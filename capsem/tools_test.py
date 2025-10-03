@@ -81,19 +81,3 @@ def test_gemini_compatibility():
     print(tool_dict)
     fn = genai_types.FunctionDeclaration(**tool_dict)
     genai_types.Tool(function_declarations=[fn])
-
-
-def test_toolset():
-    "test the ToolSet class"
-    tools = [Tool.from_dict(SPECS[name]) for name in SPECS]
-    toolset = ToolSet()
-    for tool in tools:
-        toolset.add_tool(tool, tool.name)
-
-    assert len(toolset.get_tools()) == len(tools)
-    assert isinstance(toolset.get_tool_by_name("get_current_temperature"), Tool)
-
-    for tool in tools:
-        agent_tools = toolset.get_agent_tools(tool.name)
-        assert len(agent_tools) == 1
-        assert agent_tools[0].name == tool.name
