@@ -1,0 +1,30 @@
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    permissions:
+      contents: read
+      deployments: write
+
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'latest'
+      - name: install
+        run: cd site && npm install
+        
+      # Build site -- need to use github cache eventually
+      - name: Build
+        run: cd site && npm run build
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site/dist/ --project-name=capsem
