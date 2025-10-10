@@ -12,6 +12,8 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "uvicorn>=0.37.0",
     "capsem>=0.2.0",
+    "httptools>=0.7.1",
+    "uvtools>=0.2.0",
 ]
 
 [build-system]
@@ -24,6 +26,12 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+markers = [
+    "integration: marks tests that require the proxy server running on localhost:8000 (deselect with '-m \"not integration\"')",
+    "slow: marks tests that make real API calls to OpenAI/Gemini (expensive)",
+]
+# By default, skip integration tests (can run with: pytest -m integration)
+addopts = "-m 'not integration'"
 
 [dependency-groups]
 dev = [

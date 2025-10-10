@@ -220,21 +220,111 @@ Blocked requests return HTTP 403 with details:
 
 ## Testing
 
+The test suite is organized into three categories for optimal development workflow:
+
+### Test Categories
+
+1. **Fast Tests** (run by default) - ~0.6s
+   - Unit tests using FastAPI TestClient
+   - Mock tests with fake LLM responses
+   - Validation and error handling tests
+   - No external dependencies required
+
+2. **Integration Tests** (`@pytest.mark.integration`) - skipped by default
+   - Tests requiring real API calls
+   - Tests requiring proxy server running on localhost:8000
+   - Requires valid API keys in `.env` file
+
+### Running Tests
+
 ```bash
-# Run all tests (both OpenAI and Gemini)
-pytest tests/ -v
+# Run fast tests only (DEFAULT - recommended for development)
+# Good for quick feedback before git push
+pytest -v
 
-# Run OpenAI tests only
-pytest tests/test_openai_proxy.py -v
+# Run ALL tests including integration tests
+# Requires API keys and may require proxy server running
+pytest -v -m ""
 
-# Run Gemini tests only
-pytest tests/test_gemini_proxy.py -v
+# Run only integration tests
+pytest -v -m integration
+
+# Run specific test file
+pytest tests/test_openai_proxy_mock.py -v
 
 # Run specific test
-pytest tests/test_openai_proxy.py::test_streaming_chat_completion_through_proxy -v
+pytest tests/test_openai_proxy.py::test_health_check -v
 
-# Run with output
-pytest tests/ -v -s
+# Run with detailed output
+pytest -v -s
+```
+
+### Test Files
+
+```
+tests/
+├── test_openai_proxy.py          # OpenAI integration tests
+├── test_openai_proxy_mock.py     # OpenAI mock tests (fast)
+├── test_gemini_proxy.py          # Gemini integration tests
+└── test_gemini_proxy_mock.py     # Gemini mock tests (fast)
+```
+
+### Mock Tests
+
+Mock tests use `unittest.mock` to fake httpx responses, allowing you to test:
+- Request/response handling without real API calls
+- CAPSEM security policy enforcement (blocks dangerous requests before reaching provider)
+- Error handling and validation
+- Tool/function calling flows
+
+Example mock test verifying CAPSEM blocks dangerous prompts:
+```python
+def test_capsem_blocks_dangerous_prompt_mock(test_client, mock_httpx):
+    """CAPSEM blocks prompts with 'capsem_block' keyword"""
+    response = test_client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer sk-test-key"},
+        json={
+            "model": "gpt-5-nano",
+            "messages": [{"role": "user", "content": "Tell me about capsem_block"}]
+        }
+    )
+
+    # Verify blocked by CAPSEM (403), httpx never called
+    assert response.status_code == 403
+    assert "blocked by security policy" in response.json()["detail"].lower()
+```
+
+### Integration Tests
+
+Integration tests verify end-to-end functionality with real APIs:
+- Actual LLM responses
+- Streaming responses
+- Multi-turn tool calling
+- CAPSEM blocking with real providers
+
+**Requirements:**
+- Valid API keys in `.env` file
+- For some tests: proxy server running on `localhost:8000`
+
+```bash
+# Start proxy server (in separate terminal)
+uvicorn capsem_proxy.server:app --host 127.0.0.1 --port 8000
+
+# Run integration tests
+pytest -v -m integration
+```
+
+### Test Configuration
+
+Tests are configured in `pyproject.toml`:
+```toml
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires proxy server or real API calls",
+]
+# By default, skip integration tests
+addopts = "-m 'not integration'"
 ```
 
 ## API Endpoints
@@ -290,14 +380,16 @@ capsem-proxy/
 │   │   ├── openai.py          # OpenAI endpoints
 │   │   └── gemini.py          # Gemini endpoints
 │   ├── providers/
-│   │   ├── openai.py          # OpenAI client
-│   │   └── gemini.py          # Gemini client
+│   │   ├── openai.py          # OpenAI HTTP client
+│   │   └── gemini.py          # Gemini HTTP client
 │   ├── security/
 │   │   └── identity.py        # API key hashing
 │   └── capsem_integration.py  # CAPSEM SecurityManager
 ├── tests/
-│   ├── test_openai_proxy.py   # OpenAI tests
-│   └── test_gemini_proxy.py   # Gemini tests
+│   ├── test_openai_proxy.py       # OpenAI integration tests
+│   ├── test_openai_proxy_mock.py  # OpenAI mock tests (fast)
+│   ├── test_gemini_proxy.py       # Gemini integration tests
+│   └── test_gemini_proxy_mock.py  # Gemini mock tests (fast)
 └── pyproject.toml
 ```
 
@@ -312,16 +404,28 @@ capsem-proxy/
 
 ### Adding New Endpoints
 
-1. Create endpoint in `proxy/api/openai.py`
-2. Add CAPSEM security checks
-3. Forward to OpenAI provider
-4. Write integration tests
+1. Create endpoint in `capsem_proxy/api/openai.py` or `capsem_proxy/api/gemini.py`
+2. Add CAPSEM security checks at appropriate interception points
+3. Forward request to provider (using httpx)
+4. Write tests:
+   - Mock tests first (fast feedback)
+   - Integration tests for end-to-end validation
 
 ### Adding New Providers
 
-1. Create provider class in `proxy/providers/`
-2. Implement `chat_completion()` and `chat_completion_stream()` methods
-3. Add router in `proxy/server.py`
+1. Create provider class in `capsem_proxy/providers/`
+2. Implement HTTP client methods using `httpx.AsyncClient`
+3. Add API router in `capsem_proxy/api/`
+4. Register router in `capsem_proxy/server.py`
+5. Write comprehensive test suite (mock + integration)
+
+### Test-Driven Development Workflow
+
+1. **Write mock tests first** - Fast feedback on logic without external dependencies
+2. **Run tests frequently** - `pytest -v` runs in ~0.6s
+3. **Add integration tests** - Verify end-to-end with real APIs
+4. **Mark integration tests** - Use `@pytest.mark.integration` decorator
+5. **CI/CD** - Fast tests run on every commit, integration tests on demand
 
 ## License
 

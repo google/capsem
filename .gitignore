@@ -8,6 +8,7 @@ archive/
 .vscode
 .pytest_cache
 config.toml
+CLAUDE.md
 keys.json
 workdir/
 node_modules/

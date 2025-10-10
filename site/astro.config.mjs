@@ -14,6 +14,7 @@ export default defineConfig({
 					items: [
 						// Each item here is one entry in the navigation menu.
 						{ label: 'Installation', slug: 'getting_started/installation' },
+						{ label: 'Proxy Setup', slug: 'getting_started/proxy' },
 					],
 				},
 				{
