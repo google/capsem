@@ -34,9 +34,12 @@ class Media(BaseModel):
 
 class Verdict(Enum):
     "Possible verdicts for a policy evaluation"
-    ALLOW = "allow" # allow the agent to proceed
-    BLOCK = "block" # block the agent execution
-    CONFIRM = "confirm"  # ask the user for confirmation
+    ALLOW = "ALLOW"       # Allow without any warnings
+    BLOCK = "BLOCK"       # Prevent execution or block results
+    CONFIRM = "CONFIRM"   # Require user approval
+    CLARIFY = "CLARIFY"   # Request user clarification
+    REPLAN = "REPLAN"     # Agent should reconsider approach
+    LOG = "LOG"           # Log warning but allow
 
 class Reason(str, Enum):
     "Possible reasons for a policy decision"
