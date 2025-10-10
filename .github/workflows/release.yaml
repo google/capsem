@@ -7,10 +7,11 @@ jobs:
   build:
     name: python
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: capsem
     steps:
       - uses: actions/checkout@v4
-      - name: Change directory
-        run: cd capsem
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
