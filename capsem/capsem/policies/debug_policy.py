@@ -46,10 +46,10 @@ class DebugPolicy(Policy):
         return DEFAULT_SAFE_DECISION
 
     async def on_tool_call(self, invocation_id: str, agent: Agent, tool: Tool, args: dict) -> Decision:
-        if "block" in tool.name.lower():
+        if "capsem_block" in tool.name.lower():
             decision = Decision(verdict=Verdict.BLOCK,
                             reason=Reason.POLICY_VIOLATION,
-                            details="Detected 'block' in tool name")
+                            details="Detected 'capsem_block' in tool name")
             return decision
         return DEFAULT_SAFE_DECISION
 
@@ -60,10 +60,10 @@ class DebugPolicy(Policy):
     async def on_model_call(self, invocation_id: str, agent: Agent,
                             model_name: str, system_instructions: str,
                             prompt: str, media: list[Media]) -> Decision:
-        if "block" in prompt.lower():
+        if "capsem_block" in prompt.lower():
             decision = Decision(verdict=Verdict.BLOCK,
                             reason=Reason.POLICY_VIOLATION,
-                            details="Detected 'block' in prompt")
+                            details="Detected 'capsem_block' in prompt")
         else:
             decision = DEFAULT_SAFE_DECISION
         return decision
