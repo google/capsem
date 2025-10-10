@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import json
-from .tools import Tool, ToolSet
+from .tools import Tool
 from google.genai import types as genai_types
 
 # taken from various external documentation sources
