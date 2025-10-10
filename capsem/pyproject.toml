@@ -1,6 +1,6 @@
 [project]
 name = "capsem"
-version = "0.2.0"
+version = "0.3.0"
 description = "CAPSEM: Contextual Agent Privacy and Security Manager"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,11 @@ adk = [
 ]
 pii = [
     "presidio-analyzer>=2.2.354",
+]
+all = [
+    { include-group = "dev" },
+    { include-group = "adk" },
+    { include-group = "pii" },
 ]
 
 [tool.setuptools.packages.find]

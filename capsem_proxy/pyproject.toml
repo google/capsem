@@ -1,6 +1,6 @@
 [project]
 name = "capsem-proxy"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multi-tenant LLM proxy with CAPSEM security policy enforcement"
 readme = "README.md"
 requires-python = ">=3.11"

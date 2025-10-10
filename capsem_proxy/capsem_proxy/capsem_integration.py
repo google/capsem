@@ -14,21 +14,38 @@
 
 """CAPSEM integration for the proxy"""
 
-import sys
+import os
+import logging
 from pathlib import Path
-
-# Add capsem to path
-capsem_path = Path(__file__).parent.parent / "capsem"
-sys.path.insert(0, str(capsem_path))
 
 from capsem.manager import SecurityManager
 from capsem.policies.debug_policy import DebugPolicy
 from capsem.models import Agent, Decision, Verdict
 from capsem.tools import Tool
 
-# Initialize SecurityManager with DebugPolicy
-security_manager = SecurityManager()
-security_manager.add_policy(DebugPolicy())
+logger = logging.getLogger(__name__)
+
+# Initialize SecurityManager based on config directory or default to DebugPolicy
+config_dir = os.environ.get("PROXY_CONFIG_DIR")
+
+if config_dir and Path(config_dir).exists():
+    logger.info(f"Loading policies from config directory: {config_dir}")
+    try:
+        from capsem.config_loader import load_policies_from_directory
+        security_manager = load_policies_from_directory(config_dir)
+        logger.info("Successfully loaded policies from config directory")
+    except Exception as e:
+        logger.error(f"Failed to load config: {e}")
+        logger.warning("Falling back to default DebugPolicy")
+        security_manager = SecurityManager()
+        security_manager.add_policy(DebugPolicy())
+else:
+    if config_dir:
+        logger.warning(f"Config directory not found: {config_dir}, using default DebugPolicy")
+    else:
+        logger.info("No config directory specified, using default DebugPolicy")
+    security_manager = SecurityManager()
+    security_manager.add_policy(DebugPolicy())
 
 
 def create_agent(user_id: str, tools: list[dict] = None) -> Agent:

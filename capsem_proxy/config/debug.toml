@@ -1,0 +1,8 @@
+# Debug Policy Configuration
+# This policy is useful for development and testing
+
+# Set to false to disable this policy
+enabled = true
+
+# DebugPolicy blocks prompts/tools containing "capsem_block"
+# No additional configuration needed

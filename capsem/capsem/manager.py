@@ -33,6 +33,11 @@ class SecurityManager:
         "Get the list of policies"
         return list(self._policies.values())
 
+    @property
+    def policies(self) -> list[Policy]:
+        "Get the list of policies as a property"
+        return self.get_policies()
+
     def print_policies(self):
         "Print the list of policies"
         table = [[p.name] for p in self.get_policies()]

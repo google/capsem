@@ -74,3 +74,24 @@ class DebugPolicy(Policy):
                                 thoughts: str, media: list[Media]) -> Decision:
         print(response)
         return DEFAULT_SAFE_DECISION
+
+    @classmethod
+    def from_config(cls, config: dict) -> "DebugPolicy":
+        """Create DebugPolicy from configuration dictionary
+
+        Args:
+            config: Configuration dictionary with optional keys:
+                - enabled: bool (if False, returns None to skip policy)
+
+        Returns:
+            DebugPolicy instance, or None if disabled
+
+        Example:
+            config = {"enabled": True}
+            policy = DebugPolicy.from_config(config)
+        """
+        # Check if policy is disabled
+        if not config.get("enabled", True):
+            return None
+
+        return cls()

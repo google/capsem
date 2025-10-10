@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import tomllib
+from pathlib import Path
+from typing import Optional
 from networkx import Graph
 
 from ..tools import Tool
@@ -45,6 +48,14 @@ class Policy():
         self.description = description
         self.url = url
         self.authors = authors
+
+    def __str__(self) -> str:
+        """String representation of the policy"""
+        return f"{self.name}"
+
+    def __repr__(self) -> str:
+        """Detailed representation of the policy"""
+        return f"<Policy: {self.name} by {self.authors}>"
 
     async def on_workflow_start(self,
                                 invocation_id: str,
@@ -106,3 +117,61 @@ class Policy():
                                 media: list[Media]) -> Decision:
         "Called when the agent receives a model response"
         return DEFAULT_SAFE_DECISION
+
+    @classmethod
+    def from_config(cls, config: dict) -> "Policy":
+        """Create policy instance from configuration dictionary
+
+        Args:
+            config: Configuration dictionary parsed from TOML
+
+        Returns:
+            Policy instance configured from the provided settings
+
+        Raises:
+            NotImplementedError: If policy doesn't implement config loading
+            ValueError: If configuration is invalid
+
+        Example:
+            config = {
+                "enabled": True,
+                "param1": "value1",
+                "param2": 123
+            }
+            policy = MyPolicy.from_config(config)
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement from_config(). "
+            "Override this method to support configuration loading."
+        )
+
+    @classmethod
+    def from_config_file(cls, config_path: str | Path) -> "Policy":
+        """Create policy instance from TOML configuration file
+
+        Args:
+            config_path: Path to TOML configuration file
+
+        Returns:
+            Policy instance configured from the file
+
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+            ValueError: If config file is invalid TOML
+            NotImplementedError: If policy doesn't implement config loading
+
+        Example:
+            policy = MyPolicy.from_config_file("config/my_policy.toml")
+        """
+        config_path = Path(config_path)
+
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        try:
+            with open(config_path, "rb") as f:
+                config = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            raise ValueError(f"Invalid TOML in {config_path}: {e}")
+
+        return cls.from_config(config)

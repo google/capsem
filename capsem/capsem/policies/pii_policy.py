@@ -441,3 +441,82 @@ class PIIPolicy(Policy):
             context=f"tool '{tool.name}' response",
             is_response=True
         )
+
+    @classmethod
+    def from_config(cls, config: dict) -> "PIIPolicy":
+        """Create PIIPolicy from configuration dictionary
+
+        Args:
+            config: Configuration dictionary with keys:
+                - enabled: bool (if False, returns None to skip policy)
+                - entity_decisions: Dict mapping entity type strings to verdict strings
+                  Example: {"EMAIL_ADDRESS": "BLOCK", "CREDIT_CARD": "CONFIRM"}
+                - check_prompts: bool (optional, default True)
+                - check_tool_args: bool (optional, default True)
+                - check_responses: bool (optional, default True)
+                - check_tool_responses: bool (optional, default True)
+                - score_threshold: float (optional, default 0.5)
+                - language: str (optional, default "en")
+
+        Returns:
+            Configured PIIPolicy instance, or None if disabled
+
+        Raises:
+            ValueError: If configuration is invalid
+            ImportError: If presidio-analyzer not installed
+
+        Example:
+            config = {
+                "enabled": True,
+                "entity_decisions": {
+                    "EMAIL_ADDRESS": "BLOCK",
+                    "CREDIT_CARD": "CONFIRM",
+                    "PERSON": "LOG"
+                },
+                "check_prompts": True,
+                "score_threshold": 0.5
+            }
+            policy = PIIPolicy.from_config(config)
+        """
+        # Check if policy is disabled
+        if not config.get("enabled", True):
+            return None
+
+        if not PRESIDIO_AVAILABLE:
+            raise ImportError(
+                "PIIPolicy requires presidio-analyzer. "
+                "Install with: uv sync --group pii"
+            )
+
+        # Parse entity_decisions: map string entity types to enum and verdict
+        entity_decisions_config = config.get("entity_decisions", {})
+        if not entity_decisions_config:
+            raise ValueError("PIIPolicy config must include 'entity_decisions'")
+
+        entity_decisions = {}
+        for entity_str, verdict_str in entity_decisions_config.items():
+            # Convert string to PIIEntityType enum
+            try:
+                entity_type = PIIEntityType[entity_str]
+            except KeyError:
+                raise ValueError(f"Unknown PII entity type: {entity_str}")
+
+            # Convert string to Verdict enum
+            try:
+                verdict = Verdict[verdict_str]
+            except KeyError:
+                raise ValueError(f"Unknown verdict: {verdict_str}")
+
+            entity_decisions[entity_type] = verdict
+
+        # Build policy arguments with defaults
+        return cls(
+            entity_decisions=entity_decisions,
+            check_prompts=config.get("check_prompts", True),
+            check_tool_args=config.get("check_tool_args", True),
+            check_responses=config.get("check_responses", True),
+            check_tool_responses=config.get("check_tool_responses", True),
+            score_threshold=config.get("score_threshold", 0.5),
+            language=config.get("language", "en"),
+            nlp_engine_config=config.get("nlp_engine_config")
+        )

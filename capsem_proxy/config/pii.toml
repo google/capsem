@@ -1,0 +1,43 @@
+# PII Detection Policy Configuration
+# Detects personally identifiable information using Microsoft Presidio
+#
+# IMPORTANT: Requires presidio-analyzer to be installed
+# Install with: cd ../capsem && uv sync --group pii
+
+# Set to false to disable this policy
+enabled = true
+
+# Which contexts to check for PII (all default to true)
+check_prompts = true           # Check user prompts before sending to LLM
+check_tool_args = true         # Check tool arguments
+check_responses = true         # Check model responses (data loss prevention)
+check_tool_responses = true    # Check tool responses
+
+# Detection threshold (0.0-1.0, default: 0.5)
+# Higher = fewer false positives, may miss some PII
+# Lower = catch more PII, more false positives
+score_threshold = 0.5
+
+# Language for detection (default: "en")
+language = "en"
+
+# Entity decisions: map PII entity types to verdicts
+# Available verdicts: BLOCK, CONFIRM, LOG, ALLOW
+# Available entity types:
+#   Pattern-based: EMAIL_ADDRESS, CREDIT_CARD, CRYPTO, IP_ADDRESS, PHONE_NUMBER,
+#                  US_SSN, US_BANK_NUMBER, US_DRIVER_LICENSE, US_PASSPORT, IBAN_CODE
+#   NLP-based: PERSON, LOCATION, DATE_TIME (requires spacy model)
+[entity_decisions]
+EMAIL_ADDRESS = "BLOCK"
+CREDIT_CARD = "BLOCK"
+US_SSN = "BLOCK"
+PHONE_NUMBER = "CONFIRM"
+PERSON = "LOG"
+
+# Optional: Custom NLP engine configuration
+# Uncomment to use a different spacy model or transformers
+# [nlp_engine_config]
+# nlp_engine_name = "spacy"
+# [[nlp_engine_config.models]]
+# lang_code = "en"
+# model_name = "en_core_web_sm"  # Smaller, faster model

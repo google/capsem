@@ -101,6 +101,13 @@ def parse_args() -> argparse.Namespace:
         help="Maximum number of connections to hold in backlog"
     )
 
+    parser.add_argument(
+        "--config-dir",
+        type=str,
+        default=os.getenv("PROXY_CONFIG_DIR", "config"),
+        help="Path to directory containing policy configuration files (TOML)"
+    )
+
     return parser.parse_args()
 
 
@@ -187,6 +194,25 @@ def print_startup_banner(args: argparse.Namespace, config: dict):
     if args.limit_concurrency > 0:
         print(f"  Concurrency Limit:  {args.limit_concurrency}")
     print(f"  Backlog:            {args.backlog}")
+
+    # Show enabled policies
+    print("\n  Security Policies:")
+    if args.config_dir:
+        print(f"    Config Dir: {args.config_dir}")
+        try:
+            from capsem_proxy.capsem_integration import security_manager
+            if security_manager and security_manager.policies:
+                print(f"    Enabled Policies: {len(security_manager.policies)}")
+                for policy in security_manager.policies:
+                    print(f"      ✓ {policy}")  # Uses __str__
+            else:
+                print("    - No policies loaded")
+        except Exception:
+            print("    - Loading...")
+    else:
+        print("    Enabled Policies: 1")
+        print("      ✓ Debug (default)")
+
     print("\n  Providers:")
     print("    - OpenAI API Proxy")
     print("    - Gemini API Proxy")
@@ -201,6 +227,12 @@ def main():
     setup_logging(args.log_level)
 
     logging.info("Starting CAPSEM Proxy...")
+
+    # Set config directory environment variable before importing server
+    # (server imports capsem_integration which reads this env var)
+    if args.config_dir:
+        os.environ["PROXY_CONFIG_DIR"] = args.config_dir
+        logging.info(f"Policy config directory: {args.config_dir}")
 
     # Validate environment
     validate_environment()

@@ -275,6 +275,16 @@ adk = [
     { name = "google-adk" },
     { name = "litellm" },
 ]
+all = [
+    { name = "google-adk" },
+    { name = "ipykernel" },
+    { name = "litellm" },
+    { name = "nbconvert" },
+    { name = "presidio-analyzer" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
 dev = [
     { name = "google-adk" },
     { name = "ipykernel" },
@@ -302,6 +312,16 @@ requires-dist = [
 adk = [
     { name = "google-adk", specifier = ">=1.14.1" },
     { name = "litellm", specifier = ">=1.77.4" },
+]
+all = [
+    { name = "google-adk", specifier = ">=1.14.1" },
+    { name = "ipykernel", specifier = ">=6.30.1" },
+    { name = "litellm", specifier = ">=1.77.4" },
+    { name = "nbconvert", specifier = ">=7.16.6" },
+    { name = "presidio-analyzer", specifier = ">=2.2.354" },
+    { name = "pyright", specifier = ">=1.1.405" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
 ]
 dev = [
     { name = "google-adk", specifier = ">=1.14.1" },

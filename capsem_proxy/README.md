@@ -432,3 +432,8 @@ capsem-proxy/
 Copyright 2025 Google LLC
 
 Licensed under the Apache License, Version 2.0
+
+
+## Disclaimer
+
+This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
