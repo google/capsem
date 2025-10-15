@@ -40,20 +40,62 @@ source .venv/bin/activate  # On Windows use `.venv\Scripts\activate`
 pip install capsem_proxy
 ```
 
-## Running the Proxy
+## Configuration
 
-Start the proxy server:
+### Security Policies
 
-```bash
-# Using uvicorn directly
-uvicorn capsem_proxy.server:app --host 127.0.0.1 --port 8000
+Configure security policies in a `config/` directory using TOML files. Each policy has its own configuration file.
 
-# Or if you activated the venv
-source .venv/bin/activate
-uvicorn capsem_proxy.server:app --host 127.0.0.1 --port 8000
+**Example config/debug.toml:**
+```toml
+enabled = true
 ```
 
-The proxy will start on `http://localhost:8000` and is ready to receive requests.
+**Example config/pii.toml:**
+```toml
+enabled = true
+
+[entity_decisions]
+EMAIL_ADDRESS = "BLOCK"
+CREDIT_CARD = "BLOCK"
+```
+
+See the [Policies Documentation](/policies/intro/) for available policies and detailed configuration options.
+
+## Running the Proxy
+
+Start the proxy using the launcher:
+
+```bash
+# Start with default settings (uses config/ directory)
+python -m capsem_proxy.run_proxy
+
+# Specify custom config directory
+python -m capsem_proxy.run_proxy --config-dir /path/to/config
+
+# Run on different port
+python -m capsem_proxy.run_proxy --port 8080
+
+# See all options
+python -m capsem_proxy.run_proxy --help
+```
+
+The proxy will display enabled policies on startup:
+
+```
+============================================================
+  CAPSEM PROXY - Multi-tenant LLM Security Proxy
+============================================================
+  Host:               127.0.0.1
+  Port:               8000
+
+  Security Policies:
+    Config Dir: config
+    Enabled Policies: 2
+      ✓ Debug
+      ✓ PIIDetection
+============================================================
+```
 
 ## Verify Installation
 
@@ -73,21 +115,6 @@ You should see:
 }
 ```
 
-## Security Policies
-
-By default, the proxy uses CAPSEM's `DebugPolicy` which blocks:
-- Prompts containing the `capsem_block` keyword
-- Tools with `capsem_block` in their name
-
-Blocked requests return HTTP 403 with details:
-
-```json
-{
-  "detail": "Request blocked by security policy: Detected 'capsem_block' in prompt"
-}
-```
-
-You can customize security policies by modifying `capsem_proxy/capsem_integration.py`.
 
 ## Next Steps
 

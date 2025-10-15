@@ -14,17 +14,20 @@
 
 """Google Gemini API endpoints"""
 
+from urllib import response
 import uuid
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import logging
 
+from google.genai.types import Content, GenerateContentResponse
 from capsem_proxy.providers.gemini import GeminiProvider
 from capsem_proxy.security.identity import get_user_id_from_auth
 from capsem_proxy.capsem_integration import security_manager, create_agent
-from capsem.models import Verdict
+from capsem.models import Verdict, Media, Decision
 from capsem.tools import Tool
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,13 @@ async def options_handler(model: str):
     """Handle OPTIONS requests (CORS preflight)"""
     return {"status": "ok"}
 
+async def _decide(decision: Decision, request_id: str):
+    if decision.verdict == Verdict.BLOCK:
+        logger.warning(f"[{request_id}] CAPSEM BLOCKED: {decision.details}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Request blocked by security policy: {decision.details}",
+        )
 
 @router.post("/models/{model}:generateContent")
 async def generate_content(
@@ -84,18 +94,45 @@ async def generate_content(
         # Note: Gemini uses "tools" in request, similar structure to OpenAI
         agent = create_agent(user_id, body.get("tools", []))
 
+
+        # ON_MODEL_CALL
         # Extract prompt from contents
         contents = body.get("contents", [])
+
         prompt_parts = []
+        thoughts_parts = []
         for content in contents:
-            role = content.get("role", "user")
-            parts = content.get("parts", [])
-            for part in parts:
-                if "text" in part:
-                    prompt_parts.append(f"{role}: {part['text']}")
+            try:
+                content = Content(**content)  # Validate structure
+            except Exception as e:
+                logger.warning(f"Invalid content structure: {e}")
+                continue
+            if not content.parts:
+                continue
+            for part in content.parts:
+                if part.text:
+                    if part.thought:
+                        thoughts_parts.append(part.text)
+                    else:
+                        prompt_parts.append(part.text)
 
+            # on tool call response
+            if part.function_response:
+                decision = await security_manager.on_tool_response(
+                    invocation_id=request_id,
+                    agent=agent,
+                    tool=Tool(
+                        name=part.function_response.name,
+                        description="Function response from model",
+                        parameters={}),
+                    response=part.function_response.response or {},
+                )
+                await _decide(decision, request_id)
+
+
+        # check the model call
         prompt = "\n".join(prompt_parts)
-
+        thoughts = "\n".join(thoughts_parts)
         # CAPSEM: Check model call (prompt)
         decision = await security_manager.on_model_call(
             invocation_id=request_id,
@@ -105,71 +142,66 @@ async def generate_content(
             prompt=prompt,
             media=[],
         )
+        await _decide(decision, request_id)
 
-        if decision.verdict == Verdict.BLOCK:
-            logger.warning(f"[{request_id}] CAPSEM BLOCKED: {decision.details}")
-            raise HTTPException(
-                status_code=403,
-                detail=f"Request blocked by security policy: {decision.details}",
-            )
-
-        # CAPSEM: Check tool calls if present
-        tools = body.get("tools", [])
-        if tools:
-            for tool_def in tools:
-                # Gemini tool format: {"functionDeclarations": [{"name": ..., "description": ..., "parameters": ...}]}
-                if "functionDeclarations" in tool_def:
-                    for func_decl in tool_def["functionDeclarations"]:
-                        tool = Tool(
-                            name=func_decl.get("name", "unknown"),
-                            description=func_decl.get("description", "")
-                            or "No description provided",
-                            parameters=func_decl.get(
-                                "parameters", {"type": "object", "properties": {}}
-                            ),
-                        )
-                        tool_decision = await security_manager.on_tool_call(
-                            invocation_id=request_id, agent=agent, tool=tool, args={}
-                        )
-                        if tool_decision.verdict == Verdict.BLOCK:
-                            logger.warning(
-                                f"[{request_id}] CAPSEM BLOCKED TOOL: {tool_decision.details}"
-                            )
-                            raise HTTPException(
-                                status_code=403,
-                                detail=f"Tool blocked by security policy: {tool_decision.details}",
-                            )
 
         # Forward to Gemini
-        response = await gemini_provider.generate_content(model, body, api_key)
+        raw_response = await gemini_provider.generate_content(model, body, api_key)
+        try:
+            response = GenerateContentResponse(**raw_response)
+        except Exception as e:
+            logger.error(f"Invalid response structure from Gemini: {e}")
+            raise HTTPException(status_code=502, detail="Invalid response from provider")
+
+        from rich import print as rprint
+        rprint(response)
 
         # CAPSEM: Check model response
-        response_text = ""
-        if "candidates" in response:
-            for candidate in response["candidates"]:
-                content = candidate.get("content", {})
-                parts = content.get("parts", [])
-                for part in parts:
-                    if "text" in part:
-                        response_text += part["text"]
+        response_parts = []
+        response_thoughts = []
+
+        if not response.candidates:
+            return response  # No candidates to process
+        for candidate in response.candidates:
+            if not candidate.content:
+                continue
+            for content in candidate.content:
+                if part in content:
+                    if part.text:
+                        if part.thought:
+                            response_thoughts.append(part.text)
+                        else:
+                            response_parts.append(part.text)
+
+                    # analyze function call
+                    if part.function_call:
+                        # async def on_tool_call(self, invocation_id: str, agent: Agent, tool: Tool, args: dict) -> Decision:
+
+                        tool_decision = await security_manager.on_tool_call(
+                            invocation_id=request_id,
+                            agent=agent,
+                            tool=Tool(
+                                name=part.function_call.name,
+                                description="Function call from model",
+                                parameters=part.function_call.args or {},
+                            ),
+                            args=part.function_call.args or {},
+                        )
+                        await _decide(tool_decision, request_id)
+
+        response_text = "\n".join(response_parts)
+        response_thoughts = "\n".join(response_thoughts)
 
         response_decision = await security_manager.on_model_response(
             invocation_id=request_id,
             agent=agent,
             response=response_text,
-            thoughts="",
-            media=[],
+            thoughts=response_thoughts,
+            media=[],  # Fixme
         )
 
-        if response_decision.verdict == Verdict.BLOCK:
-            logger.warning(
-                f"[{request_id}] CAPSEM BLOCKED RESPONSE: {response_decision.details}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Response blocked by security policy: {response_decision.details}",
-            )
 
+        await _decide(response_decision, request_id)
         logger.info(f"[{request_id}] Response received, returning to client")
         logger.debug(f"[{request_id}] Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'not a dict'}")
         return response

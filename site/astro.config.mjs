@@ -7,7 +7,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'CAPSEM',
-			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/google/stcarlight' }],
+			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/google/capsem' }],
 			sidebar: [
 				{
 					label: 'Getting Started',
