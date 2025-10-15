@@ -72,7 +72,6 @@ class DebugPolicy(Policy):
                                 invocation_id: str,
                                 agent: Agent, response: str,
                                 thoughts: str, media: list[Media]) -> Decision:
-        print(response)
         return DEFAULT_SAFE_DECISION
 
     @classmethod

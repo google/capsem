@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--config-dir",
+        "--config",
         type=str,
         default=os.getenv("PROXY_CONFIG_DIR", "config"),
         help="Path to directory containing policy configuration files (TOML)"
@@ -197,8 +197,8 @@ def print_startup_banner(args: argparse.Namespace, config: dict):
 
     # Show enabled policies
     print("\n  Security Policies:")
-    if args.config_dir:
-        print(f"    Config Dir: {args.config_dir}")
+    if args.config:
+        print(f"    Config Dir: {args.config}")
         try:
             from capsem_proxy.capsem_integration import security_manager
             if security_manager and security_manager.policies:
@@ -230,9 +230,9 @@ def main():
 
     # Set config directory environment variable before importing server
     # (server imports capsem_integration which reads this env var)
-    if args.config_dir:
-        os.environ["PROXY_CONFIG_DIR"] = args.config_dir
-        logging.info(f"Policy config directory: {args.config_dir}")
+    if args.config:
+        os.environ["PROXY_CONFIG_DIR"] = args.config
+        logging.info(f"Policy config directory: {args.config}")
 
     # Validate environment
     validate_environment()

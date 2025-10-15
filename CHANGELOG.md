@@ -2,6 +2,22 @@
 
 All notable changes to CAPSEM will be documented in this file.
 
+## [0.3.1] - 2025-10-15
+
+### Added
+
+- [CAPSEM Proxy] Added Gemini proxy demo notebook.
+
+### Fixed
+
+- [CAPSEM Proxy] Fixed issue where PII policy was not being applied to tool call in some cases.
+
+### Changed
+
+- Changed directory structure to move capsem to capsem_python so it is clearer
+and we can add other packages like capsem_js in the future.
+
+
 ## [0.0.3] - 2025-10-10
 
 ### Added

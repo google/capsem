@@ -34,6 +34,9 @@ import json
 import logging
 from enum import Enum
 
+from click.core import V
+from regex import R
+
 try:
     from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
     from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -278,7 +281,7 @@ class PIIPolicy(Policy):
 
         # Group detections by entity type and find most severe verdict
         detected_entities = {}
-        most_severe_verdict = None
+        most_severe_verdict = Verdict.ALLOW
         verdict_priority = {Verdict.BLOCK: 3, Verdict.CONFIRM: 2, Verdict.LOG: 1}
 
         for result in results:
@@ -373,6 +376,7 @@ class PIIPolicy(Policy):
         args: dict
     ) -> Decision:
         """Check tool arguments for PII"""
+
         if not self.check_tool_args:
             return DEFAULT_SAFE_DECISION
 

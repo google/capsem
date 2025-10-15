@@ -21,13 +21,12 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import logging
 
-from google.genai.types import Content, GenerateContentResponse
+from google.genai.types import Content, Part, GenerateContentResponse
 from capsem_proxy.providers.gemini import GeminiProvider
 from capsem_proxy.security.identity import get_user_id_from_auth
 from capsem_proxy.capsem_integration import security_manager, create_agent
 from capsem.models import Verdict, Media, Decision
 from capsem.tools import Tool
-
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +85,7 @@ async def generate_content(
             logger.error(f"Failed to parse JSON: {e}")
             raise ValueError(f"Invalid JSON in request body: {e}")
 
-        logger.info(
-            f"[{request_id}] Gemini request from user_id={user_id}, model={model}"
-        )
+        logger.info(f"[{request_id}] Gemini request from user_id={user_id}, model={model}")
 
         # Create CAPSEM agent
         # Note: Gemini uses "tools" in request, similar structure to OpenAI
@@ -153,41 +150,39 @@ async def generate_content(
             logger.error(f"Invalid response structure from Gemini: {e}")
             raise HTTPException(status_code=502, detail="Invalid response from provider")
 
-        from rich import print as rprint
-        rprint(response)
 
         # CAPSEM: Check model response
         response_parts = []
         response_thoughts = []
-
         if not response.candidates:
             return response  # No candidates to process
         for candidate in response.candidates:
             if not candidate.content:
                 continue
-            for content in candidate.content:
-                if part in content:
-                    if part.text:
-                        if part.thought:
-                            response_thoughts.append(part.text)
-                        else:
-                            response_parts.append(part.text)
+            if not candidate.content.parts or not len(candidate.content.parts):
+                continue
+            for part in candidate.content.parts:
+                if part.text:
+                    if part.thought:
+                        response_thoughts.append(part.text)
+                    else:
+                        response_parts.append(part.text)
 
-                    # analyze function call
-                    if part.function_call:
-                        # async def on_tool_call(self, invocation_id: str, agent: Agent, tool: Tool, args: dict) -> Decision:
+                # analyze function call
+                if part.function_call:
 
-                        tool_decision = await security_manager.on_tool_call(
-                            invocation_id=request_id,
-                            agent=agent,
-                            tool=Tool(
-                                name=part.function_call.name,
-                                description="Function call from model",
-                                parameters=part.function_call.args or {},
-                            ),
-                            args=part.function_call.args or {},
-                        )
-                        await _decide(tool_decision, request_id)
+                    # async def on_tool_call(self, invocation_id: str, agent: Agent, tool: Tool, args: dict) -> Decision:
+                    tool_decision = await security_manager.on_tool_call(
+                        invocation_id=request_id,
+                        agent=agent,
+                        tool=Tool(
+                            name=part.function_call.name,
+                            description="Function call from model",
+                            parameters=part.function_call.args or {},
+                        ),
+                        args=part.function_call.args or {},
+                    )
+                    await _decide(tool_decision, request_id)
 
         response_text = "\n".join(response_parts)
         response_thoughts = "\n".join(response_thoughts)
@@ -199,11 +194,10 @@ async def generate_content(
             thoughts=response_thoughts,
             media=[],  # Fixme
         )
-
-
         await _decide(response_decision, request_id)
         logger.info(f"[{request_id}] Response received, returning to client")
-        logger.debug(f"[{request_id}] Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'not a dict'}")
+
+        # logger.debug(f"[{request_id}] Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'not a dict'}")
         return response
 
     except HTTPException:
@@ -296,6 +290,7 @@ async def stream_generate_content(
                                 "parameters", {"type": "object", "properties": {}}
                             ),
                         )
+                        # FIXME args is not available here
                         tool_decision = await security_manager.on_tool_call(
                             invocation_id=request_id, agent=agent, tool=tool, args={}
                         )
