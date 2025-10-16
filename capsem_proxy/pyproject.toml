@@ -1,6 +1,6 @@
 [project]
 name = "capsem-proxy"
-version = "0.3.1"
+version = "0.3.2"
 description = "Multi-tenant LLM proxy with CAPSEM security policy enforcement"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,11 +33,13 @@ markers = [
 # By default, skip integration tests (can run with: pytest -m integration)
 addopts = "-m 'not integration'"
 
-[dependency-groups]
+[project.optional-dependencies]
+
 dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
+
 pii = [
     "presidio-analyzer>=2.2.360",
 ]
