@@ -21,6 +21,9 @@ jobs:
 
       - name: Build
         run: uv build
+
+      - name: spacy
+        run: python -m spacy download en_core_web_lg
       
       - name: Test
         run: uv run -m pytest
