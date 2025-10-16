@@ -51,6 +51,8 @@ from dotenv import load_dotenv
 from fastapi.testclient import TestClient
 from capsem_proxy.server import app
 import httpx
+from google.genai import Client, types
+from google.genai.errors import ClientError
 
 # Load environment from parent directory .env
 env_path = Path(__file__).parent.parent.parent / ".env"
@@ -58,14 +60,14 @@ load_dotenv(env_path)
 
 # Global model configuration
 MODEL_NAME = "gemini-2.5-flash"
-
+CAPSEM_PROXY = "http://127.0.0.1:8000"
 
 @pytest.fixture
 def gemini_api_key():
     """Get Gemini API key from capsem/.env"""
     key = os.getenv("GEMINI_API_KEY")
     if not key:
-        pytest.skip("GEMINI_API_KEY not set in capsem/.env")
+        pytest.skip("GEMINI_API_KEY not set in environment")
     return key
 
 
@@ -74,6 +76,16 @@ def test_client():
     """FastAPI test client"""
     return TestClient(app)
 
+
+@pytest.fixture()
+def proxied_client():
+    """Google Gemini SDK client"""
+    key = os.getenv("GEMINI_API_KEY")
+    if not key:
+        pytest.skip("GEMINI_API_KEY not set in environment")
+    http_options = types.HttpOptions(base_url=CAPSEM_PROXY)
+    client = Client(http_options=http_options)
+    return client
 
 def test_health_check_includes_gemini(test_client):
     """Test health check endpoint includes gemini provider"""
@@ -243,130 +255,6 @@ async def test_gemini_sdk_through_proxy(gemini_api_key):
     print(f"\nGemini through proxy - Response: '{text}'")
     assert "sdk works" in text.lower() or "works" in text.lower()
 
-
-@pytest.mark.integration
-async def test_gemini_with_tools_through_proxy(gemini_api_key):
-    """Test Gemini with function declarations through proxy"""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"http://localhost:8000/v1beta/models/{MODEL_NAME}:generateContent",
-            headers={"x-goog-api-key": gemini_api_key},
-            json={
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [{"text": "What's the weather in Paris?"}],
-                    }
-                ],
-                "tools": [
-                    {
-                        "functionDeclarations": [
-                            {
-                                "name": "get_weather",
-                                "description": "Get current weather for a location",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "location": {
-                                            "type": "string",
-                                            "description": "City name",
-                                        }
-                                    },
-                                    "required": ["location"],
-                                },
-                            }
-                        ]
-                    }
-                ],
-            },
-            timeout=30.0,
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    print(f"\nGemini tool test response: {data}")
-
-
-@pytest.mark.integration
-def test_prompt_with_block_keyword_blocked_by_capsem(test_client, gemini_api_key):
-    """
-    Test: Prompt with 'capsem_block' keyword should be BLOCKED by CAPSEM DebugPolicy.
-
-    CAPSEM DebugPolicy blocks any prompt containing "capsem_block" keyword.
-    This test verifies the security policy is working for Gemini.
-    """
-    response = test_client.post(
-        f"/v1beta/models/{MODEL_NAME}:generateContent",
-        headers={"x-goog-api-key": gemini_api_key},
-        json={
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": "Tell me about capsem_block technology"}],
-                }
-            ]
-        },
-    )
-
-    # Verify it's a 403 and mentions the security policy
-    assert response.status_code == 403
-    data = response.json()
-    assert "blocked by security policy" in data["detail"].lower()
-
-    print(f"\n✅ CAPSEM successfully blocked Gemini prompt with 'capsem_block' keyword")
-    print(f"Error: {data}")
-
-
-@pytest.mark.integration
-def test_tool_with_block_in_name_blocked_by_capsem(test_client, gemini_api_key):
-    """
-    Test: Tool with 'capsem_block' in name should be BLOCKED by CAPSEM DebugPolicy.
-
-    CAPSEM DebugPolicy blocks any tool with "capsem_block" in the name.
-    This test verifies the security policy is working for Gemini tools.
-    """
-    response = test_client.post(
-        f"/v1beta/models/{MODEL_NAME}:generateContent",
-        headers={"x-goog-api-key": gemini_api_key},
-        json={
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": "Use the dangerous tool"}],
-                }
-            ],
-            "tools": [
-                {
-                    "functionDeclarations": [
-                        {
-                            "name": "dangerous_capsem_block",
-                            "description": "A dangerous operation that should be blocked",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "action": {
-                                        "type": "string",
-                                        "description": "The action to perform",
-                                    }
-                                },
-                                "required": ["action"],
-                            },
-                        }
-                    ]
-                }
-            ],
-        },
-    )
-
-    # Verify it's a 403 and mentions the security policy
-    assert response.status_code == 403
-    data = response.json()
-    assert "blocked by security policy" in data["detail"].lower()
-
-    print(f"\n✅ CAPSEM successfully blocked Gemini tool with 'capsem_block' in name")
-    print(f"Error: {data}")
-
-
 @pytest.mark.integration
 async def test_streaming_generate_content(gemini_api_key):
     """Test streaming generateContent through proxy"""
@@ -423,3 +311,83 @@ def test_user_id_hashing(gemini_api_key):
     # Different key should give different hash
     user_id3 = get_user_id_from_auth("Bearer different-key")
     assert user_id != user_id3
+
+
+
+@pytest.mark.integration
+async def test_sdk_with_tool(proxied_client: Client):
+    """Test google-genai SDK with tool declaration transparently work through
+    proxy"""
+
+    def weather_function(location: str) -> dict:
+        return {"temperature": "20°C", "location": location}
+
+    config = types.GenerateContentConfig(tools=[weather_function])
+
+    response = proxied_client.models.generate_content(
+        model=MODEL_NAME,
+        contents="what is the weather in paris?",
+        config=config,
+    )
+    print(response.text)
+    assert response.text
+    assert "20" in response.text
+
+
+@pytest.mark.integration
+async def test_sdk_block_tool_name(proxied_client: Client):
+    """Test on_tool_call blocking by tool name works"""
+
+    def weather_capsem_block_function(location: str) -> dict:
+        return {"temperature": "20°C", "location": location}
+
+    config = types.GenerateContentConfig(tools=[weather_capsem_block_function])
+
+    # Assert that ClientError is raised
+    with pytest.raises(ClientError) as exc_info:
+        response = proxied_client.models.generate_content(
+            model=MODEL_NAME,
+            contents="what is the weather in paris?",
+            config=config,
+        )
+    assert "capsem_block" in str(exc_info.value)
+    assert "security policy" in str(exc_info.value)
+
+@pytest.mark.integration
+async def test_sdk_block_tool_return(proxied_client: Client):
+    """Test on_tool_result blocks"""
+
+    def weather_function(location: str) -> dict:
+        return {"temperature": "20°C", "location": 'capsem_block'}
+
+    config = types.GenerateContentConfig(tools=[weather_function])
+
+    # Assert that ClientError is raised
+    with pytest.raises(ClientError) as exc_info:
+        response = proxied_client.models.generate_content(
+            model=MODEL_NAME,
+            contents="what is the weather in paris?",
+            config=config,
+        )
+    assert "capsem_block" in str(exc_info.value)
+    assert "security policy" in str(exc_info.value)
+
+
+@pytest.mark.integration
+async def test_sdk_block_prompt(proxied_client: Client):
+    """Test on_tool_result blocks"""
+
+    def weather_function(location: str) -> dict:
+        return {"temperature": "20°C", "location": location}
+
+    config = types.GenerateContentConfig(tools=[weather_function])
+
+    # Assert that ClientError is raiseds
+    with pytest.raises(ClientError) as exc_info:
+        response = proxied_client.models.generate_content(
+            model=MODEL_NAME,
+            contents="what is the weather in paris? capsem_block",
+            config=config,
+        )
+    assert "capsem_block" in str(exc_info.value)
+    assert "security policy" in str(exc_info.value)

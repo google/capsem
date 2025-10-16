@@ -13,6 +13,7 @@
 # limitations under the License.
 
 "Debug policy that prints all events and decisions"
+from re import DEBUG
 from ..tools import Tool
 from .policy import Policy
 from ..models import Agent, Media
@@ -20,9 +21,12 @@ from ..models import Decision, DEFAULT_SAFE_DECISION, Reason, Verdict
 
 class DebugPolicy(Policy):
     "A policy that prints all events and returns safe decisions"
+
+    DEBUG_TRIGGER = "capsem_block"
+
     def __init__(self):
         super().__init__(name="Debug",
-                         description="A policy used to debug agents workflow",
+                         description="Policy used to debug CAPSEM integration. Blocks any occurrence of the word 'capsem_block' in prompts, model responses, tool names, tool arguments, or tool responses.",
                          authors="Elie Bursztein",
                          url="https://github.com/google/capsem/policies/debug")
 
@@ -46,15 +50,28 @@ class DebugPolicy(Policy):
         return DEFAULT_SAFE_DECISION
 
     async def on_tool_call(self, invocation_id: str, agent: Agent, tool: Tool, args: dict) -> Decision:
-        if "capsem_block" in tool.name.lower():
-            decision = Decision(verdict=Verdict.BLOCK,
+        if self.DEBUG_TRIGGER in tool.name.lower():
+            return Decision(verdict=Verdict.BLOCK,
                             reason=Reason.POLICY_VIOLATION,
-                            details="Detected 'capsem_block' in tool name")
-            return decision
+                            details=f"Detected '{self.DEBUG_TRIGGER}' in tool name")
+
+        args_str = ", ".join(f"{k}={v}" for k, v in args.items())
+        if self.DEBUG_TRIGGER in args_str.lower():
+            return Decision(verdict=Verdict.BLOCK,
+                            reason=Reason.POLICY_VIOLATION,
+                            details=f"Detected '{self.DEBUG_TRIGGER}' in tool arguments")
+
         return DEFAULT_SAFE_DECISION
 
     async def on_tool_response(self, invocation_id: str, agent: Agent,
                                tool: Tool, response: dict) -> Decision:
+
+        response_str = str(response)
+        if 'capsem_block' in response_str.lower():
+            return Decision(verdict=Verdict.BLOCK,
+                            reason=Reason.POLICY_VIOLATION,
+                            details=f"Detected '{self.DEBUG_TRIGGER}' in tool response")
+
         return DEFAULT_SAFE_DECISION
 
     async def on_model_call(self, invocation_id: str, agent: Agent,
@@ -63,7 +80,7 @@ class DebugPolicy(Policy):
         if "capsem_block" in prompt.lower():
             decision = Decision(verdict=Verdict.BLOCK,
                             reason=Reason.POLICY_VIOLATION,
-                            details="Detected 'capsem_block' in prompt")
+                            details=f"Detected '{self.DEBUG_TRIGGER}' in prompt")
         else:
             decision = DEFAULT_SAFE_DECISION
         return decision
@@ -72,6 +89,11 @@ class DebugPolicy(Policy):
                                 invocation_id: str,
                                 agent: Agent, response: str,
                                 thoughts: str, media: list[Media]) -> Decision:
+        if 'capsem_block' in response.lower():
+            return Decision(verdict=Verdict.BLOCK,
+                            reason=Reason.POLICY_VIOLATION,
+                            details=f"Detected '{self.DEBUG_TRIGGER}' in model response")
+
         return DEFAULT_SAFE_DECISION
 
     @classmethod

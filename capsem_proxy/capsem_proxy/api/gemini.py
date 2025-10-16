@@ -50,13 +50,16 @@ async def options_handler(model: str):
     """Handle OPTIONS requests (CORS preflight)"""
     return {"status": "ok"}
 
-async def _decide(decision: Decision, request_id: str):
+async def _decide(step: str, decision: Decision, request_id: str):
+    """Handle decision from CAPSEM and log results"""
+
+    msg = f"[{request_id}][{step}]{decision.verdict.name}:{decision.details}"
+    logger.info(msg)
+    print(msg)
     if decision.verdict == Verdict.BLOCK:
-        logger.warning(f"[{request_id}] CAPSEM BLOCKED: {decision.details}")
-        raise HTTPException(
-            status_code=403,
-            detail=f"Request blocked by security policy: {decision.details}",
-        )
+        raise HTTPException(status_code=403,
+                            detail=f"Request blocked by security policy: {decision.details}",
+                            )
 
 @router.post("/models/{model}:generateContent")
 async def generate_content(
@@ -124,7 +127,7 @@ async def generate_content(
                         parameters={}),
                     response=part.function_response.response or {},
                 )
-                await _decide(decision, request_id)
+                await _decide('on_tool_response', decision, request_id)
 
 
         # check the model call
@@ -139,7 +142,7 @@ async def generate_content(
             prompt=prompt,
             media=[],
         )
-        await _decide(decision, request_id)
+        await _decide('on_model_call', decision, request_id)
 
 
         # Forward to Gemini
@@ -182,7 +185,7 @@ async def generate_content(
                         ),
                         args=part.function_call.args or {},
                     )
-                    await _decide(tool_decision, request_id)
+                    await _decide('on_tool_call', tool_decision, request_id)
 
         response_text = "\n".join(response_parts)
         response_thoughts = "\n".join(response_thoughts)
@@ -194,7 +197,7 @@ async def generate_content(
             thoughts=response_thoughts,
             media=[],  # Fixme
         )
-        await _decide(response_decision, request_id)
+        await _decide('on_model_response', response_decision, request_id)
         logger.info(f"[{request_id}] Response received, returning to client")
 
         # logger.debug(f"[{request_id}] Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'not a dict'}")
