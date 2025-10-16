@@ -73,6 +73,7 @@ load_dotenv(env_path)
 # Global model configuration
 MODEL_NAME = "gpt-5-nano"
 MAX_TOKENS = 4000  # Increased for gpt-5-nano to generate proper responses
+CAPSEM_PROXY = "http://127.0.0.1:8000"
 
 
 @pytest.fixture
@@ -88,6 +89,18 @@ def openai_api_key():
 def test_client():
     """FastAPI test client"""
     return TestClient(app)
+
+
+@pytest.fixture
+def proxied_openai_client():
+    """OpenAI SDK client pointing to proxy"""
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        pytest.skip("OPENAI_API_KEY not set in environment")
+    return OpenAI(
+        api_key=key,
+        base_url=f"{CAPSEM_PROXY}/v1"
+    )
 
 
 def test_health_check(test_client):
@@ -599,7 +612,7 @@ def test_streaming_chat_completion_through_proxy(openai_api_key):
     """Test streaming chat completion through proxy"""
     client = OpenAI(
         api_key=openai_api_key,
-        base_url="http://localhost:8000/v1"
+        base_url=f"{CAPSEM_PROXY}/v1"
     )
 
     stream = client.chat.completions.create(
@@ -650,3 +663,195 @@ def test_streaming_chat_completion_through_proxy(openai_api_key):
         if finish_reason:
             print(f"Finish reason: {finish_reason}")
             assert finish_reason in ["stop", "length", "tool_calls"]
+
+
+@pytest.mark.integration
+def test_sdk_with_tool_call_validation(proxied_openai_client):
+    """Test OpenAI SDK with tool - validates on_tool_call when model requests tool"""
+
+    response = proxied_openai_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "user", "content": "What's the weather in Paris?"}
+        ],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get current weather for a location",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "City name"
+                            }
+                        },
+                        "required": ["location"]
+                    }
+                }
+            }
+        ],
+        max_completion_tokens=MAX_TOKENS
+    )
+
+    # Verify model made tool call
+    assert response.choices[0].message.tool_calls is not None
+    assert len(response.choices[0].message.tool_calls) > 0
+    tool_call = response.choices[0].message.tool_calls[0]
+    assert tool_call.function.name == "get_weather"
+    print(f"\n✅ Model requested tool: {tool_call.function.name}")
+    print(f"Arguments: {tool_call.function.arguments}")
+
+
+@pytest.mark.integration
+def test_sdk_block_tool_name(proxied_openai_client):
+    """Test on_tool_call blocking by tool name - matches Gemini test_sdk_block_tool_name"""
+    from openai import PermissionDeniedError
+
+    # Tool with capsem_block in name should be blocked
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        response = proxied_openai_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "user", "content": "Use the weather tool"}
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "weather_capsem_block_function",
+                        "description": "Get weather data",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            ],
+            max_completion_tokens=MAX_TOKENS
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "capsem_block" in str(exc_info.value)
+    assert "security policy" in str(exc_info.value)
+    print(f"\n✅ CAPSEM blocked tool with 'capsem_block' in name")
+
+
+@pytest.mark.integration
+def test_sdk_block_tool_call_arguments(proxied_openai_client):
+    """Test on_tool_call blocking when model's tool call contains capsem_block in arguments"""
+    from openai import PermissionDeniedError
+    import json
+
+    # Ask model to call tool with blocked content in arguments
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        response = proxied_openai_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "user", "content": "What's the weather in capsem_block city?"}
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get current weather for a location",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {"type": "string"}
+                            },
+                            "required": ["location"]
+                        }
+                    }
+                }
+            ],
+            max_completion_tokens=MAX_TOKENS
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "capsem_block" in str(exc_info.value)
+    assert "security policy" in str(exc_info.value)
+    print(f"\n✅ CAPSEM blocked tool call with 'capsem_block' in arguments")
+
+
+@pytest.mark.integration
+def test_sdk_block_tool_response(proxied_openai_client):
+    """Test on_tool_response blocking - matches Gemini test_sdk_block_tool_return"""
+    from openai import PermissionDeniedError
+    import json
+
+    # First turn: Get model to request tool call
+    response1 = proxied_openai_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "user", "content": "What's the weather in Paris?"}
+        ],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get current weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {"type": "string"}
+                        },
+                        "required": ["location"]
+                    }
+                }
+            }
+        ],
+        max_completion_tokens=MAX_TOKENS
+    )
+
+    # Verify model requested tool
+    assert response1.choices[0].message.tool_calls is not None
+    tool_call = response1.choices[0].message.tool_calls[0]
+    print(f"\n[Turn 1] Model requested: {tool_call.function.name}")
+
+    # Second turn: Send tool result with blocked content
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        response2 = proxied_openai_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "user", "content": "What's the weather in Paris?"},
+                response1.choices[0].message.model_dump(),
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps({"weather": "sunny", "location": "capsem_block"})
+                }
+            ],
+            max_completion_tokens=MAX_TOKENS
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "capsem_block" in str(exc_info.value)
+    assert "security policy" in str(exc_info.value)
+    print(f"\n✅ CAPSEM blocked tool response with 'capsem_block' content")
+
+
+@pytest.mark.integration
+def test_sdk_block_prompt(proxied_openai_client):
+    """Test on_model_call blocking - matches Gemini test_sdk_block_prompt"""
+    from openai import PermissionDeniedError
+
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        response = proxied_openai_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "user", "content": "Tell me about capsem_block technology"}
+            ],
+            max_completion_tokens=MAX_TOKENS
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "capsem_block" in str(exc_info.value)
+    assert "security policy" in str(exc_info.value)
+    print(f"\n✅ CAPSEM blocked prompt with 'capsem_block' keyword")

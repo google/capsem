@@ -268,7 +268,7 @@ wheels = [
 
 [[package]]
 name = "capsem-proxy"
-version = "0.2.0"
+version = "0.3.2"
 source = { editable = "." }
 dependencies = [
     { name = "capsem" },
@@ -282,7 +282,7 @@ dependencies = [
     { name = "uvtools" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -299,17 +299,13 @@ requires-dist = [
     { name = "httptools", specifier = ">=0.7.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "openai", specifier = ">=1.59.0" },
+    { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = ">=2.2.360" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.2" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.2.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "uvicorn", specifier = ">=0.37.0" },
     { name = "uvtools", specifier = ">=0.2.0" },
 ]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-asyncio", specifier = ">=1.2.0" },
-]
-pii = [{ name = "presidio-analyzer", specifier = ">=2.2.360" }]
 
 [[package]]
 name = "catalogue"

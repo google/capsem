@@ -24,6 +24,7 @@ import json
 from capsem_proxy.providers.openai import OpenAIProvider
 from capsem_proxy.security.identity import extract_api_key, get_user_id_from_auth, extract_session_id
 from capsem_proxy.capsem_integration import security_manager, create_agent
+from capsem_proxy.api.utils import decide
 from capsem.models import Verdict
 from capsem.tools import Tool
 
@@ -98,6 +99,21 @@ async def chat_completion(
         messages = body.get("messages", [])
         prompt = "\n".join([f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages if m.get('content')])
 
+        # CAPSEM: Check tool responses (if client is sending tool execution results)
+        for message in messages:
+            if message.get("role") == "tool":
+                tool_decision = await security_manager.on_tool_response(
+                    invocation_id=request_id,
+                    agent=agent,
+                    tool=Tool(
+                        name=message.get("name", "unknown"),
+                        description="Tool execution result from client",
+                        parameters={}
+                    ),
+                    response=message.get("content", "")
+                )
+                await decide('on_tool_response', tool_decision, request_id)
+
         # CAPSEM: Check model call (prompt)
         decision = await security_manager.on_model_call(
             invocation_id=request_id,
@@ -107,13 +123,7 @@ async def chat_completion(
             prompt=prompt,
             media=[]
         )
-
-        if decision.verdict == Verdict.BLOCK:
-            logger.warning(f"[{request_id}] CAPSEM BLOCKED: {decision.details}")
-            raise HTTPException(
-                status_code=403,
-                detail=f"Request blocked by security policy: {decision.details}"
-            )
+        await decide('on_model_call', decision, request_id)
 
         # CAPSEM: Check tool calls (tool definitions)
         tools = body.get("tools", [])
@@ -161,6 +171,30 @@ async def chat_completion(
             message = response["choices"][0].get("message", {})
             response_content = message.get("content", "") or ""
 
+            # CAPSEM: Check tool calls (if model is requesting tool execution)
+            tool_calls = message.get("tool_calls", [])
+            if tool_calls:
+                for tool_call in tool_calls:
+                    if tool_call.get("type") == "function":
+                        func = tool_call.get("function", {})
+                        # Parse arguments (they come as JSON string)
+                        try:
+                            args = json.loads(func.get("arguments", "{}"))
+                        except json.JSONDecodeError:
+                            args = {}
+
+                        tool_call_decision = await security_manager.on_tool_call(
+                            invocation_id=request_id,
+                            agent=agent,
+                            tool=Tool(
+                                name=func.get("name", "unknown"),
+                                description="Function call from model",
+                                parameters=args
+                            ),
+                            args=args
+                        )
+                        await decide('on_tool_call', tool_call_decision, request_id)
+
         response_decision = await security_manager.on_model_response(
             invocation_id=request_id,
             agent=agent,
@@ -168,13 +202,7 @@ async def chat_completion(
             thoughts="",
             media=[]
         )
-
-        if response_decision.verdict == Verdict.BLOCK:
-            logger.warning(f"[{request_id}] CAPSEM BLOCKED RESPONSE: {response_decision.details}")
-            raise HTTPException(
-                status_code=403,
-                detail=f"Response blocked by security policy: {response_decision.details}"
-            )
+        await decide('on_model_response', response_decision, request_id)
 
         logger.info(f"[{request_id}] Response received")
 
@@ -236,6 +264,21 @@ async def responses_create(
         input_messages = body.get("input", [])
         prompt = "\n".join([f"{m.get('role', 'user')}: {m.get('content', '')}" for m in input_messages if m.get('content')])
 
+        # CAPSEM: Check tool responses (if client is sending tool execution results)
+        for message in input_messages:
+            if message.get("role") == "tool":
+                tool_decision = await security_manager.on_tool_response(
+                    invocation_id=request_id,
+                    agent=agent,
+                    tool=Tool(
+                        name=message.get("name", "unknown"),
+                        description="Tool execution result from client",
+                        parameters={}
+                    ),
+                    response=message.get("content", "")
+                )
+                await decide('on_tool_response', tool_decision, request_id)
+
         # CAPSEM: Check model call (prompt)
         decision = await security_manager.on_model_call(
             invocation_id=request_id,
@@ -245,13 +288,7 @@ async def responses_create(
             prompt=prompt,
             media=[]
         )
-
-        if decision.verdict == Verdict.BLOCK:
-            logger.warning(f"[{request_id}] CAPSEM BLOCKED: {decision.details}")
-            raise HTTPException(
-                status_code=403,
-                detail=f"Request blocked by security policy: {decision.details}"
-            )
+        await decide('on_model_call', decision, request_id)
 
         # CAPSEM: Check tool calls (tool definitions)
         tools = body.get("tools", [])
@@ -270,12 +307,7 @@ async def responses_create(
                         tool=tool,
                         args={}
                     )
-                    if tool_decision.verdict == Verdict.BLOCK:
-                        logger.warning(f"[{request_id}] CAPSEM BLOCKED TOOL: {tool_decision.details}")
-                        raise HTTPException(
-                            status_code=403,
-                            detail=f"Tool blocked by security policy: {tool_decision.details}"
-                        )
+                    await decide('on_tool_call', tool_decision, request_id)
 
         # Forward to OpenAI with client's API key
         response = await openai_provider.responses_create(body, api_key)

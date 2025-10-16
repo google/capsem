@@ -25,6 +25,7 @@ from google.genai.types import Content, Part, GenerateContentResponse
 from capsem_proxy.providers.gemini import GeminiProvider
 from capsem_proxy.security.identity import get_user_id_from_auth
 from capsem_proxy.capsem_integration import security_manager, create_agent
+from capsem_proxy.api.utils import decide
 from capsem.models import Verdict, Media, Decision
 from capsem.tools import Tool
 
@@ -50,16 +51,6 @@ async def options_handler(model: str):
     """Handle OPTIONS requests (CORS preflight)"""
     return {"status": "ok"}
 
-async def _decide(step: str, decision: Decision, request_id: str):
-    """Handle decision from CAPSEM and log results"""
-
-    msg = f"[{request_id}][{step}]{decision.verdict.name}:{decision.details}"
-    logger.info(msg)
-    print(msg)
-    if decision.verdict == Verdict.BLOCK:
-        raise HTTPException(status_code=403,
-                            detail=f"Request blocked by security policy: {decision.details}",
-                            )
 
 @router.post("/models/{model}:generateContent")
 async def generate_content(
@@ -127,7 +118,7 @@ async def generate_content(
                         parameters={}),
                     response=part.function_response.response or {},
                 )
-                await _decide('on_tool_response', decision, request_id)
+                await decide('on_tool_response', decision, request_id)
 
 
         # check the model call
@@ -142,8 +133,27 @@ async def generate_content(
             prompt=prompt,
             media=[],
         )
-        await _decide('on_model_call', decision, request_id)
+        await decide('on_model_call', decision, request_id)
 
+        # CAPSEM: Check tool definitions (if client provided tool declarations)
+        tools = body.get("tools", [])
+        if tools:
+            for tool_def in tools:
+                if "functionDeclarations" in tool_def:
+                    for func_decl in tool_def["functionDeclarations"]:
+                        tool = Tool(
+                            name=func_decl.get("name", "unknown"),
+                            description=func_decl.get("description", "")
+                            or "No description provided",
+                            parameters=func_decl.get(
+                                "parameters", {"type": "object", "properties": {}}
+                            ),
+                        )
+                        # Note: args is not available for tool definitions
+                        tool_decision = await security_manager.on_tool_call(
+                            invocation_id=request_id, agent=agent, tool=tool, args={}
+                        )
+                        await decide('on_tool_call', tool_decision, request_id)
 
         # Forward to Gemini
         raw_response = await gemini_provider.generate_content(model, body, api_key)
@@ -185,7 +195,7 @@ async def generate_content(
                         ),
                         args=part.function_call.args or {},
                     )
-                    await _decide('on_tool_call', tool_decision, request_id)
+                    await decide('on_tool_call', tool_decision, request_id)
 
         response_text = "\n".join(response_parts)
         response_thoughts = "\n".join(response_thoughts)
@@ -197,7 +207,7 @@ async def generate_content(
             thoughts=response_thoughts,
             media=[],  # Fixme
         )
-        await _decide('on_model_response', response_decision, request_id)
+        await decide('on_model_response', response_decision, request_id)
         logger.info(f"[{request_id}] Response received, returning to client")
 
         # logger.debug(f"[{request_id}] Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'not a dict'}")
