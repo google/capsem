@@ -128,27 +128,37 @@ def convert_notebook(
 def main():
     """Convert all notebooks in demos/ to markdown."""
 
-    DIRS = {"demos/tutorials": "site/src/content/docs/tutorials",
-            "demos/policies": "site/src/content/docs/policies"}
+    # Get the repo root (parent of site/)
+    repo_root = Path(__file__).parent.parent
+
+    # Map source directories to destination directories (relative to repo root)
+    # Format: {source_path: destination_path}
+    DIRS = {
+        "capsem_python/demos/tutorials": "site/src/content/docs/tutorials",
+        "capsem_python/demos/policies": "site/src/content/docs/policies",
+        "capsem_proxy/demo": "site/src/content/docs/proxy"
+    }
 
     for src_dir, dest_dir in DIRS.items():
 
-        demos_dir = Path(src_dir)
-        output_dir = Path(dest_dir)
-        # clean destination
+        demos_dir = repo_root / src_dir
+        output_dir = repo_root / dest_dir
+
+        # Skip if source directory doesn't exist
+        if not demos_dir.exists():
+            print(f"⚠ Skipping {src_dir} (not found)")
+            continue
+
+        # Clean destination
         shutil.rmtree(output_dir, ignore_errors=True)
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        if not demos_dir.exists():
-            print(f"Error: {demos_dir} not found")
-            return 1
 
         # Find all notebooks
         notebooks = list(demos_dir.glob("*.ipynb"))
 
         if not notebooks:
-            print(f"No notebooks found in {demos_dir}")
-            return 1
+            print(f"⚠ No notebooks found in {demos_dir}")
+            continue
 
         print(f"Found {len(notebooks)} notebook(s) in {demos_dir} to convert:\n")
 
@@ -174,7 +184,8 @@ def main():
             )
 
         print(f"\n✓ All notebooks in {demos_dir} converted to {output_dir}")
-        return 0
+
+    return 0
 
 
 if __name__ == "__main__":

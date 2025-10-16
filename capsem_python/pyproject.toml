@@ -1,6 +1,6 @@
 [project]
 name = "capsem"
-version = "0.3.2"
+version = "0.3.3"
 description = "CAPSEM: Contextual Agent Privacy and Security Manager"
 readme = "README.md"
 requires-python = ">=3.11"

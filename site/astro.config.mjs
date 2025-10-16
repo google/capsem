@@ -13,17 +13,22 @@ export default defineConfig({
 					label: 'Getting Started',
 					items: [
 						// Each item here is one entry in the navigation menu.
-						{ label: 'Installation', slug: 'getting_started/installation' },
-						{ label: 'Proxy Setup', slug: 'getting_started/proxy' },
+						{ label: 'CAPSEM package installation', slug: 'getting_started/installation' },
+						{ label: 'CAPSEM proxy installation', slug: 'getting_started/proxy' },
 					],
 				},
 				{
-					label: 'Tutorials',
+					label: 'Integration',
 					autogenerate: { directory: 'tutorials' },
 				},
+
 				{
 					label: 'Policies',
 					autogenerate: { directory: 'policies' },
+				},
+				{
+					label: 'Proxy',
+					autogenerate: { directory: 'proxy' },
 				},
 			],
 		}),

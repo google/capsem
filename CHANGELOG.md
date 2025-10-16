@@ -18,7 +18,7 @@ All notable changes to CAPSEM will be documented in this file.
 and we can add other packages like capsem_js in the future.
 
 
-## [0.0.3] - 2025-10-10
+## [0.3.0] - 2025-10-10
 
 ### Added
 - [CAPSEM] PII Security Policy that can block, confirm, or log based on detected PII types in model and tools responses.
@@ -27,7 +27,7 @@ and we can add other packages like capsem_js in the future.
 
 - [CAPSEM Proxy] `run-proxy.py` script to run proxy in production mode.
 
-## [0.0.2] - 2025-10-09
+## [0.2.0] - 2025-10-09
 
 ### Added
 
