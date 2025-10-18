@@ -2,6 +2,18 @@
 
 All notable changes to CAPSEM will be documented in this file.
 
+## [0.3.2] - 2025-10-16
+
+### Added
+
+- [CAPSEM Proxy] Added OpenAI proxing demo notebook.
+- [Site]: Gemini and OpenAI proxying tutorials.
+
+### Fixed
+
+- [CAPSEM Proxy] Fixed issue where OpenAI interception didn't work on tool_calls.
+
+
 ## [0.3.1] - 2025-10-15
 
 ### Added
