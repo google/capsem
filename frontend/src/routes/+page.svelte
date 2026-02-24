@@ -2,71 +2,50 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
-
-	const MAX_LINES = 5000;
+	import { Terminal } from '@xterm/xterm';
+	import { FitAddon } from '@xterm/addon-fit';
+	import '@xterm/xterm/css/xterm.css';
 
 	let vmStatus = $state('loading...');
-	let serialLines = $state<string[]>([]);
-	let consoleEl: HTMLPreElement | undefined = $state();
-
-	function scrollToBottom() {
-		if (consoleEl) {
-			consoleEl.scrollTop = consoleEl.scrollHeight;
-		}
-	}
-
-	function keyToBytes(e: KeyboardEvent): string | null {
-		if (e.ctrlKey && e.key.length === 1) {
-			const code = e.key.toLowerCase().charCodeAt(0) - 96;
-			if (code >= 1 && code <= 26) {
-				return String.fromCharCode(code);
-			}
-			return null;
-		}
-		switch (e.key) {
-			case 'Enter':
-				return '\r';
-			case 'Backspace':
-				return '\x7f';
-			case 'Tab':
-				return '\t';
-			case 'Escape':
-				return '\x1b';
-			case 'ArrowUp':
-				return '\x1b[A';
-			case 'ArrowDown':
-				return '\x1b[B';
-			case 'ArrowRight':
-				return '\x1b[C';
-			case 'ArrowLeft':
-				return '\x1b[D';
-			case 'Home':
-				return '\x1b[H';
-			case 'End':
-				return '\x1b[F';
-			case 'Delete':
-				return '\x1b[3~';
-			default:
-				if (e.key.length === 1) {
-					return e.key;
-				}
-				return null;
-		}
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		const bytes = keyToBytes(e);
-		if (bytes !== null) {
-			e.preventDefault();
-			invoke('serial_input', { input: bytes });
-		}
-	}
+	let terminalContainer: HTMLDivElement | undefined = $state();
+	let terminal: Terminal;
+	let fitAddon: FitAddon;
 
 	onMount(async () => {
-		// Focus the console element for keyboard capture
-		if (consoleEl) {
-			consoleEl.focus();
+		// Initialize Terminal
+		terminal = new Terminal({
+			cursorBlink: true,
+			fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+			fontSize: 14,
+			theme: {
+				background: '#000000',
+				foreground: '#4ade80', // green-400
+			}
+		});
+		
+		fitAddon = new FitAddon();
+		terminal.loadAddon(fitAddon);
+
+		if (terminalContainer) {
+			terminal.open(terminalContainer);
+			// Small delay to ensure container is rendered properly
+			setTimeout(() => {
+				fitAddon.fit();
+			}, 10);
 		}
+
+		// Handle Terminal input (send to backend)
+		const inputDisposable = terminal.onData((data) => {
+			invoke('serial_input', { input: data });
+		});
+
+		// Handle window resize
+		const handleResize = () => {
+			if (fitAddon) {
+				fitAddon.fit();
+			}
+		};
+		window.addEventListener('resize', handleResize);
 
 		// Poll VM status
 		async function pollStatus() {
@@ -79,19 +58,17 @@
 		await pollStatus();
 		const statusInterval = setInterval(pollStatus, 2000);
 
-		// Listen for serial output events
-		const unlisten = await listen<string>('serial-output', (event) => {
-			serialLines.push(event.payload);
-			if (serialLines.length > MAX_LINES) {
-				serialLines.splice(0, serialLines.length - MAX_LINES);
-			}
-			// Scroll after DOM update
-			requestAnimationFrame(scrollToBottom);
+		// Listen for serial output events (write to terminal)
+		const unlisten = await listen<Uint8Array>('serial-output', (event) => {
+			terminal.write(new Uint8Array(event.payload));
 		});
 
 		return () => {
 			clearInterval(statusInterval);
 			unlisten();
+			inputDisposable.dispose();
+			window.removeEventListener('resize', handleResize);
+			terminal.dispose();
 		};
 	});
 
@@ -106,25 +83,30 @@
 	);
 </script>
 
-<div class="flex flex-col h-screen p-4 gap-4">
+<div class="flex flex-col h-screen p-4 gap-4 bg-black">
 	<section class="rounded-lg border border-gray-800 bg-gray-900 p-4 shrink-0">
 		<div class="flex items-center gap-3">
 			<span class="inline-block h-3 w-3 rounded-full {statusColor}"></span>
-			<span class="text-sm font-mono">VM: {vmStatus}</span>
+			<span class="text-sm font-mono text-white">VM: {vmStatus}</span>
 		</div>
 	</section>
 
-	<section class="rounded-lg border border-gray-800 bg-black flex-1 min-h-0 flex flex-col">
+	<section class="rounded-lg border border-gray-800 bg-black flex-1 min-h-0 flex flex-col overflow-hidden">
 		<div class="px-4 py-2 border-b border-gray-800 text-xs text-gray-500 font-mono shrink-0">
-			Serial Console (click to focus)
+			Terminal
 		</div>
-		<pre
-			bind:this={consoleEl}
-			tabindex="0"
-			role="textbox"
-			aria-label="Serial console"
-			onkeydown={handleKeydown}
-			class="flex-1 overflow-y-auto p-4 text-sm font-mono text-green-400 leading-relaxed whitespace-pre-wrap outline-none focus:ring-1 focus:ring-green-800"
-		>{#if serialLines.length === 0}<span class="text-gray-600">Waiting for serial output...</span>{:else}{serialLines.join('\n')}{/if}</pre>
+		<div bind:this={terminalContainer} class="flex-1 w-full h-full p-2 overflow-hidden"></div>
 	</section>
 </div>
+
+<style>
+	/* Make the terminal container take full height/width and let fitAddon handle the rest */
+	:global(.xterm) {
+		height: 100%;
+		padding: 0.5rem;
+	}
+	:global(.xterm-viewport) {
+		/* Custom scrollbar for xterm */
+		background-color: transparent !important;
+	}
+</style>

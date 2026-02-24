@@ -9,11 +9,10 @@ use objc2_foundation::{NSArray, NSObjectProtocol, NSString, NSURL};
 use objc2_virtualization::{
     VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
     VZEntropyDeviceConfiguration, VZGenericPlatformConfiguration,
-    VZGraphicsDeviceConfiguration, VZKeyboardConfiguration, VZPointingDeviceConfiguration,
-    VZSerialPortConfiguration, VZStorageDeviceConfiguration, VZUSBKeyboardConfiguration,
-    VZUSBScreenCoordinatePointingDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
-    VZVirtioEntropyDeviceConfiguration, VZVirtioGraphicsDeviceConfiguration,
-    VZVirtioGraphicsScanoutConfiguration, VZVirtualMachine as ObjcVZVirtualMachine,
+    VZSerialPortConfiguration, VZStorageDeviceConfiguration,
+    VZVirtioBlockDeviceConfiguration,
+    VZVirtioEntropyDeviceConfiguration,
+    VZVirtualMachine as ObjcVZVirtualMachine,
     VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use tokio::sync::broadcast;
@@ -39,7 +38,7 @@ impl VirtualMachine {
     ///
     /// Returns the VM, a broadcast receiver for serial console output,
     /// and a RawFd for writing input to the guest's serial console.
-    pub fn create(config: &VmConfig) -> Result<(Self, broadcast::Receiver<String>, RawFd)> {
+    pub fn create(config: &VmConfig) -> Result<(Self, broadcast::Receiver<Vec<u8>>, RawFd)> {
         let boot_loader = create_boot_loader(config)?;
 
         let (serial_port_config, serial_console, input_fd) = serial::create_serial_port()?;
@@ -67,34 +66,6 @@ impl VirtualMachine {
                 Retained::into_super(serial_port_config);
             let serial_array = NSArray::from_retained_slice(&[serial_port_super]);
             vz_config.setSerialPorts(&serial_array);
-
-            // Virtio graphics device (1920x1200 scanout)
-            let scanout = VZVirtioGraphicsScanoutConfiguration::initWithWidthInPixels_heightInPixels(
-                VZVirtioGraphicsScanoutConfiguration::alloc(),
-                1920,
-                1200,
-            );
-            let scanout_array = NSArray::from_retained_slice(&[scanout]);
-            let gpu = VZVirtioGraphicsDeviceConfiguration::new();
-            gpu.setScanouts(&scanout_array);
-            let gpu_super: Retained<VZGraphicsDeviceConfiguration> =
-                Retained::into_super(gpu);
-            let gpu_array = NSArray::from_retained_slice(&[gpu_super]);
-            vz_config.setGraphicsDevices(&gpu_array);
-
-            // USB keyboard
-            let keyboard = VZUSBKeyboardConfiguration::new();
-            let keyboard_super: Retained<VZKeyboardConfiguration> =
-                Retained::into_super(keyboard);
-            let keyboard_array = NSArray::from_retained_slice(&[keyboard_super]);
-            vz_config.setKeyboards(&keyboard_array);
-
-            // USB screen coordinate pointing device
-            let pointing = VZUSBScreenCoordinatePointingDeviceConfiguration::new();
-            let pointing_super: Retained<VZPointingDeviceConfiguration> =
-                Retained::into_super(pointing);
-            let pointing_array = NSArray::from_retained_slice(&[pointing_super]);
-            vz_config.setPointingDevices(&pointing_array);
 
             // Block device (rootfs)
             if let Some(ref disk_path) = config.disk_path {

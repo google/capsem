@@ -39,8 +39,8 @@ Building a green-field native macOS Rust application that spawns sandboxed Linux
 | - Immutable squashfs root + overlayfs    |
 | - NO network interface (air-gapped)      |
 | - dummy0 NIC + fake DNS -> SNI routing   |
-| - guest-agent IS PID 1 (no systemd)     |
-| - All TCP bridged over vsock to host     |
+| - guest-agent IS PID 1 (no systemd)      |
+| - TCP bridged via vsock (SNI + Gateway)  |
 | - Rosetta 2 for x86_64 binary compat    |
 | - Claude Code / Gemini CLI               |
 | - Pre-warmed npm/pip caches (overlay)    |
@@ -53,7 +53,7 @@ Building a green-field native macOS Rust application that spawns sandboxed Linux
 
 2. **Air-gapped VM with Fake-IP SNI routing**: No `VZNetworkDeviceAttachment`. But a NIC-less VM has no default route and no DNS, so `curl` would fail at `gethostbyname()` and the kernel would return `ENETUNREACH` before iptables ever fires. **Fix**: Guest-agent creates a `dummy0` interface + default route, runs a fake DNS server on 127.0.0.1:53 that resolves ALL domains to `10.0.0.1`, and redirects TCP to vsock. Host-side proxy ignores the fake IP, extracts the real domain from the TLS SNI field, validates against the allow-list, and routes upstream. Zero DNS leaks, zero DNS rebinding attacks.
 
-3. **Transparent API proxy (not OpenAI-compatible translator)**: Claude Code uses native Anthropic `/v1/messages` API with prompt caching, tool-use schemas, etc. We do NOT translate formats. The gateway receives native Anthropic/Gemini payloads, inspects/logs them, injects API keys, and forwards raw bytes to upstream. Zero protocol translation.
+3. **Layer 7 AI API Gateway (not an OpenAI translator)**: Claude Code uses native Anthropic `/v1/messages` API with prompt caching, tool-use schemas, etc. We do NOT translate formats. Instead of complex TLS MITM, we configure the agents via environment variables (e.g., `ANTHROPIC_BASE_URL=http://10.0.0.1:8080`) to send plain HTTP traffic to a dedicated vsock port. The host-side Axum gateway acts as a Layer 7 reverse proxy: it receives native Anthropic/Gemini JSON payloads, inspects/logs them, injects API keys, and initiates a brand new HTTPS connection to the upstream provider. Zero protocol translation, but full HTTP reconstruction.
 
 4. **PTY over vsock (not serial console)**: Serial ports cannot handle terminal resize (`SIGWINCH`). The guest-agent allocates `/dev/ptmx` pseudo-terminals and wires I/O over vsock. Serial is used ONLY for kernel boot logs.
 
@@ -74,6 +74,8 @@ Building a green-field native macOS Rust application that spawns sandboxed Linux
 12. **Graceful shutdown on Cmd+Q**: Intercept `WindowEvent::CloseRequested` in Tauri, call `api.prevent_close()`, send `Shutdown { graceful: true }` over vsock, guest-agent runs `sync` + unmounts overlay disk + ACPI poweroff. Only exit after VM reaches `Stopped` state. Prevents ext4 corruption on the persistent overlay disk.
 
 13. **OverlayFS on top of read-only VirtioFS caches**: `npm install` and `pip install` write `.lock` files and metadata to cache dirs even on 100% cache hit. Read-only VirtioFS would cause instant crash. **Fix**: Stack ephemeral overlayfs inside the guest on top of each read-only VirtioFS cache mount. Host cache stays clean, tools write temp data to tmpfs upper layer.
+
+14. **Tauri IPC Multiplexing and Backpressure**: High-volume data streams (PTY output, AI gateway logs, MCP audit trails) can overwhelm the Tauri IPC channel, causing UI lag or memory exhaustion. We **multiplex** these logical streams over session-specific **Tauri 2.0 Channels** rather than using global events. To prevent "head-of-line blocking" and UI freezes during bursts, we implement **credit-based backpressure**: the Svelte frontend grants "rendering credits" to the Rust backend, which in turn throttles vsock consumption from the guest until more credits are available.
 
 ---
 
@@ -270,13 +272,13 @@ capsem/
         rosetta.rs              # VZLinuxRosettaDirectoryShare config
       terminal/
         mod.rs
-        pty_proxy.rs            # host-side: vsock <-> Tauri event bridge
+        pty_proxy.rs            # host-side: vsock <-> Tauri 2.0 Channel bridge with backpressure
     capsem-guest-agent/src/
       pty.rs                    # allocate /dev/ptmx, fork, wire to vsock
       resize.rs                 # handle SIGWINCH from host resize events
   frontend/src/
     lib/components/
-      Terminal.svelte           # xterm.js component, sends/receives via Tauri events
+      Terminal.svelte           # xterm.js component, sends/receives via Tauri channels + backpressure
     lib/stores/
       terminal.ts              # terminal state + Tauri event bindings
 ```
@@ -335,10 +337,12 @@ VM (no real NIC):
   2. guest-agent runs fake DNS on 127.0.0.1:53
      - ALL domains resolve to 10.0.0.1 (single fake IP)
   3. /etc/resolv.conf -> nameserver 127.0.0.1
-  4. App calls: curl https://github.com
+  4. iptables routing splits traffic:
+     - AI Gateway traffic (e.g., port 8080) -> vsock-bridge on 127.0.0.1:3129 -> vsock:5004
+     - All OTHER TCP traffic -> SNI vsock-bridge on 127.0.0.1:3128 -> vsock:5002
+  5. App calls: curl https://github.com
      -> DNS resolves github.com to 10.0.0.1
      -> TCP connect to 10.0.0.1:443
-     -> kernel routes via dummy0
      -> iptables REDIRECT to vsock-bridge on 127.0.0.1:3128
      -> vsock-bridge sends raw bytes over vsock:5002 to host
 
@@ -378,8 +382,10 @@ Host (vsock:5002):
 3. `ip route add default dev dummy0`
 4. Start fake DNS on 127.0.0.1:53 (resolve everything to 10.0.0.1)
 5. Write `nameserver 127.0.0.1` to /etc/resolv.conf
-6. `iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports 3128`
-7. Start TCP bridge on 127.0.0.1:3128 -> vsock:5002
+6. `iptables -t nat -A OUTPUT -p tcp -d 10.0.0.1 --dport 8080 -j REDIRECT --to-ports 3129` (AI Gateway)
+7. `iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports 3128` (Catch-all SNI Router)
+8. Start TCP bridge on 127.0.0.1:3128 -> vsock:5002 (SNI)
+9. Start TCP bridge on 127.0.0.1:3129 -> vsock:5004 (AI Gateway)
 
 **Default network policy**:
 - Allow only TLS (port 443 implied by SNI routing -- non-TLS has no SNI, gets rejected)
@@ -415,14 +421,14 @@ Host (vsock:5002):
 **Architecture**:
 ```
 VM:
-  claude-code -> POST http://gateway.local:8080/v1/messages (native Anthropic format)
-  gemini-cli  -> POST http://gateway.local:8080/v1/gemini/... (native Gemini format)
-     (routed over vsock network bridge to host)
+  claude-code -> POST http://10.0.0.1:8080/v1/messages (native Anthropic format)
+  gemini-cli  -> POST http://10.0.0.1:8080/v1/gemini/... (native Gemini format)
+     (routed via dedicated iptables rule -> vsock:5004 to host)
 
 Host:
-  Axum gateway on localhost:
-    /v1/messages     -> inject x-api-key header -> proxy to api.anthropic.com
-    /v1/gemini/*     -> inject API key param   -> proxy to generativelanguage.googleapis.com
+  Axum gateway on vsock:5004 listener (Layer 7 HTTP Reverse Proxy):
+    /v1/messages     -> inject x-api-key header -> proxy to https://api.anthropic.com
+    /v1/gemini/*     -> inject API key param   -> proxy to https://generativelanguage.googleapis.com
     Log request body, stream response, log response, count tokens
 ```
 
@@ -637,8 +643,8 @@ Host:
 - `start_session { id }` -> `Ok` (boots VM, starts agent)
 - `stop_session { id }` -> `Ok`
 - `resume_session { id }` -> `Ok`
+- `attach_pty { session_id, pty_id, channel }` -> `Ok` (binds PTY stream to a Tauri 2.0 Channel for backpressured output)
 - `terminal_input { session_id, data: Vec<u8> }` (host -> guest PTY)
-- Tauri events: `terminal-output-{session_id}` (guest PTY -> host -> UI)
 - `pick_directory` -> `Option<String>` (native folder picker)
 - `get_session_config { id }` -> `SessionConfig`
 
@@ -753,8 +759,9 @@ Host:
 | Guest init | **Guest-agent as PID 1** (no systemd) | <50ms boot, zero unnecessary services |
 | Immutability | squashfs root + overlayfs (tmpfs or persistent disk upper) | True immutability, fresh or resumable |
 | Host-guest comm | **vsock only** + VirtioFS | No NIC = air-gapped VM, zero bypass risk |
+| IPC Streaming | **Tauri 2.0 Channels + Credit-based Backpressure** | Prevents high-volume streams (PTY, logs) from freezing the UI |
 | Network control | **Fake-IP SNI router** (dummy0 + fake DNS + vsock bridge) | Solves no-NIC routing, zero DNS leaks |
-| API proxying | **Transparent native-format proxy** (not OpenAI translator) | Preserves prompt caching, tool schemas, streaming |
+| API proxying | **Layer 7 Native HTTP Proxy** (not OpenAI translator) | Preserves prompt caching, tool schemas, streaming |
 | Terminal | **PTY over vsock** (not serial) | Proper resize, colors, cursor, SIGWINCH |
 | MCP gateway | JSON-RPC proxy over vsock + Seatbelt sandbox | Full control + host MCP server confinement |
 | Frontend | Tauri 2.0 + Svelte 5 (scaffolded from M1) | No async retrofit pain |

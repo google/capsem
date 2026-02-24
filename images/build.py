@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build VM boot assets using Podman.
 
-Extracts vmlinuz + initrd from Debian ARM64, creates a minimal ext4 rootfs.
+Extracts vmlinuz + initrd from Debian ARM64, builds a populated ext4 rootfs
+with developer tools and AI CLIs pre-installed.
 Output goes to ../assets/.
 """
 
@@ -16,7 +17,8 @@ REPO_ROOT = SCRIPT_DIR.parent
 ASSETS_DIR = REPO_ROOT / "assets"
 
 IMAGE_TAG = "capsem-kernel-builder"
-ROOTFS_SIZE_MB = 64
+ROOTFS_IMAGE_TAG = "capsem-rootfs"
+ROOTFS_SIZE = "2G"
 
 # Use podman, fall back to docker
 RUNTIME = "podman" if shutil.which("podman") else "docker"
@@ -63,25 +65,47 @@ def extract_assets():
 
 
 def create_rootfs():
-    """Create a minimal empty ext4 rootfs image."""
-    rootfs_path = ASSETS_DIR / "rootfs.img"
-    print(f"Creating {ROOTFS_SIZE_MB}MB ext4 rootfs...")
+    """Build populated ext4 rootfs with dev tools and AI CLIs."""
+    print("Building rootfs container image...")
 
+    # 1. Build rootfs container (arm64 binaries)
     run([
-        "dd", "if=/dev/zero", f"of={rootfs_path}",
-        "bs=1m", f"count={ROOTFS_SIZE_MB}",
+        RUNTIME, "build",
+        "--platform", "linux/arm64",
+        "-t", ROOTFS_IMAGE_TAG,
+        "-f", str(SCRIPT_DIR / "Dockerfile.rootfs"),
+        str(SCRIPT_DIR),
     ])
 
-    # macOS doesn't have mkfs.ext4 natively - use podman to format
-    abs_rootfs = str(rootfs_path.resolve())
+    # 2. Export container filesystem as tar
+    print("Exporting rootfs filesystem...")
+    result = run(
+        [RUNTIME, "create", "--platform", "linux/arm64",
+         ROOTFS_IMAGE_TAG, "/bin/true"],
+        capture_output=True, text=True,
+    )
+    cid = result.stdout.strip()
+    tar_path = ASSETS_DIR / "rootfs.tar"
+    try:
+        run([RUNTIME, "export", cid, "-o", str(tar_path)])
+    finally:
+        run([RUNTIME, "rm", cid])
+
+    # 3. Create read-only ext4 from tar (mke2fs -d, no mount/privileged needed)
+    print(f"Creating {ROOTFS_SIZE} ext4 rootfs image...")
+    abs_assets = str(ASSETS_DIR.resolve())
     run([
         RUNTIME, "run", "--rm",
-        "-v", f"{abs_rootfs}:/rootfs.img",
-        "debian:bookworm-slim",
-        "mkfs.ext4", "-F", "/rootfs.img",
+        "-v", f"{abs_assets}:/assets",
+        "debian:bookworm-slim", "bash", "-c",
+        "apt-get update && apt-get install -y e2fsprogs && "
+        "mkdir /rootfs && tar xf /assets/rootfs.tar -C /rootfs && "
+        f"mke2fs -t ext4 -d /rootfs -L capsem /assets/rootfs.img {ROOTFS_SIZE}",
     ])
 
-    print(f"  rootfs.img: {rootfs_path}")
+    # 4. Cleanup tar
+    tar_path.unlink()
+    print(f"  rootfs.img: {ASSETS_DIR / 'rootfs.img'}")
 
 
 def generate_checksums():

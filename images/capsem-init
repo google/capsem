@@ -1,6 +1,8 @@
 #!/bin/sh
 # Capsem sandbox init script.
 # Replaces /init in the initramfs.
+# Mounts rootfs read-only from /dev/vda, creates writable tmpfs layers,
+# then chroot into the real root.
 
 # Mount essential filesystems
 mount -t proc     proc     /proc
@@ -8,8 +10,6 @@ mount -t sysfs    sysfs    /sys
 mount -t devtmpfs devtmpfs /dev
 mkdir -p /dev/pts
 mount -t devpts   devpts   /dev/pts
-mkdir -p /tmp
-mount -t tmpfs    tmpfs    /tmp
 
 # Load kernel modules listed in /conf/modules (populated by initramfs-tools)
 if [ -f /conf/modules ]; then
@@ -19,17 +19,51 @@ if [ -f /conf/modules ]; then
     done < /conf/modules
 fi
 
-# Give USB devices time to enumerate
+# IMPORTANT: Wait for hardware to enumerate (including virtio_console/hvc0).
+# Redirecting to /dev/console before this will fail and crash the init script.
 sleep 1
 
-# Set up environment
-export TERM=linux
-export HOME=/root
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-mkdir -p /root
-
-# Redirect stdio to /dev/console
+# Send all output to console so we can see what happens
 exec 0</dev/console 1>/dev/console 2>/dev/console
 
-# Launch bash, suppress startup warnings (no controlling tty as PID 1)
-exec /bin/bash --rcfile /etc/bashrc -i 2>/dev/null
+echo "[capsem-init] listing block devices..."
+ls -la /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
+
+# Mount rootfs READ-ONLY from virtio block device
+mkdir -p /newroot
+echo "[capsem-init] mounting /dev/vda..."
+mount -t ext4 -o ro /dev/vda /newroot
+echo "[capsem-init] mount exit: $?"
+
+echo "[capsem-init] checking /newroot/bin/bash..."
+ls -la /newroot/bin/bash 2>&1
+
+# Create writable layers (tmpfs) -- ONLY these dirs are writable
+mount -t tmpfs tmpfs /newroot/root
+mount -t tmpfs tmpfs /newroot/tmp
+mount -t tmpfs tmpfs /newroot/run
+mount -t tmpfs tmpfs /newroot/var/log
+mount -t tmpfs tmpfs /newroot/var/tmp
+
+# Move virtual filesystems into new root.
+# IMPORTANT: Use '-o move' as the klibc mount binary does not support '--move'.
+mount -o move /proc /newroot/proc
+mount -o move /sys  /newroot/sys
+mount -o move /dev  /newroot/dev
+
+# Set up environment
+export TERM=xterm-256color
+export HOME=/root
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LANG=C
+
+echo "[capsem-init] about to chroot..."
+
+# chroot into rootfs and launch shell.
+# IMPORTANT: Redirect stderr to /newroot/dev/null because /dev was moved to 
+# /newroot/dev above. Redirection to /dev/null would fail on the RO rootfs.
+exec chroot /newroot /bin/bash --rcfile /etc/capsem-bashrc -i 2>/newroot/dev/null
+
+# If exec failed, don't let PID 1 exit (that causes kernel panic)
+echo "[capsem-init] chroot failed, dropping to shell"
+exec /bin/sh

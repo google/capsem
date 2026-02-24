@@ -13,7 +13,7 @@ use tracing::{debug, warn};
 
 /// A serial console reader that pipes VM output into a broadcast channel.
 pub struct SerialConsole {
-    tx: broadcast::Sender<String>,
+    tx: broadcast::Sender<Vec<u8>>,
     read_fd: RawFd,
     // Keep the NSPipes alive so the Virtualization framework's file handles stay valid.
     #[allow(dead_code)]
@@ -88,12 +88,12 @@ pub fn create_console_from_fd(read_fd: RawFd) -> SerialConsole {
 }
 
 impl SerialConsole {
-    /// Subscribe to serial output lines.
-    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+    /// Subscribe to serial output bytes.
+    pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.tx.subscribe()
     }
 
-    /// Spawn a background thread that reads from the pipe and broadcasts lines.
+    /// Spawn a background thread that reads from the pipe and broadcasts raw bytes.
     pub fn spawn_reader(self) {
         std::thread::spawn(move || {
             // Keep pipes alive for the duration of the reader thread
@@ -103,31 +103,20 @@ impl SerialConsole {
     }
 }
 
-/// Core read loop: reads bytes from a file descriptor, splits on newlines,
-/// and sends complete lines through the broadcast channel.
-fn read_loop(fd: RawFd, tx: &broadcast::Sender<String>) {
+/// Core read loop: reads bytes from a file descriptor and sends them
+/// immediately through the broadcast channel.
+fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>) {
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
     let mut buf = [0u8; 4096];
-    let mut partial = String::new();
 
     loop {
         match file.read(&mut buf) {
             Ok(0) => {
                 debug!("serial console EOF");
-                if !partial.is_empty() {
-                    let _ = tx.send(partial);
-                }
                 break;
             }
             Ok(n) => {
-                let chunk = String::from_utf8_lossy(&buf[..n]);
-                partial.push_str(&chunk);
-
-                while let Some(pos) = partial.find('\n') {
-                    let line = partial[..pos].to_string();
-                    let _ = tx.send(line);
-                    partial = partial[pos + 1..].to_string();
-                }
+                let _ = tx.send(buf[..n].to_vec());
             }
             Err(e) => {
                 warn!("serial read error: {e}");

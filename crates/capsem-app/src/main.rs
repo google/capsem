@@ -62,7 +62,7 @@ fn resolve_assets_dir() -> Result<PathBuf> {
 }
 
 /// Build config, create VM, start it, and return the VM + serial receiver + input fd.
-fn boot_vm(assets: &Path, cmdline: &str) -> Result<(VirtualMachine, broadcast::Receiver<String>, RawFd)> {
+fn boot_vm(assets: &Path, cmdline: &str) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd)> {
     let mut builder = VmConfig::builder()
         .cpu_count(2)
         .ram_bytes(512 * 1024 * 1024)
@@ -82,6 +82,9 @@ fn boot_vm(assets: &Path, cmdline: &str) -> Result<(VirtualMachine, broadcast::R
 
     if assets.join("rootfs.img").exists() {
         builder = builder.disk_path(assets.join("rootfs.img"));
+        // Skip hashing 2GB rootfs in debug builds; unoptimized SHA256 takes 30s+ 
+        // and makes the VM appear hung during development.
+        #[cfg(not(debug_assertions))]
         if let Some(hash) = option_env!("ROOTFS_HASH") {
             builder = builder.expected_disk_hash(hash);
         }
@@ -93,15 +96,15 @@ fn boot_vm(assets: &Path, cmdline: &str) -> Result<(VirtualMachine, broadcast::R
     Ok((vm, rx, input_fd))
 }
 
-/// Forward serial console lines to the Tauri frontend as events.
+/// Forward serial console bytes to the Tauri frontend as events.
 async fn serial_to_events(
     app_handle: tauri::AppHandle,
-    mut rx: broadcast::Receiver<String>,
+    mut rx: broadcast::Receiver<Vec<u8>>,
 ) {
     loop {
         match rx.recv().await {
-            Ok(line) => {
-                if let Err(e) = app_handle.emit("serial-output", &line) {
+            Ok(bytes) => {
+                if let Err(e) = app_handle.emit("serial-output", &bytes) {
                     error!("failed to emit serial-output event: {e}");
                 }
             }
@@ -173,13 +176,15 @@ fn run_cli(command: &str) -> Result<()> {
             );
         }
         match rx.try_recv() {
-            Ok(line) => {
+            Ok(bytes) => {
+                let line = String::from_utf8_lossy(&bytes);
+                print!("{}", line); std::io::Write::flush(&mut std::io::stdout()).unwrap();
                 if !got_first_output {
                     got_first_output = true;
                     first_output_time = Instant::now();
                 }
                 // If we see the banner, we know the shell is ready.
-                if line.contains("sandbox ready") || line.contains("capsem") {
+                if line.contains("sandbox ready") {
                     std::thread::sleep(Duration::from_millis(200));
                     while rx.try_recv().is_ok() {}
                     break;
@@ -216,30 +221,40 @@ fn run_cli(command: &str) -> Result<()> {
     std::thread::spawn(move || {
         let deadline = Instant::now() + CLI_TIMEOUT;
         let mut inside_output = false;
+        let mut partial = String::new();
 
         loop {
             match rx.blocking_recv() {
-                Ok(line) => {
-                    let clean = strip_ansi(line.trim_end_matches('\r'));
-                    if !inside_output {
-                        if clean.contains(CLI_START_MARKER) && !clean.contains("echo") {
-                            inside_output = true;
+                Ok(bytes) => {
+                    let chunk = String::from_utf8_lossy(&bytes);
+                    partial.push_str(&chunk);
+
+                    while let Some(pos) = partial.find('\n') {
+                        let line = partial[..pos].to_string();
+                        let rest = partial[pos + 1..].to_string();
+                        partial = rest;
+
+                        let clean = strip_ansi(line.trim_end_matches('\r'));
+                        if !inside_output {
+                            if clean.contains(CLI_START_MARKER) && !clean.contains("echo") {
+                                inside_output = true;
+                            }
+                            continue;
                         }
-                        continue;
+                        if clean.contains(CLI_DONE_MARKER) && !clean.contains("echo") {
+                            let _ = done_tx.send(Ok(()));
+                            return;
+                        }
+                        // Skip lines that contain the shell prompt (echoed commands).
+                        let trimmed = clean.trim();
+                        if trimmed.contains("capsem:/") {
+                            continue;
+                        }
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        println!("{}", trimmed);
                     }
-                    if clean.contains(CLI_DONE_MARKER) && !clean.contains("echo") {
-                        let _ = done_tx.send(Ok(()));
-                        return;
-                    }
-                    // Skip lines that contain the shell prompt (echoed commands).
-                    let trimmed = clean.trim();
-                    if trimmed.contains("capsem:/") {
-                        continue;
-                    }
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    println!("{}", trimmed);
 
                     if Instant::now() >= deadline {
                         let _ = done_tx.send(Err(anyhow::anyhow!(
@@ -378,41 +393,10 @@ fn main() {
 
             info!("assets directory: {}", assets.display());
 
-            // GUI mode: tty0 is primary console (framebuffer shows the shell)
-            match boot_vm(&assets, "console=hvc0 console=tty0 loglevel=1") {
+            // Headless mode: hvc0 is primary console (routed to the Svelte frontend)
+            match boot_vm(&assets, "console=hvc0 loglevel=1") {
                 Ok((vm, rx, input_fd)) => {
                     info!("VM booted successfully");
-
-                    // Embed VZVirtualMachineView into the Tauri window
-                    if let Some(webview_window) = app.get_webview_window("main") {
-                        let mtm = MainThreadMarker::new()
-                            .expect("setup hook must run on the main thread");
-                        unsafe {
-                            let ns_window: *mut std::ffi::c_void = webview_window.ns_window()
-                                .expect("failed to get NSWindow");
-                            let ns_window: &NSWindow = &*(ns_window as *const NSWindow);
-                            let content_view = ns_window.contentView()
-                                .expect("NSWindow has no content view");
-                            let frame: NSRect = content_view.bounds();
-
-                            let vm_view = VZVirtualMachineView::initWithFrame(
-                                mtm.alloc(),
-                                frame,
-                            );
-                            vm_view.setVirtualMachine(Some(vm.inner_vz()));
-                            vm_view.setAutomaticallyReconfiguresDisplay(true);
-
-                            // Resize with the window
-                            vm_view.setAutoresizingMask(
-                                NSAutoresizingMaskOptions::ViewWidthSizable
-                                    | NSAutoresizingMaskOptions::ViewHeightSizable,
-                            );
-
-                            // Replace the webview entirely with the VM view
-                            ns_window.setContentView(Some(&vm_view));
-                            ns_window.makeFirstResponder(Some(&vm_view));
-                        }
-                    }
 
                     {
                         let app_state = app.state::<AppState>();
