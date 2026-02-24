@@ -9,9 +9,11 @@ use objc2_foundation::{NSArray, NSObjectProtocol, NSString, NSURL};
 use objc2_virtualization::{
     VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
     VZEntropyDeviceConfiguration, VZGenericPlatformConfiguration,
-    VZSerialPortConfiguration, VZStorageDeviceConfiguration,
+    VZSerialPortConfiguration, VZSocketDevice, VZSocketDeviceConfiguration,
+    VZStorageDeviceConfiguration,
     VZVirtioBlockDeviceConfiguration,
     VZVirtioEntropyDeviceConfiguration,
+    VZVirtioSocketDeviceConfiguration,
     VZVirtualMachine as ObjcVZVirtualMachine,
     VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
@@ -74,6 +76,13 @@ impl VirtualMachine {
                     Retained::into_super(serial_port_config);
                 let serial_array = NSArray::from_retained_slice(&[serial_port_super]);
                 vz_config.setSerialPorts(&serial_array);
+
+                // Vsock device for host<->guest PTY and control channels
+                let vsock_config = VZVirtioSocketDeviceConfiguration::new();
+                let vsock_super: Retained<VZSocketDeviceConfiguration> =
+                    Retained::into_super(vsock_config);
+                let socket_array = NSArray::from_retained_slice(&[vsock_super]);
+                vz_config.setSocketDevices(&socket_array);
 
                 // Block device (rootfs)
                 if let Some(ref disk_path) = config.disk_path {
@@ -141,6 +150,11 @@ impl VirtualMachine {
     /// Access the underlying VZVirtualMachine for embedding in a VZVirtualMachineView.
     pub fn inner_vz(&self) -> &ObjcVZVirtualMachine {
         &self.inner
+    }
+
+    /// Access the vsock socket devices for registering listeners post-boot.
+    pub fn socket_devices(&self) -> Retained<NSArray<VZSocketDevice>> {
+        unsafe { self.inner.socketDevices() }
     }
 
     /// Start the VM. Must be called on the main thread.

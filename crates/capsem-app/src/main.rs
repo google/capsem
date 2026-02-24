@@ -3,19 +3,38 @@
 mod commands;
 mod state;
 
-use std::io::Write;
+use std::io::{Read, Write};
+use std::mem::ManuallyDrop;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use capsem_core::{VirtualMachine, VmConfig};
-use state::AppState;
+use capsem_core::{
+    CoalesceBuffer, ControlMessage, VirtualMachine, VmConfig, VsockManager, VSOCK_PORT_CONTROL,
+    VSOCK_PORT_TERMINAL, decode_control_message, encode_control_message,
+};
+use state::{AppState, VmInstance};
 use tauri::{Emitter, Manager};
 use tokio::sync::broadcast;
-use tracing::{debug_span, error, info, info_span};
+use tracing::{debug_span, error, info, info_span, warn};
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
+
+/// Default VM ID for the single-VM case.
+const DEFAULT_VM_ID: &str = "default";
+
+/// Borrow a raw fd as a File without taking ownership.
+///
+/// The returned `ManuallyDrop<File>` will NOT close the fd when dropped,
+/// so it's safe to use for fds owned by other objects (VsockConnection, pipes).
+///
+/// # Safety
+/// The caller must ensure `fd` is a valid, open file descriptor for the
+/// lifetime of the returned value.
+pub(crate) unsafe fn borrow_fd(fd: RawFd) -> ManuallyDrop<std::fs::File> {
+    ManuallyDrop::new(std::fs::File::from_raw_fd(fd))
+}
 
 /// Find the assets directory containing kernel, initrd, and rootfs.
 ///
@@ -174,55 +193,252 @@ async fn serial_to_events(
     }
 }
 
-/// Strip ANSI escape sequences from a string.
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Skip escape sequence: ESC [ ... final_byte
-            if let Some(next) = chars.next() {
-                if next == '[' {
-                    for ch in chars.by_ref() {
-                        if ch.is_ascii_alphabetic() || ch == 'm' {
-                            break;
-                        }
+/// Forward vsock terminal data to the frontend with coalescing.
+///
+/// Reads raw bytes from the vsock fd in a blocking thread, then emits them
+/// to the frontend. Coalesces output using `CoalesceBuffer` (8ms window,
+/// 64KB cap) to prevent IPC saturation on high-throughput commands.
+async fn vsock_terminal_to_events(app_handle: tauri::AppHandle, vsock_fd: RawFd) {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+
+    // Blocking reader thread: vsock fd -> channel
+    std::thread::spawn(move || {
+        // Safety: fd is valid for the lifetime of the VsockConnection.
+        let mut file = unsafe { borrow_fd(vsock_fd) };
+        let mut buf = [0u8; 8192];
+        loop {
+            match file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
                     }
                 }
+                Err(_) => break,
             }
-        } else {
-            out.push(c);
         }
+    });
+
+    let mut coalesce = CoalesceBuffer::new();
+    loop {
+        // Wait for the first chunk.
+        match rx.recv().await {
+            Some(chunk) => { coalesce.push(&chunk); }
+            None => break,
+        }
+
+        // Coalesce additional chunks within the time window or until size cap.
+        let deadline = tokio::time::Instant::now()
+            + Duration::from_millis(coalesce.window_ms());
+        while !coalesce.is_full() {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(chunk)) => { coalesce.push(&chunk); }
+                _ => break,
+            }
+        }
+
+        coalesce.flush_to(|batch| {
+            if let Err(e) = app_handle.emit("serial-output", batch) {
+                error!("failed to emit vsock terminal data: {e}");
+            }
+        });
     }
-    out
 }
 
-const CLI_START_MARKER: &str = "<<<CAPSEM_START>>>";
-const CLI_DONE_MARKER: &str = "<<<CAPSEM_DONE>>>";
-const CLI_TIMEOUT: Duration = Duration::from_secs(30);
+/// Handle vsock control channel: read incoming messages, handle heartbeat.
+async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ControlMessage>(32);
+
+    // Blocking reader thread for control messages.
+    std::thread::spawn(move || {
+        // Safety: fd is valid for the lifetime of the VsockConnection.
+        let mut file = unsafe { borrow_fd(control_fd) };
+        loop {
+            // Read length prefix.
+            let mut len_buf = [0u8; 4];
+            if file.read_exact(&mut len_buf).is_err() {
+                break;
+            }
+            let len = u32::from_be_bytes(len_buf) as usize;
+            if len > 4096 {
+                warn!("vsock control: frame too large ({len} bytes), dropping connection");
+                break;
+            }
+            let mut payload = vec![0u8; len];
+            if file.read_exact(&mut payload).is_err() {
+                break;
+            }
+            match capsem_core::vsock::decode_control_message(&payload) {
+                Ok(msg) => {
+                    if tx.blocking_send(msg).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    warn!("vsock control: decode error: {e}");
+                }
+            }
+        }
+    });
+
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            ControlMessage::Ready { version } => {
+                info!("vsock: guest agent ready (version {version})");
+                let _ = app_handle.emit("terminal-source-changed", "vsock");
+            }
+            ControlMessage::Pong => {
+                info!("vsock: heartbeat pong received");
+            }
+            other => {
+                info!("vsock: unexpected control message: {other:?}");
+            }
+        }
+    }
+}
+
+/// Set up vsock listeners and handle connections after VM boot.
+///
+/// Once vsock connects, the serial forwarding task is aborted since all
+/// terminal I/O now flows through the vsock PTY bridge.
+async fn setup_vsock(
+    app_handle: tauri::AppHandle,
+    mut vsock_manager: VsockManager,
+    serial_task: tauri::async_runtime::JoinHandle<()>,
+) {
+    // Wait for both terminal and control connections from the guest agent.
+    let mut terminal_conn = None;
+    let mut control_conn = None;
+
+    while terminal_conn.is_none() || control_conn.is_none() {
+        match vsock_manager.accept().await {
+            Some(conn) => {
+                info!(port = conn.port, fd = conn.fd, "vsock: accepted connection");
+                match conn.port {
+                    VSOCK_PORT_TERMINAL => terminal_conn = Some(conn),
+                    VSOCK_PORT_CONTROL => control_conn = Some(conn),
+                    other => warn!("vsock: unexpected port {other}, ignoring"),
+                }
+            }
+            None => {
+                warn!("vsock: manager channel closed before all connections established");
+                return;
+            }
+        }
+    }
+
+    let terminal = terminal_conn.unwrap();
+    let control = control_conn.unwrap();
+
+    info!("vsock: both channels connected, stopping serial forwarding");
+    serial_task.abort();
+
+    // Store vsock fds in app state so commands can use them.
+    {
+        let state = app_handle.state::<AppState>();
+        let mut vms = state.vms.lock().unwrap();
+        if let Some(instance) = vms.get_mut(DEFAULT_VM_ID) {
+            instance.vsock_terminal_fd = Some(terminal.fd);
+            instance.vsock_control_fd = Some(control.fd);
+        }
+    }
+
+    // Spawn forwarding tasks.
+    let handle1 = app_handle.clone();
+    tokio::spawn(vsock_terminal_to_events(handle1, terminal.fd));
+    tokio::spawn(vsock_control_handler(app_handle, control.fd));
+
+    // Keep the connections alive by holding them here.
+    // They'll be dropped when the task is cancelled (app shutdown).
+    let _keep_terminal = terminal;
+    let _keep_control = control;
+    // Wait forever (connections are long-lived).
+    std::future::pending::<()>().await;
+}
+
+const CLI_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Read exactly `n` bytes from a raw fd, retrying on partial reads.
+fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> std::io::Result<()> {
+    // Safety: fd is valid for the duration of this call.
+    let mut file = unsafe { borrow_fd(fd) };
+    let mut pos = 0;
+    while pos < buf.len() {
+        let n = file.read(&mut buf[pos..])?;
+        if n == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "unexpected EOF"));
+        }
+        pos += n;
+    }
+    Ok(())
+}
+
+/// Write all bytes to a raw fd.
+fn write_all_fd(fd: RawFd, data: &[u8]) -> std::io::Result<()> {
+    // Safety: fd is valid for the duration of this call.
+    let mut file = unsafe { borrow_fd(fd) };
+    file.write_all(data)?;
+    Ok(())
+}
+
+/// Read one control message from an fd (blocking).
+fn read_control_msg(fd: RawFd) -> Result<ControlMessage> {
+    let mut len_buf = [0u8; 4];
+    read_exact_fd(fd, &mut len_buf)?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > 4096 {
+        anyhow::bail!("control frame too large ({len} bytes)");
+    }
+    let mut payload = vec![0u8; len];
+    read_exact_fd(fd, &mut payload)?;
+    decode_control_message(&payload).map_err(Into::into)
+}
+
+/// Write one control message to an fd.
+fn write_control_msg(fd: RawFd, msg: &ControlMessage) -> Result<()> {
+    let frame = encode_control_message(msg)?;
+    write_all_fd(fd, &frame)?;
+    Ok(())
+}
 
 fn run_cli(command: &str) -> Result<()> {
     let assets = resolve_assets_dir()?;
-    // CLI mode: hvc0 is primary console (serial output routes to terminal)
-    let (vm, mut rx, input_fd) = boot_vm(&assets, "console=tty0 console=hvc0")?;
+    let (vm, mut rx, _serial_input_fd) = boot_vm(&assets, "console=hvc0 loglevel=1")?;
 
-    // The initramfs loads virtio_console.ko as a module, then drops to a
-    // shell via break=modules.  We must wait for the shell to be ready
-    // before writing commands.  We subscribe a second receiver to watch
-    // for the prompt on the raw line stream, and pass the primary receiver
-    // to the output-parsing thread.
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    // Set up vsock listeners.
+    let socket_devices = vm.socket_devices();
+    let mut mgr = VsockManager::new(
+        &socket_devices,
+        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL],
+    ).context("failed to set up vsock")?;
 
-    // Wait for the shell to be ready. Look for the welcome banner or
-    // fall back to waiting for serial output to settle.
-    let wait_deadline = Instant::now() + CLI_TIMEOUT;
-    let mut got_first_output = false;
-    let mut first_output_time = Instant::now();
-    loop {
-        if Instant::now() >= wait_deadline {
-            anyhow::bail!("timed out waiting for shell");
+    // Print serial boot logs to stderr in a background thread.
+    std::thread::spawn(move || {
+        loop {
+            match rx.blocking_recv() {
+                Ok(bytes) => {
+                    let _ = std::io::stderr().write_all(&bytes);
+                    let _ = std::io::stderr().flush();
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            }
         }
-        // Pump the CFRunLoop so the VM can produce serial data.
+    });
+
+    // Accept vsock connections with CFRunLoop pumping.
+    // The VZ framework delivers connections via ObjC callbacks that require
+    // CFRunLoop to be running on the main thread.
+    let deadline = Instant::now() + CLI_TIMEOUT;
+    let mut terminal_fd: Option<RawFd> = None;
+    let mut control_fd: Option<RawFd> = None;
+    let mut _conns = Vec::new(); // Keep connections alive.
+
+    while terminal_fd.is_none() || control_fd.is_none() {
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for vsock connections from guest agent");
+        }
+        // Pump CFRunLoop to deliver ObjC callbacks.
         unsafe {
             core_foundation_sys::runloop::CFRunLoopRunInMode(
                 core_foundation_sys::runloop::kCFRunLoopDefaultMode,
@@ -230,127 +446,138 @@ fn run_cli(command: &str) -> Result<()> {
                 0,
             );
         }
-        match rx.try_recv() {
-            Ok(bytes) => {
-                let line = String::from_utf8_lossy(&bytes);
-                print!("{}", line); std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                if !got_first_output {
-                    got_first_output = true;
-                    first_output_time = Instant::now();
-                }
-                // If we see the banner, we know the shell is ready.
-                if line.contains("sandbox ready") {
-                    std::thread::sleep(Duration::from_millis(200));
-                    while rx.try_recv().is_ok() {}
-                    break;
-                }
+        // Check for accepted connections (non-blocking via try_recv on the channel).
+        while let Ok(conn) = mgr.try_accept() {
+            match conn.port {
+                VSOCK_PORT_TERMINAL => terminal_fd = Some(conn.fd),
+                VSOCK_PORT_CONTROL => control_fd = Some(conn.fd),
+                _ => {}
             }
-            Err(broadcast::error::TryRecvError::Empty) => {
-                // If we already got output and it's been quiet for 1s, shell is ready.
-                if got_first_output
-                    && first_output_time.elapsed() > Duration::from_secs(1)
-                {
-                    while rx.try_recv().is_ok() {}
-                    break;
-                }
-            }
-            Err(broadcast::error::TryRecvError::Closed) => {
-                anyhow::bail!("serial channel closed before shell started");
-            }
-            Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+            _conns.push(conn);
         }
     }
 
-    // Now write the command wrapped in sentinel markers.
-    {
-        let mut pipe = unsafe { std::fs::File::from_raw_fd(input_fd) };
-        write!(
-            pipe,
-            "echo '{}'\n{}\necho '{}'\n",
-            CLI_START_MARKER, command, CLI_DONE_MARKER
-        )?;
-        std::mem::forget(pipe);
-    }
+    let terminal_fd = terminal_fd.unwrap();
+    let control_fd = control_fd.unwrap();
 
-    // Parse output between markers in a background thread.
+    // Wait for Ready message from guest agent.
+    let (ctrl_msg_tx, ctrl_msg_rx) = std::sync::mpsc::channel::<ControlMessage>();
+    let ctrl_fd_reader = control_fd;
     std::thread::spawn(move || {
-        let deadline = Instant::now() + CLI_TIMEOUT;
-        let mut inside_output = false;
-        let mut partial = String::new();
-
         loop {
-            match rx.blocking_recv() {
-                Ok(bytes) => {
-                    let chunk = String::from_utf8_lossy(&bytes);
-                    partial.push_str(&chunk);
-
-                    while let Some(pos) = partial.find('\n') {
-                        let line = partial[..pos].to_string();
-                        let rest = partial[pos + 1..].to_string();
-                        partial = rest;
-
-                        let clean = strip_ansi(line.trim_end_matches('\r'));
-                        if !inside_output {
-                            if clean.contains(CLI_START_MARKER) && !clean.contains("echo") {
-                                inside_output = true;
-                            }
-                            continue;
-                        }
-                        if clean.contains(CLI_DONE_MARKER) && !clean.contains("echo") {
-                            let _ = done_tx.send(Ok(()));
-                            return;
-                        }
-                        // Skip lines that contain the shell prompt (echoed commands).
-                        let trimmed = clean.trim();
-                        if trimmed.contains("capsem:/") {
-                            continue;
-                        }
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-                        println!("{}", trimmed);
-                    }
-
-                    if Instant::now() >= deadline {
-                        let _ = done_tx.send(Err(anyhow::anyhow!(
-                            "timed out waiting for command output"
-                        )));
-                        return;
+            match read_control_msg(ctrl_fd_reader) {
+                Ok(msg) => {
+                    if ctrl_msg_tx.send(msg).is_err() {
+                        break;
                     }
                 }
-                Err(broadcast::error::RecvError::Closed) => {
-                    let _ = done_tx.send(Ok(()));
-                    return;
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    info!("serial receiver lagged by {n} messages");
-                }
+                Err(_) => break,
             }
         }
     });
 
-    // Pump the CFRunLoop on the main thread until the reader thread signals done.
+    // Wait for Ready, pumping CFRunLoop.
     loop {
-        match done_rx.try_recv() {
-            Ok(result) => {
-                result?;
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for guest agent Ready");
+        }
+        unsafe {
+            core_foundation_sys::runloop::CFRunLoopRunInMode(
+                core_foundation_sys::runloop::kCFRunLoopDefaultMode,
+                0.05,
+                0,
+            );
+        }
+        match ctrl_msg_rx.try_recv() {
+            Ok(ControlMessage::Ready { version }) => {
+                eprintln!("[capsem] guest agent ready (v{version})");
                 break;
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                unsafe {
-                    core_foundation_sys::runloop::CFRunLoopRunInMode(
-                        core_foundation_sys::runloop::kCFRunLoopDefaultMode,
-                        0.05,
-                        0,
-                    );
-                }
+            Ok(other) => {
+                eprintln!("[capsem] unexpected control message before Ready: {other:?}");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                anyhow::bail!("control channel closed before Ready");
             }
         }
     }
 
+    // Send Exec command.
+    let exec_id: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    write_control_msg(control_fd, &ControlMessage::Exec {
+        id: exec_id,
+        command: command.to_string(),
+    })?;
+
+    // Stream terminal output from vsock to stdout in a background thread.
+    // Track whether the last byte written was a newline so we can add one
+    // before exiting if needed.
+    let last_was_newline = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let lwn = last_was_newline.clone();
+    let terminal_reader = std::thread::spawn(move || {
+        // Safety: fd is valid for the lifetime of the VsockConnection.
+        let mut file = unsafe { borrow_fd(terminal_fd) };
+        let mut buf = [0u8; 8192];
+        loop {
+            match file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let _ = std::io::stdout().write_all(&buf[..n]);
+                    let _ = std::io::stdout().flush();
+                    lwn.store(buf[n - 1] == b'\n', std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Wait for ExecDone, pumping CFRunLoop.
+    let exit_code;
+    loop {
+        if Instant::now() >= deadline {
+            eprintln!("[capsem] timed out waiting for command completion");
+            exit_code = 124; // Same as `timeout` command.
+            break;
+        }
+        unsafe {
+            core_foundation_sys::runloop::CFRunLoopRunInMode(
+                core_foundation_sys::runloop::kCFRunLoopDefaultMode,
+                0.05,
+                0,
+            );
+        }
+        match ctrl_msg_rx.try_recv() {
+            Ok(ControlMessage::ExecDone { id, exit_code: code }) if id == exec_id => {
+                exit_code = code;
+                break;
+            }
+            Ok(other) => {
+                eprintln!("[capsem] control message during exec: {other:?}");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                eprintln!("[capsem] control channel closed during exec");
+                exit_code = 1;
+                break;
+            }
+        }
+    }
+
+    // Stop VM and drop connections (closes vsock fds, unblocks the reader).
     let _ = vm.stop();
-    Ok(())
+    drop(_conns);
+    // Wait for terminal reader to drain remaining output.
+    let _ = terminal_reader.join();
+    // Ensure the host shell prompt starts on a fresh line.
+    if !last_was_newline.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = std::io::stdout().write_all(b"\n");
+        let _ = std::io::stdout().flush();
+    }
+    std::process::exit(exit_code);
 }
 
 /// Check for app updates using Tauri's updater plugin.
@@ -459,17 +686,47 @@ fn main() {
                 Ok((vm, rx, input_fd)) => {
                     info!("VM booted successfully");
 
+                    // Register vsock listeners on the socket device.
+                    let vsock_manager = {
+                        let socket_devices = vm.socket_devices();
+                        match VsockManager::new(
+                            &socket_devices,
+                            &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL],
+                        ) {
+                            Ok(mgr) => Some(mgr),
+                            Err(e) => {
+                                warn!("vsock setup failed: {e:#}, using serial-only mode");
+                                None
+                            }
+                        }
+                    };
+
+                    // Store VM state.
                     {
                         let app_state = app.state::<AppState>();
-                        let mut vm_guard = app_state.vm.lock().unwrap();
-                        *vm_guard = Some(vm);
-                        let mut fd_guard = app_state.serial_input_fd.lock().unwrap();
-                        *fd_guard = Some(input_fd);
+                        let mut vms = app_state.vms.lock().unwrap();
+                        vms.insert(DEFAULT_VM_ID.to_string(), VmInstance {
+                            vm,
+                            serial_input_fd: input_fd,
+                            vsock_terminal_fd: None,
+                            vsock_control_fd: None,
+                        });
                     }
-                    let handle = app.handle().clone();
-                    tauri::async_runtime::spawn(serial_to_events(handle.clone(), rx));
 
-                    // Push initial "running" state to frontend
+                    let handle = app.handle().clone();
+                    // Serial forwarding for boot logs (aborted once vsock connects).
+                    let serial_task = tauri::async_runtime::spawn(
+                        serial_to_events(handle.clone(), rx),
+                    );
+
+                    // Spawn vsock connection handler if available.
+                    if let Some(mgr) = vsock_manager {
+                        tauri::async_runtime::spawn(
+                            setup_vsock(handle.clone(), mgr, serial_task),
+                        );
+                    }
+
+                    // Push initial "running" state to frontend.
                     let _ = handle.emit("vm-state-changed", "running");
                 }
                 Err(e) => {
@@ -481,7 +738,11 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::vm_status, commands::serial_input])
+        .invoke_handler(tauri::generate_handler![
+            commands::vm_status,
+            commands::serial_input,
+            commands::terminal_resize,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

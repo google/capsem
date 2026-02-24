@@ -220,8 +220,8 @@ The current implementation covers Milestone 1 (VM boot + serial console). The pl
 - **Guest agent as PID 1** replacing the shell-based init (Milestone 2)
 - **vsock control channel** for structured host-guest communication (Milestone 2)
 - **Air-gapped networking** via fake-IP SNI routing over vsock (Milestone 5)
-- **Transparent AI API proxy** with key injection and cost tracking (Milestone 6)
-- **MCP gateway** with policy enforcement and Seatbelt sandboxing (Milestone 7)
-- **Session persistence** with overlay disks and security-scoped bookmarks (Milestone 8)
+- **Active AI audit gateway** with 9-stage event lifecycle, PII scrubbing, and tool call interception (Milestone 6)
+- **Hybrid MCP gateway**: local tools in-VM, remote tools via host with credential injection (Milestone 7)
+- **Per-session audit databases**, config write-back, and enterprise observability (Milestone 8)
 
 See [docs/status.md](status.md) for milestone progress and [docs/overall_plan.md](overall_plan.md) for the full roadmap.

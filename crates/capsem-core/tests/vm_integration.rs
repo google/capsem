@@ -72,3 +72,45 @@ fn vm_create_requires_entitlement() {
         Err(e) => eprintln!("VM creation failed as expected without entitlement: {e}"),
     }
 }
+
+#[test]
+fn vm_has_socket_devices_after_create() {
+    // Verify that VirtualMachine::create configures a vsock socket device.
+    // When running with the virtualization entitlement, the VM should have
+    // exactly one socket device for vsock communication.
+    let Some(assets) = assets_dir() else {
+        eprintln!("SKIPPED: VM assets not found.");
+        return;
+    };
+
+    let config = make_config(&assets);
+
+    match capsem_core::VirtualMachine::create(&config) {
+        Ok((vm, _rx, _input_fd)) => {
+            let socket_devices = vm.socket_devices();
+            assert_eq!(
+                socket_devices.count(), 1,
+                "VM should have exactly one socket device configured"
+            );
+            eprintln!("VM has {} socket device(s)", socket_devices.count());
+        }
+        Err(e) => {
+            eprintln!("SKIPPED: VM creation failed (no entitlement): {e}");
+        }
+    }
+}
+
+#[test]
+fn vsock_manager_rejects_empty_devices() {
+    // VsockManager::new should fail when given an empty socket devices array.
+    use objc2_foundation::NSArray;
+    use objc2_virtualization::VZSocketDevice;
+
+    let empty_arr = NSArray::<VZSocketDevice>::from_retained_slice(&[]);
+    let empty: &NSArray<VZSocketDevice> = &empty_arr;
+    let result = capsem_core::VsockManager::new(
+        empty,
+        &[capsem_core::VSOCK_PORT_CONTROL, capsem_core::VSOCK_PORT_TERMINAL],
+    );
+    assert!(result.is_err(), "VsockManager should reject empty socket devices");
+}

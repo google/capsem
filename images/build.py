@@ -64,6 +64,37 @@ def extract_assets():
     print(f"  initrd.img: {ASSETS_DIR / 'initrd.img'}")
 
 
+def ensure_rust_target(target: str):
+    """Ensure a rustup target is installed, installing it if missing."""
+    result = subprocess.run(
+        ["rustup", "target", "list", "--installed"],
+        capture_output=True, text=True, check=True,
+    )
+    if target not in result.stdout.split():
+        print(f"  Installing missing rustup target: {target}")
+        run(["rustup", "target", "add", target])
+
+
+def build_agent():
+    """Cross-compile capsem-pty-agent for aarch64-unknown-linux-musl."""
+    target = "aarch64-unknown-linux-musl"
+    print(f"Cross-compiling capsem-pty-agent for {target}...")
+    ensure_rust_target(target)
+    run([
+        "cargo", "build",
+        "--release",
+        "--target", target,
+        "-p", "capsem-agent",
+    ], cwd=str(REPO_ROOT))
+
+    # Copy the binary to images/ so Dockerfile.rootfs can COPY it.
+    src = REPO_ROOT / "target" / "aarch64-unknown-linux-musl" / "release" / "capsem-pty-agent"
+    dst = SCRIPT_DIR / "capsem-pty-agent"
+    import shutil as _shutil
+    _shutil.copy2(str(src), str(dst))
+    print(f"  capsem-pty-agent: {dst} ({dst.stat().st_size} bytes)")
+
+
 def create_rootfs():
     """Build populated ext4 rootfs with dev tools and AI CLIs."""
     print("Building rootfs container image...")
@@ -128,6 +159,7 @@ def main():
     print(f"Using container runtime: {RUNTIME}")
     build_kernel_image()
     extract_assets()
+    build_agent()
     create_rootfs()
     generate_checksums()
     print(f"\nDone! Assets are in {ASSETS_DIR}/")

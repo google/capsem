@@ -1,9 +1,8 @@
 # Capsem sandbox shell config
 
-# Restore stderr now that startup warnings are suppressed
-exec 2>/dev/hvc0
-
 # Terminal setup (xterm.js renders in the browser)
+# Note: stderr stays on the PTY (not redirected to /dev/hvc0) so that
+# readline's prompt output goes through the vsock terminal path.
 export TERM=xterm-256color
 export LANG=C
 export HISTSIZE=500

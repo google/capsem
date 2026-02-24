@@ -69,14 +69,28 @@ import "../styles/global.css";
         setStatus(event.payload);
       });
 
-      // -- Serial I/O --
+      // -- Terminal I/O --
 
       term.addEventListener("terminal-input", ((e: CustomEvent) => {
         invoke("serial_input", { input: e.detail });
       }) as EventListener);
 
+      // Forward terminal resize events to the host for vsock PTY resize.
+      term.addEventListener("terminal-resize", ((e: CustomEvent) => {
+        const { cols, rows } = e.detail;
+        invoke("terminal_resize", { cols, rows }).catch(() => {
+          // vsock not connected yet -- ignore silently
+        });
+      }) as EventListener);
+
+      // Listen for serial/vsock terminal output (same event name for both).
       await listen<number[]>("serial-output", (event) => {
         term.write(new Uint8Array(event.payload));
+      });
+
+      // When vsock terminal connects, the source switches from serial.
+      await listen<string>("terminal-source-changed", (event) => {
+        console.log(`terminal source: ${event.payload}`);
       });
 
       // Focus terminal on load

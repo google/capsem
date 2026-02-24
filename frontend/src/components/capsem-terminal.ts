@@ -97,6 +97,17 @@ export class CapsemTerminal extends HTMLElement {
       );
     });
 
+    // Emit resize events when terminal dimensions change.
+    this.terminal.onResize(({ cols, rows }) => {
+      this.dispatchEvent(
+        new CustomEvent("terminal-resize", {
+          detail: { cols, rows },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
+
     // ResizeObserver for layout-driven resizes
     this.resizeObserver = new ResizeObserver(() => {
       this.fitAddon.fit();

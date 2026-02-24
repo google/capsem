@@ -1,6 +1,6 @@
 [package]
 name = "capsem-core"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 [dependencies]
@@ -14,6 +14,7 @@ objc2-virtualization = { workspace = true }
 objc2-foundation = { workspace = true }
 block2 = { workspace = true }
 dispatch2 = { workspace = true }
+rmp-serde = { workspace = true }
 libc = "0.2"
 core-foundation-sys = "0.8"
 blake3 = "1"

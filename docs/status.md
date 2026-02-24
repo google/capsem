@@ -59,10 +59,10 @@ CAPSEM_ASSETS_DIR=$(pwd)/assets target/debug/capsem
 - Milestone 2: Guest Agent as PID 1 + vsock control channel
 - Milestone 3: Immutable Debian base image builder
 - Milestone 4: VirtioFS shared directories + PTY over vsock
-- Milestone 5: vsock network bridge + fake-IP SNI router
-- Milestone 6: AI gateway (transparent API proxy)
-- Milestone 7: MCP gateway + host-side server sandboxing
-- Milestone 8: Session management + persistence
+- Milestone 5: Network boundaries & real-time telemetry
+- Milestone 6: Active AI audit gateway
+- Milestone 7: Hybrid MCP architecture
+- Milestone 8: State, audit, and observability
 - Milestone 9: Full Tauri UI
 - Milestone 10: Stats dashboard + MCP approval UI
 - Milestone 11: Polish, security hardening, multi-session

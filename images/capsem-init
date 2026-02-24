@@ -63,20 +63,33 @@ export LANG=C
 
 echo "[capsem-init] about to chroot..."
 
-# Start bash in a NEW SESSION so it can acquire /dev/console as its controlling
-# terminal.  Without a controlling tty, the line discipline cannot deliver
-# SIGINT (Ctrl-C) to the foreground process group -- bash silently falls back
-# to "no job control" mode and Ctrl-C is swallowed.
+# Launch the PTY agent for vsock-based terminal I/O.
+# The agent creates a PTY pair, forks bash, and bridges via vsock to the host.
+# This gives full terminal features (resize, job control, TUI apps) and
+# high-throughput I/O without serial bottlenecks.
 #
-# setsid is not in the initramfs, so we use the rootfs copy via chroot.
-# chroot execs setsid, which calls setsid(2) and execs sh.  sh re-opens
-# /dev/console (<>/dev/console) -- because it is a session leader with no
-# ctty, the tty becomes the controlling terminal automatically.  Bash then
-# has full job control and Ctrl-C works.
-#
-# stderr starts as /dev/null to suppress startup noise (group-ID warnings
-# etc.); the bashrc restores it with `exec 2>/dev/hvc0`.
-chroot /newroot /usr/bin/setsid sh -c 'exec /bin/bash --rcfile /etc/capsem-bashrc -i <>/dev/hvc0 >&0 2>/dev/null'
+# Prefer initrd-bundled agent (injected by `just repack`) over rootfs copy.
+# This allows fast agent iteration without a full rootfs rebuild.
+AGENT_PATH=""
+if [ -x /capsem-pty-agent ]; then
+    # Copy from initrd to writable tmpfs so chroot can access it.
+    # Read-only + execute (555): prevent guest processes from modifying the agent.
+    cp /capsem-pty-agent /newroot/run/capsem-pty-agent
+    chmod 555 /newroot/run/capsem-pty-agent
+    AGENT_PATH=/run/capsem-pty-agent
+    echo "[capsem-init] using initrd-bundled agent"
+elif [ -x /newroot/usr/local/bin/capsem-pty-agent ]; then
+    AGENT_PATH=/usr/local/bin/capsem-pty-agent
+    echo "[capsem-init] using rootfs agent"
+else
+    echo "[capsem-init] FATAL: capsem-pty-agent not found"
+    echo "[capsem-init] Rebuild with 'just build' or 'just repack'"
+    # Keep PID 1 alive to prevent kernel panic, but no shell is started.
+    while true; do sleep 60; done
+fi
+
+echo "[capsem-init] starting PTY agent (vsock mode)"
+chroot /newroot "$AGENT_PATH"
 
 # If bash exits (e.g. user types 'exit'), keep PID 1 alive to prevent kernel panic.
 while true; do sleep 1; done

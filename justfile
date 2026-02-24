@@ -58,8 +58,8 @@ clean:
     cd frontend && rm -rf dist node_modules
     rm -rf target/release/bundle/macos/Capsem.app
 
-# Repack initrd with current capsem-init, rebuild, codesign, and boot.
-# Use this instead of 'build' when only capsem-init changed (~5s vs full rebuild).
+# Repack initrd with current capsem-init + capsem-pty-agent, rebuild, codesign, and boot.
+# Use this instead of 'build' when only capsem-init or capsem-agent changed (~10s vs full rebuild).
 repack *CMD:
     #!/bin/bash
     set -euo pipefail
@@ -69,17 +69,23 @@ repack *CMD:
         echo "ERROR: $INITRD not found. Run 'just build' first."
         exit 1
     fi
+    echo "=== Cross-compile agent ==="
+    cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
+    echo ""
     echo "=== Repack initrd ==="
     WORKDIR=$(mktemp -d)
     cd "$WORKDIR"
     gzip -dc "$INITRD" | cpio -id 2>/dev/null
     cp "$ROOT/images/capsem-init" init
     chmod 755 init
+    rm -f capsem-pty-agent
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
+    chmod 555 capsem-pty-agent
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
     (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
-    echo "initrd repacked"
+    echo "initrd repacked (with agent)"
     echo ""
     echo "=== Build + sign ==="
     cargo build -p capsem 2>&1 | tail -3
@@ -87,6 +93,10 @@ repack *CMD:
     echo ""
     echo "=== Boot VM ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{if CMD == "" { "echo capsem-ok" } else { CMD } }}
+
+# Run in-VM smoke test (boots VM, runs capsem-test, shuts down)
+smoke-test: sign
+    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-test"
 
 # Check code formatting and types
 check:

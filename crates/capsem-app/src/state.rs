@@ -1,18 +1,25 @@
+use std::collections::HashMap;
 use std::os::unix::io::RawFd;
 use std::sync::Mutex;
 
 use capsem_core::VirtualMachine;
 
+/// Per-VM instance state.
+pub struct VmInstance {
+    pub vm: VirtualMachine,
+    pub serial_input_fd: RawFd,
+    pub vsock_terminal_fd: Option<RawFd>,
+    pub vsock_control_fd: Option<RawFd>,
+}
+
 pub struct AppState {
-    pub vm: Mutex<Option<VirtualMachine>>,
-    pub serial_input_fd: Mutex<Option<RawFd>>,
+    pub vms: Mutex<HashMap<String, VmInstance>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
-            vm: Mutex::new(None),
-            serial_input_fd: Mutex::new(None),
+            vms: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -22,23 +29,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_state_has_no_vm() {
+    fn new_state_has_no_vms() {
         let state = AppState::new();
-        let vm = state.vm.lock().unwrap();
-        assert!(vm.is_none());
-    }
-
-    #[test]
-    fn new_state_has_no_serial_input_fd() {
-        let state = AppState::new();
-        let fd = state.serial_input_fd.lock().unwrap();
-        assert!(fd.is_none());
+        let vms = state.vms.lock().unwrap();
+        assert!(vms.is_empty());
     }
 
     #[test]
     fn mutex_is_not_poisoned_on_creation() {
         let state = AppState::new();
-        assert!(!state.vm.is_poisoned());
-        assert!(!state.serial_input_fd.is_poisoned());
+        assert!(!state.vms.is_poisoned());
     }
 }

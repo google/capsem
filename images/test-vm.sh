@@ -48,6 +48,24 @@ for d in /*/; do
     fi
 done
 
+# Guest binaries must not be writable (chmod 555)
+# Check all known paths: rootfs copy and initrd-override (if present)
+for bin in /usr/local/bin/capsem-pty-agent /run/capsem-pty-agent; do
+    if [ ! -f "$bin" ]; then
+        continue
+    fi
+    if [ -w "$bin" ]; then
+        echo "  FAIL  not_writable:${bin} (binary is writable!)"; ((FAIL++))
+    else
+        echo "  PASS  not_writable:${bin}"; ((PASS++))
+    fi
+    if [ ! -x "$bin" ]; then
+        echo "  FAIL  executable:${bin} (binary is not executable!)"; ((FAIL++))
+    else
+        echo "  PASS  executable:${bin}"; ((PASS++))
+    fi
+done
+
 echo ""
 echo "=== Unix Utilities ==="
 t df          df -h

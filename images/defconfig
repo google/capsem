@@ -70,13 +70,16 @@ CONFIG_DEVPTS_FS=y
 CONFIG_UNIX98_PTYS=y
 
 # ==========================================
-# 7. NETWORKING (Unix sockets only, no IP)
+# 7. NETWORKING (Unix sockets + vsock, no IP)
 # ==========================================
 # Unix domain sockets are required by node, python, git.
+# AF_VSOCK is used for host<->guest communication (PTY, control).
 # IP networking is completely disabled -- even if a NIC were
 # injected, the kernel has no IP stack to drive it.
 CONFIG_NET=y
 CONFIG_UNIX=y
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
 CONFIG_INET=n
 
 # ==========================================

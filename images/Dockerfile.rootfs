@@ -26,6 +26,12 @@ RUN npm install -g \
         @openai/codex && \
     npm cache clean --force
 
+# PTY agent binary (built externally, cross-compiled for aarch64-linux-musl)
+# Bridges PTY I/O over vsock for high-performance terminal communication.
+# Read-only + execute (555): prevent guest processes from modifying the agent.
+COPY capsem-pty-agent /usr/local/bin/capsem-pty-agent
+RUN chmod 555 /usr/local/bin/capsem-pty-agent
+
 # Shell config (sourced by capsem-init via --rcfile)
 COPY capsem-bashrc /etc/capsem-bashrc
 

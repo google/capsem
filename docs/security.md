@@ -43,12 +43,14 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 
 | Vector | Mitigation | Status |
 |--------|-----------|--------|
-| Direct network access | No network interface exists in the VM. No NIC, no IP stack, no default route. `curl`, `ping`, `wget` all fail with ENETUNREACH. | Implemented |
-| DNS exfiltration | No real DNS. Future fake DNS (M5) resolves everything to a single IP; no queries leave the VM. | Implemented (no DNS at all currently) |
+| Direct network access | No real network interface exists in the VM. No real NIC drivers compiled into kernel (`CONFIG_NETDEVICES=n`). Only `dummy0` exists for synthetic routing. | Implemented |
+| DNS exfiltration | No real DNS. Fake DNS (M5) resolves everything to 10.0.0.1; no queries leave the VM. | Implemented (no DNS at all currently) / Planned (M5) |
 | Covert channel via serial console | Serial goes to xterm.js in the UI. An agent could encode data in terminal output, but the user sees everything. No automated forwarding to external services. | Accepted risk (user-visible) |
-| Future network (M5): HTTPS to unauthorized domain | Host-side SNI proxy enforces domain allow-list. Only explicitly allowed domains (e.g., api.anthropic.com) are reachable. Everything else is dropped. | Planned (M5) |
+| Future network (M5): HTTPS to unauthorized domain | Host-side SNI proxy enforces domain allow-list. AI provider domains blocked at SNI level (must use audit gateway). Everything else is default-deny. | Planned (M5) |
 | Future network (M5): DNS tunneling | Fake DNS inside VM never contacts real DNS servers. Host does real resolution only for allowed domains. | Planned (M5) |
 | Future network (M5): plain HTTP to bypass SNI | No SNI in plain HTTP = connection rejected by host proxy. HTTPS-only enforcement. | Planned (M5) |
+| Future network (M5): file exfiltration via workspace | `capsem-fswatch` daemon monitors `/workspace` via fanotify, streaming real-time file events (create/edit/delete) to host over vsock:5005. Host has full visibility into what the agent writes. | Planned (M5) |
+| Future gateway (M6): data hidden in API prompts | `on_model_call` PII engine scrubs sensitive data from prompts before forwarding upstream. `on_tool_response` scans tool output for secrets. All traffic logged to per-session audit.db. | Planned (M6) |
 | Future VirtioFS (M4): read host files outside workspace | VirtioFS shares scoped to specific directories. No share = no access. Cache shares are read-only. | Planned (M4) |
 | Timing / power side channels | Out of scope. Mitigated by Apple Silicon hardware, not by us. | Out of scope |
 
@@ -71,10 +73,11 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 | Vector | Mitigation | Status |
 |--------|-----------|--------|
 | Read host ~/.ssh, ~/.aws, ~/.config | VM has no access to host filesystem. No VirtioFS share for these paths. | Implemented |
-| Read API keys from environment | API keys are not in the VM environment. Currently not needed (no network). Future: host-side gateway injects keys into outbound requests (M6). Keys never enter VM. | Planned (M6) |
-| Read API keys from gateway traffic | Future gateway uses plain HTTP inside VM (no TLS to inspect). Keys injected on the host side after the request leaves the VM. Agent sees requests without keys. | Planned (M6) |
+| Read API keys from environment | Dummy API keys in VM env (`sk-capsem-gateway`). Real keys stored in macOS Keychain, injected by host gateway (M6) into upstream HTTPS requests after traffic leaves VM. Keys never enter VM. | Planned (M6) |
+| Read API keys from gateway traffic | Gateway uses plain HTTP inside VM (no TLS to inspect). Keys injected on the host side after the request leaves the VM. Agent sees requests with dummy keys only. | Planned (M6) |
+| Exfiltrate keys via prompts to LLM | `on_model_call` PII engine (M6) scans outbound prompts for API key patterns and replaces with `[REDACTED-N]` tokens before forwarding upstream. `on_tool_response` scans tool output for secrets before returning to the LLM. | Planned (M6) |
 | Keylog or ptrace other processes | Only the agent's own processes run in the VM. No other user sessions, no other agents (per-VM isolation). | Implemented |
-| Future MCP (M7): MCP server reads host secrets | MCP servers run in macOS Seatbelt sandbox. Cannot read outside workspace directory. ~/.ssh, ~/.aws explicitly denied. | Planned (M7) |
+| Future MCP (M7): remote MCP server leaks host secrets | Remote MCP tools route through host MCP gateway (vsock:5003). Credentials injected by gateway, never exposed to VM. Local MCP tools run inside VM sandbox (no host access). | Planned (M7) |
 
 ### T6: Tampering with Host Application
 
@@ -147,12 +150,13 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 
 | Vector | Mitigation | Status |
 |--------|-----------|--------|
-| HTTPS POST to attacker's server | Domain allow-list. Only explicitly allowed domains are reachable. Attacker's domain is not on the list. | Planned (M5) |
-| Exfiltrate via allowed domain (e.g., github.com API) | Agent could theoretically push data to a public GitHub repo. Mitigation: API key isolation means no GitHub auth token in VM. Without auth, public writes are limited. | Planned (M5, M6) |
+| HTTPS POST to attacker's server | Domain allow-list at SNI proxy. Only explicitly allowed domains are reachable. Attacker's domain is not on the list. Default deny. | Planned (M5) |
+| Direct HTTPS to AI provider (bypass gateway) | AI provider domains (`api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`) are **blocked** at the SNI proxy level. All model traffic must flow through the audit gateway (vsock:5004). Agent cannot reach AI APIs without going through the 9-stage lifecycle. | Planned (M5, M6) |
+| Exfiltrate via allowed domain (e.g., github.com API) | No GitHub auth token in VM (credentials injected by host MCP gateway). Without auth, public writes are limited. `on_tool_response` (M6) scans for secrets. | Planned (M5, M7) |
 | Exfiltrate via DNS TXT records | Fake DNS inside VM. No real DNS queries ever leave the VM. DNS tunneling is impossible. | Planned (M5) |
 | Encode data in TLS SNI field | SNI is the domain name only (max 253 bytes). Not a practical exfiltration channel. Host validates SNI against allow-list; random SNI values are rejected. | Planned (M5) |
-| Exfiltrate via HTTP headers to allowed API | Host-side API gateway (M6) logs full request/response bodies. Anomalous requests visible in audit log. Gateway could enforce request schemas. | Planned (M6) |
-| Steganography in legitimate API requests | Agent embeds data in prompt text sent to AI provider. Mitigation: all API traffic is logged and inspectable. User can review. Not practically preventable without breaking functionality. | Accepted risk (logged) |
+| Exfiltrate via HTTP headers to allowed API | AI gateway (M6) logs full request/response bodies to per-session audit.db. `on_model_call` PII engine scrubs sensitive data. `on_tool_response` scans for secrets. Anomalous requests visible in audit trail. | Planned (M6) |
+| Steganography in legitimate API requests | Agent embeds data in prompt text sent to AI provider. Mitigation: all API traffic logged and inspectable in audit.db. PII engine catches common patterns. Not fully preventable without breaking functionality. | Accepted risk (logged + PII-scrubbed) |
 | Exfiltrate via timing / packet size side channels | Impractical over vsock bridge. All traffic is proxied; timing is noisy. | Low risk |
 
 ### T12: Social Engineering the User
@@ -163,7 +167,22 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 |--------|-----------|--------|
 | Fake system prompts ("run this command on host") | Terminal output is clearly scoped to the VM. No mechanism for the VM to execute host commands. | Implemented |
 | Unicode / ANSI tricks to hide malicious output | xterm.js renders standard terminal escapes. User sees what the agent produces. Education, not technology, is the mitigation here. | Accepted risk |
-| Future MCP (M7): trick user into approving dangerous tool call | MCP approval UI shows tool name, full arguments, and target. User must explicitly approve. Dangerous patterns (rm -rf, git push --force) flagged. | Planned (M7) |
+| Future MCP (M7): trick user into approving dangerous tool call | `on_tool_call` lifecycle stage (M6) pauses the LLM stream and presents tool name + full arguments in Tauri approval UI. User must explicitly approve. Dangerous patterns (rm -rf, git push --force) auto-flagged by policy engine. Corporate policy can pre-block specific tools. | Planned (M6, M7) |
+
+### T13: AI Traffic Audit Bypass
+
+**Threat**: Agent attempts to bypass the AI audit gateway to communicate with LLM providers without inspection, logging, or policy enforcement.
+
+| Vector | Mitigation | Status |
+|--------|-----------|--------|
+| Direct HTTPS to api.anthropic.com (bypass gateway) | AI provider domains are **blocked at the SNI proxy** (M5). The SNI proxy rejects connections to `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`. The only path to these providers is through the audit gateway (vsock:5004). | Planned (M5) |
+| Override `*_BASE_URL` env var to point elsewhere | Agent can change env vars, but iptables REDIRECT rules are set by capsem-init (PID 1, before agent starts). Port 8080 traffic always redirects to vsock:5004 regardless of env vars. Even if the agent changes the URL, the traffic still hits the gateway. | Planned (M5) |
+| Use a different port to reach AI provider | SNI proxy catch-all rule captures ALL TCP traffic not matched by specific port rules. Any connection to an AI provider domain on any port is blocked at SNI. | Planned (M5) |
+| Compile custom HTTP client to avoid `*_BASE_URL` | Same enforcement: iptables + SNI proxy. The network path is enforced at the kernel level, not at the application level. No userspace workaround exists. | Planned (M5) |
+| Use a non-AI proxy/relay to tunnel to AI provider | The relay domain would need to be on the SNI allow-list. Default-deny policy means only explicitly allowed domains are reachable. Relay domain would be blocked. | Planned (M5) |
+| Modify iptables rules to remove REDIRECT | iptables rules set by capsem-init. Agent runs as root but can modify rules. Mitigation: future SELinux (M12) policy denies `CAP_NET_ADMIN`. Also, fswatch + audit trail would detect network config changes. | Planned (M12) |
+
+The enforcement chain is: **iptables REDIRECT (kernel) -> vsock bridge (capsem-vsock-bridge) -> SNI proxy (host) -> audit gateway (host)**. Three independent layers must be bypassed simultaneously.
 
 ---
 
@@ -213,6 +232,33 @@ This ensures:
 - The hashes are baked into the binary at compile time, not read from a file at runtime.
 - An attacker cannot replace both the asset and its hash without modifying the binary itself.
 
+### Guest binary hardening
+
+All host-controlled binaries deployed inside the VM follow strict hardening rules:
+
+**Read-only permissions (chmod 555)**: Every guest binary (`capsem-pty-agent`, and future binaries like `capsem-fswatch`, `capsem-vsock-bridge`) is deployed with `r-xr-xr-x` permissions. No write bit. This applies to both deployment paths:
+
+- **Rootfs path** (`/usr/local/bin/`): Set to `chmod 555` in `Dockerfile.rootfs`. The rootfs itself is mounted read-only, providing a second layer of protection.
+- **Initrd override path** (`/run/`): When `just repack` bundles a binary into the initrd, `capsem-init` copies it to `/newroot/run/` (a tmpfs) at boot with `chmod 555`. The tmpfs is writable by root, but the 555 permissions prevent casual overwrites. Future SELinux policy (M12) will enforce this at the MAC level.
+
+**Read-only rootfs backing**: The rootfs ext4 image is mounted with `mount -o ro`. Even if a binary had write permissions, the filesystem would reject modifications. The combination of read-only mount + read-only permissions provides defense in depth.
+
+**Integrity verification**: Boot asset hashes (BLAKE3) are compiled into the host binary. The initrd (which contains the agent when repacked) is hashed along with the kernel and rootfs. Tampering with any asset causes a hash mismatch and the VM refuses to boot.
+
+**Smoke test verification**: The in-VM `capsem-test` script (`images/test-vm.sh`) verifies at runtime that:
+- Guest binaries are not writable (`! test -w`)
+- The rootfs is read-only (writes to `/usr` fail)
+- Writable tmpfs areas are correctly scoped
+
+**Guidelines for adding new guest binaries**:
+
+1. Set `chmod 555` in `Dockerfile.rootfs` (rootfs path)
+2. Add the binary to `just repack` with cross-compile + copy + `chmod 555`
+3. Add initrd-override logic in `capsem-init` (check `/binary` before rootfs path, copy to `/newroot/run/` with `chmod 555`)
+4. Add a `! test -w` check in `images/test-vm.sh` for the binary path
+5. Update the "Currently repacked binaries" list in `CLAUDE.md`
+6. Document the binary's purpose in this section
+
 ### No systemd, no services
 
 The VM runs capsem-init as PID 1. There is no systemd, no cron, no sshd, no service manager. The only processes are those explicitly started by capsem-init (bash, and whatever the user/agent runs). No background services, no listening ports, no scheduled tasks.
@@ -252,7 +298,7 @@ The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) 
 | `CONFIG_DEVMEM=n` | No `/dev/mem` -- root cannot read/write physical memory |
 | `CONFIG_DEVPORT=n` | No `/dev/port` -- no I/O port access |
 | `CONFIG_COMPAT=n` | No 32-bit syscall layer -- eliminates legacy compat attack surface |
-| `CONFIG_INET=n` | No IP networking stack -- even if a NIC were injected, no IP |
+| `CONFIG_INET=n` -> `y` (M5) | IP stack enabled in M5 for synthetic networking (dummy0 + iptables REDIRECT). No real NIC drivers (`CONFIG_NETDEVICES=n`). Pre-M5: no IP stack at all. |
 | `CONFIG_IO_URING=n` | No io_uring -- eliminates a historically high-CVE subsystem |
 | `CONFIG_BPF_SYSCALL=n` | No eBPF -- eliminates JIT-based attack surface |
 | `CONFIG_USERFAULTFD=n` | No userfaultfd -- commonly used in race condition exploits |
@@ -267,7 +313,7 @@ The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) 
 | `CONFIG_KALLSYMS=n` | No kernel symbol table exposed to userspace |
 | `CONFIG_DEBUG_FS=n` | No debugfs mount |
 
-Unix domain sockets (`CONFIG_UNIX=y`) are kept because node, python, and git depend on them. IP networking (`CONFIG_INET=n`) is disabled at the kernel level -- this is a deeper defense than just not attaching a NIC, because the kernel has no IP stack code at all.
+Unix domain sockets (`CONFIG_UNIX=y`) are kept because node, python, and git depend on them. IP networking is initially disabled (`CONFIG_INET=n`) at the kernel level -- deeper than just not attaching a NIC. In M5, `CONFIG_INET=y` is enabled for the synthetic network stack (dummy0 + iptables REDIRECT to vsock), but `CONFIG_NETDEVICES=n` ensures no real NIC drivers exist. The kernel can route IP packets through the dummy interface to vsock bridges, but has no driver to attach to any real network.
 
 The kernel source is pinned to a specific LTS version, downloaded from kernel.org, and built reproducibly in a container. Trade-off: we own kernel patching. CVE response requires a version bump in `images/Dockerfile.kernel` and a rebuild.
 
@@ -306,33 +352,50 @@ Updates are signed with minisign. The public key is embedded in the binary at co
 - Cache shares mounted read-only with ephemeral overlayfs to catch writes.
 - No share for ~/.ssh, ~/.aws, ~/.config, or any path outside the workspace.
 
-### Milestone 5: Air-gapped network with SNI filtering
+### Milestone 5: Network boundaries & real-time telemetry
 
-- Still no real NIC. Synthetic network via dummy0 + fake DNS + vsock bridge.
-- Host-side proxy extracts TLS SNI and enforces domain allow-list.
+- Kernel IP stack enabled (`CONFIG_INET=y`) but no real NIC drivers (`CONFIG_NETDEVICES=n`).
+- Synthetic network: `dummy0` + fake DNS (all domains -> 10.0.0.1) + iptables REDIRECT.
+- Host-side SNI proxy extracts TLS SNI and enforces domain allow-list (default-deny).
+- AI provider domains blocked at SNI proxy -- forces all model traffic through audit gateway.
 - HTTPS-only: plain HTTP rejected (no SNI to validate).
 - Zero DNS leaks: fake DNS inside VM, real resolution on host only.
 - No UDP forwarding, no ICMP, no raw sockets.
+- `capsem-fswatch` daemon monitors `/workspace` via fanotify, streams file events (create/edit/delete) to host over vsock:5005 in real-time.
+- New vsock ports: 5002 (SNI proxy), 5003 (MCP gateway), 5004 (AI gateway), 5005 (file telemetry).
 
-### Milestone 6: API key isolation
+### Milestone 6: Active AI audit gateway
 
-- API keys in macOS Keychain, never inside the VM.
-- Host-side Axum gateway injects keys into outbound API requests.
-- Agent sees plain HTTP requests without keys; host adds keys and opens HTTPS upstream.
+- Active Layer 7 gateway (Axum on vsock:5004) -- not a passive proxy.
+- 9-stage event lifecycle: `on_agent_launch`, `on_file_create`, `on_file_edit`, `on_file_delete`, `on_model_call`, `on_model_response`, `on_tool_call`, `on_tool_response`, `on_agent_end`.
+- PII engine scrubs sensitive data (emails, API keys, phone numbers) from prompts before forwarding upstream (`on_model_call`), rehydrates on response (`on_model_response`).
+- Secret detection scans tool output before returning to LLM (`on_tool_response`).
+- `on_tool_call` pauses the LLM SSE stream, presents tool name + arguments for user/policy approval. Denied calls inject synthetic error response.
+- API keys in macOS Keychain, never inside the VM. Dummy keys in agent env vars.
+- Real keys injected per-provider: `x-api-key` (Anthropic), `?key=` (Gemini), `Authorization: Bearer` (OpenAI).
+- Policy engine evaluates `policy.toml` (local) or remote corporate webhook (gRPC/HTTPS).
+- Full audit trail: every request/response logged to per-session audit.db with zstd-compressed payloads.
 
-### Milestone 7: MCP sandboxing
+### Milestone 7: Hybrid MCP architecture
 
-- Host-side MCP servers in macOS Seatbelt (`sandbox-exec`) profiles.
-- Confined to workspace directory. Cannot read ~/.ssh, ~/.aws, ~/.config.
-- Policy engine: allow, block, or require user approval per tool call.
-- Full audit log of all MCP calls.
+- Local MCP tools (bash, filesystem, git) run inside the VM -- the VM IS the sandbox.
+- Remote/enterprise MCP tools route through host MCP gateway (vsock:5003) with credential injection from macOS Keychain.
+- Agent MCP configs rewritten at boot: local tools stay as `stdio`, remote tools rewritten to `streamableHttp` URLs via host gateway.
+- Host controls local tools via AI gateway's `on_tool_call` lifecycle stage (stream pause + approval).
+- Remote tool credentials (GITHUB_TOKEN, etc.) injected by host gateway, never present in VM.
+- Full audit log of all MCP calls (both local via AI gateway, remote via MCP gateway).
 
-### Milestone 8: Session isolation
+### Milestone 8: State, audit, and observability
 
-- Per-session overlay disk, vsock CID, and VirtioFS mounts.
-- No cross-session data leakage.
-- Session deletion wipes overlay disk.
+- Per-session SQLite databases (`~/.capsem/sessions/sess_<id>/audit.db`), not a monolithic DB.
+- Raw telemetry and LLM payloads zstd-compressed before SQLite BLOB insertion.
+- Each session self-contained and independently deletable.
+- OverlayFS config write-back: agent config changes captured in tmpfs upperdir, presented in Tauri UI for selective save-back on session end.
+- Per-session overlay disk for workspace persistence across resume.
 - Graceful shutdown: sync + unmount + ACPI poweroff prevents corruption.
+- Prometheus metrics (`localhost:9090/metrics`): tool executions, model calls, policy denials, latency histograms.
+- OpenTelemetry (OTLP): sanitized + compressed session export to SIEM when mandated by corporate policy.
+- Corporate policy (`/etc/capsem/policy.toml`): distributable via MDM, controls domain lists, gateway enforcement, model restrictions, MCP tool policies, session limits, audit export.
 
 ### Milestone 12: SELinux, filesystem stripping
 
@@ -349,6 +412,36 @@ Rootfs binary stripping:
 - Keep tools agents need: `gcc`, `make`, `pip`, `npm`, `git`, `node`, `python3`, `curl`, `strace`, `gdb`.
 - Remove docs, man pages, locales, headers, static libraries.
 - Rootfs size target: <200MB (vs ~500MB+ unstripped).
+
+---
+
+## Corporate Security Profile
+
+For enterprise deployments, Capsem supports a system-wide policy file distributable via MDM (Mobile Device Management). This enables IT/security teams to enforce organizational controls without modifying the application.
+
+**Policy file**: `/etc/capsem/policy.toml` (system-wide, read-only to non-root)
+
+**Configurable controls**:
+
+| Setting | Description | Example |
+|---------|-------------|---------|
+| `network.allowed_domains` | Extend the default domain allow-list | `["*.internal.corp.com"]` |
+| `network.blocked_domains` | Block additional domains | `["*.competitor.com"]` |
+| `gateway.enforce` | Prevent users from disabling the audit gateway | `true` |
+| `gateway.approved_models` | Restrict to specific model IDs | `["claude-opus-4-6", "gemini-2.5-pro"]` |
+| `mcp.blocked_tools` | Globally block specific MCP tools | `["shell_exec", "file_delete"]` |
+| `mcp.approval_required` | Tools that always require user approval | `["git_push", "npm_publish"]` |
+| `session.max_duration_hours` | Auto-terminate sessions after N hours | `8` |
+| `session.max_cost_usd` | Cost ceiling per session | `50.0` |
+| `session.max_concurrent` | Max concurrent sessions per user | `3` |
+| `audit.otlp_endpoint` | SIEM export endpoint (OTLP/gRPC) | `"https://siem.corp.com:4317"` |
+| `audit.retention_days` | Minimum local audit retention | `90` |
+| `audit.export_on_end` | Push session audit on `on_agent_end` | `true` |
+| `pii.custom_patterns` | Additional regex patterns for PII scrubbing | `["CORP-\\d{6}"]` |
+
+**Enforcement**: When `/etc/capsem/policy.toml` exists, its settings override user preferences. The gateway cannot be disabled, domain lists are merged (corporate additions cannot be removed by user), and audit export is mandatory. The policy file is read at application startup and cached; changes require app restart.
+
+**MDM distribution**: Deploy via any MDM that supports custom configuration profiles (Jamf, Kandji, Mosyle, etc.). The policy file is a standard TOML file placed at a fixed path.
 
 ---
 

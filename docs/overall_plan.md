@@ -6,45 +6,55 @@ Building a green-field native macOS Rust application that spawns sandboxed Linux
 ## Architecture Overview
 
 ```
-+------------------------------------------+
-|  Tauri 2.0 App (macOS)                   |
-|  +------------------------------------+  |
-|  | WebView UI (Svelte 5)              |  |
-|  | - Session manager                  |  |
-|  | - Terminal (xterm.js via PTY/vsock) |  |
-|  | - Stats dashboard                  |  |
-|  | - MCP approval dialogs             |  |
-|  +------------------------------------+  |
-|           |  Tauri IPC                    |
-|  +------------------------------------+  |
-|  | Rust Backend (tokio runtime)       |  |
-|  | - VM lifecycle manager             |  |
-|  | - AI gateway (axum, native API)    |  |
-|  | - Network proxy (vsock-bridged)    |  |
-|  | - MCP gateway + policy engine      |  |
-|  | - Session store (SQLite)           |  |
-|  | - macOS Keychain key store         |  |
-|  +------------------------------------+  |
-|           |                              |
-|  +------------------------------------+  |
-|  | Apple Virtualization.framework     |  |
-|  | (objc2-virtualization v0.3.2)      |  |
-|  +------------------------------------+  |
-|       | vsock only  | VirtioFS           |
-|       | (NO NIC)    | (shared dirs)      |
-+-------|-------------|--------------------+
-        v             v
-+------------------------------------------+
-| Debian bookworm-slim ARM64 VM            |
-| - Immutable squashfs root + overlayfs    |
-| - NO network interface (air-gapped)      |
-| - dummy0 NIC + fake DNS -> SNI routing   |
-| - guest-agent IS PID 1 (no systemd)      |
-| - TCP bridged via vsock (SNI + Gateway)  |
-| - Rosetta 2 for x86_64 binary compat    |
-| - Claude Code / Gemini CLI               |
-| - Pre-warmed npm/pip caches (overlay)    |
-+------------------------------------------+
++------------------------------------------------------+
+|  Tauri 2.0 App (macOS)                               |
+|  +------------------------------------------------+  |
+|  | WebView UI (Astro + xterm.js)                  |  |
+|  | - Session manager                              |  |
+|  | - Terminal (xterm.js via PTY/vsock)             |  |
+|  | - Stats dashboard + cost tracking              |  |
+|  | - MCP/tool call approval dialogs               |  |
+|  | - Config write-back UI                         |  |
+|  +------------------------------------------------+  |
+|           |  Tauri IPC                                |
+|  +------------------------------------------------+  |
+|  | Rust Backend (tokio runtime)                   |  |
+|  | - VM lifecycle manager                         |  |
+|  | - AI audit gateway (axum, vsock:5004)          |  |
+|  |   - 9-stage event lifecycle + policy engine    |  |
+|  |   - PII scrubbing + secret detection           |  |
+|  |   - SSE stream interception + tool call pause  |  |
+|  | - SNI proxy (vsock:5002, domain filtering)     |  |
+|  | - MCP gateway (vsock:5003, remote tools)       |  |
+|  | - Per-session audit DB (SQLite + zstd blobs)   |  |
+|  | - macOS Keychain key store                     |  |
+|  | - Prometheus metrics (localhost:9090)           |  |
+|  +------------------------------------------------+  |
+|           |                                          |
+|  +------------------------------------------------+  |
+|  | Apple Virtualization.framework                 |  |
+|  | (objc2-virtualization v0.3.2)                  |  |
+|  +------------------------------------------------+  |
+|       | vsock (6 ports) | VirtioFS                   |
+|       | (NO real NIC)   | (workspace, config, caches) |
++-------|-----------------|----------------------------+
+        v                 v
++------------------------------------------------------+
+| Debian bookworm-slim ARM64 VM                        |
+| - Immutable rootfs + overlayfs                       |
+| - dummy0 NIC + fake DNS -> iptables REDIRECT         |
+| - capsem-init IS PID 1 (no systemd)                  |
+| - vsock ports:                                       |
+|   5000 control | 5001 terminal | 5002 SNI proxy      |
+|   5003 MCP gw  | 5004 AI gw    | 5005 file telemetry |
+| - capsem-pty-agent (terminal I/O)                    |
+| - capsem-vsock-bridge (TCP -> vsock forwarder)       |
+| - capsem-fake-dns (all domains -> 10.0.0.1)         |
+| - capsem-fswatch (fanotify /workspace -> vsock:5005) |
+| - Claude Code / Gemini CLI / Codex CLI               |
+| - Rosetta 2 for x86_64 binary compat                |
+| - Pre-warmed npm/pip caches (overlayfs on VirtioFS)  |
++------------------------------------------------------+
 ```
 
 ### Critical Design Decisions (from architecture review)
@@ -53,7 +63,7 @@ Building a green-field native macOS Rust application that spawns sandboxed Linux
 
 2. **Air-gapped VM with Fake-IP SNI routing**: No `VZNetworkDeviceAttachment`. But a NIC-less VM has no default route and no DNS, so `curl` would fail at `gethostbyname()` and the kernel would return `ENETUNREACH` before iptables ever fires. **Fix**: Guest-agent creates a `dummy0` interface + default route, runs a fake DNS server on 127.0.0.1:53 that resolves ALL domains to `10.0.0.1`, and redirects TCP to vsock. Host-side proxy ignores the fake IP, extracts the real domain from the TLS SNI field, validates against the allow-list, and routes upstream. Zero DNS leaks, zero DNS rebinding attacks.
 
-3. **Layer 7 AI API Gateway (not an OpenAI translator)**: Claude Code uses native Anthropic `/v1/messages` API with prompt caching, tool-use schemas, etc. We do NOT translate formats. Instead of complex TLS MITM, we configure the agents via environment variables (e.g., `ANTHROPIC_BASE_URL=http://10.0.0.1:8080`) to send plain HTTP traffic to a dedicated vsock port. The host-side Axum gateway acts as a Layer 7 reverse proxy: it receives native Anthropic/Gemini JSON payloads, inspects/logs them, injects API keys, and initiates a brand new HTTPS connection to the upstream provider. Zero protocol translation, but full HTTP reconstruction.
+3. **Active AI Audit Gateway (not a passive proxy)**: Claude Code, Gemini CLI, and Codex CLI use their native APIs (`/v1/messages`, `/v1beta/models/*`, `/v1/responses`). We do NOT translate formats. Agents are configured via `*_BASE_URL` env vars to send plain HTTP to `10.0.0.1:8080`, which iptables redirects to vsock:5004. The host-side Axum gateway actively parses SSE streams, implements a 9-stage event lifecycle (PII scrubbing, tool call interception, secret scanning), injects real API keys from macOS Keychain, and opens HTTPS connections upstream. AI provider domains are blocked at the SNI proxy level, forcing all model traffic through the gateway.
 
 4. **PTY over vsock (not serial console)**: Serial ports cannot handle terminal resize (`SIGWINCH`). The guest-agent allocates `/dev/ptmx` pseudo-terminals and wires I/O over vsock. Serial is used ONLY for kernel boot logs.
 
@@ -65,7 +75,7 @@ Building a green-field native macOS Rust application that spawns sandboxed Linux
 
 8. **Clock sync on resume**: `SyncTime` vsock message corrects guest clock drift after pause/resume, preventing TLS certificate validation failures.
 
-9. **MCP server sandboxing**: Host-side MCP servers wrapped in macOS `sandbox-exec` Seatbelt profiles, confined to workspace directory only.
+9. **Hybrid MCP architecture**: Local MCP tools (bash, filesystem, git) run inside the VM -- the VM IS the sandbox. Remote/enterprise MCP tools (GitHub, Slack, corporate APIs) route through the host MCP gateway (vsock:5003) with credential injection. Agent configs are rewritten at boot to split local (stdio, in-VM) vs remote (streamableHttp, via host). The host controls both via the AI gateway's `on_tool_call` lifecycle stage.
 
 10. **Guest-agent IS init (PID 1, no systemd)**: Kernel cmdline `init=/usr/bin/guest-agent`. Guest-agent mounts /proc, /sys, /dev, sets up dummy0 + fake DNS, mounts overlayfs, starts vsock listeners. Eliminates systemd's 1-2s boot overhead and dozens of unnecessary services. Target boot time: <50ms.
 
@@ -170,12 +180,29 @@ capsem/
         health.rs               # uptime, memory, disk stats
 ```
 
-**Guest-agent as PID 1 boot sequence**:
+**Guest-agent as PID 1 boot sequence** (M2 scope):
 1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/dev/pts`, `/tmp` (tmpfs)
 2. Set hostname
 3. Mount squashfs root overlay (if not already kernel-mounted)
-4. Start vsock listeners on ports 5000 (control), 5001 (terminal), 5002 (network)
+4. Start vsock listeners on ports 5000 (control), 5001 (terminal)
 5. Signal "Ready" to host via vsock port 5000
+
+**Full boot sequence** (all milestones, for reference):
+1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/dev/pts`, `/tmp` (tmpfs)
+2. Set hostname
+3. Mount rootfs overlay (read-only base + tmpfs upper)
+4. Mount VirtioFS shares: workspace, config, caches with overlayfs wrappers (M4)
+5. Assemble agent config: OverlayFS with host config lowerdir + tmpfs upperdir (M8)
+6. Network setup (M5):
+   a. Create `dummy0` interface, assign 10.0.0.1/32, add default route
+   b. Start `capsem-fake-dns` on 127.0.0.1:53
+   c. Write `nameserver 127.0.0.1` to `/etc/resolv.conf`
+   d. Install iptables REDIRECT rules (port 8080->3129, 8081->3130, catch-all->3128)
+   e. Start `capsem-vsock-bridge` instances (3128->vsock:5002, 3129->vsock:5004, 3130->vsock:5003)
+7. Start `capsem-fswatch` monitoring `/workspace` -> vsock:5005 (M5)
+8. Start `capsem-pty-agent` (terminal I/O on vsock:5000 control + vsock:5001 data) (M4)
+9. Set agent env vars: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, etc. (M6)
+10. Signal "Ready" to host via vsock port 5000
 
 **Kernel cmdline**: `console=hvc0 root=/dev/vda ro init=/usr/bin/guest-agent`
 
@@ -324,267 +351,495 @@ Host cache stays perfectly clean. Temp writes go to tmpfs.
 
 ---
 
-## Milestone 5: vsock Network Bridge + Fake-IP SNI Router + Domain Filtering
+## Milestone 5: Network Boundaries & Real-Time Telemetry
 
-**Goal**: VM has NO real network interface. A synthetic network stack (dummy0 + fake DNS + SNI routing) bridges all TCP over vsock with HTTPS-only enforcement and domain allow/block lists.
+**Goal**: Hardware-enforced network isolation with zero real NICs. Synthetic IP stack (dummy0 + fake DNS + iptables) routes all traffic through vsock to host-side proxies. Real-time file telemetry gives the host visibility into agent workspace activity.
 
-**Deliverable**: `curl https://api.anthropic.com` works from inside VM (allowed domain). `curl https://evil.com` is blocked. There is physically no way to bypass the filter.
+**Primary threat model**: The agent itself -- all network traffic is captured, classified, and policy-enforced before reaching the internet.
+
+**Deliverable**: `curl https://github.com` works from inside VM (allowed domain). `curl https://evil.com` is blocked. AI provider domains (api.anthropic.com, api.openai.com, generativelanguage.googleapis.com) are forced through the audit gateway (M6), not the SNI proxy. Real-time file change events stream to the host.
+
+### Hardware-Enforced Network Isolation
+
+**Kernel config changes** (`images/defconfig`):
+```
+CONFIG_INET=y                          # enable IP stack (was CONFIG_INET=n)
+CONFIG_IP_NF_IPTABLES=y                # iptables support
+CONFIG_IP_NF_NAT=y                     # NAT target (REDIRECT)
+CONFIG_NF_CONNTRACK=y                  # connection tracking (required by NAT)
+CONFIG_NETFILTER_XT_TARGET_REDIRECT=y  # REDIRECT target for iptables
+CONFIG_DUMMY=y                         # dummy network interface driver
+CONFIG_NETDEVICES=n                    # no real NIC drivers (e1000, virtio-net, etc.)
+CONFIG_IPV6=n                          # no IPv6 (reduces attack surface)
+```
+
+The kernel has an IP stack but no real NIC drivers. The only network interface is `dummy0`, created by the init script. There is no way to attach a real network device.
 
 **The "Fake-IP SNI Router" architecture**:
 ```
 VM (no real NIC):
-  1. guest-agent creates dummy0 interface + default route
-  2. guest-agent runs fake DNS on 127.0.0.1:53
+  1. capsem-init creates dummy0 interface + default route via 10.0.0.1
+  2. capsem-init starts fake DNS on 127.0.0.1:53
      - ALL domains resolve to 10.0.0.1 (single fake IP)
   3. /etc/resolv.conf -> nameserver 127.0.0.1
-  4. iptables routing splits traffic:
-     - AI Gateway traffic (e.g., port 8080) -> vsock-bridge on 127.0.0.1:3129 -> vsock:5004
-     - All OTHER TCP traffic -> SNI vsock-bridge on 127.0.0.1:3128 -> vsock:5002
+  4. iptables REDIRECT rules split traffic by destination port:
+     - port 8080  -> vsock-bridge on 127.0.0.1:3129 -> vsock:5004 (AI gateway)
+     - port 8081  -> vsock-bridge on 127.0.0.1:3130 -> vsock:5003 (MCP gateway)
+     - catch-all  -> vsock-bridge on 127.0.0.1:3128 -> vsock:5002 (SNI proxy)
   5. App calls: curl https://github.com
      -> DNS resolves github.com to 10.0.0.1
      -> TCP connect to 10.0.0.1:443
      -> iptables REDIRECT to vsock-bridge on 127.0.0.1:3128
      -> vsock-bridge sends raw bytes over vsock:5002 to host
 
-Host (vsock:5002):
-  5. Receives TCP stream
-  6. Reads first bytes: TLS ClientHello
-  7. Extracts SNI field: "github.com"
-  8. Checks domain allow-list -> allowed
-  9. Resolves REAL DNS for github.com on host
-  10. Opens REAL TLS connection to github.com:443
-  11. Bridges bidirectionally
+Host (vsock:5002 -- SNI proxy):
+  6. Receives TCP stream
+  7. Reads first bytes: TLS ClientHello
+  8. Extracts SNI field: "github.com"
+  9. Checks domain filter:
+     - AI provider domains (api.anthropic.com, api.openai.com,
+       generativelanguage.googleapis.com) -> BLOCKED at SNI proxy
+       (forces agents through the audit gateway on port 8080)
+     - Allowed dev domains -> PASS
+     - Everything else -> DROP
+  10. Resolves REAL DNS for github.com on host
+  11. Opens REAL TLS connection to github.com:443
+  12. Bridges bidirectionally
 ```
 
-**New modules**:
+**Host SNI proxy domain policy**:
+- **Blocked** (AI providers -- must use audit gateway): `api.anthropic.com`, `generativelanguage.googleapis.com`, `api.openai.com`
+- **Allowed** (safe dev domains): `github.com`, `*.github.com`, `registry.npmjs.org`, `*.npmjs.org`, `files.pythonhosted.org`, `pypi.org`, `crates.io`, `static.crates.io`
+- **Default deny**: everything else (no SNI match = connection dropped)
+- Corporate policy can extend both lists via `policy.toml`
+- Zero DNS leaks (fake DNS never leaves VM)
+- No UDP forwarding, no ICMP, no raw sockets
+
+### In-Guest File Telemetry (`capsem-fswatch`)
+
+New guest-side Rust daemon using Linux `fanotify` to monitor `/workspace`. Streams file events to the host in real-time, enabling visibility into what the agent is doing without end-of-session diffs.
+
+- **Events**: `on_file_create`, `on_file_edit`, `on_file_delete`
+- **Wire format**: MessagePack over vsock:5005
+- **Filtering**: ignores `.git/objects`, `node_modules/`, `__pycache__/`, `*.pyc`
+- **Rate limiting**: coalesces rapid edits to the same file (100ms debounce)
+
+The host-side policy engine (M6) consumes these events for the `on_file_create`, `on_file_edit`, and `on_file_delete` lifecycle stages.
+
+### vsock Port Allocation
+
+| Port | Purpose | Direction | Format |
+|------|---------|-----------|--------|
+| 5000 | Control channel | bidirectional | MessagePack |
+| 5001 | Terminal I/O | bidirectional | raw bytes |
+| 5002 | SNI proxy (general HTTPS) | guest -> host | raw TCP |
+| 5003 | MCP gateway | guest -> host | HTTP (JSON-RPC) |
+| 5004 | AI audit gateway | guest -> host | HTTP (provider-native JSON) |
+| 5005 | File telemetry | guest -> host | MessagePack |
+
+### New modules
+
 ```
   crates/
     capsem-core/src/
       network/
         mod.rs
-        proxy.rs                # host-side TCP proxy (tokio, per-connection)
+        sni_proxy.rs            # host-side SNI proxy (tokio, per-connection TCP bridge)
         tls_sni.rs              # SNI extraction from TLS ClientHello bytes
-        filter.rs               # domain allow/block list engine (glob patterns)
-        policy.rs               # per-session network policy config
-        dns.rs                  # host-side DNS resolution (trust-dns-resolver)
-    capsem-guest-agent/src/
-      network/
-        mod.rs
-        dummy_nic.rs            # create dummy0, add default route
-        fake_dns.rs             # UDP DNS server: all queries -> 10.0.0.1
-        iptables.rs             # REDIRECT rules: all TCP to local vsock bridge
-        bridge.rs               # TCP listener on 127.0.0.1:3128 -> vsock:5002
+        domain_filter.rs        # domain allow/block list engine (glob patterns, AI provider blocking)
+    capsem-agent/src/
+      bin/
+        capsem-vsock-bridge.rs  # TCP listener -> vsock forwarder (configurable port pairs)
+        capsem-fswatch.rs       # fanotify file watcher daemon -> vsock:5005
+        capsem-fake-dns.rs      # UDP DNS responder: all A queries -> 10.0.0.1
 ```
 
-**Guest-agent network boot sequence** (called from init.rs):
+**Guest network boot sequence** (in `capsem-init`):
 1. `ip link add dummy0 type dummy && ip link set dummy0 up`
 2. `ip addr add 10.0.0.1/32 dev dummy0`
 3. `ip route add default dev dummy0`
-4. Start fake DNS on 127.0.0.1:53 (resolve everything to 10.0.0.1)
-5. Write `nameserver 127.0.0.1` to /etc/resolv.conf
-6. `iptables -t nat -A OUTPUT -p tcp -d 10.0.0.1 --dport 8080 -j REDIRECT --to-ports 3129` (AI Gateway)
-7. `iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports 3128` (Catch-all SNI Router)
-8. Start TCP bridge on 127.0.0.1:3128 -> vsock:5002 (SNI)
-9. Start TCP bridge on 127.0.0.1:3129 -> vsock:5004 (AI Gateway)
+4. Start `capsem-fake-dns` on 127.0.0.1:53 (all A queries -> 10.0.0.1)
+5. Write `nameserver 127.0.0.1` to `/etc/resolv.conf`
+6. `iptables -t nat -A OUTPUT -p tcp -d 10.0.0.1 --dport 8080 -j REDIRECT --to-ports 3129` (AI gateway)
+7. `iptables -t nat -A OUTPUT -p tcp -d 10.0.0.1 --dport 8081 -j REDIRECT --to-ports 3130` (MCP gateway)
+8. `iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports 3128` (catch-all SNI proxy)
+9. Start `capsem-vsock-bridge` on 127.0.0.1:3128 -> vsock:5002 (SNI)
+10. Start `capsem-vsock-bridge` on 127.0.0.1:3129 -> vsock:5004 (AI gateway)
+11. Start `capsem-vsock-bridge` on 127.0.0.1:3130 -> vsock:5003 (MCP gateway)
+12. Start `capsem-fswatch` monitoring `/workspace` -> vsock:5005
 
-**Default network policy**:
-- Allow only TLS (port 443 implied by SNI routing -- non-TLS has no SNI, gets rejected)
-- Default allow: `api.anthropic.com`, `*.googleapis.com`, `registry.npmjs.org`, `files.pythonhosted.org`, `pypi.org`, `github.com`, `*.github.com`
-- Default block: everything else (no SNI match = connection dropped)
-- Zero DNS leaks (fake DNS never leaves VM)
-- No UDP forwarding, no ICMP, no raw sockets
+**Files to modify**:
+- `images/defconfig` -- enable CONFIG_INET, iptables, dummy, conntrack
+- `images/capsem-init` -- network setup (dummy0, fake DNS, iptables, vsock bridges, fswatch)
+- `crates/capsem-agent/` -- add `capsem-vsock-bridge`, `capsem-fswatch`, `capsem-fake-dns` binaries
+- `crates/capsem-core/src/vm/vsock.rs` -- add port constants 5002-5005
+- New: `crates/capsem-core/src/network/` -- sni_proxy.rs, domain_filter.rs, tls_sni.rs
 
 **Tests**:
 - Unit: SNI extraction from real TLS ClientHello byte captures
-- Unit: Domain filter glob matching (`*.anthropic.com` matches `api.anthropic.com`)
+- Unit: Domain filter glob matching (`*.github.com` matches `api.github.com`)
+- Unit: AI provider domains blocked at SNI proxy level
 - Unit: Policy evaluation priority (explicit block > allow > default deny)
-- Unit: Fake DNS server returns 10.0.0.1 for all A queries
-- Integration: VM `curl https://api.anthropic.com` succeeds (returns 401, no key yet)
+- Unit: Fake DNS responder returns 10.0.0.1 for all A queries, NXDOMAIN for AAAA
+- Unit: fswatch event serialization/deserialization round-trip
+- Unit: fswatch debounce coalesces rapid edits to same file
+- Integration: VM `curl https://github.com` succeeds (allowed domain)
 - Integration: VM `curl https://evil.com` fails (domain not in allow-list)
+- Integration: VM `curl https://api.anthropic.com` fails at SNI proxy (must use gateway)
 - Integration: VM `curl http://example.com` fails (no SNI in plain HTTP -> rejected)
 - Integration: VM `ping 8.8.8.8` fails (no real NIC, ICMP impossible)
 - Integration: VM `dig @8.8.8.8 google.com` fails (UDP not bridged)
+- Integration: File create in /workspace generates fswatch event on host
 - Integration: Custom session policy adds `*.example.com` to allow list, works
-- Security: `unset HTTPS_PROXY && curl https://evil.com` still fails (no bypass possible)
 - Security: DNS resolution in VM always returns 10.0.0.1 (host does real resolution)
 
-**NOT included**: No API inspection, no MCP gateway.
+**NOT included**: No API inspection (M6), no MCP gateway routing (M7).
 
 ---
 
-## Milestone 6: AI Gateway - Transparent API Proxy
+## Milestone 6: The Active AI Audit Gateway
 
-**Goal**: Model API calls pass through a host-side gateway that inspects native Anthropic/Gemini payloads, injects API keys, logs everything, and applies rate limits. No protocol translation.
+**Goal**: An active Layer 7 gateway that intercepts, inspects, and policy-enforces all LLM API traffic. Not a passive proxy -- actively parses SSE streams, pauses on tool calls for approval, scrubs PII from prompts, and injects real API keys. Full audit trail of every model interaction.
 
-**Deliverable**: Claude Code and Gemini CLI work normally inside VM, but all API traffic is logged with full request/response bodies. API keys never enter the VM.
+**Primary threat model**: The agent itself. Every model call, tool use, and file operation is evaluated against a policy engine before execution.
 
-**Architecture**:
+**Deliverable**: Claude Code, Gemini CLI, and Codex CLI work inside VM with dummy API keys. Host gateway injects real keys, logs all traffic, enforces the 9-stage event lifecycle, and can pause/deny tool calls in real-time.
+
+### Active Stream Interception
+
+Host gateway on vsock:5004 (Axum). Routes by request path to provider-specific handlers:
+
+| Request path | Provider | Key injection |
+|---|---|---|
+| `/v1/messages` | Anthropic | `x-api-key` header |
+| `/v1beta/models/*` | Google Gemini | `?key=` query param |
+| `/v1/responses` | OpenAI | `Authorization: Bearer` header |
+
+Agent environment variables (set at boot):
+
+| Agent | Environment variable | Dummy key |
+|---|---|---|
+| Claude Code | `ANTHROPIC_BASE_URL=http://10.0.0.1:8080` | `ANTHROPIC_API_KEY=sk-capsem-gateway` |
+| Gemini CLI | `GEMINI_API_BASE_URL=http://10.0.0.1:8080` | `GEMINI_API_KEY=capsem-gateway` |
+| Codex CLI | `OPENAI_BASE_URL=http://10.0.0.1:8080` | `OPENAI_API_KEY=sk-capsem-gateway` |
+
+Real API keys retrieved from macOS Keychain at runtime. Never present inside the VM.
+
+### The 9-Stage Event Lifecycle & Policy Engine
+
+Every agent interaction is evaluated against `policy.toml` (local) or a remote corporate webhook (gRPC/HTTPS). The lifecycle stages are:
+
+1. **`on_agent_launch`** -- validate user, repo, time-of-day access restrictions
+2. **`on_file_create`** -- block unauthorized file creation (consumes capsem-fswatch events from vsock:5005)
+3. **`on_file_edit`** -- scan incoming file chunks for hardcoded secrets (regex-based)
+4. **`on_file_delete`** -- prevent deletion of critical project files (e.g., `.git/`, `Cargo.toml`)
+5. **`on_model_call`** -- **PII engine** replaces sensitive prompt data (emails, API keys, phone numbers) with `[REDACTED-N]` tokens before forwarding upstream
+6. **`on_model_response`** -- rehydrate `[REDACTED-N]` tokens with original values; parse response for `tool_use` JSON blocks
+7. **`on_tool_call`** -- **pause the LLM SSE stream**. Present tool name + arguments to user/policy engine for approval. If denied, inject a synthetic tool failure response back into the stream so the LLM sees a graceful error, not a hang.
+8. **`on_tool_response`** -- scan local tool stdout/stderr for secrets before returning to the LLM
+9. **`on_agent_end`** -- final state cleanup, telemetry rollup, session cost summary
+
+### Reuse from Existing Open-Source (all Apache 2.0)
+
+| Need | Source | How to use |
+|------|--------|-----------|
+| SSE stream interception pattern | [TensorZero Gateway](https://github.com/tensorzero/gateway) | Study their per-provider stream parsers; they normalize all providers into a unified event format. Adapt the tee pattern (forward + accumulate). |
+| Provider trait abstraction | [Traceloop Hub](https://github.com/traceloop/hub) `src/providers/` | Clean trait-based provider registry. Small codebase (~100 commits), easy to extract patterns. |
+| OpenAI wire protocol types | `async-openai` crate with `features = ["types"]` | Use as a dependency for serde request/response types, SSE event types, tool call types without the HTTP client. |
+| Anthropic wire types | Traceloop Hub `src/providers/anthropic/` | Adapt their serde types. `anthropic-types` crate exists but is too minimal (missing streaming events). |
+| Gemini wire types | Hand-write | No Rust crate exists for Gemini types. Write serde structs for `generateContent`/`streamGenerateContent`. |
+| Pipeline/middleware architecture | Traceloop Hub plugin system | Their pipeline model maps well to our 9-stage lifecycle. |
+
+**Note**: Helicone AI Gateway is GPL-3.0 -- can study for design inspiration only, cannot embed code.
+
+### Architecture
+
 ```
 VM:
-  claude-code -> POST http://10.0.0.1:8080/v1/messages (native Anthropic format)
-  gemini-cli  -> POST http://10.0.0.1:8080/v1/gemini/... (native Gemini format)
-     (routed via dedicated iptables rule -> vsock:5004 to host)
+  claude-code -> POST http://10.0.0.1:8080/v1/messages
+  gemini-cli  -> POST http://10.0.0.1:8080/v1beta/models/gemini-2.5-pro:streamGenerateContent
+  codex-cli   -> POST http://10.0.0.1:8080/v1/responses
+     (all routed via iptables REDIRECT -> vsock-bridge -> vsock:5004 to host)
 
-Host:
-  Axum gateway on vsock:5004 listener (Layer 7 HTTP Reverse Proxy):
-    /v1/messages     -> inject x-api-key header -> proxy to https://api.anthropic.com
-    /v1/gemini/*     -> inject API key param   -> proxy to https://generativelanguage.googleapis.com
-    Log request body, stream response, log response, count tokens
+Host (Axum on vsock:5004):
+  1. Receive HTTP request from VM (plain HTTP, no TLS)
+  2. Route by path -> provider handler (anthropic.rs, google.rs, openai.rs)
+  3. on_model_call: PII engine scrubs sensitive data from prompt
+  4. Inject real API key from macOS Keychain
+  5. Open HTTPS connection to upstream provider
+  6. Stream SSE response back, parsing each event:
+     - Accumulate text content for audit log
+     - on_model_response: detect tool_use blocks
+     - on_tool_call: PAUSE stream, emit Tauri event for approval UI
+       - If approved: resume stream
+       - If denied: inject synthetic error, resume stream
+  7. on_tool_response: scan tool output for secrets
+  8. Log complete interaction to per-session audit.db
 ```
 
-**New modules**:
+### New modules
+
 ```
   crates/
     capsem-core/src/
       gateway/
         mod.rs
-        server.rs               # axum router, per-session middleware
-        anthropic.rs            # Anthropic /v1/messages passthrough + inspection
-        google.rs               # Gemini API passthrough + inspection
-        key_store.rs            # macOS Keychain via security-framework
-        logger.rs               # structured request/response logging to SQLite
+        server.rs               # axum router, per-session middleware, vsock:5004 listener
+        anthropic.rs            # Anthropic /v1/messages handler + SSE stream parser
+        google.rs               # Gemini API handler + SSE stream parser
+        openai.rs               # OpenAI /v1/responses handler + SSE stream parser
+        streaming.rs            # generic SSE stream tee (forward + accumulate + pause/resume)
+        key_store.rs            # macOS Keychain via security-framework crate
+        audit.rs                # per-session audit logging (SQLite + zstd-compressed blobs)
+        policy.rs               # 9-stage policy engine (local TOML + remote webhook)
         cost.rs                 # token counting + cost estimation per provider/model
-        rate_limit.rs           # per-session token-bucket rate limiter
-        streaming.rs            # SSE stream passthrough with token counting
+        pii.rs                  # PII detection + redaction engine (regex, reversible tokens)
 ```
 
 **Key crates**:
-- `axum` - HTTP server
-- `reqwest` - upstream HTTP client with streaming
+- `axum` - HTTP server (gateway)
+- `reqwest` - upstream HTTPS client with streaming
 - `security-framework` - macOS Keychain for API keys
-- `async-stream` - SSE stream inspection
+- `async-openai` (types feature) - OpenAI wire protocol serde types
+- `zstd` - compression for audit log payloads
 
-**How it works**:
-- Gateway binds to `localhost:<port>`, reachable from VM via vsock network bridge
-- VM env vars: `ANTHROPIC_BASE_URL=http://10.0.0.1:8080` (or vsock-mapped host addr)
-- Gateway receives native API request, deserializes *just enough* to extract: model, token counts, tool definitions
-- Injects `x-api-key` (Anthropic) or `?key=` (Google) from macOS Keychain
-- Streams raw bytes to upstream provider over HTTPS
-- Logs: timestamp, session_id, provider, model, input_tokens, output_tokens, cost_estimate, latency, tool_names_used
-- Does NOT modify request/response payloads (transparent proxy)
+**Files to modify**:
+- New: `crates/capsem-core/src/gateway/` -- all modules listed above
+- `crates/capsem-app/` -- wire up gateway startup at boot, Tauri events for `on_tool_call` approval UI
+- `Cargo.toml` -- add `async-openai`, `reqwest`, `axum`, `zstd` dependencies
 
 **Tests**:
-- Unit: Anthropic request body parsing (extract model, tool names, estimate input tokens)
-- Unit: Gemini request body parsing
-- Unit: Cost estimation for Claude 3.5 Sonnet, Gemini 2.5 Pro, etc.
-- Unit: Rate limiter token bucket (allow, then throttle, then recover)
-- Unit: SSE stream line-by-line forwarding preserves all events
-- Integration: Mock Anthropic upstream -> gateway -> client, full round trip
-- Integration: Streaming response forwarded correctly with token count
-- Integration: API keys present in upstream request, absent from VM env
-- Integration: Rate limiter returns 429 when exceeded
-- Integration: Cost logger writes correct records to SQLite
+- Unit: Anthropic SSE stream parsing (text events, tool_use events, stop reasons)
+- Unit: Gemini SSE stream parsing (candidates, function calls)
+- Unit: OpenAI SSE stream parsing (response events, tool calls)
+- Unit: PII engine detects and redacts emails, API keys, phone numbers
+- Unit: PII rehydration restores original values from `[REDACTED-N]` tokens
+- Unit: Policy engine evaluates TOML rules for each lifecycle stage
+- Unit: Cost estimation for Claude 4, Gemini 2.5 Pro, GPT-4o, etc.
+- Unit: Secret detection regex catches common patterns (AWS keys, GitHub tokens, etc.)
+- Integration: Mock Anthropic upstream -> gateway -> client, full round trip with audit log
+- Integration: Streaming response forwarded correctly with accumulated token count
+- Integration: API keys present in upstream request, absent from VM environment
+- Integration: on_tool_call pauses stream, synthetic denial injects error response
+- Integration: PII scrubbed from upstream request, rehydrated in response
+- Integration: Audit log contains complete request/response for each interaction
 
-**NOT included**: No MCP gateway, no UI for stats.
+**NOT included**: No MCP gateway (M7), no approval UI (M10).
 
 ---
 
-## Milestone 7: MCP Gateway + Host-Side Server Sandboxing
+## Milestone 7: Hybrid MCP Architecture
 
-**Goal**: MCP tool calls from agents are intercepted by a gateway that applies security policies. Host-side MCP servers run in macOS Seatbelt sandboxes.
+**Goal**: MCP tool calls split into two categories -- local tools that run sandboxed inside the VM, and remote/enterprise tools that run on the host. The host retains control over both via the AI gateway's `on_tool_call` lifecycle stage.
 
-**Deliverable**: Agents can use MCP tools, but dangerous operations are blocked or require host approval. MCP servers cannot escape workspace directory.
+**Key insight**: The VM IS the sandbox. Local MCP tools (bash, filesystem, git, npm) run natively via `stdio` **inside the VM**. No host-side Seatbelt needed for these. The host controls them by intercepting the LLM's intent to use the tool during `on_tool_call` (M6) -- the gateway sees the tool call in the LLM response, pauses the stream, evaluates policy, and either allows or injects a denial.
 
-**New modules**:
+**Deliverable**: Agents use MCP tools seamlessly. Local tools run in-VM with full sandbox isolation. Remote tools (GitHub, Slack, corporate APIs) route through the host MCP gateway with credential injection. Config rewrite at boot transparently splits the two.
+
+### Hardware-Sandboxed Local Tools (in-VM)
+
+Local MCP servers that need bash, npm, git, or filesystem access run inside the VM as stdio processes. The agent talks to them directly. Security comes from:
+1. The VM sandbox itself (no real network, read-only rootfs, isolated filesystem)
+2. The AI gateway's `on_tool_call` stage pausing the LLM stream before the tool executes
+3. `capsem-fswatch` (M5) reporting all file changes in real-time
+
+No host-side Seatbelt profiles needed for these tools.
+
+### Host-Routed Remote Tools
+
+Enterprise/cloud MCP tools (requiring host network access, corporate auth, or API credentials) run through the host. Agent MCP configs are rewritten at boot:
+
+```json
+// Original (in user's agent config):
+{"command": "npx", "args": ["@mcp/server-github"]}
+
+// Rewritten (in VM):
+{"type": "streamableHttp", "url": "http://10.0.0.1:8081/mcp/github"}
+```
+
+Host MCP gateway (vsock:5003) receives these HTTP requests, injects corporate auth headers (GITHUB_TOKEN, SLACK_TOKEN, etc. from macOS Keychain), and proxies to the real MCP server running on the host.
+
+### Config Rewrite Rules
+
+At boot, the host assembles agent MCP config by classifying each server:
+
+| Server type | Classification | Action |
+|---|---|---|
+| Filesystem tools (read, write, search) | Local | Leave as `stdio`, runs in VM |
+| Bash/shell tools | Local | Leave as `stdio`, runs in VM |
+| Git tools (local operations) | Local | Leave as `stdio`, runs in VM |
+| GitHub/GitLab (API access) | Remote | Rewrite to `streamableHttp` via host gateway |
+| Slack, Jira, Confluence | Remote | Rewrite to `streamableHttp` via host gateway |
+| Custom corporate tools | Remote | Rewrite to `streamableHttp` via host gateway |
+| Unknown/unclassified | Remote (safe default) | Rewrite to `streamableHttp` via host gateway |
+
+Remote tool credentials (GITHUB_TOKEN, etc.) injected by host gateway, never present in VM.
+
+### Architecture
+
+```
+VM:
+  agent --mcp-config /root/.agent/mcp.json
+    Local tools:
+      -> stdio to in-VM MCP server (e.g., filesystem, bash)
+      -> tool execution happens inside VM sandbox
+      -> host sees tool call via on_tool_call (AI gateway, M6)
+    Remote tools:
+      -> HTTP to http://10.0.0.1:8081/mcp/{server_name}
+      -> iptables REDIRECT -> vsock-bridge -> vsock:5003 to host
+
+Host MCP Gateway (vsock:5003, Axum):
+  1. Receive JSON-RPC request from VM
+  2. Route to correct host-side MCP server by path
+  3. Inject auth credentials from macOS Keychain
+  4. Forward request to real MCP server process
+  5. Return response to VM
+  6. Audit log everything (request, response, latency, server name)
+```
+
+### New modules
+
 ```
   crates/
     capsem-core/src/
       mcp/
         mod.rs
-        gateway.rs              # MCP JSON-RPC proxy (vsock <-> stdio bridge)
-        policy.rs               # tool allow/block/approval-required policies
-        audit.rs                # MCP call audit logging to SQLite
-        approval.rs             # approval queue (tokio::sync::watch for UI notification)
-        sandbox.rs              # macOS sandbox-exec profile generation
-      protocol/
-        mcp_types.rs            # MCP JSON-RPC message types (request, response, notification)
-    capsem-guest-agent/src/
-      mcp_stub.rs               # in-VM MCP "server" that forwards over vsock to host gateway
+        gateway.rs              # host-side MCP HTTP gateway (Axum on vsock:5003)
+        router.rs               # route /mcp/{name} to correct server process
+        server_manager.rs       # spawn/manage host-side MCP server processes
+        transport.rs            # streamable HTTP <-> stdio bridge
+        policy.rs               # per-tool allow/block/approval-required policies
+        audit.rs                # MCP call audit logging to per-session DB
+      config/
+        mcp_rewrite.rs          # classify local vs remote, rewrite agent MCP configs
 ```
 
-**Architecture**:
-```
-VM:
-  claude-code --mcp-config /config/mcp.json
-    -> connects to mcp-stub (localhost stdio)
-      -> forwards JSON-RPC over vsock:5003 to host
-
-Host:
-  MCP Gateway (vsock:5003):
-    -> receives JSON-RPC
-    -> evaluates policy (allow/block/approval)
-    -> if approved: spawn real MCP server in sandbox-exec jail
-    -> forward request, return response
-    -> audit log everything
-```
-
-**Seatbelt sandboxing** (macOS native):
-- Dynamically generate `.sb` profile per session
-- MCP server process confined to: workspace directory (r/w), /tmp (r/w), system libs (r/o)
-- Cannot read: ~/.ssh, ~/.aws, ~/.config, ~/Documents, etc.
-- Cannot write: anywhere outside workspace
-- Cannot access network (MCP servers talk through our gateway only)
-
-**Policies**:
-- Allow: read file, list directory, search (within workspace)
-- Block: write outside workspace, shell commands with `rm -rf`, network access
-- Approval required: shell commands, file deletion, git push, external API calls
-- Per-session configurable policy TOML
+**Config assembly at boot**:
+1. Read user's agent config from `~/.capsem/agents/{claude,gemini,codex}/`
+2. For each MCP server entry, classify as local or remote
+3. Rewrite remote entries to `streamableHttp` URLs pointing at `10.0.0.1:8081`
+4. Write assembled config to VirtioFS config share (mounted read-only in VM)
 
 **Tests**:
-- Unit: MCP JSON-RPC parsing for all message types
+- Unit: MCP config classifier correctly identifies local vs remote servers
+- Unit: Config rewrite transforms stdio entries to streamableHttp URLs
+- Unit: MCP JSON-RPC request/response parsing for all message types
 - Unit: Policy evaluation for various tool calls
-- Unit: Seatbelt profile generation with correct paths
-- Unit: Audit log entry generation
-- Integration: MCP tool call flows through gateway to real MCP server
-- Integration: Blocked tool call returns proper JSON-RPC error
-- Integration: Approval-required call queues (waits for signal)
-- Integration: MCP server cannot read ~/.ssh/id_rsa (Seatbelt blocks)
-- Integration: MCP server can read/write files in workspace
+- Unit: Audit log entry generation with correct fields
+- Integration: Local MCP tool call executes inside VM (filesystem read)
+- Integration: Remote MCP tool call routes through host gateway (mock GitHub API)
+- Integration: Host gateway injects auth credentials (present upstream, absent in VM)
+- Integration: Blocked tool call returns proper JSON-RPC error to agent
+- Integration: Audit log records both local (via AI gateway) and remote (via MCP gateway) tool calls
 
-**NOT included**: No approval UI (queue is wired but approval is auto-accept in CLI mode).
+**NOT included**: No approval UI (auto-accept in CLI mode, UI added in M10).
 
 ---
 
-## Milestone 8: Session Management + Persistence
+## Milestone 8: State, Audit, and Observability
 
-**Goal**: Full session lifecycle with persistence. Sessions survive app restart via SQLite + persistent overlay disk.
+**Goal**: Per-session audit databases, agent config persistence with OverlayFS write-back, and enterprise observability (Prometheus metrics, OpenTelemetry export, corporate policy enforcement).
 
-**Deliverable**: Create session, run agent, stop, resume later with history and workspace intact.
+**Deliverable**: Every session is self-contained with its own audit trail. Agent configs survive sessions. Enterprise deployments can enforce policies via MDM and export telemetry to SIEM.
 
-**New modules**:
+### Per-Session Databases & Compressed Blobs
+
+No monolithic SQLite database. Each session gets its own isolated storage to avoid write-lock contention, I/O bottlenecks, and memory bloat:
+
+```
+~/.capsem/
+  sessions/
+    sess_<id>/
+      audit.db          # per-session SQLite (api_calls, tool_uses, mcp_calls tables)
+      telemetry/        # compressed file events, raw LLM payloads
+  global_index.db       # maps session IDs to timestamps, agent type, workspace path for UI
+```
+
+- Raw MessagePack telemetry and LLM request/response payloads compressed with **zstd** before insertion into SQLite BLOB columns
+- Each session is self-contained and independently deletable
+- `global_index.db` is lightweight (metadata only, no payloads) for fast session list rendering
+
+### Session Resume Strategy
+
+NO VM snapshots (Apple Virtualization.framework cannot snapshot VMs with VirtioFS shares):
+- On stop: host sends `Shutdown { graceful: true }` -> guest runs `sync`, unmounts overlay, ACPI poweroff
+- Persistent overlay disk (sparse `.raw` file per session) preserves `/home`, `/var`, `/etc` changes
+- On resume: boot fresh VM, mount same overlay disk as upperdir, mount same workspace
+- Terminal scrollback history stored in per-session `audit.db` (replay on reconnect)
+- Session metadata in `global_index.db`: agent type, model, network policy, workspace path (as security-scoped bookmark), cumulative cost
+
+### OverlayFS Config Write-Back
+
+Agent config persistence across sessions:
+
+**Host-side config**: `~/.capsem/agents/{claude,gemini,codex}/` with initial import from user's existing `~/.claude/`, `~/.gemini/`, `~/.codex/`.
+
+**VM mount** (per agent type):
+```
+lowerdir=/mnt/config/{type}  (read-only VirtioFS from host)
+upperdir=/tmp/config_upper   (tmpfs, catches agent writes)
+merged -> /root/.{type}/     (agent sees writable config dir)
+```
+
+On `on_agent_end` (lifecycle stage 9): host diffs `upperdir` against `lowerdir`, presents changed files in Tauri UI for selective save-back to host. Session-specific files (logs, rewritten MCP configs) are filtered out.
+
+### Security-Scoped Bookmarks
+
+- When workspace folder selected via NSOpenPanel, create NSURL bookmark with `NSURLBookmarkCreationWithSecurityScope`
+- Store bookmark `Vec<u8>` (base64) in `global_index.db` alongside session
+- On resume: resolve bookmark -> `startAccessingSecurityScopedResource()` -> boot VM with VirtioFS
+- On stop: `stopAccessingSecurityScopedResource()`
+- Without this, macOS app sandbox revokes folder access on quit -> VirtioFS mount fails on resume
+
+### Enterprise Observability
+
+**Prometheus metrics**: Host gateway binds `127.0.0.1:9090/metrics` endpoint:
+- Counters: tool executions (by tool name), model calls (by provider), policy denials
+- Gauges: active sessions, active VMs
+- Histograms: model call latency, token usage per request
+
+**OpenTelemetry (OTLP)**: When enabled by corporate policy, pushes sanitized, compressed session audit databases to centralized SIEM:
+- Sanitized = PII-scrubbed (same engine as `on_model_call`)
+- Compressed = zstd before export
+- Push frequency configurable (per-session on end, or periodic batch)
+
+**Corporate policy** (`/etc/capsem/policy.toml`): System-wide constraints distributable via MDM:
+- Domain allow/block lists (extends/overrides default SNI policy)
+- Gateway enforcement (cannot be disabled by user)
+- Model restrictions (e.g., only approved models, no custom fine-tunes)
+- MCP tool policies (global allow/block/approval-required)
+- Session limits (max duration, max cost, max concurrent)
+- Audit export requirements (OTLP endpoint, retention period)
+- SIEM integration settings
+
+### New modules
+
 ```
   crates/
     capsem-core/src/
       session/
         mod.rs
         manager.rs              # orchestrates full session lifecycle
-        persistence.rs          # SQLite-backed session store
+        persistence.rs          # per-session SQLite store + global index
         config.rs               # per-session configuration (agent, policy, workspace)
         history.rs              # terminal scrollback + command history
         overlay_disk.rs         # sparse .raw file as persistent overlayfs upper
+        config_writeback.rs     # OverlayFS diff + selective save-back to host
       db/
         mod.rs
-        schema.rs               # SQLite migrations
-        queries.rs              # typed queries (sqlx or rusqlite)
+        schema.rs               # SQLite migrations (both audit.db and global_index.db)
+        queries.rs              # typed queries (rusqlite)
+      observability/
+        mod.rs
+        metrics.rs              # Prometheus counters, gauges, histograms
+        otlp.rs                 # OpenTelemetry export (sanitized + compressed)
+        corporate_policy.rs     # /etc/capsem/policy.toml loader + enforcer
 ```
 
-**Session resume strategy** (NO VM snapshots due to VirtioFS limitation):
-- On stop: host sends `Shutdown { graceful: true }` -> guest-agent runs `sync`, unmounts overlay disk, triggers ACPI poweroff
-- Persistent overlay disk (sparse `.raw` file per session) preserves `/home`, `/var`, `/etc` changes
-- On resume: boot fresh VM, mount same overlay disk as upperdir, mount same workspace
-- Terminal scrollback history stored in SQLite (replay on reconnect)
-- Session metadata: agent type, model, network policy, workspace path (as security-scoped bookmark), cumulative cost
-
-**Security-scoped bookmarks**:
-- When workspace folder selected via NSOpenPanel, create NSURL bookmark with `NSURLBookmarkCreationWithSecurityScope`
-- Store bookmark `Vec<u8>` (base64) in SQLite alongside session
-- On resume: resolve bookmark -> `startAccessingSecurityScopedResource()` -> boot VM with VirtioFS
-- On stop: `stopAccessingSecurityScopedResource()`
-- Without this, macOS app sandbox revokes folder access on quit -> VirtioFS mount fails on resume
-
 **Key crates**:
-- `rusqlite` - SQLite (or `sqlx` with SQLite feature)
+- `rusqlite` - SQLite for per-session audit.db and global_index.db
+- `zstd` - compression for audit log blobs and OTLP export
+- `prometheus` - metrics endpoint
 - `serde` + `serde_json` - config serialization
 
 **Clock sync on resume**:
@@ -592,18 +847,24 @@ Host:
 - Prevents TLS cert validation failures from clock drift
 
 **Tests**:
-- Unit: Session CRUD operations against SQLite
-- Unit: Schema migrations apply cleanly (up and down)
+- Unit: Session CRUD operations against global_index.db
+- Unit: Per-session audit.db schema creation and migration
+- Unit: zstd compression/decompression round-trip for audit blobs
 - Unit: Config serialization round-trip
 - Unit: Overlay disk creation (sparse file, correct size)
+- Unit: Config write-back diff detects added/modified/deleted files
+- Unit: Corporate policy TOML parsing and validation
+- Unit: Prometheus metric registration and increment
 - Integration: Create session -> exec command -> stop -> resume -> previous files still exist
-- Integration: App restart -> session list restored from SQLite
+- Integration: App restart -> session list restored from global_index.db
 - Integration: Terminal scrollback replayed on session reconnect
 - Integration: Clock sync after resume (guest time matches host within 2s)
-- Integration: Concurrent sessions with separate overlay disks don't interfere
-- Integration: Session delete cleans up overlay disk file
+- Integration: Concurrent sessions with separate audit.db files don't interfere
+- Integration: Session delete cleans up audit.db, overlay disk, and telemetry directory
+- Integration: Config write-back presents changed files, selective save works
+- Integration: Prometheus `/metrics` endpoint returns expected counters after model calls
 
-**NOT included**: No stats UI yet.
+**NOT included**: No stats UI (M10), no OTLP push (wired but requires corporate policy to activate).
 
 ---
 
@@ -718,7 +979,7 @@ Host:
 - Security: VM cannot send any network packet (no NIC verification)
 - Security: API keys not in VM env, not in VM memory (search /proc/*/environ)
 - Security: Session A cannot access Session B's workspace or overlay
-- Security: MCP server in Seatbelt cannot read ~/.ssh/id_rsa
+- Security: Remote MCP tool credentials injected by host gateway, not present in VM
 - Stress: 5 concurrent sessions, each running an agent, all isolated
 - Recovery: Kill VM process -> session shows error, resume boots fresh VM with overlay
 - Recovery: App crash -> relaunch -> sessions listed, resumable
@@ -1005,11 +1266,11 @@ Each VM execution should produce a per-execution SQLite database stored in the a
 | Host-guest comm | **vsock only** + VirtioFS | No NIC = air-gapped VM, zero bypass risk |
 | IPC Streaming | **Tauri 2.0 Channels + Credit-based Backpressure** | Prevents high-volume streams (PTY, logs) from freezing the UI |
 | Network control | **Fake-IP SNI router** (dummy0 + fake DNS + vsock bridge) | Solves no-NIC routing, zero DNS leaks |
-| API proxying | **Layer 7 Native HTTP Proxy** (not OpenAI translator) | Preserves prompt caching, tool schemas, streaming |
+| API proxying | **Active AI Audit Gateway** (9-stage lifecycle, PII scrubbing, tool call interception) | Preserves native APIs, full audit trail, real-time policy enforcement |
 | Terminal | **PTY over vsock** (not serial) | Proper resize, colors, cursor, SIGWINCH |
-| MCP gateway | JSON-RPC proxy over vsock + Seatbelt sandbox | Full control + host MCP server confinement |
+| MCP gateway | Hybrid: local tools in-VM sandbox, remote tools via host gateway (vsock:5003) | VM IS the sandbox for local tools; host controls remote tools with credential injection |
 | Frontend | Tauri 2.0 + Svelte 5 (scaffolded from M1) | No async retrofit pain |
-| Persistence | SQLite + persistent overlay disk (no VM snapshots) | VirtioFS blocks snapshots; cold boot is fast |
+| Persistence | Per-session SQLite (audit.db) + global index + persistent overlay disk | Self-contained sessions, no monolithic DB, VirtioFS blocks snapshots |
 | Workspace paths | **macOS security-scoped bookmarks** (not string paths) | Survives app sandbox quit/resume cycle |
 | Cache sharing | **OverlayFS on read-only VirtioFS** | npm/pip write .lock files; overlay catches writes |
 | App quit | **Graceful shutdown interceptor** | Prevents ext4 corruption on Cmd+Q |

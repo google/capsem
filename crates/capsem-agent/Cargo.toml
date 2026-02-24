@@ -1,0 +1,13 @@
+[package]
+name = "capsem-agent"
+version.workspace = true
+edition = "2021"
+
+[[bin]]
+name = "capsem-pty-agent"
+path = "src/main.rs"
+
+[dependencies]
+nix = { version = "0.29", features = ["fs", "ioctl", "poll", "term", "signal", "process"] }
+rmp-serde = { workspace = true }
+serde = { workspace = true }

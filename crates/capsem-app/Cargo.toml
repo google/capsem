@@ -1,6 +1,6 @@
 [package]
 name = "capsem"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 [dependencies]
@@ -15,6 +15,7 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+rmp-serde = { workspace = true }
 core-foundation-sys = "0.8"
 objc2 = { workspace = true }
 objc2-virtualization = { workspace = true }
