@@ -109,22 +109,19 @@ def create_rootfs():
 
 
 def generate_checksums():
-    print("Generating SHA-256 checksums...")
-    checksums = []
-    for filename in ["vmlinuz", "initrd.img", "rootfs.img"]:
-        filepath = ASSETS_DIR / filename
-        if filepath.exists():
-            sha256 = hashlib.sha256()
-            with open(filepath, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    sha256.update(chunk)
-            hash_hex = sha256.hexdigest()
-            checksums.append(f"{hash_hex}  {filename}")
-            print(f"  {filename}: {hash_hex}")
-
-    with open(ASSETS_DIR / "SHA256SUMS", "w") as f:
-        f.write("\n".join(checksums) + "\n")
-    print(f"  SHA256SUMS: {ASSETS_DIR / 'SHA256SUMS'}")
+    print("Generating BLAKE3 checksums...")
+    files = [f for f in ["vmlinuz", "initrd.img", "rootfs.img"]
+             if (ASSETS_DIR / f).exists()]
+    result = subprocess.run(
+        ["b3sum"] + files,
+        cwd=ASSETS_DIR,
+        capture_output=True, text=True, check=True,
+    )
+    with open(ASSETS_DIR / "B3SUMS", "w") as f:
+        f.write(result.stdout)
+    for line in result.stdout.strip().split("\n"):
+        print(f"  {line}")
+    print(f"  B3SUMS: {ASSETS_DIR / 'B3SUMS'}")
 
 
 def main():

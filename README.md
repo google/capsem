@@ -2,7 +2,7 @@
 
 Native macOS app that sandboxes AI agents in Linux VMs using Apple's Virtualization.framework.
 
-Built with Rust, Tauri 2.0, Svelte 5, and TailwindCSS.
+Built with Rust, Tauri 2.0, and Astro.
 
 ## Install
 
@@ -43,6 +43,7 @@ The CLI binary lives at `/Applications/Capsem.app/Contents/MacOS/capsem`.
 - macOS 13+ on Apple Silicon
 - Rust via [rustup](https://rustup.rs/)
 - Node.js 20+ and pnpm (`npm install -g pnpm`)
+- [just](https://github.com/casey/just) (`brew install just`)
 - Podman (`brew install podman` or [podman.io](https://podman.io/))
 
 ### Project Structure
@@ -50,43 +51,51 @@ The CLI binary lives at `/Applications/Capsem.app/Contents/MacOS/capsem`.
 ```
 crates/capsem-core/    Rust VM library (config, boot, serial, machine)
 crates/capsem-app/     Tauri 2.0 binary (GUI, CLI, updater, IPC commands)
-frontend/              Svelte 5 + TailwindCSS 4 + Skeleton UI
-images/                VM image build tooling (Dockerfile + build.py)
+frontend/              Astro + xterm.js (shadow DOM web component)
+images/                VM image build tooling (Dockerfile + build.py + capsem-init)
 assets/                Built VM assets (vmlinuz, initrd, rootfs -- gitignored)
 docs/                  Architecture and security documentation
 ```
 
-### Build the VM Image
+### Just Commands
 
-The VM needs three assets: an ARM64 Linux kernel, an initrd, and a root filesystem.
+All build workflows use `just`. Run `just --list` to see all targets.
+
+| Command | What it does |
+|---------|-------------|
+| `just build` | Build VM assets from scratch (kernel, initrd, rootfs) via Docker/Podman |
+| `just repack` | Repack initrd with current `capsem-init`, rebuild binary, and boot to test (~5s) |
+| `just dev` | Run the app in development mode with hot-reloading |
+| `just compile` | Build the debug Rust binary (includes frontend) |
+| `just sign` | Compile + codesign with virtualization entitlement |
+| `just run` | Sign + run the debug binary |
+| `just release` | Build the release `.app` bundle and codesign it |
+| `just install` | Release build + install to `/Applications` + launch |
+| `just rebuild` | Full rebuild: VM assets + app + sign + smoke test |
+| `just check` | Check Rust + frontend for errors |
+| `just clean` | Remove all build artifacts |
+
+### First-Time Setup
 
 ```sh
-podman machine init   # first time only
-podman machine start
-cd images && python3 build.py
-```
-
-### Install Dependencies
-
-```sh
+podman machine init && podman machine start   # first time only
 cd frontend && pnpm install
+just build                                     # build VM assets (~10 min)
 ```
 
-### Development Build
+### Development Workflow
 
 ```sh
-make run
+just dev        # hot-reloading dev server
+just run        # debug build + run (no hot-reload)
+just repack     # iterate on capsem-init without full asset rebuild
 ```
 
-This builds the Rust binary, signs it with the virtualization entitlement, and launches the app with assets from `./assets/`.
-
-### Release Build
+### Release
 
 ```sh
-make release-sign
+just install    # build, sign, install to /Applications, launch
 ```
-
-Produces a signed `Capsem.app` bundle at `target/release/bundle/macos/Capsem.app` with assets embedded in `Contents/Resources/`.
 
 ### Tests
 
@@ -96,7 +105,20 @@ cargo test --workspace
 
 ### Entitlements
 
-The binary must be signed with `com.apple.security.virtualization` or Virtualization.framework calls crash at runtime. The Makefile handles this automatically.
+The binary must be signed with `com.apple.security.virtualization` or Virtualization.framework calls crash at runtime. The justfile handles this automatically.
+
+## Security
+
+Capsem assumes the AI agent inside the VM is adversarial. The sandbox is hardened at every layer:
+
+- **Hardware VM isolation** -- Apple Silicon Stage 2 page tables, no shared memory
+- **Custom hardened kernel** -- compiled from source with `CONFIG_MODULES=n` (no rootkits), `CONFIG_INET=n` (no IP stack), KASLR, stack protector, FORTIFY_SOURCE. 7MB vs 30MB stock Debian. See `images/defconfig` for the full config.
+- **No network interface** -- no NIC exists in the VM. DNS, HTTP, and all IP traffic are physically impossible.
+- **Read-only rootfs** -- system binaries are immutable. Only `/root`, `/tmp`, and `/run` are writable (tmpfs, wiped on reboot).
+- **Boot asset integrity** -- BLAKE3 hashes of kernel, initrd, and rootfs are compiled into the binary. Tampered assets are rejected before the VM boots.
+- **No systemd, no services** -- PID 1 is our init script. No cron, no sshd, no background processes.
+
+Full threat model and security analysis: **[docs/security.md](docs/security.md)**
 
 ## Documentation
 

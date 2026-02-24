@@ -16,4 +16,4 @@ block2 = { workspace = true }
 dispatch2 = { workspace = true }
 libc = "0.2"
 core-foundation-sys = "0.8"
-sha2 = "0.10.9"
+blake3 = "1"

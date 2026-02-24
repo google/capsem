@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use objc2::AllocAnyThread;
 use objc2_foundation::{NSString, NSURL};
 use objc2_virtualization::VZLinuxBootLoader;
+use tracing::debug_span;
 
 use super::config::VmConfig;
 
@@ -12,6 +13,7 @@ use super::config::VmConfig;
 /// # Safety
 /// Calls Objective-C APIs which are inherently unsafe.
 pub fn create_boot_loader(config: &VmConfig) -> Result<objc2::rc::Retained<VZLinuxBootLoader>> {
+    let _span = debug_span!("create_boot_loader").entered();
     unsafe {
         let kernel_url = nsurl_from_path(&config.kernel_path)
             .context("failed to create kernel URL")?;

@@ -16,7 +16,7 @@ use objc2_virtualization::{
     VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{debug_span, info};
 
 use super::boot::create_boot_loader;
 use super::config::VmConfig;
@@ -39,75 +39,90 @@ impl VirtualMachine {
     /// Returns the VM, a broadcast receiver for serial console output,
     /// and a RawFd for writing input to the guest's serial console.
     pub fn create(config: &VmConfig) -> Result<(Self, broadcast::Receiver<Vec<u8>>, RawFd)> {
-        let boot_loader = create_boot_loader(config)?;
-
-        let (serial_port_config, serial_console, input_fd) = serial::create_serial_port()?;
-
-        let vz_config = unsafe {
-            let vz_config = VZVirtualMachineConfiguration::new();
-
-            vz_config.setCPUCount(config.cpu_count as usize);
-            vz_config.setMemorySize(config.ram_bytes);
-            vz_config.setBootLoader(Some(&boot_loader));
-
-            // Platform
-            let platform = VZGenericPlatformConfiguration::new();
-            vz_config.setPlatform(&platform);
-
-            // Entropy device (prevents hangs waiting for random)
-            let entropy_config = VZVirtioEntropyDeviceConfiguration::new();
-            let entropy_super: Retained<VZEntropyDeviceConfiguration> =
-                Retained::into_super(entropy_config);
-            let entropy_array = NSArray::from_retained_slice(&[entropy_super]);
-            vz_config.setEntropyDevices(&entropy_array);
-
-            // Serial ports - cast to superclass array
-            let serial_port_super: Retained<VZSerialPortConfiguration> =
-                Retained::into_super(serial_port_config);
-            let serial_array = NSArray::from_retained_slice(&[serial_port_super]);
-            vz_config.setSerialPorts(&serial_array);
-
-            // Block device (rootfs)
-            if let Some(ref disk_path) = config.disk_path {
-                let path_str = disk_path.to_str().context("disk path not valid UTF-8")?;
-                let ns_path = NSString::from_str(path_str);
-                let disk_url = NSURL::fileURLWithPath(&ns_path);
-
-                let disk_attachment =
-                    VZDiskImageStorageDeviceAttachment::initWithURL_readOnly_cachingMode_synchronizationMode_error(
-                        VZDiskImageStorageDeviceAttachment::alloc(),
-                        &disk_url,
-                        true, // read-only for M1
-                        VZDiskImageCachingMode::Automatic,
-                        VZDiskImageSynchronizationMode::Full,
-                    )
-                    .map_err(|e| anyhow::anyhow!("disk attach failed: {e:?}"))?;
-
-                let block_device = VZVirtioBlockDeviceConfiguration::initWithAttachment(
-                    VZVirtioBlockDeviceConfiguration::alloc(),
-                    &disk_attachment,
-                );
-
-                // Cast to superclass array
-                let block_device_super: Retained<VZStorageDeviceConfiguration> =
-                    Retained::into_super(block_device);
-                let storage_array = NSArray::from_retained_slice(&[block_device_super]);
-                vz_config.setStorageDevices(&storage_array);
-            }
-
-            // Validate
-            vz_config
-                .validateWithError()
-                .map_err(|e| anyhow::anyhow!("VM config validation failed: {e:?}"))?;
-
-            vz_config
+        let boot_loader = {
+            let _span = debug_span!("create_boot_loader").entered();
+            create_boot_loader(config)?
         };
 
-        let vm = unsafe {
-            ObjcVZVirtualMachine::initWithConfiguration(
-                ObjcVZVirtualMachine::alloc(),
-                &vz_config,
-            )
+        let (serial_port_config, serial_console, input_fd) = {
+            let _span = debug_span!("create_serial_port").entered();
+            serial::create_serial_port()?
+        };
+
+        let vz_config = {
+            let _span = debug_span!("vz_configure").entered();
+            unsafe {
+                let vz_config = VZVirtualMachineConfiguration::new();
+
+                vz_config.setCPUCount(config.cpu_count as usize);
+                vz_config.setMemorySize(config.ram_bytes);
+                vz_config.setBootLoader(Some(&boot_loader));
+
+                // Platform
+                let platform = VZGenericPlatformConfiguration::new();
+                vz_config.setPlatform(&platform);
+
+                // Entropy device (prevents hangs waiting for random)
+                let entropy_config = VZVirtioEntropyDeviceConfiguration::new();
+                let entropy_super: Retained<VZEntropyDeviceConfiguration> =
+                    Retained::into_super(entropy_config);
+                let entropy_array = NSArray::from_retained_slice(&[entropy_super]);
+                vz_config.setEntropyDevices(&entropy_array);
+
+                // Serial ports - cast to superclass array
+                let serial_port_super: Retained<VZSerialPortConfiguration> =
+                    Retained::into_super(serial_port_config);
+                let serial_array = NSArray::from_retained_slice(&[serial_port_super]);
+                vz_config.setSerialPorts(&serial_array);
+
+                // Block device (rootfs)
+                if let Some(ref disk_path) = config.disk_path {
+                    let path_str = disk_path.to_str().context("disk path not valid UTF-8")?;
+                    let ns_path = NSString::from_str(path_str);
+                    let disk_url = NSURL::fileURLWithPath(&ns_path);
+
+                    let disk_attachment =
+                        VZDiskImageStorageDeviceAttachment::initWithURL_readOnly_cachingMode_synchronizationMode_error(
+                            VZDiskImageStorageDeviceAttachment::alloc(),
+                            &disk_url,
+                            true, // read-only for M1
+                            VZDiskImageCachingMode::Automatic,
+                            VZDiskImageSynchronizationMode::Full,
+                        )
+                        .map_err(|e| anyhow::anyhow!("disk attach failed: {e:?}"))?;
+
+                    let block_device = VZVirtioBlockDeviceConfiguration::initWithAttachment(
+                        VZVirtioBlockDeviceConfiguration::alloc(),
+                        &disk_attachment,
+                    );
+
+                    // Cast to superclass array
+                    let block_device_super: Retained<VZStorageDeviceConfiguration> =
+                        Retained::into_super(block_device);
+                    let storage_array = NSArray::from_retained_slice(&[block_device_super]);
+                    vz_config.setStorageDevices(&storage_array);
+                }
+
+                // Validate
+                {
+                    let _span = debug_span!("vz_validate").entered();
+                    vz_config
+                        .validateWithError()
+                        .map_err(|e| anyhow::anyhow!("VM config validation failed: {e:?}"))?;
+                }
+
+                vz_config
+            }
+        };
+
+        let vm = {
+            let _span = debug_span!("vz_init").entered();
+            unsafe {
+                ObjcVZVirtualMachine::initWithConfiguration(
+                    ObjcVZVirtualMachine::alloc(),
+                    &vz_config,
+                )
+            }
         };
 
         info!("virtual machine created");
@@ -133,6 +148,8 @@ impl VirtualMachine {
     /// Spins the CFRunLoop while waiting for the completion handler,
     /// since VZVirtualMachine dispatches callbacks on the main queue.
     pub fn start(&mut self) -> Result<()> {
+        let _span = debug_span!("vm_start").entered();
+
         // Start the serial reader before the VM
         if let Some(console) = self.serial_console.take() {
             console.spawn_reader();

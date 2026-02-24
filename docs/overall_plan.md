@@ -726,6 +726,250 @@ Host:
 
 ---
 
+## Milestone 12: Kernel Hardening -- Custom Minimal Kernel
+
+**Goal**: Replace the stock Debian kernel with a custom-compiled minimal kernel, enforce SELinux mandatory access control, and strip the rootfs of all unnecessary binaries/files. Three layers of hardening: kernel attack surface reduction, MAC policy enforcement, and filesystem minimization.
+
+**Deliverable**: A custom aarch64 Linux kernel (~2-4MB vs ~30MB stock) with `CONFIG_MODULES=n`, SELinux in enforcing mode with a tight policy, and a rootfs stripped to only the binaries the agent actually needs. No USB, no HID, no DRM, no sound, no loadable modules, no compilers, no package managers, no setuid binaries.
+
+**Security verdict**: Strongest kernel security posture achievable. `CONFIG_MODULES=n` means even a root agent cannot dynamically load kernel code -- the kernel simply lacks the machinery to do so. This neutralizes kernel rootkits, malicious `.ko` files, and module-based persistence.
+
+**Caveat**: Patch management. We own the kernel. When a high-severity Linux kernel CVE drops, `apt-get upgrade` won't save us. We must pull the patched upstream source, recompile via our Docker pipeline, and redeploy. The Docker-based build makes this mechanical (change the kernel source tag, rebuild) but it requires active monitoring of kernel security advisories.
+
+**Kernel config (enabled)**:
+```
+# Core
+CONFIG_64BIT=y
+CONFIG_ARM64=y
+CONFIG_SMP=y
+
+# Virtio (all built-in, no modules)
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_HW_RANDOM_VIRTIO=y
+CONFIG_VIRTIO_BALLOON=y          # memory management
+CONFIG_VIRTIO_FS=y               # future VirtioFS (M4)
+CONFIG_VSOCK=y                   # future vsock (M2)
+CONFIG_VIRTIO_VSOCKETS=y
+
+# Filesystems
+CONFIG_EXT4_FS=y
+CONFIG_SQUASHFS=y                # future immutable root (M3)
+CONFIG_OVERLAY_FS=y              # writable overlay
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_TMPFS=y
+
+# Terminal / console
+CONFIG_TTY=y
+CONFIG_VT=y
+CONFIG_SERIAL_CORE=y
+CONFIG_HVC_DRIVER=y
+
+# Minimal networking (for future M5 dummy0 + iptables)
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_NETFILTER=y
+CONFIG_IP_NF_IPTABLES=y
+CONFIG_IP_NF_NAT=y
+CONFIG_DUMMY=y
+
+# Security
+CONFIG_MODULES=n                 # THE BIG ONE: no loadable modules
+CONFIG_SECURITY=y
+CONFIG_SECCOMP=y
+CONFIG_STRICT_KERNEL_RWX=y
+CONFIG_SECURITY_SELINUX=y        # mandatory access control
+CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+CONFIG_DEFAULT_SECURITY_SELINUX=y
+CONFIG_AUDIT=y                   # SELinux needs audit subsystem
+```
+
+**Kernel config (disabled)**:
+```
+CONFIG_USB_SUPPORT is not set
+CONFIG_HID is not set
+CONFIG_DRM is not set
+CONFIG_SOUND is not set
+CONFIG_WLAN is not set
+CONFIG_BLUETOOTH is not set
+CONFIG_INPUT is not set           # no keyboard/mouse
+CONFIG_NFS_FS is not set
+CONFIG_CIFS is not set
+CONFIG_WIRELESS is not set
+CONFIG_RFKILL is not set
+CONFIG_GPU is not set
+CONFIG_FB is not set              # no framebuffer
+CONFIG_MODULES is not set         # no loadable modules
+```
+
+**Build pipeline**:
+```
+images/
+  Dockerfile.kernel-custom    Cross-compile minimal kernel in Docker
+  kernel-config               Checked-in .config for reproducibility
+```
+
+The Dockerfile cross-compiles using Debian's `gcc-aarch64-linux-gnu` toolchain. The kernel source is fetched from kernel.org at a pinned tag (e.g., `v6.6.80`). The output is a `vmlinuz` and optional built-in initramfs.
+
+**SELinux mandatory access control**:
+
+SELinux provides a second layer of defense beyond filesystem permissions. Even if the agent gains root, SELinux policy restricts what root can do. The policy is baked into the rootfs at build time; the agent cannot modify it (read-only rootfs).
+
+Policy goals:
+- Agent process (bash, claude-code, node, python) confined to a `capsem_agent_t` domain
+- `capsem_agent_t` can: read/write workspace (`/workspace`), read system libs, execute allowed binaries, write to tmpfs mounts
+- `capsem_agent_t` cannot: write to `/usr`, `/bin`, `/sbin`, `/lib`, `/etc`; access raw block devices; mount filesystems; load kernel modules; change SELinux policy; access `/proc/kcore`, `/proc/kallsyms`, or other sensitive proc entries; use `ptrace` on PID 1
+- PID 1 (capsem-init / guest-agent) runs as `capsem_init_t` with full system access (it needs to mount, chroot, etc.)
+- Transition: `capsem_init_t` -> `capsem_agent_t` when bash is exec'd in the chroot
+- SELinux mode: enforcing (not permissive). Violations are denied, not just logged.
+- Kernel cmdline: `security=selinux selinux=1 enforcing=1`
+
+Build integration:
+- SELinux policy source (`.te`, `.fc`, `.if` files) checked into `images/selinux/`
+- Policy compiled during rootfs build (`checkpolicy`, `semodule_package`)
+- Filesystem labels applied during rootfs build (`setfiles`)
+- `libselinux` installed in rootfs (required for label-aware tools)
+
+**Rootfs binary/file stripping**:
+
+The stock Debian rootfs contains hundreds of binaries the agent doesn't need and an attacker could abuse. We strip the rootfs to a minimal set during the Docker build.
+
+Binaries to KEEP (allowlist):
+```
+# Shell and core utilities
+/bin/bash /bin/sh
+/usr/bin/env /usr/bin/cat /usr/bin/ls /usr/bin/cp /usr/bin/mv
+/usr/bin/mkdir /usr/bin/rm /usr/bin/chmod /usr/bin/chown
+/usr/bin/grep /usr/bin/sed /usr/bin/awk /usr/bin/sort
+/usr/bin/head /usr/bin/tail /usr/bin/wc /usr/bin/tr
+/usr/bin/find /usr/bin/xargs /usr/bin/tee
+/usr/bin/echo /usr/bin/printf /usr/bin/test /usr/bin/expr
+/usr/bin/date /usr/bin/sleep /usr/bin/id /usr/bin/whoami
+/usr/bin/uname /usr/bin/hostname /usr/bin/dirname /usr/bin/basename
+/usr/bin/readlink /usr/bin/realpath /usr/bin/stat
+/usr/bin/diff /usr/bin/patch /usr/bin/touch
+/usr/bin/tar /usr/bin/gzip /usr/bin/gunzip
+/usr/bin/du /usr/bin/df /usr/bin/free
+
+# Developer tools (needed by AI agents)
+/usr/bin/git
+/usr/bin/node /usr/bin/npm /usr/bin/npx
+/usr/bin/python3 /usr/bin/pip3
+/usr/bin/curl /usr/bin/wget
+
+# Session management
+/usr/bin/setsid /usr/bin/stty /usr/bin/tty
+
+# Build tools (needed for native Python extensions like numpy)
+/usr/bin/gcc /usr/bin/g++ /usr/bin/make /usr/bin/cc
+/usr/bin/ld /usr/bin/as /usr/bin/ar
+
+# Debug tools (agents need these for development)
+/usr/bin/strace /usr/bin/ltrace /usr/bin/gdb /usr/bin/ldd
+
+# Package managers (agents install project dependencies)
+/usr/bin/pip3 /usr/bin/pip
+/usr/bin/apt /usr/bin/apt-get /usr/bin/dpkg
+
+# AI agent CLIs (installed globally)
+claude, gemini (via npm global)
+```
+
+Binaries/files to REMOVE (blocklist):
+```
+# NOTE: gcc, make, pip, npm, strace, gdb are KEPT. Agents need compilers
+# for native Python extensions, package managers for project deps, and
+# debug tools for development. SELinux policy confines what they can
+# write to (workspace + tmpfs only).
+
+# Dangerous system tools
+mount, umount, fdisk, mkfs.*, fsck.*, losetup
+insmod, rmmod, modprobe, lsmod (redundant with CONFIG_MODULES=n but belt-and-suspenders)
+iptables, ip, route, ifconfig, ss, netstat (agent doesn't manage networking)
+su, sudo, chroot, unshare, nsenter (no privilege escalation tools)
+dd (raw disk access)
+nc, ncat, socat, nmap (network attack tools -- should not be in rootfs anyway)
+crontab, at, batch (no scheduled execution)
+
+# Setuid/setgid binaries (remove ALL setuid bits)
+find / -perm /6000 -exec chmod ug-s {} \;
+
+# Unnecessary directories
+/usr/share/doc, /usr/share/man, /usr/share/info, /usr/share/locale (except C)
+/usr/share/zoneinfo (except UTC)
+/var/cache/apt, /var/lib/apt (no apt)
+/usr/games
+```
+
+Build integration:
+- A `strip-rootfs.sh` script runs as the final stage of `Dockerfile.kernel`
+- Allowlist-based: start by removing everything in `/usr/bin`, `/usr/sbin`, `/sbin`, then copy back only allowed binaries
+- Remove all setuid/setgid bits
+- Remove all `.a` static libraries and `.h` header files
+- Final rootfs size target: <200MB (vs ~500MB+ stock with dev tools)
+
+**Migration path**:
+1. Start from Debian's `defconfig` for arm64
+2. Iteratively disable subsystems, boot-test after each change
+3. When stable, set `CONFIG_MODULES=n` and rebuild
+4. Verify all needed drivers are built-in (virtio_pci, virtio_blk, etc.)
+5. Replace `Dockerfile.kernel` with `Dockerfile.kernel-custom`
+6. `just build` produces the new kernel; everything else unchanged
+
+**Tests**:
+
+Kernel:
+- Boot: custom kernel boots successfully, reaches capsem-init
+- Boot: `/dev/vda` appears (virtio_blk built-in)
+- Boot: `/dev/hvc0` works (virtio_console built-in)
+- Boot: `random: crng init done` appears quickly (hw_random_virtio built-in)
+- Security: `insmod /tmp/evil.ko` fails with "modules disabled" or similar
+- Security: `/proc/modules` is empty or absent
+- Security: `lsmod` shows nothing
+- Security: no USB, HID, DRM messages in `dmesg`
+- Size: `vmlinuz` < 5MB (vs ~30MB stock)
+- Performance: boot time equal or faster than stock kernel
+
+SELinux:
+- Security: `getenforce` returns `Enforcing`
+- Security: agent process runs as `capsem_agent_t` (`id -Z`)
+- Security: `touch /usr/bin/evil` denied by SELinux (even as root)
+- Security: `echo x > /etc/passwd` denied by SELinux
+- Security: writing to `/workspace/` succeeds (allowed by policy)
+- Security: writing to `/tmp/` succeeds (tmpfs, allowed)
+- Security: `cat /proc/kcore` denied by SELinux
+- Security: `cat /proc/kallsyms` denied by SELinux
+- Security: `setenforce 0` denied (agent cannot disable SELinux)
+- Integration: `pip install requests` succeeds (installs to workspace/tmpfs)
+- Integration: `npm install` succeeds in workspace
+- Integration: `gcc -o hello hello.c` succeeds in workspace
+- Integration: Claude Code / Gemini CLI run normally under policy
+
+Filesystem stripping:
+- Security: no setuid/setgid binaries in rootfs (`find / -perm /6000` returns empty)
+- Security: `su` not found, `sudo` not found, `chroot` not found
+- Security: `mount` not found, `umount` not found
+- Security: `dd` not found, `nc` not found, `nsenter` not found
+- Security: no `.h` files outside workspace, no `.a` static libraries in system dirs
+- Security: `/usr/share/doc` absent, `/usr/share/man` absent
+- Size: rootfs < 200MB (vs ~500MB+ unstripped)
+- Integration: `git`, `node`, `python3`, `gcc`, `pip`, `npm`, `curl`, `strace`, `gdb` all present and functional
+
+**NOT included**: Secure Boot chain (kernel signature verification by the hypervisor). Apple's Virtualization.framework does not support this.
+
+---
+
+## Per-Execution Structured Logging (Future)
+
+Each VM execution should produce a per-execution SQLite database stored in the app data directory. Schema TBD but must include: timestamps, event names, durations, and structured fields. This enables post-hoc analysis of boot performance, hash verification costs, and VM lifecycle timing. Currently deferred -- tracing spans with `FmtSpan::CLOSE` are the interim solution. Implementation should land alongside or after Milestone 8 (Session Management + Persistence) since that milestone introduces SQLite infrastructure via `rusqlite`.
+
+---
+
 ## Verification Plan
 
 **Per-milestone**:
@@ -772,6 +1016,7 @@ Host:
 | API key storage | macOS Keychain via `security-framework` | Native OS secure storage |
 | x86_64 compat | Rosetta 2 via `VZLinuxRosettaDirectoryShare` | Transparent Intel binary execution |
 | Clock sync | `SyncTime` vsock message on resume | Prevents TLS cert failures |
+| Kernel | **Custom minimal kernel** with `CONFIG_MODULES=n` (M12) | Eliminates kernel rootkits, shrinks attack surface by 90% |
 
 ---
 

@@ -9,7 +9,7 @@ Capsem is a native macOS application that sandboxes AI agents in lightweight Lin
 |  Capsem.app (macOS)                      |
 |  +------------------------------------+  |
 |  | Tauri 2.0 Shell                    |  |
-|  | - Svelte 5 WebView (boot UI)      |  |
+|  | - Astro WebView (terminal UI)     |  |
 |  | - VZVirtualMachineView (VM screen) |  |
 |  +------------------------------------+  |
 |           |  Tauri IPC                    |
@@ -56,7 +56,7 @@ crates/capsem-core/src/
 
 **Key types:**
 
-- `VmConfig` -- builder pattern for VM configuration. Validates CPU count, RAM size, kernel path. Optionally accepts SHA-256 hashes for boot asset integrity verification.
+- `VmConfig` -- builder pattern for VM configuration. Validates CPU count, RAM size, kernel path. Optionally accepts BLAKE3 hashes for boot asset integrity verification.
 - `VirtualMachine` -- wraps `VZVirtualMachine`. Provides `create()` which returns the VM, a `broadcast::Receiver<String>` for serial output, and a raw file descriptor for serial input.
 
 ### capsem-app
@@ -72,12 +72,12 @@ crates/capsem-app/src/
 
 **Dual-mode operation:**
 
-- **GUI mode** (no arguments): Launches Tauri window, boots VM, replaces the Svelte WebView with `VZVirtualMachineView` for direct framebuffer display.
+- **GUI mode** (no arguments): Launches Tauri window, boots VM, replaces the WebView with `VZVirtualMachineView` for direct framebuffer display.
 - **CLI mode** (with arguments): Boots VM headlessly, sends command via serial console with sentinel markers, captures output between markers, prints to stdout, exits.
 
 ## Asset Resolution
 
-The app needs four files: `vmlinuz`, `initrd.img`, `rootfs.img`, `SHA256SUMS`. The `resolve_assets_dir()` function searches these locations in order:
+The app needs four files: `vmlinuz`, `initrd.img`, `rootfs.img`, `B3SUMS`. The `resolve_assets_dir()` function searches these locations in order:
 
 1. `CAPSEM_ASSETS_DIR` environment variable (development override)
 2. `Contents/Resources/` inside the .app bundle (production)
@@ -88,10 +88,10 @@ In the release .app bundle, Tauri copies assets into `Capsem.app/Contents/Resour
 
 ## Build-Time Integrity
 
-The `build.rs` script reads `assets/SHA256SUMS` and embeds the hashes as compile-time constants via `cargo:rustc-env`. At runtime, `capsem-core` verifies each asset's SHA-256 hash before booting the VM.
+The `build.rs` script reads `assets/B3SUMS` and embeds the hashes as compile-time constants via `cargo:rustc-env`. At runtime, `capsem-core` verifies each asset's BLAKE3 hash before booting the VM.
 
 ```
-build.rs reads SHA256SUMS
+build.rs reads B3SUMS
   -> cargo:rustc-env=VMLINUZ_HASH=abc123...
   -> cargo:rustc-env=INITRD_HASH=def456...
   -> cargo:rustc-env=ROOTFS_HASH=789abc...
@@ -122,21 +122,21 @@ images/
 2. Installs `linux-image-arm64`, extracts the kernel as `vmlinuz`
 3. Creates a custom initramfs with `capsem-init` as the init process
 4. Creates a 64MB ext4 `rootfs.img` (formatted inside a container since macOS lacks `mkfs.ext4`)
-5. Generates `SHA256SUMS` for all artifacts
+5. Generates `B3SUMS` for all artifacts
 6. Outputs everything to `assets/`
 
 ## GUI Architecture
 
 The GUI uses a two-phase approach:
 
-1. **Boot phase**: Tauri renders the Svelte 5 frontend (status indicator, serial console panel). This is visible briefly during VM startup.
-2. **Running phase**: Once the VM boots, the Svelte WebView is replaced with `VZVirtualMachineView`, which provides direct framebuffer access to the Linux VM's console. The user interacts with the VM as if it were a native terminal.
+1. **Boot phase**: Tauri renders the Astro frontend (tab bar, xterm.js terminal in a shadow DOM web component, status bar). This is visible briefly during VM startup.
+2. **Running phase**: Once the VM boots, the WebView is replaced with `VZVirtualMachineView`, which provides direct framebuffer access to the Linux VM's console. The user interacts with the VM as if it were a native terminal.
 
 The WebView replacement happens via raw AppKit/NSWindow manipulation using `objc2-app-kit` bindings.
 
 ## Serial Console Bridge
 
-In GUI mode, serial output from the VM is forwarded as Tauri events (`serial-output`) to the Svelte frontend for display in the Serial Console panel. The serial channel uses `tokio::sync::broadcast` for multi-consumer delivery.
+In GUI mode, serial output from the VM is forwarded as Tauri events (`serial-output`) to the frontend's xterm.js terminal. VM state transitions are pushed via `vm-state-changed` events. The serial channel uses `tokio::sync::broadcast` for multi-consumer delivery.
 
 In CLI mode, serial output is parsed directly on the main thread. Commands are wrapped in sentinel markers (`<<<CAPSEM_START>>>` / `<<<CAPSEM_DONE>>>`) to extract just the command output from the serial stream.
 
@@ -156,7 +156,7 @@ The updater public key is embedded in `tauri.conf.json`. The private key is used
 ```
 make release-sign
   1. assets-check      Verify vmlinuz exists
-  2. frontend           Build Svelte (pnpm build)
+  2. frontend           Build Astro (pnpm build)
   3. cargo tauri build  Compile Rust, bundle .app with assets in Resources/
   4. codesign            Sign .app with virtualization entitlement
 ```
@@ -171,16 +171,14 @@ CI (`.github/workflows/release.yaml`) additionally:
 
 ```
 frontend/
+  astro.config.mjs                  Astro config (static output)
   src/
-    routes/+page.svelte     Main UI: VM status, serial console
-    routes/+layout.svelte   App shell
-    app.html                HTML entry
-    app.css                 TailwindCSS 4
-  svelte.config.js          SvelteKit with static adapter
-  vite.config.ts            Vite bundler config
+    pages/index.astro               Single page: tab bar + terminal + status bar
+    components/capsem-terminal.ts   Shadow DOM web component wrapping xterm.js
+    styles/global.css               Plain CSS variables (no framework)
 ```
 
-The frontend uses SvelteKit with `@sveltejs/adapter-static` for Tauri compatibility, Skeleton UI components, and Tauri's JavaScript API for IPC.
+The frontend uses Astro with static output for Tauri compatibility. The terminal runs inside a closed shadow DOM web component (`capsem-terminal`) with xterm.js + WebGL addon for rendering. Dependencies: `@tauri-apps/api`, `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-webgl`, `astro`.
 
 ## Key Dependencies
 
@@ -193,8 +191,27 @@ The frontend uses SvelteKit with `@sveltejs/adapter-static` for Tauri compatibil
 | `tauri-plugin-dialog` | Native macOS dialogs for update prompts |
 | `tauri-plugin-process` | App restart after update |
 | `tokio` | Async runtime |
-| `sha2` | Build-time and runtime hash verification |
+| `blake3` | Build-time and runtime hash verification |
 | `tracing` | Structured logging |
+
+## Execution Logging
+
+Every VM boot sequence is instrumented with `tracing` spans. The subscriber uses `FmtSpan::CLOSE` so each span logs its duration when it completes. This provides a complete boot performance profile without manual timing code.
+
+**Span hierarchy:**
+
+- `boot_vm` (info-level, always visible)
+  - `config_build` -- VmConfig validation and hash verification
+    - `verify_hash{path=...}` -- per-asset BLAKE3 verification
+  - `vm_create` -- VZVirtualMachine construction
+    - `create_boot_loader` -- VZLinuxBootLoader setup
+    - `create_serial_port` -- NSPipe serial console setup
+    - `vz_configure` -- ObjC config (CPU, RAM, devices)
+    - `vz_validate` -- VZ config validation
+    - `vz_init` -- VZVirtualMachine instantiation
+  - `vm_start` -- VM start + runloop spin
+
+**Usage:** `RUST_LOG=capsem=debug` for full breakdown, `RUST_LOG=capsem=info` for top-level boot time only.
 
 ## Future Architecture (Planned)
 

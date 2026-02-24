@@ -11,8 +11,8 @@ dev:
     -@pkill -x Capsem 2>/dev/null || true
     cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
-# Build VM assets (kernel, initrd, rootfs)
-assets:
+# Build VM assets from scratch (kernel, initrd, rootfs) via Docker/Podman
+build:
     cd images && python3 build.py
 
 # Build frontend
@@ -31,18 +31,18 @@ sign: compile
 run: sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}}
 
-# Full rebuild: assets + app + sign, then smoke-test the VM boots
-rebuild: assets sign
+# Full rebuild: VM assets + app + sign, then smoke-test the VM boots
+rebuild: build sign
     CAPSEM_ASSETS_DIR={{assets_dir}} ./{{binary}} "echo capsem-ok"
 
-# Build the release version of the app and sign it for macOS
-build: frontend
+# Build the release .app bundle and sign it for macOS
+release: frontend
     cd crates/capsem-app && cargo tauri build
     codesign --sign - --entitlements {{entitlements}} --force --deep \
         "target/release/bundle/macos/Capsem.app"
 
 # Build and install the app to /Applications
-install: build
+install: release
     @echo "Stopping running Capsem..."
     -@pkill -x Capsem 2>/dev/null || true
     -@pkill -x capsem 2>/dev/null || true
@@ -55,18 +55,18 @@ install: build
 # Clean build artifacts
 clean:
     cargo clean
-    cd frontend && rm -rf build .svelte-kit node_modules
+    cd frontend && rm -rf dist node_modules
     rm -rf target/release/bundle/macos/Capsem.app
 
-# Quick repack initrd + boot (fast debug cycle, ~5s)
-# Repacks initrd with current capsem-init, rebuilds, codesigns, boots.
-quick *CMD:
+# Repack initrd with current capsem-init, rebuild, codesign, and boot.
+# Use this instead of 'build' when only capsem-init changed (~5s vs full rebuild).
+repack *CMD:
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
     INITRD="$ROOT/{{assets_dir}}/initrd.img"
     if [ ! -f "$INITRD" ]; then
-        echo "ERROR: $INITRD not found. Run 'just assets' first."
+        echo "ERROR: $INITRD not found. Run 'just build' first."
         exit 1
     fi
     echo "=== Repack initrd ==="
@@ -78,7 +78,7 @@ quick *CMD:
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
-    (cd "{{assets_dir}}" && shasum -a 256 vmlinuz initrd.img rootfs.img > SHA256SUMS)
+    (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
     echo "initrd repacked"
     echo ""
     echo "=== Build + sign ==="

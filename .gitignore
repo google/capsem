@@ -42,6 +42,6 @@ assets/*
 crates/capsem-app/gen/
 
 # Frontend
-frontend/.svelte-kit/
-frontend/build/
+frontend/.astro/
+frontend/dist/
 frontend/node_modules/

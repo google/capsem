@@ -16,6 +16,7 @@ pub fn vm_status(state: State<'_, AppState>) -> String {
 
 #[tauri::command]
 pub fn serial_input(input: String, state: State<'_, AppState>) -> Result<(), String> {
+    tracing::debug!("Received serial input: {:?}", input.as_bytes());
     let guard = state.serial_input_fd.lock().unwrap();
     let fd = guard.ok_or_else(|| "no serial input fd".to_string())?;
     // Safety: fd is a valid pipe write end, kept open for the lifetime of the app.

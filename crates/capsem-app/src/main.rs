@@ -13,7 +13,8 @@ use capsem_core::{VirtualMachine, VmConfig};
 use state::AppState;
 use tauri::{Emitter, Manager};
 use tokio::sync::broadcast;
-use tracing::{error, info};
+use tracing::{debug_span, error, info, info_span};
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
 
 /// Find the assets directory containing kernel, initrd, and rootfs.
@@ -24,6 +25,7 @@ use tracing_subscriber::EnvFilter;
 /// 3. `./assets` (workspace root, for `cargo run`)
 /// 4. `../../assets` (when CWD is `crates/capsem-app/`)
 fn resolve_assets_dir() -> Result<PathBuf> {
+    let _span = debug_span!("resolve_assets").entered();
     // 1. Explicit env var (development override)
     if let Ok(dir) = std::env::var("CAPSEM_ASSETS_DIR") {
         let p = PathBuf::from(dir);
@@ -61,38 +63,91 @@ fn resolve_assets_dir() -> Result<PathBuf> {
     ))
 }
 
+/// Boot performance log entry.
+struct PerfEntry {
+    stage: &'static str,
+    elapsed_ms: f64,
+}
+
+/// Write boot performance data to ~/.capsem/perf/<timestamp>.log
+fn write_perf_log(entries: &[PerfEntry]) {
+    let home = match std::env::var("HOME") {
+        Ok(h) => PathBuf::from(h),
+        Err(_) => return,
+    };
+    let dir = home.join(".capsem").join("perf");
+    let _ = std::fs::create_dir_all(&dir);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let path = dir.join(format!("{ts}.log"));
+    let mut lines = Vec::new();
+    for e in entries {
+        let line = format!("{:<30} {:>10.3} ms", e.stage, e.elapsed_ms);
+        eprintln!("{line}");
+        lines.push(line);
+    }
+    let _ = std::fs::write(&path, lines.join("\n") + "\n");
+    eprintln!("perf log: {}", path.display());
+}
+
 /// Build config, create VM, start it, and return the VM + serial receiver + input fd.
 fn boot_vm(assets: &Path, cmdline: &str) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd)> {
-    let mut builder = VmConfig::builder()
-        .cpu_count(2)
-        .ram_bytes(512 * 1024 * 1024)
-        .kernel_path(assets.join("vmlinuz"))
-        .kernel_cmdline(cmdline);
+    let _span = info_span!("boot_vm").entered();
+    let boot_start = Instant::now();
+    let mut perf = Vec::new();
 
-    if let Some(hash) = option_env!("VMLINUZ_HASH") {
-        builder = builder.expected_kernel_hash(hash);
-    }
+    let config = {
+        let _span = debug_span!("config_build").entered();
+        let t0 = Instant::now();
+        let mut builder = VmConfig::builder()
+            .cpu_count(2)
+            .ram_bytes(512 * 1024 * 1024)
+            .kernel_path(assets.join("vmlinuz"))
+            .kernel_cmdline(cmdline);
 
-    if assets.join("initrd.img").exists() {
-        builder = builder.initrd_path(assets.join("initrd.img"));
-        if let Some(hash) = option_env!("INITRD_HASH") {
-            builder = builder.expected_initrd_hash(hash);
+        if let Some(hash) = option_env!("VMLINUZ_HASH") {
+            builder = builder.expected_kernel_hash(hash);
         }
-    }
 
-    if assets.join("rootfs.img").exists() {
-        builder = builder.disk_path(assets.join("rootfs.img"));
-        // Skip hashing 2GB rootfs in debug builds; unoptimized SHA256 takes 30s+ 
-        // and makes the VM appear hung during development.
-        #[cfg(not(debug_assertions))]
-        if let Some(hash) = option_env!("ROOTFS_HASH") {
-            builder = builder.expected_disk_hash(hash);
+        if assets.join("initrd.img").exists() {
+            builder = builder.initrd_path(assets.join("initrd.img"));
+            if let Some(hash) = option_env!("INITRD_HASH") {
+                builder = builder.expected_initrd_hash(hash);
+            }
         }
+
+        if assets.join("rootfs.img").exists() {
+            builder = builder.disk_path(assets.join("rootfs.img"));
+            if let Some(hash) = option_env!("ROOTFS_HASH") {
+                builder = builder.expected_disk_hash(hash);
+            }
+        }
+
+        let config = builder.build().context("failed to build VmConfig")?;
+        perf.push(PerfEntry { stage: "config_build (incl hashing)", elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0 });
+        config
+    };
+
+    let (mut vm, rx, input_fd) = {
+        let _span = debug_span!("vm_create").entered();
+        let t0 = Instant::now();
+        let result = VirtualMachine::create(&config).context("failed to create VM")?;
+        perf.push(PerfEntry { stage: "vm_create", elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0 });
+        result
+    };
+
+    {
+        let _span = debug_span!("vm_start").entered();
+        let t0 = Instant::now();
+        vm.start().context("failed to start VM")?;
+        perf.push(PerfEntry { stage: "vm_start", elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0 });
     }
 
-    let config = builder.build().context("failed to build VmConfig")?;
-    let (mut vm, rx, input_fd) = VirtualMachine::create(&config).context("failed to create VM")?;
-    vm.start().context("failed to start VM")?;
+    perf.push(PerfEntry { stage: "TOTAL boot_vm", elapsed_ms: boot_start.elapsed().as_secs_f64() * 1000.0 });
+    write_perf_log(&perf);
+
     Ok((vm, rx, input_fd))
 }
 
@@ -299,7 +354,7 @@ fn run_cli(command: &str) -> Result<()> {
 }
 
 /// Check for app updates using Tauri's updater plugin.
-/// Uses a native dialog (not Svelte) since the webview gets replaced with
+/// Uses a native dialog (not the WebView) since the webview gets replaced with
 /// VZVirtualMachineView after VM boot.
 async fn check_for_update(app: tauri::AppHandle) {
     use tauri_plugin_updater::UpdaterExt;
@@ -348,11 +403,16 @@ async fn check_for_update(app: tauri::AppHandle) {
 fn main() {
     let cli_args: Vec<String> = std::env::args().skip(1).collect();
 
-    let default_level = if cli_args.is_empty() { "capsem=debug" } else { "capsem=warn" };
+    let filter = match std::env::var("RUST_LOG") {
+        Ok(_) => EnvFilter::from_default_env(),
+        Err(_) => {
+            let level = if cli_args.is_empty() { "debug" } else { "warn" };
+            EnvFilter::new(format!("capsem={level},capsem_core={level}"))
+        }
+    };
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive(default_level.parse().unwrap()),
-        )
+        .with_env_filter(filter)
+        .with_span_events(FmtSpan::CLOSE)
         .init();
 
     if !cli_args.is_empty() {
@@ -387,13 +447,14 @@ fn main() {
                 Err(e) => {
                     error!("asset resolution failed: {e:#}");
                     info!("continuing without VM (frontend-only mode)");
+                    let _ = app.handle().emit("vm-state-changed", "not created");
                     return Ok(());
                 }
             };
 
             info!("assets directory: {}", assets.display());
 
-            // Headless mode: hvc0 is primary console (routed to the Svelte frontend)
+            // Headless mode: hvc0 is primary console (routed to the frontend)
             match boot_vm(&assets, "console=hvc0 loglevel=1") {
                 Ok((vm, rx, input_fd)) => {
                     info!("VM booted successfully");
@@ -406,11 +467,15 @@ fn main() {
                         *fd_guard = Some(input_fd);
                     }
                     let handle = app.handle().clone();
-                    tauri::async_runtime::spawn(serial_to_events(handle, rx));
+                    tauri::async_runtime::spawn(serial_to_events(handle.clone(), rx));
+
+                    // Push initial "running" state to frontend
+                    let _ = handle.emit("vm-state-changed", "running");
                 }
                 Err(e) => {
                     error!("VM boot failed: {e:#}");
                     info!("continuing without VM (unsigned binary or missing entitlement)");
+                    let _ = app.handle().emit("vm-state-changed", "not created");
                 }
             }
 

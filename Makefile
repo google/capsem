@@ -32,4 +32,4 @@ assets-check:
 
 clean:
 	cargo clean
-	rm -rf frontend/build frontend/.svelte-kit
+	rm -rf frontend/dist

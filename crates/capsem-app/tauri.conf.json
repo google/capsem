@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.capsem.capsem",
   "build": {
-    "beforeDevCommand": "pwd && ls -la && pnpm --filter capsem-frontend dev",
+    "beforeDevCommand": "pnpm --filter capsem-frontend dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "",
-    "frontendDist": "../../frontend/build"
+    "beforeBuildCommand": "pnpm --filter capsem-frontend build",
+    "frontendDist": "../../frontend/dist"
   },
   "app": {
     "windows": [
@@ -32,7 +32,7 @@
       "../../assets/vmlinuz": "",
       "../../assets/initrd.img": "",
       "../../assets/rootfs.img": "",
-      "../../assets/SHA256SUMS": ""
+      "../../assets/B3SUMS": ""
     },
     "macOS": {
       "entitlements": "../../entitlements.plist",

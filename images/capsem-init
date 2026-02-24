@@ -63,10 +63,20 @@ export LANG=C
 
 echo "[capsem-init] about to chroot..."
 
-# chroot into rootfs and launch shell.
-# Redirect stderr to /newroot/dev/null (the devtmpfs mounted above).
-exec chroot /newroot /bin/bash --rcfile /etc/capsem-bashrc -i 2>/newroot/dev/null
+# Start bash in a NEW SESSION so it can acquire /dev/console as its controlling
+# terminal.  Without a controlling tty, the line discipline cannot deliver
+# SIGINT (Ctrl-C) to the foreground process group -- bash silently falls back
+# to "no job control" mode and Ctrl-C is swallowed.
+#
+# setsid is not in the initramfs, so we use the rootfs copy via chroot.
+# chroot execs setsid, which calls setsid(2) and execs sh.  sh re-opens
+# /dev/console (<>/dev/console) -- because it is a session leader with no
+# ctty, the tty becomes the controlling terminal automatically.  Bash then
+# has full job control and Ctrl-C works.
+#
+# stderr starts as /dev/null to suppress startup noise (group-ID warnings
+# etc.); the bashrc restores it with `exec 2>/dev/hvc0`.
+chroot /newroot /usr/bin/setsid sh -c 'exec /bin/bash --rcfile /etc/capsem-bashrc -i <>/dev/hvc0 >&0 2>/dev/null'
 
-# If exec failed, don't let PID 1 exit (that causes kernel panic)
-echo "[capsem-init] chroot failed, dropping to shell"
-exec /bin/sh
+# If bash exits (e.g. user types 'exit'), keep PID 1 alive to prevent kernel panic.
+while true; do sleep 1; done

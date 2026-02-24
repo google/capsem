@@ -1,7 +1,7 @@
 # Capsem sandbox shell config
 
 # Restore stderr now that startup warnings are suppressed
-exec 2>/dev/console
+exec 2>/dev/hvc0
 
 # Terminal setup (xterm.js renders in the browser)
 export TERM=xterm-256color

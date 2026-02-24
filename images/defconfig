@@ -1,0 +1,160 @@
+# CAPSEM Hardened Kernel Configuration
+# Minimal ARM64 for Apple Virtualization.framework
+#
+# Apply on top of allnoconfig:
+#   cp defconfig .config && make olddefconfig
+#
+# Produces a ~5MB kernel with only VirtIO drivers, no loadable modules,
+# no IP networking, and full exploit mitigations enabled.
+
+# ==========================================
+# 1. CORE ARM64
+# ==========================================
+CONFIG_ARM64=y
+CONFIG_SMP=y
+CONFIG_NR_CPUS=8
+CONFIG_ARM_GIC_V3=y
+CONFIG_ARM_ARCH_TIMER=y
+CONFIG_OF=y
+
+# ==========================================
+# 2. BOOT ESSENTIALS
+# ==========================================
+CONFIG_PRINTK=y
+CONFIG_BUG=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+
+# ==========================================
+# 3. PCI & VIRTIO (Apple VZ hardware)
+# ==========================================
+CONFIG_PCI=y
+CONFIG_PCI_HOST_GENERIC=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_HW_RANDOM=y
+CONFIG_HW_RANDOM_VIRTIO=y
+
+# ==========================================
+# 4. SERIAL CONSOLE
+# ==========================================
+CONFIG_TTY=y
+CONFIG_VT=n
+CONFIG_SERIAL_CORE=y
+CONFIG_SERIAL_CORE_CONSOLE=y
+CONFIG_SERIAL_AMBA_PL011=y
+CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
+
+# ==========================================
+# 5. BLOCK LAYER
+# ==========================================
+CONFIG_BLOCK=y
+CONFIG_BLK_DEV=y
+
+# ==========================================
+# 6. FILESYSTEMS
+# ==========================================
+CONFIG_EXT4_FS=y
+CONFIG_EXT4_USE_FOR_EXT2=y
+CONFIG_PROC_FS=y
+CONFIG_PROC_SYSCTL=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_DEVPTS_FS=y
+CONFIG_UNIX98_PTYS=y
+
+# ==========================================
+# 7. NETWORKING (Unix sockets only, no IP)
+# ==========================================
+# Unix domain sockets are required by node, python, git.
+# IP networking is completely disabled -- even if a NIC were
+# injected, the kernel has no IP stack to drive it.
+CONFIG_NET=y
+CONFIG_UNIX=y
+CONFIG_INET=n
+
+# ==========================================
+# 8. PROCESS MANAGEMENT
+# ==========================================
+CONFIG_MULTIUSER=y
+CONFIG_FUTEX=y
+CONFIG_EPOLL=y
+CONFIG_SIGNALFD=y
+CONFIG_TIMERFD=y
+CONFIG_EVENTFD=y
+CONFIG_POSIX_TIMERS=y
+CONFIG_INOTIFY_USER=y
+CONFIG_AIO=y
+CONFIG_ADVISE_SYSCALLS=y
+CONFIG_FHANDLE=y
+
+# ==========================================
+# 9. SECURITY HARDENING
+# ==========================================
+# Enforce strict memory permissions
+CONFIG_STRICT_KERNEL_RWX=y
+CONFIG_VMAP_STACK=y
+
+# KASLR
+CONFIG_RANDOMIZE_BASE=y
+
+# Stack and buffer protections
+CONFIG_STACKPROTECTOR=y
+CONFIG_STACKPROTECTOR_STRONG=y
+CONFIG_FORTIFY_SOURCE=y
+CONFIG_HARDEN_BRANCH_PREDICTOR=y
+
+# Restrict information leaks
+CONFIG_SECURITY_DMESG_RESTRICT=y
+CONFIG_KALLSYMS=n
+CONFIG_DEBUG_FS=n
+
+# Heap hardening
+CONFIG_COMPAT_BRK=n
+
+# ==========================================
+# 10. ATTACK SURFACE REDUCTION
+# ==========================================
+# No loadable kernel modules -- even root cannot load .ko files
+CONFIG_MODULES=n
+
+# No direct physical memory access
+CONFIG_DEVMEM=n
+CONFIG_DEVPORT=n
+
+# No 32-bit compat (eliminates entire legacy syscall attack surface)
+CONFIG_COMPAT=n
+
+# No kernel hot-swap or suspend
+CONFIG_KEXEC=n
+CONFIG_KEXEC_FILE=n
+CONFIG_HIBERNATION=n
+CONFIG_MAGIC_SYSRQ=n
+
+# High-CVE-count subsystems
+CONFIG_IO_URING=n
+CONFIG_BPF_SYSCALL=n
+CONFIG_USERFAULTFD=n
+
+# ==========================================
+# 11. DISABLED SUBSYSTEMS
+# ==========================================
+CONFIG_USB_SUPPORT=n
+CONFIG_SOUND=n
+CONFIG_DRM=n
+CONFIG_WLAN=n
+CONFIG_WIRELESS=n
+CONFIG_BT=n
+CONFIG_INPUT_KEYBOARD=n
+CONFIG_INPUT_MOUSE=n
+CONFIG_NETDEVICES=n
+CONFIG_NFS_FS=n
+CONFIG_NETWORK_FILESYSTEMS=n
+CONFIG_SCSI=n
+CONFIG_ATA=n

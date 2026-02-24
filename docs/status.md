@@ -13,7 +13,7 @@
 - `VZVirtioEntropyDeviceConfiguration` added (prevents guest hangs on `/dev/urandom`)
 - Tauri 2.0 app with setup hook that boots VM on launch (non-fatal on failure)
 - Serial output bridged to frontend via Tauri events (`serial-output`)
-- Svelte 5 frontend with VM status indicator and serial console panel
+- Astro frontend with tab bar, xterm.js terminal (shadow DOM), and status bar
 - VM image builder (`images/build.py`) producing kernel, initrd, rootfs
 - **CLI command execution mode**: `capsem <command>` boots the VM headlessly, runs the command in the guest, prints output to stdout, and exits
 - Serial output verified end-to-end on Apple Silicon (kernel boot messages + command output)

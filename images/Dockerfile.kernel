@@ -1,31 +1,64 @@
-# Stage 1: Extract kernel and initrd from Debian ARM64
-FROM --platform=linux/arm64 debian:bookworm-slim AS extract
+# Compile a hardened, minimal ARM64 kernel for Apple Virtualization.framework.
+# Produces vmlinuz (~5MB) and initrd.img (<1MB) with busybox + capsem-init.
+#
+# The kernel is compiled from source with a custom defconfig that:
+# - Enables only VirtIO drivers (the only hardware in Apple VZ)
+# - Disables loadable modules (CONFIG_MODULES=n)
+# - Disables IP networking (CONFIG_INET=n)
+# - Enables KASLR, stack protector, FORTIFY_SOURCE
+#
+# Override kernel version: --build-arg KERNEL_VERSION=6.6.128
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        linux-image-arm64 initramfs-tools kmod \
-        bash ncurses-bin ncurses-base && \
+FROM --platform=linux/arm64 debian:bookworm-slim AS build
+
+ARG KERNEL_VERSION=6.6.127
+
+# Install build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential bc bison flex libssl-dev libelf-dev \
+        wget ca-certificates xz-utils cpio \
+        busybox-static && \
     rm -rf /var/lib/apt/lists/*
 
-COPY modules.txt /etc/initramfs-tools/modules
-COPY hooks/capsem /etc/initramfs-tools/hooks/capsem
-RUN chmod 755 /etc/initramfs-tools/hooks/capsem
+# Download kernel source
+RUN MAJOR=$(echo ${KERNEL_VERSION} | cut -d. -f1) && \
+    wget -q "https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz" \
+        -O /tmp/linux.tar.xz && \
+    tar xf /tmp/linux.tar.xz -C /usr/src && \
+    rm /tmp/linux.tar.xz && \
+    ln -s /usr/src/linux-${KERNEL_VERSION} /usr/src/linux
 
-COPY capsem-init /capsem-init
-COPY capsem-bashrc /capsem-bashrc
-RUN chmod 755 /capsem-init
+WORKDIR /usr/src/linux
 
-RUN update-initramfs -u -k all
+# Apply capsem hardened defconfig (allnoconfig base + our overrides)
+COPY defconfig .config
+RUN make olddefconfig
 
-# Replace /init inside the initramfs with our custom init
-RUN INITRD=$(ls /boot/initrd.img-*) && \
-    mkdir -p /tmp/initrd && cd /tmp/initrd && \
-    zcat "$INITRD" | cpio -id 2>/dev/null && \
-    cp /capsem-init init && \
-    chmod 755 init && \
-    find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
+# Compile kernel -- Image is the uncompressed ARM64 kernel binary
+RUN make -j$(nproc) Image && \
+    ls -lh arch/arm64/boot/Image
 
-# Stage 2: Copy out just the boot assets
+# ---- Build minimal initrd with busybox + capsem-init ----
+COPY capsem-init /tmp/capsem-init
+RUN mkdir -p /tmp/initrd/bin /tmp/initrd/sbin /tmp/initrd/dev /tmp/initrd/proc \
+             /tmp/initrd/sys /tmp/initrd/newroot /tmp/initrd/tmp /tmp/initrd/conf \
+             /tmp/initrd/dev/pts /tmp/initrd/var/log /tmp/initrd/var/tmp && \
+    # Busybox-static provides all userspace tools capsem-init needs
+    cp /usr/bin/busybox /tmp/initrd/bin/busybox && \
+    for cmd in sh mount umount mkdir rmdir sleep ls echo cat chmod cp ln \
+               chroot mknod mv rm find grep sed awk; do \
+        ln -s busybox /tmp/initrd/bin/$cmd; \
+    done && \
+    for cmd in modprobe; do \
+        ln -s ../bin/busybox /tmp/initrd/sbin/$cmd; \
+    done && \
+    cp /tmp/capsem-init /tmp/initrd/init && \
+    chmod 755 /tmp/initrd/init && \
+    cd /tmp/initrd && \
+    find . | cpio -o -H newc 2>/dev/null | gzip > /tmp/initrd.img && \
+    echo "initrd.img: $(ls -lh /tmp/initrd.img | awk '{print $5}')"
+
+# ---- Output stage ----
 FROM scratch AS output
-COPY --from=extract /boot/vmlinuz-* /vmlinuz
-COPY --from=extract /boot/initrd.img-* /initrd.img
+COPY --from=build /usr/src/linux/arch/arm64/boot/Image /vmlinuz
+COPY --from=build /tmp/initrd.img /initrd.img

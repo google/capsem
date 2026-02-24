@@ -1,0 +1,189 @@
+---
+// Static page -- all interactivity is in the client-side <script>.
+import "../styles/global.css";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capsem</title>
+  </head>
+  <body>
+    <!-- Tab Bar -->
+    <nav id="tab-bar">
+      <button class="tab" data-tab="console" data-active="true">Console</button>
+    </nav>
+
+    <!-- Terminal -->
+    <main id="terminal-area">
+      <capsem-terminal id="term"></capsem-terminal>
+    </main>
+
+    <!-- Status Bar -->
+    <footer id="status-bar">
+      <span id="status-indicator" class="indicator"></span>
+      <span id="status-text">connecting...</span>
+    </footer>
+
+    <script>
+      import "../components/capsem-terminal.ts";
+      import type { CapsemTerminal } from "../components/capsem-terminal.ts";
+      import { invoke } from "@tauri-apps/api/core";
+      import { listen } from "@tauri-apps/api/event";
+
+      const term = document.getElementById("term") as CapsemTerminal;
+      const statusIndicator = document.getElementById(
+        "status-indicator",
+      ) as HTMLSpanElement;
+      const statusText = document.getElementById(
+        "status-text",
+      ) as HTMLSpanElement;
+
+      // -- Status updates --
+
+      function setStatus(state: string) {
+        statusText.textContent = state;
+        statusIndicator.className = "indicator";
+        if (state === "running") {
+          statusIndicator.classList.add("status-running");
+        } else if (state === "stopped" || state === "error") {
+          statusIndicator.classList.add("status-stopped");
+        } else if (state === "not created") {
+          statusIndicator.classList.add("status-none");
+        } else {
+          statusIndicator.classList.add("status-pending");
+        }
+      }
+
+      // One-shot initial query
+      try {
+        const state = await invoke<string>("vm_status");
+        setStatus(state);
+      } catch {
+        setStatus("error");
+      }
+
+      // Push-based updates
+      await listen<string>("vm-state-changed", (event) => {
+        setStatus(event.payload);
+      });
+
+      // -- Serial I/O --
+
+      term.addEventListener("terminal-input", ((e: CustomEvent) => {
+        invoke("serial_input", { input: e.detail });
+      }) as EventListener);
+
+      await listen<number[]>("serial-output", (event) => {
+        term.write(new Uint8Array(event.payload));
+      });
+
+      // Focus terminal on load
+      term.focusTerminal();
+
+      // -- Tab bar --
+
+      const tabBar = document.getElementById("tab-bar")!;
+      tabBar.addEventListener("click", (e) => {
+        const btn = (e.target as HTMLElement).closest(".tab") as HTMLElement | null;
+        if (!btn) return;
+        tabBar.querySelectorAll(".tab").forEach((t) => {
+          (t as HTMLElement).dataset.active = "false";
+        });
+        btn.dataset.active = "true";
+      });
+    </script>
+
+    <style>
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* Tab Bar */
+      #tab-bar {
+        display: flex;
+        background: var(--bg-primary);
+        border-bottom: 1px solid var(--border-color);
+        padding: 0 8px;
+        flex-shrink: 0;
+        -webkit-app-region: drag;
+      }
+
+      .tab {
+        -webkit-app-region: no-drag;
+        background: var(--tab-inactive-bg);
+        color: var(--text-secondary);
+        border: none;
+        border-bottom: 2px solid transparent;
+        padding: 8px 16px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+
+      .tab:hover {
+        color: var(--text-primary);
+      }
+
+      .tab[data-active="true"] {
+        color: var(--text-primary);
+        background: var(--tab-active-bg);
+        border-bottom-color: var(--accent-green);
+      }
+
+      /* Terminal area */
+      #terminal-area {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        background: var(--bg-primary);
+      }
+
+      /* Status Bar */
+      #status-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 12px;
+        background: var(--status-bar-bg);
+        border-top: 1px solid var(--border-color);
+        font-size: 11px;
+        color: var(--text-secondary);
+        flex-shrink: 0;
+      }
+
+      .indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent-gray);
+      }
+
+      .status-running {
+        background: var(--accent-green);
+      }
+
+      .status-stopped {
+        background: var(--accent-red);
+      }
+
+      .status-none {
+        background: var(--accent-gray);
+      }
+
+      .status-pending {
+        background: var(--accent-yellow);
+      }
+    </style>
+  </body>
+</html>

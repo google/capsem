@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
+use tracing::debug_span;
 
 const MIN_CPU: u32 = 1;
 const MAX_CPU: u32 = 8;
@@ -120,12 +121,12 @@ impl VmConfigBuilder {
     }
 
     fn verify_hash(path: &Path, expected_hash: &str) -> Result<(), ConfigError> {
-        use sha2::{Digest, Sha256};
+        let _span = debug_span!("verify_hash", path = %path.display()).entered();
         use std::fs::File;
         use std::io::Read;
 
         let mut file = File::open(path)?;
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         let mut buffer = [0; 65536];
         loop {
             let n = file.read(&mut buffer)?;
@@ -134,7 +135,7 @@ impl VmConfigBuilder {
             }
             hasher.update(&buffer[..n]);
         }
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = hasher.finalize().to_hex().to_string();
         if hash != expected_hash {
             return Err(ConfigError::HashMismatch(
                 path.display().to_string(),

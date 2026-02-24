@@ -9,7 +9,7 @@ use objc2_virtualization::{
     VZFileHandleSerialPortAttachment, VZVirtioConsoleDeviceSerialPortConfiguration,
 };
 use tokio::sync::broadcast;
-use tracing::{debug, warn};
+use tracing::{debug, debug_span, warn};
 
 /// A serial console reader that pipes VM output into a broadcast channel.
 pub struct SerialConsole {
@@ -29,6 +29,7 @@ pub fn create_serial_port() -> Result<(
     SerialConsole,
     RawFd,
 )> {
+    let _span = debug_span!("create_serial_port").entered();
     // Input pipe: host writes to inputPipe.fileHandleForWriting,
     //             framework reads from inputPipe.fileHandleForReading -> guest
     let input_pipe = NSPipe::pipe();
@@ -139,35 +140,21 @@ mod tests {
         (fds[0], fds[1])
     }
 
-    #[test]
-    fn reader_broadcasts_complete_lines() {
-        let (read_fd, write_fd) = make_pipe();
-        let console = create_console_from_fd(read_fd);
-        let mut rx = console.subscribe();
-
-        console.spawn_reader();
-
-        // Write data to the pipe
-        let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
-        writer.write_all(b"hello world\n").unwrap();
-        writer.write_all(b"second line\n").unwrap();
-        drop(writer); // close triggers EOF
-
-        // Collect lines
-        let mut lines = Vec::new();
+    /// Collect all broadcast chunks into a single byte vector.
+    fn collect_all(rx: &mut broadcast::Receiver<Vec<u8>>) -> Vec<u8> {
+        let mut out = Vec::new();
         loop {
             match rx.blocking_recv() {
-                Ok(line) => lines.push(line),
+                Ok(chunk) => out.extend_from_slice(&chunk),
                 Err(broadcast::error::RecvError::Closed) => break,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
             }
         }
-
-        assert_eq!(lines, vec!["hello world", "second line"]);
+        out
     }
 
     #[test]
-    fn reader_handles_partial_lines() {
+    fn reader_broadcasts_written_data() {
         let (read_fd, write_fd) = make_pipe();
         let console = create_console_from_fd(read_fd);
         let mut rx = console.subscribe();
@@ -175,25 +162,33 @@ mod tests {
         console.spawn_reader();
 
         let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
-        // Write partial line, then complete it
+        writer.write_all(b"hello world\n").unwrap();
+        writer.write_all(b"second line\n").unwrap();
+        drop(writer);
+
+        let all = collect_all(&mut rx);
+        assert_eq!(all, b"hello world\nsecond line\n");
+    }
+
+    #[test]
+    fn reader_broadcasts_partial_writes() {
+        let (read_fd, write_fd) = make_pipe();
+        let console = create_console_from_fd(read_fd);
+        let mut rx = console.subscribe();
+
+        console.spawn_reader();
+
+        let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
         writer.write_all(b"partial").unwrap();
         writer.write_all(b" complete\n").unwrap();
         drop(writer);
 
-        let mut lines = Vec::new();
-        loop {
-            match rx.blocking_recv() {
-                Ok(line) => lines.push(line),
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            }
-        }
-
-        assert_eq!(lines, vec!["partial complete"]);
+        let all = collect_all(&mut rx);
+        assert_eq!(all, b"partial complete\n");
     }
 
     #[test]
-    fn reader_flushes_trailing_partial_on_eof() {
+    fn reader_broadcasts_data_without_trailing_newline() {
         let (read_fd, write_fd) = make_pipe();
         let console = create_console_from_fd(read_fd);
         let mut rx = console.subscribe();
@@ -204,20 +199,12 @@ mod tests {
         writer.write_all(b"first\nno newline at end").unwrap();
         drop(writer);
 
-        let mut lines = Vec::new();
-        loop {
-            match rx.blocking_recv() {
-                Ok(line) => lines.push(line),
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            }
-        }
-
-        assert_eq!(lines, vec!["first", "no newline at end"]);
+        let all = collect_all(&mut rx);
+        assert_eq!(all, b"first\nno newline at end");
     }
 
     #[test]
-    fn reader_handles_empty_lines() {
+    fn reader_broadcasts_empty_lines() {
         let (read_fd, write_fd) = make_pipe();
         let console = create_console_from_fd(read_fd);
         let mut rx = console.subscribe();
@@ -228,16 +215,8 @@ mod tests {
         writer.write_all(b"a\n\nb\n").unwrap();
         drop(writer);
 
-        let mut lines = Vec::new();
-        loop {
-            match rx.blocking_recv() {
-                Ok(line) => lines.push(line),
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            }
-        }
-
-        assert_eq!(lines, vec!["a", "", "b"]);
+        let all = collect_all(&mut rx);
+        assert_eq!(all, b"a\n\nb\n");
     }
 
     #[test]

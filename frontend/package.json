@@ -2,32 +2,18 @@
   "name": "capsem-frontend",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "devDependencies": {
-    "@sveltejs/adapter-static": "^3",
-    "@sveltejs/kit": "^2",
-    "@sveltejs/vite-plugin-svelte": "^5",
-    "@tailwindcss/vite": "^4",
-    "svelte": "^5",
-    "tailwindcss": "^4",
-    "typescript": "^5",
-    "vite": "^6"
+    "dev": "astro dev --port 5173",
+    "build": "astro build"
   },
   "dependencies": {
-    "@skeletonlabs/skeleton": "^3",
-    "@skeletonlabs/skeleton-svelte": "^1",
     "@tauri-apps/api": "^2",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0"
+    "@xterm/xterm": "^6",
+    "@xterm/addon-fit": "^0.11",
+    "@xterm/addon-webgl": "^0.19"
   },
-  "type": "module",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+  "devDependencies": {
+    "astro": "^5"
   }
 }

@@ -2,12 +2,12 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    println!("cargo:rerun-if-changed=../../assets/SHA256SUMS");
-    
+    println!("cargo:rerun-if-changed=../../assets/B3SUMS");
+
     // Optional: Only enforce signature at build time if the file exists
     // (so developers can still build if they haven't run build.py yet,
     // though boot will fail if we enforce it at runtime).
-    let manifest_path = Path::new("../../assets/SHA256SUMS");
+    let manifest_path = Path::new("../../assets/B3SUMS");
     if manifest_path.exists() {
         let content = fs::read_to_string(manifest_path).unwrap();
         for line in content.lines() {

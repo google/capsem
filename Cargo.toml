@@ -2,6 +2,11 @@
 resolver = "2"
 members = ["crates/capsem-core", "crates/capsem-app"]
 
+# Always optimize blake3 -- its SIMD assembly is 100x faster than
+# unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.
+[profile.dev.package.blake3]
+opt-level = 3
+
 [workspace.dependencies]
 anyhow = "1"
 thiserror = "2"
