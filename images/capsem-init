@@ -27,16 +27,17 @@ sleep 1
 exec 0</dev/console 1>/dev/console 2>/dev/console
 
 echo "[capsem-init] listing block devices..."
-ls -la /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
+ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 
-# Mount rootfs READ-ONLY from virtio block device
+# Mount rootfs READ-ONLY from virtio block device.
+# The kernel cmdline has 'ro' so this is always read-only.
 mkdir -p /newroot
 echo "[capsem-init] mounting /dev/vda..."
 mount -t ext4 -o ro /dev/vda /newroot
 echo "[capsem-init] mount exit: $?"
 
 echo "[capsem-init] checking /newroot/bin/bash..."
-ls -la /newroot/bin/bash 2>&1
+ls /newroot/bin/bash 2>&1
 
 # Create writable layers (tmpfs) -- ONLY these dirs are writable
 mount -t tmpfs tmpfs /newroot/root
@@ -45,11 +46,14 @@ mount -t tmpfs tmpfs /newroot/run
 mount -t tmpfs tmpfs /newroot/var/log
 mount -t tmpfs tmpfs /newroot/var/tmp
 
-# Move virtual filesystems into new root.
-# IMPORTANT: Use '-o move' as the klibc mount binary does not support '--move'.
-mount -o move /proc /newroot/proc
-mount -o move /sys  /newroot/sys
-mount -o move /dev  /newroot/dev
+# Mount virtual filesystems fresh in the new root (not moved from initramfs).
+# /proc, /sys, /dev exist as empty dirs from docker export.
+# /dev/pts is created after devtmpfs is mounted (devtmpfs is writable).
+mount -t proc     proc     /newroot/proc
+mount -t sysfs    sysfs    /newroot/sys
+mount -t devtmpfs devtmpfs /newroot/dev
+mkdir -p /newroot/dev/pts
+mount -t devpts   devpts   /newroot/dev/pts
 
 # Set up environment
 export TERM=xterm-256color
@@ -60,8 +64,7 @@ export LANG=C
 echo "[capsem-init] about to chroot..."
 
 # chroot into rootfs and launch shell.
-# IMPORTANT: Redirect stderr to /newroot/dev/null because /dev was moved to 
-# /newroot/dev above. Redirection to /dev/null would fail on the RO rootfs.
+# Redirect stderr to /newroot/dev/null (the devtmpfs mounted above).
 exec chroot /newroot /bin/bash --rcfile /etc/capsem-bashrc -i 2>/newroot/dev/null
 
 # If exec failed, don't let PID 1 exit (that causes kernel panic)

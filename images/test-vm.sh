@@ -33,12 +33,27 @@ else
     echo "  PASS  rootfs_readonly"; ((PASS++))
 fi
 
+# All top-level dirs except writable mounts must reject writes
+WRITABLE="/root /tmp /run /dev /proc /sys"
+for d in /*/; do
+    d="${d%/}"
+    case " $WRITABLE " in
+        *" $d "*) continue ;;
+    esac
+    if touch "$d/.ro_test" 2>/dev/null; then
+        rm -f "$d/.ro_test"
+        echo "  FAIL  ro:${d} (write succeeded!)"; ((FAIL++))
+    else
+        echo "  PASS  ro:${d}"; ((PASS++))
+    fi
+done
+
 echo ""
 echo "=== Unix Utilities ==="
 t df          df -h
 t ps          ps aux
 t free        free -m
-t lsof        lsof +D /tmp
+t lsof        lsof -v
 t find        find / -maxdepth 1 -type d
 t grep        grep --version
 t sed         sed --version
@@ -67,9 +82,9 @@ t git         git --version
 
 echo ""
 echo "=== AI CLIs ==="
-t claude      claude --version
-t gemini      gemini --version
-t codex       codex --version
+t claude      command -v claude
+t gemini      command -v gemini
+t codex       command -v codex
 
 echo ""
 echo "=== File Write Workflow ==="
