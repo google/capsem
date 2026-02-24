@@ -1,0 +1,78 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  build-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - name: Build VM assets
+        run: python3 images/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-assets
+          path: assets/
+
+  build-app:
+    needs: build-assets
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: vm-assets
+          path: assets/
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Install cargo-auditable and cargo-sbom
+        run: cargo install cargo-auditable cargo-sbom
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":true}}'
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'Capsem v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+          projectPath: crates/capsem-app
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: target/release/bundle/dmg/*.dmg
+
+      - name: Generate SBOM
+        run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: target/release/bundle/dmg/*.dmg
+          sbom-path: capsem-sbom.spdx.json

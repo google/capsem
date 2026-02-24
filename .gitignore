@@ -30,3 +30,18 @@ dist/*
 .DS_Store
 *_Store
 private/
+
+# Rust
+target/
+Cargo.lock
+
+# VM assets (built by images/build.py)
+assets/*
+
+# Tauri
+crates/capsem-app/gen/
+
+# Frontend
+frontend/.svelte-kit/
+frontend/build/
+frontend/node_modules/

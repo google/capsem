@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/capsem-core", "crates/capsem-app"]
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+objc2 = "0.6"
+objc2-virtualization = "0.3"
+objc2-foundation = "0.3"
+block2 = "0.6"
+dispatch2 = "0.2"

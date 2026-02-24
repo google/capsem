@@ -1,0 +1,27 @@
+# Capsem sandbox shell config
+
+# Restore stderr now that startup warnings are suppressed
+exec 2>/dev/console
+
+# Terminal setup
+export TERM=linux
+export LANG=C
+export HISTSIZE=500
+export HISTFILE=/tmp/.bash_history
+
+# Prompt: green bold "capsem" with blue directory
+PS1='\[\033[1;32m\]capsem\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
+
+# Enable color for ls if supported (GNU coreutils)
+if /usr/bin/ls --color=auto / >/dev/null 2>&1; then
+    alias ls='/usr/bin/ls --color=auto'
+    alias ll='/usr/bin/ls -la --color=auto'
+fi
+alias grep='grep --color=auto'
+
+# Clear screen and show welcome banner
+printf '\033[2J\033[H'
+echo ""
+echo -e "\033[1;32m  CAPSEM sandbox ready\033[0m"
+echo -e "\033[0;36m  Linux $(uname -r) | $(uname -m)\033[0m"
+echo ""

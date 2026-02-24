@@ -1,0 +1,19 @@
+[package]
+name = "capsem-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+objc2 = { workspace = true }
+objc2-virtualization = { workspace = true }
+objc2-foundation = { workspace = true }
+block2 = { workspace = true }
+dispatch2 = { workspace = true }
+libc = "0.2"
+core-foundation-sys = "0.8"
+sha2 = "0.10.9"

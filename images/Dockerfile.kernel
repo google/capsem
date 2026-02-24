@@ -1,0 +1,31 @@
+# Stage 1: Extract kernel and initrd from Debian ARM64
+FROM --platform=linux/arm64 debian:bookworm-slim AS extract
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        linux-image-arm64 initramfs-tools kmod \
+        bash ncurses-bin ncurses-base && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY modules.txt /etc/initramfs-tools/modules
+COPY hooks/capsem /etc/initramfs-tools/hooks/capsem
+RUN chmod 755 /etc/initramfs-tools/hooks/capsem
+
+COPY capsem-init /capsem-init
+COPY capsem-bashrc /capsem-bashrc
+RUN chmod 755 /capsem-init
+
+RUN update-initramfs -u -k all
+
+# Replace /init inside the initramfs with our custom init
+RUN INITRD=$(ls /boot/initrd.img-*) && \
+    mkdir -p /tmp/initrd && cd /tmp/initrd && \
+    zcat "$INITRD" | cpio -id 2>/dev/null && \
+    cp /capsem-init init && \
+    chmod 755 init && \
+    find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
+
+# Stage 2: Copy out just the boot assets
+FROM scratch AS output
+COPY --from=extract /boot/vmlinuz-* /vmlinuz
+COPY --from=extract /boot/initrd.img-* /initrd.img

@@ -1,0 +1,27 @@
+#!/bin/sh
+# initramfs-tools hook: add bash and capsem shell config
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+# Copy bash and utilities needed for a usable shell
+copy_exec /usr/bin/bash /bin/bash
+copy_exec /usr/bin/stty /usr/bin/stty
+copy_exec /usr/bin/env /usr/bin/env
+
+# Copy GNU coreutils ls for color support
+copy_exec /usr/bin/ls /usr/bin/ls
+
+# Copy terminfo for TERM=linux to all standard lookup paths
+for dir in /usr/share/terminfo /lib/terminfo /etc/terminfo; do
+    mkdir -p "${DESTDIR}${dir}/l"
+    cp /usr/share/terminfo/l/linux "${DESTDIR}${dir}/l/" 2>/dev/null || true
+done
+
+# Copy our custom init and bashrc
+cp /capsem-init "${DESTDIR}/capsem-init"
+chmod 755 "${DESTDIR}/capsem-init"
+cp /capsem-bashrc "${DESTDIR}/etc/bashrc"

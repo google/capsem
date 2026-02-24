@@ -1,0 +1,35 @@
+#!/bin/sh
+# Capsem sandbox init script.
+# Replaces /init in the initramfs.
+
+# Mount essential filesystems
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts
+mount -t devpts   devpts   /dev/pts
+mkdir -p /tmp
+mount -t tmpfs    tmpfs    /tmp
+
+# Load kernel modules listed in /conf/modules (populated by initramfs-tools)
+if [ -f /conf/modules ]; then
+    while read -r mod args; do
+        case "$mod" in \#*|"") continue ;; esac
+        modprobe -q "$mod" $args 2>/dev/null || true
+    done < /conf/modules
+fi
+
+# Give USB devices time to enumerate
+sleep 1
+
+# Set up environment
+export TERM=linux
+export HOME=/root
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mkdir -p /root
+
+# Redirect stdio to /dev/console
+exec 0</dev/console 1>/dev/console 2>/dev/console
+
+# Launch bash, suppress startup warnings (no controlling tty as PID 1)
+exec /bin/bash --rcfile /etc/bashrc -i 2>/dev/null
