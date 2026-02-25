@@ -7,7 +7,7 @@ import pytest
 from conftest import run
 
 
-@pytest.mark.parametrize("runtime", ["python3", "node", "npm", "pip3", "git"])
+@pytest.mark.parametrize("runtime", ["python3", "node", "npm", "pip3", "uv", "git"])
 def test_runtime_version(runtime):
     """Each dev runtime must respond to --version."""
     result = run(f"{runtime} --version")

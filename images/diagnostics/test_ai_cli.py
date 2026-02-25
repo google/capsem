@@ -13,14 +13,13 @@ def test_ai_cli_installed(cli):
 
 
 @pytest.mark.parametrize("cli", ["gemini", "claude", "codex"])
-def test_ai_cli_sandboxed(cli):
-    """AI CLIs must fail when invoked (no network, no auth)."""
-    result = run(f"{cli} --help 2>&1 || {cli} 2>&1", timeout=15)
-    # We expect non-zero: either network failure or missing credentials.
-    # Even --help returning 0 is acceptable for some CLIs, so we only
-    # test that the binary runs at all without hanging. The real sandbox
-    # enforcement is test_network_blocked in test_sandbox.py.
-    # Here we just verify the binary executes and doesn't crash with a signal.
-    assert result.returncode < 128, (
-        f"{cli} crashed with signal {result.returncode - 128}"
+def test_ai_cli_help(cli):
+    """AI CLI --help must execute without runtime errors."""
+    result = run(f"{cli} --help 2>&1", timeout=15)
+    output = result.stdout
+    # Must not crash with a JS/Node runtime error
+    for error in ["SyntaxError", "TypeError", "ReferenceError", "Cannot find module"]:
+        assert error not in output, f"{cli} --help has runtime error: {error}"
+    assert result.returncode == 0, (
+        f"{cli} --help failed (rc={result.returncode}): {output[:300]}"
     )

@@ -42,6 +42,7 @@ Capsem is a native macOS application that sandboxes AI agents in lightweight Lin
 | - Air-gapped networking (dummy0 + fake DNS  |
 |   + iptables REDIRECT for SNI proxy)         |
 | - Read-only ext4 rootfs + tmpfs overlays    |
+| - Ephemeral ext4 scratch disk (/root, ~8GB) |
 +---------------------------------------------+
 ```
 
@@ -75,14 +76,14 @@ The core VM library. Framework-agnostic -- no Tauri dependency.
 crates/capsem-core/src/
   lib.rs              Public API re-exports
   vm/
-    config.rs         VmConfig builder (CPU, RAM, kernel, initrd, disk, hashes)
+    config.rs         VmConfig builder (CPU, RAM, kernel, initrd, rootfs disk, scratch disk, hashes)
     boot.rs           VZLinuxBootLoader setup via objc2-virtualization
     machine.rs        VirtualMachine create/start/stop lifecycle
     serial.rs         Serial console I/O via NSPipe + broadcast channel
     vsock.rs          VsockManager, CoalesceBuffer, port constants, re-exports from capsem-proto
   net/
     domain_policy.rs  Allow/block list with wildcard matching
-    policy_config.rs  user.toml / corp.toml loader, merge logic, GuestConfig
+    policy_config.rs  user.toml / corp.toml loader, merge logic, GuestConfig, VmSettings
     sni_parser.rs     TLS ClientHello SNI extraction
     sni_proxy.rs      Host-side SNI proxy (vsock:5002 -> real HTTPS)
     telemetry.rs      Per-session web.db (SQLite) for connection logging
@@ -90,7 +91,7 @@ crates/capsem-core/src/
 
 **Key types:**
 
-- `VmConfig` -- builder pattern for VM configuration. Validates CPU count, RAM size, kernel path. Optionally accepts BLAKE3 hashes for boot asset integrity verification.
+- `VmConfig` -- builder pattern for VM configuration. Validates CPU count, RAM size, kernel path, scratch disk path. Optionally accepts BLAKE3 hashes for boot asset integrity verification. Supports two block devices: rootfs (read-only, identifier `rootfs`) and scratch disk (read-write, identifier `scratch`).
 - `VirtualMachine` -- wraps `VZVirtualMachine`. Provides `create()` which returns the VM, a `broadcast::Receiver<Vec<u8>>` for serial output, and a raw file descriptor for serial input.
 - `VsockManager` -- ObjC bridge that registers vsock listeners on the VM's socket device and delivers accepted connections via an async channel.
 - `CoalesceBuffer` -- batches small output chunks (10ms/64KB) to prevent IPC saturation.
@@ -313,13 +314,49 @@ Every VM boot sequence is instrumented with `tracing` spans. The subscriber uses
 
 **Usage:** `RUST_LOG=capsem=debug` for full breakdown, `RUST_LOG=capsem=info` for top-level boot time only.
 
+## Disk Architecture
+
+The VM uses two virtio block devices with stable identifiers:
+
+| Device | Identifier | Guest Path | Mode | Purpose |
+|--------|-----------|------------|------|---------|
+| rootfs | `rootfs` | `/dev/vda` | Read-only | Immutable Debian base image |
+| scratch | `scratch` | `/dev/vdb` | Read-write | Ephemeral `/root` workspace |
+
+**Scratch disk lifecycle**: Host creates a sparse file (`~/.capsem/sessions/<vm_id>/scratch.img`), guest formats it at boot (`mke2fs -t ext4 -O ^has_journal`), mounts at `/root`. Deleted on VM stop. No journal for lower I/O overhead on ephemeral data.
+
+**Session directory** (`~/.capsem/sessions/<vm_id>/`):
+
+```
+scratch.img      # ephemeral scratch disk (deleted on VM stop)
+web.db           # network telemetry (retained across sessions)
+session.json     # metadata: vm_id, status, created_at, config snapshot
+```
+
+**Stale session cleanup**: On app startup, leftover `scratch.img` files are deleted and orphaned "running" sessions are marked "crashed".
+
+### Future: Custom Disks (Forking)
+
+The current scratch disk is ephemeral -- wiped on every boot. A future release will add **persistent custom disks** that users can configure, save, and reuse:
+
+- **Fork workflow**: Boot VM with a special `--setup` / config mode flag. User installs packages, configures tools, customizes environment. On exit, the scratch disk is NOT deleted -- instead it's saved as a named custom disk image (e.g., `~/.capsem/disks/my-ml-env.img`).
+- **Boot from custom disk**: User selects a saved disk image when creating a session. The image is attached as the scratch device instead of a fresh sparse file. Guest skips formatting (detects existing ext4 via superblock check) and mounts directly.
+- **Disk metadata**: Tracked in a central database (likely `~/.capsem/capsem.db`) rather than per-session JSON. Schema includes: disk name, creation date, size, base rootfs version, last-used timestamp, status (active/paused/stopped/archived), parent disk (for fork lineage), and associated session IDs.
+- **Pause vs stop semantics**: A paused session keeps its disk intact and the VM state can be restored (once VZ checkpointing is wired up). A stopped session can optionally preserve or discard its disk. Disk metadata tracks which state each disk is in, so the UI can show "3 paused sessions, 1 running" etc.
+
+This replaces the per-session `session.json` approach with a proper relational model in `capsem.db` where disks, sessions, and VM lifecycle states are first-class entities.
+
 ## Future Architecture (Planned)
 
-The current implementation covers Milestones 1-3 (VM boot, serial console, vsock PTY agent, CLI exec) and partial Milestone 5 (air-gapped networking with SNI proxy). The planned architecture extends to:
+The current implementation covers Milestones 1-4 (VM boot, serial console, vsock PTY agent, CLI exec, MITM proxy, scratch disk). The planned architecture extends to:
 
-- **VirtioFS workspace sharing** for host-guest file access (Milestone 4)
-- **Active AI audit gateway** with 9-stage event lifecycle, PII scrubbing, and tool call interception (Milestone 6)
-- **Hybrid MCP gateway**: local tools in-VM, remote tools via host with credential injection (Milestone 7)
-- **Per-session audit databases**, config write-back, and enterprise observability (Milestone 8)
+- **Custom disk images** with fork/save workflow for persistent environments
+- **Disk + session metadata database** (`capsem.db`) with pause/stop/archive states
+- **VM pause/resume** using VZ framework's native pause support
+- **VM checkpointing** (macOS 14+) with `saveMachineStateTo` / `restoreMachineStateFrom`
+- **VirtioFS workspace sharing** for host-guest file access
+- **Active AI audit gateway** with 9-stage event lifecycle, PII scrubbing, and tool call interception
+- **Hybrid MCP gateway**: local tools in-VM, remote tools via host with credential injection
+- **Per-session audit databases**, config write-back, and enterprise observability
 
 See [docs/status.md](status.md) for milestone progress and [docs/overall_plan.md](overall_plan.md) for the full roadmap.

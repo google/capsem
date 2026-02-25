@@ -21,6 +21,14 @@ use super::http_policy::{HttpPolicy, HttpRule};
 pub struct PolicyFile {
     pub network: Option<NetworkPolicy>,
     pub guest: Option<GuestConfig>,
+    pub vm: Option<VmSettings>,
+}
+
+/// VM resource settings section.
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct VmSettings {
+    /// Size of the ephemeral scratch disk in GB (default: 8).
+    pub scratch_disk_size_gb: Option<u32>,
 }
 
 /// Network policy section within a TOML config file.
@@ -242,6 +250,32 @@ pub fn load_merged_guest_config() -> GuestConfig {
     merge_guest_config(&user, &corp)
 }
 
+/// Default scratch disk size in GB.
+const DEFAULT_SCRATCH_DISK_SIZE_GB: u32 = 8;
+
+/// Merge VM settings from user and corp files.
+///
+/// Corp vm settings override user vm settings entirely (field-level).
+pub fn merge_vm_settings(user: &PolicyFile, corp: &PolicyFile) -> VmSettings {
+    let corp_vm = corp.vm.as_ref();
+    let user_vm = user.vm.as_ref();
+
+    let scratch_disk_size_gb = corp_vm
+        .and_then(|v| v.scratch_disk_size_gb)
+        .or_else(|| user_vm.and_then(|v| v.scratch_disk_size_gb))
+        .or(Some(DEFAULT_SCRATCH_DISK_SIZE_GB));
+
+    VmSettings { scratch_disk_size_gb }
+}
+
+/// Load and merge VM settings from the standard locations.
+///
+/// Returns merged `VmSettings` with defaults applied.
+pub fn load_merged_vm_settings() -> VmSettings {
+    let (user, corp) = load_policy_files();
+    merge_vm_settings(&user, &corp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +291,7 @@ mod tests {
                 rules: None,
             }),
             guest: None,
+            vm: None,
         }
     }
 
@@ -336,7 +371,7 @@ mod tests {
             Some(vec!["evil.com"]),
             Some("deny"),
         );
-        let corp = PolicyFile { network: None, guest: None };
+        let corp = PolicyFile { network: None, guest: None, vm: None };
         let policy = merge_policies(&user, &corp);
         let (action, _) = policy.evaluate("github.com");
         assert_eq!(action, Action::Allow);
@@ -456,6 +491,7 @@ allow = ["github.com"]
         let user = PolicyFile {
             network: None,
             guest: Some(GuestConfig { env: Some(env) }),
+            vm: None,
         };
         let corp = empty_policy();
         let gc = merge_guest_config(&user, &corp);
@@ -471,12 +507,14 @@ allow = ["github.com"]
         let user = PolicyFile {
             network: None,
             guest: Some(GuestConfig { env: Some(user_env) }),
+            vm: None,
         };
         let mut corp_env = HashMap::new();
         corp_env.insert("FOO".into(), "corp_val".into());
         let corp = PolicyFile {
             network: None,
             guest: Some(GuestConfig { env: Some(corp_env) }),
+            vm: None,
         };
         let gc = merge_guest_config(&user, &corp);
         let env = gc.env.unwrap();
@@ -630,5 +668,85 @@ max_body_capture = 8192
         let hp = merge_http_policy(&user, &corp);
         assert!(hp.log_bodies);
         assert_eq!(hp.max_body_capture, 8192);
+    }
+
+    // -- VM settings --
+
+    #[test]
+    fn vm_settings_default_scratch_size() {
+        let user = empty_policy();
+        let corp = empty_policy();
+        let vs = merge_vm_settings(&user, &corp);
+        assert_eq!(vs.scratch_disk_size_gb, Some(DEFAULT_SCRATCH_DISK_SIZE_GB));
+    }
+
+    #[test]
+    fn vm_settings_from_user() {
+        let toml_str = r#"
+[vm]
+scratch_disk_size_gb = 16
+"#;
+        let user: PolicyFile = toml::from_str(toml_str).unwrap();
+        let corp = empty_policy();
+        let vs = merge_vm_settings(&user, &corp);
+        assert_eq!(vs.scratch_disk_size_gb, Some(16));
+    }
+
+    #[test]
+    fn vm_settings_corp_overrides_user() {
+        let user_toml = r#"
+[vm]
+scratch_disk_size_gb = 16
+"#;
+        let corp_toml = r#"
+[vm]
+scratch_disk_size_gb = 4
+"#;
+        let user: PolicyFile = toml::from_str(user_toml).unwrap();
+        let corp: PolicyFile = toml::from_str(corp_toml).unwrap();
+        let vs = merge_vm_settings(&user, &corp);
+        assert_eq!(vs.scratch_disk_size_gb, Some(4));
+    }
+
+    #[test]
+    fn vm_settings_corp_unspecified_uses_user() {
+        let user_toml = r#"
+[vm]
+scratch_disk_size_gb = 12
+"#;
+        let user: PolicyFile = toml::from_str(user_toml).unwrap();
+        let corp = empty_policy();
+        let vs = merge_vm_settings(&user, &corp);
+        assert_eq!(vs.scratch_disk_size_gb, Some(12));
+    }
+
+    #[test]
+    fn parse_vm_section_toml() {
+        let toml_str = r#"
+[vm]
+scratch_disk_size_gb = 32
+"#;
+        let policy: PolicyFile = toml::from_str(toml_str).unwrap();
+        let vm = policy.vm.unwrap();
+        assert_eq!(vm.scratch_disk_size_gb, Some(32));
+    }
+
+    #[test]
+    fn parse_toml_with_all_sections() {
+        let toml_str = r#"
+[network]
+allow = ["github.com"]
+
+[guest]
+env = { TERM = "screen" }
+
+[vm]
+scratch_disk_size_gb = 10
+"#;
+        let policy: PolicyFile = toml::from_str(toml_str).unwrap();
+        assert!(policy.network.is_some());
+        assert!(policy.guest.is_some());
+        assert!(policy.vm.is_some());
+        assert_eq!(policy.vm.unwrap().scratch_disk_size_gb, Some(10));
     }
 }

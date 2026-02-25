@@ -15,17 +15,34 @@ RUN apt-get update && \
         git \
         curl ca-certificates \
         iproute2 iptables dnsmasq \
-        python3 python3-pip python3-venv \
-        nodejs npm && \
+        python3 python3-pip python3-venv && \
     ln -sf vim.tiny /usr/bin/vim && \
     rm -rf /var/lib/apt/lists/*
 
+# Node.js 24 LTS via nvm (Debian bookworm ships v18 which lacks the 'v'
+# regex flag needed by modern npm packages like @google/gemini-cli)
+ENV NVM_DIR=/usr/local/nvm
+RUN mkdir -p $NVM_DIR && \
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash && \
+    bash -c '. $NVM_DIR/nvm.sh && nvm install 24 && \
+    for bin in node npm npx; do ln -sf "$(which $bin)" /usr/local/bin/$bin; done'
+
+# uv -- fast Python package installer (also available to guest AI agents)
+RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh && \
+    install -m 555 /root/.local/bin/uv /usr/local/bin/uv && \
+    install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
+
 # AI coding CLIs (installed globally via npm)
+# Symlink all nvm bin entries to /usr/local/bin so they're on PATH.
 RUN npm install -g \
         @anthropic-ai/claude-code \
         @google/gemini-cli \
         @openai/codex && \
-    npm cache clean --force
+    npm cache clean --force && \
+    for bin in $NVM_DIR/versions/node/*/bin/*; do \
+        name=$(basename "$bin"); \
+        [ -e "/usr/local/bin/$name" ] || ln -sf "$bin" "/usr/local/bin/$name"; \
+    done
 
 # Install MITM CA certificate into system trust store
 # (copied into images/ by build.py before docker build)
@@ -33,7 +50,7 @@ COPY capsem-ca.crt /usr/local/share/ca-certificates/capsem-ca.crt
 RUN update-ca-certificates
 
 # Patch certifi's CA bundle (Python requests/openai SDK use certifi, not system store)
-RUN pip3 install --break-system-packages certifi && \
+RUN uv pip install --system --break-system-packages certifi && \
     CERTIFI_BUNDLE=$(python3 -c "import certifi; print(certifi.where())") && \
     cat /usr/local/share/ca-certificates/capsem-ca.crt >> "$CERTIFI_BUNDLE"
 
@@ -52,7 +69,7 @@ RUN chmod 555 /usr/local/bin/capsem-net-proxy
 COPY capsem-bashrc /etc/capsem-bashrc
 
 # Pytest for VM diagnostics
-RUN pip3 install --break-system-packages pytest
+RUN uv pip install --system --break-system-packages pytest
 
 # Diagnostic test suite
 COPY diagnostics/ /usr/local/lib/capsem-tests/

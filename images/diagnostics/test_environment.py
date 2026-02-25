@@ -89,11 +89,21 @@ def test_dev_pts_mounted():
 # -- Tmpfs sizes --
 
 
-def test_root_is_writable_tmpfs():
-    """/root must be a writable tmpfs mount."""
+def test_root_is_ext4_scratch_disk():
+    """/root must be mounted from the ephemeral scratch disk (ext4)."""
     result = run("mount | grep 'on /root '")
     assert result.returncode == 0, "/root not mounted"
-    assert "tmpfs" in result.stdout, f"/root is not tmpfs: {result.stdout}"
+    assert "ext4" in result.stdout, f"/root is not ext4: {result.stdout}"
+
+
+def test_root_scratch_disk_size():
+    """/root scratch disk should be at least 4GB."""
+    result = run("df -B1 /root | tail -1 | awk '{print $2}'")
+    assert result.returncode == 0, "df failed"
+    size_bytes = int(result.stdout.strip())
+    # At least 4GB (smallest reasonable scratch disk)
+    assert size_bytes >= 4 * 1024 * 1024 * 1024, \
+        f"/root scratch disk too small: {size_bytes / (1024**3):.1f} GB"
 
 
 def test_tmp_is_writable_tmpfs():

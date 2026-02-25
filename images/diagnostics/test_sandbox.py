@@ -31,8 +31,8 @@ def test_rootfs_readonly(path):
 
 
 @pytest.mark.parametrize("path", ["/root", "/tmp", "/run", "/var/log", "/var/tmp"])
-def test_writable_tmpfs(path):
-    """Writable tmpfs mounts must allow write + readback."""
+def test_writable_mounts(path):
+    """Writable mounts (/root=ext4 scratch, others=tmpfs) must allow write + readback."""
     test_file = f"{path}/.capsem_rw_test"
     payload = "capsem-writable-ok"
     result = run(f'echo "{payload}" > {test_file} && cat {test_file}')

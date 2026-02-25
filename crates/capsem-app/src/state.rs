@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use capsem_core::VirtualMachine;
@@ -26,6 +27,7 @@ pub struct VmInstance {
     pub vsock_control_fd: Option<RawFd>,
     pub net_state: Option<VmNetworkState>,
     pub state_machine: HostStateMachine,
+    pub scratch_disk_path: Option<PathBuf>,
 }
 
 pub struct AppState {

@@ -39,8 +39,8 @@ echo "[capsem-init] mount exit: $?"
 echo "[capsem-init] checking /newroot/bin/bash..."
 ls /newroot/bin/bash 2>&1
 
-# Create writable layers (tmpfs) -- ONLY these dirs are writable
-mount -t tmpfs tmpfs /newroot/root
+# Create writable tmpfs layers first -- ONLY these dirs are writable.
+# /root is handled below (scratch disk or tmpfs fallback).
 mount -t tmpfs tmpfs /newroot/tmp
 mount -t tmpfs tmpfs /newroot/run
 mount -t tmpfs tmpfs /newroot/var/log
@@ -54,6 +54,33 @@ mount -t sysfs    sysfs    /newroot/sys
 mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
+
+# Mount /root: prefer scratch disk (virtio block device), fall back to tmpfs.
+# The scratch disk provides ~8GB of workspace instead of RAM-limited tmpfs.
+# Must happen AFTER /newroot/dev is mounted so device nodes resolve in chroot.
+# Uses rootfs e2fsprogs (not busybox) for ext4 support.
+SCRATCH=""
+if [ -b /dev/vdb ]; then
+    SCRATCH=/dev/vdb
+fi
+
+if [ -n "$SCRATCH" ]; then
+    echo "[capsem-init] formatting scratch disk ($SCRATCH)..."
+    if chroot /newroot /usr/sbin/mke2fs -t ext4 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1; then
+        if mount -t ext4 "$SCRATCH" /newroot/root; then
+            echo "[capsem-init] /root mounted from scratch disk"
+        else
+            echo "[capsem-init] WARNING: scratch disk mount failed, falling back to tmpfs"
+            mount -t tmpfs tmpfs /newroot/root
+        fi
+    else
+        echo "[capsem-init] WARNING: scratch disk format failed, falling back to tmpfs"
+        mount -t tmpfs tmpfs /newroot/root
+    fi
+else
+    mount -t tmpfs tmpfs /newroot/root
+    echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
+fi
 
 # === Network: air-gapped IP stack ===
 # The guest has no real NIC. We create a dummy interface with a local IP,

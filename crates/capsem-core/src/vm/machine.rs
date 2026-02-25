@@ -84,31 +84,23 @@ impl VirtualMachine {
                 let socket_array = NSArray::from_retained_slice(&[vsock_super]);
                 vz_config.setSocketDevices(&socket_array);
 
-                // Block device (rootfs)
+                // Block devices
+                let mut storage_devices: Vec<Retained<VZStorageDeviceConfiguration>> = Vec::new();
+
+                // Rootfs (read-only)
                 if let Some(ref disk_path) = config.disk_path {
-                    let path_str = disk_path.to_str().context("disk path not valid UTF-8")?;
-                    let ns_path = NSString::from_str(path_str);
-                    let disk_url = NSURL::fileURLWithPath(&ns_path);
+                    let device = attach_disk(disk_path, true, Some("rootfs"))?;
+                    storage_devices.push(device);
+                }
 
-                    let disk_attachment =
-                        VZDiskImageStorageDeviceAttachment::initWithURL_readOnly_cachingMode_synchronizationMode_error(
-                            VZDiskImageStorageDeviceAttachment::alloc(),
-                            &disk_url,
-                            true, // read-only for M1
-                            VZDiskImageCachingMode::Automatic,
-                            VZDiskImageSynchronizationMode::Full,
-                        )
-                        .map_err(|e| anyhow::anyhow!("disk attach failed: {e:?}"))?;
+                // Scratch disk (read-write, ephemeral workspace)
+                if let Some(ref scratch_path) = config.scratch_disk_path {
+                    let device = attach_disk(scratch_path, false, Some("scratch"))?;
+                    storage_devices.push(device);
+                }
 
-                    let block_device = VZVirtioBlockDeviceConfiguration::initWithAttachment(
-                        VZVirtioBlockDeviceConfiguration::alloc(),
-                        &disk_attachment,
-                    );
-
-                    // Cast to superclass array
-                    let block_device_super: Retained<VZStorageDeviceConfiguration> =
-                        Retained::into_super(block_device);
-                    let storage_array = NSArray::from_retained_slice(&[block_device_super]);
+                if !storage_devices.is_empty() {
+                    let storage_array = NSArray::from_retained_slice(&storage_devices);
                     vz_config.setStorageDevices(&storage_array);
                 }
 
@@ -229,6 +221,45 @@ impl VirtualMachine {
             VZVirtualMachineState::Restoring => "restoring",
             _ => "unknown",
         }
+    }
+}
+
+/// Create a VZ block device attachment from a disk image path.
+///
+/// `read_only`: true for rootfs, false for scratch disks.
+/// `identifier`: optional virtio block device identifier (max 20 ASCII bytes),
+/// exposed in guest as `/dev/disk/by-id/virtio-<identifier>`.
+fn attach_disk(
+    path: &std::path::Path,
+    read_only: bool,
+    identifier: Option<&str>,
+) -> anyhow::Result<Retained<VZStorageDeviceConfiguration>> {
+    unsafe {
+        let path_str = path.to_str().context("disk path not valid UTF-8")?;
+        let ns_path = NSString::from_str(path_str);
+        let disk_url = NSURL::fileURLWithPath(&ns_path);
+
+        let disk_attachment =
+            VZDiskImageStorageDeviceAttachment::initWithURL_readOnly_cachingMode_synchronizationMode_error(
+                VZDiskImageStorageDeviceAttachment::alloc(),
+                &disk_url,
+                read_only,
+                VZDiskImageCachingMode::Automatic,
+                VZDiskImageSynchronizationMode::Full,
+            )
+            .map_err(|e| anyhow::anyhow!("disk attach failed for {}: {e:?}", path.display()))?;
+
+        let block_device = VZVirtioBlockDeviceConfiguration::initWithAttachment(
+            VZVirtioBlockDeviceConfiguration::alloc(),
+            &disk_attachment,
+        );
+
+        if let Some(id) = identifier {
+            let ns_id = NSString::from_str(id);
+            block_device.setBlockDeviceIdentifier(&ns_id);
+        }
+
+        Ok(Retained::into_super(block_device))
     }
 }
 

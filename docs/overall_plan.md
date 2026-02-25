@@ -742,31 +742,59 @@ Host MCP Gateway (vsock:5003, Axum):
 
 **Deliverable**: Every session is self-contained with its own audit trail. Agent configs survive sessions. Enterprise deployments can enforce policies via MDM and export telemetry to SIEM.
 
-### Per-Session Databases & Compressed Blobs
+### Central Database & Disk/Session Metadata
 
-No monolithic SQLite database. Each session gets its own isolated storage to avoid write-lock contention, I/O bottlenecks, and memory bloat:
+A single `~/.capsem/capsem.db` (SQLite) replaces per-session JSON files and `global_index.db`. It tracks disks, sessions, and VM lifecycle as first-class entities:
 
 ```
 ~/.capsem/
+  capsem.db               # central metadata: disks, sessions, policies, audit index
+  disks/
+    <disk_id>.img         # named disk images (custom + ephemeral)
   sessions/
-    sess_<id>/
-      audit.db          # per-session SQLite (api_calls, tool_uses, mcp_calls tables)
-      telemetry/        # compressed file events, raw LLM payloads
-  global_index.db       # maps session IDs to timestamps, agent type, workspace path for UI
+    <session_id>/
+      audit.db            # per-session SQLite (api_calls, tool_uses, mcp_calls tables)
+      web.db              # network telemetry
+      telemetry/          # compressed file events, raw LLM payloads
 ```
 
-- Raw MessagePack telemetry and LLM request/response payloads compressed with **zstd** before insertion into SQLite BLOB columns
+**`capsem.db` schema (planned)**:
+
+- **disks** table: `id`, `name` (user-facing label), `path`, `size_gb`, `created_at`, `last_used_at`, `status` (ephemeral/saved/archived), `parent_disk_id` (fork lineage), `rootfs_version`, `description`
+- **sessions** table: `id`, `disk_id` (FK), `vm_id`, `created_at`, `stopped_at`, `status` (running/paused/stopped/crashed), `agent_type`, `network_policy`, `workspace_path` (security-scoped bookmark), `ram_bytes`, `cpu_count`, `cumulative_cost`
+- **session_audit_index**: lightweight pointers into per-session `audit.db` files for fast global search
+
+This replaces the current `session.json` approach. Each session still gets its own `audit.db` for write-lock isolation, but the central DB handles all metadata queries (session list, disk inventory, status filtering).
+
+- Raw MessagePack telemetry and LLM request/response payloads compressed with **zstd** before insertion into per-session SQLite BLOB columns
 - Each session is self-contained and independently deletable
-- `global_index.db` is lightweight (metadata only, no payloads) for fast session list rendering
+- Disk images can be shared across sessions (one custom disk, multiple boot cycles)
+
+### Custom Disk Images (Fork Workflow)
+
+The current scratch disk is ephemeral -- wiped on every boot. Future releases will support **persistent custom disks** that users can configure, save, and reuse:
+
+1. **Setup mode**: Boot VM with `--setup` flag (or UI "Create custom environment" button). User gets a shell to install packages, configure tools, set up dotfiles. The scratch disk is NOT deleted on exit -- instead it's saved as a named disk image in `~/.capsem/disks/`.
+
+2. **Boot from custom disk**: User selects a saved disk when creating a session. Guest detects existing ext4 (superblock check), skips formatting, mounts directly. All user customizations are immediately available.
+
+3. **Fork lineage**: Creating a new disk "from" an existing one copies the parent image (or uses reflinks on APFS). The `parent_disk_id` column tracks lineage so users can see "my-ml-env was forked from base-python".
+
+4. **Disk lifecycle states**:
+   - `ephemeral` -- created fresh each boot, deleted on stop (current behavior)
+   - `saved` -- user explicitly saved after setup, reusable across sessions
+   - `archived` -- compressed and moved to cold storage, restorable on demand
+
+5. **Pause vs stop disk semantics**: When a session is paused (VM pause, future milestone), the disk stays attached and dirty. When stopped gracefully, the guest runs `sync` first. The `sessions.status` column distinguishes paused/stopped/crashed so the UI can show accurate state. A crashed session's disk can be mounted read-only for data recovery.
 
 ### Session Resume Strategy
 
 NO VM snapshots (Apple Virtualization.framework cannot snapshot VMs with VirtioFS shares):
 - On stop: host sends `Shutdown { graceful: true }` -> guest runs `sync`, unmounts overlay, ACPI poweroff
-- Persistent overlay disk (sparse `.raw` file per session) preserves `/home`, `/var`, `/etc` changes
-- On resume: boot fresh VM, mount same overlay disk as upperdir, mount same workspace
+- Persistent custom disk (sparse `.img` file) preserves `/root` workspace changes
+- On resume: boot fresh VM, mount same disk image (skip formatting), mount same workspace
 - Terminal scrollback history stored in per-session `audit.db` (replay on reconnect)
-- Session metadata in `global_index.db`: agent type, model, network policy, workspace path (as security-scoped bookmark), cumulative cost
+- Session metadata in `capsem.db`: agent type, model, network policy, workspace path (as security-scoped bookmark), cumulative cost
 
 ### OverlayFS Config Write-Back
 
@@ -820,15 +848,20 @@ On `on_agent_end` (lifecycle stage 9): host diffs `upperdir` against `lowerdir`,
       session/
         mod.rs
         manager.rs              # orchestrates full session lifecycle
-        persistence.rs          # per-session SQLite store + global index
+        persistence.rs          # per-session SQLite store
         config.rs               # per-session configuration (agent, policy, workspace)
         history.rs              # terminal scrollback + command history
-        overlay_disk.rs         # sparse .raw file as persistent overlayfs upper
         config_writeback.rs     # OverlayFS diff + selective save-back to host
+      disk/
+        mod.rs
+        manager.rs              # disk lifecycle: create, fork, save, archive, delete
+        image.rs                # sparse image creation, superblock detection, reflink copy
+        metadata.rs             # disk metadata CRUD against capsem.db
       db/
         mod.rs
-        schema.rs               # SQLite migrations (both audit.db and global_index.db)
+        schema.rs               # SQLite migrations (capsem.db, audit.db)
         queries.rs              # typed queries (rusqlite)
+        capsem_db.rs            # central DB: disks, sessions, policies
       observability/
         mod.rs
         metrics.rs              # Prometheus counters, gauges, histograms
@@ -837,7 +870,7 @@ On `on_agent_end` (lifecycle stage 9): host diffs `upperdir` against `lowerdir`,
 ```
 
 **Key crates**:
-- `rusqlite` - SQLite for per-session audit.db and global_index.db
+- `rusqlite` - SQLite for capsem.db, per-session audit.db
 - `zstd` - compression for audit log blobs and OTLP export
 - `prometheus` - metrics endpoint
 - `serde` + `serde_json` - config serialization
@@ -847,7 +880,8 @@ On `on_agent_end` (lifecycle stage 9): host diffs `upperdir` against `lowerdir`,
 - Prevents TLS cert validation failures from clock drift
 
 **Tests**:
-- Unit: Session CRUD operations against global_index.db
+- Unit: Session CRUD operations against capsem.db
+- Unit: Disk CRUD operations (create, rename, fork, archive, delete)
 - Unit: Per-session audit.db schema creation and migration
 - Unit: zstd compression/decompression round-trip for audit blobs
 - Unit: Config serialization round-trip
@@ -855,14 +889,19 @@ On `on_agent_end` (lifecycle stage 9): host diffs `upperdir` against `lowerdir`,
 - Unit: Config write-back diff detects added/modified/deleted files
 - Unit: Corporate policy TOML parsing and validation
 - Unit: Prometheus metric registration and increment
+- Unit: Disk fork copies image and records parent lineage
+- Unit: Disk status transitions (ephemeral -> saved -> archived)
 - Integration: Create session -> exec command -> stop -> resume -> previous files still exist
-- Integration: App restart -> session list restored from global_index.db
+- Integration: App restart -> session list restored from capsem.db
 - Integration: Terminal scrollback replayed on session reconnect
 - Integration: Clock sync after resume (guest time matches host within 2s)
 - Integration: Concurrent sessions with separate audit.db files don't interfere
-- Integration: Session delete cleans up audit.db, overlay disk, and telemetry directory
+- Integration: Session delete cleans up audit.db, disk (if ephemeral), and telemetry directory
 - Integration: Config write-back presents changed files, selective save works
 - Integration: Prometheus `/metrics` endpoint returns expected counters after model calls
+- Integration: Boot with --setup -> install packages -> save disk -> boot new session from saved disk -> packages present
+- Integration: Pause session -> disk preserved -> resume -> workspace intact
+- Integration: Disk inventory shows correct status for each disk (ephemeral/saved/archived)
 
 **NOT included**: No stats UI (M10), no OTLP push (wired but requires corporate policy to activate).
 

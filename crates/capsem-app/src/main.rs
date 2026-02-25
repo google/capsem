@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use capsem_core::{
     CoalesceBuffer, GuestToHost, HostState, HostStateMachine, HostToGuest, VirtualMachine,
     VmConfig, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
-    decode_guest_msg, encode_host_msg, validate_guest_msg, MAX_FRAME_SIZE,
+    create_scratch_disk, decode_guest_msg, encode_host_msg, validate_guest_msg, MAX_FRAME_SIZE,
 };
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
@@ -110,6 +110,145 @@ fn write_perf_log(sm: &HostStateMachine) {
     eprintln!("perf log: {}", path.display());
 }
 
+/// Get current UTC time as ISO 8601 string.
+fn chrono_now() -> String {
+    let dur = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs();
+    // Simple ISO 8601 without pulling in chrono crate
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+    // Epoch days to date (simplified -- good enough for timestamps)
+    let mut y = 1970i64;
+    let mut remaining_days = days as i64;
+    loop {
+        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if remaining_days < year_days {
+            break;
+        }
+        remaining_days -= year_days;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0;
+    for md in &month_days {
+        if remaining_days < *md {
+            break;
+        }
+        remaining_days -= md;
+        m += 1;
+    }
+    format!("{y:04}-{:02}-{:02}T{hours:02}:{minutes:02}:{seconds:02}Z", m + 1, remaining_days + 1)
+}
+
+/// Get the sessions base directory: ~/.capsem/sessions/
+fn sessions_dir() -> Option<PathBuf> {
+    std::env::var("HOME").ok().map(|h| {
+        PathBuf::from(h).join(".capsem").join("sessions")
+    })
+}
+
+/// Get the session directory for a specific VM: ~/.capsem/sessions/<vm_id>/
+fn session_dir_for(vm_id: &str) -> Option<PathBuf> {
+    sessions_dir().map(|d| d.join(vm_id))
+}
+
+/// Session metadata persisted to session.json.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SessionMetadata {
+    vm_id: String,
+    created_at: String,
+    status: String,
+    scratch_disk_size_gb: u32,
+    ram_bytes: u64,
+}
+
+/// Write session.json to the session directory.
+fn write_session_json(session_dir: &Path, metadata: &SessionMetadata) {
+    let path = session_dir.join("session.json");
+    match serde_json::to_string_pretty(metadata) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                warn!("failed to write session.json: {e}");
+            }
+        }
+        Err(e) => warn!("failed to serialize session.json: {e}"),
+    }
+}
+
+/// Update session.json status field.
+fn update_session_status(session_dir: &Path, status: &str) {
+    let path = session_dir.join("session.json");
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            match serde_json::from_str::<SessionMetadata>(&content) {
+                Ok(mut meta) => {
+                    meta.status = status.to_string();
+                    write_session_json(session_dir, &meta);
+                }
+                Err(e) => warn!("failed to parse session.json: {e}"),
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => warn!("failed to read session.json: {e}"),
+    }
+}
+
+/// Clean up stale sessions on app startup.
+///
+/// Deletes any leftover scratch.img files (always ephemeral) and marks
+/// any "running" sessions as "crashed" (stale from ungraceful exit).
+fn cleanup_stale_sessions() {
+    let base = match sessions_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let entries = match std::fs::read_dir(&base) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        // Always delete leftover scratch.img
+        let scratch = dir.join("scratch.img");
+        if scratch.exists() {
+            info!(path = %scratch.display(), "deleting stale scratch.img");
+            let _ = std::fs::remove_file(&scratch);
+        }
+        // Mark stale "running" sessions as "crashed"
+        let json_path = dir.join("session.json");
+        if let Ok(content) = std::fs::read_to_string(&json_path) {
+            if let Ok(meta) = serde_json::from_str::<SessionMetadata>(&content) {
+                if meta.status == "running" {
+                    info!(vm_id = %meta.vm_id, "marking stale session as crashed");
+                    update_session_status(&dir, "crashed");
+                }
+            }
+        }
+    }
+}
+
+/// Clean up a VM session: delete scratch.img, update session.json to "stopped".
+fn cleanup_session(session_dir: &Path, scratch_path: Option<&Path>) {
+    if let Some(scratch) = scratch_path {
+        if scratch.exists() {
+            info!(path = %scratch.display(), "deleting scratch.img");
+            if let Err(e) = std::fs::remove_file(scratch) {
+                warn!("failed to delete scratch.img: {e}");
+            }
+        }
+    }
+    update_session_status(session_dir, "stopped");
+}
+
 /// Static CA keypair embedded at compile time.
 const CA_KEY_PEM: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT_PEM: &str = include_str!("../../../config/capsem-ca.crt");
@@ -147,9 +286,13 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
 }
 
 /// Build config, create VM, start it, and return the VM + serial receiver + input fd + state machine.
+///
+/// If `scratch_disk_path` is provided, the scratch disk is attached as a second
+/// block device (read-write) for the guest `/root` workspace.
 fn boot_vm(
     assets: &Path,
     cmdline: &str,
+    scratch_disk_path: Option<&Path>,
 ) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd, HostStateMachine)> {
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
@@ -178,6 +321,10 @@ fn boot_vm(
             if let Some(hash) = option_env!("ROOTFS_HASH") {
                 builder = builder.expected_disk_hash(hash);
             }
+        }
+
+        if let Some(scratch) = scratch_disk_path {
+            builder = builder.scratch_disk_path(scratch);
         }
 
         builder.build().context("failed to build VmConfig")?
@@ -657,7 +804,38 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
         .context("failed to create tokio runtime")?;
 
     let assets = resolve_assets_dir()?;
-    let (vm, mut rx, _serial_input_fd, _sm) = boot_vm(&assets, "console=hvc0 ro loglevel=1")?;
+
+    // Create session directory and scratch disk for CLI mode.
+    let vm_settings = policy_config::load_merged_vm_settings();
+    let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
+    let session_dir = session_dir_for("cli");
+    let scratch_path = session_dir.as_ref().map(|d| {
+        std::fs::create_dir_all(d).ok();
+        let path = d.join("scratch.img");
+        if let Err(e) = create_scratch_disk(&path, scratch_size) {
+            warn!("failed to create scratch disk: {e}");
+            return None;
+        }
+        info!(size_gb = scratch_size, "created scratch disk");
+        Some(path)
+    }).flatten();
+
+    // Write session.json
+    if let Some(ref dir) = session_dir {
+        write_session_json(dir, &SessionMetadata {
+            vm_id: "cli".to_string(),
+            created_at: chrono_now(),
+            status: "running".to_string(),
+            scratch_disk_size_gb: scratch_size,
+            ram_bytes: 512 * 1024 * 1024,
+        });
+    }
+
+    let (vm, mut rx, _serial_input_fd, _sm) = boot_vm(
+        &assets,
+        "console=hvc0 ro loglevel=1",
+        scratch_path.as_deref(),
+    )?;
 
     // Set up vsock listeners (including SNI proxy port).
     let socket_devices = vm.socket_devices();
@@ -896,6 +1074,12 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
     drop(_conns);
     // Wait for terminal reader to drain remaining output.
     let _ = terminal_reader.join();
+
+    // Clean up session: delete scratch.img, update session.json.
+    if let Some(ref dir) = session_dir {
+        cleanup_session(dir, scratch_path.as_deref());
+    }
+
     // Ensure the host shell prompt starts on a fresh line.
     if !last_was_newline.load(std::sync::atomic::Ordering::Relaxed) {
         let _ = std::io::stdout().write_all(b"\n");
@@ -967,6 +1151,7 @@ fn main() {
         .init();
 
     if !cli_args.is_empty() {
+        cleanup_stale_sessions();
         let (cli_env, remaining_args) = parse_env_args(&cli_args);
         if remaining_args.is_empty() {
             eprintln!("capsem: no command specified");
@@ -981,6 +1166,9 @@ fn main() {
     }
 
     info!("starting capsem");
+
+    // Clean up stale sessions from previous runs.
+    cleanup_stale_sessions();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1013,8 +1201,34 @@ fn main() {
 
             info!("assets directory: {}", assets.display());
 
+            // Create session directory and scratch disk for GUI mode.
+            let vm_settings = policy_config::load_merged_vm_settings();
+            let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
+            let gui_session_dir = session_dir_for(DEFAULT_VM_ID);
+            let gui_scratch_path = gui_session_dir.as_ref().map(|d| {
+                std::fs::create_dir_all(d).ok();
+                let path = d.join("scratch.img");
+                if let Err(e) = create_scratch_disk(&path, scratch_size) {
+                    warn!("failed to create scratch disk: {e}");
+                    return None;
+                }
+                info!(size_gb = scratch_size, "created scratch disk");
+                Some(path)
+            }).flatten();
+
+            // Write session.json
+            if let Some(ref dir) = gui_session_dir {
+                write_session_json(dir, &SessionMetadata {
+                    vm_id: DEFAULT_VM_ID.to_string(),
+                    created_at: chrono_now(),
+                    status: "running".to_string(),
+                    scratch_disk_size_gb: scratch_size,
+                    ram_bytes: 512 * 1024 * 1024,
+                });
+            }
+
             // Headless mode: hvc0 is primary console (routed to the frontend)
-            match boot_vm(&assets, "console=hvc0 ro loglevel=1") {
+            match boot_vm(&assets, "console=hvc0 ro loglevel=1", gui_scratch_path.as_deref()) {
                 Ok((vm, rx, input_fd, sm)) => {
                     info!("VM booted successfully");
 
@@ -1053,6 +1267,7 @@ fn main() {
                             vsock_control_fd: None,
                             net_state,
                             state_machine: sm,
+                            scratch_disk_path: gui_scratch_path.clone(),
                         });
                     }
 

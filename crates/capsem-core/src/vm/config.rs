@@ -33,6 +33,7 @@ pub struct VmConfig {
     pub kernel_path: PathBuf,
     pub initrd_path: Option<PathBuf>,
     pub disk_path: Option<PathBuf>,
+    pub scratch_disk_path: Option<PathBuf>,
     pub kernel_cmdline: String,
     pub expected_kernel_hash: Option<String>,
     pub expected_initrd_hash: Option<String>,
@@ -52,6 +53,7 @@ pub struct VmConfigBuilder {
     kernel_path: Option<PathBuf>,
     initrd_path: Option<PathBuf>,
     disk_path: Option<PathBuf>,
+    scratch_disk_path: Option<PathBuf>,
     kernel_cmdline: String,
     expected_kernel_hash: Option<String>,
     expected_initrd_hash: Option<String>,
@@ -66,6 +68,7 @@ impl Default for VmConfigBuilder {
             kernel_path: None,
             initrd_path: None,
             disk_path: None,
+            scratch_disk_path: None,
             kernel_cmdline: "console=hvc0 root=/dev/vda ro".to_string(),
             expected_kernel_hash: None,
             expected_initrd_hash: None,
@@ -97,6 +100,11 @@ impl VmConfigBuilder {
 
     pub fn disk_path(mut self, path: impl AsRef<Path>) -> Self {
         self.disk_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn scratch_disk_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.scratch_disk_path = Some(path.as_ref().to_path_buf());
         self
     }
 
@@ -182,12 +190,19 @@ impl VmConfigBuilder {
             }
         }
 
+        if let Some(ref scratch) = self.scratch_disk_path {
+            if !scratch.exists() {
+                return Err(ConfigError::MissingDisk(scratch.clone()));
+            }
+        }
+
         Ok(VmConfig {
             cpu_count: self.cpu_count,
             ram_bytes: self.ram_bytes,
             kernel_path,
             initrd_path: self.initrd_path,
             disk_path: self.disk_path,
+            scratch_disk_path: self.scratch_disk_path,
             kernel_cmdline: self.kernel_cmdline,
             expected_kernel_hash: self.expected_kernel_hash,
             expected_initrd_hash: self.expected_initrd_hash,
@@ -438,6 +453,45 @@ mod tests {
         assert_eq!(config.unwrap().disk_path.unwrap(), disk);
     }
 
+    // --- scratch disk path tests ---
+
+    #[test]
+    fn rejects_nonexistent_scratch_disk() {
+        let kernel = temp_file("vmlinuz-scratch-bad");
+        let err = VmConfig::builder()
+            .kernel_path(&kernel)
+            .scratch_disk_path("/nonexistent/scratch.img")
+            .build();
+        assert!(matches!(err, Err(ConfigError::MissingDisk(_))));
+    }
+
+    #[test]
+    fn accepts_valid_scratch_disk() {
+        let kernel = temp_file("vmlinuz-scratch-ok");
+        let scratch = temp_file("scratch-ok.img");
+        let config = VmConfig::builder()
+            .kernel_path(&kernel)
+            .scratch_disk_path(&scratch)
+            .build();
+        assert!(config.is_ok());
+        assert_eq!(config.unwrap().scratch_disk_path.unwrap(), scratch);
+    }
+
+    #[test]
+    fn accepts_both_disk_and_scratch_disk() {
+        let kernel = temp_file("vmlinuz-both-disks");
+        let disk = temp_file("rootfs-both.img");
+        let scratch = temp_file("scratch-both.img");
+        let config = VmConfig::builder()
+            .kernel_path(&kernel)
+            .disk_path(&disk)
+            .scratch_disk_path(&scratch)
+            .build()
+            .unwrap();
+        assert_eq!(config.disk_path.unwrap(), disk);
+        assert_eq!(config.scratch_disk_path.unwrap(), scratch);
+    }
+
     // --- builder defaults ---
 
     #[test]
@@ -448,6 +502,7 @@ mod tests {
         assert!(b.kernel_path.is_none());
         assert!(b.initrd_path.is_none());
         assert!(b.disk_path.is_none());
+        assert!(b.scratch_disk_path.is_none());
         assert_eq!(b.kernel_cmdline, "console=hvc0 root=/dev/vda ro");
     }
 

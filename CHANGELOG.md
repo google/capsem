@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-25
+
+### Added
+- Ephemeral scratch disk for `/root` workspace (8GB default, configurable via `[vm].scratch_disk_size_gb` in `~/.capsem/user.toml`)
+- Per-session directory structure (`~/.capsem/sessions/<vm_id>/`) with session metadata (`session.json`)
+- Stale session cleanup on startup: leftover scratch images deleted, orphaned "running" sessions marked as "crashed"
+- Block device identifiers (`rootfs`, `scratch`) for stable device naming in the guest (`/dev/disk/by-id/virtio-*`)
+- uv fast Python package installer available to guest AI agents
+
+### Changed
+- Guest `/root` workspace now uses ext4 on a virtio block device instead of RAM-backed tmpfs, increasing usable space from ~512MB to 8GB+
+- Upgraded Node.js from Debian's v18 to v24 LTS via nvm
+- Replaced pip3 with uv for in-VM Python package management (certifi, pytest)
+
+### Fixed
+- gemini CLI crashing with `SyntaxError: Invalid regular expression flags` due to Node.js 18 lacking the 'v' regex flag
+- AI CLI smoke test was too lenient -- now verifies `--help` runs without JS runtime errors instead of only checking for signal crashes
+
 ## [0.4.0] - 2026-02-25
 
 ### Added
