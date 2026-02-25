@@ -55,7 +55,54 @@ mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
 
-# Set up environment
+# === Network: air-gapped IP stack ===
+# The guest has no real NIC. We create a dummy interface with a local IP,
+# run a fake DNS that resolves everything to that IP, and use iptables to
+# redirect port 443 to our vsock-backed proxy. The host SNI proxy then
+# inspects TLS ClientHello for the domain and bridges to the real server.
+echo "[capsem-init] setting up network..."
+chroot /newroot ip link set lo up 2>/dev/null || true
+chroot /newroot ip link add dummy0 type dummy
+chroot /newroot ip addr add 10.0.0.1/24 dev dummy0
+chroot /newroot ip link set dummy0 up
+chroot /newroot ip route add default dev dummy0
+
+# Fake DNS: all domains resolve to 10.0.0.1.
+# resolv.conf lives on read-only rootfs, so bind-mount from writable /run.
+echo "nameserver 127.0.0.1" > /newroot/run/resolv.conf
+mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
+chroot /newroot dnsmasq --no-daemon --no-resolv --no-hosts \
+    --address=/#/10.0.0.1 --listen-address=127.0.0.1 --port=53 &
+sleep 0.2
+
+# iptables REDIRECT: use iptables-legacy since kernel has NF_TABLES=n.
+IPTABLES=iptables
+if [ -x /newroot/usr/sbin/iptables-legacy ]; then
+    IPTABLES=iptables-legacy
+fi
+chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443
+echo "[capsem-init] network ready"
+
+# Launch net proxy (TCP->vsock bridge) as background process.
+# Prefer initrd-bundled copy, fall back to rootfs.
+NET_PROXY_PATH=""
+if [ -x /capsem-net-proxy ]; then
+    cp /capsem-net-proxy /newroot/run/capsem-net-proxy
+    chmod 555 /newroot/run/capsem-net-proxy
+    NET_PROXY_PATH=/run/capsem-net-proxy
+elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
+    NET_PROXY_PATH=/usr/local/bin/capsem-net-proxy
+fi
+if [ -n "$NET_PROXY_PATH" ]; then
+    chroot /newroot "$NET_PROXY_PATH" &
+    sleep 0.1
+    echo "[capsem-init] net-proxy started"
+else
+    echo "[capsem-init] WARNING: capsem-net-proxy not found, no HTTPS proxy"
+fi
+
+# Set up environment (capsem-init defaults; the PTY agent overrides these
+# with values from the host's BootConfig message at vsock handshake time).
 export TERM=xterm-256color
 export HOME=/root
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

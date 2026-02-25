@@ -7,7 +7,12 @@ edition = "2021"
 name = "capsem-pty-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "capsem-net-proxy"
+path = "src/net_proxy.rs"
+
 [dependencies]
 nix = { version = "0.29", features = ["fs", "ioctl", "poll", "term", "signal", "process"] }
 rmp-serde = { workspace = true }
 serde = { workspace = true }
+capsem-proto = { path = "../capsem-proto" }

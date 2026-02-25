@@ -97,11 +97,27 @@ just repack     # iterate on capsem-init without full asset rebuild
 just install    # build, sign, install to /Applications, launch
 ```
 
-### Tests
+### Testing
+
+Testing has two layers: host-side Rust tests and in-VM diagnostics.
+
+**Host-side (out of VM)** -- standard Rust unit and integration tests that run on macOS without booting a VM:
 
 ```sh
 cargo test --workspace
 ```
+
+**In-VM diagnostics** -- a pytest suite that runs inside the guest VM to verify the sandbox actually works end-to-end. It checks sandbox security (read-only rootfs, no kernel modules, no networking), unix utilities, dev runtimes (Python, Node.js, git), AI CLI availability, and file I/O workflows.
+
+```sh
+just smoke-test                       # boot VM, run all diagnostics, exit
+just run                              # or boot interactively, then:
+capsem-doctor                         # run all diagnostics
+capsem-doctor -k sandbox              # run only sandbox tests
+capsem-doctor -x                      # stop on first failure
+```
+
+The diagnostic suite lives in `images/diagnostics/` and is baked into the rootfs via `Dockerfile.rootfs`. `capsem-doctor` (aliased as `capsem-test`) is the entry point. It returns a non-zero exit code on failure, so `just smoke-test` fails the build when tests fail.
 
 ### Entitlements
 

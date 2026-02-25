@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/capsem-core", "crates/capsem-app", "crates/capsem-agent"]
+members = ["crates/capsem-proto", "crates/capsem-core", "crates/capsem-app", "crates/capsem-agent"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 
 # Always optimize blake3 -- its SIMD assembly is 100x faster than
 # unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.
@@ -19,8 +19,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rmp-serde = "1"
+toml = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+humantime = "2"
 objc2 = "0.6"
 objc2-virtualization = "0.3"
 objc2-foundation = "0.3"
 block2 = "0.6"
 dispatch2 = "0.2"
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+time = "0.3"
+rustls = "0.23"
+rustls-pemfile = "2"
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1"] }
+http-body-util = "0.1"
+http = "1"

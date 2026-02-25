@@ -12,7 +12,7 @@ dev:
     cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
 # Build VM assets from scratch (kernel, initrd, rootfs) via Docker/Podman
-build:
+build: ensure-tools test
     cd images && python3 build.py
 
 # Build frontend
@@ -58,7 +58,8 @@ clean:
     cd frontend && rm -rf dist node_modules
     rm -rf target/release/bundle/macos/Capsem.app
 
-# Repack initrd with current capsem-init + capsem-pty-agent, rebuild, codesign, and boot.
+# Repack initrd with current capsem-init + capsem-pty-agent + capsem-net-proxy,
+# rebuild, codesign, and boot.
 # Use this instead of 'build' when only capsem-init or capsem-agent changed (~10s vs full rebuild).
 repack *CMD:
     #!/bin/bash
@@ -69,6 +70,9 @@ repack *CMD:
         echo "ERROR: $INITRD not found. Run 'just build' first."
         exit 1
     fi
+    echo "=== Tests ==="
+    cargo llvm-cov --workspace --no-cfg-coverage
+    echo ""
     echo "=== Cross-compile agent ==="
     cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
     echo ""
@@ -78,14 +82,16 @@ repack *CMD:
     gzip -dc "$INITRD" | cpio -id 2>/dev/null
     cp "$ROOT/images/capsem-init" init
     chmod 755 init
-    rm -f capsem-pty-agent
+    rm -f capsem-pty-agent capsem-net-proxy
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
     chmod 555 capsem-pty-agent
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-net-proxy" capsem-net-proxy
+    chmod 555 capsem-net-proxy
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
     (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
-    echo "initrd repacked (with agent)"
+    echo "initrd repacked (with agent + net-proxy)"
     echo ""
     echo "=== Build + sign ==="
     cargo build -p capsem 2>&1 | tail -3
@@ -94,11 +100,28 @@ repack *CMD:
     echo "=== Boot VM ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{if CMD == "" { "echo capsem-ok" } else { CMD } }}
 
-# Run in-VM smoke test (boots VM, runs capsem-test, shuts down)
+# Run in-VM smoke test (boots VM, runs capsem-doctor, shuts down)
 smoke-test: sign
-    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-test"
+    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
 
-# Check code formatting and types
-check:
-    cargo check
+# Ensure required dev tools are installed
+ensure-tools:
+    #!/bin/bash
+    set -euo pipefail
+    if ! command -v cargo-llvm-cov &>/dev/null; then
+        echo "Installing cargo-llvm-cov..."
+        cargo install cargo-llvm-cov
+    fi
+    if ! rustup component list --installed | grep -q llvm-tools; then
+        echo "Installing llvm-tools-preview..."
+        rustup component add llvm-tools-preview
+    fi
+
+# Run tests with coverage summary
+test:
+    cargo llvm-cov --workspace --no-cfg-coverage
+
+# Check code and types
+check: ensure-tools
+    cargo llvm-cov --workspace --no-cfg-coverage
     cd frontend && pnpm run build

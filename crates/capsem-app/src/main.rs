@@ -7,14 +7,20 @@ use std::io::{Read, Write};
 use std::mem::ManuallyDrop;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capsem_core::{
-    CoalesceBuffer, ControlMessage, VirtualMachine, VmConfig, VsockManager, VSOCK_PORT_CONTROL,
-    VSOCK_PORT_TERMINAL, decode_control_message, encode_control_message,
+    CoalesceBuffer, GuestToHost, HostState, HostStateMachine, HostToGuest, VirtualMachine,
+    VmConfig, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+    decode_guest_msg, encode_host_msg, validate_guest_msg, MAX_FRAME_SIZE,
 };
-use state::{AppState, VmInstance};
+use capsem_core::net::cert_authority::CertAuthority;
+use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
+use capsem_core::net::policy_config;
+use capsem_core::net::telemetry::WebDb;
+use state::{AppState, VmInstance, VmNetworkState};
 use tauri::{Emitter, Manager};
 use tokio::sync::broadcast;
 use tracing::{debug_span, error, info, info_span, warn};
@@ -82,14 +88,13 @@ fn resolve_assets_dir() -> Result<PathBuf> {
     ))
 }
 
-/// Boot performance log entry.
-struct PerfEntry {
-    stage: &'static str,
-    elapsed_ms: f64,
-}
-
-/// Write boot performance data to ~/.capsem/perf/<timestamp>.log
-fn write_perf_log(entries: &[PerfEntry]) {
+/// Write boot performance data from the state machine to ~/.capsem/perf/<timestamp>.log
+fn write_perf_log(sm: &HostStateMachine) {
+    let log = sm.format_perf_log();
+    if log.is_empty() {
+        return;
+    }
+    eprint!("{log}");
     let home = match std::env::var("HOME") {
         Ok(h) => PathBuf::from(h),
         Err(_) => return,
@@ -101,25 +106,56 @@ fn write_perf_log(entries: &[PerfEntry]) {
         .unwrap_or_default()
         .as_secs();
     let path = dir.join(format!("{ts}.log"));
-    let mut lines = Vec::new();
-    for e in entries {
-        let line = format!("{:<30} {:>10.3} ms", e.stage, e.elapsed_ms);
-        eprintln!("{line}");
-        lines.push(line);
-    }
-    let _ = std::fs::write(&path, lines.join("\n") + "\n");
+    let _ = std::fs::write(&path, &log);
     eprintln!("perf log: {}", path.display());
 }
 
-/// Build config, create VM, start it, and return the VM + serial receiver + input fd.
-fn boot_vm(assets: &Path, cmdline: &str) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd)> {
+/// Static CA keypair embedded at compile time.
+const CA_KEY_PEM: &str = include_str!("../../../config/capsem-ca.key");
+const CA_CERT_PEM: &str = include_str!("../../../config/capsem-ca.crt");
+
+/// Create per-VM network state: load CA, HTTP policy, and open web.db.
+fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
+    let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM)
+        .context("failed to load MITM CA")?;
+    info!(vm_id, "loaded MITM CA");
+
+    let policy = policy_config::load_merged_policy();
+    let dp = policy.domain_policy();
+    info!(
+        vm_id,
+        "loaded domain policy (allow={}, block={})",
+        dp.allow_count(),
+        dp.block_count()
+    );
+
+    // Session directory: ~/.capsem/sessions/<vm_id>/
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let session_dir = PathBuf::from(home)
+        .join(".capsem")
+        .join("sessions")
+        .join(vm_id);
+    let db_path = session_dir.join("web.db");
+    let web_db = WebDb::open(&db_path).context("failed to open web.db")?;
+    info!(path = %db_path.display(), "opened web.db");
+
+    Ok(VmNetworkState {
+        policy: Arc::new(policy),
+        web_db: Arc::new(Mutex::new(web_db)),
+        ca: Arc::new(ca),
+    })
+}
+
+/// Build config, create VM, start it, and return the VM + serial receiver + input fd + state machine.
+fn boot_vm(
+    assets: &Path,
+    cmdline: &str,
+) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd, HostStateMachine)> {
     let _span = info_span!("boot_vm").entered();
-    let boot_start = Instant::now();
-    let mut perf = Vec::new();
+    let mut sm = HostStateMachine::new_host();
 
     let config = {
         let _span = debug_span!("config_build").entered();
-        let t0 = Instant::now();
         let mut builder = VmConfig::builder()
             .cpu_count(2)
             .ram_bytes(512 * 1024 * 1024)
@@ -144,30 +180,22 @@ fn boot_vm(assets: &Path, cmdline: &str) -> Result<(VirtualMachine, broadcast::R
             }
         }
 
-        let config = builder.build().context("failed to build VmConfig")?;
-        perf.push(PerfEntry { stage: "config_build (incl hashing)", elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0 });
-        config
+        builder.build().context("failed to build VmConfig")?
     };
 
     let (mut vm, rx, input_fd) = {
         let _span = debug_span!("vm_create").entered();
-        let t0 = Instant::now();
-        let result = VirtualMachine::create(&config).context("failed to create VM")?;
-        perf.push(PerfEntry { stage: "vm_create", elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0 });
-        result
+        VirtualMachine::create(&config).context("failed to create VM")?
     };
 
     {
         let _span = debug_span!("vm_start").entered();
-        let t0 = Instant::now();
         vm.start().context("failed to start VM")?;
-        perf.push(PerfEntry { stage: "vm_start", elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0 });
     }
 
-    perf.push(PerfEntry { stage: "TOTAL boot_vm", elapsed_ms: boot_start.elapsed().as_secs_f64() * 1000.0 });
-    write_perf_log(&perf);
+    sm.transition(HostState::Booting, "vm_started")?;
 
-    Ok((vm, rx, input_fd))
+    Ok((vm, rx, input_fd, sm))
 }
 
 /// Forward serial console bytes to the Tauri frontend as events.
@@ -246,8 +274,10 @@ async fn vsock_terminal_to_events(app_handle: tauri::AppHandle, vsock_fd: RawFd)
 }
 
 /// Handle vsock control channel: read incoming messages, handle heartbeat.
+/// Called AFTER the boot handshake (Ready/BootConfig/BootReady already consumed).
+/// Validates each incoming message against the host state machine before processing.
 async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<ControlMessage>(32);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<GuestToHost>(32);
 
     // Blocking reader thread for control messages.
     std::thread::spawn(move || {
@@ -260,7 +290,7 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
                 break;
             }
             let len = u32::from_be_bytes(len_buf) as usize;
-            if len > 4096 {
+            if len > MAX_FRAME_SIZE as usize {
                 warn!("vsock control: frame too large ({len} bytes), dropping connection");
                 break;
             }
@@ -268,7 +298,7 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
             if file.read_exact(&mut payload).is_err() {
                 break;
             }
-            match capsem_core::vsock::decode_control_message(&payload) {
+            match decode_guest_msg(&payload) {
                 Ok(msg) => {
                     if tx.blocking_send(msg).is_err() {
                         break;
@@ -282,16 +312,26 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
     });
 
     while let Some(msg) = rx.recv().await {
-        match msg {
-            ControlMessage::Ready { version } => {
-                info!("vsock: guest agent ready (version {version})");
-                let _ = app_handle.emit("terminal-source-changed", "vsock");
+        // Validate incoming guest message against host state machine.
+        {
+            let state = app_handle.state::<AppState>();
+            let vms = state.vms.lock().unwrap();
+            if let Some(instance) = vms.get(DEFAULT_VM_ID) {
+                if let Err(e) = validate_guest_msg(&msg, instance.state_machine.state()) {
+                    warn!("vsock: rejected control message: {e}");
+                    continue;
+                }
             }
-            ControlMessage::Pong => {
+        }
+        match msg {
+            GuestToHost::Pong => {
                 info!("vsock: heartbeat pong received");
             }
+            GuestToHost::ExecDone { id, exit_code } => {
+                info!("vsock: exec done (id={id}, exit_code={exit_code})");
+            }
             other => {
-                info!("vsock: unexpected control message: {other:?}");
+                info!("vsock: unhandled control message: {other:?}");
             }
         }
     }
@@ -300,7 +340,9 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
 /// Set up vsock listeners and handle connections after VM boot.
 ///
 /// Once vsock connects, the serial forwarding task is aborted since all
-/// terminal I/O now flows through the vsock PTY bridge.
+/// terminal I/O now flows through the vsock PTY bridge. After terminal
+/// and control are established, continues accepting port 5002 (SNI proxy)
+/// connections indefinitely, spawning each into a blocking thread.
 async fn setup_vsock(
     app_handle: tauri::AppHandle,
     mut vsock_manager: VsockManager,
@@ -317,6 +359,9 @@ async fn setup_vsock(
                 match conn.port {
                     VSOCK_PORT_TERMINAL => terminal_conn = Some(conn),
                     VSOCK_PORT_CONTROL => control_conn = Some(conn),
+                    VSOCK_PORT_SNI_PROXY => {
+                        info!("vsock: SNI proxy connection before terminal/control ready, deferring");
+                    }
                     other => warn!("vsock: unexpected port {other}, ignoring"),
                 }
             }
@@ -330,30 +375,145 @@ async fn setup_vsock(
     let terminal = terminal_conn.unwrap();
     let control = control_conn.unwrap();
 
-    info!("vsock: both channels connected, stopping serial forwarding");
-    serial_task.abort();
-
-    // Store vsock fds in app state so commands can use them.
+    // Transition: Booting -> VsockConnected
     {
+        let state = app_handle.state::<AppState>();
+        let mut vms = state.vms.lock().unwrap();
+        if let Some(instance) = vms.get_mut(DEFAULT_VM_ID) {
+            if let Err(e) = instance.state_machine.transition(HostState::VsockConnected, "vsock_ports_connected") {
+                warn!("state machine: {e}");
+            }
+        }
+    }
+
+    info!("vsock: both channels connected, performing boot handshake");
+
+    // Boot handshake: wait for Ready, send BootConfig, wait for BootReady.
+    // Read first control message -- expect GuestToHost::Ready.
+    match read_control_msg(control.fd) {
+        Ok(GuestToHost::Ready { version }) => {
+            info!("vsock: guest agent ready (version {version})");
+            // Transition: VsockConnected -> Handshaking
+            let state = app_handle.state::<AppState>();
+            let mut vms = state.vms.lock().unwrap();
+            if let Some(instance) = vms.get_mut(DEFAULT_VM_ID) {
+                if let Err(e) = instance.state_machine.transition(HostState::Handshaking, "ready_received") {
+                    warn!("state machine: {e}");
+                }
+            }
+        }
+        Ok(other) => {
+            warn!("vsock: expected Ready, got {other:?}");
+        }
+        Err(e) => {
+            warn!("vsock: failed to read Ready: {e}");
+        }
+    }
+
+    // Build and send BootConfig.
+    match build_boot_config(&[]) {
+        Ok(boot_config) => {
+            if let Err(e) = write_control_msg(control.fd, &boot_config) {
+                warn!("vsock: failed to send BootConfig: {e}");
+            }
+        }
+        Err(e) => {
+            warn!("vsock: failed to build BootConfig: {e}");
+        }
+    }
+
+    // Wait for BootReady (5s timeout for backwards compat with old agents).
+    let boot_ready_deadline = Instant::now() + Duration::from_secs(5);
+    let mut boot_ready_received = false;
+    while Instant::now() < boot_ready_deadline {
+        match read_control_msg(control.fd) {
+            Ok(GuestToHost::BootReady) => {
+                info!("vsock: guest boot ready");
+                boot_ready_received = true;
+                break;
+            }
+            Ok(other) => {
+                info!("vsock: control message during boot handshake: {other:?}");
+            }
+            Err(e) => {
+                warn!("vsock: control channel error during boot handshake: {e}");
+                break;
+            }
+        }
+    }
+    if !boot_ready_received {
+        warn!("vsock: BootReady not received (old agent?), proceeding anyway");
+    }
+
+    serial_task.abort();
+    info!("vsock: boot handshake complete, stopping serial forwarding");
+
+    // Store vsock fds and transition to Running.
+    let mitm_config = {
         let state = app_handle.state::<AppState>();
         let mut vms = state.vms.lock().unwrap();
         if let Some(instance) = vms.get_mut(DEFAULT_VM_ID) {
             instance.vsock_terminal_fd = Some(terminal.fd);
             instance.vsock_control_fd = Some(control.fd);
+            if let Err(e) = instance.state_machine.transition(HostState::Running, "boot_ready_received") {
+                warn!("state machine: {e}");
+            }
+            write_perf_log(&instance.state_machine);
+            instance.net_state.as_ref().map(|ns| {
+                Arc::new(MitmProxyConfig {
+                    ca: Arc::clone(&ns.ca),
+                    policy: Arc::clone(&ns.policy),
+                    web_db: Arc::clone(&ns.web_db),
+                })
+            })
+        } else {
+            None
         }
-    }
+    };
+
+    // Emit structured state change to frontend.
+    let _ = app_handle.emit("vm-state-changed", serde_json::json!({
+        "state": "Running",
+        "trigger": "boot_ready_received",
+    }));
+    let _ = app_handle.emit("terminal-source-changed", "vsock");
 
     // Spawn forwarding tasks.
     let handle1 = app_handle.clone();
     tokio::spawn(vsock_terminal_to_events(handle1, terminal.fd));
     tokio::spawn(vsock_control_handler(app_handle, control.fd));
 
-    // Keep the connections alive by holding them here.
-    // They'll be dropped when the task is cancelled (app shutdown).
+    // Keep terminal/control connections alive.
     let _keep_terminal = terminal;
     let _keep_control = control;
-    // Wait forever (connections are long-lived).
-    std::future::pending::<()>().await;
+
+    // Accept MITM proxy connections indefinitely on port 5002.
+    if let Some(config) = mitm_config {
+        info!("vsock: listening for MITM proxy connections on port 5002");
+        loop {
+            match vsock_manager.accept().await {
+                Some(conn) if conn.port == VSOCK_PORT_SNI_PROXY => {
+                    let fd = conn.fd;
+                    let config = Arc::clone(&config);
+                    tokio::spawn(async move {
+                        let _conn = conn; // keep VsockConnection alive
+                        mitm_proxy::handle_connection(fd, config).await;
+                    });
+                }
+                Some(conn) => {
+                    warn!(port = conn.port, "vsock: unexpected port after setup, ignoring");
+                }
+                None => {
+                    info!("vsock: manager channel closed, stopping MITM proxy accept loop");
+                    break;
+                }
+            }
+        }
+    } else {
+        warn!("vsock: no network state, MITM proxy disabled");
+        // Wait forever (connections are long-lived).
+        std::future::pending::<()>().await;
+    }
 }
 
 const CLI_TIMEOUT: Duration = Duration::from_secs(120);
@@ -381,36 +541,140 @@ fn write_all_fd(fd: RawFd, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Read one control message from an fd (blocking).
-fn read_control_msg(fd: RawFd) -> Result<ControlMessage> {
+/// Read one guest-to-host control message from an fd (blocking).
+fn read_control_msg(fd: RawFd) -> Result<GuestToHost> {
     let mut len_buf = [0u8; 4];
     read_exact_fd(fd, &mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 4096 {
+    if len > MAX_FRAME_SIZE as usize {
         anyhow::bail!("control frame too large ({len} bytes)");
     }
     let mut payload = vec![0u8; len];
     read_exact_fd(fd, &mut payload)?;
-    decode_control_message(&payload).map_err(Into::into)
+    decode_guest_msg(&payload).map_err(Into::into)
 }
 
-/// Write one control message to an fd.
-fn write_control_msg(fd: RawFd, msg: &ControlMessage) -> Result<()> {
-    let frame = encode_control_message(msg)?;
+/// Write one host-to-guest control message to an fd.
+fn write_control_msg(fd: RawFd, msg: &HostToGuest) -> Result<()> {
+    let frame = encode_host_msg(msg)?;
     write_all_fd(fd, &frame)?;
     Ok(())
 }
 
-fn run_cli(command: &str) -> Result<()> {
-    let assets = resolve_assets_dir()?;
-    let (vm, mut rx, _serial_input_fd) = boot_vm(&assets, "console=hvc0 loglevel=1")?;
+/// Build a BootConfig message with clock + env vars.
+///
+/// Env var priority: hardcoded defaults < user.toml [guest].env < CLI --env flags.
+fn build_boot_config(cli_env: &[(String, String)]) -> Result<HostToGuest> {
+    use capsem_core::capsem_proto::encode_boot_config_checked;
 
-    // Set up vsock listeners.
+    let epoch_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Start with hardcoded defaults.
+    let mut env_map: Vec<(String, String)> = vec![
+        ("TERM".into(), "xterm-256color".into()),
+        ("HOME".into(), "/root".into()),
+        ("PATH".into(), "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into()),
+        ("LANG".into(), "C".into()),
+        // CA trust env vars for MITM proxy (ensures all runtimes trust the Capsem CA)
+        ("REQUESTS_CA_BUNDLE".into(), "/etc/ssl/certs/ca-certificates.crt".into()),
+        ("NODE_EXTRA_CA_CERTS".into(), "/etc/ssl/certs/ca-certificates.crt".into()),
+        ("SSL_CERT_FILE".into(), "/etc/ssl/certs/ca-certificates.crt".into()),
+    ];
+
+    // Merge user.toml [guest].env (overrides defaults).
+    let guest_config = policy_config::load_merged_guest_config();
+    if let Some(user_env) = guest_config.env {
+        for (key, value) in user_env {
+            if value.len() > 4096 {
+                warn!(key, len = value.len(), "env var value exceeds 4096 bytes, truncating");
+            }
+            if let Some(existing) = env_map.iter_mut().find(|(k, _)| k == &key) {
+                existing.1 = value;
+            } else {
+                env_map.push((key, value));
+            }
+        }
+    }
+
+    // Merge CLI --env flags (overrides everything).
+    for (key, value) in cli_env {
+        if let Some(existing) = env_map.iter_mut().find(|(k, _)| k == key) {
+            existing.1 = value.clone();
+        } else {
+            env_map.push((key.clone(), value.clone()));
+        }
+    }
+
+    let msg = HostToGuest::BootConfig {
+        epoch_secs,
+        env_vars: env_map,
+    };
+
+    // Validate the frame fits within limits.
+    encode_boot_config_checked(&msg)?;
+
+    Ok(msg)
+}
+
+/// Parse `--env KEY=VALUE` pairs from CLI args, returning env pairs and remaining args.
+fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<String>) {
+    let mut env_pairs = Vec::new();
+    let mut remaining = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--env" {
+            if let Some(val) = iter.next() {
+                if let Some((key, value)) = val.split_once('=') {
+                    env_pairs.push((key.to_string(), value.to_string()));
+                } else {
+                    eprintln!("capsem: --env value must be KEY=VALUE, got: {val}");
+                }
+            } else {
+                eprintln!("capsem: --env requires a KEY=VALUE argument");
+            }
+        } else if let Some(rest) = arg.strip_prefix("--env=") {
+            if let Some((key, value)) = rest.split_once('=') {
+                env_pairs.push((key.to_string(), value.to_string()));
+            } else {
+                eprintln!("capsem: --env value must be KEY=VALUE, got: {rest}");
+            }
+        } else {
+            remaining.push(arg.clone());
+        }
+    }
+    (env_pairs, remaining)
+}
+
+fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
+    // Tokio runtime for async MITM proxy handlers.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+
+    let assets = resolve_assets_dir()?;
+    let (vm, mut rx, _serial_input_fd, _sm) = boot_vm(&assets, "console=hvc0 ro loglevel=1")?;
+
+    // Set up vsock listeners (including SNI proxy port).
     let socket_devices = vm.socket_devices();
     let mut mgr = VsockManager::new(
         &socket_devices,
-        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL],
+        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY],
     ).context("failed to set up vsock")?;
+
+    // Create per-VM network state for MITM proxy.
+    let net_state = create_net_state("cli").ok();
+    let mitm_config: Option<Arc<MitmProxyConfig>> = net_state.as_ref().map(|ns| {
+        Arc::new(MitmProxyConfig {
+            ca: Arc::clone(&ns.ca),
+            policy: Arc::clone(&ns.policy),
+            web_db: Arc::clone(&ns.web_db),
+        })
+    });
 
     // Print serial boot logs to stderr in a background thread.
     std::thread::spawn(move || {
@@ -451,6 +715,18 @@ fn run_cli(command: &str) -> Result<()> {
             match conn.port {
                 VSOCK_PORT_TERMINAL => terminal_fd = Some(conn.fd),
                 VSOCK_PORT_CONTROL => control_fd = Some(conn.fd),
+                VSOCK_PORT_SNI_PROXY => {
+                    // Spawn MITM proxy handler on the tokio runtime.
+                    if let Some(ref config) = mitm_config {
+                        let fd = conn.fd;
+                        let config = Arc::clone(config);
+                        rt.spawn(async move {
+                            let _conn = conn;
+                            mitm_proxy::handle_connection(fd, config).await;
+                        });
+                        continue; // conn moved, don't push to _conns
+                    }
+                }
                 _ => {}
             }
             _conns.push(conn);
@@ -461,7 +737,7 @@ fn run_cli(command: &str) -> Result<()> {
     let control_fd = control_fd.unwrap();
 
     // Wait for Ready message from guest agent.
-    let (ctrl_msg_tx, ctrl_msg_rx) = std::sync::mpsc::channel::<ControlMessage>();
+    let (ctrl_msg_tx, ctrl_msg_rx) = std::sync::mpsc::channel::<GuestToHost>();
     let ctrl_fd_reader = control_fd;
     std::thread::spawn(move || {
         loop {
@@ -489,7 +765,7 @@ fn run_cli(command: &str) -> Result<()> {
             );
         }
         match ctrl_msg_rx.try_recv() {
-            Ok(ControlMessage::Ready { version }) => {
+            Ok(GuestToHost::Ready { version }) => {
                 eprintln!("[capsem] guest agent ready (v{version})");
                 break;
             }
@@ -503,12 +779,45 @@ fn run_cli(command: &str) -> Result<()> {
         }
     }
 
+    // Send BootConfig with clock + env vars.
+    let boot_config = build_boot_config(cli_env)?;
+    write_control_msg(control_fd, &boot_config)?;
+
+    // Wait for BootReady (5s timeout for backwards compat).
+    let boot_ready_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if Instant::now() >= boot_ready_deadline {
+            eprintln!("[capsem] BootReady not received (old agent?), proceeding");
+            break;
+        }
+        unsafe {
+            core_foundation_sys::runloop::CFRunLoopRunInMode(
+                core_foundation_sys::runloop::kCFRunLoopDefaultMode,
+                0.05,
+                0,
+            );
+        }
+        match ctrl_msg_rx.try_recv() {
+            Ok(GuestToHost::BootReady) => {
+                eprintln!("[capsem] guest boot ready");
+                break;
+            }
+            Ok(other) => {
+                eprintln!("[capsem] control message during boot: {other:?}");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                anyhow::bail!("guest agent disconnected during boot handshake");
+            }
+        }
+    }
+
     // Send Exec command.
     let exec_id: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    write_control_msg(control_fd, &ControlMessage::Exec {
+    write_control_msg(control_fd, &HostToGuest::Exec {
         id: exec_id,
         command: command.to_string(),
     })?;
@@ -535,7 +844,7 @@ fn run_cli(command: &str) -> Result<()> {
         }
     });
 
-    // Wait for ExecDone, pumping CFRunLoop.
+    // Wait for ExecDone, pumping CFRunLoop and accepting SNI proxy connections.
     let exit_code;
     loop {
         if Instant::now() >= deadline {
@@ -550,8 +859,23 @@ fn run_cli(command: &str) -> Result<()> {
                 0,
             );
         }
+        // Accept any incoming MITM proxy connections during exec.
+        while let Ok(conn) = mgr.try_accept() {
+            if conn.port == VSOCK_PORT_SNI_PROXY {
+                if let Some(ref config) = mitm_config {
+                    let fd = conn.fd;
+                    let config = Arc::clone(config);
+                    rt.spawn(async move {
+                        let _conn = conn;
+                        mitm_proxy::handle_connection(fd, config).await;
+                    });
+                }
+            } else {
+                _conns.push(conn);
+            }
+        }
         match ctrl_msg_rx.try_recv() {
-            Ok(ControlMessage::ExecDone { id, exit_code: code }) if id == exec_id => {
+            Ok(GuestToHost::ExecDone { id, exit_code: code }) if id == exec_id => {
                 exit_code = code;
                 break;
             }
@@ -643,8 +967,13 @@ fn main() {
         .init();
 
     if !cli_args.is_empty() {
-        let command = cli_args.join(" ");
-        if let Err(e) = run_cli(&command) {
+        let (cli_env, remaining_args) = parse_env_args(&cli_args);
+        if remaining_args.is_empty() {
+            eprintln!("capsem: no command specified");
+            std::process::exit(1);
+        }
+        let command = remaining_args.join(" ");
+        if let Err(e) = run_cli(&command, &cli_env) {
             eprintln!("capsem: {e:#}");
             std::process::exit(1);
         }
@@ -674,7 +1003,10 @@ fn main() {
                 Err(e) => {
                     error!("asset resolution failed: {e:#}");
                     info!("continuing without VM (frontend-only mode)");
-                    let _ = app.handle().emit("vm-state-changed", "not created");
+                    let _ = app.handle().emit("vm-state-changed", serde_json::json!({
+                        "state": "Error",
+                        "trigger": "assets_not_found",
+                    }));
                     return Ok(());
                 }
             };
@@ -682,22 +1014,31 @@ fn main() {
             info!("assets directory: {}", assets.display());
 
             // Headless mode: hvc0 is primary console (routed to the frontend)
-            match boot_vm(&assets, "console=hvc0 loglevel=1") {
-                Ok((vm, rx, input_fd)) => {
+            match boot_vm(&assets, "console=hvc0 ro loglevel=1") {
+                Ok((vm, rx, input_fd, sm)) => {
                     info!("VM booted successfully");
 
-                    // Register vsock listeners on the socket device.
+                    // Register vsock listeners on the socket device (including SNI proxy port).
                     let vsock_manager = {
                         let socket_devices = vm.socket_devices();
                         match VsockManager::new(
                             &socket_devices,
-                            &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL],
+                            &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY],
                         ) {
                             Ok(mgr) => Some(mgr),
                             Err(e) => {
                                 warn!("vsock setup failed: {e:#}, using serial-only mode");
                                 None
                             }
+                        }
+                    };
+
+                    // Create per-VM network state (policy + web.db).
+                    let net_state = match create_net_state(DEFAULT_VM_ID) {
+                        Ok(ns) => Some(ns),
+                        Err(e) => {
+                            warn!("network state init failed: {e:#}, SNI proxy disabled");
+                            None
                         }
                     };
 
@@ -710,6 +1051,8 @@ fn main() {
                             serial_input_fd: input_fd,
                             vsock_terminal_fd: None,
                             vsock_control_fd: None,
+                            net_state,
+                            state_machine: sm,
                         });
                     }
 
@@ -726,13 +1069,19 @@ fn main() {
                         );
                     }
 
-                    // Push initial "running" state to frontend.
-                    let _ = handle.emit("vm-state-changed", "running");
+                    // Push initial state to frontend (Booting, not yet Running).
+                    let _ = handle.emit("vm-state-changed", serde_json::json!({
+                        "state": "Booting",
+                        "trigger": "vm_started",
+                    }));
                 }
                 Err(e) => {
                     error!("VM boot failed: {e:#}");
                     info!("continuing without VM (unsigned binary or missing entitlement)");
-                    let _ = app.handle().emit("vm-state-changed", "not created");
+                    let _ = app.handle().emit("vm-state-changed", serde_json::json!({
+                        "state": "Error",
+                        "trigger": "boot_failed",
+                    }));
                 }
             }
 
@@ -742,6 +1091,12 @@ fn main() {
             commands::vm_status,
             commands::serial_input,
             commands::terminal_resize,
+            commands::net_events,
+            commands::get_guest_config,
+            commands::get_network_policy,
+            commands::set_guest_env,
+            commands::remove_guest_env,
+            commands::get_vm_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

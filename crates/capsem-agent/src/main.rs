@@ -4,7 +4,10 @@
 // forks bash on the slave side, and bridges the master PTY with the host
 // over two vsock connections:
 //   - Port 5001: raw PTY I/O (terminal data)
-//   - Port 5000: control messages (resize, heartbeat)
+//   - Port 5000: control messages (resize, heartbeat, boot config)
+
+#[path = "vsock_io.rs"]
+mod vsock_io;
 
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -12,123 +15,66 @@ use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
 
+use capsem_proto::{
+    GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_host_msg, encode_guest_msg,
+};
 use nix::libc;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::pty::openpty;
 use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::unistd::{ForkResult, Pid, close, dup2, execvp, fork, setsid};
 
-use serde::{Deserialize, Serialize};
+use vsock_io::{VSOCK_HOST_CID, read_exact_fd, vsock_connect_retry, write_all_fd};
 
 /// vsock port for control messages.
 const VSOCK_PORT_CONTROL: u32 = 5000;
 /// vsock port for terminal data.
 const VSOCK_PORT_TERMINAL: u32 = 5001;
-/// Host CID (always 2 for the hypervisor).
-const VSOCK_HOST_CID: u32 = 2;
-/// AF_VSOCK address family.
-const AF_VSOCK: i32 = 40;
-
-/// Control messages shared with the host (must match capsem-core::vsock::ControlMessage).
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "t", content = "d", rename_all = "lowercase")]
-enum ControlMessage {
-    Ready { version: String },
-    Resize { cols: u16, rows: u16 },
-    Ping,
-    Pong,
-    Exec { id: u64, command: String },
-    ExecDone { id: u64, exit_code: i32 },
-}
 
 // ---------------------------------------------------------------------------
-// vsock helpers (using libc directly -- nix doesn't support AF_VSOCK)
+// Control message framing (using capsem-proto types)
 // ---------------------------------------------------------------------------
 
-#[repr(C)]
-struct SockaddrVm {
-    svm_family: libc::sa_family_t,
-    svm_reserved1: u16,
-    svm_port: u32,
-    svm_cid: u32,
-    svm_flags: u8,
-    svm_zero: [u8; 3],
-}
-
-fn vsock_connect(cid: u32, port: u32) -> io::Result<RawFd> {
-    let fd = unsafe { libc::socket(AF_VSOCK, libc::SOCK_STREAM, 0) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    let addr = SockaddrVm {
-        svm_family: AF_VSOCK as libc::sa_family_t,
-        svm_reserved1: 0,
-        svm_port: port,
-        svm_cid: cid,
-        svm_flags: 0,
-        svm_zero: [0; 3],
-    };
-
-    let ret = unsafe {
-        libc::connect(
-            fd,
-            &addr as *const SockaddrVm as *const libc::sockaddr,
-            std::mem::size_of::<SockaddrVm>() as libc::socklen_t,
-        )
-    };
-    if ret < 0 {
-        let err = io::Error::last_os_error();
-        unsafe { libc::close(fd); }
-        return Err(err);
-    }
-
-    Ok(fd)
-}
-
-fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
-    let mut delay_ms = 100;
-    loop {
-        match vsock_connect(cid, port) {
-            Ok(fd) => {
-                eprintln!("[capsem-agent] {label} connected (port {port})");
-                return fd;
-            }
-            Err(e) => {
-                eprintln!("[capsem-agent] {label} connect failed: {e}, retrying in {delay_ms}ms");
-                thread::sleep(Duration::from_millis(delay_ms));
-                delay_ms = (delay_ms * 2).min(2000);
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Control message framing
-// ---------------------------------------------------------------------------
-
-fn send_control_msg(fd: RawFd, msg: &ControlMessage) -> io::Result<()> {
-    let payload = rmp_serde::to_vec_named(msg)
+fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
+    let frame = encode_guest_msg(msg)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    let len = (payload.len() as u32).to_be_bytes();
-    write_all_fd(fd, &len)?;
-    write_all_fd(fd, &payload)?;
+    write_all_fd(fd, &frame)?;
     Ok(())
 }
 
-fn recv_control_msg(fd: RawFd) -> io::Result<ControlMessage> {
+fn recv_host_msg(fd: RawFd) -> io::Result<HostToGuest> {
     let mut len_buf = [0u8; 4];
     read_exact_fd(fd, &mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 4096 {
+    if len > MAX_FRAME_SIZE as usize {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "control frame too large"));
     }
     let mut payload = vec![0u8; len];
     read_exact_fd(fd, &mut payload)?;
-    rmp_serde::from_slice(&payload)
+    decode_host_msg(&payload)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+// ---------------------------------------------------------------------------
+// Clock sync
+// ---------------------------------------------------------------------------
+
+fn set_system_clock(epoch_secs: u64) {
+    let ts = libc::timespec {
+        tv_sec: epoch_secs as _,
+        tv_nsec: 0,
+    };
+    let ret = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) };
+    if ret == 0 {
+        eprintln!("[capsem-agent] clock set to epoch {epoch_secs}");
+    } else {
+        eprintln!(
+            "[capsem-agent] WARNING: clock_settime failed ({}): \
+             agent must run as root with CAP_SYS_TIME",
+            std::io::Error::last_os_error()
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -154,15 +100,46 @@ fn set_winsize(master_fd: RawFd, cols: u16, rows: u16) {
 fn main() {
     eprintln!("[capsem-agent] starting (pid {})", process::id());
 
-    // Open PTY pair.
+    // Step 1: Connect to host vsock ports BEFORE PTY/fork.
+    let terminal_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL, "terminal");
+    let control_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_CONTROL, "control");
+
+    // Step 2: Send Ready.
+    if let Err(e) = send_guest_msg(control_fd, &GuestToHost::Ready {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    }) {
+        eprintln!("[capsem-agent] failed to send Ready: {e}");
+        process::exit(1);
+    }
+
+    // Step 3: Wait for BootConfig from host.
+    let (boot_epoch, boot_env) = match recv_host_msg(control_fd) {
+        Ok(HostToGuest::BootConfig { epoch_secs, env_vars }) => {
+            eprintln!("[capsem-agent] received BootConfig (epoch={epoch_secs}, {} env vars)", env_vars.len());
+            (epoch_secs, env_vars)
+        }
+        Ok(other) => {
+            eprintln!("[capsem-agent] expected BootConfig, got {other:?}, continuing with defaults");
+            (0, vec![])
+        }
+        Err(e) => {
+            eprintln!("[capsem-agent] failed to receive BootConfig: {e}, continuing with defaults");
+            (0, vec![])
+        }
+    };
+
+    // Step 4: Set system clock.
+    if boot_epoch > 0 {
+        set_system_clock(boot_epoch);
+    }
+
+    // Step 5: Open PTY pair and set initial size.
     let pty = openpty(None, None).expect("openpty failed");
     let master_fd = pty.master.as_raw_fd();
     let slave_fd = pty.slave.as_raw_fd();
-
-    // Set initial terminal size (80x24 default).
     set_winsize(master_fd, 80, 24);
 
-    // Fork: child becomes bash on the slave PTY.
+    // Step 6: Fork -- child becomes bash on the slave PTY.
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
             // Close master in child.
@@ -185,10 +162,15 @@ fn main() {
                 let _ = close(slave_fd);
             }
 
-            // Set environment.
+            // Set environment from BootConfig.
+            // Hardcoded defaults first (in case BootConfig is empty / old host).
             std::env::set_var("TERM", "xterm-256color");
             std::env::set_var("HOME", "/root");
             std::env::set_var("LANG", "C");
+            // BootConfig env vars override defaults (last wins).
+            for (key, value) in &boot_env {
+                std::env::set_var(key, value);
+            }
 
             // Exec bash (never returns on success).
             let bash = std::ffi::CString::new("/bin/bash").unwrap();
@@ -210,7 +192,13 @@ fn main() {
             // Ignore SIGHUP so we don't die when the child exits.
             unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }.ok();
 
-            run_bridge(master_fd, child);
+            // Step 7: Send BootReady -- config applied, terminal ready.
+            if let Err(e) = send_guest_msg(control_fd, &GuestToHost::BootReady) {
+                eprintln!("[capsem-agent] failed to send BootReady: {e}");
+            }
+
+            // Enter bridge loop with already-connected fds.
+            run_bridge(master_fd, child, terminal_fd, control_fd);
         }
         Err(e) => {
             eprintln!("[capsem-agent] fork failed: {e}");
@@ -230,18 +218,7 @@ struct ExecState {
     current_id: Mutex<Option<u64>>,
 }
 
-fn run_bridge(master_fd: RawFd, child_pid: Pid) {
-    // Connect to host vsock ports with retry.
-    let terminal_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL, "terminal");
-    let control_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_CONTROL, "control");
-
-    // Send Ready message.
-    if let Err(e) = send_control_msg(control_fd, &ControlMessage::Ready {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    }) {
-        eprintln!("[capsem-agent] failed to send Ready: {e}");
-    }
-
+fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: RawFd) {
     // Shared exec state between control and bridge loops.
     let exec_state = Arc::new(ExecState {
         active: AtomicBool::new(false),
@@ -266,40 +243,6 @@ fn run_bridge(master_fd: RawFd, child_pid: Pid) {
     let _ = nix::sys::wait::waitpid(child_pid, None);
 }
 
-/// Write all bytes to an fd, retrying on partial writes.
-fn write_all_fd(fd: RawFd, data: &[u8]) -> io::Result<()> {
-    let mut written = 0;
-    while written < data.len() {
-        match nix::unistd::write(
-            unsafe { std::os::unix::io::BorrowedFd::borrow_raw(fd) },
-            &data[written..],
-        ) {
-            Ok(n) => written += n,
-            Err(nix::errno::Errno::EINTR) => continue,
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
-
-/// Read exactly `buf.len()` bytes from an fd, retrying on partial reads.
-fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> io::Result<()> {
-    let mut pos = 0;
-    while pos < buf.len() {
-        match nix::unistd::read(fd, &mut buf[pos..]) {
-            Ok(0) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "unexpected EOF",
-                ))
-            }
-            Ok(n) => pos += n,
-            Err(nix::errno::Errno::EINTR) => continue,
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
 
 /// Scan for sentinel in data, stripping it from the forwarded output.
 /// Returns (data_to_forward, optional (id, exit_code) if sentinel found).
@@ -468,8 +411,8 @@ fn control_loop(
     exec_done_rx: mpsc::Receiver<(u64, i32)>,
 ) {
     loop {
-        match recv_control_msg(control_fd) {
-            Ok(ControlMessage::Resize { cols, rows }) => {
+        match recv_host_msg(control_fd) {
+            Ok(HostToGuest::Resize { cols, rows }) => {
                 eprintln!("[capsem-agent] resize: {cols}x{rows}");
                 set_winsize(master_fd, cols, rows);
                 // Send SIGWINCH to the foreground process group.
@@ -480,13 +423,13 @@ fn control_loop(
                     }
                 }
             }
-            Ok(ControlMessage::Ping) => {
-                if let Err(e) = send_control_msg(control_fd, &ControlMessage::Pong) {
+            Ok(HostToGuest::Ping) => {
+                if let Err(e) = send_guest_msg(control_fd, &GuestToHost::Pong) {
                     eprintln!("[capsem-agent] failed to send Pong: {e}");
                     break;
                 }
             }
-            Ok(ControlMessage::Exec { id, command }) => {
+            Ok(HostToGuest::Exec { id, command }) => {
                 eprintln!("[capsem-agent] exec[{id}]: {command}");
                 // Store exec id and activate sentinel scanning.
                 {
@@ -517,7 +460,7 @@ fn control_loop(
                     eprintln!("[capsem-agent] failed to inject exec command: {e}");
                     exec_state.active.store(false, Ordering::Release);
                     // Send ExecDone with error exit code.
-                    let _ = send_control_msg(control_fd, &ControlMessage::ExecDone {
+                    let _ = send_guest_msg(control_fd, &GuestToHost::ExecDone {
                         id,
                         exit_code: 126,
                     });
@@ -535,7 +478,7 @@ fn control_loop(
                             termios.c_lflag |= libc::ECHO;
                             libc::tcsetattr(master_fd, libc::TCSANOW, &termios);
                         }
-                        if let Err(e) = send_control_msg(control_fd, &ControlMessage::ExecDone {
+                        if let Err(e) = send_guest_msg(control_fd, &GuestToHost::ExecDone {
                             id: done_id,
                             exit_code,
                         }) {
@@ -550,7 +493,7 @@ fn control_loop(
                 }
             }
             Ok(msg) => {
-                eprintln!("[capsem-agent] unexpected control message: {msg:?}");
+                eprintln!("[capsem-agent] unhandled control message: {msg:?}");
             }
             Err(e) => {
                 eprintln!("[capsem-agent] control channel error: {e}");
@@ -563,6 +506,7 @@ fn control_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::vsock_io::{AF_VSOCK, SockaddrVm};
     use std::io::Write;
     use std::os::unix::io::FromRawFd;
 
@@ -573,95 +517,39 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Wire format compatibility with host
+    // Wire format compatibility: new disjoint types over pipes
     // -----------------------------------------------------------------------
 
     #[test]
-    fn agent_ready_decodable_by_host() {
-        // Agent encodes Ready; host must be able to decode it.
-        let msg = ControlMessage::Ready { version: "0.3.0".to_string() };
-        let payload = rmp_serde::to_vec_named(&msg).unwrap();
-        // Simulate host-side decode using rmp_serde directly.
-        let decoded: ControlMessage = rmp_serde::from_slice(&payload).unwrap();
+    fn agent_ready_roundtrip() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = GuestToHost::Ready { version: "0.3.0".to_string() };
+        send_guest_msg(write_fd, &msg).unwrap();
+        // Simulate host-side receive.
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded: GuestToHost = capsem_proto::decode_guest_msg(&payload).unwrap();
         match decoded {
-            ControlMessage::Ready { version } => assert_eq!(version, "0.3.0"),
+            GuestToHost::Ready { version } => assert_eq!(version, "0.3.0"),
             other => panic!("expected Ready, got {other:?}"),
         }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
     }
 
     #[test]
     fn host_resize_decodable_by_agent() {
-        // Host encodes Resize; agent must be able to decode it.
-        let msg = ControlMessage::Resize { cols: 200, rows: 50 };
-        let payload = rmp_serde::to_vec_named(&msg).unwrap();
-        let decoded: ControlMessage = rmp_serde::from_slice(&payload).unwrap();
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::Resize { cols: 200, rows: 50 };
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
         match decoded {
-            ControlMessage::Resize { cols, rows } => {
+            HostToGuest::Resize { cols, rows } => {
                 assert_eq!(cols, 200);
                 assert_eq!(rows, 50);
-            }
-            other => panic!("expected Resize, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn host_ping_decodable_by_agent() {
-        let msg = ControlMessage::Ping;
-        let payload = rmp_serde::to_vec_named(&msg).unwrap();
-        let decoded: ControlMessage = rmp_serde::from_slice(&payload).unwrap();
-        assert!(matches!(decoded, ControlMessage::Ping));
-    }
-
-    #[test]
-    fn agent_pong_decodable_by_host() {
-        let msg = ControlMessage::Pong;
-        let payload = rmp_serde::to_vec_named(&msg).unwrap();
-        let decoded: ControlMessage = rmp_serde::from_slice(&payload).unwrap();
-        assert!(matches!(decoded, ControlMessage::Pong));
-    }
-
-    #[test]
-    fn exec_roundtrip_host_to_agent() {
-        let msg = ControlMessage::Exec { id: 42, command: "ls -la".to_string() };
-        let payload = rmp_serde::to_vec_named(&msg).unwrap();
-        let decoded: ControlMessage = rmp_serde::from_slice(&payload).unwrap();
-        match decoded {
-            ControlMessage::Exec { id, command } => {
-                assert_eq!(id, 42);
-                assert_eq!(command, "ls -la");
-            }
-            other => panic!("expected Exec, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn exec_done_roundtrip_agent_to_host() {
-        let msg = ControlMessage::ExecDone { id: 42, exit_code: 0 };
-        let payload = rmp_serde::to_vec_named(&msg).unwrap();
-        let decoded: ControlMessage = rmp_serde::from_slice(&payload).unwrap();
-        match decoded {
-            ControlMessage::ExecDone { id, exit_code } => {
-                assert_eq!(id, 42);
-                assert_eq!(exit_code, 0);
-            }
-            other => panic!("expected ExecDone, got {other:?}"),
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Framing over pipes (simulates vsock fd)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn send_recv_roundtrip_over_pipe() {
-        let (read_fd, write_fd) = make_pipe();
-        let msg = ControlMessage::Resize { cols: 132, rows: 43 };
-        send_control_msg(write_fd, &msg).unwrap();
-        let decoded = recv_control_msg(read_fd).unwrap();
-        match decoded {
-            ControlMessage::Resize { cols, rows } => {
-                assert_eq!(cols, 132);
-                assert_eq!(rows, 43);
             }
             other => panic!("expected Resize, got {other:?}"),
         }
@@ -669,13 +557,48 @@ mod tests {
     }
 
     #[test]
+    fn boot_config_roundtrip_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::BootConfig {
+            epoch_secs: 1708800000,
+            env_vars: vec![("TERM".into(), "xterm-256color".into())],
+        };
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        match decoded {
+            HostToGuest::BootConfig { epoch_secs, env_vars } => {
+                assert_eq!(epoch_secs, 1708800000);
+                assert_eq!(env_vars.len(), 1);
+            }
+            other => panic!("expected BootConfig, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn boot_ready_roundtrip_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        send_guest_msg(write_fd, &GuestToHost::BootReady).unwrap();
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
+        assert!(matches!(decoded, GuestToHost::BootReady));
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
     fn send_recv_exec_over_pipe() {
         let (read_fd, write_fd) = make_pipe();
-        let msg = ControlMessage::Exec { id: 99, command: "echo hi".to_string() };
-        send_control_msg(write_fd, &msg).unwrap();
-        let decoded = recv_control_msg(read_fd).unwrap();
+        let msg = HostToGuest::Exec { id: 99, command: "echo hi".to_string() };
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
         match decoded {
-            ControlMessage::Exec { id, command } => {
+            HostToGuest::Exec { id, command } => {
                 assert_eq!(id, 99);
                 assert_eq!(command, "echo hi");
             }
@@ -687,11 +610,15 @@ mod tests {
     #[test]
     fn send_recv_exec_done_over_pipe() {
         let (read_fd, write_fd) = make_pipe();
-        let msg = ControlMessage::ExecDone { id: 99, exit_code: 1 };
-        send_control_msg(write_fd, &msg).unwrap();
-        let decoded = recv_control_msg(read_fd).unwrap();
+        send_guest_msg(write_fd, &GuestToHost::ExecDone { id: 99, exit_code: 1 }).unwrap();
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
         match decoded {
-            ControlMessage::ExecDone { id, exit_code } => {
+            GuestToHost::ExecDone { id, exit_code } => {
                 assert_eq!(id, 99);
                 assert_eq!(exit_code, 1);
             }
@@ -704,19 +631,20 @@ mod tests {
     fn send_recv_multiple_messages_over_pipe() {
         let (read_fd, write_fd) = make_pipe();
 
-        send_control_msg(write_fd, &ControlMessage::Ping).unwrap();
-        send_control_msg(write_fd, &ControlMessage::Resize { cols: 80, rows: 24 }).unwrap();
-        send_control_msg(write_fd, &ControlMessage::Pong).unwrap();
+        // Send host messages.
+        let ping_frame = capsem_proto::encode_host_msg(&HostToGuest::Ping).unwrap();
+        write_all_fd(write_fd, &ping_frame).unwrap();
+        let resize_frame = capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 80, rows: 24 }).unwrap();
+        write_all_fd(write_fd, &resize_frame).unwrap();
 
-        assert!(matches!(recv_control_msg(read_fd).unwrap(), ControlMessage::Ping));
-        match recv_control_msg(read_fd).unwrap() {
-            ControlMessage::Resize { cols, rows } => {
+        assert!(matches!(recv_host_msg(read_fd).unwrap(), HostToGuest::Ping));
+        match recv_host_msg(read_fd).unwrap() {
+            HostToGuest::Resize { cols, rows } => {
                 assert_eq!(cols, 80);
                 assert_eq!(rows, 24);
             }
             other => panic!("expected Resize, got {other:?}"),
         }
-        assert!(matches!(recv_control_msg(read_fd).unwrap(), ControlMessage::Pong));
 
         unsafe { libc::close(read_fd); libc::close(write_fd); }
     }
@@ -724,13 +652,13 @@ mod tests {
     #[test]
     fn recv_rejects_oversized_frame() {
         let (read_fd, write_fd) = make_pipe();
-        // Write a length prefix claiming 8KB (> 4KB limit).
-        let len_bytes = (8192u32).to_be_bytes();
+        // Write a length prefix claiming > MAX_FRAME_SIZE.
+        let len_bytes = ((MAX_FRAME_SIZE + 1) as u32).to_be_bytes();
         let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
         writer.write_all(&len_bytes).unwrap();
         std::mem::forget(writer);
 
-        let result = recv_control_msg(read_fd);
+        let result = recv_host_msg(read_fd);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -742,9 +670,19 @@ mod tests {
     fn recv_eof_returns_error() {
         let (read_fd, write_fd) = make_pipe();
         unsafe { libc::close(write_fd); }
-        let result = recv_control_msg(read_fd);
+        let result = recv_host_msg(read_fd);
         assert!(result.is_err());
         unsafe { libc::close(read_fd); }
+    }
+
+    // -----------------------------------------------------------------------
+    // Clock sync
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_system_clock_no_crash() {
+        // On non-root systems this will fail with EPERM, but must not crash.
+        set_system_clock(1708800000);
     }
 
     // -----------------------------------------------------------------------
@@ -753,7 +691,6 @@ mod tests {
 
     #[test]
     fn sockaddr_vm_size_matches_kernel() {
-        // Linux sockaddr_vm is 16 bytes.
         assert_eq!(
             std::mem::size_of::<SockaddrVm>(),
             16,
@@ -763,7 +700,6 @@ mod tests {
 
     #[test]
     fn sockaddr_vm_field_offsets() {
-        // Verify critical fields are at the right byte offsets.
         let addr = SockaddrVm {
             svm_family: 0,
             svm_reserved1: 0,
@@ -787,14 +723,12 @@ mod tests {
 
     #[test]
     fn port_constants_match_host() {
-        // These must match capsem-core::vsock constants.
         assert_eq!(VSOCK_PORT_CONTROL, 5000);
         assert_eq!(VSOCK_PORT_TERMINAL, 5001);
     }
 
     #[test]
     fn host_cid_is_two() {
-        // The host/hypervisor CID is always 2 in the vsock spec.
         assert_eq!(VSOCK_HOST_CID, 2);
     }
 
@@ -813,7 +747,6 @@ mod tests {
         let master_fd = pty.master.as_raw_fd();
         set_winsize(master_fd, 200, 50);
 
-        // Read it back.
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         let ret = unsafe { libc::ioctl(master_fd, libc::TIOCGWINSZ, &mut ws) };
         assert_eq!(ret, 0);
@@ -826,14 +759,12 @@ mod tests {
         let pty = openpty(None, None).expect("openpty failed");
         let master_fd = pty.master.as_raw_fd();
 
-        // Minimum.
         set_winsize(master_fd, 1, 1);
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         unsafe { libc::ioctl(master_fd, libc::TIOCGWINSZ, &mut ws); }
         assert_eq!(ws.ws_col, 1);
         assert_eq!(ws.ws_row, 1);
 
-        // Large.
         set_winsize(master_fd, 500, 200);
         unsafe { libc::ioctl(master_fd, libc::TIOCGWINSZ, &mut ws); }
         assert_eq!(ws.ws_col, 500);
@@ -866,22 +797,18 @@ mod tests {
     #[test]
     fn sentinel_split_across_two_reads() {
         let mut tail = Vec::new();
-        // First chunk: partial sentinel (tail keeps last SENTINEL_PREFIX.len()-1 bytes).
         let (forward1, result1) = scan_and_strip_sentinel(
             &mut tail,
             b"output\x1b_CAPSEM_EX",
         );
         assert!(result1.is_none());
-        // Conservative tail: some leading bytes may be held back.
         assert!(!forward1.is_empty());
 
-        // Second chunk: rest of sentinel.
         let (forward2, result2) = scan_and_strip_sentinel(
             &mut tail,
             b"IT:42:0\x1b\\trailing",
         );
         assert_eq!(result2, Some((42, 0)));
-        // All data before sentinel should have been forwarded across both calls.
         let mut all_forwarded = forward1.clone();
         all_forwarded.extend_from_slice(&forward2);
         assert_eq!(&all_forwarded, b"output");
@@ -894,7 +821,6 @@ mod tests {
         let data = b"just normal terminal output here\n";
         let (forward, result) = scan_and_strip_sentinel(&mut tail, data);
         assert!(result.is_none());
-        // Should forward most data, keeping a small tail for potential partial sentinel.
         assert!(!forward.is_empty());
         assert!(forward.len() + tail.len() == data.len());
     }

@@ -5,7 +5,8 @@
 #   cp defconfig .config && make olddefconfig
 #
 # Produces a ~5MB kernel with only VirtIO drivers, no loadable modules,
-# no IP networking, and full exploit mitigations enabled.
+# air-gapped IP stack (dummy NIC + iptables REDIRECT), and full exploit
+# mitigations enabled.
 
 # ==========================================
 # 1. CORE ARM64
@@ -70,17 +71,40 @@ CONFIG_DEVPTS_FS=y
 CONFIG_UNIX98_PTYS=y
 
 # ==========================================
-# 7. NETWORKING (Unix sockets + vsock, no IP)
+# 7. NETWORKING (Unix sockets + vsock + air-gapped IP)
 # ==========================================
-# Unix domain sockets are required by node, python, git.
-# AF_VSOCK is used for host<->guest communication (PTY, control).
-# IP networking is completely disabled -- even if a NIC were
-# injected, the kernel has no IP stack to drive it.
+# Unix domain sockets: required by node, python, git.
+# AF_VSOCK: host<->guest communication (PTY, control, SNI proxy).
+# IP stack: enabled for air-gapped networking. Guest uses a dummy
+# NIC + fake DNS + iptables REDIRECT to funnel all HTTPS through
+# a vsock-backed SNI proxy on the host. No real NIC is attached.
 CONFIG_NET=y
 CONFIG_UNIX=y
 CONFIG_VSOCKETS=y
 CONFIG_VIRTIO_VSOCKETS=y
-CONFIG_INET=n
+CONFIG_INET=y
+CONFIG_IP_MULTICAST=n
+CONFIG_IPV6=n
+
+# Dummy NIC (air-gapped: no real NIC, just a local IP for routing)
+CONFIG_NETDEVICES=y
+CONFIG_DUMMY=y
+CONFIG_ETHERNET=n
+CONFIG_NET_VENDOR_VIRTIO=n
+
+# Netfilter/iptables: REDIRECT target for transparent proxy
+CONFIG_NETFILTER=y
+CONFIG_NETFILTER_ADVANCED=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_NAT=y
+CONFIG_NF_TABLES=n
+CONFIG_IP_NF_IPTABLES=y
+CONFIG_IP_NF_FILTER=y
+CONFIG_IP_NF_NAT=y
+CONFIG_NF_NAT_REDIRECT=y
+CONFIG_NETFILTER_XTABLES=y
+CONFIG_NETFILTER_XT_TARGET_REDIRECT=y
+CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
 
 # ==========================================
 # 8. PROCESS MANAGEMENT
@@ -100,6 +124,10 @@ CONFIG_FHANDLE=y
 # ==========================================
 # 9. SECURITY HARDENING
 # ==========================================
+# Expert mode: required so KALLSYMS=n and other hardening options take effect
+# (many security-sensitive options are gated behind CONFIG_EXPERT)
+CONFIG_EXPERT=y
+
 # Enforce strict memory permissions
 CONFIG_STRICT_KERNEL_RWX=y
 CONFIG_VMAP_STACK=y
@@ -156,7 +184,6 @@ CONFIG_WIRELESS=n
 CONFIG_BT=n
 CONFIG_INPUT_KEYBOARD=n
 CONFIG_INPUT_MOUSE=n
-CONFIG_NETDEVICES=n
 CONFIG_NFS_FS=n
 CONFIG_NETWORK_FILESYSTEMS=n
 CONFIG_SCSI=n

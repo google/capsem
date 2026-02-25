@@ -5,40 +5,67 @@ Capsem is a native macOS application that sandboxes AI agents in lightweight Lin
 ## System Overview
 
 ```
-+------------------------------------------+
-|  Capsem.app (macOS)                      |
-|  +------------------------------------+  |
-|  | Tauri 2.0 Shell                    |  |
-|  | - Astro WebView (terminal UI)     |  |
-|  | - VZVirtualMachineView (VM screen) |  |
-|  +------------------------------------+  |
-|           |  Tauri IPC                    |
-|  +------------------------------------+  |
-|  | Rust Backend                       |  |
-|  | - capsem-core (VM library)         |  |
-|  | - Asset resolution                 |  |
-|  | - Serial console bridge            |  |
-|  | - Auto-updater (native dialog)     |  |
-|  +------------------------------------+  |
-|           |                               |
-|  +------------------------------------+  |
-|  | Apple Virtualization.framework     |  |
-|  | (objc2-virtualization bindings)    |  |
-|  +------------------------------------+  |
-|           |                               |
-+-----------|-------------------------------+
++---------------------------------------------+
+|  Capsem.app (macOS)                         |
+|  +---------------------------------------+  |
+|  | Tauri 2.0 Shell                       |  |
+|  | - Astro WebView (xterm.js terminal)  |  |
+|  | - VZVirtualMachineView (VM screen)    |  |
+|  +---------------------------------------+  |
+|           |  Tauri IPC                       |
+|  +---------------------------------------+  |
+|  | Rust Backend                          |  |
+|  | - capsem-app  (GUI, CLI, IPC)        |  |
+|  | - capsem-core (VM library)           |  |
+|  | - capsem-proto (protocol types)      |  |
+|  | - SNI proxy + domain policy          |  |
+|  | - Auto-updater (native dialog)       |  |
+|  +---------------------------------------+  |
+|           |                                  |
+|  +---------------------------------------+  |
+|  | Apple Virtualization.framework        |  |
+|  | (objc2-virtualization bindings)       |  |
+|  +---------------------------------------+  |
+|           | serial (boot logs)               |
+|           | vsock:5000 (control)             |
+|           | vsock:5001 (terminal PTY I/O)    |
+|           | vsock:5002 (SNI proxy)           |
++-----------|----------------------------------+
             v
-+------------------------------------------+
-| Debian ARM64 Linux VM                    |
-| - Custom initramfs with capsem-init      |
-| - virtio_console for serial I/O          |
-| - ext4 rootfs                            |
-+------------------------------------------+
++---------------------------------------------+
+| Debian ARM64 Linux VM                       |
+| - capsem-init (PID 1): mounts, network,    |
+|   launches capsem-pty-agent                  |
+| - capsem-pty-agent: PTY <-> vsock bridge,   |
+|   boot handshake (Ready/BootConfig/BootReady)|
+| - capsem-net-proxy: TCP:10443 -> vsock:5002 |
+| - Air-gapped networking (dummy0 + fake DNS  |
+|   + iptables REDIRECT for SNI proxy)         |
+| - Read-only ext4 rootfs + tmpfs overlays    |
++---------------------------------------------+
 ```
 
 ## Crate Architecture
 
-The Rust workspace contains two crates:
+The Rust workspace contains four crates:
+
+### capsem-proto
+
+Shared protocol types for host/guest communication. No platform-specific deps -- cross-compiles for both macOS host and aarch64-linux-musl guest.
+
+```
+crates/capsem-proto/src/
+  lib.rs              HostToGuest, GuestToHost enums, encode/decode helpers
+```
+
+**Key types:**
+
+- `HostToGuest` -- commands from host to guest: `BootConfig`, `Resize`, `Exec`, `Ping`, plus reserved variants (`FileWrite`, `FileRead`, `FileDelete`, `Shutdown`).
+- `GuestToHost` -- messages from guest to host: `Ready`, `BootReady`, `ExecDone`, `Pong`, plus reserved variants (`FileCreated`, `FileModified`, `FileDeleted`, `FileContent`).
+
+**Security invariant (RFC T14):** The host only deserializes `GuestToHost`. The guest only deserializes `HostToGuest`. Disjoint serde tags make cross-type decoding fail at the type level.
+
+**Framing:** `[4-byte BE length][MessagePack payload]`, max frame size 8KB.
 
 ### capsem-core
 
@@ -46,18 +73,50 @@ The core VM library. Framework-agnostic -- no Tauri dependency.
 
 ```
 crates/capsem-core/src/
-  lib.rs              Public API: VmConfig, VirtualMachine
+  lib.rs              Public API re-exports
   vm/
     config.rs         VmConfig builder (CPU, RAM, kernel, initrd, disk, hashes)
     boot.rs           VZLinuxBootLoader setup via objc2-virtualization
     machine.rs        VirtualMachine create/start/stop lifecycle
     serial.rs         Serial console I/O via NSPipe + broadcast channel
+    vsock.rs          VsockManager, CoalesceBuffer, port constants, re-exports from capsem-proto
+  net/
+    domain_policy.rs  Allow/block list with wildcard matching
+    policy_config.rs  user.toml / corp.toml loader, merge logic, GuestConfig
+    sni_parser.rs     TLS ClientHello SNI extraction
+    sni_proxy.rs      Host-side SNI proxy (vsock:5002 -> real HTTPS)
+    telemetry.rs      Per-session web.db (SQLite) for connection logging
 ```
 
 **Key types:**
 
 - `VmConfig` -- builder pattern for VM configuration. Validates CPU count, RAM size, kernel path. Optionally accepts BLAKE3 hashes for boot asset integrity verification.
-- `VirtualMachine` -- wraps `VZVirtualMachine`. Provides `create()` which returns the VM, a `broadcast::Receiver<String>` for serial output, and a raw file descriptor for serial input.
+- `VirtualMachine` -- wraps `VZVirtualMachine`. Provides `create()` which returns the VM, a `broadcast::Receiver<Vec<u8>>` for serial output, and a raw file descriptor for serial input.
+- `VsockManager` -- ObjC bridge that registers vsock listeners on the VM's socket device and delivers accepted connections via an async channel.
+- `CoalesceBuffer` -- batches small output chunks (10ms/64KB) to prevent IPC saturation.
+- `DomainPolicy` -- evaluates domains against allow/block lists with wildcard support.
+- `GuestConfig` -- `[guest]` section from user.toml with env var overrides.
+
+### capsem-agent
+
+Guest-side binaries, cross-compiled for `aarch64-unknown-linux-musl`.
+
+```
+crates/capsem-agent/src/
+  main.rs             capsem-pty-agent: PTY <-> vsock bridge with boot handshake
+  net_proxy.rs        capsem-net-proxy: TCP:10443 -> vsock:5002 relay
+  vsock_io.rs         Shared vsock connect + fd I/O helpers
+```
+
+**capsem-pty-agent boot sequence:**
+
+1. Connect vsock control (port 5000) and terminal (port 5001)
+2. Send `GuestToHost::Ready { version }`
+3. Wait for `HostToGuest::BootConfig { epoch_secs, env_vars }`
+4. Set system clock via `clock_settime(CLOCK_REALTIME)`
+5. Open PTY pair, fork bash with env vars from BootConfig
+6. Send `GuestToHost::BootReady`
+7. Enter bridge loop: master PTY <-> vsock terminal, control loop in background thread
 
 ### capsem-app
 
@@ -65,15 +124,15 @@ The Tauri application binary. Handles GUI, CLI mode, asset resolution, and auto-
 
 ```
 crates/capsem-app/src/
-  main.rs             Entry point, asset resolution, VM boot, updater
-  commands.rs         Tauri IPC commands (vm_status, serial_input)
-  state.rs            AppState with Mutex-wrapped VM handle + serial fd
+  main.rs             Entry point, asset resolution, VM boot, boot handshake, updater
+  commands.rs         Tauri IPC commands (vm_status, serial_input, terminal_resize, net_events)
+  state.rs            AppState with per-VM instance state (serial + vsock fds, network state)
 ```
 
 **Dual-mode operation:**
 
-- **GUI mode** (no arguments): Launches Tauri window, boots VM, replaces the WebView with `VZVirtualMachineView` for direct framebuffer display.
-- **CLI mode** (with arguments): Boots VM headlessly, sends command via serial console with sentinel markers, captures output between markers, prints to stdout, exits.
+- **GUI mode** (no arguments): Launches Tauri window, boots VM, performs vsock boot handshake (Ready -> BootConfig -> BootReady), then replaces WebView with `VZVirtualMachineView`.
+- **CLI mode** (with arguments): Boots VM headlessly, performs boot handshake, sends `Exec` command via vsock control channel, captures output from vsock terminal, propagates exit code. Supports `--env KEY=VALUE` flags.
 
 ## Asset Resolution
 
@@ -134,11 +193,47 @@ The GUI uses a two-phase approach:
 
 The WebView replacement happens via raw AppKit/NSWindow manipulation using `objc2-app-kit` bindings.
 
-## Serial Console Bridge
+## Communication Channels
 
-In GUI mode, serial output from the VM is forwarded as Tauri events (`serial-output`) to the frontend's xterm.js terminal. VM state transitions are pushed via `vm-state-changed` events. The serial channel uses `tokio::sync::broadcast` for multi-consumer delivery.
+### Serial console (boot logs only)
 
-In CLI mode, serial output is parsed directly on the main thread. Commands are wrapped in sentinel markers (`<<<CAPSEM_START>>>` / `<<<CAPSEM_DONE>>>`) to extract just the command output from the serial stream.
+The serial console (`/dev/hvc0`) carries kernel boot messages. In GUI mode, serial output is forwarded as Tauri events (`serial-output`) to xterm.js via `tokio::sync::broadcast`. Serial forwarding is aborted once the vsock boot handshake completes.
+
+### Vsock (primary terminal + control)
+
+All post-boot communication uses virtio-vsock:
+
+| Port | Direction | Purpose |
+|------|-----------|---------|
+| 5000 | Bidirectional | Control messages (BootConfig, Resize, Exec, Ping/Pong) |
+| 5001 | Bidirectional | Raw PTY byte streaming (terminal I/O) |
+| 5002 | Guest -> Host | SNI proxy (HTTPS connections from guest) |
+
+**Boot handshake** (vsock:5000):
+
+```
+Guest                         Host
+  |                              |
+  |--- Ready { version } ------>|   "I'm alive, send me config"
+  |                              |
+  |<-- BootConfig { clock, env } |   "Here's your clock + env vars"
+  |                              |
+  |--- BootReady -------------->|   "Applied config, bash forked, ready"
+  |                              |
+  |    (terminal I/O begins)     |
+```
+
+**Clock synchronization**: The host sends `epoch_secs` (current Unix time) in `BootConfig`. The guest agent calls `clock_settime(CLOCK_REALTIME)` before forking bash. This ensures TLS cert validation, git timestamps, and other time-dependent tools work correctly.
+
+**Environment injection**: `BootConfig.env_vars` carries environment variables with priority: hardcoded defaults (`TERM`, `HOME`, `PATH`, `LANG`) < `user.toml [guest].env` < CLI `--env` flags.
+
+**Terminal I/O** (vsock:5001): Frontend xterm.js `onData` -> Tauri `serial_input` command -> vsock fd -> guest PTY. Reverse: guest PTY -> vsock -> `CoalesceBuffer` (10ms/64KB) -> Tauri event -> xterm.js `write`.
+
+**CLI exec**: Host sends `HostToGuest::Exec { id, command }`, agent injects command into PTY with sentinel markers, detects exit code via sentinel in PTY output, sends `GuestToHost::ExecDone { id, exit_code }`.
+
+### SNI proxy (vsock:5002)
+
+Guest-side `capsem-net-proxy` listens on TCP `127.0.0.1:10443`. iptables REDIRECT captures all port 443 traffic to this listener. The proxy bridges each connection to the host via vsock:5002. The host reads the TLS ClientHello, extracts the SNI hostname, checks it against the domain policy (allow/block lists from `user.toml` + `corp.toml`), and either bridges to the real server or rejects the connection. All decisions are logged to per-session `web.db`.
 
 ## Auto-Update
 
@@ -191,8 +286,13 @@ The frontend uses Astro with static output for Tauri compatibility. The terminal
 | `tauri-plugin-dialog` | Native macOS dialogs for update prompts |
 | `tauri-plugin-process` | App restart after update |
 | `tokio` | Async runtime |
+| `rmp-serde` | MessagePack serialization for vsock control messages |
+| `serde` | Serialization framework |
 | `blake3` | Build-time and runtime hash verification |
 | `tracing` | Structured logging |
+| `nix` | Unix syscalls for guest agent (PTY, signals, fork) |
+| `rusqlite` | Per-session web.db for network telemetry |
+| `toml` | Policy config parsing (user.toml / corp.toml) |
 
 ## Execution Logging
 
@@ -215,11 +315,9 @@ Every VM boot sequence is instrumented with `tracing` spans. The subscriber uses
 
 ## Future Architecture (Planned)
 
-The current implementation covers Milestone 1 (VM boot + serial console). The planned architecture extends to:
+The current implementation covers Milestones 1-3 (VM boot, serial console, vsock PTY agent, CLI exec) and partial Milestone 5 (air-gapped networking with SNI proxy). The planned architecture extends to:
 
-- **Guest agent as PID 1** replacing the shell-based init (Milestone 2)
-- **vsock control channel** for structured host-guest communication (Milestone 2)
-- **Air-gapped networking** via fake-IP SNI routing over vsock (Milestone 5)
+- **VirtioFS workspace sharing** for host-guest file access (Milestone 4)
 - **Active AI audit gateway** with 9-stage event lifecycle, PII scrubbing, and tool call interception (Milestone 6)
 - **Hybrid MCP gateway**: local tools in-VM, remote tools via host with credential injection (Milestone 7)
 - **Per-session audit databases**, config write-back, and enterprise observability (Milestone 8)

@@ -1,0 +1,59 @@
+# Capsem user configuration
+# Copy to ~/.capsem/user.toml to customize.
+#
+# Corporate overrides: /etc/capsem/corp.toml (MDM-distributed)
+# If corp.toml specifies a field, it overrides user.toml entirely for that field.
+
+[network]
+# Domains allowed for HTTPS access from the guest VM.
+# Supports exact match ("github.com") and wildcard ("*.github.com").
+allow = [
+    "github.com",
+    "*.github.com",
+    "*.githubusercontent.com",
+    "registry.npmjs.org",
+    "*.npmjs.org",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "crates.io",
+    "static.crates.io",
+    "deb.debian.org",
+    "security.debian.org",
+    "elie.net",
+    "*.elie.net",
+]
+
+# Domains explicitly blocked (checked before allow-list).
+block = [
+    "api.anthropic.com",
+    "api.openai.com",
+    "generativelanguage.googleapis.com",
+]
+
+# Default action when no rule matches: "allow" or "deny".
+default = "deny"
+
+# HTTP-level rules (optional): fine-grained method+path control per domain.
+# Rules are checked AFTER the domain allow/block list.
+# If no rules exist for an allowed domain, all requests are permitted.
+#
+# [[network.rules]]
+# domain = "api.github.com"
+# method = "GET"                  # "GET", "POST", etc. or omit for "*" (any)
+# path = "/repos/*"               # exact or prefix wildcard
+# action = "allow"
+#
+# [[network.rules]]
+# domain = "api.github.com"
+# method = "DELETE"
+# action = "deny"
+
+# Body logging (optional): capture request/response bodies in web.db telemetry.
+# log_bodies = false
+# max_body_capture = 4096
+
+# [guest]
+# Custom environment variables injected into the guest VM at boot.
+# These override the hardcoded defaults (TERM, HOME, LANG, PATH).
+# Example:
+# env = { EDITOR = "vim", MY_API_KEY = "..." }

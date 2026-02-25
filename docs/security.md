@@ -20,7 +20,7 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 | Hypervisor bug in Virtualization.framework | Apple maintains the hypervisor; we rely on hardware-enforced Stage 2 page tables on Apple Silicon. No custom device emulation code. | Inherited from Apple |
 | Malformed virtio device interaction | We use only Apple's built-in virtio backends (console, block, entropy). No custom device emulation. Attack surface is Apple's code. | Inherited from Apple |
 | Exploiting serial console parsing | Serial console is raw byte passthrough (NSPipe). No parsing, no protocol, no structured data. Nothing to exploit on the host side. | Implemented |
-| Future vsock protocol bugs | Length-prefixed framing with bounded message sizes. All deserialization uses serde with deny_unknown_fields. | Planned (M2) |
+| vsock protocol bugs | Length-prefixed framing (4-byte BE + MessagePack) with 8KB max frame size. Disjoint type system: host only deserializes `GuestToHost`, guest only deserializes `HostToGuest`. Cross-type decoding fails at the serde tag level (different tag namespaces). All deserialization via `rmp-serde` with tagged enums. | Implemented |
 
 ### T2: Persistence Across Sessions
 
@@ -43,13 +43,13 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 
 | Vector | Mitigation | Status |
 |--------|-----------|--------|
-| Direct network access | No real network interface exists in the VM. No real NIC drivers compiled into kernel (`CONFIG_NETDEVICES=n`). Only `dummy0` exists for synthetic routing. | Implemented |
-| DNS exfiltration | No real DNS. Fake DNS (M5) resolves everything to 10.0.0.1; no queries leave the VM. | Implemented (no DNS at all currently) / Planned (M5) |
+| Direct network access | No real network interface exists in the VM. No real NIC drivers compiled into kernel (`CONFIG_NETDEVICES=n`). Only `dummy0` exists for synthetic routing via vsock-backed SNI proxy. | Implemented |
+| DNS exfiltration | No real DNS. Fake DNS (dnsmasq) resolves everything to 10.0.0.1; no queries leave the VM. | Implemented |
 | Covert channel via serial console | Serial goes to xterm.js in the UI. An agent could encode data in terminal output, but the user sees everything. No automated forwarding to external services. | Accepted risk (user-visible) |
-| Future network (M5): HTTPS to unauthorized domain | Host-side SNI proxy enforces domain allow-list. AI provider domains blocked at SNI level (must use audit gateway). Everything else is default-deny. | Planned (M5) |
-| Future network (M5): DNS tunneling | Fake DNS inside VM never contacts real DNS servers. Host does real resolution only for allowed domains. | Planned (M5) |
-| Future network (M5): plain HTTP to bypass SNI | No SNI in plain HTTP = connection rejected by host proxy. HTTPS-only enforcement. | Planned (M5) |
-| Future network (M5): file exfiltration via workspace | `capsem-fswatch` daemon monitors `/workspace` via fanotify, streaming real-time file events (create/edit/delete) to host over vsock:5005. Host has full visibility into what the agent writes. | Planned (M5) |
+| HTTPS to unauthorized domain | Host-side SNI proxy enforces domain allow-list (user.toml + corp.toml). AI provider domains blocked at SNI level. Everything else is default-deny. All decisions logged to per-session web.db. | Implemented |
+| DNS tunneling | Fake DNS inside VM never contacts real DNS servers. Host does real resolution only for allowed domains. | Implemented |
+| Plain HTTP to bypass SNI | No SNI in plain HTTP = connection rejected by host proxy. HTTPS-only enforcement. Only port 443 is redirected to the vsock proxy. | Implemented |
+| File exfiltration via workspace | `capsem-fswatch` daemon monitors `/workspace` via fanotify, streaming real-time file events (create/edit/delete) to host over vsock:5005. Host has full visibility into what the agent writes. | Planned (M5) |
 | Future gateway (M6): data hidden in API prompts | `on_model_call` PII engine scrubs sensitive data from prompts before forwarding upstream. `on_tool_response` scans tool output for secrets. All traffic logged to per-session audit.db. | Planned (M6) |
 | Future VirtioFS (M4): read host files outside workspace | VirtioFS shares scoped to specific directories. No share = no access. Cache shares are read-only. | Planned (M4) |
 | Timing / power side channels | Out of scope. Mitigated by Apple Silicon hardware, not by us. | Out of scope |
@@ -98,7 +98,7 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 |--------|-----------|--------|
 | Cross-VM memory access | Hardware-enforced isolation. Each VM has its own Stage 2 page tables. | Inherited from Apple |
 | Shared filesystem | No shared filesystems between sessions currently. Future: each session gets its own VirtioFS mounts and overlay disk (M8). | Implemented (no sharing) |
-| Shared network | No network currently. Future: per-session vsock CIDs and per-session network policies (M5, M8). | Planned |
+| Shared network | Per-VM network state: each VM gets its own domain policy, web.db, and SNI proxy connection handlers. | Implemented |
 | Poisoned persistent overlay | Future overlay disks are per-session. Session deletion wipes the disk. Fresh sessions start clean. | Planned (M8) |
 
 ### T8: XSS via Terminal Output
@@ -120,11 +120,11 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 
 | Vector | Mitigation | Status |
 |--------|-----------|--------|
-| `pip install evil-package` (with post-install script) | No network interface. `pip install` fails with connection error. Package cannot be downloaded. | Implemented |
+| `pip install evil-package` (with post-install script) | Only allow-listed domains reachable. pypi.org is on the allow-list but exfiltration to non-listed domains fails. Post-install scripts run in the sandbox. | Implemented |
 | Package pre-cached in rootfs image | Rootfs is built from a controlled Dockerfile with explicit package lists. No arbitrary packages. Build is reproducible from source. | Implemented |
-| Future network (M5): download from pypi.org | pypi.org is on the domain allow-list (needed for legitimate installs). A malicious package's post-install script could run, but it cannot exfiltrate because only allow-listed domains are reachable. | Planned (M5) |
-| Future network (M5): malicious package opens reverse shell | No inbound connections possible (no real NIC). Outbound only to allow-listed domains via SNI proxy. Reverse shell to attacker's server fails unless attacker controls an allowed domain. | Planned (M5) |
-| Future network (M5): package exfiltrates via allowed domain (e.g., npmjs.org PUT) | Host-side gateway could inspect and log all traffic. For registry domains, restrict to GET only (read-only package downloads). | Planned (M5, policy refinement) |
+| Download from pypi.org | pypi.org is on the domain allow-list (needed for legitimate installs). A malicious package's post-install script could run, but it cannot exfiltrate because only allow-listed domains are reachable. | Implemented |
+| Malicious package opens reverse shell | No inbound connections possible (no real NIC). Outbound only to allow-listed domains via SNI proxy. Reverse shell to attacker's server fails unless attacker controls an allowed domain. | Implemented |
+| Package exfiltrates via allowed domain (e.g., npmjs.org PUT) | Host-side gateway could inspect and log all traffic. For registry domains, restrict to GET only (read-only package downloads). | Planned (policy refinement) |
 | npm/pip cache poisoning via VirtioFS | Cache shares are read-only VirtioFS with ephemeral overlayfs. Agent's writes go to tmpfs upper layer, wiped on reboot. Host cache is never modified. | Planned (M4) |
 | Malicious package loads kernel module | Custom kernel compiled with `CONFIG_MODULES=n`. No dynamic module loading possible. | Implemented |
 | Malicious package modifies system binaries | Rootfs is read-only. `/usr/bin`, `/usr/lib`, etc. are immutable. Future SELinux (M12) enforces this even if rootfs mount changes. | Implemented + Planned (M12) |
@@ -144,17 +144,17 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 | Supply chain attack on npm global install (Claude Code, Gemini CLI) | These are installed during `just build` from pinned versions. BLAKE3 hash of the resulting rootfs detects any change. | Implemented |
 | Modified rootfs in .app bundle post-codesign | macOS codesigning covers all resources in the bundle. Modifying rootfs.img invalidates the signature. Gatekeeper blocks launch. | Implemented (release builds) |
 
-### T11: Data Exfiltration via Network (Future M5+)
+### T11: Data Exfiltration via Network
 
-**Threat**: Once network access is added (M5), an agent attempts to exfiltrate workspace data to an attacker-controlled server through the allowed network channels.
+**Threat**: An agent attempts to exfiltrate workspace data to an attacker-controlled server through the network channels.
 
 | Vector | Mitigation | Status |
 |--------|-----------|--------|
-| HTTPS POST to attacker's server | Domain allow-list at SNI proxy. Only explicitly allowed domains are reachable. Attacker's domain is not on the list. Default deny. | Planned (M5) |
-| Direct HTTPS to AI provider (bypass gateway) | AI provider domains (`api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`) are **blocked** at the SNI proxy level. All model traffic must flow through the audit gateway (vsock:5004). Agent cannot reach AI APIs without going through the 9-stage lifecycle. | Planned (M5, M6) |
-| Exfiltrate via allowed domain (e.g., github.com API) | No GitHub auth token in VM (credentials injected by host MCP gateway). Without auth, public writes are limited. `on_tool_response` (M6) scans for secrets. | Planned (M5, M7) |
-| Exfiltrate via DNS TXT records | Fake DNS inside VM. No real DNS queries ever leave the VM. DNS tunneling is impossible. | Planned (M5) |
-| Encode data in TLS SNI field | SNI is the domain name only (max 253 bytes). Not a practical exfiltration channel. Host validates SNI against allow-list; random SNI values are rejected. | Planned (M5) |
+| HTTPS POST to attacker's server | Domain allow-list at SNI proxy. Only explicitly allowed domains are reachable. Attacker's domain is not on the list. Default deny. All decisions logged to per-session web.db. | Implemented |
+| Direct HTTPS to AI provider (bypass gateway) | AI provider domains (`api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`) are **blocked** at the SNI proxy level. All model traffic must flow through the audit gateway (vsock:5004). Agent cannot reach AI APIs without going through the 9-stage lifecycle. | Implemented (SNI block) / Planned (M6 gateway) |
+| Exfiltrate via allowed domain (e.g., github.com API) | No GitHub auth token in VM (credentials injected by host MCP gateway). Without auth, public writes are limited. `on_tool_response` (M6) scans for secrets. | Implemented (no creds) / Planned (M7 gateway) |
+| Exfiltrate via DNS TXT records | Fake DNS inside VM (dnsmasq `--address=/#/10.0.0.1`). No real DNS queries ever leave the VM. DNS tunneling is impossible. | Implemented |
+| Encode data in TLS SNI field | SNI is the domain name only (max 253 bytes). Not a practical exfiltration channel. Host validates SNI against allow-list; random SNI values are rejected. | Implemented |
 | Exfiltrate via HTTP headers to allowed API | AI gateway (M6) logs full request/response bodies to per-session audit.db. `on_model_call` PII engine scrubs sensitive data. `on_tool_response` scans for secrets. Anomalous requests visible in audit trail. | Planned (M6) |
 | Steganography in legitimate API requests | Agent embeds data in prompt text sent to AI provider. Mitigation: all API traffic logged and inspectable in audit.db. PII engine catches common patterns. Not fully preventable without breaking functionality. | Accepted risk (logged + PII-scrubbed) |
 | Exfiltrate via timing / packet size side channels | Impractical over vsock bridge. All traffic is proxied; timing is noisy. | Low risk |
@@ -175,14 +175,14 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 
 | Vector | Mitigation | Status |
 |--------|-----------|--------|
-| Direct HTTPS to api.anthropic.com (bypass gateway) | AI provider domains are **blocked at the SNI proxy** (M5). The SNI proxy rejects connections to `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`. The only path to these providers is through the audit gateway (vsock:5004). | Planned (M5) |
-| Override `*_BASE_URL` env var to point elsewhere | Agent can change env vars, but iptables REDIRECT rules are set by capsem-init (PID 1, before agent starts). Port 8080 traffic always redirects to vsock:5004 regardless of env vars. Even if the agent changes the URL, the traffic still hits the gateway. | Planned (M5) |
-| Use a different port to reach AI provider | SNI proxy catch-all rule captures ALL TCP traffic not matched by specific port rules. Any connection to an AI provider domain on any port is blocked at SNI. | Planned (M5) |
-| Compile custom HTTP client to avoid `*_BASE_URL` | Same enforcement: iptables + SNI proxy. The network path is enforced at the kernel level, not at the application level. No userspace workaround exists. | Planned (M5) |
-| Use a non-AI proxy/relay to tunnel to AI provider | The relay domain would need to be on the SNI allow-list. Default-deny policy means only explicitly allowed domains are reachable. Relay domain would be blocked. | Planned (M5) |
-| Modify iptables rules to remove REDIRECT | iptables rules set by capsem-init. Agent runs as root but can modify rules. Mitigation: future SELinux (M12) policy denies `CAP_NET_ADMIN`. Also, fswatch + audit trail would detect network config changes. | Planned (M12) |
+| Direct HTTPS to api.anthropic.com (bypass gateway) | AI provider domains are **blocked at the SNI proxy**. The SNI proxy rejects connections to `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`. The only path to these providers will be through the audit gateway (vsock:5004). | Implemented (SNI block) / Planned (M6 gateway) |
+| Override `*_BASE_URL` env var to point elsewhere | Agent can change env vars, but iptables REDIRECT rules are set by capsem-init (PID 1, before agent starts). Port 443 traffic always redirects to vsock proxy regardless of env vars. Even if the agent changes the URL, the traffic still hits the SNI proxy. | Implemented |
+| Use a different port to reach AI provider | Only port 443 is redirected to the vsock proxy. Connections on other ports have no route to the outside (dummy0 interface with no real gateway). | Implemented |
+| Compile custom HTTP client to avoid `*_BASE_URL` | Same enforcement: iptables + SNI proxy. The network path is enforced at the kernel level, not at the application level. No userspace workaround exists. | Implemented |
+| Use a non-AI proxy/relay to tunnel to AI provider | The relay domain would need to be on the SNI allow-list. Default-deny policy means only explicitly allowed domains are reachable. Relay domain would be blocked. | Implemented |
+| Modify iptables rules to remove REDIRECT | iptables rules set by capsem-init. Agent runs as root but can modify rules. Mitigation: future SELinux (M12) policy denies `CAP_NET_ADMIN`. Also, fswatch + audit trail would detect network config changes. | Accepted risk / Planned (M12) |
 
-The enforcement chain is: **iptables REDIRECT (kernel) -> vsock bridge (capsem-vsock-bridge) -> SNI proxy (host) -> audit gateway (host)**. Three independent layers must be bypassed simultaneously.
+The enforcement chain is: **iptables REDIRECT (kernel) -> capsem-net-proxy (guest vsock bridge) -> SNI proxy (host) -> [future: audit gateway (host)]**. Three independent layers must be bypassed simultaneously.
 
 ---
 
@@ -196,14 +196,51 @@ Apple's Virtualization.framework provides hardware-enforced isolation via Apple 
 - The VM cannot access host memory, host filesystems, or host processes.
 - The only communication channels are those explicitly configured: serial console (and future vsock).
 
-### No network interface
+### Air-gapped networking (SNI proxy)
 
-The VM has no `VZNetworkDeviceAttachment`. There is physically no network interface inside the guest:
+The VM has no real network interface (`CONFIG_NETDEVICES=n`). Instead, a synthetic air-gapped network stack provides controlled HTTPS access:
 
-- No IP connectivity of any kind.
-- No DNS resolution.
-- `ping`, `curl`, `wget` all fail with "Network is unreachable".
-- There is no software configuration that can bypass this -- the network device does not exist.
+- **dummy0 interface** with IP `10.0.0.1/24` -- no real NIC, no real gateway.
+- **Fake DNS** (dnsmasq): all domain lookups resolve to `10.0.0.1`. No DNS leaves the VM.
+- **iptables REDIRECT**: port 443 traffic -> `capsem-net-proxy` on TCP `127.0.0.1:10443`.
+- **capsem-net-proxy**: bridges each TCP connection to host via vsock:5002.
+- **Host SNI proxy**: reads TLS ClientHello, extracts SNI hostname, evaluates against domain policy (allow/block lists from `user.toml` + `corp.toml`), bridges to real server if allowed, rejects otherwise.
+- **Default deny**: unlisted domains are rejected. Only explicitly allowed domains are reachable.
+- **AI provider blocking**: `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com` blocked at SNI level.
+- **Per-session telemetry**: every connection attempt logged to `~/.capsem/sessions/<vm_id>/web.db` (SQLite) with timestamp, domain, decision, and reason.
+- **Corporate override**: `/etc/capsem/corp.toml` overrides user domain lists for enterprise lockdown.
+
+### Vsock protocol security
+
+The vsock control channel (port 5000) uses a disjoint type system to prevent message confusion:
+
+- **`HostToGuest`** enum: commands the host sends to the guest (BootConfig, Resize, Exec, Ping, plus reserved variants).
+- **`GuestToHost`** enum: messages the guest sends to the host (Ready, BootReady, ExecDone, Pong, plus reserved variants).
+- **Disjoint serde tags**: `HostToGuest` and `GuestToHost` use different tag values. Decoding a `GuestToHost` message as `HostToGuest` (or vice versa) fails at the deserialization level.
+- **Bounded frames**: 8KB max frame size, 4-byte big-endian length prefix. Oversized frames are rejected before reading the payload.
+- **Type-safe API**: `encode_host_msg()`/`decode_host_msg()` for host-side, `encode_guest_msg()`/`decode_guest_msg()` for guest-side. Impossible to accidentally use the wrong encoder/decoder.
+
+### Zero-trust guest binaries
+
+The guest agent (`capsem-pty-agent`, `capsem-net-proxy`, and any future guest binaries) is treated as untrusted code. All security enforcement, state tracking, and protocol validation live exclusively on the host side. The guest has no state machine, no message validation, and no policy enforcement of its own.
+
+**Rationale**: The agent runs inside the VM where a compromised or rogue AI has full root access. Any validation logic in the guest can be bypassed by an attacker who replaces or patches the binary, modifies its memory at runtime, or intercepts its vsock communication. Guest-side checks would provide a false sense of security while adding complexity.
+
+**Design rules**:
+
+- **No state machine on the guest**: The host tracks its own lifecycle state (`HostState`) and validates all inbound guest messages against it. The guest agent follows a simple sequential boot procedure with no enforcement.
+- **No message validation on the guest**: The guest decodes and acts on whatever the host sends. The host is the trusted party; if the host sends a valid message, the guest should obey it. If a compromised guest sends an invalid message, the host drops it.
+- **All policy enforcement on the host**: Domain allow/block lists, HTTP rules, file monitoring, and future MCP/AI gateway policies are evaluated on the host. The guest sees only the effect (connection allowed/denied), never the policy itself.
+- **Guest binaries are deliberately simple**: Minimal logic, no configuration, no policy files. This reduces the attack surface inside the VM and makes the binaries easier to audit.
+- **State machine lives in `capsem-core`**: The `HostState` enum, `StateMachine`, and message validation functions are in `capsem-core` (host-only crate), not in `capsem-proto` (shared crate). This enforces the architectural boundary at the dependency level -- the guest agent physically cannot import host state machine code.
+
+### Clock synchronization
+
+The guest VM boots with epoch-0 clock. Without correct time, TLS cert validation, git, and other tools break. The host sends the current time in `BootConfig.epoch_secs` during the vsock boot handshake, and the guest agent sets the system clock via `clock_settime(CLOCK_REALTIME)` before forking bash.
+
+- Clock is set **before** any user-facing process starts.
+- Requires `CAP_SYS_TIME` (satisfied: agent runs as root, launched by capsem-init PID 1).
+- If `clock_settime` fails (EPERM), a warning is logged but boot continues with incorrect time.
 
 ### Read-only rootfs
 
@@ -236,7 +273,7 @@ This ensures:
 
 All host-controlled binaries deployed inside the VM follow strict hardening rules:
 
-**Read-only permissions (chmod 555)**: Every guest binary (`capsem-pty-agent`, and future binaries like `capsem-fswatch`, `capsem-vsock-bridge`) is deployed with `r-xr-xr-x` permissions. No write bit. This applies to both deployment paths:
+**Read-only permissions (chmod 555)**: Every guest binary (`capsem-pty-agent`, `capsem-net-proxy`, and future binaries like `capsem-fswatch`) is deployed with `r-xr-xr-x` permissions. No write bit. This applies to both deployment paths:
 
 - **Rootfs path** (`/usr/local/bin/`): Set to `chmod 555` in `Dockerfile.rootfs`. The rootfs itself is mounted read-only, providing a second layer of protection.
 - **Initrd override path** (`/run/`): When `just repack` bundles a binary into the initrd, `capsem-init` copies it to `/newroot/run/` (a tmpfs) at boot with `chmod 555`. The tmpfs is writable by root, but the 555 permissions prevent casual overwrites. Future SELinux policy (M12) will enforce this at the MAC level.
@@ -298,7 +335,7 @@ The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) 
 | `CONFIG_DEVMEM=n` | No `/dev/mem` -- root cannot read/write physical memory |
 | `CONFIG_DEVPORT=n` | No `/dev/port` -- no I/O port access |
 | `CONFIG_COMPAT=n` | No 32-bit syscall layer -- eliminates legacy compat attack surface |
-| `CONFIG_INET=n` -> `y` (M5) | IP stack enabled in M5 for synthetic networking (dummy0 + iptables REDIRECT). No real NIC drivers (`CONFIG_NETDEVICES=n`). Pre-M5: no IP stack at all. |
+| `CONFIG_INET=y` | IP stack enabled for synthetic networking (dummy0 + iptables REDIRECT to vsock-backed SNI proxy). No real NIC drivers (`CONFIG_NETDEVICES=n`). |
 | `CONFIG_IO_URING=n` | No io_uring -- eliminates a historically high-CVE subsystem |
 | `CONFIG_BPF_SYSCALL=n` | No eBPF -- eliminates JIT-based attack surface |
 | `CONFIG_USERFAULTFD=n` | No userfaultfd -- commonly used in race condition exploits |
@@ -313,7 +350,7 @@ The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) 
 | `CONFIG_KALLSYMS=n` | No kernel symbol table exposed to userspace |
 | `CONFIG_DEBUG_FS=n` | No debugfs mount |
 
-Unix domain sockets (`CONFIG_UNIX=y`) are kept because node, python, and git depend on them. IP networking is initially disabled (`CONFIG_INET=n`) at the kernel level -- deeper than just not attaching a NIC. In M5, `CONFIG_INET=y` is enabled for the synthetic network stack (dummy0 + iptables REDIRECT to vsock), but `CONFIG_NETDEVICES=n` ensures no real NIC drivers exist. The kernel can route IP packets through the dummy interface to vsock bridges, but has no driver to attach to any real network.
+Unix domain sockets (`CONFIG_UNIX=y`) are kept because node, python, and git depend on them. IP networking is enabled (`CONFIG_INET=y`) for the synthetic network stack (dummy0 + iptables REDIRECT to vsock), but `CONFIG_NETDEVICES=n` ensures no real NIC drivers exist. The kernel can route IP packets through the dummy interface to vsock bridges, but has no driver to attach to any real network.
 
 The kernel source is pinned to a specific LTS version, downloaded from kernel.org, and built reproducibly in a container. Trade-off: we own kernel patching. CVE response requires a version bump in `images/Dockerfile.kernel` and a rebuild.
 
@@ -352,17 +389,21 @@ Updates are signed with minisign. The public key is embedded in the binary at co
 - Cache shares mounted read-only with ephemeral overlayfs to catch writes.
 - No share for ~/.ssh, ~/.aws, ~/.config, or any path outside the workspace.
 
-### Milestone 5: Network boundaries & real-time telemetry
+### Milestone 5: Network boundaries & real-time telemetry (partially implemented)
 
+**Implemented:**
 - Kernel IP stack enabled (`CONFIG_INET=y`) but no real NIC drivers (`CONFIG_NETDEVICES=n`).
-- Synthetic network: `dummy0` + fake DNS (all domains -> 10.0.0.1) + iptables REDIRECT.
+- Synthetic network: `dummy0` + fake DNS (dnsmasq `--address=/#/10.0.0.1`) + iptables REDIRECT.
 - Host-side SNI proxy extracts TLS SNI and enforces domain allow-list (default-deny).
-- AI provider domains blocked at SNI proxy -- forces all model traffic through audit gateway.
-- HTTPS-only: plain HTTP rejected (no SNI to validate).
+- AI provider domains blocked at SNI proxy.
+- Configurable domain policy via `~/.capsem/user.toml` and `/etc/capsem/corp.toml`.
+- Per-session `web.db` logging all HTTPS connection decisions.
 - Zero DNS leaks: fake DNS inside VM, real resolution on host only.
-- No UDP forwarding, no ICMP, no raw sockets.
-- `capsem-fswatch` daemon monitors `/workspace` via fanotify, streams file events (create/edit/delete) to host over vsock:5005 in real-time.
-- New vsock ports: 5002 (SNI proxy), 5003 (MCP gateway), 5004 (AI gateway), 5005 (file telemetry).
+- vsock port 5002 for SNI proxy connections.
+
+**Remaining:**
+- `capsem-fswatch` daemon for `/workspace` fanotify monitoring (vsock:5005).
+- vsock ports 5003 (MCP gateway), 5004 (AI gateway), 5005 (file telemetry).
 
 ### Milestone 6: Active AI audit gateway
 

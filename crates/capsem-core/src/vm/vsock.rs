@@ -1,6 +1,6 @@
 use std::os::unix::io::RawFd;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, ProtocolObject};
 use objc2::{define_class, msg_send, AnyThread, DefinedClass, Message};
@@ -9,60 +9,21 @@ use objc2_virtualization::{
     VZSocketDevice, VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketListener,
     VZVirtioSocketListenerDelegate,
 };
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+// Re-export protocol types from capsem-proto.
+pub use capsem_proto::{
+    GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_guest_msg, decode_host_msg, encode_guest_msg,
+    encode_host_msg, max_frame_size,
+};
 
 /// vsock port for structured control messages (resize, heartbeat).
 pub const VSOCK_PORT_CONTROL: u32 = 5000;
 /// vsock port for raw PTY byte streaming (stdin/stdout).
 pub const VSOCK_PORT_TERMINAL: u32 = 5001;
-
-/// Maximum size of a single control message frame (4KB).
-const MAX_CONTROL_FRAME_SIZE: u32 = 4096;
-
-// ---------------------------------------------------------------------------
-// Control message protocol
-// ---------------------------------------------------------------------------
-
-/// Structured control messages exchanged over the vsock control channel.
-/// Framed as `[4-byte BE length][RMP payload]`.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "t", content = "d", rename_all = "lowercase")]
-pub enum ControlMessage {
-    /// Guest agent announces readiness.
-    Ready { version: String },
-    /// Request terminal resize.
-    Resize { cols: u16, rows: u16 },
-    /// Heartbeat ping.
-    Ping,
-    /// Heartbeat pong.
-    Pong,
-    /// Host requests command execution in the guest PTY.
-    Exec { id: u64, command: String },
-    /// Guest reports command completion with exit code.
-    ExecDone { id: u64, exit_code: i32 },
-}
-
-/// Encode a control message into a length-prefixed RMP frame.
-pub fn encode_control_message(msg: &ControlMessage) -> Result<Vec<u8>> {
-    let payload = rmp_serde::to_vec_named(msg).context("failed to encode control message")?;
-    let len = payload.len() as u32;
-    let mut frame = Vec::with_capacity(4 + payload.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&payload);
-    Ok(frame)
-}
-
-/// Decode a control message from an RMP payload (without the length prefix).
-pub fn decode_control_message(payload: &[u8]) -> Result<ControlMessage> {
-    rmp_serde::from_slice(payload).context("failed to decode control message")
-}
-
-/// Return the max allowed control frame size.
-pub fn max_control_frame_size() -> u32 {
-    MAX_CONTROL_FRAME_SIZE
-}
+/// vsock port for SNI proxy (HTTPS/HTTP traffic from guest).
+pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
 
 // ---------------------------------------------------------------------------
 // Output coalescing buffer
@@ -322,247 +283,6 @@ mod tests {
     use super::*;
 
     // -----------------------------------------------------------------------
-    // Roundtrip encoding/decoding
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn control_message_roundtrip_ready() {
-        let msg = ControlMessage::Ready {
-            version: "0.3.0".to_string(),
-        };
-        let frame = encode_control_message(&msg).unwrap();
-        let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
-        assert!(len < MAX_CONTROL_FRAME_SIZE);
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Ready { version } => assert_eq!(version, "0.3.0"),
-            other => panic!("expected Ready, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn control_message_roundtrip_resize() {
-        let msg = ControlMessage::Resize {
-            cols: 120,
-            rows: 40,
-        };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Resize { cols, rows } => {
-                assert_eq!(cols, 120);
-                assert_eq!(rows, 40);
-            }
-            other => panic!("expected Resize, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn control_message_roundtrip_ping_pong() {
-        for msg in [ControlMessage::Ping, ControlMessage::Pong] {
-            let frame = encode_control_message(&msg).unwrap();
-            let decoded = decode_control_message(&frame[4..]).unwrap();
-            match (&msg, &decoded) {
-                (ControlMessage::Ping, ControlMessage::Ping) => {}
-                (ControlMessage::Pong, ControlMessage::Pong) => {}
-                _ => panic!("mismatch: {msg:?} vs {decoded:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn control_message_roundtrip_exec() {
-        let msg = ControlMessage::Exec {
-            id: 42,
-            command: "echo hello && ls -la".to_string(),
-        };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Exec { id, command } => {
-                assert_eq!(id, 42);
-                assert_eq!(command, "echo hello && ls -la");
-            }
-            other => panic!("expected Exec, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn control_message_roundtrip_exec_done() {
-        let msg = ControlMessage::ExecDone {
-            id: 99,
-            exit_code: 127,
-        };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::ExecDone { id, exit_code } => {
-                assert_eq!(id, 99);
-                assert_eq!(exit_code, 127);
-            }
-            other => panic!("expected ExecDone, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn control_message_exec_done_negative_exit_code() {
-        let msg = ControlMessage::ExecDone {
-            id: 1,
-            exit_code: -1,
-        };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::ExecDone { id, exit_code } => {
-                assert_eq!(id, 1);
-                assert_eq!(exit_code, -1);
-            }
-            other => panic!("expected ExecDone, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn control_message_exec_max_id() {
-        let msg = ControlMessage::Exec {
-            id: u64::MAX,
-            command: "x".to_string(),
-        };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Exec { id, .. } => assert_eq!(id, u64::MAX),
-            other => panic!("expected Exec, got {other:?}"),
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Frame format
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn frame_length_prefix_is_correct() {
-        let msg = ControlMessage::Ping;
-        let frame = encode_control_message(&msg).unwrap();
-        let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
-        assert_eq!(len, frame.len() - 4);
-    }
-
-    #[test]
-    fn frame_length_prefix_is_big_endian() {
-        let msg = ControlMessage::Ping;
-        let frame = encode_control_message(&msg).unwrap();
-        let payload_len = frame.len() - 4;
-        // Verify BE encoding: most significant byte first.
-        let expected = (payload_len as u32).to_be_bytes();
-        assert_eq!(&frame[..4], &expected);
-    }
-
-    #[test]
-    fn all_message_variants_fit_within_max_frame_size() {
-        let messages = vec![
-            ControlMessage::Ready { version: "99.99.99".to_string() },
-            ControlMessage::Resize { cols: u16::MAX, rows: u16::MAX },
-            ControlMessage::Ping,
-            ControlMessage::Pong,
-            ControlMessage::Exec { id: u64::MAX, command: "echo hello".to_string() },
-            ControlMessage::ExecDone { id: u64::MAX, exit_code: i32::MIN },
-        ];
-        for msg in messages {
-            let frame = encode_control_message(&msg).unwrap();
-            let payload_len = frame.len() - 4;
-            assert!(
-                payload_len <= MAX_CONTROL_FRAME_SIZE as usize,
-                "{msg:?} payload is {payload_len} bytes, exceeds max {MAX_CONTROL_FRAME_SIZE}"
-            );
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Decode error handling
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn decode_empty_payload_fails() {
-        let result = decode_control_message(&[]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn decode_garbage_bytes_fails() {
-        let garbage = [0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
-        let result = decode_control_message(&garbage);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn decode_truncated_payload_fails() {
-        let msg = ControlMessage::Ready { version: "1.0.0".to_string() };
-        let frame = encode_control_message(&msg).unwrap();
-        // Take only half the payload.
-        let half = &frame[4..4 + (frame.len() - 4) / 2];
-        let result = decode_control_message(half);
-        assert!(result.is_err());
-    }
-
-    // -----------------------------------------------------------------------
-    // Resize boundary values
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn resize_zero_dimensions() {
-        let msg = ControlMessage::Resize { cols: 0, rows: 0 };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Resize { cols, rows } => {
-                assert_eq!(cols, 0);
-                assert_eq!(rows, 0);
-            }
-            other => panic!("expected Resize, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn resize_max_dimensions() {
-        let msg = ControlMessage::Resize { cols: u16::MAX, rows: u16::MAX };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Resize { cols, rows } => {
-                assert_eq!(cols, u16::MAX);
-                assert_eq!(rows, u16::MAX);
-            }
-            other => panic!("expected Resize, got {other:?}"),
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Ready version string edge cases
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn ready_empty_version() {
-        let msg = ControlMessage::Ready { version: String::new() };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Ready { version } => assert_eq!(version, ""),
-            other => panic!("expected Ready, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn ready_unicode_version() {
-        let msg = ControlMessage::Ready { version: "v1.0-\u{1F600}".to_string() };
-        let frame = encode_control_message(&msg).unwrap();
-        let decoded = decode_control_message(&frame[4..]).unwrap();
-        match decoded {
-            ControlMessage::Ready { version } => assert_eq!(version, "v1.0-\u{1F600}"),
-            other => panic!("expected Ready, got {other:?}"),
-        }
-    }
-
-    // -----------------------------------------------------------------------
     // Constants
     // -----------------------------------------------------------------------
 
@@ -573,58 +293,13 @@ mod tests {
 
     #[test]
     fn port_constants_are_in_expected_range() {
-        // Both ports should be in the well-known range.
         assert!(VSOCK_PORT_CONTROL < 65536);
         assert!(VSOCK_PORT_TERMINAL < 65536);
     }
 
     #[test]
-    fn max_control_frame_size_is_4kb() {
-        assert_eq!(max_control_frame_size(), 4096);
-    }
-
-    // -----------------------------------------------------------------------
-    // Wire format stability (RMP)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn rmp_encoding_is_deterministic() {
-        // Same message must produce identical bytes every time.
-        let msg = ControlMessage::Resize { cols: 80, rows: 24 };
-        let a = encode_control_message(&msg).unwrap();
-        let b = encode_control_message(&msg).unwrap();
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn different_messages_produce_different_bytes() {
-        let ping = encode_control_message(&ControlMessage::Ping).unwrap();
-        let pong = encode_control_message(&ControlMessage::Pong).unwrap();
-        assert_ne!(ping, pong);
-    }
-
-    #[test]
-    fn rmp_payload_is_compact() {
-        // MessagePack should be significantly smaller than equivalent JSON.
-        // Ping is a trivial message; its payload should be well under 50 bytes.
-        let frame = encode_control_message(&ControlMessage::Ping).unwrap();
-        let payload_len = frame.len() - 4;
-        assert!(payload_len < 50, "Ping payload is {payload_len} bytes, expected < 50");
-    }
-
-    #[test]
-    fn cross_decode_host_and_guest_format() {
-        // Encode with rmp_serde directly (simulating guest) and decode with our helper.
-        let msg = ControlMessage::Resize { cols: 132, rows: 43 };
-        let raw = rmp_serde::to_vec_named(&msg).unwrap();
-        let decoded = decode_control_message(&raw).unwrap();
-        match decoded {
-            ControlMessage::Resize { cols, rows } => {
-                assert_eq!(cols, 132);
-                assert_eq!(rows, 43);
-            }
-            other => panic!("expected Resize, got {other:?}"),
-        }
+    fn max_frame_size_is_8kb() {
+        assert_eq!(max_frame_size(), 8192);
     }
 
     // -----------------------------------------------------------------------

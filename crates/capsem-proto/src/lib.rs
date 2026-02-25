@@ -1,0 +1,722 @@
+//! Capsem protocol types for host/guest communication over vsock.
+//!
+//! Defines disjoint `HostToGuest` and `GuestToHost` message enums with
+//! MessagePack framing. No platform-specific dependencies, so this crate
+//! cross-compiles for both macOS host and aarch64-linux-musl guest.
+//!
+//! # Security invariant (RFC T14)
+//!
+//! The host only deserializes `GuestToHost`. The guest only deserializes
+//! `HostToGuest`. This is enforced at the type level by having separate
+//! encode/decode function pairs.
+
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
+
+/// Maximum size of a single control message frame (8KB).
+/// Bumped from 4KB to accommodate env var payloads in BootConfig.
+pub const MAX_FRAME_SIZE: u32 = 8192;
+
+// ---------------------------------------------------------------------------
+// Message types
+// ---------------------------------------------------------------------------
+
+/// Commands sent from host to guest over vsock:5000.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "t", content = "d", rename_all = "lowercase")]
+pub enum HostToGuest {
+    // -- Boot --
+    /// Clock sync + environment injection at boot.
+    BootConfig {
+        epoch_secs: u64,
+        env_vars: Vec<(String, String)>,
+    },
+    // -- Terminal --
+    /// Request terminal resize.
+    Resize { cols: u16, rows: u16 },
+    /// Execute command in guest PTY.
+    Exec { id: u64, command: String },
+    // -- Heartbeat --
+    /// Liveness check.
+    Ping,
+    // -- File operations (reserved) --
+    /// Inject file into guest workspace.
+    FileWrite {
+        path: String,
+        data: Vec<u8>,
+        mode: u32,
+    },
+    /// Request file content from guest.
+    FileRead { id: u64, path: String },
+    /// Delete file in guest workspace.
+    FileDelete { path: String },
+    // -- Lifecycle (reserved) --
+    /// Graceful shutdown request.
+    Shutdown,
+}
+
+/// Messages sent from guest to host over vsock:5000.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "t", content = "d", rename_all = "lowercase")]
+pub enum GuestToHost {
+    // -- Boot --
+    /// Agent alive, waiting for boot config.
+    Ready { version: String },
+    /// Boot config applied, terminal ready.
+    BootReady,
+    // -- Terminal --
+    /// Command completed with exit code.
+    ExecDone { id: u64, exit_code: i32 },
+    // -- Heartbeat --
+    /// Heartbeat response.
+    Pong,
+    // -- File telemetry (reserved) --
+    /// Telemetry: file created in guest.
+    FileCreated { path: String, size: u64 },
+    /// Telemetry: file modified in guest.
+    FileModified { path: String, size: u64 },
+    /// Telemetry: file deleted in guest.
+    FileDeleted { path: String },
+    /// Response to FileRead.
+    FileContent {
+        id: u64,
+        path: String,
+        data: Vec<u8>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Framing: [4-byte BE length][RMP payload]
+// ---------------------------------------------------------------------------
+
+/// Encode a `HostToGuest` message into a length-prefixed RMP frame.
+pub fn encode_host_msg(msg: &HostToGuest) -> Result<Vec<u8>> {
+    let payload = rmp_serde::to_vec_named(msg).context("failed to encode HostToGuest")?;
+    let len = payload.len() as u32;
+    let mut frame = Vec::with_capacity(4 + payload.len());
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(&payload);
+    Ok(frame)
+}
+
+/// Decode a `HostToGuest` message from an RMP payload (without the length prefix).
+pub fn decode_host_msg(payload: &[u8]) -> Result<HostToGuest> {
+    rmp_serde::from_slice(payload).context("failed to decode HostToGuest")
+}
+
+/// Encode a `GuestToHost` message into a length-prefixed RMP frame.
+pub fn encode_guest_msg(msg: &GuestToHost) -> Result<Vec<u8>> {
+    let payload = rmp_serde::to_vec_named(msg).context("failed to encode GuestToHost")?;
+    let len = payload.len() as u32;
+    let mut frame = Vec::with_capacity(4 + payload.len());
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(&payload);
+    Ok(frame)
+}
+
+/// Decode a `GuestToHost` message from an RMP payload (without the length prefix).
+pub fn decode_guest_msg(payload: &[u8]) -> Result<GuestToHost> {
+    rmp_serde::from_slice(payload).context("failed to decode GuestToHost")
+}
+
+/// Return the max allowed control frame size.
+pub fn max_frame_size() -> u32 {
+    MAX_FRAME_SIZE
+}
+
+/// Validate that a BootConfig payload fits within the frame size limit.
+/// Returns `Ok(frame)` or an error describing the overflow.
+pub fn encode_boot_config_checked(msg: &HostToGuest) -> Result<Vec<u8>> {
+    let frame = encode_host_msg(msg)?;
+    let payload_len = frame.len() - 4;
+    if payload_len > (MAX_FRAME_SIZE - 4) as usize {
+        bail!(
+            "environment block too large ({} bytes, max {}): \
+             reduce the number or size of --env values or [guest].env entries",
+            payload_len,
+            MAX_FRAME_SIZE - 4
+        );
+    }
+    Ok(frame)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------
+    // HostToGuest roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn roundtrip_boot_config() {
+        let msg = HostToGuest::BootConfig {
+            epoch_secs: 1708800000,
+            env_vars: vec![
+                ("TERM".into(), "xterm-256color".into()),
+                ("HOME".into(), "/root".into()),
+            ],
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
+        assert!(len < MAX_FRAME_SIZE);
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::BootConfig {
+                epoch_secs,
+                env_vars,
+            } => {
+                assert_eq!(epoch_secs, 1708800000);
+                assert_eq!(env_vars.len(), 2);
+                assert_eq!(env_vars[0], ("TERM".into(), "xterm-256color".into()));
+            }
+            other => panic!("expected BootConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_resize() {
+        let msg = HostToGuest::Resize {
+            cols: 120,
+            rows: 40,
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::Resize { cols, rows } => {
+                assert_eq!(cols, 120);
+                assert_eq!(rows, 40);
+            }
+            other => panic!("expected Resize, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_exec() {
+        let msg = HostToGuest::Exec {
+            id: 42,
+            command: "echo hello && ls -la".into(),
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::Exec { id, command } => {
+                assert_eq!(id, 42);
+                assert_eq!(command, "echo hello && ls -la");
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_ping() {
+        let msg = HostToGuest::Ping;
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, HostToGuest::Ping));
+    }
+
+    #[test]
+    fn roundtrip_file_write() {
+        let msg = HostToGuest::FileWrite {
+            path: "/workspace/test.txt".into(),
+            data: b"hello world".to_vec(),
+            mode: 0o644,
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::FileWrite { path, data, mode } => {
+                assert_eq!(path, "/workspace/test.txt");
+                assert_eq!(data, b"hello world");
+                assert_eq!(mode, 0o644);
+            }
+            other => panic!("expected FileWrite, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_read() {
+        let msg = HostToGuest::FileRead {
+            id: 7,
+            path: "/workspace/out.log".into(),
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::FileRead { id, path } => {
+                assert_eq!(id, 7);
+                assert_eq!(path, "/workspace/out.log");
+            }
+            other => panic!("expected FileRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_delete() {
+        let msg = HostToGuest::FileDelete {
+            path: "/workspace/tmp".into(),
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::FileDelete { path } => assert_eq!(path, "/workspace/tmp"),
+            other => panic!("expected FileDelete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_shutdown() {
+        let msg = HostToGuest::Shutdown;
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, HostToGuest::Shutdown));
+    }
+
+    // -------------------------------------------------------------------
+    // GuestToHost roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn roundtrip_ready() {
+        let msg = GuestToHost::Ready {
+            version: "0.3.0".into(),
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::Ready { version } => assert_eq!(version, "0.3.0"),
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_boot_ready() {
+        let msg = GuestToHost::BootReady;
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, GuestToHost::BootReady));
+    }
+
+    #[test]
+    fn roundtrip_exec_done() {
+        let msg = GuestToHost::ExecDone {
+            id: 99,
+            exit_code: 127,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::ExecDone { id, exit_code } => {
+                assert_eq!(id, 99);
+                assert_eq!(exit_code, 127);
+            }
+            other => panic!("expected ExecDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_pong() {
+        let msg = GuestToHost::Pong;
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, GuestToHost::Pong));
+    }
+
+    #[test]
+    fn roundtrip_file_created() {
+        let msg = GuestToHost::FileCreated {
+            path: "/workspace/new.txt".into(),
+            size: 1234,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileCreated { path, size } => {
+                assert_eq!(path, "/workspace/new.txt");
+                assert_eq!(size, 1234);
+            }
+            other => panic!("expected FileCreated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_modified() {
+        let msg = GuestToHost::FileModified {
+            path: "/workspace/edit.txt".into(),
+            size: 5678,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileModified { path, size } => {
+                assert_eq!(path, "/workspace/edit.txt");
+                assert_eq!(size, 5678);
+            }
+            other => panic!("expected FileModified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_deleted() {
+        let msg = GuestToHost::FileDeleted {
+            path: "/workspace/gone.txt".into(),
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileDeleted { path } => assert_eq!(path, "/workspace/gone.txt"),
+            other => panic!("expected FileDeleted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_content() {
+        let msg = GuestToHost::FileContent {
+            id: 7,
+            path: "/workspace/out.log".into(),
+            data: b"log contents here".to_vec(),
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileContent { id, path, data } => {
+                assert_eq!(id, 7);
+                assert_eq!(path, "/workspace/out.log");
+                assert_eq!(data, b"log contents here");
+            }
+            other => panic!("expected FileContent, got {other:?}"),
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Frame format
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn frame_length_prefix_is_correct() {
+        let msg = HostToGuest::Ping;
+        let frame = encode_host_msg(&msg).unwrap();
+        let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+        assert_eq!(len, frame.len() - 4);
+    }
+
+    #[test]
+    fn frame_length_prefix_is_big_endian() {
+        let msg = HostToGuest::Ping;
+        let frame = encode_host_msg(&msg).unwrap();
+        let payload_len = frame.len() - 4;
+        let expected = (payload_len as u32).to_be_bytes();
+        assert_eq!(&frame[..4], &expected);
+    }
+
+    #[test]
+    fn rmp_encoding_is_deterministic() {
+        let msg = HostToGuest::Resize {
+            cols: 80,
+            rows: 24,
+        };
+        let a = encode_host_msg(&msg).unwrap();
+        let b = encode_host_msg(&msg).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_messages_produce_different_bytes() {
+        let ping = encode_host_msg(&HostToGuest::Ping).unwrap();
+        let pong = encode_guest_msg(&GuestToHost::Pong).unwrap();
+        assert_ne!(ping, pong);
+    }
+
+    #[test]
+    fn rmp_payload_is_compact() {
+        let frame = encode_host_msg(&HostToGuest::Ping).unwrap();
+        let payload_len = frame.len() - 4;
+        assert!(
+            payload_len < 50,
+            "Ping payload is {payload_len} bytes, expected < 50"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Cross-type decode must fail (disjoint type safety)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn guest_msg_fails_to_decode_as_host() {
+        let msg = GuestToHost::Pong;
+        let frame = encode_guest_msg(&msg).unwrap();
+        let result = decode_host_msg(&frame[4..]);
+        // Pong only exists in GuestToHost, not HostToGuest, so this must fail.
+        assert!(result.is_err(), "decoding GuestToHost::Pong as HostToGuest should fail");
+    }
+
+    #[test]
+    fn host_msg_fails_to_decode_as_guest() {
+        let msg = HostToGuest::Ping;
+        let frame = encode_host_msg(&msg).unwrap();
+        let result = decode_guest_msg(&frame[4..]);
+        // Ping only exists in HostToGuest, not GuestToHost, so this must fail.
+        assert!(result.is_err(), "decoding HostToGuest::Ping as GuestToHost should fail");
+    }
+
+    #[test]
+    fn boot_config_fails_as_guest_msg() {
+        let msg = HostToGuest::BootConfig {
+            epoch_secs: 1000,
+            env_vars: vec![],
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let result = decode_guest_msg(&frame[4..]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn boot_ready_fails_as_host_msg() {
+        let msg = GuestToHost::BootReady;
+        let frame = encode_guest_msg(&msg).unwrap();
+        let result = decode_host_msg(&frame[4..]);
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // Decode error handling
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn decode_empty_payload_fails_host() {
+        assert!(decode_host_msg(&[]).is_err());
+    }
+
+    #[test]
+    fn decode_empty_payload_fails_guest() {
+        assert!(decode_guest_msg(&[]).is_err());
+    }
+
+    #[test]
+    fn decode_garbage_bytes_fails() {
+        let garbage = [0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
+        assert!(decode_host_msg(&garbage).is_err());
+        assert!(decode_guest_msg(&garbage).is_err());
+    }
+
+    #[test]
+    fn decode_truncated_payload_fails() {
+        let msg = GuestToHost::Ready {
+            version: "1.0.0".into(),
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let half = &frame[4..4 + (frame.len() - 4) / 2];
+        assert!(decode_guest_msg(half).is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // BootConfig size validation
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn boot_config_with_many_env_vars_fits() {
+        let env_vars: Vec<(String, String)> = (0..50)
+            .map(|i| (format!("VAR_{i}"), format!("value_{i}")))
+            .collect();
+        let msg = HostToGuest::BootConfig {
+            epoch_secs: 1708800000,
+            env_vars,
+        };
+        let frame = encode_boot_config_checked(&msg).unwrap();
+        assert!(frame.len() - 4 <= (MAX_FRAME_SIZE - 4) as usize);
+    }
+
+    #[test]
+    fn boot_config_oversized_env_rejected() {
+        let env_vars: Vec<(String, String)> = (0..200)
+            .map(|i| (format!("VERY_LONG_VAR_NAME_{i}"), "x".repeat(100)))
+            .collect();
+        let msg = HostToGuest::BootConfig {
+            epoch_secs: 1708800000,
+            env_vars,
+        };
+        let result = encode_boot_config_checked(&msg);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("environment block too large"));
+    }
+
+    // -------------------------------------------------------------------
+    // All variants fit within MAX_FRAME_SIZE
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn all_host_variants_fit() {
+        let messages = vec![
+            HostToGuest::BootConfig {
+                epoch_secs: u64::MAX,
+                env_vars: vec![("K".into(), "V".into())],
+            },
+            HostToGuest::Resize {
+                cols: u16::MAX,
+                rows: u16::MAX,
+            },
+            HostToGuest::Exec {
+                id: u64::MAX,
+                command: "echo hello".into(),
+            },
+            HostToGuest::Ping,
+            HostToGuest::FileWrite {
+                path: "/test".into(),
+                data: vec![0; 10],
+                mode: 0o644,
+            },
+            HostToGuest::FileRead {
+                id: 1,
+                path: "/test".into(),
+            },
+            HostToGuest::FileDelete {
+                path: "/test".into(),
+            },
+            HostToGuest::Shutdown,
+        ];
+        for msg in messages {
+            let frame = encode_host_msg(&msg).unwrap();
+            let payload_len = frame.len() - 4;
+            assert!(
+                payload_len <= MAX_FRAME_SIZE as usize,
+                "{msg:?} payload is {payload_len} bytes, exceeds max {MAX_FRAME_SIZE}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_guest_variants_fit() {
+        let messages = vec![
+            GuestToHost::Ready {
+                version: "99.99.99".into(),
+            },
+            GuestToHost::BootReady,
+            GuestToHost::ExecDone {
+                id: u64::MAX,
+                exit_code: i32::MIN,
+            },
+            GuestToHost::Pong,
+            GuestToHost::FileCreated {
+                path: "/test".into(),
+                size: u64::MAX,
+            },
+            GuestToHost::FileModified {
+                path: "/test".into(),
+                size: u64::MAX,
+            },
+            GuestToHost::FileDeleted {
+                path: "/test".into(),
+            },
+            GuestToHost::FileContent {
+                id: 1,
+                path: "/test".into(),
+                data: vec![0; 10],
+            },
+        ];
+        for msg in messages {
+            let frame = encode_guest_msg(&msg).unwrap();
+            let payload_len = frame.len() - 4;
+            assert!(
+                payload_len <= MAX_FRAME_SIZE as usize,
+                "{msg:?} payload is {payload_len} bytes, exceeds max {MAX_FRAME_SIZE}"
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Constants
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn max_frame_size_is_8kb() {
+        assert_eq!(max_frame_size(), 8192);
+    }
+
+    // -------------------------------------------------------------------
+    // Edge cases
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn exec_done_negative_exit_code() {
+        let msg = GuestToHost::ExecDone {
+            id: 1,
+            exit_code: -1,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::ExecDone { id, exit_code } => {
+                assert_eq!(id, 1);
+                assert_eq!(exit_code, -1);
+            }
+            other => panic!("expected ExecDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_max_id() {
+        let msg = HostToGuest::Exec {
+            id: u64::MAX,
+            command: "x".into(),
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::Exec { id, .. } => assert_eq!(id, u64::MAX),
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ready_empty_version() {
+        let msg = GuestToHost::Ready {
+            version: String::new(),
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::Ready { version } => assert_eq!(version, ""),
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn boot_config_empty_env() {
+        let msg = HostToGuest::BootConfig {
+            epoch_secs: 0,
+            env_vars: vec![],
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::BootConfig {
+                epoch_secs,
+                env_vars,
+            } => {
+                assert_eq!(epoch_secs, 0);
+                assert!(env_vars.is_empty());
+            }
+            other => panic!("expected BootConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cross_decode_host_format() {
+        // Encode with rmp_serde directly (simulating remote), decode with helper.
+        let msg = HostToGuest::Resize {
+            cols: 132,
+            rows: 43,
+        };
+        let raw = rmp_serde::to_vec_named(&msg).unwrap();
+        let decoded = decode_host_msg(&raw).unwrap();
+        match decoded {
+            HostToGuest::Resize { cols, rows } => {
+                assert_eq!(cols, 132);
+                assert_eq!(rows, 43);
+            }
+            other => panic!("expected Resize, got {other:?}"),
+        }
+    }
+}

@@ -14,6 +14,7 @@ RUN apt-get update && \
         vim-tiny \
         git \
         curl ca-certificates \
+        iproute2 iptables dnsmasq \
         python3 python3-pip python3-venv \
         nodejs npm && \
     ln -sf vim.tiny /usr/bin/vim && \
@@ -26,18 +27,44 @@ RUN npm install -g \
         @openai/codex && \
     npm cache clean --force
 
+# Install MITM CA certificate into system trust store
+# (copied into images/ by build.py before docker build)
+COPY capsem-ca.crt /usr/local/share/ca-certificates/capsem-ca.crt
+RUN update-ca-certificates
+
+# Patch certifi's CA bundle (Python requests/openai SDK use certifi, not system store)
+RUN pip3 install --break-system-packages certifi && \
+    CERTIFI_BUNDLE=$(python3 -c "import certifi; print(certifi.where())") && \
+    cat /usr/local/share/ca-certificates/capsem-ca.crt >> "$CERTIFI_BUNDLE"
+
 # PTY agent binary (built externally, cross-compiled for aarch64-linux-musl)
 # Bridges PTY I/O over vsock for high-performance terminal communication.
 # Read-only + execute (555): prevent guest processes from modifying the agent.
 COPY capsem-pty-agent /usr/local/bin/capsem-pty-agent
 RUN chmod 555 /usr/local/bin/capsem-pty-agent
 
+# Net proxy binary (cross-compiled for aarch64-linux-musl)
+# Bridges TCP connections from the guest to the host SNI proxy via vsock.
+COPY capsem-net-proxy /usr/local/bin/capsem-net-proxy
+RUN chmod 555 /usr/local/bin/capsem-net-proxy
+
 # Shell config (sourced by capsem-init via --rcfile)
 COPY capsem-bashrc /etc/capsem-bashrc
 
-# VM test script
-COPY test-vm.sh /usr/local/bin/capsem-test
-RUN chmod 755 /usr/local/bin/capsem-test
+# Pytest for VM diagnostics
+RUN pip3 install --break-system-packages pytest
+
+# Diagnostic test suite
+COPY diagnostics/ /usr/local/lib/capsem-tests/
+
+# Doctor script (entry point)
+COPY capsem-doctor /usr/local/bin/capsem-doctor
+RUN chmod 755 /usr/local/bin/capsem-doctor
+# Backward compat: capsem-test -> capsem-doctor
+RUN ln -sf capsem-doctor /usr/local/bin/capsem-test
+
+# Strip setuid/setgid bits from all binaries (VM runs as root, no need for them).
+RUN find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -exec chmod u-s,g-s {} + 2>/dev/null || true
 
 # /root is a tmpfs at runtime, so don't put anything here
 RUN rm -rf /root && mkdir -p /root

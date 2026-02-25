@@ -18,7 +18,7 @@ ASSETS_DIR = REPO_ROOT / "assets"
 
 IMAGE_TAG = "capsem-kernel-builder"
 ROOTFS_IMAGE_TAG = "capsem-rootfs"
-ROOTFS_SIZE = "2G"
+ROOTFS_SIZE = "2G"  # ~1.2GB content (AI CLIs are 625MB alone) + ext4 overhead
 
 # Use podman, fall back to docker
 RUNTIME = "podman" if shutil.which("podman") else "docker"
@@ -76,9 +76,9 @@ def ensure_rust_target(target: str):
 
 
 def build_agent():
-    """Cross-compile capsem-pty-agent for aarch64-unknown-linux-musl."""
+    """Cross-compile capsem-pty-agent and capsem-net-proxy for aarch64-unknown-linux-musl."""
     target = "aarch64-unknown-linux-musl"
-    print(f"Cross-compiling capsem-pty-agent for {target}...")
+    print(f"Cross-compiling guest binaries for {target}...")
     ensure_rust_target(target)
     run([
         "cargo", "build",
@@ -87,17 +87,25 @@ def build_agent():
         "-p", "capsem-agent",
     ], cwd=str(REPO_ROOT))
 
-    # Copy the binary to images/ so Dockerfile.rootfs can COPY it.
-    src = REPO_ROOT / "target" / "aarch64-unknown-linux-musl" / "release" / "capsem-pty-agent"
-    dst = SCRIPT_DIR / "capsem-pty-agent"
+    # Copy binaries to images/ so Dockerfile.rootfs can COPY them.
     import shutil as _shutil
-    _shutil.copy2(str(src), str(dst))
-    print(f"  capsem-pty-agent: {dst} ({dst.stat().st_size} bytes)")
+    release_dir = REPO_ROOT / "target" / "aarch64-unknown-linux-musl" / "release"
+    for binary_name in ["capsem-pty-agent", "capsem-net-proxy"]:
+        src = release_dir / binary_name
+        dst = SCRIPT_DIR / binary_name
+        _shutil.copy2(str(src), str(dst))
+        print(f"  {binary_name}: {dst} ({dst.stat().st_size} bytes)")
 
 
 def create_rootfs():
     """Build populated ext4 rootfs with dev tools and AI CLIs."""
     print("Building rootfs container image...")
+
+    # Copy CA cert into images/ so Dockerfile.rootfs can COPY it
+    ca_src = REPO_ROOT / "config" / "capsem-ca.crt"
+    ca_dst = SCRIPT_DIR / "capsem-ca.crt"
+    shutil.copy2(str(ca_src), str(ca_dst))
+    print(f"  capsem-ca.crt: {ca_dst}")
 
     # 1. Build rootfs container (arm64 binaries)
     run([
@@ -136,7 +144,16 @@ def create_rootfs():
 
     # 4. Cleanup tar
     tar_path.unlink()
-    print(f"  rootfs.img: {ASSETS_DIR / 'rootfs.img'}")
+
+    # 5. Defragment: Docker volume writes through VirtioFS cause severe APFS
+    # fragmentation (e.g. 12GB on disk for a 2GB file). A simple copy produces
+    # a contiguous file at the correct size.
+    img_path = ASSETS_DIR / "rootfs.img"
+    tmp_path = ASSETS_DIR / "rootfs.img.tmp"
+    print("Defragmenting rootfs.img (APFS volume-mount workaround)...")
+    shutil.copy2(str(img_path), str(tmp_path))
+    tmp_path.rename(img_path)
+    print(f"  rootfs.img: {img_path} ({img_path.stat().st_size // (1024*1024)} MB)")
 
 
 def generate_checksums():
