@@ -19,7 +19,7 @@ use super::http_policy::{HttpPolicy, HttpRule};
 /// Top-level structure for user.toml / corp.toml.
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct PolicyFile {
-    pub network: Option<NetworkPolicy>,
+    pub network: Option<NetworkPolicyConfig>,
     pub guest: Option<GuestConfig>,
     pub vm: Option<VmSettings>,
 }
@@ -33,7 +33,7 @@ pub struct VmSettings {
 
 /// Network policy section within a TOML config file.
 #[derive(Serialize, Deserialize, Debug, Default)]
-pub struct NetworkPolicy {
+pub struct NetworkPolicyConfig {
     /// Domains allowed to be accessed (exact or *.wildcard patterns).
     pub allow: Option<Vec<String>>,
     /// Domains explicitly blocked (checked before allow-list).
@@ -244,6 +244,83 @@ pub fn load_merged_policy() -> HttpPolicy {
     merge_http_policy(&user, &corp)
 }
 
+/// Build a `NetworkPolicy` (new policy engine) from merged TOML config.
+///
+/// Bridges the TOML allow/block lists into per-domain read/write rules:
+/// - Blocked domains get read=false, write=false
+/// - Allowed domains get read=true, write=true
+/// - Default action maps to default_allow_read and default_allow_write
+///
+/// Falls back to `NetworkPolicy::default_dev()` when no config files exist.
+pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
+    use super::policy::{NetworkPolicy, PolicyRule, DomainMatcher};
+
+    let (user, corp) = load_policy_files();
+    let user_net = user.network.as_ref();
+    let corp_net = corp.network.as_ref();
+
+    // If neither file has a network section, use hardcoded dev defaults.
+    if user_net.is_none() && corp_net.is_none() {
+        return NetworkPolicy::default_dev();
+    }
+
+    let allow = corp_net
+        .and_then(|n| n.allow.as_ref())
+        .or_else(|| user_net.and_then(|n| n.allow.as_ref()));
+
+    let block = corp_net
+        .and_then(|n| n.block.as_ref())
+        .or_else(|| user_net.and_then(|n| n.block.as_ref()));
+
+    let default_str = corp_net
+        .and_then(|n| n.default.as_ref())
+        .or_else(|| user_net.and_then(|n| n.default.as_ref()));
+
+    let log_bodies = corp_net
+        .and_then(|n| n.log_bodies)
+        .or_else(|| user_net.and_then(|n| n.log_bodies))
+        .unwrap_or(true);
+
+    let max_body_capture = corp_net
+        .and_then(|n| n.max_body_capture)
+        .or_else(|| user_net.and_then(|n| n.max_body_capture))
+        .unwrap_or(4096);
+
+    // Build rules: blocked domains first (read=false, write=false),
+    // then allowed domains (read=true, write=true).
+    let mut rules = Vec::new();
+
+    if let Some(block_list) = block {
+        for pattern in block_list {
+            rules.push(PolicyRule {
+                matcher: DomainMatcher::parse(pattern),
+                allow_read: false,
+                allow_write: false,
+            });
+        }
+    }
+
+    if let Some(allow_list) = allow {
+        for pattern in allow_list {
+            rules.push(PolicyRule {
+                matcher: DomainMatcher::parse(pattern),
+                allow_read: true,
+                allow_write: true,
+            });
+        }
+    }
+
+    // Default action: "allow" -> both true, "deny" -> both false.
+    let default_allow = default_str
+        .map(|s| s.to_lowercase() == "allow")
+        .unwrap_or(false);
+
+    let mut policy = NetworkPolicy::new(rules, default_allow, default_allow);
+    policy.log_bodies = log_bodies;
+    policy.max_body_capture = max_body_capture;
+    policy
+}
+
 /// Load and merge guest config from the standard locations.
 pub fn load_merged_guest_config() -> GuestConfig {
     let (user, corp) = load_policy_files();
@@ -282,7 +359,7 @@ mod tests {
 
     fn make_user(allow: Option<Vec<&str>>, block: Option<Vec<&str>>, default: Option<&str>) -> PolicyFile {
         PolicyFile {
-            network: Some(NetworkPolicy {
+            network: Some(NetworkPolicyConfig {
                 allow: allow.map(|v| v.into_iter().map(String::from).collect()),
                 block: block.map(|v| v.into_iter().map(String::from).collect()),
                 default: default.map(String::from),

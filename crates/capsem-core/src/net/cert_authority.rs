@@ -100,8 +100,41 @@ impl CertAuthority {
 }
 
 /// rustls SNI-based certificate resolver that mints certs on demand.
+///
+/// Also captures the resolved domain name for use after the TLS handshake
+/// (replaces the old separate SNI parser). Optionally rejects fully-blocked
+/// domains at the TLS level (returns None -> handshake fails, no cert minted).
 pub struct MitmCertResolver {
     pub ca: Arc<CertAuthority>,
+    /// Domain captured during TLS handshake from ClientHello SNI.
+    pub resolved_domain: std::sync::Mutex<Option<String>>,
+    /// Optional policy for pre-TLS rejection of fully-blocked domains.
+    policy: Option<Arc<super::policy::NetworkPolicy>>,
+}
+
+impl MitmCertResolver {
+    /// Create a new resolver wrapping the given CA.
+    pub fn new(ca: Arc<CertAuthority>) -> Self {
+        Self {
+            ca,
+            resolved_domain: std::sync::Mutex::new(None),
+            policy: None,
+        }
+    }
+
+    /// Create a resolver that rejects fully-blocked domains at TLS level.
+    pub fn with_policy(ca: Arc<CertAuthority>, policy: Arc<super::policy::NetworkPolicy>) -> Self {
+        Self {
+            ca,
+            resolved_domain: std::sync::Mutex::new(None),
+            policy: Some(policy),
+        }
+    }
+
+    /// Get the domain captured during the last TLS handshake.
+    pub fn domain(&self) -> Option<String> {
+        self.resolved_domain.lock().unwrap().clone()
+    }
 }
 
 impl fmt::Debug for MitmCertResolver {
@@ -114,9 +147,18 @@ impl fmt::Debug for MitmCertResolver {
 
 impl rustls::server::ResolvesServerCert for MitmCertResolver {
     fn resolve(&self, hello: ClientHello) -> Option<Arc<CertifiedKey>> {
-        hello
-            .server_name()
-            .and_then(|domain| self.ca.certified_key_for_domain(domain).ok())
+        let domain = hello.server_name()?;
+        *self.resolved_domain.lock().unwrap() = Some(domain.to_owned());
+
+        // Skip cert minting for fully-blocked domains (both read and write denied).
+        // Returning None fails the TLS handshake, so the client sees a connection error.
+        if let Some(ref policy) = self.policy {
+            if policy.is_fully_blocked(domain).is_some() {
+                return None;
+            }
+        }
+
+        self.ca.certified_key_for_domain(domain).ok()
     }
 }
 
@@ -183,7 +225,7 @@ mod tests {
     #[test]
     fn resolver_debug_output() {
         let ca = Arc::new(load_ca());
-        let resolver = MitmCertResolver { ca };
+        let resolver = MitmCertResolver::new(ca);
         let debug = format!("{:?}", resolver);
         assert!(debug.contains("MitmCertResolver"));
     }

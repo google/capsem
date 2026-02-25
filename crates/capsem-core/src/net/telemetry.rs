@@ -43,11 +43,12 @@ pub struct NetEvent {
     pub bytes_sent: u64,
     pub bytes_received: u64,
     pub duration_ms: u64,
-    pub reason: Option<String>,
     // Extended fields for MITM proxy (Option for backward compat).
     pub method: Option<String>,
     pub path: Option<String>,
+    pub query: Option<String>,
     pub status_code: Option<u16>,
+    pub matched_rule: Option<String>,
     pub request_headers: Option<String>,
     pub response_headers: Option<String>,
     pub request_body_preview: Option<String>,
@@ -73,10 +74,11 @@ const CREATE_SCHEMA: &str = "
         bytes_sent INTEGER DEFAULT 0,
         bytes_received INTEGER DEFAULT 0,
         duration_ms INTEGER DEFAULT 0,
-        reason TEXT,
         method TEXT,
         path TEXT,
+        query TEXT,
         status_code INTEGER,
+        matched_rule TEXT,
         request_headers TEXT,
         response_headers TEXT,
         request_body_preview TEXT,
@@ -141,6 +143,8 @@ impl WebDb {
             ("request_body_preview", "ALTER TABLE http_requests ADD COLUMN request_body_preview TEXT"),
             ("response_body_preview", "ALTER TABLE http_requests ADD COLUMN response_body_preview TEXT"),
             ("conn_type", "ALTER TABLE http_requests ADD COLUMN conn_type TEXT DEFAULT 'https'"),
+            ("query", "ALTER TABLE http_requests ADD COLUMN query TEXT"),
+            ("matched_rule", "ALTER TABLE http_requests ADD COLUMN matched_rule TEXT"),
         ];
 
         for (col, sql) in migrations {
@@ -159,10 +163,11 @@ impl WebDb {
         self.conn.execute(
             "INSERT INTO http_requests (
                 timestamp, domain, port, decision, bytes_sent, bytes_received,
-                duration_ms, reason, method, path, status_code, request_headers,
-                response_headers, request_body_preview, response_body_preview, conn_type
+                duration_ms, method, path, query, status_code, matched_rule,
+                request_headers, response_headers, request_body_preview,
+                response_body_preview, conn_type
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 timestamp,
                 event.domain,
@@ -171,10 +176,11 @@ impl WebDb {
                 event.bytes_sent as i64,
                 event.bytes_received as i64,
                 event.duration_ms as i64,
-                event.reason,
                 event.method,
                 event.path,
+                event.query,
                 event.status_code.map(|c| c as i64),
+                event.matched_rule,
                 event.request_headers,
                 event.response_headers,
                 event.request_body_preview,
@@ -189,8 +195,9 @@ impl WebDb {
     pub fn recent(&self, limit: usize) -> rusqlite::Result<Vec<NetEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp, domain, port, decision, bytes_sent, bytes_received,
-                    duration_ms, reason, method, path, status_code, request_headers,
-                    response_headers, request_body_preview, response_body_preview, conn_type
+                    duration_ms, method, path, query, status_code, matched_rule,
+                    request_headers, response_headers, request_body_preview,
+                    response_body_preview, conn_type
              FROM http_requests
              ORDER BY id DESC
              LIMIT ?1",
@@ -210,15 +217,16 @@ impl WebDb {
                 bytes_sent: row.get::<_, i64>(4)? as u64,
                 bytes_received: row.get::<_, i64>(5)? as u64,
                 duration_ms: row.get::<_, i64>(6)? as u64,
-                reason: row.get(7)?,
-                method: row.get(8)?,
-                path: row.get(9)?,
+                method: row.get(7)?,
+                path: row.get(8)?,
+                query: row.get(9)?,
                 status_code: row.get::<_, Option<i64>>(10)?.map(|c| c as u16),
-                request_headers: row.get(11)?,
-                response_headers: row.get(12)?,
-                request_body_preview: row.get(13)?,
-                response_body_preview: row.get(14)?,
-                conn_type: row.get(15)?,
+                matched_rule: row.get(11)?,
+                request_headers: row.get(12)?,
+                response_headers: row.get(13)?,
+                request_body_preview: row.get(14)?,
+                response_body_preview: row.get(15)?,
+                conn_type: row.get(16)?,
             })
         })?;
 
@@ -248,10 +256,11 @@ mod tests {
             bytes_sent: 1024,
             bytes_received: 4096,
             duration_ms: 150,
-            reason: Some("test".to_string()),
             method: None,
             path: None,
+            query: None,
             status_code: None,
+            matched_rule: Some("test".to_string()),
             request_headers: None,
             response_headers: None,
             request_body_preview: None,
@@ -269,10 +278,11 @@ mod tests {
             bytes_sent: 2048,
             bytes_received: 8192,
             duration_ms: 250,
-            reason: None,
             method: Some("GET".to_string()),
             path: Some("/api/v1/repos".to_string()),
+            query: None,
             status_code: Some(200),
+            matched_rule: None,
             request_headers: Some("Host: github.com\r\nUser-Agent: curl".to_string()),
             response_headers: Some("Content-Type: application/json".to_string()),
             request_body_preview: None,
@@ -338,7 +348,7 @@ mod tests {
         assert_eq!(results[0].bytes_sent, 1024);
         assert_eq!(results[0].bytes_received, 4096);
         assert_eq!(results[0].duration_ms, 150);
-        assert_eq!(results[0].reason, Some("test".to_string()));
+        assert_eq!(results[0].matched_rule, Some("test".to_string()));
         // Extended fields should be None.
         assert_eq!(results[0].method, None);
         assert_eq!(results[0].path, None);
@@ -364,14 +374,14 @@ mod tests {
     }
 
     #[test]
-    fn record_with_no_reason() {
+    fn record_with_no_matched_rule() {
         let db = WebDb::open_in_memory().unwrap();
         let mut event = sample_event("elie.net", Decision::Allowed);
-        event.reason = None;
+        event.matched_rule = None;
         db.record(&event).unwrap();
 
         let results = db.recent(10).unwrap();
-        assert_eq!(results[0].reason, None);
+        assert_eq!(results[0].matched_rule, None);
     }
 
     // -- Extended fields --

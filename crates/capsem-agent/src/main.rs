@@ -38,7 +38,7 @@ const VSOCK_PORT_TERMINAL: u32 = 5001;
 
 fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
     let frame = encode_guest_msg(msg)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::other(e))?;
     write_all_fd(fd, &frame)?;
     Ok(())
 }
@@ -350,11 +350,10 @@ fn bridge_loop(
                                 &mut tail,
                                 &buf[..n],
                             );
-                            if !forward.is_empty() {
-                                if write_all_fd(vsock_fd, &forward).is_err() {
+                            if !forward.is_empty()
+                                && write_all_fd(vsock_fd, &forward).is_err() {
                                     break;
                                 }
-                            }
                             if let Some((id, exit_code)) = result {
                                 exec_state.active.store(false, Ordering::Release);
                                 // Flush remaining tail data BEFORE signaling
@@ -368,10 +367,8 @@ fn bridge_loop(
                                 }
                                 let _ = exec_done_tx.send((id, exit_code));
                             }
-                        } else {
-                            if write_all_fd(vsock_fd, &buf[..n]).is_err() {
-                                break;
-                            }
+                        } else if write_all_fd(vsock_fd, &buf[..n]).is_err() {
+                            break;
                         }
                     }
                     Err(nix::errno::Errno::EAGAIN) => {}

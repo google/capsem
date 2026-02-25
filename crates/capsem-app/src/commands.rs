@@ -7,7 +7,7 @@ use capsem_core::{HostToGuest, encode_host_msg, validate_host_msg};
 use serde::Serialize;
 use tauri::State;
 
-use crate::borrow_fd;
+use crate::clone_fd;
 use crate::state::AppState;
 
 /// Default VM ID for the single-VM case.
@@ -31,8 +31,8 @@ pub fn serial_input(input: String, state: State<'_, AppState>) -> Result<(), Str
     // Prefer vsock terminal if connected, fall back to serial.
     let fd = instance.vsock_terminal_fd.unwrap_or(instance.serial_input_fd);
 
-    // Safety: fd is valid for the lifetime of the VM.
-    let mut file = unsafe { borrow_fd(fd) };
+    let mut file = clone_fd(fd)
+        .map_err(|e| format!("clone fd failed: {e}"))?;
     file.write_all(input.as_bytes())
         .map_err(|e| format!("write failed: {e}"))
 }
@@ -53,8 +53,8 @@ pub fn terminal_resize(
         .map_err(|e| format!("{e}"))?;
     let frame = encode_host_msg(&msg).map_err(|e| format!("{e}"))?;
 
-    // Safety: fd is valid for the lifetime of the VM.
-    let mut file = unsafe { borrow_fd(control_fd) };
+    let mut file = clone_fd(control_fd)
+        .map_err(|e| format!("clone control fd failed: {e}"))?;
     file.write_all(&frame)
         .map_err(|e| format!("control write failed: {e}"))
 }

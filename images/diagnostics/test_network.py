@@ -288,8 +288,14 @@ def test_ca_env_var_set(var):
 
 def test_denied_domain_rejected():
     """HTTPS to a denied domain must fail."""
-    result = run("curl -skI --connect-timeout 5 https://example.com 2>&1", timeout=15)
+    result = run("curl -skI --connect-timeout 5 https://api.openai.com 2>&1", timeout=15)
     assert result.returncode != 0, "curl to denied domain should fail"
+
+
+def test_post_to_random_domain_denied():
+    """POST to a non-allow-listed domain must return 403."""
+    result = run("curl -ski -X POST --connect-timeout 5 https://example.com 2>&1", timeout=15)
+    assert "403" in result.stdout or result.returncode != 0, "POST to denied domain should return 403 or fail"
 
 
 @pytest.mark.parametrize("domain", [

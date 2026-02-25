@@ -30,16 +30,12 @@ use tracing_subscriber::EnvFilter;
 /// Default VM ID for the single-VM case.
 const DEFAULT_VM_ID: &str = "default";
 
-/// Borrow a raw fd as a File without taking ownership.
-///
-/// The returned `ManuallyDrop<File>` will NOT close the fd when dropped,
-/// so it's safe to use for fds owned by other objects (VsockConnection, pipes).
-///
-/// # Safety
-/// The caller must ensure `fd` is a valid, open file descriptor for the
-/// lifetime of the returned value.
-pub(crate) unsafe fn borrow_fd(fd: RawFd) -> ManuallyDrop<std::fs::File> {
-    ManuallyDrop::new(std::fs::File::from_raw_fd(fd))
+/// Clone a raw fd into an independently-owned File.
+/// The original fd remains open and unaffected.
+pub(crate) fn clone_fd(fd: RawFd) -> std::io::Result<std::fs::File> {
+    // Safety: fd is valid (checked by caller context)
+    let file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+    file.try_clone() // creates a dup'd fd owned by the returned File
 }
 
 /// Find the assets directory containing kernel, initrd, and rootfs.
@@ -253,19 +249,17 @@ fn cleanup_session(session_dir: &Path, scratch_path: Option<&Path>) {
 const CA_KEY_PEM: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT_PEM: &str = include_str!("../../../config/capsem-ca.crt");
 
-/// Create per-VM network state: load CA, HTTP policy, and open web.db.
+/// Create per-VM network state: load CA, network policy, and open web.db.
 fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM)
         .context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
 
-    let policy = policy_config::load_merged_policy();
-    let dp = policy.domain_policy();
+    let policy = policy_config::load_merged_network_policy();
     info!(
         vm_id,
-        "loaded domain policy (allow={}, block={})",
-        dp.allow_count(),
-        dp.block_count()
+        "loaded network policy ({} rules)",
+        policy.rules.len()
     );
 
     // Session directory: ~/.capsem/sessions/<vm_id>/
@@ -282,6 +276,7 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
         policy: Arc::new(policy),
         web_db: Arc::new(Mutex::new(web_db)),
         ca: Arc::new(ca),
+        upstream_tls: mitm_proxy::make_upstream_tls_config(),
     })
 }
 
@@ -378,8 +373,13 @@ async fn vsock_terminal_to_events(app_handle: tauri::AppHandle, vsock_fd: RawFd)
 
     // Blocking reader thread: vsock fd -> channel
     std::thread::spawn(move || {
-        // Safety: fd is valid for the lifetime of the VsockConnection.
-        let mut file = unsafe { borrow_fd(vsock_fd) };
+        let mut file = match clone_fd(vsock_fd) {
+            Ok(f) => f,
+            Err(e) => {
+                error!("vsock terminal: failed to clone fd: {e}");
+                return;
+            }
+        };
         let mut buf = [0u8; 8192];
         loop {
             match file.read(&mut buf) {
@@ -428,8 +428,13 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
 
     // Blocking reader thread for control messages.
     std::thread::spawn(move || {
-        // Safety: fd is valid for the lifetime of the VsockConnection.
-        let mut file = unsafe { borrow_fd(control_fd) };
+        let mut file = match clone_fd(control_fd) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("vsock control: failed to clone fd: {e}");
+                return;
+            }
+        };
         loop {
             // Read length prefix.
             let mut len_buf = [0u8; 4];
@@ -611,6 +616,7 @@ async fn setup_vsock(
                     ca: Arc::clone(&ns.ca),
                     policy: Arc::clone(&ns.policy),
                     web_db: Arc::clone(&ns.web_db),
+                    upstream_tls: Arc::clone(&ns.upstream_tls),
                 })
             })
         } else {
@@ -667,8 +673,7 @@ const CLI_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Read exactly `n` bytes from a raw fd, retrying on partial reads.
 fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> std::io::Result<()> {
-    // Safety: fd is valid for the duration of this call.
-    let mut file = unsafe { borrow_fd(fd) };
+    let mut file = clone_fd(fd)?;
     let mut pos = 0;
     while pos < buf.len() {
         let n = file.read(&mut buf[pos..])?;
@@ -682,8 +687,7 @@ fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> std::io::Result<()> {
 
 /// Write all bytes to a raw fd.
 fn write_all_fd(fd: RawFd, data: &[u8]) -> std::io::Result<()> {
-    // Safety: fd is valid for the duration of this call.
-    let mut file = unsafe { borrow_fd(fd) };
+    let mut file = clone_fd(fd)?;
     file.write_all(data)?;
     Ok(())
 }
@@ -698,8 +702,7 @@ fn read_control_msg(fd: RawFd) -> Result<GuestToHost> {
     }
     let mut payload = vec![0u8; len];
     read_exact_fd(fd, &mut payload)?;
-    decode_guest_msg(&payload).map_err(Into::into)
-}
+    decode_guest_msg(&payload)}
 
 /// Write one host-to-guest control message to an fd.
 fn write_control_msg(fd: RawFd, msg: &HostToGuest) -> Result<()> {
@@ -795,6 +798,24 @@ fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<String>) {
     (env_pairs, remaining)
 }
 
+/// Start the VM in CLI mode and execute a command.
+///
+/// **Architecture & CFRunLoop:**
+/// This function runs entirely on the main thread and uses synchronous blocking I/O
+/// combined with manual `CFRunLoop` pumping. The Virtualization.framework (VZ) heavily
+/// relies on GCD and the main thread's run loop to dispatch events, handle vsock
+/// connections, and manage VM state transitions. If we block the main thread
+/// (e.g., by waiting on a channel or reading from a socket without pumping the run loop),
+/// VZ will deadlock and vsock connections will never arrive.
+///
+/// To solve this, `run_cli` uses `CFRunLoopRunInMode` with a short timeout (50ms)
+/// to yield control back to VZ, allowing it to process events. We then check for
+/// incoming messages or vsock connections using non-blocking/try_recv methods.
+///
+/// **Limitations:**
+/// - Cannot use `tokio::main` or `async` on the main thread because tokio's reactor
+///   does not pump `CFRunLoop`.
+/// - Requires manual polling loops for control messages.
 fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
     // Tokio runtime for async MITM proxy handlers.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -809,7 +830,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
     let vm_settings = policy_config::load_merged_vm_settings();
     let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
     let session_dir = session_dir_for("cli");
-    let scratch_path = session_dir.as_ref().map(|d| {
+    let scratch_path = session_dir.as_ref().and_then(|d| {
         std::fs::create_dir_all(d).ok();
         let path = d.join("scratch.img");
         if let Err(e) = create_scratch_disk(&path, scratch_size) {
@@ -818,7 +839,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
         }
         info!(size_gb = scratch_size, "created scratch disk");
         Some(path)
-    }).flatten();
+    });
 
     // Write session.json
     if let Some(ref dir) = session_dir {
@@ -851,6 +872,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
             ca: Arc::clone(&ns.ca),
             policy: Arc::clone(&ns.policy),
             web_db: Arc::clone(&ns.web_db),
+            upstream_tls: Arc::clone(&ns.upstream_tls),
         })
     });
 
@@ -876,9 +898,16 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
     let mut control_fd: Option<RawFd> = None;
     let mut _conns = Vec::new(); // Keep connections alive.
 
+    let setup_start = Instant::now();
+    let mut warned_setup = false;
+
     while terminal_fd.is_none() || control_fd.is_none() {
         if Instant::now() >= deadline {
             anyhow::bail!("timed out waiting for vsock connections from guest agent");
+        }
+        if !warned_setup && setup_start.elapsed() > Duration::from_secs(30) {
+            eprintln!("[capsem] warning: no vsock connections after 30s. Is the guest agent running?");
+            warned_setup = true;
         }
         // Pump CFRunLoop to deliver ObjC callbacks.
         unsafe {
@@ -1006,8 +1035,13 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
     let last_was_newline = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let lwn = last_was_newline.clone();
     let terminal_reader = std::thread::spawn(move || {
-        // Safety: fd is valid for the lifetime of the VsockConnection.
-        let mut file = unsafe { borrow_fd(terminal_fd) };
+        let mut file = match clone_fd(terminal_fd) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("[capsem] terminal reader failed to clone fd: {e}");
+                return;
+            }
+        };
         let mut buf = [0u8; 8192];
         loop {
             match file.read(&mut buf) {
@@ -1024,11 +1058,17 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
 
     // Wait for ExecDone, pumping CFRunLoop and accepting SNI proxy connections.
     let exit_code;
+    let mut last_msg_time = Instant::now();
+    let mut warned_exec = false;
     loop {
         if Instant::now() >= deadline {
             eprintln!("[capsem] timed out waiting for command completion");
             exit_code = 124; // Same as `timeout` command.
             break;
+        }
+        if !warned_exec && last_msg_time.elapsed() > Duration::from_secs(30) {
+            eprintln!("[capsem] warning: no control messages (heartbeats) for 30s. Guest may be hung.");
+            warned_exec = true;
         }
         unsafe {
             core_foundation_sys::runloop::CFRunLoopRunInMode(
@@ -1057,7 +1097,13 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
                 exit_code = code;
                 break;
             }
+            Ok(GuestToHost::Pong) => {
+                last_msg_time = Instant::now();
+                warned_exec = false;
+            }
             Ok(other) => {
+                last_msg_time = Instant::now();
+                warned_exec = false;
                 eprintln!("[capsem] control message during exec: {other:?}");
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => continue,
@@ -1205,7 +1251,7 @@ fn main() {
             let vm_settings = policy_config::load_merged_vm_settings();
             let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
             let gui_session_dir = session_dir_for(DEFAULT_VM_ID);
-            let gui_scratch_path = gui_session_dir.as_ref().map(|d| {
+            let gui_scratch_path = gui_session_dir.as_ref().and_then(|d| {
                 std::fs::create_dir_all(d).ok();
                 let path = d.join("scratch.img");
                 if let Err(e) = create_scratch_disk(&path, scratch_size) {
@@ -1214,7 +1260,7 @@ fn main() {
                 }
                 info!(size_gb = scratch_size, "created scratch disk");
                 Some(path)
-            }).flatten();
+            });
 
             // Write session.json
             if let Some(ref dir) = gui_session_dir {

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Network policy replaced with simplified rule-based system: per-domain read/write verb control with defaults (GET allowed, POST denied)
+- Removed SNI-based pre-TLS policy check; all policy enforcement at HTTP level
+- Removed generativelanguage.googleapis.com from block-list (Gemini API testing)
+- MITM proxy streams request and response bodies instead of buffering in memory
+- Upstream TLS config cached per-VM instead of recreated per-request
+- Default `log_bodies` changed from false to true
+
+### Fixed
+- web.db now records query string, matched rule, and 403 status for denied requests
+- Upstream connection failures record error reason in telemetry
+
+### Removed
+- SNI parser module (`sni_parser.rs`) -- domain extracted from TLS handshake instead
+
+### Security
+- Body size limit (100MB) prevents OOM from malicious guest payloads
+- Replaced unsafe borrow_fd with safe fd cloning
+
 ## [0.5.0] - 2026-02-25
 
 ### Added

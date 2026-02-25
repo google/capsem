@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use capsem_core::VirtualMachine;
 use capsem_core::HostStateMachine;
 use capsem_core::net::cert_authority::CertAuthority;
-use capsem_core::net::http_policy::HttpPolicy;
+use capsem_core::net::policy::NetworkPolicy;
 use capsem_core::net::telemetry::WebDb;
 
 /// Per-VM network state: policy, telemetry DB, and connection tracking.
@@ -14,9 +14,11 @@ use capsem_core::net::telemetry::WebDb;
 /// Each VM gets its own `VmNetworkState` that is dropped when the VM stops,
 /// which prevents cross-VM interference.
 pub struct VmNetworkState {
-    pub policy: Arc<HttpPolicy>,
+    pub policy: Arc<NetworkPolicy>,
     pub web_db: Arc<Mutex<WebDb>>,
     pub ca: Arc<CertAuthority>,
+    /// Cached upstream TLS config, created once via `mitm_proxy::make_upstream_tls_config()`.
+    pub upstream_tls: Arc<capsem_core::net::mitm_proxy::UpstreamTlsConfig>,
 }
 
 /// Per-VM instance state.
