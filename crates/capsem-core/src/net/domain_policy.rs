@@ -166,6 +166,7 @@ pub fn default_allow_list() -> &'static [&'static str] {
         "security.debian.org",
         "elie.net",
         "*.elie.net",
+        "*.googleapis.com",
     ]
 }
 
@@ -174,7 +175,6 @@ pub fn default_block_list() -> &'static [&'static str] {
     &[
         "api.anthropic.com",
         "api.openai.com",
-        "generativelanguage.googleapis.com",
     ]
 }
 
@@ -256,10 +256,10 @@ mod tests {
     }
 
     #[test]
-    fn block_google_ai_api() {
+    fn allow_google_ai_api() {
         let policy = dev_policy();
         let (action, _) = policy.evaluate("generativelanguage.googleapis.com");
-        assert_eq!(action, Action::Deny);
+        assert_eq!(action, Action::Allow);
     }
 
     #[test]
@@ -355,5 +355,244 @@ mod tests {
         let policy = dev_policy();
         let patterns = policy.blocked_patterns();
         assert!(patterns.contains(&"api.anthropic.com".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Stress: block always beats allow
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn block_beats_allow_exact_same_domain() {
+        let policy = DomainPolicy::new(
+            &["evil.com".into()],
+            &["evil.com".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("evil.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+    }
+
+    #[test]
+    fn block_beats_allow_wildcard_same_domain() {
+        let policy = DomainPolicy::new(
+            &["*.example.com".into()],
+            &["*.example.com".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("sub.example.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+    }
+
+    #[test]
+    fn exact_block_beats_wildcard_allow() {
+        // Block "api.example.com" exactly, allow "*.example.com" via wildcard.
+        let policy = DomainPolicy::new(
+            &["*.example.com".into()],
+            &["api.example.com".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("api.example.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+        // Other subdomains still allowed
+        let (action, _) = policy.evaluate("web.example.com");
+        assert_eq!(action, Action::Allow);
+    }
+
+    #[test]
+    fn wildcard_block_beats_exact_allow() {
+        // Allow "api.example.com" exactly, block "*.example.com" via wildcard.
+        let policy = DomainPolicy::new(
+            &["api.example.com".into()],
+            &["*.example.com".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("api.example.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+    }
+
+    #[test]
+    fn block_beats_allow_with_default_allow() {
+        // Default is allow, domain is in both lists -- block wins.
+        let policy = DomainPolicy::new(
+            &["target.com".into()],
+            &["target.com".into()],
+            Action::Allow,
+        );
+        let (action, _) = policy.evaluate("target.com");
+        assert_eq!(action, Action::Deny);
+    }
+
+    #[test]
+    fn block_beats_allow_with_default_deny() {
+        // Default is deny, domain is in both lists -- block wins.
+        let policy = DomainPolicy::new(
+            &["target.com".into()],
+            &["target.com".into()],
+            Action::Deny,
+        );
+        let (action, _) = policy.evaluate("target.com");
+        assert_eq!(action, Action::Deny);
+    }
+
+    #[test]
+    fn block_many_overlapping_wildcards() {
+        // Multiple wildcard overlaps: block should always win.
+        let policy = DomainPolicy::new(
+            &["*.a.com".into(), "*.b.com".into(), "*.c.com".into()],
+            &["*.a.com".into(), "*.c.com".into()],
+            Action::Allow,
+        );
+        let (action, _) = policy.evaluate("x.a.com");
+        assert_eq!(action, Action::Deny);
+        let (action, _) = policy.evaluate("x.b.com");
+        assert_eq!(action, Action::Allow);
+        let (action, _) = policy.evaluate("x.c.com");
+        assert_eq!(action, Action::Deny);
+    }
+
+    // -----------------------------------------------------------------------
+    // Stress: explicit lists beat default action
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn allow_list_beats_default_deny() {
+        let policy = DomainPolicy::new(
+            &["safe.com".into()],
+            &[],
+            Action::Deny,
+        );
+        let (action, reason) = policy.evaluate("safe.com");
+        assert_eq!(action, Action::Allow);
+        assert_eq!(reason, "domain in allow-list");
+    }
+
+    #[test]
+    fn block_list_beats_default_allow() {
+        let policy = DomainPolicy::new(
+            &[],
+            &["dangerous.com".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("dangerous.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+    }
+
+    #[test]
+    fn wildcard_allow_beats_default_deny() {
+        let policy = DomainPolicy::new(
+            &["*.safe.org".into()],
+            &[],
+            Action::Deny,
+        );
+        let (action, reason) = policy.evaluate("api.safe.org");
+        assert_eq!(action, Action::Allow);
+        assert_eq!(reason, "domain in allow-list");
+        // Base domain not matched by wildcard -- falls to default deny
+        let (action, _) = policy.evaluate("safe.org");
+        assert_eq!(action, Action::Deny);
+    }
+
+    #[test]
+    fn wildcard_block_beats_default_allow() {
+        let policy = DomainPolicy::new(
+            &[],
+            &["*.evil.org".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("sub.evil.org");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+        // Base domain not matched by wildcard -- falls to default allow
+        let (action, _) = policy.evaluate("evil.org");
+        assert_eq!(action, Action::Allow);
+    }
+
+    #[test]
+    fn unlisted_domain_uses_default_deny() {
+        let policy = DomainPolicy::new(
+            &["allowed.com".into()],
+            &["blocked.com".into()],
+            Action::Deny,
+        );
+        let (action, reason) = policy.evaluate("unlisted.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain not in allow-list");
+    }
+
+    #[test]
+    fn unlisted_domain_uses_default_allow() {
+        let policy = DomainPolicy::new(
+            &["allowed.com".into()],
+            &["blocked.com".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("unlisted.com");
+        assert_eq!(action, Action::Allow);
+        assert_eq!(reason, "default allow");
+    }
+
+    // -----------------------------------------------------------------------
+    // Stress: priority ordering (block > allow > default)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn full_priority_chain_block_allow_default() {
+        // Three domains: one blocked, one allowed, one unlisted.
+        // Default = Allow. Verify each gets the right outcome.
+        let policy = DomainPolicy::new(
+            &["allowed.com".into(), "both.com".into()],
+            &["blocked.com".into(), "both.com".into()],
+            Action::Allow,
+        );
+        let (action, reason) = policy.evaluate("blocked.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+
+        let (action, reason) = policy.evaluate("allowed.com");
+        assert_eq!(action, Action::Allow);
+        assert_eq!(reason, "domain in allow-list");
+
+        let (action, reason) = policy.evaluate("unlisted.com");
+        assert_eq!(action, Action::Allow);
+        assert_eq!(reason, "default allow");
+
+        // "both.com" in both lists -- block wins
+        let (action, reason) = policy.evaluate("both.com");
+        assert_eq!(action, Action::Deny);
+        assert_eq!(reason, "domain in block-list");
+    }
+
+    #[test]
+    fn full_priority_chain_with_default_deny() {
+        let policy = DomainPolicy::new(
+            &["allowed.com".into(), "both.com".into()],
+            &["blocked.com".into(), "both.com".into()],
+            Action::Deny,
+        );
+        let (action, _) = policy.evaluate("blocked.com");
+        assert_eq!(action, Action::Deny);
+        let (action, _) = policy.evaluate("allowed.com");
+        assert_eq!(action, Action::Allow);
+        let (action, _) = policy.evaluate("unlisted.com");
+        assert_eq!(action, Action::Deny);
+        let (action, _) = policy.evaluate("both.com");
+        assert_eq!(action, Action::Deny);
+    }
+
+    #[test]
+    fn many_domains_block_always_wins_over_allow() {
+        // Stress: 100 domains in both allow and block. All must be denied.
+        let domains: Vec<String> = (0..100).map(|i| format!("d{i}.test.com")).collect();
+        let policy = DomainPolicy::new(&domains, &domains, Action::Allow);
+        for d in &domains {
+            let (action, reason) = policy.evaluate(d);
+            assert_eq!(action, Action::Deny, "block must beat allow for {d}");
+            assert_eq!(reason, "domain in block-list");
+        }
     }
 }

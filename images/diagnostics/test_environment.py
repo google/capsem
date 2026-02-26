@@ -29,6 +29,15 @@ def test_path_includes_standard_dirs():
     assert "/usr/bin" in path, f"/usr/bin not in PATH: {path}"
 
 
+def test_python_venv_active():
+    """A Python venv must be activated so pip install works on read-only rootfs."""
+    venv = os.environ.get("VIRTUAL_ENV")
+    assert venv and os.path.isdir(venv), (
+        f"VIRTUAL_ENV not set or missing (got {venv!r}). "
+        "pip install will fail on the read-only rootfs without an active venv."
+    )
+
+
 # -- Shell --
 
 

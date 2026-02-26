@@ -204,9 +204,10 @@ def test_allowed_domain():
 
 
 def test_denied_domain():
-    """HTTPS to a denied domain (example.com) must be rejected."""
+    """HTTPS to a denied domain (example.com) must be rejected (403 or refused)."""
     result = run("curl -sI --connect-timeout 5 https://example.com 2>&1", timeout=15)
-    assert result.returncode != 0, "curl to denied domain should fail"
+    assert result.returncode != 0 or "403" in result.stdout, \
+        f"curl to denied domain should fail or return 403: {result.stdout}"
 
 
 def test_no_real_nics():

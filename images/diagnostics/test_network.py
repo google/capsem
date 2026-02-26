@@ -287,9 +287,10 @@ def test_ca_env_var_set(var):
 
 
 def test_denied_domain_rejected():
-    """HTTPS to a denied domain must fail."""
+    """HTTPS to a denied domain must be rejected (403 or connection refused)."""
     result = run("curl -skI --connect-timeout 5 https://api.openai.com 2>&1", timeout=15)
-    assert result.returncode != 0, "curl to denied domain should fail"
+    assert result.returncode != 0 or "403" in result.stdout, \
+        f"curl to denied domain should fail or return 403: {result.stdout}"
 
 
 def test_post_to_random_domain_denied():
@@ -303,13 +304,13 @@ def test_post_to_random_domain_denied():
     "api.openai.com",
 ])
 def test_ai_provider_domain_blocked(domain):
-    """AI provider domains must be blocked at the MITM proxy."""
+    """AI provider domains must be blocked at the MITM proxy (403 or refused)."""
     result = run(
         f"curl -skI --connect-timeout 10 https://{domain} 2>&1",
         timeout=20,
     )
-    assert result.returncode != 0, \
-        f"Connection to {domain} should be blocked by policy"
+    assert result.returncode != 0 or "403" in result.stdout, \
+        f"Connection to {domain} should be blocked: {result.stdout}"
 
 
 def test_http_port_80_not_proxied():

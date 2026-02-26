@@ -102,14 +102,13 @@ impl CertAuthority {
 /// rustls SNI-based certificate resolver that mints certs on demand.
 ///
 /// Also captures the resolved domain name for use after the TLS handshake
-/// (replaces the old separate SNI parser). Optionally rejects fully-blocked
-/// domains at the TLS level (returns None -> handshake fails, no cert minted).
+/// (replaces the old separate SNI parser). Always mints certs even for
+/// blocked domains so we can complete the TLS handshake, read the HTTP
+/// request (capturing method/path), and return a proper 403 response.
 pub struct MitmCertResolver {
     pub ca: Arc<CertAuthority>,
     /// Domain captured during TLS handshake from ClientHello SNI.
     pub resolved_domain: std::sync::Mutex<Option<String>>,
-    /// Optional policy for pre-TLS rejection of fully-blocked domains.
-    policy: Option<Arc<super::policy::NetworkPolicy>>,
 }
 
 impl MitmCertResolver {
@@ -118,16 +117,14 @@ impl MitmCertResolver {
         Self {
             ca,
             resolved_domain: std::sync::Mutex::new(None),
-            policy: None,
         }
     }
 
-    /// Create a resolver that rejects fully-blocked domains at TLS level.
-    pub fn with_policy(ca: Arc<CertAuthority>, policy: Arc<super::policy::NetworkPolicy>) -> Self {
+    /// Create a resolver with policy awareness (still mints certs for all domains).
+    pub fn with_policy(ca: Arc<CertAuthority>, _policy: Arc<super::policy::NetworkPolicy>) -> Self {
         Self {
             ca,
             resolved_domain: std::sync::Mutex::new(None),
-            policy: Some(policy),
         }
     }
 
@@ -150,14 +147,9 @@ impl rustls::server::ResolvesServerCert for MitmCertResolver {
         let domain = hello.server_name()?;
         *self.resolved_domain.lock().unwrap() = Some(domain.to_owned());
 
-        // Skip cert minting for fully-blocked domains (both read and write denied).
-        // Returning None fails the TLS handshake, so the client sees a connection error.
-        if let Some(ref policy) = self.policy {
-            if policy.is_fully_blocked(domain).is_some() {
-                return None;
-            }
-        }
-
+        // Always mint a cert, even for blocked domains. This lets us complete
+        // the TLS handshake, read the HTTP request (method, path), and return
+        // a proper 403 response with telemetry.
         self.ca.certified_key_for_domain(domain).ok()
     }
 }

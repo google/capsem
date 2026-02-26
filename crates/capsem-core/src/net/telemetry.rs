@@ -33,9 +33,22 @@ impl Decision {
     }
 }
 
+/// Serialize SystemTime as f64 epoch seconds (for frontend compatibility).
+fn serialize_timestamp<S: serde::Serializer>(ts: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
+    let epoch = ts.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+    s.serialize_f64(epoch.as_secs_f64())
+}
+
+/// Deserialize f64 epoch seconds back to SystemTime.
+fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
+    let secs: f64 = serde::Deserialize::deserialize(d)?;
+    Ok(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs_f64(secs))
+}
+
 /// A single network connection event recorded in web.db.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetEvent {
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub domain: String,
     pub port: u16,
@@ -239,6 +252,31 @@ impl WebDb {
             .query_row("SELECT COUNT(*) FROM http_requests", [], |row| {
                 row.get::<_, i64>(0).map(|n| n as usize)
             })
+    }
+
+    /// Count events grouped by decision: returns (total, allowed, denied).
+    pub fn count_by_decision(&self) -> rusqlite::Result<(usize, usize, usize)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT decision, COUNT(*) FROM http_requests GROUP BY decision",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let decision: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            Ok((decision, count as usize))
+        })?;
+        let mut total = 0usize;
+        let mut allowed = 0usize;
+        let mut denied = 0usize;
+        for row in rows {
+            let (decision, count) = row?;
+            total += count;
+            match decision.as_str() {
+                "allowed" => allowed += count,
+                "denied" => denied += count,
+                _ => {} // error and other types counted in total only
+            }
+        }
+        Ok((total, allowed, denied))
     }
 }
 
@@ -512,6 +550,45 @@ mod tests {
             db.record(&sample_event(&format!("site{i}.com"), Decision::Allowed)).unwrap();
         }
         assert_eq!(db.count().unwrap(), 7);
+    }
+
+    // -- Count by decision --
+
+    #[test]
+    fn count_by_decision_empty() {
+        let db = WebDb::open_in_memory().unwrap();
+        assert_eq!(db.count_by_decision().unwrap(), (0, 0, 0));
+    }
+
+    #[test]
+    fn count_by_decision_mixed() {
+        let db = WebDb::open_in_memory().unwrap();
+        for _ in 0..3 {
+            db.record(&sample_event("a.com", Decision::Allowed)).unwrap();
+        }
+        for _ in 0..2 {
+            db.record(&sample_event("b.com", Decision::Denied)).unwrap();
+        }
+        db.record(&sample_event("c.com", Decision::Error)).unwrap();
+        assert_eq!(db.count_by_decision().unwrap(), (6, 3, 2));
+    }
+
+    #[test]
+    fn count_by_decision_only_allowed() {
+        let db = WebDb::open_in_memory().unwrap();
+        for _ in 0..4 {
+            db.record(&sample_event("a.com", Decision::Allowed)).unwrap();
+        }
+        assert_eq!(db.count_by_decision().unwrap(), (4, 4, 0));
+    }
+
+    #[test]
+    fn count_by_decision_only_denied() {
+        let db = WebDb::open_in_memory().unwrap();
+        for _ in 0..3 {
+            db.record(&sample_event("a.com", Decision::Denied)).unwrap();
+        }
+        assert_eq!(db.count_by_decision().unwrap(), (3, 0, 3));
     }
 
     // -- Decision serialization --

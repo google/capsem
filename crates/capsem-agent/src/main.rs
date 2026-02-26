@@ -9,7 +9,7 @@
 #[path = "vsock_io.rs"]
 mod vsock_io;
 
-use std::io;
+use std::io::{self, Write as _};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +18,8 @@ use std::thread;
 
 use capsem_proto::{
     GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_host_msg, encode_guest_msg,
+    validate_env_key, validate_env_value, validate_file_path,
+    MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
 };
 use nix::libc;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
@@ -31,6 +33,8 @@ use vsock_io::{VSOCK_HOST_CID, read_exact_fd, vsock_connect_retry, write_all_fd}
 const VSOCK_PORT_CONTROL: u32 = 5000;
 /// vsock port for terminal data.
 const VSOCK_PORT_TERMINAL: u32 = 5001;
+/// Boot log persisted so it can be inspected after boot (`cat /var/log/capsem-boot.log`).
+const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
 
 // ---------------------------------------------------------------------------
 // Control message framing (using capsem-proto types)
@@ -94,43 +98,182 @@ fn set_winsize(master_fd: RawFd, cols: u16, rows: u16) {
 }
 
 // ---------------------------------------------------------------------------
+// Boot log -- persists at /var/log/capsem-boot.log for post-boot diagnosis
+// ---------------------------------------------------------------------------
+
+fn open_boot_log() -> std::fs::File {
+    // Ensure /var/log exists (may be tmpfs).
+    let _ = std::fs::create_dir_all("/var/log");
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(BOOT_LOG_PATH)
+        .unwrap_or_else(|_| {
+            // Fallback: /tmp is always writable.
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open("/tmp/capsem-boot.log")
+                .expect("cannot open boot log")
+        })
+}
+
+fn blog_line(log: &mut std::fs::File, msg: &str) {
+    let _ = writeln!(log, "{msg}");
+    eprintln!("[capsem-agent] {msg}");
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 fn main() {
     eprintln!("[capsem-agent] starting (pid {})", process::id());
 
+    // Open boot log (persists after boot for diagnosis).
+    let mut blog = open_boot_log();
+    blog_line(&mut blog, &format!(
+        "capsem-agent {} starting (pid {})",
+        env!("CARGO_PKG_VERSION"),
+        process::id(),
+    ));
+
     // Step 1: Connect to host vsock ports BEFORE PTY/fork.
     let terminal_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL, "terminal");
     let control_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_CONTROL, "control");
+    blog_line(&mut blog, "vsock connected (terminal + control)");
 
     // Step 2: Send Ready.
     if let Err(e) = send_guest_msg(control_fd, &GuestToHost::Ready {
         version: env!("CARGO_PKG_VERSION").to_string(),
     }) {
+        blog_line(&mut blog, &format!("FATAL: failed to send Ready: {e}"));
         eprintln!("[capsem-agent] failed to send Ready: {e}");
         process::exit(1);
     }
+    blog_line(&mut blog, "sent Ready");
 
-    // Step 3: Wait for BootConfig from host.
-    let (boot_epoch, boot_env) = match recv_host_msg(control_fd) {
-        Ok(HostToGuest::BootConfig { epoch_secs, env_vars }) => {
-            eprintln!("[capsem-agent] received BootConfig (epoch={epoch_secs}, {} env vars)", env_vars.len());
-            (epoch_secs, env_vars)
+    // Step 3: Boot handshake -- receive BootConfig, then SetEnv/FileWrite/BootConfigDone.
+    let mut boot_env: Vec<(String, String)> = Vec::new();
+    let mut file_count: usize = 0;
+
+    // 3a: Receive BootConfig (clock sync).
+    match recv_host_msg(control_fd) {
+        Ok(HostToGuest::BootConfig { epoch_secs }) => {
+            eprintln!("[capsem-agent] received BootConfig (epoch={epoch_secs})");
+            blog_line(&mut blog, &format!("BootConfig epoch={epoch_secs}"));
+            if epoch_secs > 0 {
+                set_system_clock(epoch_secs);
+                blog_line(&mut blog, &format!("clock set to {epoch_secs}"));
+            }
         }
         Ok(other) => {
+            blog_line(&mut blog, &format!("expected BootConfig, got {other:?}"));
             eprintln!("[capsem-agent] expected BootConfig, got {other:?}, continuing with defaults");
-            (0, vec![])
         }
         Err(e) => {
+            blog_line(&mut blog, &format!("BootConfig error: {e}"));
             eprintln!("[capsem-agent] failed to receive BootConfig: {e}, continuing with defaults");
-            (0, vec![])
         }
     };
 
-    // Step 4: Set system clock.
-    if boot_epoch > 0 {
-        set_system_clock(boot_epoch);
+    // 3b: Receive individual SetEnv, FileWrite, and BootConfigDone messages.
+    // Defense-in-depth: validate everything independently of the host.
+    let mut total_file_bytes: usize = 0;
+
+    loop {
+        match recv_host_msg(control_fd) {
+            Ok(HostToGuest::SetEnv { key, value }) => {
+                // Validate env key (defense-in-depth).
+                if let Err(e) = validate_env_key(&key) {
+                    blog_line(&mut blog, &format!("SetEnv rejected: {e}"));
+                    eprintln!("[capsem-agent] rejecting env var: {e}");
+                    continue;
+                }
+                if let Err(e) = validate_env_value(&value) {
+                    blog_line(&mut blog, &format!("SetEnv {key} rejected: {e}"));
+                    eprintln!("[capsem-agent] rejecting env var {key}: {e}");
+                    continue;
+                }
+                if boot_env.len() >= MAX_BOOT_ENV_VARS {
+                    blog_line(&mut blog, &format!("SetEnv {key}: env var cap reached"));
+                    eprintln!("[capsem-agent] env var cap reached ({MAX_BOOT_ENV_VARS}), skipping {key}");
+                    continue;
+                }
+
+                let preview = if value.len() > 40 {
+                    format!("{}...", &value[..40])
+                } else {
+                    value.clone()
+                };
+                blog_line(&mut blog, &format!("SetEnv {key}={preview}"));
+                eprintln!("[capsem-agent] SetEnv {key}");
+                boot_env.push((key, value));
+            }
+            Ok(HostToGuest::FileWrite { path, data, mode }) => {
+                // Validate file path (defense-in-depth).
+                if let Err(e) = validate_file_path(&path) {
+                    blog_line(&mut blog, &format!("FileWrite rejected: {e}"));
+                    eprintln!("[capsem-agent] rejecting file write: {e}");
+                    continue;
+                }
+                if file_count >= MAX_BOOT_FILES {
+                    blog_line(&mut blog, &format!("FileWrite {path}: file cap reached"));
+                    eprintln!("[capsem-agent] file cap reached ({MAX_BOOT_FILES}), skipping {path}");
+                    continue;
+                }
+                if total_file_bytes + data.len() > MAX_BOOT_FILE_BYTES {
+                    blog_line(&mut blog, &format!("FileWrite {path}: total bytes cap reached"));
+                    eprintln!("[capsem-agent] file bytes cap reached ({MAX_BOOT_FILE_BYTES}), skipping {path}");
+                    continue;
+                }
+
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        blog_line(&mut blog, &format!("FileWrite {path}: mkdir failed: {e}"));
+                        eprintln!("[capsem-agent] failed to create dir {}: {e}", parent.display());
+                        continue;
+                    }
+                }
+                if let Err(e) = std::fs::write(&path, &data) {
+                    blog_line(&mut blog, &format!("FileWrite {path}: write failed: {e}"));
+                    eprintln!("[capsem-agent] failed to write {path}: {e}");
+                    continue;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
+                }
+                total_file_bytes += data.len();
+                file_count += 1;
+                blog_line(&mut blog, &format!(
+                    "FileWrite {path} ({} bytes, mode={mode:#o})",
+                    data.len(),
+                ));
+                eprintln!("[capsem-agent] wrote {path} ({} bytes)", data.len());
+            }
+            Ok(HostToGuest::BootConfigDone) => {
+                blog_line(&mut blog, &format!(
+                    "BootConfigDone: {} env vars, {} files",
+                    boot_env.len(),
+                    file_count,
+                ));
+                eprintln!("[capsem-agent] boot config done ({} env vars, {} files)", boot_env.len(), file_count);
+                break;
+            }
+            Ok(other) => {
+                blog_line(&mut blog, &format!("unexpected boot message: {other:?}"));
+                eprintln!("[capsem-agent] unexpected message during boot: {other:?}");
+            }
+            Err(e) => {
+                blog_line(&mut blog, &format!("boot handshake error: {e}"));
+                eprintln!("[capsem-agent] boot handshake error: {e}, proceeding with what we have");
+                break;
+            }
+        }
     }
 
     // Step 5: Open PTY pair and set initial size.
@@ -162,12 +305,12 @@ fn main() {
                 let _ = close(slave_fd);
             }
 
-            // Set environment from BootConfig.
+            // Set environment from boot handshake.
             // Hardcoded defaults first (in case BootConfig is empty / old host).
             std::env::set_var("TERM", "xterm-256color");
             std::env::set_var("HOME", "/root");
             std::env::set_var("LANG", "C");
-            // BootConfig env vars override defaults (last wins).
+            // Boot env vars override defaults (last wins).
             for (key, value) in &boot_env {
                 std::env::set_var(key, value);
             }
@@ -193,9 +336,11 @@ fn main() {
             unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }.ok();
 
             // Step 7: Send BootReady -- config applied, terminal ready.
+            blog_line(&mut blog, "sending BootReady, entering bridge loop");
             if let Err(e) = send_guest_msg(control_fd, &GuestToHost::BootReady) {
                 eprintln!("[capsem-agent] failed to send BootReady: {e}");
             }
+            drop(blog); // flush and close boot log before bridge loop
 
             // Enter bridge loop with already-connected fds.
             run_bridge(master_fd, child, terminal_fd, control_fd);
@@ -558,18 +703,69 @@ mod tests {
         let (read_fd, write_fd) = make_pipe();
         let msg = HostToGuest::BootConfig {
             epoch_secs: 1708800000,
-            env_vars: vec![("TERM".into(), "xterm-256color".into())],
         };
         let frame = capsem_proto::encode_host_msg(&msg).unwrap();
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
         match decoded {
-            HostToGuest::BootConfig { epoch_secs, env_vars } => {
+            HostToGuest::BootConfig { epoch_secs } => {
                 assert_eq!(epoch_secs, 1708800000);
-                assert_eq!(env_vars.len(), 1);
             }
             other => panic!("expected BootConfig, got {other:?}"),
         }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn boot_handshake_set_env_roundtrip() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::SetEnv {
+            key: "TERM".into(),
+            value: "xterm-256color".into(),
+        };
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        match decoded {
+            HostToGuest::SetEnv { key, value } => {
+                assert_eq!(key, "TERM");
+                assert_eq!(value, "xterm-256color");
+            }
+            other => panic!("expected SetEnv, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn boot_handshake_file_write_roundtrip() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::FileWrite {
+            path: "/root/.gemini/settings.json".into(),
+            data: b"{}".to_vec(),
+            mode: 0o644,
+        };
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        match decoded {
+            HostToGuest::FileWrite { path, data, mode } => {
+                assert_eq!(path, "/root/.gemini/settings.json");
+                assert_eq!(data, b"{}");
+                assert_eq!(mode, 0o644);
+            }
+            other => panic!("expected FileWrite, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn boot_config_done_roundtrip() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::BootConfigDone;
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        assert!(matches!(decoded, HostToGuest::BootConfigDone));
         unsafe { libc::close(read_fd); libc::close(write_fd); }
     }
 

@@ -5,7 +5,9 @@
 FROM --platform=linux/arm64 debian:bookworm-slim
 
 # Core utilities and inspection tools
+# apt-get upgrade pulls latest security patches and package versions at build time.
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         coreutils util-linux procps psmisc findutils diffutils \
         lsof strace file less man-db \
@@ -17,14 +19,16 @@ RUN apt-get update && \
         iproute2 iptables dnsmasq \
         python3 python3-pip python3-venv && \
     ln -sf vim.tiny /usr/bin/vim && \
+    pip3 install --break-system-packages --upgrade pip && \
     rm -rf /var/lib/apt/lists/*
 
 # Node.js 24 LTS via nvm (Debian bookworm ships v18 which lacks the 'v'
-# regex flag needed by modern npm packages like @google/gemini-cli)
+# regex flag needed by modern npm packages like @google/gemini-cli).
+# nvm install script always fetches latest release. npm upgraded to latest after.
 ENV NVM_DIR=/usr/local/nvm
 RUN mkdir -p $NVM_DIR && \
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash && \
-    bash -c '. $NVM_DIR/nvm.sh && nvm install 24 && \
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash && \
+    bash -c '. $NVM_DIR/nvm.sh && nvm install 24 && npm install -g npm@latest && \
     for bin in node npm npx; do ln -sf "$(which $bin)" /usr/local/bin/$bin; done'
 
 # uv -- fast Python package installer (also available to guest AI agents)
@@ -32,17 +36,14 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 
     install -m 555 /root/.local/bin/uv /usr/local/bin/uv && \
     install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
 
-# AI coding CLIs (installed globally via npm)
-# Symlink all nvm bin entries to /usr/local/bin so they're on PATH.
-RUN npm install -g \
-        @anthropic-ai/claude-code \
-        @google/gemini-cli \
-        @openai/codex && \
+# AI coding CLIs -- installed to /opt/ai-clis (staging area).
+# Copied to writable scratch disk at boot by capsem-init so that
+# auto-update works (CLIs self-update and need writable node_modules).
+COPY npm-globals.txt /tmp/npm-globals.txt
+RUN grep -v '^\s*#' /tmp/npm-globals.txt | grep -v '^\s*$' | \
+    xargs npm install -g --prefix /opt/ai-clis && \
     npm cache clean --force && \
-    for bin in $NVM_DIR/versions/node/*/bin/*; do \
-        name=$(basename "$bin"); \
-        [ -e "/usr/local/bin/$name" ] || ln -sf "$bin" "/usr/local/bin/$name"; \
-    done
+    rm /tmp/npm-globals.txt
 
 # Install MITM CA certificate into system trust store
 # (copied into images/ by build.py before docker build)
@@ -67,9 +68,15 @@ RUN chmod 555 /usr/local/bin/capsem-net-proxy
 
 # Shell config (sourced by capsem-init via --rcfile)
 COPY capsem-bashrc /etc/capsem-bashrc
+COPY banner.txt /etc/capsem-banner.txt
+COPY tips.txt /etc/capsem-tips.txt
 
-# Pytest for VM diagnostics
-RUN uv pip install --system --break-system-packages pytest
+# Common Python packages (pre-installed so they're available immediately).
+# The boot-time venv uses --system-site-packages to inherit these.
+# Agents can still pip/uv install additional packages into the venv.
+COPY requirements.txt /tmp/requirements.txt
+RUN uv pip install --system --break-system-packages -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
 
 # Diagnostic test suite
 COPY diagnostics/ /usr/local/lib/capsem-tests/
@@ -79,6 +86,13 @@ COPY capsem-doctor /usr/local/bin/capsem-doctor
 RUN chmod 755 /usr/local/bin/capsem-doctor
 # Backward compat: capsem-test -> capsem-doctor
 RUN ln -sf capsem-doctor /usr/local/bin/capsem-test
+
+# Remove PEP 668 EXTERNALLY-MANAGED marker.
+# This is an ephemeral sandboxed VM -- the protection is unnecessary and blocks
+# pip install with a confusing error.  A pre-activated venv handles writes
+# (since the rootfs is read-only) but removing the marker is belt-and-suspenders
+# so any stray pip invocation outside the venv gives a real error, not PEP 668.
+RUN rm -f /usr/lib/python*/EXTERNALLY-MANAGED
 
 # Strip setuid/setgid bits from all binaries (VM runs as root, no need for them).
 RUN find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -exec chmod u-s,g-s {} + 2>/dev/null || true

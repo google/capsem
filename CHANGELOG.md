@@ -7,8 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-02-26
+
+### Added
+- Guest dev environment: `pip install`, `uv pip install`, `npm install -g` all work out of the box on the read-only rootfs
+- Python venv auto-activated at boot with `--system-site-packages` (packages install to `/root/.venv`)
+- `pip` and `python` aliased to `uv pip` and `uv run python` (faster, no root warning)
+- AI CLIs (claude, gemini, codex) installed to writable scratch disk at boot so auto-update works
+- npm global prefix redirected to writable `/root/.npm-global` for `npm install -g`
+- Pre-installed Python packages declared in `images/requirements.txt`: numpy, requests, httpx, pandas, scipy, scikit-learn, matplotlib, pillow, pyyaml, beautifulsoup4, lxml, tqdm, rich
+- Pre-installed npm globals declared in `images/npm-globals.txt` (AI CLIs)
+- Login banner shows AI tool status: ready (blue), no API key (purple), disabled by policy (purple)
+- Host injects `CAPSEM_ANTHROPIC_ALLOWED`, `CAPSEM_OPENAI_ALLOWED`, `CAPSEM_GOOGLE_ALLOWED` env vars at boot
+- Configurable login banner (`images/banner.txt`) and random developer tips (`images/tips.txt`)
+- Removed PEP 668 EXTERNALLY-MANAGED marker from rootfs
+- `just build` upgrades all tools to latest: apt packages, pip, npm, node, nvm, uv
+- Claude Code yolo mode: `~/.claude/settings.json` with `bypassPermissions` + `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and `~/.claude.json` state file to skip onboarding, trust dialogs, and keybinding prompts
+- Gemini CLI yolo mode: `~/.gemini/settings.json` with `approvalMode: "yolo"`, telemetry/auto-updates disabled, folder trust disabled, and Gemini's own sandbox disabled (capsem provides the sandbox)
+- Metadata-driven env var injection: settings declare `env_vars` in metadata instead of hardcoded mappings
+- Built-in guest environment settings (`guest.shell.term`, `guest.shell.home`, `guest.shell.path`, `guest.shell.lang`, `guest.tls.ca_bundle`) configurable via user.toml and corp.toml
+- Individual vsock boot messages (`SetEnv`, `FileWrite`, `BootConfigDone`) replacing single `BootConfig` frame, eliminating the 8KB frame size limit for boot configuration
+- Guest boot log at `/var/log/capsem-boot.log` recording clock sync, env vars, file writes, and handshake status
+- Per-service domain settings (`ai.*.domains`) with user-editable comma-separated domain patterns
+- AI provider API key injection into guest VM environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`)
+- Google AI (`ai.google.allow`) enabled by default for out-of-the-box Gemini CLI support
+- Per-session unique IDs (`YYYYMMDD-HHMMSS-XXXX`) replacing hardcoded "default"/"cli" VM IDs
+- Session index database (`~/.capsem/sessions/main.db`) tracking metadata across sessions
+- `get_session_info` and `get_session_history` Tauri IPC commands for the Sessions view
+- Session retention settings: `session.retention_days`, `session.max_sessions`, `session.max_disk_gb`
+- Age-based, count-based, and disk-based session culling at startup
+- Migration from legacy `session.json` files to `main.db` on startup
+- Request count snapshotting (`count_by_decision`) when sessions stop
+- Svelte 5 + Tailwind v4 + DaisyUI v5 frontend framework replacing vanilla JS
+- Single Svelte island architecture: `<App client:only="svelte" />` in Astro shell
+- Sidebar navigation with collapsible icon rail (Console, Sessions, Network, Settings)
+- Network events view with filterable table, expandable rows showing headers/body
+- Settings view with categorized editor, type-aware inputs, corp lock indicators
+- Sessions view with VM state timeline from state machine history
+- Terminal view wrapping existing xterm.js web component with Tauri event wiring
+- Status bar showing VM state indicator, HTTPS call count, allowed/denied stats
+- Light/dark theme toggle with localStorage persistence and system preference fallback
+- Svelte 5 rune stores for VM state, network events, settings, theme, and sidebar
+- TypeScript IPC layer (`types.ts` + `api.ts`) with typed wrappers for all Tauri commands
+- `svelte-check` added to `just check` and `pnpm run check` pipelines
+- Generic typed settings system replacing TOML-based policy config -- each setting has ID, type, category, default, metadata, and optional `enabled_by` parent toggle
+- Per-setting corp override: corporate settings (`/etc/capsem/corp.toml`) lock individual settings, not entire sections
+- Setting metadata with domain patterns, HTTP method permissions, numeric bounds, and text choices
+- `get_settings` and `update_setting` Tauri IPC commands for the settings UI
+- Settings architecture documentation in `docs/architecture.md`
+- Policy override security documentation in `docs/security.md`
+
 ### Changed
+- Increased vsock MAX_FRAME_SIZE from 8KB to 256KB for generous boot payloads
+- Boot handshake protocol now sends env vars and files as individual messages instead of a single `BootConfig` payload
+- Sessions view redesigned: current session info cards, network analytics, session history table (replaced CPU/memory/binary stats that VZ doesn't expose)
+- Per-session telemetry renamed from `web.db` to `info.db` (legacy `web.db` still read for backward compatibility)
+- Each VM boot creates a fresh telemetry database, eliminating stale request carryover between sessions
 - Network policy replaced with simplified rule-based system: per-domain read/write verb control with defaults (GET allowed, POST denied)
+- Configuration format changed from section-based TOML (`[network]`, `[guest]`, `[vm]`) to flat settings map (`[settings]` with dotted keys like `"registry.github.allow"`)
+- Domain allow/block lists now derived from setting toggles and their metadata (e.g., toggling `registry.github.allow` controls `github.com`, `*.github.com`, `*.githubusercontent.com`)
+- AI provider domains moved from explicit block-list to disabled-by-default toggles with domain metadata
+- Guest environment variables stored as `guest.env.*` settings instead of `[guest].env` table
+- VM settings (scratch disk size) stored as `vm.scratch_disk_size_gb` setting instead of `[vm]` section
 - Removed SNI-based pre-TLS policy check; all policy enforcement at HTTP level
 - Removed generativelanguage.googleapis.com from block-list (Gemini API testing)
 - MITM proxy streams request and response bodies instead of buffering in memory
@@ -16,15 +76,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default `log_bodies` changed from false to true
 
 ### Fixed
+- Denied domains now record HTTP method, path, and status in telemetry (TLS handshake completes, denial at HTTP 403 level)
+- Guest receives proper HTTP 403 response with reason for denied requests instead of cryptic TLS connection error
+- "Invalid Date" in Session/Network views: timestamps now serialize as epoch seconds instead of SystemTime objects
+- Legacy "default"/"cli" sessions migrated as "crashed" instead of carrying over stale "running" status
 - web.db now records query string, matched rule, and 403 status for denied requests
 - Upstream connection failures record error reason in telemetry
 
 ### Removed
+- `get_vm_stats` command and `VmStats`/`BinaryCall` types (VZ framework doesn't expose guest metrics)
+- Hardcoded `DEFAULT_VM_ID` constant -- replaced by dynamic session IDs
+- `session.json` files -- replaced by `main.db` session index (migrated automatically)
 - SNI parser module (`sni_parser.rs`) -- domain extracted from TLS handshake instead
 
 ### Security
+- Env var sanitization: reject keys containing `=` or NUL bytes, values containing NUL (prevents agent crash / kernel panic)
+- Blocked env var list: LD_PRELOAD, LD_LIBRARY_PATH, IFS, BASH_ENV, and other dangerous variables rejected during boot
+- Boot allocation caps: max 128 env vars, 64 files, 10MB total file data
+- FileWrite path traversal protection: reject paths containing `..`
+- Defense-in-depth: guest agent validates env vars and file paths independently of host
 - Body size limit (100MB) prevents OOM from malicious guest payloads
 - Replaced unsafe borrow_fd with safe fd cloning
+- Corp-locked settings cannot be modified by user, enforced at the merge level
 
 ## [0.5.0] - 2026-02-25
 

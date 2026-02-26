@@ -66,7 +66,7 @@ crates/capsem-proto/src/
 
 **Security invariant (RFC T14):** The host only deserializes `GuestToHost`. The guest only deserializes `HostToGuest`. Disjoint serde tags make cross-type decoding fail at the type level.
 
-**Framing:** `[4-byte BE length][MessagePack payload]`, max frame size 8KB.
+**Framing:** `[4-byte BE length][MessagePack payload]`, max frame size 256KB.
 
 ### capsem-core
 
@@ -83,7 +83,7 @@ crates/capsem-core/src/
     vsock.rs          VsockManager, CoalesceBuffer, port constants, re-exports from capsem-proto
   net/
     domain_policy.rs  Allow/block list with wildcard matching
-    policy_config.rs  user.toml / corp.toml loader, merge logic, GuestConfig, VmSettings
+    policy_config.rs  Settings engine: typed registry, user/corp merge, translation to policy objects
     sni_parser.rs     TLS ClientHello SNI extraction
     sni_proxy.rs      Host-side SNI proxy (vsock:5002 -> real HTTPS)
     telemetry.rs      Per-session web.db (SQLite) for connection logging
@@ -96,7 +96,8 @@ crates/capsem-core/src/
 - `VsockManager` -- ObjC bridge that registers vsock listeners on the VM's socket device and delivers accepted connections via an async channel.
 - `CoalesceBuffer` -- batches small output chunks (10ms/64KB) to prevent IPC saturation.
 - `DomainPolicy` -- evaluates domains against allow/block lists with wildcard support.
-- `GuestConfig` -- `[guest]` section from user.toml with env var overrides.
+- `GuestConfig` -- guest environment variables extracted from settings.
+- `ResolvedSetting` -- a fully resolved setting with effective value, source, and metadata.
 
 ### capsem-agent
 
@@ -113,11 +114,13 @@ crates/capsem-agent/src/
 
 1. Connect vsock control (port 5000) and terminal (port 5001)
 2. Send `GuestToHost::Ready { version }`
-3. Wait for `HostToGuest::BootConfig { epoch_secs, env_vars }`
-4. Set system clock via `clock_settime(CLOCK_REALTIME)`
-5. Open PTY pair, fork bash with env vars from BootConfig
-6. Send `GuestToHost::BootReady`
-7. Enter bridge loop: master PTY <-> vsock terminal, control loop in background thread
+3. Receive `HostToGuest::BootConfig { epoch_secs }` -- clock sync
+4. Receive individual `SetEnv` messages (validated: no NUL, no blocked vars, capped at 128)
+5. Receive `FileWrite` messages (validated: no path traversal, capped at 64 files / 10MB total)
+6. Receive `BootConfigDone` -- end of boot config
+7. Set system clock, apply env vars, open PTY, fork bash
+8. Send `GuestToHost::BootReady`
+9. Enter bridge loop: master PTY <-> vsock terminal, control loop in background thread
 
 ### capsem-app
 
@@ -213,20 +216,23 @@ All post-boot communication uses virtio-vsock:
 **Boot handshake** (vsock:5000):
 
 ```
-Guest                         Host
-  |                              |
-  |--- Ready { version } ------>|   "I'm alive, send me config"
-  |                              |
-  |<-- BootConfig { clock, env } |   "Here's your clock + env vars"
-  |                              |
-  |--- BootReady -------------->|   "Applied config, bash forked, ready"
-  |                              |
-  |    (terminal I/O begins)     |
+Guest                                Host
+  |                                    |
+  |--- Ready { version } ------------>|
+  |                                    |
+  |<-- BootConfig { epoch_secs } -----|  clock sync
+  |<-- SetEnv { key, value } ---------|  (repeated, validated)
+  |<-- FileWrite { path, data } ------|  (repeated, validated)
+  |<-- BootConfigDone ----------------|  end of config
+  |                                    |
+  |--- BootReady -------------------->|  config applied, terminal ready
+  |                                    |
+  |    (terminal I/O begins)           |
 ```
 
 **Clock synchronization**: The host sends `epoch_secs` (current Unix time) in `BootConfig`. The guest agent calls `clock_settime(CLOCK_REALTIME)` before forking bash. This ensures TLS cert validation, git timestamps, and other time-dependent tools work correctly.
 
-**Environment injection**: `BootConfig.env_vars` carries environment variables with priority: hardcoded defaults (`TERM`, `HOME`, `PATH`, `LANG`) < `user.toml [guest].env` < CLI `--env` flags.
+**Environment injection**: Individual `SetEnv` messages carry environment variables with priority: hardcoded defaults (`TERM`, `HOME`, `PATH`, `LANG`) < `user.toml [guest].env` < CLI `--env` flags. Both host and guest validate env vars: keys containing `=` or NUL bytes are rejected, blocked variables (LD_PRELOAD, IFS, BASH_ENV, etc.) are dropped, and the total count is capped at 128. File writes are validated against path traversal (`..`) and capped at 64 files / 10MB total.
 
 **Terminal I/O** (vsock:5001): Frontend xterm.js `onData` -> Tauri `serial_input` command -> vsock fd -> guest PTY. Reverse: guest PTY -> vsock -> `CoalesceBuffer` (10ms/64KB) -> Tauri event -> xterm.js `write`.
 
@@ -345,6 +351,71 @@ The current scratch disk is ephemeral -- wiped on every boot. A future release w
 - **Pause vs stop semantics**: A paused session keeps its disk intact and the VM state can be restored (once VZ checkpointing is wired up). A stopped session can optionally preserve or discard its disk. Disk metadata tracks which state each disk is in, so the UI can show "3 paused sessions, 1 running" etc.
 
 This replaces the per-session `session.json` approach with a proper relational model in `capsem.db` where disks, sessions, and VM lifecycle states are first-class entities.
+
+## Settings Architecture
+
+Capsem uses a generic typed settings system for all configuration. Each setting has an ID, name, description, type, category, default value, and optional `enabled_by` pointer to a parent toggle.
+
+### Setting Registry
+
+Settings are defined in a compile-time registry (`setting_definitions()` in `policy_config.rs`). Categories:
+
+| Category | Example Settings |
+|----------|-----------------|
+| AI Providers | `ai.anthropic.allow`, `ai.anthropic.api_key`, `ai.openai.allow`, ... |
+| Package Registries | `registry.github.allow`, `registry.npm.allow`, `registry.pypi.allow`, ... |
+| Network | `network.default_action`, `network.log_bodies`, `network.max_body_capture` |
+| Session | `session.retention_days` |
+| Appearance | `appearance.dark_mode`, `appearance.font_size` |
+| VM | `vm.scratch_disk_size_gb` |
+| Guest Environment | `guest.env.*` (dynamic, prefix-based) |
+
+### Setting Types
+
+Each setting has a `SettingType` that drives UI rendering: `Text`, `Number`, `Password`, `Url`, `Email`, `ApiKey`, `Bool`.
+
+### TOML Format
+
+Settings files store only overrides. A setting not listed uses its registry default:
+
+```toml
+[settings]
+"registry.github.allow" = { value = true, modified = "2026-02-24T10:30:00Z" }
+"network.log_bodies" = { value = true, modified = "2026-02-24T10:30:00Z" }
+"guest.env.EDITOR" = { value = "vim", modified = "2026-02-24T10:30:00Z" }
+```
+
+### Merge Semantics
+
+Resolution order: **corp > user > default**. For each setting ID, the corp file wins if present, then user, then the registry default. This is per-key, not per-category.
+
+### Setting Metadata
+
+Network toggle settings carry structured metadata:
+
+- `domains` -- domain patterns (e.g., `["github.com", "*.github.com"]`) that are allowed/blocked when the toggle is on/off.
+- `rules` -- HTTP method permissions per domain (e.g., GET+POST allowed, DELETE denied).
+- `choices` -- valid values for text choice settings (e.g., `["allow", "deny"]`).
+- `min`/`max` -- bounds for number settings.
+
+### Translation Layer
+
+The settings engine translates resolved settings into domain-specific policy objects:
+
+```
+ResolvedSettings --> settings_to_domain_policy() --> DomainPolicy
+                 --> settings_to_http_policy()   --> HttpPolicy
+                 --> settings_to_guest_config()  --> GuestConfig
+                 --> settings_to_vm_settings()   --> VmSettings
+```
+
+Enabled toggles with domain metadata add to the allow-list. Disabled toggles with domain metadata add to the block-list. This means toggling `ai.anthropic.allow` from false to true moves `api.anthropic.com` from blocked to allowed.
+
+### enabled_by
+
+A setting can declare `enabled_by: Some("parent.id")` to indicate it depends on a parent toggle. When the parent is off, the child is computed as `enabled: false` (greyed out in the UI). Only one level of nesting is supported.
+
+Example: `ai.anthropic.api_key` has `enabled_by: Some("ai.anthropic.allow")`. The API key field is disabled when the Anthropic toggle is off.
 
 ## Future Architecture (Planned)
 

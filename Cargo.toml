@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/capsem-proto", "crates/capsem-core", "crates/capsem-app", "crates/capsem-agent"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 
 # Always optimize blake3 -- its SIMD assembly is 100x faster than
 # unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.
@@ -37,3 +37,7 @@ hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1"] }
 http-body-util = "0.1"
 http = "1"
+axum = "0.8"
+reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls"], default-features = false }
+futures = "0.3"
+tokio-stream = "0.1"

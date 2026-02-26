@@ -5,15 +5,24 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev --port 5173",
-    "build": "astro build"
+    "build": "astro build",
+    "check": "astro check && svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
+    "@astrojs/svelte": "^7",
     "@tauri-apps/api": "^2",
-    "@xterm/xterm": "^6",
     "@xterm/addon-fit": "^0.11",
-    "@xterm/addon-webgl": "^0.19"
+    "@xterm/addon-webgl": "^0.19",
+    "@xterm/xterm": "^6"
   },
   "devDependencies": {
-    "astro": "^5"
+    "@astrojs/check": "^0.9.6",
+    "@tailwindcss/vite": "^4",
+    "astro": "^5",
+    "daisyui": "^5",
+    "svelte": "^5",
+    "svelte-check": "^4",
+    "tailwindcss": "^4",
+    "typescript": "^5.7"
   }
 }

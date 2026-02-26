@@ -20,15 +20,13 @@ use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
 use capsem_core::net::policy_config;
 use capsem_core::net::telemetry::WebDb;
+use capsem_core::session::{self, SessionIndex, SessionRecord};
 use state::{AppState, VmInstance, VmNetworkState};
 use tauri::{Emitter, Manager};
 use tokio::sync::broadcast;
 use tracing::{debug_span, error, info, info_span, warn};
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
-
-/// Default VM ID for the single-VM case.
-const DEFAULT_VM_ID: &str = "default";
 
 /// Clone a raw fd into an independently-owned File.
 /// The original fd remains open and unaffected.
@@ -106,42 +104,6 @@ fn write_perf_log(sm: &HostStateMachine) {
     eprintln!("perf log: {}", path.display());
 }
 
-/// Get current UTC time as ISO 8601 string.
-fn chrono_now() -> String {
-    let dur = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = dur.as_secs();
-    // Simple ISO 8601 without pulling in chrono crate
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
-    // Epoch days to date (simplified -- good enough for timestamps)
-    let mut y = 1970i64;
-    let mut remaining_days = days as i64;
-    loop {
-        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
-        if remaining_days < year_days {
-            break;
-        }
-        remaining_days -= year_days;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut m = 0;
-    for md in &month_days {
-        if remaining_days < *md {
-            break;
-        }
-        remaining_days -= md;
-        m += 1;
-    }
-    format!("{y:04}-{:02}-{:02}T{hours:02}:{minutes:02}:{seconds:02}Z", m + 1, remaining_days + 1)
-}
-
 /// Get the sessions base directory: ~/.capsem/sessions/
 fn sessions_dir() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(|h| {
@@ -154,86 +116,127 @@ fn session_dir_for(vm_id: &str) -> Option<PathBuf> {
     sessions_dir().map(|d| d.join(vm_id))
 }
 
-/// Session metadata persisted to session.json.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SessionMetadata {
-    vm_id: String,
-    created_at: String,
-    status: String,
-    scratch_disk_size_gb: u32,
-    ram_bytes: u64,
-}
-
-/// Write session.json to the session directory.
-fn write_session_json(session_dir: &Path, metadata: &SessionMetadata) {
-    let path = session_dir.join("session.json");
-    match serde_json::to_string_pretty(metadata) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                warn!("failed to write session.json: {e}");
-            }
-        }
-        Err(e) => warn!("failed to serialize session.json: {e}"),
-    }
-}
-
-/// Update session.json status field.
-fn update_session_status(session_dir: &Path, status: &str) {
-    let path = session_dir.join("session.json");
-    match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            match serde_json::from_str::<SessionMetadata>(&content) {
-                Ok(mut meta) => {
-                    meta.status = status.to_string();
-                    write_session_json(session_dir, &meta);
-                }
-                Err(e) => warn!("failed to parse session.json: {e}"),
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => warn!("failed to read session.json: {e}"),
-    }
-}
-
-/// Clean up stale sessions on app startup.
+/// Clean up stale sessions on app startup using SessionIndex.
 ///
 /// Deletes any leftover scratch.img files (always ephemeral) and marks
 /// any "running" sessions as "crashed" (stale from ungraceful exit).
-fn cleanup_stale_sessions() {
+/// Also runs age-based, count-based, and disk-based culling.
+fn cleanup_stale_sessions(index: &SessionIndex) {
     let base = match sessions_dir() {
         Some(d) => d,
         None => return,
     };
-    let entries = match std::fs::read_dir(&base) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let dir = entry.path();
-        if !dir.is_dir() {
-            continue;
+
+    // Delete leftover scratch.img files from all session dirs.
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let scratch = dir.join("scratch.img");
+            if scratch.exists() {
+                info!(path = %scratch.display(), "deleting stale scratch.img");
+                let _ = std::fs::remove_file(&scratch);
+            }
         }
-        // Always delete leftover scratch.img
-        let scratch = dir.join("scratch.img");
-        if scratch.exists() {
-            info!(path = %scratch.display(), "deleting stale scratch.img");
-            let _ = std::fs::remove_file(&scratch);
+    }
+
+    // Mark stale "running" sessions as "crashed" in main.db.
+    match index.mark_running_as_crashed() {
+        Ok(0) => {}
+        Ok(n) => info!(count = n, "marked stale sessions as crashed"),
+        Err(e) => warn!("failed to mark stale sessions: {e}"),
+    }
+
+    // Age-based culling.
+    let settings = policy_config::load_merged_settings();
+    let retention_days = settings.iter()
+        .find(|s| s.id == "session.retention_days")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(30) as u32;
+    let max_sessions = settings.iter()
+        .find(|s| s.id == "session.max_sessions")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(100) as usize;
+    let max_disk_gb = settings.iter()
+        .find(|s| s.id == "session.max_disk_gb")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(100) as u64;
+
+    if let Ok(n) = index.delete_older_than_days(retention_days) {
+        if n > 0 {
+            info!(count = n, "culled old sessions (>{retention_days} days)");
         }
-        // Mark stale "running" sessions as "crashed"
-        let json_path = dir.join("session.json");
-        if let Ok(content) = std::fs::read_to_string(&json_path) {
-            if let Ok(meta) = serde_json::from_str::<SessionMetadata>(&content) {
-                if meta.status == "running" {
-                    info!(vm_id = %meta.vm_id, "marking stale session as crashed");
-                    update_session_status(&dir, "crashed");
+    }
+    if let Ok(n) = index.delete_keeping_newest(max_sessions) {
+        if n > 0 {
+            info!(count = n, "culled sessions over cap ({max_sessions})");
+        }
+    }
+
+    // Disk-based culling.
+    let max_disk_bytes = max_disk_gb * 1024 * 1024 * 1024;
+    let mut usage = session::disk_usage_bytes(&base);
+    if usage > max_disk_bytes {
+        if let Ok(stopped) = index.stopped_sessions_oldest_first() {
+            for rec in stopped {
+                if usage <= max_disk_bytes {
+                    break;
+                }
+                let dir = base.join(&rec.id);
+                if dir.is_dir() {
+                    let dir_bytes = session::disk_usage_bytes(&dir);
+                    if let Err(e) = std::fs::remove_dir_all(&dir) {
+                        warn!(id = %rec.id, "failed to remove session dir: {e}");
+                        continue;
+                    }
+                    usage = usage.saturating_sub(dir_bytes);
+                    info!(id = %rec.id, "culled session dir for disk budget");
+                }
+            }
+        }
+    }
+
+    // Remove orphan session dirs that no longer have a DB record.
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        let known_ids: std::collections::HashSet<String> = index
+            .recent(10_000)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let name = match dir.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if !session::is_valid_session_id(&name) {
+                continue;
+            }
+            if !known_ids.contains(&name) {
+                if let Err(e) = std::fs::remove_dir_all(&dir) {
+                    warn!(id = %name, "failed to remove orphan session dir: {e}");
+                } else {
+                    info!(id = %name, "removed orphan session dir");
                 }
             }
         }
     }
 }
 
-/// Clean up a VM session: delete scratch.img, update session.json to "stopped".
-fn cleanup_session(session_dir: &Path, scratch_path: Option<&Path>) {
+/// Clean up a VM session: delete scratch.img, snapshot request counts, update status.
+fn cleanup_session(
+    session_dir: &Path,
+    scratch_path: Option<&Path>,
+    session_id: &str,
+    index: &SessionIndex,
+    web_db: Option<&std::sync::Mutex<WebDb>>,
+) {
     if let Some(scratch) = scratch_path {
         if scratch.exists() {
             info!(path = %scratch.display(), "deleting scratch.img");
@@ -242,7 +245,22 @@ fn cleanup_session(session_dir: &Path, scratch_path: Option<&Path>) {
             }
         }
     }
-    update_session_status(session_dir, "stopped");
+
+    // Snapshot request counts.
+    if let Some(db_lock) = web_db {
+        if let Ok(db) = db_lock.lock() {
+            if let Ok((total, allowed, denied)) = db.count_by_decision() {
+                let _ = index.update_request_counts(
+                    session_id,
+                    total as u64,
+                    allowed as u64,
+                    denied as u64,
+                );
+            }
+        }
+    }
+
+    let _ = index.update_status(session_id, "stopped", Some(&session::now_iso()));
 }
 
 /// Static CA keypair embedded at compile time.
@@ -268,12 +286,12 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
         .join(".capsem")
         .join("sessions")
         .join(vm_id);
-    let db_path = session_dir.join("web.db");
-    let web_db = WebDb::open(&db_path).context("failed to open web.db")?;
-    info!(path = %db_path.display(), "opened web.db");
+    let db_path = session_dir.join("info.db");
+    let web_db = WebDb::open(&db_path).context("failed to open telemetry db")?;
+    info!(path = %db_path.display(), "opened telemetry db");
 
     Ok(VmNetworkState {
-        policy: Arc::new(policy),
+        policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
         web_db: Arc::new(Mutex::new(web_db)),
         ca: Arc::new(ca),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
@@ -467,11 +485,14 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
         // Validate incoming guest message against host state machine.
         {
             let state = app_handle.state::<AppState>();
-            let vms = state.vms.lock().unwrap();
-            if let Some(instance) = vms.get(DEFAULT_VM_ID) {
-                if let Err(e) = validate_guest_msg(&msg, instance.state_machine.state()) {
-                    warn!("vsock: rejected control message: {e}");
-                    continue;
+            let vm_id = state.active_session_id.lock().unwrap().clone();
+            if let Some(ref id) = vm_id {
+                let vms = state.vms.lock().unwrap();
+                if let Some(instance) = vms.get(id) {
+                    if let Err(e) = validate_guest_msg(&msg, instance.state_machine.state()) {
+                        warn!("vsock: rejected control message: {e}");
+                        continue;
+                    }
                 }
             }
         }
@@ -530,10 +551,13 @@ async fn setup_vsock(
     // Transition: Booting -> VsockConnected
     {
         let state = app_handle.state::<AppState>();
-        let mut vms = state.vms.lock().unwrap();
-        if let Some(instance) = vms.get_mut(DEFAULT_VM_ID) {
-            if let Err(e) = instance.state_machine.transition(HostState::VsockConnected, "vsock_ports_connected") {
-                warn!("state machine: {e}");
+        let vm_id = state.active_session_id.lock().unwrap().clone();
+        if let Some(ref id) = vm_id {
+            let mut vms = state.vms.lock().unwrap();
+            if let Some(instance) = vms.get_mut(id) {
+                if let Err(e) = instance.state_machine.transition(HostState::VsockConnected, "vsock_ports_connected") {
+                    warn!("state machine: {e}");
+                }
             }
         }
     }
@@ -547,10 +571,13 @@ async fn setup_vsock(
             info!("vsock: guest agent ready (version {version})");
             // Transition: VsockConnected -> Handshaking
             let state = app_handle.state::<AppState>();
-            let mut vms = state.vms.lock().unwrap();
-            if let Some(instance) = vms.get_mut(DEFAULT_VM_ID) {
-                if let Err(e) = instance.state_machine.transition(HostState::Handshaking, "ready_received") {
-                    warn!("state machine: {e}");
+            let vm_id = state.active_session_id.lock().unwrap().clone();
+            if let Some(ref id) = vm_id {
+                let mut vms = state.vms.lock().unwrap();
+                if let Some(instance) = vms.get_mut(id) {
+                    if let Err(e) = instance.state_machine.transition(HostState::Handshaking, "ready_received") {
+                        warn!("state machine: {e}");
+                    }
                 }
             }
         }
@@ -562,19 +589,12 @@ async fn setup_vsock(
         }
     }
 
-    // Build and send BootConfig.
-    match build_boot_config(&[]) {
-        Ok(boot_config) => {
-            if let Err(e) = write_control_msg(control.fd, &boot_config) {
-                warn!("vsock: failed to send BootConfig: {e}");
-            }
-        }
-        Err(e) => {
-            warn!("vsock: failed to build BootConfig: {e}");
-        }
+    // Send boot config as individual messages.
+    if let Err(e) = send_boot_config(control.fd, &[]) {
+        warn!("vsock: failed to send boot config: {e}");
     }
 
-    // Wait for BootReady (5s timeout for backwards compat with old agents).
+    // Wait for BootReady.
     let boot_ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut boot_ready_received = false;
     while Instant::now() < boot_ready_deadline {
@@ -594,7 +614,7 @@ async fn setup_vsock(
         }
     }
     if !boot_ready_received {
-        warn!("vsock: BootReady not received (old agent?), proceeding anyway");
+        warn!("vsock: BootReady not received within 5s, proceeding anyway");
     }
 
     serial_task.abort();
@@ -603,8 +623,9 @@ async fn setup_vsock(
     // Store vsock fds and transition to Running.
     let mitm_config = {
         let state = app_handle.state::<AppState>();
+        let vm_id = state.active_session_id.lock().unwrap().clone();
         let mut vms = state.vms.lock().unwrap();
-        if let Some(instance) = vms.get_mut(DEFAULT_VM_ID) {
+        if let Some(instance) = vm_id.as_ref().and_then(|id| vms.get_mut(id)) {
             instance.vsock_terminal_fd = Some(terminal.fd);
             instance.vsock_control_fd = Some(control.fd);
             if let Err(e) = instance.state_machine.transition(HostState::Running, "boot_ready_received") {
@@ -711,66 +732,124 @@ fn write_control_msg(fd: RawFd, msg: &HostToGuest) -> Result<()> {
     Ok(())
 }
 
-/// Build a BootConfig message with clock + env vars.
+/// Send the boot configuration as individual vsock messages.
 ///
-/// Env var priority: hardcoded defaults < user.toml [guest].env < CLI --env flags.
-fn build_boot_config(cli_env: &[(String, String)]) -> Result<HostToGuest> {
-    use capsem_core::capsem_proto::encode_boot_config_checked;
+/// Sends BootConfig (clock), then SetEnv for each env var, FileWrite for each
+/// boot file, and BootConfigDone to signal completion. Each message is its own
+/// frame, eliminating the old single-frame size constraint.
+///
+/// Validates all env vars and file paths before sending. Invalid entries are
+/// logged and skipped. Enforces allocation caps (MAX_BOOT_ENV_VARS,
+/// MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES) to prevent unbounded allocations.
+///
+/// Env var priority: settings registry defaults < user.toml overrides < CLI --env flags.
+fn send_boot_config(control_fd: RawFd, cli_env: &[(String, String)]) -> Result<()> {
+    use capsem_core::capsem_proto::{
+        validate_env_key, validate_env_value, validate_file_path,
+        MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
+    };
 
     let epoch_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
-    // Start with hardcoded defaults.
-    let mut env_map: Vec<(String, String)> = vec![
-        ("TERM".into(), "xterm-256color".into()),
-        ("HOME".into(), "/root".into()),
-        ("PATH".into(), "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into()),
-        ("LANG".into(), "C".into()),
-        // CA trust env vars for MITM proxy (ensures all runtimes trust the Capsem CA)
-        ("REQUESTS_CA_BUNDLE".into(), "/etc/ssl/certs/ca-certificates.crt".into()),
-        ("NODE_EXTRA_CA_CERTS".into(), "/etc/ssl/certs/ca-certificates.crt".into()),
-        ("SSL_CERT_FILE".into(), "/etc/ssl/certs/ca-certificates.crt".into()),
-    ];
+    // 1. Send BootConfig with clock.
+    write_control_msg(control_fd, &HostToGuest::BootConfig { epoch_secs })?;
 
-    // Merge user.toml [guest].env (overrides defaults).
+    // 2. Send metadata-driven env vars from settings registry.
     let guest_config = policy_config::load_merged_guest_config();
-    if let Some(user_env) = guest_config.env {
-        for (key, value) in user_env {
-            if value.len() > 4096 {
-                warn!(key, len = value.len(), "env var value exceeds 4096 bytes, truncating");
+    let mut env_count: usize = 0;
+
+    if let Some(env) = guest_config.env {
+        for (key, value) in env {
+            if env_count >= MAX_BOOT_ENV_VARS {
+                warn!("boot env var cap reached ({MAX_BOOT_ENV_VARS}), skipping remaining");
+                break;
             }
-            if let Some(existing) = env_map.iter_mut().find(|(k, _)| k == &key) {
-                existing.1 = value;
-            } else {
-                env_map.push((key, value));
+            if let Err(e) = validate_env_key(&key) {
+                warn!("skipping invalid boot env var key: {e}");
+                continue;
             }
+            if let Err(e) = validate_env_value(&value) {
+                warn!("skipping boot env var {key}: {e}");
+                continue;
+            }
+            write_control_msg(control_fd, &HostToGuest::SetEnv { key, value })?;
+            env_count += 1;
         }
     }
 
-    // Merge CLI --env flags (overrides everything).
+    // 3. CLI --env overrides (last wins).
     for (key, value) in cli_env {
-        if let Some(existing) = env_map.iter_mut().find(|(k, _)| k == key) {
-            existing.1 = value.clone();
-        } else {
-            env_map.push((key.clone(), value.clone()));
+        if env_count >= MAX_BOOT_ENV_VARS {
+            warn!("boot env var cap reached ({MAX_BOOT_ENV_VARS}), skipping remaining CLI --env");
+            break;
         }
+        if let Err(e) = validate_env_key(key) {
+            warn!("skipping invalid CLI --env key: {e}");
+            continue;
+        }
+        if let Err(e) = validate_env_value(value) {
+            warn!("skipping CLI --env {key}: {e}");
+            continue;
+        }
+        write_control_msg(
+            control_fd,
+            &HostToGuest::SetEnv {
+                key: key.clone(),
+                value: value.clone(),
+            },
+        )?;
+        env_count += 1;
     }
 
-    let msg = HostToGuest::BootConfig {
-        epoch_secs,
-        env_vars: env_map,
-    };
+    // 4. Send each boot file (with caps).
+    let mut file_count: usize = 0;
+    let mut total_file_bytes: usize = 0;
 
-    // Validate the frame fits within limits.
-    encode_boot_config_checked(&msg)?;
+    for file in guest_config.files.unwrap_or_default() {
+        if file_count >= MAX_BOOT_FILES {
+            warn!("boot file cap reached ({MAX_BOOT_FILES}), skipping remaining");
+            break;
+        }
+        let data = file.content.into_bytes();
+        if total_file_bytes + data.len() > MAX_BOOT_FILE_BYTES {
+            warn!(
+                "boot file bytes cap reached ({MAX_BOOT_FILE_BYTES}), skipping {}",
+                file.path
+            );
+            continue;
+        }
+        if let Err(e) = validate_file_path(&file.path) {
+            warn!("skipping invalid boot file path: {e}");
+            continue;
+        }
+        total_file_bytes += data.len();
+        file_count += 1;
+        write_control_msg(
+            control_fd,
+            &HostToGuest::FileWrite {
+                path: file.path,
+                data,
+                mode: file.mode,
+            },
+        )?;
+    }
 
-    Ok(msg)
+    // 5. Signal done.
+    write_control_msg(control_fd, &HostToGuest::BootConfigDone)?;
+
+    Ok(())
 }
 
 /// Parse `--env KEY=VALUE` pairs from CLI args, returning env pairs and remaining args.
+///
+/// CLI --env args are validated strictly: invalid keys or values cause an error
+/// message and the pair is skipped (stricter than config file handling).
 fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<String>) {
+    use capsem_core::capsem_proto::{validate_env_key, validate_env_value};
+
     let mut env_pairs = Vec::new();
     let mut remaining = Vec::new();
     let mut iter = args.iter();
@@ -778,6 +857,14 @@ fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<String>) {
         if arg == "--env" {
             if let Some(val) = iter.next() {
                 if let Some((key, value)) = val.split_once('=') {
+                    if let Err(e) = validate_env_key(key) {
+                        eprintln!("capsem: --env rejected: {e}");
+                        continue;
+                    }
+                    if let Err(e) = validate_env_value(value) {
+                        eprintln!("capsem: --env {key} rejected: {e}");
+                        continue;
+                    }
                     env_pairs.push((key.to_string(), value.to_string()));
                 } else {
                     eprintln!("capsem: --env value must be KEY=VALUE, got: {val}");
@@ -787,6 +874,14 @@ fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<String>) {
             }
         } else if let Some(rest) = arg.strip_prefix("--env=") {
             if let Some((key, value)) = rest.split_once('=') {
+                if let Err(e) = validate_env_key(key) {
+                    eprintln!("capsem: --env rejected: {e}");
+                    continue;
+                }
+                if let Err(e) = validate_env_value(value) {
+                    eprintln!("capsem: --env {key} rejected: {e}");
+                    continue;
+                }
                 env_pairs.push((key.to_string(), value.to_string()));
             } else {
                 eprintln!("capsem: --env value must be KEY=VALUE, got: {rest}");
@@ -816,7 +911,7 @@ fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<String>) {
 /// - Cannot use `tokio::main` or `async` on the main thread because tokio's reactor
 ///   does not pump `CFRunLoop`.
 /// - Requires manual polling loops for control messages.
-fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
+fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionIndex) -> Result<()> {
     // Tokio runtime for async MITM proxy handlers.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -826,11 +921,16 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
 
     let assets = resolve_assets_dir()?;
 
+    // Generate unique session ID.
+    let cli_session_id = session::generate_session_id();
+    eprintln!("[capsem] session: {cli_session_id}");
+
     // Create session directory and scratch disk for CLI mode.
     let vm_settings = policy_config::load_merged_vm_settings();
     let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
-    let session_dir = session_dir_for("cli");
-    let scratch_path = session_dir.as_ref().and_then(|d| {
+    let ram_bytes: u64 = 512 * 1024 * 1024;
+    let cli_session_dir = session_dir_for(&cli_session_id);
+    let scratch_path = cli_session_dir.as_ref().and_then(|d| {
         std::fs::create_dir_all(d).ok();
         let path = d.join("scratch.img");
         if let Err(e) = create_scratch_disk(&path, scratch_size) {
@@ -841,15 +941,22 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
         Some(path)
     });
 
-    // Write session.json
-    if let Some(ref dir) = session_dir {
-        write_session_json(dir, &SessionMetadata {
-            vm_id: "cli".to_string(),
-            created_at: chrono_now(),
-            status: "running".to_string(),
-            scratch_disk_size_gb: scratch_size,
-            ram_bytes: 512 * 1024 * 1024,
-        });
+    // Record session in main.db.
+    let record = SessionRecord {
+        id: cli_session_id.clone(),
+        mode: "cli".to_string(),
+        command: Some(command.to_string()),
+        status: "running".to_string(),
+        created_at: session::now_iso(),
+        stopped_at: None,
+        scratch_disk_size_gb: scratch_size,
+        ram_bytes,
+        total_requests: 0,
+        allowed_requests: 0,
+        denied_requests: 0,
+    };
+    if let Err(e) = session_index.create_session(&record) {
+        warn!("failed to record session: {e}");
     }
 
     let (vm, mut rx, _serial_input_fd, _sm) = boot_vm(
@@ -866,7 +973,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
     ).context("failed to set up vsock")?;
 
     // Create per-VM network state for MITM proxy.
-    let net_state = create_net_state("cli").ok();
+    let net_state = create_net_state(&cli_session_id).ok();
     let mitm_config: Option<Arc<MitmProxyConfig>> = net_state.as_ref().map(|ns| {
         Arc::new(MitmProxyConfig {
             ca: Arc::clone(&ns.ca),
@@ -986,15 +1093,14 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
         }
     }
 
-    // Send BootConfig with clock + env vars.
-    let boot_config = build_boot_config(cli_env)?;
-    write_control_msg(control_fd, &boot_config)?;
+    // Send boot config as individual messages.
+    send_boot_config(control_fd, cli_env)?;
 
-    // Wait for BootReady (5s timeout for backwards compat).
+    // Wait for BootReady.
     let boot_ready_deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if Instant::now() >= boot_ready_deadline {
-            eprintln!("[capsem] BootReady not received (old agent?), proceeding");
+            eprintln!("[capsem] BootReady not received within 5s, proceeding");
             break;
         }
         unsafe {
@@ -1121,9 +1227,11 @@ fn run_cli(command: &str, cli_env: &[(String, String)]) -> Result<()> {
     // Wait for terminal reader to drain remaining output.
     let _ = terminal_reader.join();
 
-    // Clean up session: delete scratch.img, update session.json.
-    if let Some(ref dir) = session_dir {
-        cleanup_session(dir, scratch_path.as_deref());
+    // Clean up session: delete scratch.img, snapshot counts, update status.
+    if let Some(ref dir) = cli_session_dir {
+        let web_db_arc = net_state.as_ref().map(|ns| Arc::clone(&ns.web_db));
+        let web_db_ref = web_db_arc.as_deref();
+        cleanup_session(dir, scratch_path.as_deref(), &cli_session_id, session_index, web_db_ref);
     }
 
     // Ensure the host shell prompt starts on a fresh line.
@@ -1196,15 +1304,33 @@ fn main() {
         .with_span_events(FmtSpan::CLOSE)
         .init();
 
+    // Open session index early (shared by CLI and GUI paths).
+    let session_index = match sessions_dir() {
+        Some(d) => {
+            let _ = std::fs::create_dir_all(&d);
+            match SessionIndex::open(&d.join("main.db")) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    eprintln!("capsem: failed to open session index: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => {
+            eprintln!("capsem: HOME not set, cannot create session index");
+            std::process::exit(1);
+        }
+    };
+
     if !cli_args.is_empty() {
-        cleanup_stale_sessions();
+        cleanup_stale_sessions(&session_index);
         let (cli_env, remaining_args) = parse_env_args(&cli_args);
         if remaining_args.is_empty() {
             eprintln!("capsem: no command specified");
             std::process::exit(1);
         }
         let command = remaining_args.join(" ");
-        if let Err(e) = run_cli(&command, &cli_env) {
+        if let Err(e) = run_cli(&command, &cli_env, &session_index) {
             eprintln!("capsem: {e:#}");
             std::process::exit(1);
         }
@@ -1214,13 +1340,13 @@ fn main() {
     info!("starting capsem");
 
     // Clean up stale sessions from previous runs.
-    cleanup_stale_sessions();
+    cleanup_stale_sessions(&session_index);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState::new())
+        .manage(AppState::new(session_index))
         .setup(|app| {
             info!("tauri setup hook running");
 
@@ -1247,10 +1373,15 @@ fn main() {
 
             info!("assets directory: {}", assets.display());
 
+            // Generate unique session ID for this boot.
+            let gui_session_id = session::generate_session_id();
+            info!(session_id = %gui_session_id, "starting new session");
+
             // Create session directory and scratch disk for GUI mode.
             let vm_settings = policy_config::load_merged_vm_settings();
             let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
-            let gui_session_dir = session_dir_for(DEFAULT_VM_ID);
+            let ram_bytes: u64 = 512 * 1024 * 1024;
+            let gui_session_dir = session_dir_for(&gui_session_id);
             let gui_scratch_path = gui_session_dir.as_ref().and_then(|d| {
                 std::fs::create_dir_all(d).ok();
                 let path = d.join("scratch.img");
@@ -1262,15 +1393,28 @@ fn main() {
                 Some(path)
             });
 
-            // Write session.json
-            if let Some(ref dir) = gui_session_dir {
-                write_session_json(dir, &SessionMetadata {
-                    vm_id: DEFAULT_VM_ID.to_string(),
-                    created_at: chrono_now(),
+            // Record session in main.db.
+            {
+                let app_state = app.state::<AppState>();
+                let idx = app_state.session_index.lock().unwrap();
+                let record = SessionRecord {
+                    id: gui_session_id.clone(),
+                    mode: "gui".to_string(),
+                    command: None,
                     status: "running".to_string(),
+                    created_at: session::now_iso(),
+                    stopped_at: None,
                     scratch_disk_size_gb: scratch_size,
-                    ram_bytes: 512 * 1024 * 1024,
-                });
+                    ram_bytes,
+                    total_requests: 0,
+                    allowed_requests: 0,
+                    denied_requests: 0,
+                };
+                if let Err(e) = idx.create_session(&record) {
+                    warn!("failed to record session: {e}");
+                }
+                // Set active session ID.
+                *app_state.active_session_id.lock().unwrap() = Some(gui_session_id.clone());
             }
 
             // Headless mode: hvc0 is primary console (routed to the frontend)
@@ -1293,8 +1437,8 @@ fn main() {
                         }
                     };
 
-                    // Create per-VM network state (policy + web.db).
-                    let net_state = match create_net_state(DEFAULT_VM_ID) {
+                    // Create per-VM network state (policy + info.db).
+                    let net_state = match create_net_state(&gui_session_id) {
                         Ok(ns) => Some(ns),
                         Err(e) => {
                             warn!("network state init failed: {e:#}, SNI proxy disabled");
@@ -1306,7 +1450,7 @@ fn main() {
                     {
                         let app_state = app.state::<AppState>();
                         let mut vms = app_state.vms.lock().unwrap();
-                        vms.insert(DEFAULT_VM_ID.to_string(), VmInstance {
+                        vms.insert(gui_session_id.clone(), VmInstance {
                             vm,
                             serial_input_fd: input_fd,
                             vsock_terminal_fd: None,
@@ -1358,6 +1502,10 @@ fn main() {
             commands::set_guest_env,
             commands::remove_guest_env,
             commands::get_vm_state,
+            commands::get_settings,
+            commands::update_setting,
+            commands::get_session_info,
+            commands::get_session_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

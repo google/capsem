@@ -135,6 +135,25 @@ export HOME=/root
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LANG=C
 
+# Create Python virtualenv so pip/uv installs work out of the box.
+# The rootfs is read-only, so packages must go to a writable location.
+# --system-site-packages: inherit pre-installed packages (numpy, requests, etc.)
+# from the read-only rootfs while allowing new installs into the writable venv.
+# uv venv is ~100ms; fall back to stdlib venv if uv is missing.
+chroot /newroot uv venv --system-site-packages /root/.venv 2>/dev/null || \
+    chroot /newroot python3 -m venv --system-site-packages /root/.venv 2>/dev/null || true
+
+# Copy AI CLIs from rootfs staging area to writable scratch disk.
+# They need to be mutable because they self-update at runtime.
+# Also serves as the npm global prefix so `npm install -g` works.
+if [ -d /newroot/opt/ai-clis ]; then
+    cp -a /newroot/opt/ai-clis /newroot/root/.npm-global
+    echo "[capsem-init] AI CLIs copied to scratch disk"
+else
+    mkdir -p /newroot/root/.npm-global
+fi
+chroot /newroot npm config set prefix /root/.npm-global 2>/dev/null || true
+
 echo "[capsem-init] about to chroot..."
 
 # Launch the PTY agent for vsock-based terminal I/O.

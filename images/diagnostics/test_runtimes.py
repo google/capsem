@@ -14,6 +14,55 @@ def test_runtime_version(runtime):
     assert result.returncode == 0, f"{runtime} --version failed: {result.stderr}"
 
 
+def test_pip_install_works():
+    """pip install must work without PEP 668 or permission errors.
+
+    The guest VM activates a venv at /root/.venv so packages install
+    to a writable location (rootfs is read-only).
+    """
+    # Install a small, pure-Python package
+    result = run("pip install six 2>&1", timeout=30)
+    assert result.returncode == 0, f"pip install failed: {result.stdout}"
+    assert "externally-managed" not in result.stdout.lower(), (
+        "PEP 668 EXTERNALLY-MANAGED error not suppressed"
+    )
+    # Verify the package is importable
+    result = run("python3 -c 'import six; print(six.__version__)'")
+    assert result.returncode == 0, f"import six failed: {result.stderr}"
+
+
+def test_uv_pip_install_works():
+    """uv pip install must work inside the activated venv."""
+    result = run("uv pip install wheel 2>&1", timeout=30)
+    assert result.returncode == 0, f"uv pip install failed: {result.stdout}"
+    result = run("python3 -c 'import wheel; print(wheel.__version__)'")
+    assert result.returncode == 0, f"import wheel failed: {result.stderr}"
+
+
+def test_npm_install_global_works():
+    """npm install -g must work (prefix redirected to writable /root/.npm-global)."""
+    result = run("npm install -g cowsay 2>&1", timeout=30)
+    assert result.returncode == 0, f"npm install -g failed: {result.stdout}"
+    result = run("cowsay hello 2>&1")
+    assert result.returncode == 0, f"cowsay not found after npm install -g: {result.stderr}"
+    assert "hello" in result.stdout
+
+
+def test_npm_install_local_works(output_dir):
+    """npm install (local) must work in a writable directory."""
+    project = output_dir / "npm_test"
+    cmds = " && ".join([
+        f"mkdir -p {project}",
+        f"cd {project}",
+        "npm init -y",
+        "npm install lodash",
+        "node -e 'const _ = require(\"lodash\"); console.log(_.capitalize(\"works\"))'",
+    ])
+    result = run(cmds, timeout=30)
+    assert result.returncode == 0, f"npm install failed: {result.stdout}\n{result.stderr}"
+    assert "Works" in result.stdout
+
+
 def test_python_execution(output_dir):
     """Python can import stdlib, write JSON, and read it back."""
     out_file = output_dir / "python_exec_test.json"

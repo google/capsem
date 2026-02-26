@@ -2,58 +2,53 @@
 # Copy to ~/.capsem/user.toml to customize.
 #
 # Corporate overrides: /etc/capsem/corp.toml (MDM-distributed)
-# If corp.toml specifies a field, it overrides user.toml entirely for that field.
-
-[network]
-# Domains allowed for HTTPS access from the guest VM.
-# Supports exact match ("github.com") and wildcard ("*.github.com").
-allow = [
-    "github.com",
-    "*.github.com",
-    "*.githubusercontent.com",
-    "registry.npmjs.org",
-    "*.npmjs.org",
-    "pypi.org",
-    "files.pythonhosted.org",
-    "crates.io",
-    "static.crates.io",
-    "deb.debian.org",
-    "security.debian.org",
-    "elie.net",
-    "*.elie.net",
-]
-
-# Domains explicitly blocked (checked before allow-list).
-block = [
-    "api.anthropic.com",
-    "api.openai.com",
-    "generativelanguage.googleapis.com",
-]
-
-# Default action when no rule matches: "allow" or "deny".
-default = "deny"
-
-# HTTP-level rules (optional): fine-grained method+path control per domain.
-# Rules are checked AFTER the domain allow/block list.
-# If no rules exist for an allowed domain, all requests are permitted.
+# If corp.toml specifies a setting, it overrides user.toml for that key.
 #
-# [[network.rules]]
-# domain = "api.github.com"
-# method = "GET"                  # "GET", "POST", etc. or omit for "*" (any)
-# path = "/repos/*"               # exact or prefix wildcard
-# action = "allow"
-#
-# [[network.rules]]
-# domain = "api.github.com"
-# method = "DELETE"
-# action = "deny"
+# Only overrides need to be listed here. Settings not listed use defaults.
+# Full setting registry: see `capsem --settings` or the Settings UI tab.
 
-# Body logging (optional): capture request/response bodies in web.db telemetry.
-# log_bodies = false
-# max_body_capture = 4096
+[settings]
+# -- AI Providers (Google enabled by default) --
+# "ai.anthropic.allow" = { value = false, modified = "2026-02-25T00:00:00Z" }
+# "ai.anthropic.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
+# "ai.anthropic.domains" = { value = "*.anthropic.com, *.claude.com", modified = "2026-02-25T00:00:00Z" }
+# -- Claude Code boot files (written to ~/.claude/ in guest at boot) --
+# "ai.anthropic.claude.settings_json" -- bypassPermissions + disable telemetry/updates
+# "ai.anthropic.claude.state_json" -- skip onboarding/trust dialogs
+# "ai.openai.allow" = { value = false, modified = "2026-02-25T00:00:00Z" }
+# "ai.openai.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
+# "ai.openai.domains" = { value = "*.openai.com", modified = "2026-02-25T00:00:00Z" }
+# "ai.google.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# "ai.google.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
+# "ai.google.domains" = { value = "*.googleapis.com", modified = "2026-02-25T00:00:00Z" }
+# -- Gemini CLI boot files (written to ~/.gemini/ in guest at boot) --
+# "ai.google.gemini.settings_json" -- yolo mode + disable telemetry/updates/sandbox
+# "ai.google.gemini.projects_json" = { value = "{\"projects\":{\"/root\":\"root\"}}", modified = "2026-02-25T00:00:00Z" }
+# "ai.google.gemini.trusted_folders_json" = { value = "{\"/root\":\"TRUST_FOLDER\"}", modified = "2026-02-25T00:00:00Z" }
+# "ai.google.gemini.installation_id" = { value = "your-uuid-here", modified = "2026-02-25T00:00:00Z" }
 
-# [guest]
-# Custom environment variables injected into the guest VM at boot.
-# These override the hardcoded defaults (TERM, HOME, LANG, PATH).
-# Example:
-# env = { EDITOR = "vim", MY_API_KEY = "..." }
+# -- Package Registries (enabled by default) --
+# "registry.github.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# "registry.npm.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# "registry.pypi.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# "registry.crates.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# "registry.debian.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# "registry.elie.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+
+# -- Network --
+# "network.default_action" = { value = "deny", modified = "2026-02-25T00:00:00Z" }
+# "network.log_bodies" = { value = false, modified = "2026-02-25T00:00:00Z" }
+# "network.max_body_capture" = { value = 4096, modified = "2026-02-25T00:00:00Z" }
+
+# -- Session --
+# "session.retention_days" = { value = 30, modified = "2026-02-25T00:00:00Z" }
+
+# -- Appearance --
+# "appearance.dark_mode" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# "appearance.font_size" = { value = 14, modified = "2026-02-25T00:00:00Z" }
+
+# -- VM --
+# "vm.scratch_disk_size_gb" = { value = 8, modified = "2026-02-25T00:00:00Z" }
+
+# -- Guest Environment (dynamic, prefix-based) --
+# "guest.env.EDITOR" = { value = "vim", modified = "2026-02-25T00:00:00Z" }

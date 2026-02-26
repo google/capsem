@@ -41,8 +41,38 @@ release: frontend
     codesign --sign - --entitlements {{entitlements}} --force --deep \
         "target/release/bundle/macos/Capsem.app"
 
+# Repack initrd only (no build, no boot) -- used as a dependency by install
+repack-initrd:
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    INITRD="$ROOT/{{assets_dir}}/initrd.img"
+    if [ ! -f "$INITRD" ]; then
+        echo "ERROR: $INITRD not found. Run 'just build' first."
+        exit 1
+    fi
+    echo "=== Cross-compile agent ==="
+    cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
+    echo ""
+    echo "=== Repack initrd ==="
+    WORKDIR=$(mktemp -d)
+    cd "$WORKDIR"
+    gzip -dc "$INITRD" | cpio -id 2>/dev/null
+    cp "$ROOT/images/capsem-init" init
+    chmod 755 init
+    rm -f capsem-pty-agent capsem-net-proxy
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
+    chmod 555 capsem-pty-agent
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-net-proxy" capsem-net-proxy
+    chmod 555 capsem-net-proxy
+    find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
+    rm -rf "$WORKDIR"
+    cd "$ROOT"
+    (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
+    echo "initrd repacked (with agent + net-proxy)"
+
 # Build and install the app to /Applications
-install: release
+install: repack-initrd release
     @echo "Stopping running Capsem..."
     -@pkill -x Capsem 2>/dev/null || true
     -@pkill -x capsem 2>/dev/null || true
@@ -124,4 +154,8 @@ test:
 # Check code and types
 check: ensure-tools
     cargo llvm-cov --workspace --no-cfg-coverage
-    cd frontend && pnpm run build
+    cd frontend && pnpm run check && pnpm run build
+
+# Frontend dev server with mock data (no Tauri/VM needed)
+ui:
+    cd frontend && pnpm run dev

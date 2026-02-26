@@ -20,7 +20,7 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 | Hypervisor bug in Virtualization.framework | Apple maintains the hypervisor; we rely on hardware-enforced Stage 2 page tables on Apple Silicon. No custom device emulation code. | Inherited from Apple |
 | Malformed virtio device interaction | We use only Apple's built-in virtio backends (console, block, entropy). No custom device emulation. Attack surface is Apple's code. | Inherited from Apple |
 | Exploiting serial console parsing | Serial console is raw byte passthrough (NSPipe). No parsing, no protocol, no structured data. Nothing to exploit on the host side. | Implemented |
-| vsock protocol bugs | Length-prefixed framing (4-byte BE + MessagePack) with 8KB max frame size. Disjoint type system: host only deserializes `GuestToHost`, guest only deserializes `HostToGuest`. Cross-type decoding fails at the serde tag level (different tag namespaces). All deserialization via `rmp-serde` with tagged enums. | Implemented |
+| vsock protocol bugs | Length-prefixed framing (4-byte BE + MessagePack) with 256KB max frame size. Disjoint type system: host only deserializes `GuestToHost`, guest only deserializes `HostToGuest`. Cross-type decoding fails at the serde tag level (different tag namespaces). All deserialization via `rmp-serde` with tagged enums. | Implemented |
 
 ### T2: Persistence Across Sessions
 
@@ -217,7 +217,7 @@ The vsock control channel (port 5000) uses a disjoint type system to prevent mes
 - **`HostToGuest`** enum: commands the host sends to the guest (BootConfig, Resize, Exec, Ping, plus reserved variants).
 - **`GuestToHost`** enum: messages the guest sends to the host (Ready, BootReady, ExecDone, Pong, plus reserved variants).
 - **Disjoint serde tags**: `HostToGuest` and `GuestToHost` use different tag values. Decoding a `GuestToHost` message as `HostToGuest` (or vice versa) fails at the deserialization level.
-- **Bounded frames**: 8KB max frame size, 4-byte big-endian length prefix. Oversized frames are rejected before reading the payload.
+- **Bounded frames**: 256KB max frame size, 4-byte big-endian length prefix. Oversized frames are rejected before reading the payload.
 - **Type-safe API**: `encode_host_msg()`/`decode_host_msg()` for host-side, `encode_guest_msg()`/`decode_guest_msg()` for guest-side. Impossible to accidentally use the wrong encoder/decoder.
 
 ### Zero-trust guest binaries
@@ -234,9 +234,29 @@ The guest agent (`capsem-pty-agent`, `capsem-net-proxy`, and any future guest bi
 - **Guest binaries are deliberately simple**: Minimal logic, no configuration, no policy files. This reduces the attack surface inside the VM and makes the binaries easier to audit.
 - **State machine lives in `capsem-core`**: The `HostState` enum, `StateMachine`, and message validation functions are in `capsem-core` (host-only crate), not in `capsem-proto` (shared crate). This enforces the architectural boundary at the dependency level -- the guest agent physically cannot import host state machine code.
 
+### Boot handshake hardening
+
+The boot handshake (vsock:5000) sends env vars and files to the guest. Multiple layers of validation prevent injection, crashes, and resource exhaustion:
+
+- **Env var sanitization**: Keys containing `=` or NUL bytes are rejected (prevents `std::env::set_var` panics that would crash PID 1 and kernel panic). Values containing NUL bytes are also rejected.
+- **Blocked env var list**: `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `IFS`, `BASH_ENV`, `ENV`, `CDPATH`, `GLOBIGNORE`, `SHELLOPTS`, `BASHOPTS`, `PROMPT_COMMAND`, `PS4`, all `LD_*` prefixed vars, and `BASH_FUNC_*` exports are blocked. Case-sensitive (Linux env vars are case-sensitive).
+- **Allocation caps**: Max 128 env vars, 64 files, 10MB total file data during boot handshake. Prevents unbounded memory allocation from a compromised or buggy config.
+- **File path traversal protection**: Paths containing `..` are rejected, preventing writes outside intended directories.
+- **Defense-in-depth**: The guest agent validates all env vars and file paths independently of the host. Even if a compromised host sends invalid data, the agent rejects it.
+
+### AI agent permission bypass (yolo mode)
+
+AI agents inside the VM (Claude Code, Gemini CLI) run with their built-in safety prompts disabled. Claude Code gets `{"defaultMode":"bypassPermissions"}` in `~/.claude/settings.json`. Gemini CLI gets `"approvalMode":"yolo"` in `~/.gemini/settings.json`. Both configs are injected as boot files via the settings registry.
+
+**Why this is safe**: Capsem's entire purpose is to be the security boundary. The VM provides hardware-enforced isolation -- no real network interface, read-only rootfs, air-gapped HTTPS proxy with domain allow-lists, and per-session ephemeral storage. Every action the agent takes is contained within the sandbox. Adding a second layer of "are you sure?" prompts inside the VM would serve no purpose: the agent has full root access anyway, and the prompts would only slow down legitimate work without preventing anything that the VM sandbox doesn't already prevent.
+
+**Why double-prompting is actively harmful**: AI agents that stop to ask permission for every file write and shell command are unusable for autonomous work -- the whole reason Capsem exists. Users would either disable the prompts manually (defeating the purpose) or avoid using the sandbox entirely. By defaulting to yolo mode, Capsem delivers on its value proposition: run AI agents at full speed with real security, not security theater.
+
+**Corporate override**: Organizations can override these defaults via `/etc/capsem/corp.toml` (MDM-distributed). Setting `ai.anthropic.claude.settings_json` or `ai.google.gemini.settings_json` to custom values replaces the yolo configs with stricter policies if needed.
+
 ### Clock synchronization
 
-The guest VM boots with epoch-0 clock. Without correct time, TLS cert validation, git, and other tools break. The host sends the current time in `BootConfig.epoch_secs` during the vsock boot handshake, and the guest agent sets the system clock via `clock_settime(CLOCK_REALTIME)` before forking bash.
+The guest VM boots with epoch-0 clock. Without correct time, TLS cert validation, git, and other tools break. The host sends the current time in `BootConfig { epoch_secs }` during the vsock boot handshake, and the guest agent sets the system clock via `clock_settime(CLOCK_REALTIME)` before forking bash.
 
 - Clock is set **before** any user-facing process starts.
 - Requires `CAP_SYS_TIME` (satisfied: agent runs as root, launched by capsem-init PID 1).
@@ -295,6 +315,23 @@ All host-controlled binaries deployed inside the VM follow strict hardening rule
 4. Add a `! test -w` check in `images/test-vm.sh` for the binary path
 5. Update the "Currently repacked binaries" list in `CLAUDE.md`
 6. Document the binary's purpose in this section
+
+### Policy override security
+
+Capsem uses a two-tier settings system where corporate policy always overrides user preferences:
+
+- **User settings** (`~/.capsem/user.toml`): editable by the user. Only stores overrides from registry defaults.
+- **Corporate settings** (`/etc/capsem/corp.toml`): read-only, MDM-distributed. Any setting specified here cannot be changed by the user.
+
+**Enforcement rules:**
+
+1. **Per-key override**: Corp settings override user settings per setting ID, not per category. If corp sets `ai.anthropic.allow = false`, the user cannot enable it, but other AI providers are unaffected unless also locked.
+2. **Write isolation**: `can_write_corp_settings()` always returns false. The application never writes to `/etc/capsem/corp.toml`. Only user.toml is writable.
+3. **Corp-locked indicator**: Each resolved setting carries a `corp_locked` flag. The UI shows locked settings as read-only with a lock icon.
+4. **No expansion**: A user cannot expand permissions beyond what corp allows. If corp blocks a domain toggle, the user cannot enable it. If corp sets `network.default_action = "deny"`, the user cannot change it to `"allow"`.
+5. **Dynamic settings**: Corp can also lock dynamic settings like `guest.env.*` to enforce specific environment variable values.
+
+**Audit trail**: Each setting entry includes a `modified` timestamp. The `source` field (`default`, `user`, `corp`) in resolved settings makes it clear which tier set each value.
 
 ### No systemd, no services
 

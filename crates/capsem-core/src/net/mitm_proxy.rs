@@ -39,7 +39,9 @@ const MAX_HELLO_SIZE: usize = 16384;
 /// Configuration for the MITM proxy.
 pub struct MitmProxyConfig {
     pub ca: Arc<CertAuthority>,
-    pub policy: Arc<NetworkPolicy>,
+    /// Live policy, swappable via RwLock so settings changes take effect
+    /// without restarting the VM. Each connection snapshots the Arc.
+    pub policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
     pub web_db: Arc<Mutex<WebDb>>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,
@@ -116,7 +118,13 @@ pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
             duration_ms,
             "MITM proxy: completed"
         ),
-        Decision::Denied => info!(domain, "MITM proxy: denied"),
+        Decision::Denied => info!(
+            domain,
+            method = ?telemetry.and_then(|t| t.method.as_deref()),
+            path = ?telemetry.and_then(|t| t.path.as_deref()),
+            duration_ms,
+            "MITM proxy: denied"
+        ),
         Decision::Error => warn!(domain, "MITM proxy: error"),
     }
 }
@@ -169,10 +177,13 @@ async fn handle_inner(
     }
     initial_buf.truncate(n);
 
+    // Snapshot the live policy for this connection (cheap Arc clone).
+    let policy: Arc<NetworkPolicy> = config.policy.read().unwrap().clone();
+
     // 2. TLS handshake -- MitmCertResolver captures the domain from SNI.
     let resolver = Arc::new(MitmCertResolver::with_policy(
         Arc::clone(&config.ca),
-        Arc::clone(&config.policy),
+        Arc::clone(&policy),
     ));
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut tls_config = ServerConfig::builder_with_provider(provider)
@@ -187,14 +198,7 @@ async fn handle_inner(
     let replay = ReplayReader::new(initial_buf, vsock_stream);
     let tls_stream = acceptor.accept(replay).await.map_err(|e| {
         let domain = resolver.domain().unwrap_or_default();
-        // If the domain was captured and is fully blocked, this is a policy denial
-        // (the resolver returned None to fail the handshake), not a TLS error.
-        if !domain.is_empty() && config.policy.is_fully_blocked(&domain).is_some() {
-            let rule = config.policy.is_fully_blocked(&domain).unwrap();
-            (domain, Decision::Denied, rule)
-        } else {
-            (domain, Decision::Error, format!("TLS handshake: {e}"))
-        }
+        (domain, Decision::Error, format!("TLS handshake: {e}"))
     })?;
 
     // 3. Get domain from the resolver (captured during handshake).
@@ -202,14 +206,25 @@ async fn handle_inner(
         (String::new(), Decision::Denied, "no SNI in ClientHello".into())
     })?;
 
+    // TODO(gateway): AI provider domains (api.anthropic.com, api.openai.com,
+    // generativelanguage.googleapis.com) should be routed to the AI audit gateway
+    // (gateway::server) on vsock:5004 instead of being proxied here. Currently
+    // they are blocked by default policy. When the gateway is integrated into the
+    // VM boot sequence, the guest will send AI traffic to port 8080 (redirected
+    // to vsock:5004 by iptables) and the MITM proxy on vsock:5002 will never see
+    // these domains. This TODO tracks the integration point where we need to:
+    //   1. Start gateway::server::start_on_vsock(5004) during VM boot
+    //   2. Verify iptables in capsem-init splits traffic correctly
+    //   3. Optionally add a fallback here: if domain is an AI provider and somehow
+    //      reaches the MITM proxy, redirect to the gateway instead of blocking
+
     // 4. Run hyper HTTP/1.1 server on the MITM TLS stream.
     let io = TokioIo::new(tls_stream);
 
-    let policy = Arc::clone(&config.policy);
     let upstream_tls = Arc::clone(&config.upstream_tls);
     let domain_for_svc = domain.clone();
-    let log_bodies = config.policy.log_bodies;
-    let max_body = config.policy.max_body_capture;
+    let log_bodies = policy.log_bodies;
+    let max_body = policy.max_body_capture;
 
     // Shared telemetry state.
     let telem = Arc::new(Mutex::new(ConnectionTelemetry {
@@ -750,7 +765,7 @@ mod tests {
         let web_db = Arc::new(Mutex::new(WebDb::open_in_memory().unwrap()));
         Arc::new(MitmProxyConfig {
             ca,
-            policy: Arc::new(policy),
+            policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
             web_db,
             upstream_tls: make_upstream_tls_config(),
         })

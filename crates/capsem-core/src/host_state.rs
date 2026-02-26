@@ -166,10 +166,20 @@ impl HostStateMachine {
 /// current lifecycle stage.
 pub fn validate_host_msg(msg: &HostToGuest, state: HostState) -> Result<()> {
     match (msg, state) {
+        // Boot handshake messages: BootConfig, SetEnv, FileWrite, BootConfigDone
         (HostToGuest::BootConfig { .. }, HostState::Handshaking) => Ok(()),
         (HostToGuest::BootConfig { .. }, _) => {
             bail!("BootConfig only valid in Handshaking, got {state:?}")
         }
+        (HostToGuest::SetEnv { .. }, HostState::Handshaking) => Ok(()),
+        (HostToGuest::SetEnv { .. }, _) => {
+            bail!("SetEnv only valid in Handshaking, got {state:?}")
+        }
+        (HostToGuest::BootConfigDone, HostState::Handshaking) => Ok(()),
+        (HostToGuest::BootConfigDone, _) => {
+            bail!("BootConfigDone only valid in Handshaking, got {state:?}")
+        }
+        (HostToGuest::FileWrite { .. }, HostState::Handshaking) => Ok(()),
         (HostToGuest::Shutdown, _) => Ok(()),
         (_, HostState::Running) => Ok(()),
         (msg, _) => bail!("{msg:?} only valid in Running, got {state:?}"),
@@ -378,19 +388,13 @@ mod tests {
 
     #[test]
     fn boot_config_in_handshaking() {
-        let msg = HostToGuest::BootConfig {
-            epoch_secs: 1000,
-            env_vars: vec![],
-        };
+        let msg = HostToGuest::BootConfig { epoch_secs: 1000 };
         assert!(validate_host_msg(&msg, HostState::Handshaking).is_ok());
     }
 
     #[test]
     fn boot_config_rejected_in_other_states() {
-        let msg = HostToGuest::BootConfig {
-            epoch_secs: 1000,
-            env_vars: vec![],
-        };
+        let msg = HostToGuest::BootConfig { epoch_secs: 1000 };
         for state in [
             HostState::Created,
             HostState::Booting,
@@ -446,6 +450,36 @@ mod tests {
     fn ping_only_in_running() {
         assert!(validate_host_msg(&HostToGuest::Ping, HostState::Running).is_ok());
         assert!(validate_host_msg(&HostToGuest::Ping, HostState::Created).is_err());
+    }
+
+    #[test]
+    fn set_env_in_handshaking() {
+        let msg = HostToGuest::SetEnv {
+            key: "TERM".into(),
+            value: "xterm-256color".into(),
+        };
+        assert!(validate_host_msg(&msg, HostState::Handshaking).is_ok());
+        assert!(validate_host_msg(&msg, HostState::Running).is_err());
+        assert!(validate_host_msg(&msg, HostState::Booting).is_err());
+    }
+
+    #[test]
+    fn boot_config_done_in_handshaking() {
+        assert!(validate_host_msg(&HostToGuest::BootConfigDone, HostState::Handshaking).is_ok());
+        assert!(validate_host_msg(&HostToGuest::BootConfigDone, HostState::Running).is_err());
+        assert!(validate_host_msg(&HostToGuest::BootConfigDone, HostState::Booting).is_err());
+    }
+
+    #[test]
+    fn file_write_in_handshaking_and_running() {
+        let msg = HostToGuest::FileWrite {
+            path: "/root/.gemini/settings.json".into(),
+            data: b"{}".to_vec(),
+            mode: 0o644,
+        };
+        assert!(validate_host_msg(&msg, HostState::Handshaking).is_ok());
+        assert!(validate_host_msg(&msg, HostState::Running).is_ok());
+        assert!(validate_host_msg(&msg, HostState::Booting).is_err());
     }
 
     // -------------------------------------------------------------------

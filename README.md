@@ -99,18 +99,29 @@ just install    # build, sign, install to /Applications, launch
 
 ### Testing
 
-Testing has two layers: host-side Rust tests and in-VM diagnostics.
+Testing has three layers: host-side Rust tests, frontend checks, and in-VM diagnostics.
 
 **Host-side (out of VM)** -- standard Rust unit and integration tests that run on macOS without booting a VM:
 
 ```sh
 cargo test --workspace
+just check                            # cargo llvm-cov + frontend build + svelte-check
 ```
+
+**Frontend** -- the UI can be developed and tested in a browser without booting a VM. Mock data (fake VM state, network events, settings) is served automatically when Tauri is not present:
+
+```sh
+just ui                               # starts Astro dev server on http://localhost:5173
+cd frontend && pnpm run check         # astro check + svelte-check (type errors)
+cd frontend && pnpm run build         # production build (catches bundling issues)
+```
+
+The mock mode is transparent -- `src/lib/api.ts` detects the absence of `window.__TAURI_INTERNALS__` and returns fake data from `src/lib/mock.ts`. All views (Terminal, Sessions, Network, Settings) are functional with mock data.
 
 **In-VM diagnostics** -- a pytest suite that runs inside the guest VM to verify the sandbox actually works end-to-end. It checks sandbox security (read-only rootfs, no kernel modules, no networking), unix utilities, dev runtimes (Python, Node.js, git), AI CLI availability, and file I/O workflows.
 
 ```sh
-just smoke-test                       # boot VM, run all diagnostics, exit
+just smoke-test                       # build, sign, boot VM, run capsem-doctor, exit
 just run                              # or boot interactively, then:
 capsem-doctor                         # run all diagnostics
 capsem-doctor -k sandbox              # run only sandbox tests
@@ -118,6 +129,13 @@ capsem-doctor -x                      # stop on first failure
 ```
 
 The diagnostic suite lives in `images/diagnostics/` and is baked into the rootfs via `Dockerfile.rootfs`. `capsem-doctor` (aliased as `capsem-test`) is the entry point. It returns a non-zero exit code on failure, so `just smoke-test` fails the build when tests fail.
+
+**Full validation** -- to test everything end-to-end (Rust tests + frontend build + VM boot + in-VM diagnostics):
+
+```sh
+just check                            # host-side: cargo llvm-cov + frontend build
+just smoke-test                       # VM-side: boot + capsem-doctor
+```
 
 ### Entitlements
 
@@ -135,6 +153,42 @@ Capsem assumes the AI agent inside the VM is adversarial. The sandbox is hardene
 - **No systemd, no services** -- PID 1 is our init script. No cron, no sshd, no background processes.
 
 Full threat model and security analysis: **[docs/security.md](docs/security.md)**
+
+## Defaults
+
+AI agents run in **yolo mode** by default -- all permission prompts are bypassed because Capsem's VM sandbox is the security boundary. Telemetry, auto-updates, and first-run prompts are also disabled since they serve no purpose in an air-gapped VM.
+
+### Claude Code
+
+Boot files injected to `~/.claude/settings.json` and `~/.claude.json`:
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `permissions.defaultMode` | `bypassPermissions` | Capsem is the sandbox -- Claude's own permission prompts are redundant |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | Master switch: disables telemetry, error reporting, auto-updates, and `/bug` command. The VM is air-gapped anyway. |
+| `hasCompletedOnboarding` | `true` | Skips the first-run onboarding wizard |
+| `hasTrustDialogAccepted` | `true` | No "trust this folder?" prompt |
+| `hasTrustDialogHooksAccepted` | `true` | No hooks trust dialog |
+| `shiftEnterKeyBindingInstalled` | `true` | No keybinding installation prompt |
+
+### Gemini CLI
+
+Boot files injected to `~/.gemini/settings.json`, `projects.json`, `trustedFolders.json`, and `installation_id`:
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `approvalMode` | `yolo` | Auto-approve all tool calls -- Capsem is the sandbox |
+| `enableAutoUpdate` | `false` | VM has a fixed version, update checks would fail anyway |
+| `telemetry.enabled` | `false` | No telemetry in an air-gapped VM |
+| `usageStatisticsEnabled` | `false` | No usage stats collection |
+| `folderTrust.enabled` | `false` | No folder trust prompts -- `/root` is pre-trusted |
+| `tools.sandbox` | `false` | Disable Gemini's own sandbox (Capsem IS the sandbox) |
+| `hideTips`, `showShortcutsHint` | suppressed | Reduce terminal noise |
+| `homeDirectoryWarningDismissed` | `true` | No "running in home dir" warning |
+
+### Overriding defaults
+
+All defaults can be overridden per-setting in `~/.capsem/user.toml`. Corporate deployments can lock settings via `/etc/capsem/corp.toml` (MDM-distributed). See [docs/security.md](docs/security.md) for details.
 
 ## Documentation
 

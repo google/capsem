@@ -1,5 +1,7 @@
+pub mod gateway;
 pub mod host_state;
 pub mod net;
+pub mod session;
 pub mod vm;
 
 use std::path::Path;

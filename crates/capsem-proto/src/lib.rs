@@ -13,9 +13,52 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-/// Maximum size of a single control message frame (8KB).
-/// Bumped from 4KB to accommodate env var payloads in BootConfig.
-pub const MAX_FRAME_SIZE: u32 = 8192;
+/// Maximum size of a single control message frame (256KB).
+/// Generous buffer for large payloads like CA bundles and file writes.
+pub const MAX_FRAME_SIZE: u32 = 262_144;
+
+/// Maximum number of env vars allowed during boot handshake.
+pub const MAX_BOOT_ENV_VARS: usize = 128;
+
+/// Maximum number of files allowed during boot handshake.
+pub const MAX_BOOT_FILES: usize = 64;
+
+/// Maximum cumulative file bytes allowed during boot handshake (10MB).
+pub const MAX_BOOT_FILE_BYTES: usize = 10_485_760;
+
+/// Maximum length of an env var key.
+pub const MAX_ENV_KEY_LEN: usize = 256;
+
+/// Maximum length of an env var value (128KB).
+pub const MAX_ENV_VALUE_LEN: usize = 131_072;
+
+/// Env var names that are blocked during boot injection.
+///
+/// These are dangerous because they can hijack the dynamic linker, alter
+/// shell behavior, or enable code injection before any user process runs.
+/// Case-sensitive (Linux env vars are case-sensitive).
+pub const BLOCKED_ENV_VARS: &[&str] = &[
+    // Dynamic linker injection
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "LD_BIND_NOT",
+    "LD_DEBUG",
+    "LD_DYNAMIC_WEAK",
+    "LD_PROFILE",
+    "LD_SHOW_AUXV",
+    "LD_USE_LOAD_BIAS",
+    // Shell behavior hijacking
+    "IFS",
+    "BASH_ENV",
+    "ENV",
+    "CDPATH",
+    "GLOBIGNORE",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PROMPT_COMMAND",
+    "PS4",
+];
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -26,11 +69,12 @@ pub const MAX_FRAME_SIZE: u32 = 8192;
 #[serde(tag = "t", content = "d", rename_all = "lowercase")]
 pub enum HostToGuest {
     // -- Boot --
-    /// Clock sync + environment injection at boot.
-    BootConfig {
-        epoch_secs: u64,
-        env_vars: Vec<(String, String)>,
-    },
+    /// Clock sync at boot (first message after Ready).
+    BootConfig { epoch_secs: u64 },
+    /// Set a single environment variable in the guest.
+    SetEnv { key: String, value: String },
+    /// Signals that all boot-time env vars and files have been sent.
+    BootConfigDone,
     // -- Terminal --
     /// Request terminal resize.
     Resize { cols: u16, rows: u16 },
@@ -124,20 +168,83 @@ pub fn max_frame_size() -> u32 {
     MAX_FRAME_SIZE
 }
 
-/// Validate that a BootConfig payload fits within the frame size limit.
-/// Returns `Ok(frame)` or an error describing the overflow.
-pub fn encode_boot_config_checked(msg: &HostToGuest) -> Result<Vec<u8>> {
-    let frame = encode_host_msg(msg)?;
-    let payload_len = frame.len() - 4;
-    if payload_len > (MAX_FRAME_SIZE - 4) as usize {
+// ---------------------------------------------------------------------------
+// Boot handshake validation
+// ---------------------------------------------------------------------------
+
+/// Check if an env var name is blocked (exact match or `LD_` prefix).
+pub fn is_blocked_env_var(key: &str) -> bool {
+    if BLOCKED_ENV_VARS.contains(&key) {
+        return true;
+    }
+    // Block any LD_ prefixed var not in the explicit list (catch-all for
+    // future linker variables like LD_TRACE_LOADED_OBJECTS).
+    if key.starts_with("LD_") {
+        return true;
+    }
+    // Block bash function exports (BASH_FUNC_name%%)
+    if key.starts_with("BASH_FUNC_") {
+        return true;
+    }
+    false
+}
+
+/// Validate an env var key for boot injection.
+///
+/// Rejects: empty keys, keys containing `=` or NUL bytes, keys exceeding
+/// `MAX_ENV_KEY_LEN`, and keys matching the blocklist.
+pub fn validate_env_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        bail!("env var key is empty");
+    }
+    if key.contains('=') {
+        bail!("env var key contains '=': {key:?}");
+    }
+    if key.contains('\0') {
+        bail!("env var key contains NUL byte: {key:?}");
+    }
+    if key.len() > MAX_ENV_KEY_LEN {
         bail!(
-            "environment block too large ({} bytes, max {}): \
-             reduce the number or size of --env values or [guest].env entries",
-            payload_len,
-            MAX_FRAME_SIZE - 4
+            "env var key exceeds max length ({} > {MAX_ENV_KEY_LEN}): {key:?}",
+            key.len()
         );
     }
-    Ok(frame)
+    if is_blocked_env_var(key) {
+        bail!("env var key is blocked: {key:?}");
+    }
+    Ok(())
+}
+
+/// Validate an env var value for boot injection.
+///
+/// Rejects: values containing NUL bytes, values exceeding `MAX_ENV_VALUE_LEN`.
+pub fn validate_env_value(value: &str) -> Result<()> {
+    if value.contains('\0') {
+        bail!("env var value contains NUL byte");
+    }
+    if value.len() > MAX_ENV_VALUE_LEN {
+        bail!(
+            "env var value exceeds max length ({} > {MAX_ENV_VALUE_LEN})",
+            value.len()
+        );
+    }
+    Ok(())
+}
+
+/// Validate a file path for boot file injection.
+///
+/// Rejects: empty paths, paths containing NUL bytes, paths containing `..`.
+pub fn validate_file_path(path: &str) -> Result<()> {
+    if path.is_empty() {
+        bail!("file path is empty");
+    }
+    if path.contains('\0') {
+        bail!("file path contains NUL byte: {path:?}");
+    }
+    if path.contains("..") {
+        bail!("file path contains '..': {path:?}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -152,26 +259,57 @@ mod tests {
     fn roundtrip_boot_config() {
         let msg = HostToGuest::BootConfig {
             epoch_secs: 1708800000,
-            env_vars: vec![
-                ("TERM".into(), "xterm-256color".into()),
-                ("HOME".into(), "/root".into()),
-            ],
         };
         let frame = encode_host_msg(&msg).unwrap();
         let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
         assert!(len < MAX_FRAME_SIZE);
         let decoded = decode_host_msg(&frame[4..]).unwrap();
         match decoded {
-            HostToGuest::BootConfig {
-                epoch_secs,
-                env_vars,
-            } => {
+            HostToGuest::BootConfig { epoch_secs } => {
                 assert_eq!(epoch_secs, 1708800000);
-                assert_eq!(env_vars.len(), 2);
-                assert_eq!(env_vars[0], ("TERM".into(), "xterm-256color".into()));
             }
             other => panic!("expected BootConfig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn roundtrip_set_env() {
+        let msg = HostToGuest::SetEnv {
+            key: "ANTHROPIC_API_KEY".into(),
+            value: "sk-test-123".into(),
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::SetEnv { key, value } => {
+                assert_eq!(key, "ANTHROPIC_API_KEY");
+                assert_eq!(value, "sk-test-123");
+            }
+            other => panic!("expected SetEnv, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_boot_config_done() {
+        let msg = HostToGuest::BootConfigDone;
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, HostToGuest::BootConfigDone));
+    }
+
+    #[test]
+    fn set_env_fits_in_frame() {
+        // A 128KB env var value should fit in a single 256KB frame.
+        let msg = HostToGuest::SetEnv {
+            key: "LARGE_VAR".into(),
+            value: "x".repeat(MAX_ENV_VALUE_LEN),
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let payload_len = frame.len() - 4;
+        assert!(
+            payload_len <= MAX_FRAME_SIZE as usize,
+            "SetEnv payload is {payload_len} bytes, exceeds max {MAX_FRAME_SIZE}"
+        );
     }
 
     #[test]
@@ -462,10 +600,7 @@ mod tests {
 
     #[test]
     fn boot_config_fails_as_guest_msg() {
-        let msg = HostToGuest::BootConfig {
-            epoch_secs: 1000,
-            env_vars: vec![],
-        };
+        let msg = HostToGuest::BootConfig { epoch_secs: 1000 };
         let frame = encode_host_msg(&msg).unwrap();
         let result = decode_guest_msg(&frame[4..]);
         assert!(result.is_err());
@@ -511,35 +646,17 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // BootConfig size validation
+    // SetEnv / BootConfigDone size validation
     // -------------------------------------------------------------------
 
     #[test]
-    fn boot_config_with_many_env_vars_fits() {
-        let env_vars: Vec<(String, String)> = (0..50)
-            .map(|i| (format!("VAR_{i}"), format!("value_{i}")))
-            .collect();
-        let msg = HostToGuest::BootConfig {
-            epoch_secs: 1708800000,
-            env_vars,
-        };
-        let frame = encode_boot_config_checked(&msg).unwrap();
-        assert!(frame.len() - 4 <= (MAX_FRAME_SIZE - 4) as usize);
-    }
-
-    #[test]
-    fn boot_config_oversized_env_rejected() {
-        let env_vars: Vec<(String, String)> = (0..200)
-            .map(|i| (format!("VERY_LONG_VAR_NAME_{i}"), "x".repeat(100)))
-            .collect();
-        let msg = HostToGuest::BootConfig {
-            epoch_secs: 1708800000,
-            env_vars,
-        };
-        let result = encode_boot_config_checked(&msg);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("environment block too large"));
+    fn boot_config_done_is_compact() {
+        let frame = encode_host_msg(&HostToGuest::BootConfigDone).unwrap();
+        let payload_len = frame.len() - 4;
+        assert!(
+            payload_len < 50,
+            "BootConfigDone payload is {payload_len} bytes, expected < 50"
+        );
     }
 
     // -------------------------------------------------------------------
@@ -551,8 +668,12 @@ mod tests {
         let messages = vec![
             HostToGuest::BootConfig {
                 epoch_secs: u64::MAX,
-                env_vars: vec![("K".into(), "V".into())],
             },
+            HostToGuest::SetEnv {
+                key: "K".into(),
+                value: "V".into(),
+            },
+            HostToGuest::BootConfigDone,
             HostToGuest::Resize {
                 cols: u16::MAX,
                 rows: u16::MAX,
@@ -630,8 +751,8 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[test]
-    fn max_frame_size_is_8kb() {
-        assert_eq!(max_frame_size(), 8192);
+    fn max_frame_size_is_256kb() {
+        assert_eq!(max_frame_size(), 262_144);
     }
 
     // -------------------------------------------------------------------
@@ -683,23 +804,209 @@ mod tests {
     }
 
     #[test]
-    fn boot_config_empty_env() {
-        let msg = HostToGuest::BootConfig {
-            epoch_secs: 0,
-            env_vars: vec![],
-        };
+    fn boot_config_zero_epoch() {
+        let msg = HostToGuest::BootConfig { epoch_secs: 0 };
         let frame = encode_host_msg(&msg).unwrap();
         let decoded = decode_host_msg(&frame[4..]).unwrap();
         match decoded {
-            HostToGuest::BootConfig {
-                epoch_secs,
-                env_vars,
-            } => {
+            HostToGuest::BootConfig { epoch_secs } => {
                 assert_eq!(epoch_secs, 0);
-                assert!(env_vars.is_empty());
             }
             other => panic!("expected BootConfig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn large_file_write_fits_in_frame() {
+        // A 200KB file should fit in the 256KB frame.
+        let msg = HostToGuest::FileWrite {
+            path: "/workspace/ca-bundle.crt".into(),
+            data: vec![0x41; 200_000],
+            mode: 0o644,
+        };
+        let frame = encode_host_msg(&msg).unwrap();
+        let payload_len = frame.len() - 4;
+        assert!(
+            payload_len <= MAX_FRAME_SIZE as usize,
+            "FileWrite payload is {payload_len} bytes, exceeds max {MAX_FRAME_SIZE}"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Boot handshake validation: env key
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn validate_env_key_accepts_normal_keys() {
+        assert!(validate_env_key("HOME").is_ok());
+        assert!(validate_env_key("PATH").is_ok());
+        assert!(validate_env_key("ANTHROPIC_API_KEY").is_ok());
+        assert!(validate_env_key("MY_VAR_123").is_ok());
+        assert!(validate_env_key("a").is_ok());
+    }
+
+    #[test]
+    fn validate_env_key_rejects_empty() {
+        assert!(validate_env_key("").is_err());
+    }
+
+    #[test]
+    fn validate_env_key_rejects_equals() {
+        assert!(validate_env_key("FOO=BAR").is_err());
+        assert!(validate_env_key("=").is_err());
+        assert!(validate_env_key("KEY=").is_err());
+    }
+
+    #[test]
+    fn validate_env_key_rejects_nul() {
+        assert!(validate_env_key("FOO\0BAR").is_err());
+        assert!(validate_env_key("\0").is_err());
+    }
+
+    #[test]
+    fn validate_env_key_rejects_oversized() {
+        let long_key = "X".repeat(MAX_ENV_KEY_LEN + 1);
+        assert!(validate_env_key(&long_key).is_err());
+        // Exactly at limit should pass.
+        let ok_key = "X".repeat(MAX_ENV_KEY_LEN);
+        assert!(validate_env_key(&ok_key).is_ok());
+    }
+
+    #[test]
+    fn validate_env_key_rejects_every_blocked_var() {
+        for &var in BLOCKED_ENV_VARS {
+            assert!(
+                validate_env_key(var).is_err(),
+                "should reject blocked var: {var}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_env_key_rejects_ld_prefix_vars() {
+        // LD_ prefix catch-all blocks unknown linker vars.
+        assert!(validate_env_key("LD_TRACE_LOADED_OBJECTS").is_err());
+        assert!(validate_env_key("LD_WHATEVER").is_err());
+    }
+
+    #[test]
+    fn validate_env_key_rejects_bash_func_export() {
+        assert!(validate_env_key("BASH_FUNC_myfunc%%").is_err());
+        assert!(validate_env_key("BASH_FUNC_evil").is_err());
+    }
+
+    #[test]
+    fn validate_env_key_case_sensitive() {
+        // Linux env vars are case-sensitive. Lowercase variants are harmless.
+        assert!(validate_env_key("ld_preload").is_ok());
+        assert!(validate_env_key("Ld_Preload").is_ok());
+        assert!(validate_env_key("ifs").is_ok());
+        assert!(validate_env_key("bash_env").is_ok());
+    }
+
+    // -------------------------------------------------------------------
+    // Boot handshake validation: env value
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn validate_env_value_accepts_normal() {
+        assert!(validate_env_value("hello world").is_ok());
+        assert!(validate_env_value("").is_ok()); // empty value is valid
+        assert!(validate_env_value("/usr/bin:/usr/local/bin").is_ok());
+        assert!(validate_env_value("sk-test-abc123").is_ok());
+    }
+
+    #[test]
+    fn validate_env_value_rejects_nul() {
+        assert!(validate_env_value("foo\0bar").is_err());
+        assert!(validate_env_value("\0").is_err());
+    }
+
+    #[test]
+    fn validate_env_value_rejects_oversized() {
+        let long_val = "X".repeat(MAX_ENV_VALUE_LEN + 1);
+        assert!(validate_env_value(&long_val).is_err());
+        // Exactly at limit should pass.
+        let ok_val = "X".repeat(MAX_ENV_VALUE_LEN);
+        assert!(validate_env_value(&ok_val).is_ok());
+    }
+
+    // -------------------------------------------------------------------
+    // Boot handshake validation: file path
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn validate_file_path_accepts_normal() {
+        assert!(validate_file_path("/workspace/test.txt").is_ok());
+        assert!(validate_file_path("/etc/ssl/certs/ca-certificates.crt").is_ok());
+        assert!(validate_file_path("/root/.bashrc").is_ok());
+    }
+
+    #[test]
+    fn validate_file_path_rejects_empty() {
+        assert!(validate_file_path("").is_err());
+    }
+
+    #[test]
+    fn validate_file_path_rejects_nul() {
+        assert!(validate_file_path("/workspace/\0evil").is_err());
+    }
+
+    #[test]
+    fn validate_file_path_rejects_traversal() {
+        assert!(validate_file_path("/workspace/../etc/passwd").is_err());
+        assert!(validate_file_path("../escape").is_err());
+        assert!(validate_file_path("/workspace/..").is_err());
+        assert!(validate_file_path("..").is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // is_blocked_env_var
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn is_blocked_catches_all_listed_vars() {
+        assert!(is_blocked_env_var("LD_PRELOAD"));
+        assert!(is_blocked_env_var("LD_LIBRARY_PATH"));
+        assert!(is_blocked_env_var("LD_AUDIT"));
+        assert!(is_blocked_env_var("IFS"));
+        assert!(is_blocked_env_var("BASH_ENV"));
+        assert!(is_blocked_env_var("ENV"));
+        assert!(is_blocked_env_var("CDPATH"));
+        assert!(is_blocked_env_var("GLOBIGNORE"));
+        assert!(is_blocked_env_var("SHELLOPTS"));
+        assert!(is_blocked_env_var("BASHOPTS"));
+        assert!(is_blocked_env_var("PROMPT_COMMAND"));
+        assert!(is_blocked_env_var("PS4"));
+    }
+
+    #[test]
+    fn is_blocked_allows_safe_vars() {
+        assert!(!is_blocked_env_var("HOME"));
+        assert!(!is_blocked_env_var("PATH"));
+        assert!(!is_blocked_env_var("TERM"));
+        assert!(!is_blocked_env_var("EDITOR"));
+        assert!(!is_blocked_env_var("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn is_blocked_case_sensitive() {
+        assert!(!is_blocked_env_var("ld_preload"));
+        assert!(!is_blocked_env_var("Ld_Preload"));
+        assert!(!is_blocked_env_var("ifs"));
+    }
+
+    // -------------------------------------------------------------------
+    // Constants
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn boot_cap_constants() {
+        assert_eq!(MAX_BOOT_ENV_VARS, 128);
+        assert_eq!(MAX_BOOT_FILES, 64);
+        assert_eq!(MAX_BOOT_FILE_BYTES, 10_485_760);
+        assert_eq!(MAX_ENV_KEY_LEN, 256);
+        assert_eq!(MAX_ENV_VALUE_LEN, 131_072);
     }
 
     #[test]

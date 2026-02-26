@@ -1,0 +1,17 @@
+# Python packages pre-installed in the capsem VM.
+# Inherited by the boot-time venv via --system-site-packages.
+# Agents can install additional packages with pip/uv at runtime.
+pytest
+numpy
+requests
+httpx
+pandas
+scipy
+scikit-learn
+matplotlib
+pillow
+pyyaml
+beautifulsoup4
+lxml
+tqdm
+rich

@@ -50,7 +50,7 @@ fn make_proxy_config(
             allow_write: true,
         });
     }
-    let policy = Arc::new(NetworkPolicy::new(rules, default_allow, default_allow));
+    let policy = Arc::new(std::sync::RwLock::new(Arc::new(NetworkPolicy::new(rules, default_allow, default_allow))));
     let web_db = Arc::new(Mutex::new(WebDb::open_in_memory().unwrap()));
     let config = Arc::new(MitmProxyConfig {
         ca,
@@ -152,22 +152,40 @@ async fn mitm_proxy_denies_forbidden_domain() {
     let (config, web_db) = make_proxy_config(&[], &["example.com"], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
-    // Connect and attempt TLS to a denied domain.
+    // TLS now completes even for denied domains (we mint a cert to capture HTTP details).
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
     let domain = ServerName::try_from("example.com").unwrap();
+    let tls = connector
+        .connect(domain, tcp)
+        .await
+        .expect("TLS handshake should succeed (denial happens at HTTP level)");
 
-    // The proxy rejects the domain BEFORE completing TLS, so the handshake fails.
-    let result = connector.connect(domain, tcp).await;
-    assert!(result.is_err(), "TLS to denied domain should fail");
+    // Send HTTP request -- expect 403.
+    let io = TokioIo::new(tls);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+    tokio::spawn(conn);
 
+    let req = hyper::Request::builder()
+        .method("GET")
+        .uri("/test")
+        .header("host", "example.com")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 403, "denied domain should return 403");
+
+    drop(sender);
     proxy_task.await.unwrap();
 
-    // Verify telemetry records the denial.
+    // Verify telemetry records the denial with method and path.
     let events = web_db.lock().unwrap().recent(10).unwrap();
     assert!(!events.is_empty(), "should have recorded denial event");
     assert_eq!(events[0].domain, "example.com");
     assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].method.as_deref(), Some("GET"));
+    assert_eq!(events[0].path.as_deref(), Some("/test"));
+    assert_eq!(events[0].status_code, Some(403));
 }
 
 #[tokio::test]
@@ -179,16 +197,34 @@ async fn mitm_proxy_denies_default_deny_unlisted_domain() {
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
     let domain = ServerName::try_from("unlisted-domain.test").unwrap();
+    let tls = connector
+        .connect(domain, tcp)
+        .await
+        .expect("TLS handshake should succeed (denial happens at HTTP level)");
 
-    let result = connector.connect(domain, tcp).await;
-    assert!(result.is_err(), "TLS to unlisted domain under default-deny should fail");
+    // Send HTTP request -- expect 403.
+    let io = TokioIo::new(tls);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+    tokio::spawn(conn);
 
+    let req = hyper::Request::builder()
+        .method("POST")
+        .uri("/api/data")
+        .header("host", "unlisted-domain.test")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 403);
+
+    drop(sender);
     proxy_task.await.unwrap();
 
     let events = web_db.lock().unwrap().recent(10).unwrap();
     assert!(!events.is_empty());
     assert_eq!(events[0].domain, "unlisted-domain.test");
     assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].method.as_deref(), Some("POST"));
+    assert_eq!(events[0].path.as_deref(), Some("/api/data"));
 }
 
 #[tokio::test]
