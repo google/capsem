@@ -85,7 +85,7 @@ async fn proxy_handler(
                 kind.as_str()
             );
             warn!(provider = kind.as_str(), "no API key configured");
-            record_error(&config.audit_db, kind.as_str(), &method, &path, &msg);
+            record_error(Arc::clone(&config.audit_db), kind.as_str(), &method, &path, &msg);
             return (StatusCode::SERVICE_UNAVAILABLE, msg).into_response();
         }
     };
@@ -99,7 +99,7 @@ async fn proxy_handler(
         Ok(b) => b,
         Err(e) => {
             let msg = format!("Capsem gateway: failed to read request body: {e}\n");
-            record_error(&config.audit_db, kind.as_str(), &method, &path, &msg);
+            record_error(Arc::clone(&config.audit_db), kind.as_str(), &method, &path, &msg);
             return (StatusCode::BAD_REQUEST, msg).into_response();
         }
     };
@@ -160,7 +160,7 @@ async fn proxy_handler(
             let msg = format!("Capsem gateway: upstream request failed: {e}\n");
             warn!(provider = kind.as_str(), error = %e, "upstream request failed");
             record_gateway_event(
-                &config.audit_db,
+                Arc::clone(&config.audit_db),
                 kind.as_str(),
                 model.as_deref(),
                 &method,
@@ -249,7 +249,7 @@ async fn proxy_handler(
             let response_bytes = bytes_handle.load(Ordering::Relaxed);
             let response_preview = drain_accumulated(&accumulated_handle);
             record_gateway_event(
-                &audit_db,
+                Arc::clone(&audit_db),
                 &provider_str,
                 model_clone.as_deref(),
                 &method_clone,
@@ -282,7 +282,7 @@ async fn proxy_handler(
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let msg = format!("Capsem gateway: failed to read upstream response: {e}\n");
                 record_gateway_event(
-                    &config.audit_db,
+                    Arc::clone(&config.audit_db),
                     kind.as_str(),
                     model.as_deref(),
                     &method,
@@ -311,7 +311,7 @@ async fn proxy_handler(
         };
 
         record_gateway_event(
-            &config.audit_db,
+            Arc::clone(&config.audit_db),
             kind.as_str(),
             model.as_deref(),
             &method,
@@ -345,6 +345,11 @@ async fn proxy_handler(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct ExtractModelPayload {
+    model: Option<String>,
+}
+
 /// Extract the "model" field from a JSON request body.
 /// Works for Anthropic (top-level "model") and OpenAI (top-level "model").
 /// For Gemini, the model is in the URL path so this may return None.
@@ -352,36 +357,44 @@ fn extract_model(body: &[u8]) -> Option<String> {
     if body.is_empty() {
         return None;
     }
-    // Quick partial parse -- just extract "model" field.
-    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
-    v.get("model")?.as_str().map(|s| s.to_string())
+    // Fast structural parse: Serde ignores unmapped fields (like huge image payloads)
+    // without allocating memory for them, unlike `serde_json::Value`.
+    serde_json::from_slice::<ExtractModelPayload>(body)
+        .ok()
+        .and_then(|p| p.model)
 }
 
 /// Record an error event to the audit DB.
-fn record_error(db: &Arc<Mutex<GatewayDb>>, provider: &str, method: &str, path: &str, error: &str) {
-    if let Ok(db) = db.lock() {
-        let _ = db.record(&GatewayEvent {
-            timestamp: SystemTime::now(),
-            provider: provider.to_string(),
-            model: None,
-            method: method.to_string(),
-            path: path.to_string(),
-            status_code: 0,
-            duration_ms: 0,
-            request_bytes: 0,
-            response_bytes: 0,
-            streamed: false,
-            request_body: None,
-            response_body: None,
-            error: Some(error.to_string()),
-        });
-    }
+fn record_error(db: Arc<Mutex<GatewayDb>>, provider: &str, method: &str, path: &str, error: &str) {
+    let event = GatewayEvent {
+        timestamp: SystemTime::now(),
+        provider: provider.to_string(),
+        model: None,
+        method: method.to_string(),
+        path: path.to_string(),
+        status_code: 0,
+        duration_ms: 0,
+        request_bytes: 0,
+        response_bytes: 0,
+        streamed: false,
+        request_body: None,
+        response_body: None,
+        error: Some(error.to_string()),
+    };
+    
+    // SQLite writes are synchronous. Offload to a blocking thread pool
+    // to prevent stalling the axum async worker thread.
+    tokio::task::spawn_blocking(move || {
+        if let Ok(db) = db.lock() {
+            let _ = db.record(&event);
+        }
+    });
 }
 
 /// Record a gateway event to the audit DB.
 #[allow(clippy::too_many_arguments)]
 fn record_gateway_event(
-    db: &Arc<Mutex<GatewayDb>>,
+    db: Arc<Mutex<GatewayDb>>,
     provider: &str,
     model: Option<&str>,
     method: &str,
@@ -395,23 +408,28 @@ fn record_gateway_event(
     response_body: Option<&str>,
     error: Option<&str>,
 ) {
-    if let Ok(db) = db.lock() {
-        let _ = db.record(&GatewayEvent {
-            timestamp: SystemTime::now(),
-            provider: provider.to_string(),
-            model: model.map(|s| s.to_string()),
-            method: method.to_string(),
-            path: path.to_string(),
-            status_code,
-            duration_ms,
-            request_bytes,
-            response_bytes,
-            streamed,
-            request_body: request_body.map(|s| s.to_string()),
-            response_body: response_body.map(|s| s.to_string()),
-            error: error.map(|s| s.to_string()),
-        });
-    }
+    let event = GatewayEvent {
+        timestamp: SystemTime::now(),
+        provider: provider.to_string(),
+        model: model.map(|s| s.to_string()),
+        method: method.to_string(),
+        path: path.to_string(),
+        status_code,
+        duration_ms,
+        request_bytes,
+        response_bytes,
+        streamed,
+        request_body: request_body.map(|s| s.to_string()),
+        response_body: response_body.map(|s| s.to_string()),
+        error: error.map(|s| s.to_string()),
+    };
+    
+    // Offload synchronous SQLite write to a blocking thread.
+    tokio::task::spawn_blocking(move || {
+        if let Ok(db) = db.lock() {
+            let _ = db.record(&event);
+        }
+    });
 }
 
 /// Start the gateway on a TCP socket. Returns the bound address.

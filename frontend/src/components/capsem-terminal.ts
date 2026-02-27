@@ -27,14 +27,17 @@ const LIGHT_THEME: TerminalTheme = {
 const HOST_CSS = `
   :host {
     display: block;
+    position: relative;
     width: 100%;
     height: 100%;
     overflow: hidden;
   }
   .terminal-wrapper {
-    width: 100%;
-    height: 100%;
-    padding: 4px;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    bottom: 4px;
+    left: 4px;
   }
   .xterm {
     height: 100%;
@@ -50,6 +53,7 @@ export class CapsemTerminal extends HTMLElement {
   private fitAddon: FitAddon;
   private resizeObserver: ResizeObserver | null = null;
   private wrapper: HTMLDivElement | null = null;
+  private resizeRafId: number = 0;
 
   constructor() {
     super();
@@ -57,6 +61,7 @@ export class CapsemTerminal extends HTMLElement {
 
     this.terminal = new Terminal({
       cursorBlink: true,
+      convertEol: true,
       fontFamily:
         'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
       fontSize: 14,
@@ -126,14 +131,20 @@ export class CapsemTerminal extends HTMLElement {
       );
     });
 
-    // ResizeObserver for layout-driven resizes
+    // ResizeObserver for layout-driven resizes (debounced via rAF to prevent
+    // IPC flood -- each fit() can trigger a terminal-resize event).
     this.resizeObserver = new ResizeObserver(() => {
-      this.fitAddon.fit();
+      if (this.resizeRafId) cancelAnimationFrame(this.resizeRafId);
+      this.resizeRafId = requestAnimationFrame(() => {
+        this.resizeRafId = 0;
+        this.fitAddon.fit();
+      });
     });
     this.resizeObserver.observe(this);
   }
 
   disconnectedCallback() {
+    if (this.resizeRafId) cancelAnimationFrame(this.resizeRafId);
     this.resizeObserver?.disconnect();
     this.terminal.dispose();
   }
@@ -146,6 +157,18 @@ export class CapsemTerminal extends HTMLElement {
   /** Focus the terminal input. */
   focusTerminal() {
     this.terminal.focus();
+  }
+
+  /** Re-fit the terminal to its container and emit a resize event. */
+  fit() {
+    this.fitAddon.fit();
+    this.dispatchEvent(
+      new CustomEvent("terminal-resize", {
+        detail: { cols: this.terminal.cols, rows: this.terminal.rows },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   /** Switch terminal color theme. */

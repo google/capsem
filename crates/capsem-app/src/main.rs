@@ -358,17 +358,15 @@ fn boot_vm(
     Ok((vm, rx, input_fd, sm))
 }
 
-/// Forward serial console bytes to the Tauri frontend as events.
+/// Forward serial console bytes to the terminal output queue.
 async fn serial_to_events(
-    app_handle: tauri::AppHandle,
+    terminal_output: Arc<state::TerminalOutputQueue>,
     mut rx: broadcast::Receiver<Vec<u8>>,
 ) {
     loop {
         match rx.recv().await {
             Ok(bytes) => {
-                if let Err(e) = app_handle.emit("serial-output", &bytes) {
-                    error!("failed to emit serial-output event: {e}");
-                }
+                terminal_output.push(bytes);
             }
             Err(broadcast::error::RecvError::Closed) => {
                 info!("serial broadcast channel closed");
@@ -381,13 +379,16 @@ async fn serial_to_events(
     }
 }
 
-/// Forward vsock terminal data to the frontend with coalescing.
+/// Forward vsock terminal data to the terminal output queue with coalescing.
 ///
-/// Reads raw bytes from the vsock fd in a blocking thread, then emits them
-/// to the frontend. Coalesces output using `CoalesceBuffer` (8ms window,
-/// 64KB cap) to prevent IPC saturation on high-throughput commands.
-async fn vsock_terminal_to_events(app_handle: tauri::AppHandle, vsock_fd: RawFd) {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+/// Reads raw bytes from the vsock fd in a blocking thread, coalesces them
+/// using `CoalesceBuffer` (5ms window, 10MB cap), then pushes batches to
+/// the `TerminalOutputQueue` for the frontend to poll.
+async fn vsock_terminal_to_events(
+    terminal_output: Arc<state::TerminalOutputQueue>,
+    vsock_fd: RawFd,
+) {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8192);
 
     // Blocking reader thread: vsock fd -> channel
     std::thread::spawn(move || {
@@ -398,7 +399,7 @@ async fn vsock_terminal_to_events(app_handle: tauri::AppHandle, vsock_fd: RawFd)
                 return;
             }
         };
-        let mut buf = [0u8; 8192];
+        let mut buf = [0u8; 262144];
         loop {
             match file.read(&mut buf) {
                 Ok(0) => break,
@@ -431,9 +432,7 @@ async fn vsock_terminal_to_events(app_handle: tauri::AppHandle, vsock_fd: RawFd)
         }
 
         coalesce.flush_to(|batch| {
-            if let Err(e) = app_handle.emit("serial-output", batch) {
-                error!("failed to emit vsock terminal data: {e}");
-            }
+            terminal_output.push(batch.to_vec());
         });
     }
 }
@@ -653,8 +652,11 @@ async fn setup_vsock(
     let _ = app_handle.emit("terminal-source-changed", "vsock");
 
     // Spawn forwarding tasks.
-    let handle1 = app_handle.clone();
-    tokio::spawn(vsock_terminal_to_events(handle1, terminal.fd));
+    let terminal_output = {
+        let state = app_handle.state::<AppState>();
+        Arc::clone(&state.terminal_output)
+    };
+    tokio::spawn(vsock_terminal_to_events(terminal_output, terminal.fd));
     tokio::spawn(vsock_control_handler(app_handle, control.fd));
 
     // Keep terminal/control connections alive.
@@ -1462,9 +1464,19 @@ fn main() {
                     }
 
                     let handle = app.handle().clone();
+                    // Reset the terminal output queue for the new session.
+                    {
+                        let app_state = app.state::<AppState>();
+                        app_state.terminal_output.reset();
+                    }
+
                     // Serial forwarding for boot logs (aborted once vsock connects).
+                    let serial_output = {
+                        let app_state = app.state::<AppState>();
+                        Arc::clone(&app_state.terminal_output)
+                    };
                     let serial_task = tauri::async_runtime::spawn(
-                        serial_to_events(handle.clone(), rx),
+                        serial_to_events(serial_output, rx),
                     );
 
                     // Spawn vsock connection handler if available.
@@ -1495,6 +1507,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::vm_status,
             commands::serial_input,
+            commands::terminal_poll,
             commands::terminal_resize,
             commands::net_events,
             commands::get_guest_config,

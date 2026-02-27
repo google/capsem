@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@astrojs/svelte": "^7",
+    "@msgpack/msgpack": "^3.1.3",
     "@tauri-apps/api": "^2",
     "@xterm/addon-fit": "^0.11",
     "@xterm/addon-webgl": "^0.19",

@@ -31,10 +31,10 @@ pub const VSOCK_PORT_AI_GATEWAY: u32 = 5004;
 // Output coalescing buffer
 // ---------------------------------------------------------------------------
 
-/// Default coalescing time window (10ms = 100 fps).
-const COALESCE_WINDOW_MS: u64 = 10;
-/// Default coalescing size cap.
-const COALESCE_MAX_BYTES: usize = 65536;
+/// Default coalescing time window (5ms = 200 fps).
+const COALESCE_WINDOW_MS: u64 = 5;
+/// Default coalescing size cap (10MB).
+const COALESCE_MAX_BYTES: usize = 10_485_760;
 
 /// Coalesces small chunks into larger batches to prevent IPC saturation.
 ///
@@ -48,7 +48,7 @@ pub struct CoalesceBuffer {
 }
 
 impl CoalesceBuffer {
-    /// Create a new coalescing buffer with default settings (8ms / 64KB).
+    /// Create a new coalescing buffer with default settings (5ms / 10MB).
     pub fn new() -> Self {
         Self {
             buf: Vec::with_capacity(COALESCE_MAX_BYTES),
@@ -319,8 +319,8 @@ mod tests {
     #[test]
     fn coalesce_default_limits() {
         let buf = CoalesceBuffer::new();
-        assert_eq!(buf.max_bytes(), 65536);
-        assert_eq!(buf.window_ms(), 10);
+        assert_eq!(buf.max_bytes(), 10_485_760);
+        assert_eq!(buf.window_ms(), 5);
     }
 
     #[test]
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn coalesce_default_trait() {
         let buf = CoalesceBuffer::default();
-        assert_eq!(buf.max_bytes(), 65536);
+        assert_eq!(buf.max_bytes(), 10_485_760);
     }
 
     // -----------------------------------------------------------------------

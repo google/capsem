@@ -91,12 +91,49 @@ fn tcp_accept(listen_fd: RawFd) -> io::Result<RawFd> {
 /// Bridge two fds bidirectionally using poll(2).
 /// Returns when either side closes or errors.
 fn bridge(fd_a: RawFd, fd_b: RawFd) {
+    let fd_a_clone = fd_a;
+    let fd_b_clone = fd_b;
+
+    // Spawn thread for fd_b -> fd_a
+    let _thread = std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            let mut poll_fds = [
+                PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(fd_b_clone) }, PollFlags::POLLIN),
+            ];
+
+            match poll(&mut poll_fds, PollTimeout::from(5000u16)) {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(_) => break,
+            }
+
+            if let Some(revents) = poll_fds[0].revents() {
+                if revents.contains(PollFlags::POLLIN) {
+                    match nix::unistd::read(fd_b_clone, &mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if write_all_fd(fd_a_clone, &buf[..n]).is_err() {
+                                break;
+                            }
+                        }
+                        Err(nix::errno::Errno::EAGAIN) => {}
+                        Err(_) => break,
+                    }
+                }
+                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
+                    break;
+                }
+            }
+        }
+    });
+
     let mut buf = [0u8; 8192];
 
     loop {
         let mut poll_fds = [
             PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(fd_a) }, PollFlags::POLLIN),
-            PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(fd_b) }, PollFlags::POLLIN),
         ];
 
         match poll(&mut poll_fds, PollTimeout::from(5000u16)) {
@@ -124,26 +161,14 @@ fn bridge(fd_a: RawFd, fd_b: RawFd) {
                 break;
             }
         }
-
-        // fd_b -> fd_a
-        if let Some(revents) = poll_fds[1].revents() {
-            if revents.contains(PollFlags::POLLIN) {
-                match nix::unistd::read(fd_b, &mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if write_all_fd(fd_a, &buf[..n]).is_err() {
-                            break;
-                        }
-                    }
-                    Err(nix::errno::Errno::EAGAIN) => {}
-                    Err(_) => break,
-                }
-            }
-            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
-                break;
-            }
-        }
     }
+
+    // Wait for the other direction to finish
+    // However, if one direction closes (e.g. fd_a stops sending), 
+    // the other direction might still be sending. If fd_a closes completely, 
+    // the read above breaks, and we exit `bridge`. We should make sure we don't 
+    // leave the thread running indefinitely, but dropping the fds in `handle_connection` 
+    // will send an error/HUP to the thread and terminate it.
 }
 
 /// Handle a single TCP connection: connect to host vsock and bridge.
@@ -306,5 +331,62 @@ mod tests {
         
         // The bridge should join successfully
         bridge_handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_bridge_concurrency_no_deadlock() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::AsRawFd;
+
+        let (mut host_a, guest_a) = UnixStream::pair().unwrap();
+        let (mut host_b, guest_b) = UnixStream::pair().unwrap();
+
+        let fd_a = guest_a.as_raw_fd();
+        let fd_b = guest_b.as_raw_fd();
+
+        let _bridge_thread = std::thread::spawn(move || {
+            bridge(fd_a, fd_b);
+        });
+
+        let data_size = 1024 * 1024;
+        let test_data = vec![0x42u8; data_size];
+
+        let mut host_a_read = host_a.try_clone().unwrap();
+        let mut host_b_read = host_b.try_clone().unwrap();
+
+        let t_a_write = std::thread::spawn({
+            let test_data = test_data.clone();
+            move || {
+                std::io::Write::write_all(&mut host_a, &test_data).unwrap();
+            }
+        });
+
+        let t_b_write = std::thread::spawn({
+            let test_data = test_data.clone();
+            move || {
+                std::io::Write::write_all(&mut host_b, &test_data).unwrap();
+            }
+        });
+
+        let t_a_read = std::thread::spawn(move || {
+            let mut buf = vec![0u8; data_size];
+            std::io::Read::read_exact(&mut host_a_read, &mut buf).unwrap();
+            buf
+        });
+
+        let t_b_read = std::thread::spawn(move || {
+            let mut buf = vec![0u8; data_size];
+            std::io::Read::read_exact(&mut host_b_read, &mut buf).unwrap();
+            buf
+        });
+
+        t_a_write.join().unwrap();
+        t_b_write.join().unwrap();
+
+        let out_a = t_a_read.join().unwrap();
+        let out_b = t_b_read.join().unwrap();
+
+        assert_eq!(out_a, test_data);
+        assert_eq!(out_b, test_data);
     }
 }

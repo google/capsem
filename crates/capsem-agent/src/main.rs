@@ -467,10 +467,47 @@ fn bridge_loop(
     // Rolling tail buffer for sentinel detection across read boundaries.
     let mut tail: Vec<u8> = Vec::with_capacity(128);
 
+    // Spawn a dedicated thread for vsock -> Master PTY (stdin direction)
+    // This prevents deadlocks when both master_fd and vsock_fd buffers are full.
+    let master_fd_clone = master_fd;
+    let vsock_fd_clone = vsock_fd;
+    std::thread::spawn(move || {
+        let mut local_buf = [0u8; 8192];
+        loop {
+            let mut poll_fds = [
+                PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd_clone) }, PollFlags::POLLIN),
+            ];
+
+            match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(_) => break,
+            }
+
+            if let Some(revents) = poll_fds[0].revents() {
+                if revents.contains(PollFlags::POLLIN) {
+                    match nix::unistd::read(vsock_fd_clone, &mut local_buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if write_all_fd(master_fd_clone, &local_buf[..n]).is_err() {
+                                break;
+                            }
+                        }
+                        Err(nix::errno::Errno::EAGAIN) => {}
+                        Err(_) => break,
+                    }
+                }
+                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
+                    break;
+                }
+            }
+        }
+    });
+
     loop {
         let mut poll_fds = [
             PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) }, PollFlags::POLLIN),
-            PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) }, PollFlags::POLLIN),
         ];
 
         match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
@@ -513,25 +550,6 @@ fn bridge_loop(
                                 let _ = exec_done_tx.send((id, exit_code));
                             }
                         } else if write_all_fd(vsock_fd, &buf[..n]).is_err() {
-                            break;
-                        }
-                    }
-                    Err(nix::errno::Errno::EAGAIN) => {}
-                    Err(_) => break,
-                }
-            }
-            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
-                break;
-            }
-        }
-
-        // vsock -> Master PTY (stdin direction)
-        if let Some(revents) = poll_fds[1].revents() {
-            if revents.contains(PollFlags::POLLIN) {
-                match nix::unistd::read(vsock_fd, &mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if write_all_fd(master_fd, &buf[..n]).is_err() {
                             break;
                         }
                     }
@@ -1047,5 +1065,75 @@ mod tests {
         assert_eq!(find_subsequence(b"hello world", b"world"), Some(6));
         assert_eq!(find_subsequence(b"hello world", b"xyz"), None);
         assert_eq!(find_subsequence(b"abc", b"abc"), Some(0));
+    }
+
+    #[test]
+    fn bridge_loop_concurrency_no_deadlock() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::AsRawFd;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        use std::sync::mpsc;
+        use std::sync::Mutex;
+
+        let (mut master_host, master_guest) = UnixStream::pair().unwrap();
+        let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
+
+        let exec_state = Arc::new(ExecState {
+            active: AtomicBool::new(false),
+            current_id: Mutex::new(None),
+        });
+        let (exec_done_tx, _exec_done_rx) = mpsc::channel();
+
+        let master_fd = master_guest.as_raw_fd();
+        let vsock_fd = vsock_guest.as_raw_fd();
+
+        let exec_state_clone = Arc::clone(&exec_state);
+        let _bridge_thread = std::thread::spawn(move || {
+            bridge_loop(master_fd, vsock_fd, &exec_state_clone, exec_done_tx);
+        });
+
+        // 1MB ensures internal buffers (usually 8KB) fill up, triggering backpressure
+        // and testing deadlock immunity.
+        let data_size = 1024 * 1024;
+        let test_data = vec![0x42u8; data_size];
+
+        let mut master_host_read = master_host.try_clone().unwrap();
+        let mut vsock_host_read = vsock_host.try_clone().unwrap();
+
+        let t_master_write = std::thread::spawn({
+            let test_data = test_data.clone();
+            move || {
+                std::io::Write::write_all(&mut master_host, &test_data).unwrap();
+            }
+        });
+
+        let t_vsock_write = std::thread::spawn({
+            let test_data = test_data.clone();
+            move || {
+                std::io::Write::write_all(&mut vsock_host, &test_data).unwrap();
+            }
+        });
+
+        let t_master_read = std::thread::spawn(move || {
+            let mut buf = vec![0u8; data_size];
+            std::io::Read::read_exact(&mut master_host_read, &mut buf).unwrap();
+            buf
+        });
+
+        let t_vsock_read = std::thread::spawn(move || {
+            let mut buf = vec![0u8; data_size];
+            std::io::Read::read_exact(&mut vsock_host_read, &mut buf).unwrap();
+            buf
+        });
+
+        t_master_write.join().unwrap();
+        t_vsock_write.join().unwrap();
+
+        let master_out = t_master_read.join().unwrap();
+        let vsock_out = t_vsock_read.join().unwrap();
+
+        assert_eq!(master_out, test_data);
+        assert_eq!(vsock_out, test_data);
     }
 }

@@ -431,3 +431,19 @@ The current implementation covers Milestones 1-4 (VM boot, serial console, vsock
 - **Per-session audit databases**, config write-back, and enterprise observability
 
 See [docs/status.md](status.md) for milestone progress and [docs/overall_plan.md](overall_plan.md) for the full roadmap.
+
+## Development Guidelines
+
+When extending the Rust backend or guest agents, adhere to the following performance and concurrency guidelines to ensure system stability under heavy load:
+
+1. **Never Block the Async Executor:**
+   - The Tauri backend and Axum gateway run on asynchronous executors (`tokio`). Performing synchronous, long-running operations (like heavy CPU bound tasks or blocking disk I/O) directly inside an `async` function will stall the worker thread and freeze the application.
+   - **Rule:** Always wrap synchronous disk operations (e.g., SQLite writes, heavy file reads) inside `tokio::task::spawn_blocking` to offload them to a dedicated thread pool.
+
+2. **Prevent Bidirectional I/O Deadlocks:**
+   - When bridging two blocking file descriptors bidirectionally (e.g., bridging a TCP socket to a vsock, or bridging the PTY to the vsock), doing both reads in a single thread using `poll(2)` is vulnerable to deadlocks. If both outgoing buffers fill up simultaneously, the single thread blocks on writing and stops reading, creating a mutual lockup.
+   - **Rule:** Always spawn a dedicated background thread to handle at least one direction of the bidirectional data flow.
+
+3. **Optimize Payload Parsing:**
+   - The LLM Gateway handles massive HTTP payloads (megabytes of tool calls or images). Parsing these entirely into dynamic memory structures (like `serde_json::Value`) is highly inefficient and risks memory exhaustion.
+   - **Rule:** When extracting specific fields from a large JSON payload, define a targeted struct and use `serde::Deserialize`. Serde will perform a structural parse, skipping and discarding unused data without allocating memory for it.

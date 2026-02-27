@@ -67,6 +67,7 @@ pub struct NetEvent {
     pub request_body_preview: Option<String>,
     pub response_body_preview: Option<String>,
     pub conn_type: Option<String>,
+    pub process_name: Option<String>,
 }
 
 /// Per-session SQLite database for HTTPS request recording.
@@ -96,7 +97,8 @@ const CREATE_SCHEMA: &str = "
         response_headers TEXT,
         request_body_preview TEXT,
         response_body_preview TEXT,
-        conn_type TEXT DEFAULT 'https'
+        conn_type TEXT DEFAULT 'https',
+        process_name TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_http_requests_domain
         ON http_requests(domain);
@@ -178,9 +180,9 @@ impl WebDb {
                 timestamp, domain, port, decision, bytes_sent, bytes_received,
                 duration_ms, method, path, query, status_code, matched_rule,
                 request_headers, response_headers, request_body_preview,
-                response_body_preview, conn_type
+                response_body_preview, conn_type, process_name
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 timestamp,
                 event.domain,
@@ -199,6 +201,7 @@ impl WebDb {
                 event.request_body_preview,
                 event.response_body_preview,
                 event.conn_type,
+                event.process_name,
             ],
         )?;
         Ok(())
@@ -210,7 +213,7 @@ impl WebDb {
             "SELECT timestamp, domain, port, decision, bytes_sent, bytes_received,
                     duration_ms, method, path, query, status_code, matched_rule,
                     request_headers, response_headers, request_body_preview,
-                    response_body_preview, conn_type
+                    response_body_preview, conn_type, process_name
              FROM http_requests
              ORDER BY id DESC
              LIMIT ?1",
@@ -240,6 +243,7 @@ impl WebDb {
                 request_body_preview: row.get(14)?,
                 response_body_preview: row.get(15)?,
                 conn_type: row.get(16)?,
+                process_name: row.get(17)?,
             })
         })?;
 
@@ -304,6 +308,7 @@ mod tests {
             request_body_preview: None,
             response_body_preview: None,
             conn_type: None,
+            process_name: None,
         }
     }
 
@@ -326,6 +331,7 @@ mod tests {
             request_body_preview: None,
             response_body_preview: Some("{\"repos\":[]}".to_string()),
             conn_type: Some("https".to_string()),
+            process_name: None,
         }
     }
 

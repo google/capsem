@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-26
+
+### Changed
+- Terminal output uses poll-based binary IPC (`terminal_poll`) instead of JSON event emission, eliminating ~4x serialization overhead
+- Terminal input batched with 5ms window (up to 4KB) to reduce IPC round-trips per keystroke
+- Vsock read buffer increased from 8KB to 64KB and mpsc channel from 256 to 8192 entries
+- CoalesceBuffer defaults changed from 10ms/64KB to 5ms/10MB for higher throughput
+- Terminal output queue with 64-entry backpressure cap prevents OOM when frontend stops polling
+
 ## [0.6.0] - 2026-02-26
 
 ### Added
