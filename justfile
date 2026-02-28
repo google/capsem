@@ -27,8 +27,8 @@ compile: frontend
 sign: compile
     codesign --sign - --entitlements {{entitlements}} --force {{binary}}
 
-# Run the signed debug binary
-run: sign
+# Run the signed debug binary (repacks initrd first to pick up guest changes)
+run: repack-initrd sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}}
 
 # Full rebuild: VM assets + app + sign, then smoke-test the VM boots
@@ -155,6 +155,16 @@ test:
 check: ensure-tools
     cargo llvm-cov --workspace --no-cfg-coverage
     cd frontend && pnpm run check && pnpm run build
+
+# Update model pricing data from pydantic/genai-prices
+update_prices:
+    curl -sL https://raw.githubusercontent.com/pydantic/genai-prices/main/prices/data_slim.json \
+        -o config/genai-prices.json
+    @echo "Updated config/genai-prices.json"
+
+# Regenerate data/fixtures/test.db (shared test fixture)
+gen-test-db:
+    python3 data/fixtures/generate_test_db.py
 
 # Frontend dev server with mock data (no Tauri/VM needed)
 ui:
