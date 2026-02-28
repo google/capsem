@@ -70,6 +70,7 @@ impl SettingValue {
 
 /// Per-rule HTTP method permissions.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub struct HttpMethodPermissions {
     /// Optional per-rule domain subset.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -90,19 +91,6 @@ pub struct HttpMethodPermissions {
     pub other: bool,
 }
 
-impl Default for HttpMethodPermissions {
-    fn default() -> Self {
-        Self {
-            domains: Vec::new(),
-            path: None,
-            get: false,
-            post: false,
-            put: false,
-            delete: false,
-            other: false,
-        }
-    }
-}
 
 /// Structured metadata for a setting.
 ///
@@ -211,7 +199,9 @@ pub struct GuestConfig {
 /// VM resource settings (extracted from settings).
 #[derive(Debug, Default, Clone)]
 pub struct VmSettings {
+    pub cpu_count: Option<u32>,
     pub scratch_disk_size_gb: Option<u32>,
+    pub ram_gb: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +367,7 @@ pub fn setting_definitions() -> Vec<SettingDef> {
             name: "Gemini settings.json",
             description: "Content for ~/.gemini/settings.json. Session retention, auth, MCP servers, etc.",
             setting_type: SettingType::File,
-            default_value: SettingValue::Text(r#"{"homeDirectoryWarningDismissed":true,"approvalMode":"yolo","general":{"enableAutoUpdate":false,"enableAutoUpdateNotification":false,"sessionRetention":{"enabled":true,"maxAge":"30d","warningAcknowledged":true}},"ui":{"hideTips":true,"showHomeDirectoryWarning":false,"showCompatibilityWarnings":false,"showShortcutsHint":false},"privacy":{"usageStatisticsEnabled":false},"telemetry":{"enabled":false},"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust.enabled":false},"ide":{"hasSeenNudge":true},"tools":{"sandbox":false}}"#.into()),
+            default_value: SettingValue::Text(r#"{"general":{"disableAutoUpdate":true,"disableUpdateNag":true},"ui":{"hideTips":true,"hideBanner":false},"privacy":{"usageStatisticsEnabled":false},"telemetry":{"enabled":false},"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust.enabled":false},"ide":{"hasSeenNudge":true},"tools":{"sandbox":false}}"#.into()),
             enabled_by: Some("ai.google.allow"),
             metadata: SettingMetadata { guest_path: Some("/root/.gemini/settings.json".into()), ..Default::default() },
         },
@@ -497,16 +487,17 @@ pub fn setting_definitions() -> Vec<SettingDef> {
                 ..Default::default()
             },
         },
+        // -- Search --
         SettingDef {
-            id: "registry.debian.allow",
-            category: "Package Registries",
-            name: "Allow Debian repos",
-            description: "Enable access to Debian package repositories.",
+            id: "search.google.allow",
+            category: "Search",
+            name: "Allow Google Search",
+            description: "Enable access to Google web search.",
             setting_type: SettingType::Bool,
             default_value: SettingValue::Bool(true),
             enabled_by: None,
             metadata: SettingMetadata {
-                domains: vec!["deb.debian.org".into(), "security.debian.org".into()],
+                domains: vec!["www.google.com".into(), "google.com".into()],
                 rules: HashMap::from([(
                     "default".into(),
                     HttpMethodPermissions {
@@ -518,15 +509,36 @@ pub fn setting_definitions() -> Vec<SettingDef> {
             },
         },
         SettingDef {
-            id: "registry.elie.allow",
-            category: "Package Registries",
-            name: "Allow elie.net",
-            description: "Enable access to elie.net and subdomains.",
+            id: "search.perplexity.allow",
+            category: "Search",
+            name: "Allow Perplexity",
+            description: "Enable access to Perplexity AI search.",
             setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
+            default_value: SettingValue::Bool(false),
             enabled_by: None,
             metadata: SettingMetadata {
-                domains: vec!["elie.net".into(), "*.elie.net".into()],
+                domains: vec!["perplexity.ai".into(), "*.perplexity.ai".into()],
+                rules: HashMap::from([(
+                    "default".into(),
+                    HttpMethodPermissions {
+                        get: true,
+                        post: true,
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            },
+        },
+        SettingDef {
+            id: "search.firecrawl.allow",
+            category: "Search",
+            name: "Allow Firecrawl",
+            description: "Enable access to Firecrawl web scraping API.",
+            setting_type: SettingType::Bool,
+            default_value: SettingValue::Bool(false),
+            enabled_by: None,
+            metadata: SettingMetadata {
+                domains: vec!["firecrawl.dev".into(), "api.firecrawl.dev".into()],
                 rules: HashMap::from([(
                     "default".into(),
                     HttpMethodPermissions {
@@ -623,8 +635,8 @@ pub fn setting_definitions() -> Vec<SettingDef> {
             },
         },
         SettingDef {
-            id: "network.log_bodies",
-            category: "Network",
+            id: "vm.log_bodies",
+            category: "VM",
             name: "Log request bodies",
             description: "Capture request/response bodies in telemetry.",
             setting_type: SettingType::Bool,
@@ -633,8 +645,8 @@ pub fn setting_definitions() -> Vec<SettingDef> {
             metadata: SettingMetadata::default(),
         },
         SettingDef {
-            id: "network.max_body_capture",
-            category: "Network",
+            id: "vm.max_body_capture",
+            category: "VM",
             name: "Max body capture",
             description: "Maximum bytes of body to capture in telemetry.",
             setting_type: SettingType::Number,
@@ -646,10 +658,30 @@ pub fn setting_definitions() -> Vec<SettingDef> {
                 ..Default::default()
             },
         },
-        // -- Session --
         SettingDef {
-            id: "session.retention_days",
-            category: "Session",
+            id: "network.custom_allow",
+            category: "Network",
+            name: "Custom allowed domains",
+            description: "Comma-separated domain patterns to allow. Wildcards supported (*.example.com).",
+            setting_type: SettingType::Text,
+            default_value: SettingValue::Text("elie.net, *.elie.net".into()),
+            enabled_by: None,
+            metadata: SettingMetadata::default(),
+        },
+        SettingDef {
+            id: "network.custom_block",
+            category: "Network",
+            name: "Custom blocked domains",
+            description: "Comma-separated domain patterns to block. Takes priority over custom allow list.",
+            setting_type: SettingType::Text,
+            default_value: SettingValue::Text(String::new()),
+            enabled_by: None,
+            metadata: SettingMetadata::default(),
+        },
+        // -- Session (in VM category) --
+        SettingDef {
+            id: "vm.retention_days",
+            category: "VM",
             name: "Session retention",
             description: "Number of days to retain session data.",
             setting_type: SettingType::Number,
@@ -688,12 +720,40 @@ pub fn setting_definitions() -> Vec<SettingDef> {
         },
         // -- VM --
         SettingDef {
+            id: "vm.cpu_count",
+            category: "VM",
+            name: "CPU cores",
+            description: "Number of CPU cores allocated to the VM.",
+            setting_type: SettingType::Number,
+            default_value: SettingValue::Number(4),
+            enabled_by: None,
+            metadata: SettingMetadata {
+                min: Some(1),
+                max: Some(8),
+                ..Default::default()
+            },
+        },
+        SettingDef {
+            id: "vm.ram_gb",
+            category: "VM",
+            name: "RAM",
+            description: "Amount of RAM allocated to the VM in GB.",
+            setting_type: SettingType::Number,
+            default_value: SettingValue::Number(4),
+            enabled_by: None,
+            metadata: SettingMetadata {
+                min: Some(1),
+                max: Some(16),
+                ..Default::default()
+            },
+        },
+        SettingDef {
             id: "vm.scratch_disk_size_gb",
             category: "VM",
             name: "Scratch disk size",
             description: "Size of the ephemeral scratch disk in GB.",
             setting_type: SettingType::Number,
-            default_value: SettingValue::Number(8),
+            default_value: SettingValue::Number(16),
             enabled_by: None,
             metadata: SettingMetadata {
                 min: Some(1),
@@ -701,10 +761,9 @@ pub fn setting_definitions() -> Vec<SettingDef> {
                 ..Default::default()
             },
         },
-        // -- Session (continued) --
         SettingDef {
-            id: "session.max_sessions",
-            category: "Session",
+            id: "vm.max_sessions",
+            category: "VM",
             name: "Maximum sessions",
             description: "Keep at most this many sessions (oldest culled first).",
             setting_type: SettingType::Number,
@@ -717,8 +776,8 @@ pub fn setting_definitions() -> Vec<SettingDef> {
             },
         },
         SettingDef {
-            id: "session.max_disk_gb",
-            category: "Session",
+            id: "vm.max_disk_gb",
+            category: "VM",
             name: "Maximum disk usage",
             description: "Maximum total disk usage for all sessions in GB.",
             setting_type: SettingType::Number,
@@ -1073,6 +1132,31 @@ pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
         }
     }
 
+    // Custom allow/block lists from network.custom_allow / network.custom_block.
+    // Block takes priority over allow for overlapping domains.
+    let custom_allow = resolved
+        .iter()
+        .find(|s| s.id == "network.custom_allow")
+        .and_then(|s| s.effective_value.as_text())
+        .unwrap_or("");
+    let custom_block = resolved
+        .iter()
+        .find(|s| s.id == "network.custom_block")
+        .and_then(|s| s.effective_value.as_text())
+        .unwrap_or("");
+    let custom_allow_domains = parse_domain_list(custom_allow);
+    let custom_block_domains = parse_domain_list(custom_block);
+
+    // Block beats allow: any domain in custom_block goes to block_list only.
+    for d in &custom_allow_domains {
+        if corp_blocked_matches(d, &corp_blocked) || corp_blocked_matches(d, &custom_block_domains) {
+            block_list.push(d.clone());
+        } else {
+            allow_list.push(d.clone());
+        }
+    }
+    block_list.extend(custom_block_domains);
+
     let default_action = resolved
         .iter()
         .find(|s| s.id == "network.default_action")
@@ -1110,7 +1194,7 @@ pub fn settings_to_http_policy(resolved: &[ResolvedSetting]) -> HttpPolicy {
         // For each rule in metadata, generate HttpRules for the setting's domains
         let rule_domains: Vec<&str> = s.metadata.domains.iter().map(|d| d.as_str()).collect();
 
-        for (_rule_name, perms) in &s.metadata.rules {
+        for perms in s.metadata.rules.values() {
             let domains_for_rule = if perms.domains.is_empty() {
                 rule_domains.clone()
             } else {
@@ -1146,13 +1230,13 @@ pub fn settings_to_http_policy(resolved: &[ResolvedSetting]) -> HttpPolicy {
 
     let log_bodies = resolved
         .iter()
-        .find(|s| s.id == "network.log_bodies")
+        .find(|s| s.id == "vm.log_bodies")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(false);
 
     let max_body_capture = resolved
         .iter()
-        .find(|s| s.id == "network.max_body_capture")
+        .find(|s| s.id == "vm.max_body_capture")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(4096) as usize;
 
@@ -1249,14 +1333,28 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
 
 /// Extract VM settings from resolved settings.
 pub fn settings_to_vm_settings(resolved: &[ResolvedSetting]) -> VmSettings {
+    let cpu_count = resolved
+        .iter()
+        .find(|s| s.id == "vm.cpu_count")
+        .and_then(|s| s.effective_value.as_number())
+        .map(|n| n as u32);
+
     let scratch_disk_size_gb = resolved
         .iter()
         .find(|s| s.id == "vm.scratch_disk_size_gb")
         .and_then(|s| s.effective_value.as_number())
         .map(|n| n as u32);
 
+    let ram_gb = resolved
+        .iter()
+        .find(|s| s.id == "vm.ram_gb")
+        .and_then(|s| s.effective_value.as_number())
+        .map(|n| n as u32);
+
     VmSettings {
-        scratch_disk_size_gb: Some(scratch_disk_size_gb.unwrap_or(8)),
+        cpu_count: Some(cpu_count.unwrap_or(4)),
+        scratch_disk_size_gb: Some(scratch_disk_size_gb.unwrap_or(16)),
+        ram_gb: Some(ram_gb.unwrap_or(4)),
     }
 }
 
@@ -1360,6 +1458,37 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
         }
     }
 
+    // Custom allow/block lists: same pattern as settings_to_domain_policy
+    let custom_allow_text = resolved
+        .iter()
+        .find(|s| s.id == "network.custom_allow")
+        .and_then(|s| s.effective_value.as_text())
+        .unwrap_or("");
+    let custom_block_text = resolved
+        .iter()
+        .find(|s| s.id == "network.custom_block")
+        .and_then(|s| s.effective_value.as_text())
+        .unwrap_or("");
+    let custom_allow_domains = parse_domain_list(custom_allow_text);
+    let custom_block_domains = parse_domain_list(custom_block_text);
+
+    for domain in &custom_allow_domains {
+        let blocked = corp_blocked_matches(domain, &corp_blocked)
+            || corp_blocked_matches(domain, &custom_block_domains);
+        rules.push(PolicyRule {
+            matcher: DomainMatcher::parse(domain),
+            allow_read: !blocked,
+            allow_write: !blocked,
+        });
+    }
+    for domain in &custom_block_domains {
+        rules.push(PolicyRule {
+            matcher: DomainMatcher::parse(domain),
+            allow_read: false,
+            allow_write: false,
+        });
+    }
+
     let default_action = resolved
         .iter()
         .find(|s| s.id == "network.default_action")
@@ -1369,13 +1498,13 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
 
     let log_bodies = resolved
         .iter()
-        .find(|s| s.id == "network.log_bodies")
+        .find(|s| s.id == "vm.log_bodies")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(true);
 
     let max_body_capture = resolved
         .iter()
-        .find(|s| s.id == "network.max_body_capture")
+        .find(|s| s.id == "vm.max_body_capture")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(4096) as usize;
 
@@ -1458,10 +1587,10 @@ mod tests {
 
     #[test]
     fn corp_override_number() {
-        let user = file_with(vec![("network.max_body_capture", SettingValue::Number(8192))]);
-        let corp = file_with(vec![("network.max_body_capture", SettingValue::Number(1024))]);
+        let user = file_with(vec![("vm.max_body_capture", SettingValue::Number(8192))]);
+        let corp = file_with(vec![("vm.max_body_capture", SettingValue::Number(1024))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "network.max_body_capture").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.max_body_capture").unwrap();
         assert_eq!(s.effective_value, SettingValue::Number(1024));
         assert_eq!(s.source, PolicySource::Corp);
     }
@@ -1490,12 +1619,12 @@ mod tests {
     fn corp_override_mixed_categories() {
         let user = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("network.log_bodies", SettingValue::Bool(true)),
+            ("vm.log_bodies", SettingValue::Bool(true)),
             ("appearance.dark_mode", SettingValue::Bool(false)),
         ]);
         let corp = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(false)),
-            ("network.log_bodies", SettingValue::Bool(false)),
+            ("vm.log_bodies", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&user, &corp);
 
@@ -1503,7 +1632,7 @@ mod tests {
         assert_eq!(ai.effective_value, SettingValue::Bool(false));
         assert_eq!(ai.source, PolicySource::Corp);
 
-        let log = resolved.iter().find(|s| s.id == "network.log_bodies").unwrap();
+        let log = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
         assert_eq!(log.effective_value, SettingValue::Bool(false));
         assert_eq!(log.source, PolicySource::Corp);
 
@@ -1520,8 +1649,6 @@ mod tests {
             ("registry.npm.allow", SettingValue::Bool(false)),
             ("registry.pypi.allow", SettingValue::Bool(false)),
             ("registry.crates.allow", SettingValue::Bool(false)),
-            ("registry.debian.allow", SettingValue::Bool(false)),
-            ("registry.elie.allow", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&empty_file(), &corp);
         for s in &resolved {
@@ -1580,7 +1707,7 @@ mod tests {
     fn write_user_settings_creates_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test_user.toml");
-        let file = file_with(vec![("network.log_bodies", SettingValue::Bool(true))]);
+        let file = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
         write_settings_file(&path, &file).unwrap();
         assert!(path.exists());
     }
@@ -1591,7 +1718,7 @@ mod tests {
         let path = dir.path().join("roundtrip.toml");
         let file = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("network.max_body_capture", SettingValue::Number(8192)),
+            ("vm.max_body_capture", SettingValue::Number(8192)),
             ("guest.env.EDITOR", SettingValue::Text("vim".into())),
         ]);
         write_settings_file(&path, &file).unwrap();
@@ -1609,12 +1736,12 @@ mod tests {
         let path = dir.path().join("preserve.toml");
         let mut file = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("network.log_bodies", SettingValue::Bool(false)),
+            ("vm.log_bodies", SettingValue::Bool(false)),
         ]);
         write_settings_file(&path, &file).unwrap();
 
         // Update one setting
-        file.settings.get_mut("network.log_bodies").unwrap().value = SettingValue::Bool(true);
+        file.settings.get_mut("vm.log_bodies").unwrap().value = SettingValue::Bool(true);
         write_settings_file(&path, &file).unwrap();
 
         let loaded = load_settings_file(&path).unwrap();
@@ -1623,7 +1750,7 @@ mod tests {
             SettingValue::Bool(true),
         );
         assert_eq!(
-            loaded.settings.get("network.log_bodies").unwrap().value,
+            loaded.settings.get("vm.log_bodies").unwrap().value,
             SettingValue::Bool(true),
         );
     }
@@ -1675,8 +1802,6 @@ mod tests {
             "registry.npm.allow",
             "registry.pypi.allow",
             "registry.crates.allow",
-            "registry.debian.allow",
-            "registry.elie.allow",
         ] {
             let s = resolved.iter().find(|s| s.id == *id).unwrap();
             assert_eq!(s.effective_value, SettingValue::Bool(true), "expected {id} to be true");
@@ -1690,13 +1815,13 @@ mod tests {
         let da = resolved.iter().find(|s| s.id == "network.default_action").unwrap();
         assert_eq!(da.effective_value, SettingValue::Text("deny".into()));
 
-        let lb = resolved.iter().find(|s| s.id == "network.log_bodies").unwrap();
+        let lb = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
         assert_eq!(lb.effective_value, SettingValue::Bool(false));
 
-        let mbc = resolved.iter().find(|s| s.id == "network.max_body_capture").unwrap();
+        let mbc = resolved.iter().find(|s| s.id == "vm.max_body_capture").unwrap();
         assert_eq!(mbc.effective_value, SettingValue::Number(4096));
 
-        let rd = resolved.iter().find(|s| s.id == "session.retention_days").unwrap();
+        let rd = resolved.iter().find(|s| s.id == "vm.retention_days").unwrap();
         assert_eq!(rd.effective_value, SettingValue::Number(30));
 
         let dm = resolved.iter().find(|s| s.id == "appearance.dark_mode").unwrap();
@@ -1771,35 +1896,35 @@ mod tests {
     #[test]
     fn source_default() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        let s = resolved.iter().find(|s| s.id == "network.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::Default);
         assert!(s.modified.is_none());
     }
 
     #[test]
     fn source_user() {
-        let user = file_with(vec![("network.log_bodies", SettingValue::Bool(true))]);
+        let user = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
         let resolved = resolve_settings(&user, &empty_file());
-        let s = resolved.iter().find(|s| s.id == "network.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::User);
         assert!(s.modified.is_some());
     }
 
     #[test]
     fn source_corp() {
-        let corp = file_with(vec![("network.log_bodies", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
         let resolved = resolve_settings(&empty_file(), &corp);
-        let s = resolved.iter().find(|s| s.id == "network.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::Corp);
         assert!(s.modified.is_some());
     }
 
     #[test]
     fn source_corp_beats_user() {
-        let user = file_with(vec![("network.log_bodies", SettingValue::Bool(true))]);
-        let corp = file_with(vec![("network.log_bodies", SettingValue::Bool(false))]);
+        let user = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("vm.log_bodies", SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "network.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::Corp);
         assert_eq!(s.effective_value, SettingValue::Bool(false));
     }
@@ -1844,7 +1969,7 @@ mod tests {
     #[test]
     fn enabled_by_none_always_enabled() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        let s = resolved.iter().find(|s| s.id == "network.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
         assert!(s.enabled);
         assert!(s.enabled_by.is_none());
     }
@@ -1956,7 +2081,7 @@ mod tests {
     fn settings_file_toml_roundtrip() {
         let file = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("network.max_body_capture", SettingValue::Number(8192)),
+            ("vm.max_body_capture", SettingValue::Number(8192)),
             ("guest.env.EDITOR", SettingValue::Text("vim".into())),
         ]);
         let toml_str = toml::to_string_pretty(&file).unwrap();
@@ -2030,14 +2155,14 @@ mod tests {
     fn parse_toml_mixed_value_types() {
         let toml_str = r#"
 [settings]
-"network.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"network.max_body_capture" = { value = 8192, modified = "2026-01-01T00:00:00Z" }
+"vm.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"vm.max_body_capture" = { value = 8192, modified = "2026-01-01T00:00:00Z" }
 "network.default_action" = { value = "deny", modified = "2026-01-01T00:00:00Z" }
 "appearance.font_size" = { value = 16, modified = "2026-01-01T00:00:00Z" }
 "#;
         let file: SettingsFile = toml::from_str(toml_str).expect("should parse mixed types");
-        assert_eq!(file.settings["network.log_bodies"].value, SettingValue::Bool(true));
-        assert_eq!(file.settings["network.max_body_capture"].value, SettingValue::Number(8192));
+        assert_eq!(file.settings["vm.log_bodies"].value, SettingValue::Bool(true));
+        assert_eq!(file.settings["vm.max_body_capture"].value, SettingValue::Number(8192));
         assert_eq!(file.settings["network.default_action"].value, SettingValue::Text("deny".into()));
         assert_eq!(file.settings["appearance.font_size"].value, SettingValue::Number(16));
     }
@@ -2167,7 +2292,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let file = file_with(vec![
             ("ai.google.api_key", SettingValue::Text("AIzaTest".into())),
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("network.max_body_capture", SettingValue::Number(4096)),
+            ("vm.max_body_capture", SettingValue::Number(4096)),
         ]);
         let serialized = toml::to_string_pretty(&file).unwrap();
         let parsed: SettingsFile = toml::from_str(&serialized)
@@ -2277,27 +2402,75 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     // -----------------------------------------------------------------------
 
     #[test]
-    fn vm_settings_default_scratch_size() {
+    fn vm_settings_default_cpu_count() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
         let vs = settings_to_vm_settings(&resolved);
-        assert_eq!(vs.scratch_disk_size_gb, Some(8));
+        assert_eq!(vs.cpu_count, Some(4));
     }
 
     #[test]
-    fn vm_settings_from_user() {
-        let user = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(16))]);
-        let resolved = resolve_settings(&user, &empty_file());
+    fn vm_settings_default_scratch_size() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.scratch_disk_size_gb, Some(16));
     }
 
     #[test]
+    fn vm_settings_default_ram() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let vs = settings_to_vm_settings(&resolved);
+        assert_eq!(vs.ram_gb, Some(4));
+    }
+
+    #[test]
+    fn vm_settings_from_user() {
+        let user = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(32))]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let vs = settings_to_vm_settings(&resolved);
+        assert_eq!(vs.scratch_disk_size_gb, Some(32));
+    }
+
+    #[test]
+    fn vm_settings_ram_from_user() {
+        let user = file_with(vec![("vm.ram_gb", SettingValue::Number(8))]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let vs = settings_to_vm_settings(&resolved);
+        assert_eq!(vs.ram_gb, Some(8));
+    }
+
+    #[test]
     fn vm_settings_corp_overrides_user() {
-        let user = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(16))]);
+        let user = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(32))]);
         let corp = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(4))]);
         let resolved = resolve_settings(&user, &corp);
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.scratch_disk_size_gb, Some(4));
+    }
+
+    #[test]
+    fn vm_settings_ram_corp_overrides_user() {
+        let user = file_with(vec![("vm.ram_gb", SettingValue::Number(8))]);
+        let corp = file_with(vec![("vm.ram_gb", SettingValue::Number(2))]);
+        let resolved = resolve_settings(&user, &corp);
+        let vs = settings_to_vm_settings(&resolved);
+        assert_eq!(vs.ram_gb, Some(2));
+    }
+
+    #[test]
+    fn vm_settings_cpu_from_user() {
+        let user = file_with(vec![("vm.cpu_count", SettingValue::Number(2))]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let vs = settings_to_vm_settings(&resolved);
+        assert_eq!(vs.cpu_count, Some(2));
+    }
+
+    #[test]
+    fn vm_settings_cpu_corp_overrides_user() {
+        let user = file_with(vec![("vm.cpu_count", SettingValue::Number(8))]);
+        let corp = file_with(vec![("vm.cpu_count", SettingValue::Number(2))]);
+        let resolved = resolve_settings(&user, &corp);
+        let vs = settings_to_vm_settings(&resolved);
+        assert_eq!(vs.cpu_count, Some(2));
     }
 
     // -----------------------------------------------------------------------
@@ -2550,7 +2723,6 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             ("registry.pypi.allow", SettingValue::Bool(false)),
             ("registry.npm.allow", SettingValue::Bool(false)),
             ("registry.crates.allow", SettingValue::Bool(false)),
-            ("registry.debian.allow", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -2696,7 +2868,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
-        let has_key = gc.env.as_ref().map_or(false, |e| e.contains_key("ANTHROPIC_API_KEY"));
+        let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
         assert!(!has_key, "empty API key should not be injected");
     }
 
@@ -2838,8 +3010,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
         // Only dynamic env vars from defaults might exist, but no API keys.
-        let has_ant = gc.env.as_ref().map_or(false, |e| e.contains_key("ANTHROPIC_API_KEY"));
-        let has_oai = gc.env.as_ref().map_or(false, |e| e.contains_key("OPENAI_API_KEY"));
+        let has_ant = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
+        let has_oai = gc.env.as_ref().is_some_and(|e| e.contains_key("OPENAI_API_KEY"));
         assert!(!has_ant, "empty anthropic key should not be injected");
         assert!(!has_oai, "empty openai key should not be injected");
     }
@@ -3219,7 +3391,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
-        let has_key = gc.env.as_ref().map_or(false, |e| e.contains_key("ANTHROPIC_API_KEY"));
+        let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
         assert!(!has_key, "empty API key should not be injected");
     }
 
@@ -3303,7 +3475,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
-        let has_key = gc.env.as_ref().map_or(false, |e| e.contains_key("LD_PRELOAD"));
+        let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("LD_PRELOAD"));
         assert!(!has_key, "LD_PRELOAD should be dropped by validation");
     }
 
@@ -3314,7 +3486,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
-        let has_key = gc.env.as_ref().map_or(false, |e| e.contains_key("LD_LIBRARY_PATH"));
+        let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("LD_LIBRARY_PATH"));
         assert!(!has_key, "LD_LIBRARY_PATH should be dropped by validation");
     }
 
@@ -3327,5 +3499,125 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let gc = settings_to_guest_config(&resolved);
         let env = gc.env.unwrap();
         assert_eq!(env.get("EDITOR").unwrap(), "vim");
+    }
+
+    // -----------------------------------------------------------------------
+    // Search category
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn search_google_allowed_by_default() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let s = resolved.iter().find(|s| s.id == "search.google.allow").unwrap();
+        assert_eq!(s.effective_value, SettingValue::Bool(true));
+        assert_eq!(s.category, "Search");
+    }
+
+    #[test]
+    fn search_perplexity_firecrawl_blocked_by_default() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        for id in &["search.perplexity.allow", "search.firecrawl.allow"] {
+            let s = resolved.iter().find(|s| s.id == *id).unwrap();
+            assert_eq!(s.effective_value, SettingValue::Bool(false), "expected {id} to be false");
+        }
+    }
+
+    #[test]
+    fn search_google_domains_in_policy() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        let (action, _) = dp.evaluate("www.google.com");
+        assert_eq!(action, Action::Allow, "google.com should be allowed by default");
+    }
+
+    // -----------------------------------------------------------------------
+    // Custom allow/block
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn custom_allow_allows_domains() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        // elie.net is in the default custom_allow
+        let (action, _) = dp.evaluate("elie.net");
+        assert_eq!(action, Action::Allow, "elie.net should be allowed via custom_allow");
+    }
+
+    #[test]
+    fn custom_allow_wildcard_allows_subdomains() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        let (action, _) = dp.evaluate("www.elie.net");
+        assert_eq!(action, Action::Allow, "*.elie.net should allow subdomains");
+    }
+
+    #[test]
+    fn custom_block_blocks_domains() {
+        let user = file_with(vec![
+            ("network.custom_block", SettingValue::Text("evil.com".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        let (action, _) = dp.evaluate("evil.com");
+        assert_eq!(action, Action::Deny, "custom_block should block domains");
+    }
+
+    #[test]
+    fn custom_block_beats_custom_allow_on_overlap() {
+        let user = file_with(vec![
+            ("network.custom_allow", SettingValue::Text("overlap.com".into())),
+            ("network.custom_block", SettingValue::Text("overlap.com".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        let (action, _) = dp.evaluate("overlap.com");
+        assert_eq!(action, Action::Deny, "block must beat allow for overlapping domains");
+    }
+
+    #[test]
+    fn custom_allow_empty_entries_tolerated() {
+        let user = file_with(vec![
+            ("network.custom_allow", SettingValue::Text(",, , foo.com , ,".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        let (action, _) = dp.evaluate("foo.com");
+        assert_eq!(action, Action::Allow, "empty entries should be ignored");
+    }
+
+    #[test]
+    fn custom_block_empty_is_noop() {
+        let user = file_with(vec![
+            ("network.custom_block", SettingValue::Text("".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        // Default custom_allow domains (elie.net) still allowed
+        let (action, _) = dp.evaluate("elie.net");
+        assert_eq!(action, Action::Allow, "empty custom_block should not block anything");
+    }
+
+    #[test]
+    fn custom_allow_corp_override() {
+        // Corp sets custom_allow to empty -> user's default elie.net is gone
+        let corp = file_with(vec![
+            ("network.custom_allow", SettingValue::Text("".into())),
+        ]);
+        let resolved = resolve_settings(&empty_file(), &corp);
+        let dp = settings_to_domain_policy(&resolved);
+        let (action, _) = dp.evaluate("elie.net");
+        assert_eq!(action, Action::Deny, "corp should be able to override custom_allow");
+    }
+
+    #[test]
+    fn custom_allow_in_network_policy() {
+        // Verify custom domains also appear in the NetworkPolicy path
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let dp = settings_to_domain_policy(&resolved);
+        let allowed = dp.allowed_patterns();
+        assert!(
+            allowed.iter().any(|d| d == "elie.net"),
+            "elie.net should be in allowed patterns: {allowed:?}"
+        );
     }
 }

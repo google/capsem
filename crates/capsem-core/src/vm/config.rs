@@ -63,8 +63,8 @@ pub struct VmConfigBuilder {
 impl Default for VmConfigBuilder {
     fn default() -> Self {
         Self {
-            cpu_count: 2,
-            ram_bytes: 1024 * 1024 * 1024, // 1 GB
+            cpu_count: 4,
+            ram_bytes: 4 * 1024 * 1024 * 1024, // 4 GB
             kernel_path: None,
             initrd_path: None,
             disk_path: None,
@@ -234,8 +234,8 @@ mod tests {
             .kernel_path(&kernel)
             .build()
             .unwrap();
-        assert_eq!(config.cpu_count, 2); // default
-        assert_eq!(config.ram_bytes, 1024 * 1024 * 1024); // default 1GB
+        assert_eq!(config.cpu_count, 4); // default
+        assert_eq!(config.ram_bytes, 4 * 1024 * 1024 * 1024); // default 4GB
         assert_eq!(config.kernel_cmdline, "console=hvc0 root=/dev/vda ro");
         assert!(config.initrd_path.is_none());
         assert!(config.disk_path.is_none());
@@ -497,8 +497,8 @@ mod tests {
     #[test]
     fn builder_defaults_are_sane() {
         let b = VmConfigBuilder::default();
-        assert_eq!(b.cpu_count, 2);
-        assert_eq!(b.ram_bytes, 1024 * 1024 * 1024);
+        assert_eq!(b.cpu_count, 4);
+        assert_eq!(b.ram_bytes, 4 * 1024 * 1024 * 1024);
         assert!(b.kernel_path.is_none());
         assert!(b.initrd_path.is_none());
         assert!(b.disk_path.is_none());

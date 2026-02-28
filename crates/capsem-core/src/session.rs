@@ -18,7 +18,7 @@ pub fn generate_session_id() -> String {
 
     // 4 random hex chars from timestamp nanos + XOR with a counter.
     let nanos = now.subsec_nanos();
-    let rand_bits = nanos ^ (std::process::id() as u32).wrapping_mul(2654435761);
+    let rand_bits = nanos ^ std::process::id().wrapping_mul(2654435761);
     let suffix = rand_bits & 0xFFFF;
 
     format!(
@@ -70,8 +70,8 @@ const SESSION_SCHEMA: &str = "
         status TEXT NOT NULL DEFAULT 'running',
         created_at TEXT NOT NULL,
         stopped_at TEXT,
-        scratch_disk_size_gb INTEGER NOT NULL DEFAULT 8,
-        ram_bytes INTEGER NOT NULL DEFAULT 536870912,
+        scratch_disk_size_gb INTEGER NOT NULL DEFAULT 16,
+        ram_bytes INTEGER NOT NULL DEFAULT 4294967296,
         total_requests INTEGER NOT NULL DEFAULT 0,
         allowed_requests INTEGER NOT NULL DEFAULT 0,
         denied_requests INTEGER NOT NULL DEFAULT 0
@@ -398,8 +398,8 @@ mod tests {
             status: status.to_string(),
             created_at: "2026-02-25T14:30:52Z".to_string(),
             stopped_at: None,
-            scratch_disk_size_gb: 8,
-            ram_bytes: 512 * 1024 * 1024,
+            scratch_disk_size_gb: 16,
+            ram_bytes: 4 * 1024 * 1024 * 1024,
             total_requests: 0,
             allowed_requests: 0,
             denied_requests: 0,
