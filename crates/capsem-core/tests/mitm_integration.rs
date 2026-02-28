@@ -8,12 +8,12 @@
 ///
 /// Requires internet access (the proxy connects upstream to real servers).
 use std::os::unix::io::IntoRawFd;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
 use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
-use capsem_core::net::telemetry::{Decision, WebDb};
+use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
@@ -25,15 +25,11 @@ const CA_KEY: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../config/capsem-ca.crt");
 
 /// Build a NetworkPolicy from allow/block lists for integration tests.
-///
-/// - Blocked domains: read=false, write=false
-/// - Allowed domains: read=true, write=true
-/// - default_allow: controls what happens to unlisted domains
 fn make_proxy_config(
     allowed: &[&str],
     blocked: &[&str],
     default_allow: bool,
-) -> (Arc<MitmProxyConfig>, Arc<Mutex<WebDb>>) {
+) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let mut rules = Vec::new();
     for pattern in blocked {
@@ -51,14 +47,17 @@ fn make_proxy_config(
         });
     }
     let policy = Arc::new(std::sync::RwLock::new(Arc::new(NetworkPolicy::new(rules, default_allow, default_allow))));
-    let web_db = Arc::new(Mutex::new(WebDb::open_in_memory().unwrap()));
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
+    // Leak the tempdir so it lives for the test
+    std::mem::forget(dir);
     let config = Arc::new(MitmProxyConfig {
         ca,
         policy,
-        web_db: web_db.clone(),
+        db: db.clone(),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
     });
-    (config, web_db)
+    (config, db)
 }
 
 /// Build a rustls ClientConfig that trusts the Capsem MITM CA.
@@ -103,7 +102,7 @@ async fn spawn_proxy(
 
 #[tokio::test]
 async fn mitm_proxy_allows_elie_net() {
-    let (config, web_db) = make_proxy_config(&["elie.net"], &[], false);
+    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     // Connect through the proxy with TLS trusting our MITM CA.
@@ -137,8 +136,12 @@ async fn mitm_proxy_allows_elie_net() {
     drop(sender);
     proxy_task.await.unwrap();
 
+    // Give writer thread time to flush.
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
     // Verify telemetry.
-    let events = web_db.lock().unwrap().recent(10).unwrap();
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty(), "should have recorded a telemetry event");
     assert_eq!(events[0].domain, "elie.net");
     assert_eq!(events[0].decision, Decision::Allowed);
@@ -149,10 +152,9 @@ async fn mitm_proxy_allows_elie_net() {
 
 #[tokio::test]
 async fn mitm_proxy_denies_forbidden_domain() {
-    let (config, web_db) = make_proxy_config(&[], &["example.com"], false);
+    let (config, db) = make_proxy_config(&[], &["example.com"], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
-    // TLS now completes even for denied domains (we mint a cert to capture HTTP details).
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
     let domain = ServerName::try_from("example.com").unwrap();
@@ -161,7 +163,6 @@ async fn mitm_proxy_denies_forbidden_domain() {
         .await
         .expect("TLS handshake should succeed (denial happens at HTTP level)");
 
-    // Send HTTP request -- expect 403.
     let io = TokioIo::new(tls);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(conn);
@@ -178,8 +179,10 @@ async fn mitm_proxy_denies_forbidden_domain() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    // Verify telemetry records the denial with method and path.
-    let events = web_db.lock().unwrap().recent(10).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty(), "should have recorded denial event");
     assert_eq!(events[0].domain, "example.com");
     assert_eq!(events[0].decision, Decision::Denied);
@@ -190,8 +193,7 @@ async fn mitm_proxy_denies_forbidden_domain() {
 
 #[tokio::test]
 async fn mitm_proxy_denies_default_deny_unlisted_domain() {
-    // Default-deny policy with no allow-list: all domains rejected.
-    let (config, web_db) = make_proxy_config(&[], &[], false);
+    let (config, db) = make_proxy_config(&[], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -202,7 +204,6 @@ async fn mitm_proxy_denies_default_deny_unlisted_domain() {
         .await
         .expect("TLS handshake should succeed (denial happens at HTTP level)");
 
-    // Send HTTP request -- expect 403.
     let io = TokioIo::new(tls);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(conn);
@@ -219,7 +220,10 @@ async fn mitm_proxy_denies_default_deny_unlisted_domain() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    let events = web_db.lock().unwrap().recent(10).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty());
     assert_eq!(events[0].domain, "unlisted-domain.test");
     assert_eq!(events[0].decision, Decision::Denied);
@@ -229,7 +233,7 @@ async fn mitm_proxy_denies_default_deny_unlisted_domain() {
 
 #[tokio::test]
 async fn mitm_proxy_records_http_method_and_path() {
-    let (config, web_db) = make_proxy_config(&["elie.net"], &[], false);
+    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -241,7 +245,6 @@ async fn mitm_proxy_records_http_method_and_path() {
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(conn);
 
-    // GET a specific path so we can verify telemetry captures method + path.
     let req = hyper::Request::builder()
         .method("GET")
         .uri("/about")
@@ -250,32 +253,31 @@ async fn mitm_proxy_records_http_method_and_path() {
         .unwrap();
     let resp = sender.send_request(req).await.unwrap();
     assert!(resp.status().as_u16() < 500);
-    // Consume the response body so hyper releases the connection.
     let _ = resp.into_body().collect().await;
 
     drop(sender);
     proxy_task.await.unwrap();
 
-    let events = web_db.lock().unwrap().recent(10).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty());
     assert_eq!(events[0].method.as_deref(), Some("GET"));
-    // Path might have been redirected, but should start with /about or be recorded.
     assert!(events[0].path.is_some());
 }
 
 #[tokio::test]
 async fn mitm_proxy_denies_bad_upstream_cert() {
-    let (config, web_db) = make_proxy_config(&["expired.badssl.com"], &[], false);
+    let (config, db) = make_proxy_config(&["expired.badssl.com"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
     let domain = ServerName::try_from("expired.badssl.com").unwrap();
-    
-    // The proxy will successfully complete the TLS handshake with the client using its MITM CA.
-    // The failure happens when the proxy attempts to connect upstream during the HTTP request.
+
     let tls = connector.connect(domain, tcp).await.expect("TLS handshake to proxy should succeed");
-    
+
     let io = TokioIo::new(tls);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(conn);
@@ -287,41 +289,42 @@ async fn mitm_proxy_denies_bad_upstream_cert() {
         .body(Full::new(Bytes::new()))
         .unwrap();
 
-    let resp_result = sender.send_request(req).await;
-    
-    // The proxy drops the connection (or hyper fails) because the upstream TLS fails.
-    assert!(resp_result.is_err(), "Proxy should drop HTTP connection when upstream cert is bad");
+    let resp = sender.send_request(req).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 502, "Bad upstream cert should return 502");
+    let _ = resp.into_body().collect().await;
 
+    drop(sender);
     proxy_task.await.unwrap();
 
-    let events = web_db.lock().unwrap().recent(10).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty(), "Proxy should record the telemetry for failed upstream cert");
     assert_eq!(events[0].domain, "expired.badssl.com");
-    // Depending on exactly when it drops, it might be Denied or Error. Both mean it failed safely.
-    assert!(matches!(events[0].decision, Decision::Error | Decision::Denied), "Decision should be Error or Denied");
+    assert_eq!(events[0].decision, Decision::Error);
+    assert_eq!(events[0].status_code, Some(502));
 }
 
 #[tokio::test]
 async fn mitm_proxy_handles_garbage_data() {
-    // Allow elie.net, but we will send garbage instead of valid SNI/TLS
-    let (config, web_db) = make_proxy_config(&["elie.net"], &[], false);
+    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    
-    // Write random garbage instead of a valid TLS ClientHello
+
     let garbage: Vec<u8> = (0..1024).map(|i| (i % 255) as u8).collect();
     tcp.write_all(&garbage).await.unwrap();
-    
-    // Read to ensure proxy closes the connection without hanging or panicking.
-    // The proxy may send back TLS alert bytes before closing, so accept any response.
+
     let mut buf = vec![0u8; 1024];
     let _ = tcp.read(&mut buf).await;
 
     proxy_task.await.unwrap();
 
-    let events = web_db.lock().unwrap().recent(10).unwrap();
-    // It shouldn't even parse a domain to log, or it might log <unknown>
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
     if !events.is_empty() {
         assert!(matches!(events[0].decision, Decision::Error | Decision::Denied));
     }
@@ -329,7 +332,7 @@ async fn mitm_proxy_handles_garbage_data() {
 
 #[tokio::test]
 async fn mitm_proxy_streams_large_payload() {
-    let (config, web_db) = make_proxy_config(&["httpbin.org"], &[], false);
+    let (config, db) = make_proxy_config(&["httpbin.org"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -341,28 +344,81 @@ async fn mitm_proxy_streams_large_payload() {
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(conn);
 
-    // 1MB payload to test streaming
-    let payload_size = 1024 * 1024; 
+    let payload_size = 1024 * 1024;
     let large_body = vec![b'A'; payload_size];
-    
+
     let req = hyper::Request::builder()
         .method("POST")
         .uri("/post")
         .header("host", "httpbin.org")
         .body(Full::new(Bytes::from(large_body)))
         .unwrap();
-        
+
     let resp = sender.send_request(req).await.unwrap();
     assert!(resp.status().as_u16() < 500, "Large streaming request failed");
-    
+
     let _ = resp.into_body().collect().await;
 
     drop(sender);
     proxy_task.await.unwrap();
 
-    let events = web_db.lock().unwrap().recent(10).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty());
     assert_eq!(events[0].method.as_deref(), Some("POST"));
-    // Ensure that bytes sent reflects the large payload
     assert!(events[0].bytes_sent >= payload_size as u64, "Recorded telemetry bytes_sent {} is smaller than payload size {}", events[0].bytes_sent, payload_size);
+}
+
+/// Multiple requests on one keep-alive connection reuse the upstream connection.
+/// This verifies the per-connection pooling produces correct telemetry for each request.
+#[tokio::test]
+async fn multiple_requests_reuse_upstream_connection() {
+    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+    let (proxy_task, addr) = spawn_proxy(config).await;
+
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
+    let domain = ServerName::try_from("elie.net").unwrap();
+    let tls = connector.connect(domain, tcp).await.unwrap();
+
+    let io = TokioIo::new(tls);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+    tokio::spawn(conn);
+
+    // Send 3 requests on the same keep-alive connection.
+    for path in ["/", "/about", "/contact"] {
+        let req = hyper::Request::builder()
+            .method("HEAD")
+            .uri(path)
+            .header("host", "elie.net")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let resp = sender.send_request(req).await.unwrap();
+        assert!(
+            resp.status().as_u16() < 500,
+            "request to {path} failed with {}",
+            resp.status()
+        );
+        let _ = resp.into_body().collect().await;
+    }
+
+    drop(sender);
+    proxy_task.await.unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(
+        events.len(),
+        3,
+        "3 keep-alive requests should produce 3 telemetry events"
+    );
+    for event in &events {
+        assert_eq!(event.domain, "elie.net");
+        assert_eq!(event.decision, Decision::Allowed);
+        assert_eq!(event.method.as_deref(), Some("HEAD"));
+    }
 }

@@ -160,6 +160,7 @@ impl WebDb {
             ("conn_type", "ALTER TABLE http_requests ADD COLUMN conn_type TEXT DEFAULT 'https'"),
             ("query", "ALTER TABLE http_requests ADD COLUMN query TEXT"),
             ("matched_rule", "ALTER TABLE http_requests ADD COLUMN matched_rule TEXT"),
+            ("process_name", "ALTER TABLE http_requests ADD COLUMN process_name TEXT"),
         ];
 
         for (col, sql) in migrations {
@@ -502,6 +503,7 @@ mod tests {
         assert_eq!(results[0].method, None);
         assert_eq!(results[0].path, None);
         assert_eq!(results[0].status_code, None);
+        assert_eq!(results[0].process_name, None);
 
         // Insert a new-style event.
         db.record(&http_event("github.com")).unwrap();
