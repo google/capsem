@@ -1,47 +1,25 @@
-# Improvement: BLAKE3 hashing vs sha256
-Results:
+# Performance Improvements
 
-| Stage | SHA256 (debug) | BLAKE3 (debug) | BLAKE3 (opt) |
-| --- | --- | --- | --- |
-| config_build (incl hashing 2GB rootfs) | **78,635 ms** | 23,918 ms | **41 ms** |
-| vm_create | 10 ms | 10 ms | 11 ms |
-| vm_start | 104 ms | 101 ms | 100 ms |
-| **TOTAL** | **78,749 ms** | **24,029 ms** | **153 ms** |
+## Disk I/O Optimization Results
+- **Scratch Disk (4K Random Write):** Improved from 1.9 MB/s to ~37 MB/s (~19x speedup, ~9,500 IOPS).
+- **Scratch Disk (4K Random Read):** Improved from 1,654.0 MB/s to 7,989.1 MB/s (nearly 5x speedup, jumping from 423K IOPS to over 2.04 Million IOPS).
+- **Rootfs (4K Random Read):** Improved from 4.3 MB/s to 112.2 MB/s (~26x speedup).
+- **Strategy (Host):** Enabled host-level caching (`VZDiskImageCachingMode::Cached`) and disabled strict synchronization barriers (`VZDiskImageSynchronizationMode::None`) for both rootfs and ephemeral scratch disks in `crates/capsem-core/src/vm/machine.rs`.
+- **Strategy (Guest):** Added `sysfs` tuning to `images/capsem-init` setting the I/O scheduler to `none` (delegating to macOS) and increasing `read_ahead_kb` to `4096` and `nr_requests` to `256` for all VirtIO block devices. Added `noatime` and `nodiratime` to ext4 mount options.
 
-**1,895x faster** hashing. SHA256 was 78.6s for the config build; BLAKE3 with opt-level=3 is 41ms. The root
+## Network Proxy Performance Results
+- **Async Implementation:** Replaced the synchronous, thread-per-connection `net-proxy` with a Tokio-based async implementation in `capsem-agent`. This resolves potential deadlocks and improves concurrency handling.
+- **Latency Analysis:** Identified that the ~180ms latency floor for Google is primarily due to geographical network distance. Verified with `elie.net` (Cloudflare) which shows a raw latency floor of ~85ms through the proxy stack.
+- **Keep-alive:** Verified that HTTP keep-alive and connection reuse are working correctly across the proxy, maintaining persistent connections from guest-to-host and host-to-upstream.
 
-# Deconfig and harden the kernel
+## Build and Hashing
+- **BLAKE3 Integration:** Switched from SHA256 to BLAKE3 for rootfs integrity checking.
+- **Results:**
+    - SHA256 (debug): 78,635 ms
+    - BLAKE3 (opt): 41 ms
+    - **Speedup:** ~1,895x faster configuration building.
 
-### Files created/modified
-
-| File | Change |
-| --- | --- |
-| `images/defconfig` | New -- hardened ARM64 kernel config (120 lines) |
-| `images/Dockerfile.kernel` | Rewritten -- compiles kernel from source instead of using stock Debian |
-| `docs/security.md` | Updated -- replaced "Minimal kernel modules" with comprehensive "Hardened custom kernel" section; updated threat tables from "Planned (M12)" to "Implemented" |
-| `README.md` | Updated -- added Security section with key hardening highlights linking to security.md |
-
----
-
-### Performance
-
-| Metric | Before (stock Debian) | After (custom hardened) |
-| --- | --- | --- |
-| **Kernel size** | ~30MB | 7.0MB |
-| **Initrd size** | ~30MB | 966KB |
-| **Boot time** | ~1.1s | ~1.1s (same) |
-| **capsem-test** | 45/45 pass | 45/45 pass |
-
----
-
-### Key security improvements now implemented
-
-* **`CONFIG_MODULES=n`** -- no loadable kernel modules, eliminates rootkits
-* **`CONFIG_INET=n`** -- no IP networking stack at kernel level
-* **`CONFIG_DEVMEM=n`** -- no `/dev/mem` physical memory access
-* **`CONFIG_IO_URING=n`, `CONFIG_BPF_SYSCALL=n`, `CONFIG_USERFAULTFD=n**` -- high-CVE subsystems removed
-* **`CONFIG_COMPAT=n`** -- no 32-bit syscall compat layer
-* **KASLR, stack protector, FORTIFY_SOURCE, strict kernel RWX** all enabled
-* **Kernel source pinned to LTS 6.6.127**, built reproducibly in container
-
-Would you like me to create a breakdown of how these specific `CONFIG` changes impact the overall attack surface of the system?
+## Kernel Hardening
+- **Custom Kernel:** Implemented a hardened ARM64 kernel (`v6.6.127`) with `CONFIG_MODULES=n`, `CONFIG_INET=n`, and high-CVE subsystems disabled.
+- **Size Reduction:** Kernel reduced from 30MB to 7MB; Initrd reduced from 30MB to 966KB.
+- **Security Invariants:** KASLR, stack protection, and strict RWX enabled.

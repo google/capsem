@@ -244,8 +244,8 @@ fn attach_disk(
                 VZDiskImageStorageDeviceAttachment::alloc(),
                 &disk_url,
                 read_only,
-                VZDiskImageCachingMode::Automatic,
-                VZDiskImageSynchronizationMode::Full,
+                VZDiskImageCachingMode::Cached,
+                VZDiskImageSynchronizationMode::None,
             )
             .map_err(|e| anyhow::anyhow!("disk attach failed for {}: {e:?}", path.display()))?;
 

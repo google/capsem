@@ -11,6 +11,16 @@ mount -t devtmpfs devtmpfs /dev
 mkdir -p /dev/pts
 mount -t devpts   devpts   /dev/pts
 
+# Optimize block I/O: virtio performs best with 'none' scheduler (host OS handles it)
+# and a larger read-ahead buffer.
+for dev in /sys/block/vd*; do
+    if [ -d "$dev" ]; then
+        echo none > "$dev/queue/scheduler" 2>/dev/null || true
+        echo 4096 > "$dev/queue/read_ahead_kb" 2>/dev/null || true
+        echo 256 > "$dev/queue/nr_requests" 2>/dev/null || true
+    fi
+done
+
 # Load kernel modules listed in /conf/modules (populated by initramfs-tools)
 if [ -f /conf/modules ]; then
     while read -r mod args; do
@@ -33,7 +43,7 @@ ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 # The kernel cmdline has 'ro' so this is always read-only.
 mkdir -p /newroot
 echo "[capsem-init] mounting /dev/vda..."
-mount -t ext4 -o ro /dev/vda /newroot
+mount -t ext4 -o ro,noatime,nodiratime,noload /dev/vda /newroot
 echo "[capsem-init] mount exit: $?"
 
 echo "[capsem-init] checking /newroot/bin/bash..."
@@ -66,9 +76,15 @@ fi
 
 if [ -n "$SCRATCH" ]; then
     echo "[capsem-init] formatting scratch disk ($SCRATCH)..."
-    if chroot /newroot /usr/sbin/mke2fs -t ext4 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1; then
-        if mount -t ext4 "$SCRATCH" /newroot/root; then
+    if chroot /newroot /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1; then
+        if mount -t ext4 -o rw,noatime,nodiratime "$SCRATCH" /newroot/root; then
             echo "[capsem-init] /root mounted from scratch disk"
+            # Create a 1GB swap file on the scratch disk.
+            dd if=/dev/zero of=/newroot/root/.swapfile bs=1M count=1024 2>/dev/null
+            chmod 600 /newroot/root/.swapfile
+            mkswap /newroot/root/.swapfile >/dev/null 2>&1
+            swapon /newroot/root/.swapfile
+            echo "[capsem-init] swap enabled (1GB)"
         else
             echo "[capsem-init] WARNING: scratch disk mount failed, falling back to tmpfs"
             mount -t tmpfs tmpfs /newroot/root
@@ -128,12 +144,29 @@ else
     echo "[capsem-init] WARNING: capsem-net-proxy not found, no HTTPS proxy"
 fi
 
+# Increase open file descriptor limit to prevent EMFILE/Errno 24 crashes
+ulimit -n 65536
+
 # Set up environment (capsem-init defaults; the PTY agent overrides these
 # with values from the host's BootConfig message at vsock handshake time).
 export TERM=xterm-256color
+export COLORTERM=truecolor
 export HOME=/root
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LANG=C
+
+# Signal to AI CLIs that we are inside a sandbox (allows root + bypass permissions).
+export IS_SANDBOX=1
+
+# Optimize Node.js and Python for the sandboxed VM environment
+# 1. Prevent kernel OOMs by capping Node's V8 heap (VM has 4GB RAM by default)
+export NODE_OPTIONS="--max-old-space-size=2048"
+# 2. Disable slow network checks and ads during CLI executions
+export NO_UPDATE_NOTIFIER=1
+export NPM_CONFIG_UPDATE_NOTIFIER=false
+export NPM_CONFIG_FUND=false
+export NPM_CONFIG_AUDIT=false
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Create Python virtualenv so pip/uv installs work out of the box.
 # The rootfs is read-only, so packages must go to a writable location.

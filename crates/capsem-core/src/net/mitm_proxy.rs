@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// MITM transparent proxy: terminates TLS from the guest, inspects HTTP traffic,
 /// applies per-domain read/write policy, and bridges to the real upstream server.
 ///
@@ -9,7 +10,7 @@
 /// 5. If denied: return 403
 /// 6. Upstream TLS to real server
 /// 7. Forward request, stream response back
-/// 8. Record telemetry (domain, method, path, query, decision, matched rule)
+/// 8. Emit per-request telemetry (one NetEvent per HTTP request, not per connection)
 use std::io;
 use std::mem::ManuallyDrop;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
@@ -18,17 +19,19 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Instant, SystemTime};
 
+use capsem_logger::{DbWriter, Decision, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp};
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
 use rustls::ServerConfig;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsAcceptor;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::cert_authority::{CertAuthority, MitmCertResolver};
 use super::policy::NetworkPolicy;
-use super::telemetry::{Decision, NetEvent, WebDb};
+use crate::gateway::events::{StopReason, collect_summary};
+use crate::gateway::provider::ProviderKind;
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.
 pub type UpstreamTlsConfig = rustls::ClientConfig;
@@ -42,9 +45,19 @@ pub struct MitmProxyConfig {
     /// Live policy, swappable via RwLock so settings changes take effect
     /// without restarting the VM. Each connection snapshots the Arc.
     pub policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
-    pub web_db: Arc<Mutex<WebDb>>,
+    pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,
+}
+
+/// Detect AI provider from domain name.
+fn detect_ai_provider(domain: &str) -> Option<ProviderKind> {
+    match domain {
+        "api.anthropic.com" => Some(ProviderKind::Anthropic),
+        "api.openai.com" => Some(ProviderKind::OpenAi),
+        "generativelanguage.googleapis.com" => Some(ProviderKind::Google),
+        _ => None,
+    }
 }
 
 /// Build the upstream TLS client config (trusts standard webpki roots).
@@ -63,97 +76,57 @@ pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
 /// Handle a single MITM proxy connection from the guest.
 ///
 /// This is the async entry point for each vsock:5002 connection.
+/// Per-request telemetry is emitted by TelemetryBody when each HTTP response
+/// body completes. This function only emits connection-level error events
+/// (TLS failures, no SNI, etc.).
 pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
-    let start = Instant::now();
-
     let result = handle_inner(vsock_fd, &config).await;
 
-    let duration_ms = start.elapsed().as_millis() as u64;
-    let (domain, decision, telemetry) = match &result {
-        Ok(t) => (t.domain.clone(), t.decision, Some(t)),
-        Err((d, dec, _)) => (d.clone(), *dec, None),
-    };
+    match result {
+        Ok(domain) => {
+            debug!(domain, "MITM proxy: connection closed");
+        }
+        Err((domain, decision, reason)) => {
+            let display_domain = if domain.is_empty() {
+                "<unknown>".to_string()
+            } else {
+                domain
+            };
 
-    let event = NetEvent {
-        timestamp: SystemTime::now(),
-        domain: if domain.is_empty() {
-            "<unknown>".to_string()
-        } else {
-            domain.clone()
-        },
-        port: 443,
-        decision,
-        bytes_sent: telemetry.map_or(0, |t| t.bytes_sent),
-        bytes_received: telemetry.map_or(0, |t| t.bytes_received),
-        duration_ms,
-        method: telemetry.and_then(|t| t.method.clone()),
-        path: telemetry.and_then(|t| t.path.clone()),
-        query: telemetry.and_then(|t| t.query.clone()),
-        status_code: telemetry.and_then(|t| t.status_code),
-        matched_rule: telemetry
-            .and_then(|t| t.matched_rule.clone().or_else(|| t.error_reason.clone()))
-            .or_else(|| match &result {
-                Err((_, _, reason)) => Some(reason.clone()),
-                _ => None,
-            }),
-        request_headers: telemetry.and_then(|t| t.request_headers.clone()),
-        response_headers: telemetry.and_then(|t| t.response_headers.clone()),
-        request_body_preview: telemetry.and_then(|t| t.request_body_preview.clone()),
-        response_body_preview: telemetry.and_then(|t| t.response_body_preview.clone()),
-        conn_type: Some("https-mitm".to_string()),
-    };
+            let event = NetEvent {
+                timestamp: SystemTime::now(),
+                domain: display_domain.clone(),
+                port: 443,
+                decision,
+                process_name: None,
+                pid: None,
+                bytes_sent: 0,
+                bytes_received: 0,
+                duration_ms: 0,
+                method: None,
+                path: None,
+                query: None,
+                status_code: None,
+                matched_rule: Some(reason.clone()),
+                request_headers: None,
+                response_headers: None,
+                request_body_preview: None,
+                response_body_preview: None,
+                conn_type: Some("https-mitm".to_string()),
+            };
 
-    if let Ok(db) = config.web_db.lock() {
-        if let Err(e) = db.record(&event) {
-            warn!(error = %e, "failed to record MITM net event");
+            config.db.write(WriteOp::NetEvent(event)).await;
+            warn!(domain = display_domain, reason, "MITM proxy: connection error");
         }
     }
-
-    match decision {
-        Decision::Allowed => info!(
-            domain,
-            method = ?telemetry.and_then(|t| t.method.as_deref()),
-            path = ?telemetry.and_then(|t| t.path.as_deref()),
-            status = ?telemetry.and_then(|t| t.status_code),
-            duration_ms,
-            "MITM proxy: completed"
-        ),
-        Decision::Denied => info!(
-            domain,
-            method = ?telemetry.and_then(|t| t.method.as_deref()),
-            path = ?telemetry.and_then(|t| t.path.as_deref()),
-            duration_ms,
-            "MITM proxy: denied"
-        ),
-        Decision::Error => warn!(domain, "MITM proxy: error"),
-    }
 }
 
-/// Collected telemetry from a successful (or partially successful) connection.
-struct ConnectionTelemetry {
-    domain: String,
-    decision: Decision,
-    method: Option<String>,
-    path: Option<String>,
-    query: Option<String>,
-    status_code: Option<u16>,
-    matched_rule: Option<String>,
-    request_headers: Option<String>,
-    response_headers: Option<String>,
-    request_body_preview: Option<String>,
-    response_body_preview: Option<String>,
-    bytes_sent: u64,
-    bytes_received: u64,
-    error_reason: Option<String>,
-    req_stats: Option<Arc<Mutex<BodyStats>>>,
-    resp_stats: Option<Arc<Mutex<BodyStats>>>,
-}
-
-/// Inner handler. Returns Ok(telemetry) on success, Err((domain, decision, reason)) on failure.
+/// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
+/// on connection-level failure. Per-request telemetry is emitted by TelemetryBody.
 async fn handle_inner(
     vsock_fd: RawFd,
     config: &MitmProxyConfig,
-) -> Result<ConnectionTelemetry, (String, Decision, String)> {
+) -> Result<String, (String, Decision, String)> {
     // Wrap vsock fd in a non-owning async stream.
     let vsock_file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(vsock_fd) });
     let std_fd = vsock_file.try_clone().map_err(|e| {
@@ -167,7 +140,7 @@ async fn handle_inner(
     })?;
     let mut vsock_stream = AsyncFdStream(async_fd);
 
-    // 1. Read initial bytes (TLS ClientHello).
+    // 1. Read initial bytes (TLS ClientHello + potential metadata).
     let mut initial_buf = vec![0u8; MAX_HELLO_SIZE];
     let n = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut initial_buf)
         .await
@@ -176,6 +149,45 @@ async fn handle_inner(
         return Err((String::new(), Decision::Error, "empty connection".into()));
     }
     initial_buf.truncate(n);
+
+    let mut process_name: Option<String> = None;
+    if initial_buf.starts_with(b"\0CAPSEM_META:") {
+        // Metadata may arrive fragmented across multiple reads.
+        // Keep reading until we find the terminating '\n' or hit the 4KB limit.
+        const MAX_META_SIZE: usize = 4096;
+        loop {
+            if let Some(nl_idx) = initial_buf.iter().position(|&b| b == b'\n') {
+                let proc_bytes = &initial_buf[13..nl_idx];
+                process_name = String::from_utf8(proc_bytes.to_vec()).ok();
+                initial_buf.drain(0..=nl_idx);
+                break;
+            }
+            if initial_buf.len() >= MAX_META_SIZE {
+                return Err((String::new(), Decision::Error, "metadata exceeded 4KB limit".into()));
+            }
+            let mut more = vec![0u8; 1024];
+            let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut more)
+                .await
+                .map_err(|e| (String::new(), Decision::Error, format!("read metadata: {e}")))?;
+            if n2 == 0 {
+                return Err((String::new(), Decision::Error, "EOF during metadata read".into()));
+            }
+            initial_buf.extend_from_slice(&more[..n2]);
+        }
+
+        // If initial_buf is empty after draining meta, we need to read ClientHello.
+        if initial_buf.is_empty() {
+            let mut hello_buf = vec![0u8; MAX_HELLO_SIZE];
+            let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut hello_buf)
+                .await
+                .map_err(|e| (String::new(), Decision::Error, format!("read ClientHello after meta: {e}")))?;
+            if n2 == 0 {
+                return Err((String::new(), Decision::Error, "empty connection after meta".into()));
+            }
+            hello_buf.truncate(n2);
+            initial_buf = hello_buf;
+        }
+    }
 
     // Snapshot the live policy for this connection (cheap Arc clone).
     let policy: Arc<NetworkPolicy> = config.policy.read().unwrap().clone();
@@ -206,62 +218,35 @@ async fn handle_inner(
         (String::new(), Decision::Denied, "no SNI in ClientHello".into())
     })?;
 
-    // TODO(gateway): AI provider domains (api.anthropic.com, api.openai.com,
-    // generativelanguage.googleapis.com) should be routed to the AI audit gateway
-    // (gateway::server) on vsock:5004 instead of being proxied here. Currently
-    // they are blocked by default policy. When the gateway is integrated into the
-    // VM boot sequence, the guest will send AI traffic to port 8080 (redirected
-    // to vsock:5004 by iptables) and the MITM proxy on vsock:5002 will never see
-    // these domains. This TODO tracks the integration point where we need to:
-    //   1. Start gateway::server::start_on_vsock(5004) during VM boot
-    //   2. Verify iptables in capsem-init splits traffic correctly
-    //   3. Optionally add a fallback here: if domain is an AI provider and somehow
-    //      reaches the MITM proxy, redirect to the gateway instead of blocking
+    // AI provider detection.
+    let ai_provider = detect_ai_provider(&domain);
 
     // 4. Run hyper HTTP/1.1 server on the MITM TLS stream.
     let io = TokioIo::new(tls_stream);
 
     let upstream_tls = Arc::clone(&config.upstream_tls);
     let domain_for_svc = domain.clone();
+    let db = Arc::clone(&config.db);
     let log_bodies = policy.log_bodies;
     let max_body = policy.max_body_capture;
+    let process_name = Arc::new(process_name);
 
-    // Shared telemetry state.
-    let telem = Arc::new(Mutex::new(ConnectionTelemetry {
-        domain: domain.clone(),
-        decision: Decision::Allowed,
-        method: None,
-        path: None,
-        query: None,
-        status_code: None,
-        matched_rule: None,
-        request_headers: None,
-        response_headers: None,
-        request_body_preview: None,
-        response_body_preview: None,
-        bytes_sent: 0,
-        bytes_received: 0,
-        error_reason: None,
-        req_stats: None,
-        resp_stats: None,
-    }));
-    let telem_svc = Arc::clone(&telem);
+    // Per-connection upstream sender cache: each MITM connection serves one
+    // domain via keep-alive, so caching the sender avoids re-establishing
+    // TCP+TLS for every request on the same connection.
+    let cached_upstream: Arc<tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
         let policy = Arc::clone(&policy);
         let upstream_tls = Arc::clone(&upstream_tls);
         let domain = domain_for_svc.clone();
-        let telem = Arc::clone(&telem_svc);
+        let db = Arc::clone(&db);
+        let process_name = Arc::clone(&process_name);
+        let cached_upstream = Arc::clone(&cached_upstream);
 
         async move {
-            let res = handle_request(req, &domain, &policy, &upstream_tls, &telem, log_bodies, max_body).await;
-            if let Err(ref e) = res {
-                if let Ok(mut t) = telem.lock() {
-                    t.decision = Decision::Error;
-                    t.error_reason = Some(e.to_string());
-                }
-            }
-            res
+            handle_request(req, &domain, &policy, &upstream_tls, &db, &process_name, ai_provider, log_bodies, max_body, &cached_upstream).await
         }
     });
 
@@ -271,101 +256,40 @@ async fn handle_inner(
         .await
     {
         // Connection errors are expected when the guest closes.
-        if !e.is_incomplete_message() {
+        let err_str = e.to_string();
+        if !e.is_incomplete_message() && !err_str.contains("error shutting down connection") {
             warn!(domain, error = %e, "hyper serve error");
         }
     }
 
-    let result = match Arc::try_unwrap(telem) {
-        Ok(mutex) => {
-            let mut t = mutex.into_inner().unwrap();
-            if let Some(req_stats) = &t.req_stats {
-                if let Ok(st) = req_stats.lock() {
-                    t.bytes_sent = st.bytes;
-                    if !st.preview.is_empty() {
-                        t.request_body_preview = Some(String::from_utf8_lossy(&st.preview).into_owned());
-                    }
-                }
-            }
-            if let Some(resp_stats) = &t.resp_stats {
-                if let Ok(st) = resp_stats.lock() {
-                    t.bytes_received = st.bytes;
-                    if !st.preview.is_empty() {
-                        t.response_body_preview = Some(String::from_utf8_lossy(&st.preview).into_owned());
-                    }
-                }
-            }
-            t
-        }
-        Err(arc) => {
-            let lock = arc.lock().unwrap();
-            let mut t = ConnectionTelemetry {
-                domain: lock.domain.clone(),
-                decision: lock.decision,
-                method: lock.method.clone(),
-                path: lock.path.clone(),
-                query: lock.query.clone(),
-                status_code: lock.status_code,
-                matched_rule: lock.matched_rule.clone(),
-                request_headers: lock.request_headers.clone(),
-                response_headers: lock.response_headers.clone(),
-                request_body_preview: lock.request_body_preview.clone(),
-                response_body_preview: lock.response_body_preview.clone(),
-                bytes_sent: lock.bytes_sent,
-                bytes_received: lock.bytes_received,
-                error_reason: lock.error_reason.clone(),
-                req_stats: lock.req_stats.clone(),
-                resp_stats: lock.resp_stats.clone(),
-            };
-            if let Some(req_stats) = &t.req_stats {
-                if let Ok(st) = req_stats.lock() {
-                    t.bytes_sent = st.bytes;
-                    if !st.preview.is_empty() {
-                        t.request_body_preview = Some(String::from_utf8_lossy(&st.preview).into_owned());
-                    }
-                }
-            }
-            if let Some(resp_stats) = &t.resp_stats {
-                if let Ok(st) = resp_stats.lock() {
-                    t.bytes_received = st.bytes;
-                    if !st.preview.is_empty() {
-                        t.response_body_preview = Some(String::from_utf8_lossy(&st.preview).into_owned());
-                    }
-                }
-            }
-            t
-        }
-    };
-    Ok(result)
+    Ok(domain)
 }
 
 /// Handle a single HTTP request within the MITM TLS connection.
+///
+/// Builds a per-request `TelemetryEmitter` and wraps the response body in
+/// `TelemetryBody` so telemetry is emitted when the response completes.
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
     domain: &str,
     policy: &NetworkPolicy,
     upstream_tls: &Arc<rustls::ClientConfig>,
-    telem: &Mutex<ConnectionTelemetry>,
+    db: &Arc<DbWriter>,
+    process_name: &Option<String>,
+    ai_provider: Option<ProviderKind>,
     log_bodies: bool,
     max_body: usize,
+    cached_upstream: &tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>,
 ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error> {
     use http_body_util::BodyExt;
 
-    // Step 5: Sequential Proxying Optimization
-    // Start upstream connection before consuming full request body.
+    let start_time = Instant::now();
     let (parts, req_body) = req.into_parts();
     let method = parts.method.to_string();
     let (path, query) = split_path_query(&parts.uri);
 
-    // Capture request metadata.
+    // Capture request headers.
     let req_hdrs = format_headers(&parts.headers);
-    {
-        let mut t = telem.lock().unwrap();
-        t.method = Some(method.clone());
-        t.path = Some(path.clone());
-        t.query = query.clone();
-        t.request_headers = Some(req_hdrs);
-    }
 
     // Check for WebSocket upgrade.
     let is_upgrade = parts.headers
@@ -375,28 +299,76 @@ async fn handle_request(
         .unwrap_or(false);
 
     // Policy check: domain + method -> read/write decision.
-    let decision = policy.evaluate(domain, &method);
-    {
-        let mut t = telem.lock().unwrap();
-        t.matched_rule = Some(decision.matched_rule.clone());
-    }
-    if !decision.allowed {
-        {
-            let mut t = telem.lock().unwrap();
-            t.decision = Decision::Denied;
-            t.status_code = Some(403);
-        }
-        let body = format!(
-            "Capsem: request denied ({}: {} {})
-",
-            decision.reason, method, path
+    let eval = policy.evaluate(domain, &method);
+    if !eval.allowed {
+        let body_text = format!(
+            "Capsem: request denied ({}: {} {})\n",
+            eval.reason, method, path
         );
-        let boxed_body = Full::new(Bytes::from(body))
+
+        let emitter = TelemetryEmitter {
+            db: Arc::clone(db),
+            domain: domain.to_string(),
+            process_name: process_name.clone(),
+            ai_provider,
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            status_code: Some(403),
+            decision: Decision::Denied,
+            matched_rule: Some(eval.matched_rule),
+            request_headers: Some(req_hdrs),
+            response_headers: None,
+
+            req_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            resp_kind: RespStatsKind::Plain(Arc::new(Mutex::new(BodyStats::new(0)))),
+            start_time,
+        };
+
+        let deny_body = Full::new(Bytes::from(body_text))
             .map_err(|never| match never {})
             .boxed();
+        let telem_body = TelemetryBody::new(deny_body, emitter);
+
         return Ok(hyper::Response::builder()
             .status(403)
-            .body(boxed_body)
+            .body(telem_body.boxed())
+            .unwrap());
+    }
+
+    // Reject WebSocket upgrades (not supported through MITM proxy).
+    if is_upgrade {
+        let body_text = format!(
+            "Capsem: WebSocket upgrades are not supported ({} {})\n",
+            method, path
+        );
+
+        let emitter = TelemetryEmitter {
+            db: Arc::clone(db),
+            domain: domain.to_string(),
+            process_name: process_name.clone(),
+            ai_provider,
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            status_code: Some(400),
+            decision: Decision::Denied,
+            matched_rule: Some("websocket-not-supported".to_string()),
+            request_headers: Some(req_hdrs),
+            response_headers: None,
+            req_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            resp_kind: RespStatsKind::Plain(Arc::new(Mutex::new(BodyStats::new(0)))),
+            start_time,
+        };
+
+        let deny_body = Full::new(Bytes::from(body_text))
+            .map_err(|never| match never {})
+            .boxed();
+        let telem_body = TelemetryBody::new(deny_body, emitter);
+
+        return Ok(hyper::Response::builder()
+            .status(400)
+            .body(telem_body.boxed())
             .unwrap());
     }
 
@@ -404,34 +376,94 @@ async fn handle_request(
     let original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
 
-    // Connect upstream TLS (using cached config).
-    let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
-
-    let upstream_tcp = tokio::net::TcpStream::connect(format!("{domain}:443")).await?;
-    let server_name = rustls::pki_types::ServerName::try_from(domain.to_string())?;
-    let upstream_tls = connector.connect(server_name, upstream_tcp).await?;
-
-    if is_upgrade {
-        // WebSocket upgrade: log metadata, then blind bridge.
-        let boxed_body = Full::new(Bytes::new())
+    // Helper: build a 502 Bad Gateway response with telemetry so upstream
+    // errors don't kill keep-alive connections (returns Ok, not Err).
+    let make_502 = |error: &dyn std::fmt::Display,
+                    method: &str,
+                    path: &str,
+                    query: &Option<String>,
+                    req_hdrs: &str,
+                    start: Instant|
+     -> hyper::Response<ProxyBoxBody> {
+        warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
+        let body_text = format!("Capsem: upstream error ({error})\n");
+        let emitter = TelemetryEmitter {
+            db: Arc::clone(db),
+            domain: domain.to_string(),
+            process_name: process_name.clone(),
+            ai_provider,
+            method: method.to_string(),
+            path: path.to_string(),
+            query: query.clone(),
+            status_code: Some(502),
+            decision: Decision::Error,
+            matched_rule: Some(error.to_string()),
+            request_headers: Some(req_hdrs.to_string()),
+            response_headers: None,
+            req_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            resp_kind: RespStatsKind::Plain(Arc::new(Mutex::new(BodyStats::new(0)))),
+            start_time: start,
+        };
+        let deny_body = Full::new(Bytes::from(body_text))
             .map_err(|never| match never {})
             .boxed();
-        let resp = hyper::Response::builder()
-            .status(101)
-            .header("upgrade", "websocket")
-            .header("connection", "upgrade")
-            .body(boxed_body)
-            .unwrap();
-        telem.lock().unwrap().status_code = Some(101);
-        return Ok(resp);
+        let telem_body = TelemetryBody::new(deny_body, emitter);
+        hyper::Response::builder()
+            .status(502)
+            .body(telem_body.boxed())
+            .unwrap()
+    };
+
+    // Try to reuse a cached upstream sender, or create a new connection.
+    // Each MITM connection serves one domain via keep-alive, so per-connection
+    // caching avoids re-establishing TCP+TLS for every request.
+    let mut reusable = cached_upstream.lock().await.take();
+
+    // If we have a cached sender, check it's still alive.
+    if let Some(ref mut s) = reusable {
+        if s.ready().await.is_err() {
+            reusable = None;
+        }
     }
 
-    // Forward request to upstream via hyper client.
-    let upstream_io = TokioIo::new(upstream_tls);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(upstream_io).await?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+    // Create a fresh upstream connection if needed.
+    let mut sender = if let Some(s) = reusable {
+        s
+    } else {
+        let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
+        let upstream_tcp = match tokio::net::TcpStream::connect(format!("{domain}:443")).await {
+            Ok(tcp) => {
+                let _ = tcp.set_nodelay(true);
+                tcp
+            },
+            Err(e) => {
+                return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+            }
+        };
+        let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {
+            Ok(sn) => sn,
+            Err(e) => {
+                return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+            }
+        };
+        let upstream_tls_stream = match connector.connect(server_name, upstream_tcp).await {
+            Ok(tls) => tls,
+            Err(e) => {
+                return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+            }
+        };
+        let upstream_io = TokioIo::new(upstream_tls_stream);
+        let (sender, conn) = match hyper::client::conn::http1::handshake(upstream_io).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+            }
+        };
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        sender
+    };
 
     // Build upstream request with original headers.
     let full_path = match &query {
@@ -448,54 +480,84 @@ async fn handle_request(
     }
     builder = builder.header("host", domain);
 
-    // Track request body
+    // Track request body (boxed for consistent sender type across requests).
     let req_stats = Arc::new(Mutex::new(BodyStats {
         bytes: 0,
         preview: Vec::new(),
         max_preview: if log_bodies { max_body } else { 0 },
     }));
-    let tracked_req_body = TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024); // 100MB limit
-    let upstream_req = builder.body(tracked_req_body)?;
+    let tracked_req_body = TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024);
+    let upstream_req = builder.body(tracked_req_body.boxed())?;
 
-    let resp = sender.send_request(upstream_req).await?;
+    let resp = match sender.send_request(upstream_req).await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+        }
+    };
+
+    // Put the sender back in the cache for the next request on this connection.
+    // The next request's ready().await will naturally wait until this response
+    // body completes (hyper 1.x keep-alive semantics).
+    cached_upstream.lock().await.replace(sender);
     let resp_status = resp.status().as_u16();
-
-    // Track response body
-    let resp_stats = Arc::new(Mutex::new(BodyStats {
-        bytes: 0,
-        preview: Vec::new(),
-        max_preview: if log_bodies { max_body } else { 0 },
-    }));
     let (resp_parts, resp_body) = resp.into_parts();
-    let tracked_resp_body = TrackedBody::new(resp_body, Arc::clone(&resp_stats), 100 * 1024 * 1024); // 100MB limit
 
     // Capture response headers.
     let resp_hdrs = format_headers(&resp_parts.headers);
 
-    {
-        let mut t = telem.lock().unwrap();
-        t.status_code = Some(resp_status);
-        t.response_headers = Some(resp_hdrs);
-        t.req_stats = Some(Arc::clone(&req_stats));
-        t.resp_stats = Some(Arc::clone(&resp_stats));
-    }
+    // Build the response body with telemetry wrapper.
+    let (inner_body, resp_kind) = if let Some(provider) = ai_provider {
+        use crate::gateway::ai_body::AiResponseBody;
+        use crate::gateway::anthropic::AnthropicStreamParserWithState;
+        use crate::gateway::google::GoogleStreamParser;
+        use crate::gateway::openai::OpenAiStreamParser;
 
-    // Build downstream response.
-    let response = hyper::Response::from_parts(resp_parts, tracked_resp_body.boxed());
+        let provider_parser: Box<dyn crate::gateway::events::ProviderStreamParser + Send> = match provider {
+            ProviderKind::Anthropic => Box::new(AnthropicStreamParserWithState::new()),
+            ProviderKind::OpenAi => Box::new(OpenAiStreamParser::new()),
+            ProviderKind::Google => Box::new(GoogleStreamParser::new()),
+        };
 
-    // Spawn a task to update telemetry after response is complete
-    // Wait, the body is consumed by the hyper server, we can't easily wait for it here
-    // unless we spawn a task or just don't capture body metrics.
-    // Actually, `handle_request` returns the response, and hyper streams it.
-    // The telemetry is extracted after `serve_connection` completes!
-    // So we just need to update telemetry with the stats from the `TrackedBody` instances
-    // when `handle_connection` finishes.
-    // We'll return the response now, but we need to pass the stats back.
-    // Wait, `req_stats` and `resp_stats` are arcs. We can update `telem` periodically or just 
-    // update `telem` in a Drop impl of `TrackedBody` or just do it in the closure.
-    // Let's spawn a task to poll for completion? No, we can just save `req_stats` and `resp_stats`
-    // in `ConnectionTelemetry` or let `TrackedBody` update `telem` directly!
-    // Let's change TrackedBody to update `telem` directly.
+        let max_preview = if log_bodies { max_body } else { 0 };
+        let ai_body = AiResponseBody::new(resp_body, provider_parser, max_preview, 100 * 1024 * 1024);
+        let ai_state = ai_body.ai_state();
+        let ai_stats = ai_body.stats();
+
+        let kind = RespStatsKind::Ai { stats: ai_stats, state: ai_state };
+        (ai_body.boxed(), kind)
+    } else {
+        let resp_stats = Arc::new(Mutex::new(BodyStats {
+            bytes: 0,
+            preview: Vec::new(),
+            max_preview: if log_bodies { max_body } else { 0 },
+        }));
+        let tracked_resp_body = TrackedBody::new(resp_body, Arc::clone(&resp_stats), 100 * 1024 * 1024);
+        let kind = RespStatsKind::Plain(resp_stats);
+        (tracked_resp_body.boxed(), kind)
+    };
+
+    let emitter = TelemetryEmitter {
+        db: Arc::clone(db),
+        domain: domain.to_string(),
+        process_name: process_name.clone(),
+        ai_provider,
+        method,
+        path,
+        query,
+        status_code: Some(resp_status),
+        decision: Decision::Allowed,
+        matched_rule: Some(eval.matched_rule),
+        request_headers: Some(req_hdrs),
+        response_headers: Some(resp_hdrs),
+
+        req_stats,
+        resp_kind,
+        start_time,
+    };
+
+    let telem_body = TelemetryBody::new(inner_body, emitter);
+    let response = hyper::Response::from_parts(resp_parts, telem_body.boxed());
     Ok(response)
 }
 
@@ -506,6 +568,289 @@ struct BodyStats {
     bytes: u64,
     preview: Vec<u8>,
     max_preview: usize,
+}
+
+impl BodyStats {
+    fn new(max_preview: usize) -> Self {
+        Self { bytes: 0, preview: Vec::new(), max_preview }
+    }
+}
+
+/// Which response body stats variant we're tracking.
+enum RespStatsKind {
+    /// Non-AI response: plain byte tracking.
+    Plain(Arc<Mutex<BodyStats>>),
+    /// AI response: SSE-parsed body with events + stats.
+    Ai {
+        stats: Arc<Mutex<crate::gateway::ai_body::AiBodyStats>>,
+        state: Arc<Mutex<crate::gateway::ai_body::AiStreamState>>,
+    },
+}
+
+/// Holds everything needed to build and emit a NetEvent (+ optional ModelCall)
+/// when a single HTTP request/response cycle completes.
+struct TelemetryEmitter {
+    db: Arc<DbWriter>,
+    // Connection-level
+    domain: String,
+    process_name: Option<String>,
+    ai_provider: Option<ProviderKind>,
+    // Request-level
+    method: String,
+    path: String,
+    query: Option<String>,
+    status_code: Option<u16>,
+    decision: Decision,
+    matched_rule: Option<String>,
+    request_headers: Option<String>,
+    response_headers: Option<String>,
+    // Body stats
+    req_stats: Arc<Mutex<BodyStats>>,
+    resp_kind: RespStatsKind,
+    // Timing
+    start_time: Instant,
+}
+
+impl TelemetryEmitter {
+    /// Build and write a NetEvent (and optionally a ModelCall) to the DB.
+    fn emit(self) {
+        let duration_ms = self.start_time.elapsed().as_millis() as u64;
+
+        // Read request body stats.
+        let (bytes_sent, request_body_preview) = if let Ok(st) = self.req_stats.lock() {
+            let preview = if st.preview.is_empty() {
+                None
+            } else {
+                Some(String::from_utf8_lossy(&st.preview).into_owned())
+            };
+            (st.bytes, preview)
+        } else {
+            (0, None)
+        };
+
+        // Read response body stats.
+        let (bytes_received, response_body_preview, ai_state_ref) = match &self.resp_kind {
+            RespStatsKind::Plain(resp_stats) => {
+                if let Ok(st) = resp_stats.lock() {
+                    let preview = if st.preview.is_empty() {
+                        None
+                    } else {
+                        Some(String::from_utf8_lossy(&st.preview).into_owned())
+                    };
+                    (st.bytes, preview, None)
+                } else {
+                    (0, None, None)
+                }
+            }
+            RespStatsKind::Ai { stats, state } => {
+                let (bytes, preview) = if let Ok(st) = stats.lock() {
+                    let p = if st.preview.is_empty() {
+                        None
+                    } else {
+                        Some(String::from_utf8_lossy(&st.preview).into_owned())
+                    };
+                    (st.bytes, p)
+                } else {
+                    (0, None)
+                };
+                (bytes, preview, Some(Arc::clone(state)))
+            }
+        };
+
+        let event = NetEvent {
+            timestamp: SystemTime::now(),
+            domain: self.domain.clone(),
+            port: 443,
+            decision: self.decision,
+            process_name: self.process_name.clone(),
+            pid: None,
+            bytes_sent,
+            bytes_received,
+            duration_ms,
+            method: Some(self.method.clone()),
+            path: Some(self.path.clone()),
+            query: self.query.clone(),
+            status_code: self.status_code,
+            matched_rule: self.matched_rule.clone(),
+            request_headers: self.request_headers.clone(),
+            response_headers: self.response_headers.clone(),
+            request_body_preview,
+            response_body_preview,
+            conn_type: Some("https-mitm".to_string()),
+        };
+
+        self.db.try_write(WriteOp::NetEvent(event));
+
+        // Emit ModelCall for AI providers.
+        if let Some(provider) = self.ai_provider {
+            self.emit_model_call(provider, bytes_sent, bytes_received, duration_ms, &ai_state_ref);
+        }
+
+        // Log.
+        match self.decision {
+            Decision::Allowed => info!(
+                domain = self.domain,
+                method = self.method,
+                path = self.path,
+                status = ?self.status_code,
+                duration_ms,
+                "MITM proxy: completed"
+            ),
+            Decision::Denied => info!(
+                domain = self.domain,
+                method = self.method,
+                path = self.path,
+                duration_ms,
+                "MITM proxy: denied"
+            ),
+            Decision::Error => warn!(
+                domain = self.domain,
+                method = self.method,
+                "MITM proxy: error"
+            ),
+        }
+    }
+
+    /// Build and write a ModelCall for AI provider traffic.
+    fn emit_model_call(
+        &self,
+        provider: ProviderKind,
+        request_bytes: u64,
+        response_bytes: u64,
+        duration_ms: u64,
+        ai_state_ref: &Option<Arc<Mutex<crate::gateway::ai_body::AiStreamState>>>,
+    ) {
+        use crate::gateway::request_parser;
+
+        // Parse request body for metadata.
+        let req_body_bytes: Vec<u8> = self.req_stats.lock()
+            .ok()
+            .map(|st| st.preview.clone())
+            .unwrap_or_default();
+        let req_meta = request_parser::parse_request(provider, &req_body_bytes);
+
+        // Collect stream summary from AI events.
+        let summary = ai_state_ref.as_ref().and_then(|state| {
+            state.lock().ok().map(|ai| collect_summary(&ai.events))
+        });
+
+        let stop_reason_str = summary.as_ref().and_then(|s| s.stop_reason.as_ref()).map(|sr| {
+            match sr {
+                StopReason::EndTurn => "end_turn".to_string(),
+                StopReason::ToolUse => "tool_use".to_string(),
+                StopReason::MaxTokens => "max_tokens".to_string(),
+                StopReason::ContentFilter => "content_filter".to_string(),
+                StopReason::Other(s) => s.clone(),
+            }
+        });
+
+        let tool_calls: Vec<ToolCallEntry> = summary.as_ref()
+            .map(|s| s.tool_calls.iter().map(|tc| ToolCallEntry {
+                call_index: tc.index,
+                call_id: tc.call_id.clone(),
+                tool_name: tc.name.clone(),
+                arguments: if tc.arguments.is_empty() { None } else { Some(tc.arguments.clone()) },
+            }).collect())
+            .unwrap_or_default();
+
+        let tool_responses: Vec<ToolResponseEntry> = req_meta.tool_results.iter()
+            .map(|tr| ToolResponseEntry {
+                call_id: tr.call_id.clone(),
+                content_preview: Some(tr.content_preview.clone()),
+                is_error: tr.is_error,
+            })
+            .collect();
+
+        let model_call = ModelCall {
+            timestamp: SystemTime::now(),
+            provider: provider.as_str().to_string(),
+            model: req_meta.model.or_else(|| summary.as_ref().and_then(|s| s.model.clone())),
+            process_name: self.process_name.clone(),
+            pid: None,
+            method: self.method.clone(),
+            path: self.path.clone(),
+            stream: req_meta.stream,
+            system_prompt_preview: req_meta.system_prompt_preview,
+            messages_count: req_meta.messages_count,
+            tools_count: req_meta.tools_count,
+            request_bytes,
+            request_body_preview: self.req_stats.lock().ok()
+                .and_then(|st| if st.preview.is_empty() { None } else {
+                    Some(String::from_utf8_lossy(&st.preview).into_owned())
+                }),
+            message_id: summary.as_ref().and_then(|s| s.message_id.clone()),
+            status_code: self.status_code,
+            text_content: summary.as_ref().map(|s| s.text.clone()).filter(|s| !s.is_empty()),
+            thinking_content: summary.as_ref().map(|s| s.thinking.clone()).filter(|s| !s.is_empty()),
+            stop_reason: stop_reason_str,
+            input_tokens: summary.as_ref().and_then(|s| s.input_tokens),
+            output_tokens: summary.as_ref().and_then(|s| s.output_tokens),
+            duration_ms,
+            response_bytes,
+            estimated_cost_usd: 0.0,
+            trace_id: None,
+            tool_calls,
+            tool_responses,
+        };
+
+        self.db.try_write(WriteOp::ModelCall(model_call));
+    }
+}
+
+/// Wraps a response body and fires telemetry when the body completes.
+/// If the body is dropped before completion (client disconnect), the
+/// Drop impl fires as a fallback.
+///
+/// ProxyBoxBody (BoxBody) is Unpin, so no pin projection needed.
+struct TelemetryBody {
+    inner: ProxyBoxBody,
+    emitter: Option<TelemetryEmitter>,
+}
+
+impl TelemetryBody {
+    fn new(inner: ProxyBoxBody, emitter: TelemetryEmitter) -> Self {
+        Self { inner, emitter: Some(emitter) }
+    }
+}
+
+impl hyper::body::Body for TelemetryBody {
+    type Data = Bytes;
+    type Error = anyhow::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_frame(cx) {
+            Poll::Ready(None) => {
+                // Body complete -- emit telemetry.
+                if let Some(emitter) = this.emitter.take() {
+                    emitter.emit();
+                }
+                Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for TelemetryBody {
+    fn drop(&mut self) {
+        // Fallback: if the body was dropped before completion (e.g. client
+        // disconnect), emit whatever telemetry we have.
+        if let Some(emitter) = self.emitter.take() {
+            emitter.emit();
+        }
+    }
 }
 
 pin_project_lite::pin_project! {
@@ -748,11 +1093,14 @@ impl<R: AsyncWrite + Unpin> AsyncWrite for ReplayReader<R> {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::io::IntoRawFd;
     use std::os::unix::net::UnixStream;
+
+    use http_body_util::BodyExt;
 
     use crate::net::cert_authority::CertAuthority;
     use crate::net::policy::NetworkPolicy;
@@ -760,13 +1108,19 @@ mod tests {
     const CA_KEY: &str = include_str!("../../../../config/capsem-ca.key");
     const CA_CERT: &str = include_str!("../../../../config/capsem-ca.crt");
 
+    /// Flush delay for the DB writer thread to process queued writes.
+    const DB_FLUSH_MS: u64 = 100;
+
     fn make_config_with_policy(policy: NetworkPolicy) -> Arc<MitmProxyConfig> {
         let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
-        let web_db = Arc::new(Mutex::new(WebDb::open_in_memory().unwrap()));
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
+        // Leak the tempdir so it lives for the test
+        std::mem::forget(dir);
         Arc::new(MitmProxyConfig {
             ca,
             policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
-            web_db,
+            db,
             upstream_tls: make_upstream_tls_config(),
         })
     }
@@ -822,6 +1176,85 @@ mod tests {
         record
     }
 
+    // ---------------------------------------------------------------
+    // Metadata fragmentation tests
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fragmented_metadata_is_reassembled() {
+        let config = make_config_dev();
+        let (s1, s2) = UnixStream::pair().unwrap();
+
+        let proxy_fd = s2.into_raw_fd();
+        let proxy_config = Arc::clone(&config);
+        let proxy_task = tokio::spawn(async move {
+            handle_connection(proxy_fd, proxy_config).await;
+        });
+
+        // Write metadata in two fragments: first the prefix, then the rest + newline + client hello.
+        s1.set_nonblocking(false).unwrap();
+        let mut writer = s1;
+        // Fragment 1: metadata prefix without the newline
+        std::io::Write::write_all(&mut writer, b"\0CAPSEM_META:my_proc").unwrap();
+        // Small delay so the proxy reads the first fragment before the rest arrives.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Fragment 2: rest of metadata with newline, then the TLS ClientHello
+        let mut frag2 = b"ess_name\n".to_vec();
+        frag2.extend_from_slice(&make_client_hello("example.com"));
+        std::io::Write::write_all(&mut writer, &frag2).unwrap();
+        drop(writer);
+
+        // The proxy should have reassembled metadata and completed TLS handshake.
+        // It will fail after handshake (no real TLS client), but the key check
+        // is that it didn't error during metadata parsing.
+        let _ = proxy_task.await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        // Should have an event (error from failed TLS with raw bytes, not metadata error).
+        // The important thing is we didn't get "metadata exceeded 4KB" or "EOF during metadata".
+        if !events.is_empty() {
+            let rule = events[0].matched_rule.as_deref().unwrap_or("");
+            assert!(!rule.contains("metadata"), "Fragmented metadata should be reassembled, got: {rule}");
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_metadata_rejected() {
+        let config = make_config_dev();
+        let (s1, s2) = UnixStream::pair().unwrap();
+
+        let proxy_fd = s2.into_raw_fd();
+        let proxy_config = Arc::clone(&config);
+        let proxy_task = tokio::spawn(async move {
+            handle_connection(proxy_fd, proxy_config).await;
+        });
+
+        // Write >4KB metadata without a newline terminator.
+        let mut oversized = b"\0CAPSEM_META:".to_vec();
+        oversized.extend_from_slice(&vec![b'A'; 5000]);
+        let mut writer = s1;
+        std::io::Write::write_all(&mut writer, &oversized).unwrap();
+        drop(writer);
+
+        let _ = proxy_task.await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert!(!events.is_empty(), "oversized metadata should produce error event");
+        assert_eq!(events[0].decision, Decision::Error);
+        let rule = events[0].matched_rule.as_deref().unwrap_or("");
+        assert!(rule.contains("4KB"), "Should mention 4KB limit, got: {rule}");
+    }
+
+    // ---------------------------------------------------------------
+    // Existing connection-level tests (unchanged behavior)
+    // ---------------------------------------------------------------
+
     #[tokio::test]
     async fn no_sni_records_error() {
         let config = make_config_dev();
@@ -832,8 +1265,11 @@ mod tests {
 
         handle_connection(s2.into_raw_fd(), config.clone()).await;
 
-        let db = config.web_db.lock().unwrap();
-        let events = db.recent(10).unwrap();
+        // Give writer thread time to flush.
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].domain, "<unknown>");
         // Without valid TLS, it's an error (handshake failure)
@@ -848,8 +1284,10 @@ mod tests {
 
         handle_connection(s2.into_raw_fd(), config.clone()).await;
 
-        let db = config.web_db.lock().unwrap();
-        let events = db.recent(10).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].decision, Decision::Error);
     }
@@ -1041,5 +1479,404 @@ mod tests {
         let (path, query) = split_path_query(&uri);
         assert_eq!(path, "/about");
         assert_eq!(query, None);
+    }
+
+    // ---------------------------------------------------------------
+    // TelemetryEmitter unit tests
+    // ---------------------------------------------------------------
+
+    /// Helper: create a DbWriter for tests with a reader for verification.
+    fn make_test_db() -> Arc<DbWriter> {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
+        std::mem::forget(dir);
+        db
+    }
+
+    fn make_emitter(db: &Arc<DbWriter>) -> TelemetryEmitter {
+        TelemetryEmitter {
+            db: Arc::clone(db),
+            domain: "example.com".to_string(),
+            process_name: None,
+            ai_provider: None,
+            method: "GET".to_string(),
+            path: "/".to_string(),
+            query: None,
+            status_code: Some(200),
+            decision: Decision::Allowed,
+            matched_rule: Some("default-dev-allow".to_string()),
+            request_headers: Some("host: example.com".to_string()),
+            response_headers: Some("content-type: text/html".to_string()),
+
+            req_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            resp_kind: RespStatsKind::Plain(Arc::new(Mutex::new(BodyStats::new(0)))),
+            start_time: Instant::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn telemetry_emitter_writes_net_event() {
+        let db = make_test_db();
+        let emitter = make_emitter(&db);
+        emitter.emit();
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].domain, "example.com");
+        assert_eq!(events[0].method, Some("GET".to_string()));
+        assert_eq!(events[0].path, Some("/".to_string()));
+        assert_eq!(events[0].status_code, Some(200));
+        assert_eq!(events[0].decision, Decision::Allowed);
+    }
+
+    #[tokio::test]
+    async fn telemetry_emitter_writes_model_call_for_ai() {
+        let db = make_test_db();
+
+        // Set up AI provider emitter with fake SSE state
+        let ai_state = Arc::new(Mutex::new(crate::gateway::ai_body::AiStreamState {
+            sse_parser: crate::gateway::sse::SseParser::new(),
+            provider_parser: Box::new(crate::gateway::anthropic::AnthropicStreamParserWithState::new()),
+            events: vec![
+                crate::gateway::events::LlmEvent::MessageStart {
+                    message_id: Some("msg_test".into()),
+                    model: Some("claude-test".into()),
+                },
+                crate::gateway::events::LlmEvent::TextDelta { index: 0, text: "Hello".into() },
+                crate::gateway::events::LlmEvent::MessageEnd {
+                    stop_reason: Some(crate::gateway::events::StopReason::EndTurn),
+                },
+            ],
+        }));
+        let ai_stats = Arc::new(Mutex::new(crate::gateway::ai_body::AiBodyStats {
+            bytes: 500,
+            preview: Vec::new(),
+            max_preview: 0,
+        }));
+
+        let emitter = TelemetryEmitter {
+            db: Arc::clone(&db),
+            domain: "api.anthropic.com".to_string(),
+            process_name: None,
+            ai_provider: Some(ProviderKind::Anthropic),
+            method: "POST".to_string(),
+            path: "/v1/messages".to_string(),
+            query: None,
+            status_code: Some(200),
+            decision: Decision::Allowed,
+            matched_rule: Some("ai-allow".to_string()),
+            request_headers: Some("x-api-key: sk-test1234".to_string()),
+            response_headers: Some("content-type: text/event-stream".to_string()),
+
+            req_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            resp_kind: RespStatsKind::Ai { stats: ai_stats, state: ai_state },
+            start_time: Instant::now(),
+        };
+        emitter.emit();
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].domain, "api.anthropic.com");
+
+        // ModelCall should also be recorded
+        let calls = reader.recent_model_calls(10).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.provider, "anthropic");
+        assert_eq!(calls[0].1.model, Some("claude-test".to_string()));
+    }
+
+    // ---------------------------------------------------------------
+    // TelemetryBody tests
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn telemetry_body_emits_on_completion() {
+        let db = make_test_db();
+        let emitter = make_emitter(&db);
+
+        let inner = Full::new(Bytes::from("hello body"))
+            .map_err(|never| -> anyhow::Error { match never {} })
+            .boxed();
+        let telem_body = TelemetryBody::new(inner, emitter);
+
+        // Consume the body fully.
+        let _ = telem_body.collect().await.unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].domain, "example.com");
+    }
+
+    #[tokio::test]
+    async fn telemetry_body_emits_on_drop() {
+        let db = make_test_db();
+        let emitter = make_emitter(&db);
+
+        let inner = Full::new(Bytes::from("hello body"))
+            .map_err(|never| -> anyhow::Error { match never {} })
+            .boxed();
+        let telem_body = TelemetryBody::new(inner, emitter);
+
+        // Drop without consuming.
+        drop(telem_body);
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1, "Drop fallback should emit");
+        assert_eq!(events[0].domain, "example.com");
+    }
+
+    #[tokio::test]
+    async fn telemetry_body_emits_only_once() {
+        let db = make_test_db();
+        let emitter = make_emitter(&db);
+
+        let inner = Full::new(Bytes::from("hello body"))
+            .map_err(|never| -> anyhow::Error { match never {} })
+            .boxed();
+        let telem_body = TelemetryBody::new(inner, emitter);
+
+        // Consume fully (triggers emit on completion), then drop (should not emit again).
+        let _ = telem_body.collect().await.unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1, "should emit exactly once, not on both completion and drop");
+    }
+
+    // ---------------------------------------------------------------
+    // Denied-request integration test (no upstream needed)
+    // ---------------------------------------------------------------
+
+    /// Build a rustls TLS client config that trusts our MITM CA.
+    fn make_mitm_client_config() -> Arc<rustls::ClientConfig> {
+        let mut root_store = rustls::RootCertStore::empty();
+        let ca_certs: Vec<_> = rustls_pemfile::certs(&mut CA_CERT.as_bytes())
+            .collect::<Result<_, _>>()
+            .unwrap();
+        for cert in ca_certs {
+            root_store.add(cert).unwrap();
+        }
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        Arc::new(rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(root_store)
+            .with_no_client_auth())
+    }
+
+    #[tokio::test]
+    async fn denied_request_emits_event() {
+        let config = make_config_deny_all();
+        let (s1, s2) = UnixStream::pair().unwrap();
+
+        let proxy_fd = s2.into_raw_fd();
+        let proxy_config = Arc::clone(&config);
+        let proxy_task = tokio::spawn(async move {
+            handle_connection(proxy_fd, proxy_config).await;
+        });
+
+        let client_config = make_mitm_client_config();
+        let connector = tokio_rustls::TlsConnector::from(client_config);
+        s1.set_nonblocking(true).unwrap();
+        let stream = tokio::net::UnixStream::from_std(s1).unwrap();
+        let sni = rustls::pki_types::ServerName::try_from("example.com").unwrap();
+        let tls_stream = connector.connect(sni, stream).await.unwrap();
+
+        let io = TokioIo::new(tls_stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+        tokio::spawn(async move { let _ = conn.await; });
+
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri("/secret")
+            .header("host", "example.com")
+            .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
+            .unwrap();
+        let resp = sender.send_request(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 403);
+        // Consume the body to trigger telemetry emission.
+        let _ = resp.into_body().collect().await;
+
+        drop(sender);
+        let _ = proxy_task.await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].decision, Decision::Denied);
+        assert_eq!(events[0].status_code, Some(403));
+        assert_eq!(events[0].method, Some("GET".to_string()));
+        assert_eq!(events[0].path, Some("/secret".to_string()));
+    }
+
+    /// Multiple denied requests on the same keep-alive connection produce
+    /// one event per request (the core bug this fix addresses).
+    #[tokio::test]
+    async fn multiple_denied_requests_emit_separate_events() {
+        let config = make_config_deny_all();
+        let (s1, s2) = UnixStream::pair().unwrap();
+
+        let proxy_fd = s2.into_raw_fd();
+        let proxy_config = Arc::clone(&config);
+        let proxy_task = tokio::spawn(async move {
+            handle_connection(proxy_fd, proxy_config).await;
+        });
+
+        let client_config = make_mitm_client_config();
+        let connector = tokio_rustls::TlsConnector::from(client_config);
+        s1.set_nonblocking(true).unwrap();
+        let stream = tokio::net::UnixStream::from_std(s1).unwrap();
+        let sni = rustls::pki_types::ServerName::try_from("example.com").unwrap();
+        let tls_stream = connector.connect(sni, stream).await.unwrap();
+
+        let io = TokioIo::new(tls_stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+        tokio::spawn(async move { let _ = conn.await; });
+
+        // Send 3 requests on the same keep-alive connection.
+        for path in ["/a", "/b", "/c"] {
+            let req = hyper::Request::builder()
+                .method("GET")
+                .uri(path)
+                .header("host", "example.com")
+                .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
+                .unwrap();
+            let resp = sender.send_request(req).await.unwrap();
+            assert_eq!(resp.status().as_u16(), 403);
+            let _ = resp.into_body().collect().await;
+        }
+
+        drop(sender);
+        let _ = proxy_task.await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let mut events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 3, "3 requests should produce 3 events, not 1");
+        events.reverse(); // chronological order
+        assert_eq!(events[0].path, Some("/a".to_string()));
+        assert_eq!(events[1].path, Some("/b".to_string()));
+        assert_eq!(events[2].path, Some("/c".to_string()));
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_rejected_with_400() {
+        let config = make_config_dev();
+        let (s1, s2) = UnixStream::pair().unwrap();
+
+        let proxy_fd = s2.into_raw_fd();
+        let proxy_config = Arc::clone(&config);
+        let proxy_task = tokio::spawn(async move {
+            handle_connection(proxy_fd, proxy_config).await;
+        });
+
+        let client_config = make_mitm_client_config();
+        let connector = tokio_rustls::TlsConnector::from(client_config);
+        s1.set_nonblocking(true).unwrap();
+        let stream = tokio::net::UnixStream::from_std(s1).unwrap();
+        let sni = rustls::pki_types::ServerName::try_from("example.com").unwrap();
+        let tls_stream = connector.connect(sni, stream).await.unwrap();
+
+        let io = TokioIo::new(tls_stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+        tokio::spawn(async move { let _ = conn.await; });
+
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri("/ws")
+            .header("host", "example.com")
+            .header("upgrade", "websocket")
+            .header("connection", "upgrade")
+            .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
+            .unwrap();
+        let resp = sender.send_request(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 400, "WebSocket upgrades should return 400");
+        let _ = resp.into_body().collect().await;
+
+        drop(sender);
+        let _ = proxy_task.await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].decision, Decision::Denied);
+        assert_eq!(events[0].status_code, Some(400));
+        assert_eq!(events[0].matched_rule, Some("websocket-not-supported".to_string()));
+    }
+
+    /// Upstream DNS failure returns 502 instead of killing the connection.
+    #[tokio::test]
+    async fn upstream_error_returns_502() {
+        // Allow nonexistent.invalid but it will fail at TCP connect.
+        use crate::net::policy::{DomainMatcher, PolicyRule};
+        let policy = NetworkPolicy::new(
+            vec![PolicyRule {
+                matcher: DomainMatcher::parse("nonexistent.invalid"),
+                allow_read: true,
+                allow_write: true,
+            }],
+            false,
+            false,
+        );
+        let config = make_config_with_policy(policy);
+        let (s1, s2) = UnixStream::pair().unwrap();
+
+        let proxy_fd = s2.into_raw_fd();
+        let proxy_config = Arc::clone(&config);
+        let proxy_task = tokio::spawn(async move {
+            handle_connection(proxy_fd, proxy_config).await;
+        });
+
+        let client_config = make_mitm_client_config();
+        let connector = tokio_rustls::TlsConnector::from(client_config);
+        s1.set_nonblocking(true).unwrap();
+        let stream = tokio::net::UnixStream::from_std(s1).unwrap();
+        let sni = rustls::pki_types::ServerName::try_from("nonexistent.invalid").unwrap();
+        let tls_stream = connector.connect(sni, stream).await.unwrap();
+
+        let io = TokioIo::new(tls_stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+        tokio::spawn(async move { let _ = conn.await; });
+
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri("/")
+            .header("host", "nonexistent.invalid")
+            .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
+            .unwrap();
+        let resp = sender.send_request(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 502, "Upstream error should return 502");
+        let _ = resp.into_body().collect().await;
+
+        drop(sender);
+        let _ = proxy_task.await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].decision, Decision::Error);
+        assert_eq!(events[0].status_code, Some(502));
+        assert_eq!(events[0].domain, "nonexistent.invalid");
     }
 }
