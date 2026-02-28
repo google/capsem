@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Sanitize HTTP headers in telemetry logs: allowlisted headers (content-type, host, server, etc.) stored verbatim; all others (authorization, x-api-key, cookies) have values replaced with BLAKE3 hash prefix (`hash:<12-char-hex>`) to prevent credential leakage while preserving header presence and enabling correlation
+
 ### Added
 - Configurable VM CPU cores via `vm.cpu_count` setting (1-8, default 4)
 - Configurable VM RAM via `vm.ram_gb` setting (1-16 GB, default 4 GB)

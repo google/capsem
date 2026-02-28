@@ -921,12 +921,41 @@ fn split_path_query(uri: &hyper::Uri) -> (String, Option<String>) {
     (path, query)
 }
 
-/// Format HTTP headers as a string for telemetry.
+/// Headers whose values are safe to store verbatim in telemetry logs.
+/// Everything else keeps its name but the value is replaced with a BLAKE3
+/// hash prefix so credentials (API keys, bearer tokens, cookies) never
+/// reach the database while still allowing correlation across requests.
+const HEADER_ALLOWLIST: &[&str] = &[
+    "accept",
+    "content-encoding",
+    "content-length",
+    "content-type",
+    "date",
+    "host",
+    "server",
+    "transfer-encoding",
+    "user-agent",
+];
+
+/// Format HTTP headers for telemetry storage.
+///
+/// Allowlisted headers are stored verbatim. All other headers keep their
+/// name but the value is replaced with `hash:<12-char-hex>` (first 6 bytes
+/// of the BLAKE3 digest). This prevents credential leakage while preserving
+/// header presence and enabling same-key correlation.
 fn format_headers(headers: &hyper::HeaderMap) -> String {
     headers
         .iter()
         .map(|(name, value)| {
-            format!("{}: {}", name, value.to_str().unwrap_or("<binary>"))
+            if HEADER_ALLOWLIST.contains(&name.as_str()) {
+                let v = value.to_str().unwrap_or("<binary>");
+                format!("{}: {}", name, v)
+            } else {
+                let raw = value.as_bytes();
+                let digest = blake3::hash(raw);
+                let hex = &digest.to_hex()[..12];
+                format!("{}: hash:{}", name, hex)
+            }
         })
         .collect::<Vec<_>>()
         .join("\r\n")
@@ -1479,6 +1508,96 @@ mod tests {
         let (path, query) = split_path_query(&uri);
         assert_eq!(path, "/about");
         assert_eq!(query, None);
+    }
+
+    // ---------------------------------------------------------------
+    // Header sanitization tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn format_headers_keeps_allowlisted_verbatim() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert("content-length", "42".parse().unwrap());
+        headers.insert("host", "api.example.com".parse().unwrap());
+        headers.insert("server", "nginx".parse().unwrap());
+        headers.insert("user-agent", "curl/8.0".parse().unwrap());
+
+        let formatted = format_headers(&headers);
+        assert!(formatted.contains("content-type: application/json"));
+        assert!(formatted.contains("content-length: 42"));
+        assert!(formatted.contains("host: api.example.com"));
+        assert!(formatted.contains("server: nginx"));
+        assert!(formatted.contains("user-agent: curl/8.0"));
+    }
+
+    #[test]
+    fn format_headers_hashes_sensitive_headers() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert("x-api-key", "sk-ant-1234567890abcdef".parse().unwrap());
+        headers.insert("authorization", "Bearer tok_secret".parse().unwrap());
+        headers.insert("cookie", "session=abc123".parse().unwrap());
+
+        let formatted = format_headers(&headers);
+
+        // Header names are preserved.
+        assert!(formatted.contains("x-api-key: hash:"));
+        assert!(formatted.contains("authorization: hash:"));
+        assert!(formatted.contains("cookie: hash:"));
+
+        // Raw credential values must NOT appear.
+        assert!(!formatted.contains("sk-ant-1234567890abcdef"));
+        assert!(!formatted.contains("Bearer tok_secret"));
+        assert!(!formatted.contains("session=abc123"));
+    }
+
+    #[test]
+    fn format_headers_hash_is_deterministic() {
+        let mut h1 = hyper::HeaderMap::new();
+        h1.insert("x-api-key", "AIzaSyBxxxxxxx".parse().unwrap());
+        let mut h2 = hyper::HeaderMap::new();
+        h2.insert("x-api-key", "AIzaSyBxxxxxxx".parse().unwrap());
+
+        assert_eq!(format_headers(&h1), format_headers(&h2));
+    }
+
+    #[test]
+    fn format_headers_different_keys_different_hashes() {
+        let mut h1 = hyper::HeaderMap::new();
+        h1.insert("x-api-key", "key-AAAA".parse().unwrap());
+        let mut h2 = hyper::HeaderMap::new();
+        h2.insert("x-api-key", "key-BBBB".parse().unwrap());
+
+        // Extract the hash portion from each.
+        let f1 = format_headers(&h1);
+        let f2 = format_headers(&h2);
+        let hash1 = f1.strip_prefix("x-api-key: hash:").unwrap();
+        let hash2 = f2.strip_prefix("x-api-key: hash:").unwrap();
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn format_headers_mixed_allowed_and_sensitive() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert("content-type", "text/html".parse().unwrap());
+        headers.insert("x-api-key", "sk-secret".parse().unwrap());
+        headers.insert("accept", "text/html".parse().unwrap());
+
+        let formatted = format_headers(&headers);
+
+        // Allowlisted: verbatim.
+        assert!(formatted.contains("content-type: text/html"));
+        assert!(formatted.contains("accept: text/html"));
+
+        // Sensitive: hashed, raw value absent.
+        assert!(formatted.contains("x-api-key: hash:"));
+        assert!(!formatted.contains("sk-secret"));
+    }
+
+    #[test]
+    fn format_headers_empty() {
+        let headers = hyper::HeaderMap::new();
+        assert_eq!(format_headers(&headers), "");
     }
 
     // ---------------------------------------------------------------

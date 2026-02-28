@@ -333,6 +333,22 @@ Capsem uses a two-tier settings system where corporate policy always overrides u
 
 **Audit trail**: Each setting entry includes a `modified` timestamp. The `source` field (`default`, `user`, `corp`) in resolved settings makes it clear which tier set each value.
 
+### Telemetry header sanitization
+
+The MITM proxy logs every HTTP request/response to per-session SQLite (`web.db`). HTTP headers are sanitized before storage to prevent credential leakage:
+
+- **Allowlisted headers** are stored verbatim: `accept`, `content-encoding`, `content-length`, `content-type`, `date`, `host`, `server`, `transfer-encoding`, `user-agent`.
+- **All other headers** (including `authorization`, `x-api-key`, `x-goog-api-key`, `cookie`, `set-cookie`, and any custom headers) keep their name but the value is replaced with `hash:<12-char-hex>` -- the first 6 bytes of the BLAKE3 digest of the raw value.
+
+This design:
+
+1. **Prevents credential leakage**: API keys, bearer tokens, and session cookies never reach the database. Even if the SQLite file is exfiltrated or shared for debugging, no secrets are exposed.
+2. **Preserves header presence**: Analysts can see which headers were sent (e.g., "this request included an `x-api-key` header") without seeing the value.
+3. **Enables correlation**: The hash is deterministic -- the same API key always produces the same hash. This allows grouping requests by key identity without exposing the key itself.
+4. **Minimal allowlist approach**: The allowlist is deliberately small and contains only structural/metadata headers that carry no authentication material. New headers default to hashed, not verbatim. Adding a header to the allowlist requires a code change and review.
+
+Implementation: `format_headers()` in `crates/capsem-core/src/net/mitm_proxy.rs`. Tests verify that allowlisted headers pass through, sensitive headers are hashed, hashing is deterministic, and different values produce different hashes.
+
 ### No systemd, no services
 
 The VM runs capsem-init as PID 1. There is no systemd, no cron, no sshd, no service manager. The only processes are those explicitly started by capsem-init (bash, and whatever the user/agent runs). No background services, no listening ports, no scheduled tasks.
