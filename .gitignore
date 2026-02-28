@@ -1,4 +1,5 @@
-lib/
+# Python virtualenv lib (but NOT frontend/src/lib/)
+/lib/
 .env
 .venv
 archive/
@@ -26,6 +27,7 @@ env/
 *.egg-info
 dist/*
 *.pickle
+*.bak
 .s.yml
 .DS_Store
 *_Store
