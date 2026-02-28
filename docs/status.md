@@ -1,68 +1,76 @@
 # Capsem Status
 
-## Milestone 1: Tauri Scaffold + Boot a Linux VM from Rust
+## Implemented Milestones
 
-### Done
+### Milestone 1: Tauri Scaffold + Boot a Linux VM from Rust
+- VmConfig builder with validation (cpu, ram, kernel, initrd, disk, hashes)
+- `VZLinuxBootLoader` and `VirtualMachine` abstractions
+- Async Tauri 2.0 app booting the VM headlessly or via GUI
 
-- Cargo workspace with `capsem-core` and `capsem` (renamed from `capsem-app`) crates
-- `VmConfig` builder with validation (cpu, ram, kernel, initrd, disk)
-- `VZLinuxBootLoader` setup via `objc2-virtualization`
-- `SerialConsole` with NSPipe-backed broadcast channel
-- `VirtualMachine` create/start/stop wrapping `VZVirtualMachine`
-- `VirtualMachine::create()` returns `(Self, broadcast::Receiver<String>)` for serial output
-- `VZVirtioEntropyDeviceConfiguration` added (prevents guest hangs on `/dev/urandom`)
-- Tauri 2.0 app with setup hook that boots VM on launch (non-fatal on failure)
-- Serial output bridged to frontend via Tauri events (`serial-output`)
-- Astro frontend with tab bar, xterm.js terminal (shadow DOM), and status bar
-- VM image builder (`images/build.py`) producing kernel, initrd, rootfs
-- **CLI command execution mode**: `capsem <command>` boots the VM headlessly, runs the command in the guest, prints output to stdout, and exits
-- Serial output verified end-to-end on Apple Silicon (kernel boot messages + command output)
-- 42 unit tests passing, 0 clippy warnings
-- `entitlements.plist` with `com.apple.security.virtualization`
+### Milestone 2: Guest Agent as PID 1 + vsock Control Channel
+- `capsem-init` (bash) and `capsem-pty-agent` (Rust) booting the VM in <100ms
+- Vsock control channel (MessagePack framing) for `Exec`, `Resize`, `SetEnv`, `FileWrite`
+- Clock synchronization and env var injection at boot
 
-### How to Run
+### Milestone 3: Immutable Debian Base Image Builder
+- `build.py` pipeline for generating `vmlinuz`, `initrd`, and `rootfs.img`
+- Debian bookworm-slim ARM64 base with Node.js, Python, uv, and pre-installed AI CLIs
+- Fast hashing using BLAKE3 (B3SUMS)
+- Ext4 rootfs with `noatime,nodiratime,noload`
 
-```sh
-# Install frontend deps
-cd frontend && pnpm install && cd ..
+### Milestone 4: PTY over vsock & Workspace (Partially Complete)
+- **Done:** PTY allocation in guest, vsock bridging to host, xterm.js terminal UI, `stty size` resize sync.
+- **Done:** High-performance async terminal polling and batched input.
+- **Pending:** VirtioFS shared directories (workspace, config, caches). Currently using a large, ephemeral ext4 scratch disk instead.
 
-# Build VM assets (first time)
-cd images && python3 build.py && cd ..
+### Milestone 5: Network Boundaries & Real-Time Telemetry
+- Air-gapped VM: no real NICs, `dummy0` interface, fake DNS (all to `10.0.0.1`).
+- `iptables` REDIRECT routing port 443 to `capsem-net-proxy` on guest.
+- **Tokio-based Async `net-proxy`**: Bridges TCP to vsock with TCP_NODELAY and high concurrency.
+- Host-side MITM proxy on vsock:5002 intercepting TLS and applying HTTP method/path/domain policies.
 
-# Run tests
-cargo test --workspace
+### Milestone 6: The Active AI Audit Gateway
+- Host-side Axum gateway intercepting AI traffic (`api.anthropic.com`, `api.openai.com`, etc.).
+- Real-time SSE stream parsing for Anthropic, OpenAI, and Google Gemini.
+- macOS Keychain key injection (no keys inside VM).
+- Cost estimation via bundled pydantic pricing models.
 
-# Frontend-only dev (no VM, unsigned binary is fine)
-cargo tauri dev
+### Milestone 8: State, Audit, and Observability
+- Unified `capsem-logger` crate with a dedicated writer thread.
+- Single `session.db` (SQLite) per VM tracking `net_events`, `model_calls`, `tool_calls`, and `tool_responses`.
+- SQL-driven statistics aggregation for the UI dashboard.
 
-# Build + sign (required for VM on Apple Silicon)
-make build && make sign
+### Milestone 9: Full Tauri UI - Session Manager + Settings
+- Svelte 5 + Tailwind v4 + DaisyUI v5 frontend.
+- Typed settings system (User + Corp policy overrides) translating to `GuestConfig` and `NetworkPolicy`.
+- Interactive session dashboard, settings editor, and network events table.
 
-# CLI mode: run a command in the VM
-CAPSEM_ASSETS_DIR=$(pwd)/assets target/debug/capsem 'uname -a'
+### Milestone 12: Kernel Hardening -- Custom Minimal Kernel
+- Custom Linux 6.6.127 kernel with `CONFIG_MODULES=n`, `CONFIG_INET=n` (at kernel level), and stripped drivers.
+- Extreme footprint reduction (7MB kernel, 966KB initrd).
+- Tuned disk I/O (`scheduler=none`, `VZDiskImageCachingMode::Cached`, 4MB read-ahead) pushing 2M+ IOPS on VirtIO block devices.
 
-# GUI mode (no arguments)
-CAPSEM_ASSETS_DIR=$(pwd)/assets target/debug/capsem
-```
+## Upcoming Architecture Tasks (Next-Gen Roadmap)
 
-### Known Issues
+Based on `docs/next-gen.md`, Capsem is evolving from a single-process GUI into a multi-VM platform with a background daemon, MCP server, and hypervisor abstractions.
 
-- Debian arm64 kernel ships `virtio_console` as a module, not built-in. CLI mode uses `break=modules` kernel cmdline to let the initramfs load it before dropping to a shell.
-- The Tauri GUI serial console panel has not been verified end-to-end (the kernel cmdline change to `break=modules` may affect GUI mode).
+1. **Phase 1: Hypervisor Abstraction (Linux Readiness)**
+   - Extract Apple `Virtualization.framework` code into a clean `AppleVz` backend.
+   - Define `Hypervisor`, `VmInstance`, `SerialConsole`, and `VsockProvider` traits.
+   - Paves the way for Linux/KVM porting.
 
-### Not Yet Done (Milestone 1 remaining)
+2. **Phase 2: Daemon Core + MCP Server**
+   - Create `capsem-daemon` crate.
+   - Introduce Axum HTTP API for background VM management (`/health`, `/status`, `/stop`).
+   - Built-in MCP server so AI agents (like Claude Code) can programmatically `provision_sandbox` and `run_exec`.
 
-- Verify serial console panel works in the Tauri GUI with the updated kernel cmdline
+3. **Phase 3: Shell & Multi-VM (`capsem shell`)**
+   - Interactive PTY via raw mode `stdin`/`stdout`.
+   - Ability to attach to daemon-managed VMs.
 
-### Not Started
+4. **Phase 4: SSH Gateway & IDE Integration**
+   - In-guest `openssh-server` + `capsem-ssh-bridge`.
+   - Host-side Unix socket bridge for VS Code / Antigravity Remote SSH.
 
-- Milestone 2: Guest Agent as PID 1 + vsock control channel
-- Milestone 3: Immutable Debian base image builder
-- Milestone 4: VirtioFS shared directories + PTY over vsock
-- Milestone 5: Network boundaries & real-time telemetry
-- Milestone 6: Active AI audit gateway
-- Milestone 7: Hybrid MCP architecture
-- Milestone 8: State, audit, and observability
-- Milestone 9: Full Tauri UI
-- Milestone 10: Stats dashboard + MCP approval UI
-- Milestone 11: Polish, security hardening, multi-session
+5. **VirtioFS Workspace Sharing**
+   - Fulfill the missing piece of Milestone 4: replacing the ephemeral scratch disk with a live view of the host's project directory.

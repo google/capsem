@@ -48,7 +48,7 @@ Capsem is a native macOS application that sandboxes AI agents in lightweight Lin
 
 ## Crate Architecture
 
-The Rust workspace contains four crates:
+The Rust workspace contains five crates:
 
 ### capsem-proto
 
@@ -84,9 +84,22 @@ crates/capsem-core/src/
   net/
     domain_policy.rs  Allow/block list with wildcard matching
     policy_config.rs  Settings engine: typed registry, user/corp merge, translation to policy objects
+    mitm_proxy.rs     MITM proxy: TLS termination, HTTP inspection, upstream bridging, AI call auditing
+    cert_authority.rs CA loader + on-demand domain cert minting with RwLock cache
+    http_policy.rs    Method+path policy engine (extends domain-level policy)
     sni_parser.rs     TLS ClientHello SNI extraction
-    sni_proxy.rs      Host-side SNI proxy (vsock:5002 -> real HTTPS)
-    telemetry.rs      Per-session web.db (SQLite) for connection logging
+    policy.rs         NetworkPolicy aggregate (domain + HTTP rules)
+  gateway/
+    mod.rs            GatewayConfig (holds Arc<DbWriter>)
+    server.rs         Axum router: proxy handler, key injection, SSE streaming, audit logging
+    provider.rs       Provider trait + route_provider (Anthropic, OpenAI, Google)
+    anthropic.rs      Anthropic provider + SSE stream parser
+    openai.rs         OpenAI provider + SSE stream parser
+    google.rs         Google Gemini provider + SSE stream parser
+    events.rs         StreamEvent types, collect_summary for SSE audit
+    request_parser.rs Structured request body parsing (model, tools, system prompt)
+    ai_body.rs        AiResponseBody: streaming body wrapper with parser + stats
+    sse.rs            SSE line parser
 ```
 
 **Key types:**
@@ -436,14 +449,20 @@ See [docs/status.md](status.md) for milestone progress and [docs/overall_plan.md
 
 When extending the Rust backend or guest agents, adhere to the following performance and concurrency guidelines to ensure system stability under heavy load:
 
-1. **Never Block the Async Executor:**
-   - The Tauri backend and Axum gateway run on asynchronous executors (`tokio`). Performing synchronous, long-running operations (like heavy CPU bound tasks or blocking disk I/O) directly inside an `async` function will stall the worker thread and freeze the application.
-   - **Rule:** Always wrap synchronous disk operations (e.g., SQLite writes, heavy file reads) inside `tokio::task::spawn_blocking` to offload them to a dedicated thread pool.
+1. **Never Block the Async Executor or Tauri IPC Thread Pool:**
+   - The Tauri backend and Axum gateway run on asynchronous executors (`tokio`). Performing synchronous, long-running operations (like heavy CPU bound tasks or blocking disk I/O, including writing to a vsock buffer that might be full) directly inside an `async` function or a synchronous Tauri command will stall the worker thread. For Tauri commands, this exhausts the IPC thread pool, causing the UI to freeze and queue up inputs (lag/barfing).
+   - **Rule:** Always define Tauri commands that do I/O as `async fn` and wrap synchronous disk or vsock operations (e.g., SQLite writes, heavy file reads, `write_all` to a file descriptor) inside `tokio::task::spawn_blocking` to offload them to Tokio's dedicated background thread pool.
 
-2. **Prevent Bidirectional I/O Deadlocks:**
+2. **Avoid Thread Pool Exhaustion and Latency in Hot Loops:**
+   - While `spawn_blocking` is essential for disk I/O, calling it excessively inside high-frequency hot loops (e.g., per-keystroke from the terminal, or per-byte/chunk in a stream parser) will flood the Tokio thread pool. This causes severe context-switching overhead, CPU spikes, and lag.
+   - **Rule:** For high-frequency events, do NOT spawn a new blocking task per event. Instead, use an `std::sync::mpsc::channel` to send the events instantly to a *single* dedicated background thread.
+   - **Implementation (Terminal Input):** The `terminal_input_tx` in `AppState` uses a dedicated thread that survives the entire application lifecycle. It coalesces rapid sequential keystrokes using `try_recv` and reuses a single `File` handle (avoiding `dup/close` syscalls per char).
+   - **Rule (Guest Agent Buffering):** When scanning for sentinels in a stream (like the exit-code sentinel in `capsem-pty-agent`), never use fixed-size buffering that forces a lag. Only buffer the minimal amount of data that *actually matches* a prefix of the target sentinel, and flush everything else immediately to maintain real-time interactive performance.
+
+3. **Prevent Bidirectional I/O Deadlocks:**
    - When bridging two blocking file descriptors bidirectionally (e.g., bridging a TCP socket to a vsock, or bridging the PTY to the vsock), doing both reads in a single thread using `poll(2)` is vulnerable to deadlocks. If both outgoing buffers fill up simultaneously, the single thread blocks on writing and stops reading, creating a mutual lockup.
    - **Rule:** Always spawn a dedicated background thread to handle at least one direction of the bidirectional data flow.
 
-3. **Optimize Payload Parsing:**
+4. **Optimize Payload Parsing:**
    - The LLM Gateway handles massive HTTP payloads (megabytes of tool calls or images). Parsing these entirely into dynamic memory structures (like `serde_json::Value`) is highly inefficient and risks memory exhaustion.
-   - **Rule:** When extracting specific fields from a large JSON payload, define a targeted struct and use `serde::Deserialize`. Serde will perform a structural parse, skipping and discarding unused data without allocating memory for it.
+   - **Rule:** When extracting specific fields from a large JSON payload, define a targeted struct and use `serde::Deserialize`. Serde will perform a structural parse, skipping and discarding unused data without allocating memory for it. In stream parsers, state updates must be lock-free or use fast memory-only `Mutex` locks without triggering any blocking I/O per chunk.
