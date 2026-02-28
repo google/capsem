@@ -42,7 +42,7 @@ const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
 
 fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
     let frame = encode_guest_msg(msg)
-        .map_err(|e| io::Error::other(e))?;
+        .map_err(io::Error::other)?;
     write_all_fd(fd, &frame)?;
     Ok(())
 }
@@ -429,9 +429,18 @@ fn scan_and_strip_sentinel(
         return (before, None);
     }
 
-    // No sentinel prefix found. Forward all data except the last few bytes
-    // that could be the start of a partial sentinel prefix.
-    let keep = SENTINEL_PREFIX.len() - 1;
+    // No sentinel prefix found. Determine how many bytes to keep at the end
+    // to avoid splitting a sentinel across chunks.
+    // OPTIMIZATION: Only keep bytes if the tail ends with a prefix of the sentinel.
+    // This eliminates the 18-byte lag for normal interactive output.
+    let mut keep = 0;
+    for i in (1..SENTINEL_PREFIX.len()).rev() {
+        if tail.ends_with(&SENTINEL_PREFIX[..i]) {
+            keep = i;
+            break;
+        }
+    }
+
     if tail.len() > keep {
         let forward_end = tail.len() - keep;
         let forward = tail[..forward_end].to_vec();
@@ -864,7 +873,7 @@ mod tests {
     fn recv_rejects_oversized_frame() {
         let (read_fd, write_fd) = make_pipe();
         // Write a length prefix claiming > MAX_FRAME_SIZE.
-        let len_bytes = ((MAX_FRAME_SIZE + 1) as u32).to_be_bytes();
+        let len_bytes = (MAX_FRAME_SIZE + 1).to_be_bytes();
         let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
         writer.write_all(&len_bytes).unwrap();
         std::mem::forget(writer);

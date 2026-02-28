@@ -16,6 +16,8 @@ import pytest
     "sort", "uniq", "wc", "cut", "tr", "diff", "tee", "xargs",
     # Network and shell
     "curl", "ip", "bash", "env",
+    # Benchmarks
+    "capsem-bench",
 ])
 def test_utility_available(util):
     """Each required unix utility must be in PATH."""

@@ -31,6 +31,10 @@ alias pip3='uv pip'
 alias python='uv run python'
 alias python3='uv run python3'
 
+# AI CLIs: auto-approve tool calls (VM is already sandboxed).
+# Without --yolo, non-interactive mode (-p) hides write/execute tools.
+alias gemini='gemini --yolo'
+
 # Color aliases
 alias ls='ls --color=auto'
 alias ll='ls -la --color=auto'
@@ -88,3 +92,4 @@ fi
 
 unset _BLUE _PURPLE _DIM _BOLD _RST
 echo ""
+ulimit -n 65536
