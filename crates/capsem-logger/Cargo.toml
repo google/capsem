@@ -1,0 +1,15 @@
+[package]
+name = "capsem-logger"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+rusqlite = { workspace = true }
+humantime = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
