@@ -54,6 +54,7 @@ export class CapsemTerminal extends HTMLElement {
   private resizeObserver: ResizeObserver | null = null;
   private wrapper: HTMLDivElement | null = null;
   private resizeRafId: number = 0;
+  renderer: "webgl" | "canvas" = "canvas";
 
   constructor() {
     super();
@@ -92,10 +93,14 @@ export class CapsemTerminal extends HTMLElement {
     // Try WebGL renderer with canvas fallback
     try {
       const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+        this.renderer = "canvas";
+      });
       this.terminal.loadAddon(webgl);
+      this.renderer = "webgl";
     } catch {
-      // Canvas renderer is the default fallback
+      this.renderer = "canvas";
     }
 
     this.fitAddon.fit();

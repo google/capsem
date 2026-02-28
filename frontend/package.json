@@ -14,11 +14,14 @@
     "@tauri-apps/api": "^2",
     "@xterm/addon-fit": "^0.11",
     "@xterm/addon-webgl": "^0.19",
-    "@xterm/xterm": "^6"
+    "@xterm/xterm": "^6",
+    "chart.js": "^4.5.1",
+    "sql.js": "^1.14.0"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.6",
     "@tailwindcss/vite": "^4",
+    "@types/sql.js": "^1.4.9",
     "astro": "^5",
     "daisyui": "^5",
     "svelte": "^5",
