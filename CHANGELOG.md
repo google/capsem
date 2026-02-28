@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Configurable VM CPU cores via `vm.cpu_count` setting (1-8, default 4)
+- Configurable VM RAM via `vm.ram_gb` setting (1-16 GB, default 4 GB)
+- 1 GB swap file on scratch disk for better memory pressure handling
+- Per-call cost tracking: gateway estimates USD cost using bundled model pricing data from pydantic/genai-prices
+- SQL-driven session statistics: counts, token usage, cost, domain distribution, and time-bucketed charts all computed via SQLite queries
+- New Tauri IPC commands: `get_session_stats` (full aggregate dashboard data), `get_model_calls` (model call history with search)
+- LLM Usage section in Sessions view: API call count, input/output tokens, estimated cost, per-provider breakdown, model calls table, tool usage badges
+- SQL-powered search in Network view: debounced search queries hit SQLite LIKE instead of client-side filtering
+- `just update_prices` recipe to refresh bundled model pricing data
+- `capsem-bench rootfs` benchmark: sequential and random 4K read performance on the read-only rootfs (where binaries and node_modules live)
+- `capsem-bench startup` benchmark: cold-start latency for python3, node, claude, gemini, and codex CLIs (3 runs, min/mean/max)
+- Rich table formatting for all capsem-bench output (replaces manual text formatting)
+- Search category in settings: Google Search (on by default), Perplexity, and Firecrawl toggles with domain-level policy
+- Custom allow/block domain lists (`network.custom_allow`, `network.custom_block`) for user-defined domain rules
+- Active Policy debug panel in Network view: collapsible section showing allowed/blocked domain lists, default action, corp managed status, and policy conflicts
+- Policy conflict detection: domains appearing in both allow and block lists are flagged in the Network view
+
+### Changed
+- VM Disk Performance Overhaul: Smashed past **2 Million IOPS** for random 4K reads (~8 GB/s) and achieved **~20x speedup** in random write throughput.
+- Network Proxy Overhaul: Replaced synchronous thread-per-connection guest proxy with a **Tokio-based async implementation**.
+- Structural Latency Elimination: Enabled `TCP_NODELAY` on both guest and host proxies, reducing proxy overhead to the physical network floor (~40ms median RTT).
+- VM CPU default increased from 2 to 4 cores
+- VM RAM default increased from 512 MB to 4 GB
+- Scratch disk default increased from 8 GB to 16 GB
+- Node.js V8 heap cap raised from 512 MB to 2 GB to match higher RAM
+- Network store is now SQL-driven: counts and charts read from `get_session_stats` instead of counting JS arrays
+- Session info response expanded with LLM metrics (model call count, tokens, tool calls, estimated cost)
+- `net_events` command accepts optional `search` parameter for SQL-backed filtering
+- `get_session_info` is now async with `spawn_blocking` for proper non-blocking DB access
+- Rootfs disk caching mode changed from `Automatic` to `Cached` for aggressive host page cache retention on the read-only disk
+- `elie.net` moved from a Package Registry toggle to the default custom allowed domains list
+- `network.log_bodies` and `network.max_body_capture` moved from Network to VM category
+- Session settings (`session.retention_days`, `session.max_sessions`, `session.max_disk_gb`) moved from Session to VM category
+- Mock data now mirrors the full backend settings registry (~35 settings across 7 categories)
+- Settings view categories are now displayed in a fixed order: AI Providers, Search, Package Registries, Network, Guest Environment, Appearance, VM
+- Settings view categories are collapsed by default (click to expand)
+- Network view: allowed/blocked domain lists are now separate collapsible groups within Active Policy
+- Network events for `elie.net` and `www.google.com` now show as allowed (matching their default policy)
+- Host-side disk settings: enabled host-level caching (`VZDiskImageCachingMode::Cached`) and disabled synchronization barriers (`VZDiskImageSynchronizationMode::None`).
+- Guest-side kernel tuning: `capsem-init` now sets I/O scheduler to `none`, `read_ahead_kb` to 4096, and `nr_requests` to 256 for all VirtIO devices.
+- Filesystem optimizations: Added `noatime,nodiratime,noload` mount options for rootfs and scratch disks.
+- Scratch disk format optimization: `mke2fs` now uses `-m 0` to reclaim reserved root blocks.
+
+### Fixed
+- Benign "error shutting down connection" warnings in the host proxy logs are now filtered.
+
+### Removed
+- `registry.elie.allow` setting (replaced by `network.custom_allow` default)
+- `registry.debian.allow` setting (rootfs is read-only, packages cannot be installed at runtime)
+- Invented `network.allowlist` and `network.blocklist` settings from mock data (never existed in backend)
+- `domainlist` setting type from frontend (custom allow/block use standard `text` type with ID-based chip rendering)
+
+### Added
+- `capsem-logger` crate: unified audit database with dedicated writer thread, replacing three separate SQLite databases (`WebDb`, `GatewayDb`, `AiDb`) with a single `session.db` per VM session
+- Dedicated writer thread using `tokio::sync::mpsc` channel with block-then-drain batching (up to 128 ops per transaction), eliminating `spawn_blocking` + `Arc<Mutex<>>` contention
+- `DbWriter` / `DbReader` API: async writes via channel, read-only WAL concurrent readers, typed `WriteOp` enum for debuggable operations
+- Unified schema: `net_events` (all HTTPS connections), `model_calls` (denormalized request+response), `tool_calls`, `tool_responses` tables in a single DB file
+- `capsem-bench` in-VM performance benchmark tool: disk I/O (sequential read/write, random 4K IOPS) and HTTP throughput (ab-style concurrent requests with latency percentiles). Outputs structured JSON to stdout for telemetry collection.
+- Inline SSE event parsing in the MITM proxy for AI provider traffic (Anthropic, OpenAI, Google Gemini)
+- Provider-agnostic LLM event types (`LlmEvent`, `StreamSummary`) with `collect_summary()` for structured audit logging
+- Hand-rolled SSE wire-format parser with chunk-boundary-safe state machine (no crate dependency)
+- Provider-specific SSE stream parsers: Anthropic (interleaved content blocks, thinking), OpenAI Chat Completions (tool calls, content filter), Google Gemini (complete events, synthetic call IDs)
+- Request body parser extracting model, stream flag, system prompt preview, message/tool counts, and tool_result entries for tool call lifecycle linking
+- `AiResponseBody`: hyper Body wrapper that does SSE parsing inline during `poll_frame` with zero added latency
+- AI provider domain detection (`api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`) in the MITM proxy
+- API key suffix extraction (last 4 chars, Stripe-style) from `x-api-key` and `Authorization: Bearer` headers
+
+### Changed
+- MITM proxy and gateway server use `DbWriter` channel instead of `spawn_blocking` + `Arc<Mutex<>>` for all database writes
+- Session telemetry stored in `session.db` (was `info.db`)
+
+### Removed
+- `GatewayDb` (redundant flat table, replaced by `model_calls` in unified schema)
+- `AiDb` (normalized 4-table schema, merged into `capsem-logger`)
+- `WebDb` (replaced by `net_events` table in unified schema)
+- `StreamAccumulator` (unused since `AiResponseBody` replaced it)
+- Gateway TODO comment about separate vsock:5004 routing (replaced by inline MITM proxy SSE parsing)
+
 ## [0.7.0] - 2026-02-26
 
 ### Changed
