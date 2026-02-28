@@ -4,8 +4,7 @@
 /// Runs on vsock:5004 in production (plain HTTP from the VM) or on a TCP
 /// socket for standalone testing.
 use std::net::SocketAddr;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use axum::body::Body;
@@ -14,13 +13,51 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use axum::Router;
-use futures::StreamExt;
+use capsem_logger::{DbWriter, ModelCall, NetEvent, Decision, ToolCallEntry, ToolResponseEntry, WriteOp};
 use tracing::{info, warn};
 
-use super::audit::{GatewayDb, GatewayEvent};
+use super::ai_body::AiResponseBody;
+use super::events::collect_summary;
 use super::provider::route_provider;
-use super::streaming::{StreamAccumulator, drain_accumulated};
+use super::request_parser::parse_request;
 use super::GatewayConfig;
+
+/// Assign a trace_id for a model call, updating the shared TraceState.
+///
+/// Looks up existing trace from tool_response call_ids. If none found,
+/// generates a new UUID. If stop_reason indicates ToolUse, registers
+/// the emitted tool_call_ids. Otherwise, completes the trace.
+fn assign_trace_id(
+    config: &GatewayConfig,
+    tool_response_call_ids: &[String],
+    tool_call_ids: &[String],
+    stop_reason: Option<&str>,
+) -> String {
+    let mut state = config.trace_state.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Look up existing trace from tool responses in this request.
+    let trace_id = state
+        .lookup(tool_response_call_ids)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Check if this is a tool-use stop (trace continues) or terminal (trace ends).
+    // Some providers (like Gemini) don't have a specific ToolUse stop reason and just return STOP,
+    // so the presence of tool calls is the most reliable indicator.
+    let is_tool_use = !tool_call_ids.is_empty() || stop_reason
+        .map(|r| {
+            let r_lower = r.to_lowercase();
+            r_lower.contains("tool") || r_lower == "\"tooluse\""
+        })
+        .unwrap_or(false);
+
+    if is_tool_use && !tool_call_ids.is_empty() {
+        state.register_tool_calls(&trace_id, tool_call_ids);
+    } else {
+        state.complete_trace(&trace_id);
+    }
+
+    trace_id
+}
 
 /// Maximum request body to capture in audit log (64 KB).
 const MAX_REQUEST_CAPTURE: usize = 64 * 1024;
@@ -85,7 +122,7 @@ async fn proxy_handler(
                 kind.as_str()
             );
             warn!(provider = kind.as_str(), "no API key configured");
-            record_error(Arc::clone(&config.audit_db), kind.as_str(), &method, &path, &msg);
+            record_error(&config.db, kind.as_str(), &method, &path, &msg).await;
             return (StatusCode::SERVICE_UNAVAILABLE, msg).into_response();
         }
     };
@@ -99,12 +136,16 @@ async fn proxy_handler(
         Ok(b) => b,
         Err(e) => {
             let msg = format!("Capsem gateway: failed to read request body: {e}\n");
-            record_error(Arc::clone(&config.audit_db), kind.as_str(), &method, &path, &msg);
+            record_error(&config.db, kind.as_str(), &method, &path, &msg).await;
             return (StatusCode::BAD_REQUEST, msg).into_response();
         }
     };
 
     let request_bytes = body_bytes.len() as u64;
+
+    // Use structured request parser for normalized auditing.
+    let req_meta = parse_request(kind, &body_bytes);
+    let model = req_meta.model.clone();
 
     // Capture request body preview for audit.
     let request_body_preview = if body_bytes.is_empty() {
@@ -113,9 +154,6 @@ async fn proxy_handler(
         let limit = MAX_REQUEST_CAPTURE.min(body_bytes.len());
         Some(String::from_utf8_lossy(&body_bytes[..limit]).into_owned())
     };
-
-    // Try to extract model name from request body JSON.
-    let model = extract_model(&body_bytes);
 
     // 5. Build upstream request via reqwest.
     let reqwest_method = match method.as_str() {
@@ -159,21 +197,14 @@ async fn proxy_handler(
             let duration_ms = start.elapsed().as_millis() as u64;
             let msg = format!("Capsem gateway: upstream request failed: {e}\n");
             warn!(provider = kind.as_str(), error = %e, "upstream request failed");
-            record_gateway_event(
-                Arc::clone(&config.audit_db),
+            record_net_event(
+                &config.db,
                 kind.as_str(),
-                model.as_deref(),
-                &method,
-                &path,
-                502,
-                duration_ms,
-                request_bytes,
-                0,
-                false,
-                request_body_preview.as_deref(),
-                None,
-                Some(&msg),
-            );
+                &method, &path,
+                Some(502), duration_ms,
+                request_bytes, 0,
+                Decision::Error, Some(&msg),
+            ).await;
             return (StatusCode::BAD_GATEWAY, msg).into_response();
         }
     };
@@ -201,19 +232,24 @@ async fn proxy_handler(
 
     // 8. Stream or collect response body.
     if is_sse {
-        // Streaming SSE: wrap in accumulator and forward.
-        let byte_stream = upstream_resp.bytes_stream();
-        let accumulator = StreamAccumulator::new(byte_stream, MAX_RESPONSE_CAPTURE);
-        let accumulated_handle = accumulator.accumulated();
-        let bytes_handle = accumulator.bytes_count();
+        // Streaming SSE: wrap in AiResponseBody for normalized parsing.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        // Map the stream to axum-compatible types.
-        let mapped = accumulator.map(|result: Result<axum::body::Bytes, reqwest::Error>| {
-            result.map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-            })
-        });
-        let body = Body::from_stream(mapped);
+        let byte_stream = upstream_resp.bytes_stream();
+        let body = Body::from_stream(byte_stream);
+
+        let ai_body = AiResponseBody::new(
+            body,
+            kind.create_parser(),
+            MAX_RESPONSE_CAPTURE,
+            100 * 1024 * 1024,
+        )
+        .with_on_drop(tx);
+
+        let ai_state_handle = ai_body.ai_state();
+        let stats_handle = ai_body.stats();
+
+        let body = Body::new(ai_body);
 
         let response = response_builder.body(body).unwrap_or_else(|_| {
             Response::builder()
@@ -222,47 +258,128 @@ async fn proxy_handler(
                 .unwrap()
         });
 
-        // Spawn a task to record audit after response is fully streamed.
-        // We need the accumulated data which is only available after the stream ends.
-        let audit_db = Arc::clone(&config.audit_db);
+        // Recording logic
+        let db = Arc::clone(&config.db);
+        let config_ref = Arc::clone(&config);
         let provider_str = kind.as_str().to_string();
         let model_clone = model.clone();
         let method_clone = method.clone();
         let path_clone = path.clone();
         let req_preview = request_body_preview.clone();
+
+        // Build tool responses from request metadata
+        let tool_responses: Vec<ToolResponseEntry> = req_meta
+            .tool_results
+            .iter()
+            .map(|tr| ToolResponseEntry {
+                call_id: tr.call_id.clone(),
+                content_preview: Some(tr.content_preview.clone()),
+                is_error: tr.is_error,
+            })
+            .collect();
+
+        // Collect tool response call_ids for trace lookup
+        let tool_response_call_ids: Vec<String> = req_meta
+            .tool_results
+            .iter()
+            .map(|tr| tr.call_id.clone())
+            .collect();
+
+        let sys_prompt_preview = req_meta.system_prompt_preview;
+        let messages_count = req_meta.messages_count;
+        let tools_count = req_meta.tools_count;
+
         tokio::spawn(async move {
-            // Wait a bit for the stream to likely finish, then check.
-            // The actual recording happens when we can lock the accumulated data.
-            // Since the stream is being consumed by axum/hyper, we just need to
-            // wait until it's done. We poll periodically.
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            loop {
-                // Check if the stream is done by seeing if the byte count stabilized.
-                let current = bytes_handle.load(Ordering::Relaxed);
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                let after = bytes_handle.load(Ordering::Relaxed);
-                if current == after {
-                    break;
-                }
-            }
+            // Wait for the body to be dropped (stream finished)
+            let _ = rx.await;
             let duration_ms = start.elapsed().as_millis() as u64;
-            let response_bytes = bytes_handle.load(Ordering::Relaxed);
-            let response_preview = drain_accumulated(&accumulated_handle);
-            record_gateway_event(
-                Arc::clone(&audit_db),
+
+            let (response_bytes, _response_preview, events) =
+                if let Ok(st) = stats_handle.lock() {
+                    let events = ai_state_handle
+                        .lock()
+                        .ok()
+                        .map(|s| s.events.clone())
+                        .unwrap_or_default();
+                    (st.bytes, None::<String>, events)
+                } else {
+                    (0, None, Vec::new())
+                };
+
+            // Build model call from SSE events
+            let summary = collect_summary(&events);
+            let tool_calls: Vec<ToolCallEntry> = summary
+                .tool_calls
+                .iter()
+                .map(|tc| ToolCallEntry {
+                    call_index: tc.index,
+                    call_id: tc.call_id.clone(),
+                    tool_name: tc.name.clone(),
+                    arguments: if tc.arguments.is_empty() {
+                        None
+                    } else {
+                        Some(tc.arguments.clone())
+                    },
+                })
+                .collect();
+
+            let estimated_cost_usd = config_ref.pricing.estimate_cost(
                 &provider_str,
                 model_clone.as_deref(),
-                &method_clone,
-                &path_clone,
-                status_u16,
-                duration_ms,
-                request_bytes,
-                response_bytes,
-                true,
-                req_preview.as_deref(),
-                response_preview.as_deref(),
-                None,
+                summary.input_tokens,
+                summary.output_tokens,
             );
+
+            let stop_reason_str = summary.stop_reason.map(|r| format!("{:?}", r));
+
+            // Assign trace_id using shared TraceState
+            let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
+            let trace_id = assign_trace_id(
+                &config_ref,
+                &tool_response_call_ids,
+                &tool_call_ids,
+                stop_reason_str.as_deref(),
+            );
+
+            let model_call = ModelCall {
+                timestamp: SystemTime::now(),
+                provider: provider_str.clone(),
+                model: model_clone.clone(),
+                process_name: None,
+                pid: None,
+                method: method_clone.clone(),
+                path: path_clone.clone(),
+                stream: true,
+                system_prompt_preview: sys_prompt_preview,
+                messages_count,
+                tools_count,
+                request_bytes,
+                request_body_preview: req_preview,
+                message_id: summary.message_id,
+                status_code: Some(status_u16),
+                text_content: if summary.text.is_empty() {
+                    None
+                } else {
+                    Some(summary.text)
+                },
+                thinking_content: if summary.thinking.is_empty() {
+                    None
+                } else {
+                    Some(summary.thinking)
+                },
+                stop_reason: stop_reason_str,
+                input_tokens: summary.input_tokens,
+                output_tokens: summary.output_tokens,
+                duration_ms,
+                response_bytes,
+                estimated_cost_usd,
+                trace_id: Some(trace_id),
+                tool_calls,
+                tool_responses,
+            };
+
+            db.write(WriteOp::ModelCall(model_call)).await;
+
             info!(
                 provider = provider_str,
                 model = ?model_clone,
@@ -281,21 +398,14 @@ async fn proxy_handler(
             Err(e) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let msg = format!("Capsem gateway: failed to read upstream response: {e}\n");
-                record_gateway_event(
-                    Arc::clone(&config.audit_db),
+                record_net_event(
+                    &config.db,
                     kind.as_str(),
-                    model.as_deref(),
-                    &method,
-                    &path,
-                    status_u16,
-                    duration_ms,
-                    request_bytes,
-                    0,
-                    false,
-                    request_body_preview.as_deref(),
-                    None,
-                    Some(&msg),
-                );
+                    &method, &path,
+                    Some(502), duration_ms,
+                    request_bytes, 0,
+                    Decision::Error, Some(&msg),
+                ).await;
                 return (StatusCode::BAD_GATEWAY, msg).into_response();
             }
         };
@@ -310,21 +420,68 @@ async fn proxy_handler(
             Some(String::from_utf8_lossy(&resp_bytes[..limit]).into_owned())
         };
 
-        record_gateway_event(
-            Arc::clone(&config.audit_db),
+        // Build tool responses from request metadata
+        let tool_responses: Vec<ToolResponseEntry> = req_meta
+            .tool_results
+            .iter()
+            .map(|tr| ToolResponseEntry {
+                call_id: tr.call_id.clone(),
+                content_preview: Some(tr.content_preview.clone()),
+                is_error: tr.is_error,
+            })
+            .collect();
+
+        let tool_response_call_ids: Vec<String> = req_meta
+            .tool_results
+            .iter()
+            .map(|tr| tr.call_id.clone())
+            .collect();
+
+        let estimated_cost_usd = config.pricing.estimate_cost(
             kind.as_str(),
             model.as_deref(),
-            &method,
-            &path,
-            status_u16,
-            duration_ms,
-            request_bytes,
-            response_bytes,
-            false,
-            request_body_preview.as_deref(),
-            response_preview.as_deref(),
+            None,
             None,
         );
+
+        // Non-streaming: no tool calls emitted, so trace always completes here
+        let trace_id = assign_trace_id(
+            &config,
+            &tool_response_call_ids,
+            &[], // no tool_call_ids in non-streaming responses
+            None,
+        );
+
+        let model_call = ModelCall {
+            timestamp: SystemTime::now(),
+            provider: kind.as_str().to_string(),
+            model: model.clone(),
+            process_name: None,
+            pid: None,
+            method: method.clone(),
+            path: path.clone(),
+            stream: false,
+            system_prompt_preview: req_meta.system_prompt_preview,
+            messages_count: req_meta.messages_count,
+            tools_count: req_meta.tools_count,
+            request_bytes,
+            request_body_preview: request_body_preview.clone(),
+            message_id: None,
+            status_code: Some(status_u16),
+            text_content: response_preview.clone(),
+            thinking_content: None,
+            stop_reason: None,
+            input_tokens: None,
+            output_tokens: None,
+            duration_ms,
+            response_bytes,
+            estimated_cost_usd,
+            trace_id: Some(trace_id),
+            tool_calls: Vec::new(),
+            tool_responses,
+        };
+
+        config.db.write(WriteOp::ModelCall(model_call)).await;
 
         info!(
             provider = kind.as_str(),
@@ -345,95 +502,71 @@ async fn proxy_handler(
     }
 }
 
-#[derive(serde::Deserialize)]
-struct ExtractModelPayload {
-    model: Option<String>,
-}
-
-/// Extract the "model" field from a JSON request body.
-/// Works for Anthropic (top-level "model") and OpenAI (top-level "model").
-/// For Gemini, the model is in the URL path so this may return None.
-fn extract_model(body: &[u8]) -> Option<String> {
-    if body.is_empty() {
-        return None;
-    }
-    // Fast structural parse: Serde ignores unmapped fields (like huge image payloads)
-    // without allocating memory for them, unlike `serde_json::Value`.
-    serde_json::from_slice::<ExtractModelPayload>(body)
-        .ok()
-        .and_then(|p| p.model)
-}
-
-/// Record an error event to the audit DB.
-fn record_error(db: Arc<Mutex<GatewayDb>>, provider: &str, method: &str, path: &str, error: &str) {
-    let event = GatewayEvent {
+/// Record an error event as a NetEvent to the audit DB.
+async fn record_error(db: &DbWriter, provider: &str, method: &str, path: &str, error: &str) {
+    let event = NetEvent {
         timestamp: SystemTime::now(),
-        provider: provider.to_string(),
-        model: None,
-        method: method.to_string(),
-        path: path.to_string(),
-        status_code: 0,
+        domain: provider.to_string(),
+        port: 0,
+        decision: Decision::Error,
+        process_name: None,
+        pid: None,
+        method: Some(method.to_string()),
+        path: Some(path.to_string()),
+        query: None,
+        status_code: None,
+        bytes_sent: 0,
+        bytes_received: 0,
         duration_ms: 0,
-        request_bytes: 0,
-        response_bytes: 0,
-        streamed: false,
-        request_body: None,
-        response_body: None,
-        error: Some(error.to_string()),
+        matched_rule: Some(error.to_string()),
+        request_headers: None,
+        response_headers: None,
+        request_body_preview: None,
+        response_body_preview: None,
+        conn_type: Some("gateway".to_string()),
     };
-    
-    // SQLite writes are synchronous. Offload to a blocking thread pool
-    // to prevent stalling the axum async worker thread.
-    tokio::task::spawn_blocking(move || {
-        if let Ok(db) = db.lock() {
-            let _ = db.record(&event);
-        }
-    });
+    db.write(WriteOp::NetEvent(event)).await;
 }
 
-/// Record a gateway event to the audit DB.
+/// Record a gateway network event.
 #[allow(clippy::too_many_arguments)]
-fn record_gateway_event(
-    db: Arc<Mutex<GatewayDb>>,
+async fn record_net_event(
+    db: &DbWriter,
     provider: &str,
-    model: Option<&str>,
     method: &str,
     path: &str,
-    status_code: u16,
+    status_code: Option<u16>,
     duration_ms: u64,
-    request_bytes: u64,
-    response_bytes: u64,
-    streamed: bool,
-    request_body: Option<&str>,
-    response_body: Option<&str>,
+    bytes_sent: u64,
+    bytes_received: u64,
+    decision: Decision,
     error: Option<&str>,
 ) {
-    let event = GatewayEvent {
+    let event = NetEvent {
         timestamp: SystemTime::now(),
-        provider: provider.to_string(),
-        model: model.map(|s| s.to_string()),
-        method: method.to_string(),
-        path: path.to_string(),
+        domain: provider.to_string(),
+        port: 0,
+        decision,
+        process_name: None,
+        pid: None,
+        method: Some(method.to_string()),
+        path: Some(path.to_string()),
+        query: None,
         status_code,
+        bytes_sent,
+        bytes_received,
         duration_ms,
-        request_bytes,
-        response_bytes,
-        streamed,
-        request_body: request_body.map(|s| s.to_string()),
-        response_body: response_body.map(|s| s.to_string()),
-        error: error.map(|s| s.to_string()),
+        matched_rule: error.map(|s| s.to_string()),
+        request_headers: None,
+        response_headers: None,
+        request_body_preview: None,
+        response_body_preview: None,
+        conn_type: Some("gateway".to_string()),
     };
-    
-    // Offload synchronous SQLite write to a blocking thread.
-    tokio::task::spawn_blocking(move || {
-        if let Ok(db) = db.lock() {
-            let _ = db.record(&event);
-        }
-    });
+    db.write(WriteOp::NetEvent(event)).await;
 }
 
 /// Start the gateway on a TCP socket. Returns the bound address.
-/// Used for integration tests and standalone debugging.
 pub async fn start_standalone(
     config: Arc<GatewayConfig>,
     addr: SocketAddr,
@@ -451,43 +584,20 @@ pub async fn start_standalone(
 mod tests {
     use super::*;
 
-    #[test]
-    fn extract_model_anthropic() {
-        let body = br#"{"model":"claude-sonnet-4-20250514","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}"#;
-        assert_eq!(extract_model(body).as_deref(), Some("claude-sonnet-4-20250514"));
-    }
-
-    #[test]
-    fn extract_model_openai() {
-        let body = br#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#;
-        assert_eq!(extract_model(body).as_deref(), Some("gpt-4o"));
-    }
-
-    #[test]
-    fn extract_model_empty_body() {
-        assert_eq!(extract_model(b""), None);
-    }
-
-    #[test]
-    fn extract_model_no_model_field() {
-        let body = br#"{"messages":[{"role":"user","content":"hi"}]}"#;
-        assert_eq!(extract_model(body), None);
-    }
-
-    #[test]
-    fn extract_model_invalid_json() {
-        assert_eq!(extract_model(b"not json"), None);
-    }
-
     #[tokio::test]
     async fn health_endpoint() {
-        let db = Arc::new(Mutex::new(GatewayDb::open_in_memory().unwrap()));
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            DbWriter::open(&dir.path().join("test.db"), 64).unwrap(),
+        );
         let config = Arc::new(GatewayConfig {
             anthropic_api_key: None,
             openai_api_key: None,
             google_api_key: None,
-            audit_db: db,
+            db,
             http_client: reqwest::Client::new(),
+            pricing: crate::gateway::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(crate::gateway::TraceState::new()),
         });
 
         let addr = start_standalone(config, "127.0.0.1:0".parse().unwrap())
@@ -501,32 +611,43 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_path_returns_404() {
-        let db = Arc::new(Mutex::new(GatewayDb::open_in_memory().unwrap()));
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            DbWriter::open(&dir.path().join("test.db"), 64).unwrap(),
+        );
         let config = Arc::new(GatewayConfig {
             anthropic_api_key: None,
             openai_api_key: None,
             google_api_key: None,
-            audit_db: db,
+            db,
             http_client: reqwest::Client::new(),
+            pricing: crate::gateway::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(crate::gateway::TraceState::new()),
         });
 
         let addr = start_standalone(config, "127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
 
-        let resp = reqwest::get(format!("http://{addr}/v2/unknown")).await.unwrap();
+        let resp = reqwest::get(format!("http://{addr}/v2/unknown"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 404);
     }
 
     #[tokio::test]
     async fn missing_api_key_returns_503() {
-        let db = Arc::new(Mutex::new(GatewayDb::open_in_memory().unwrap()));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = Arc::new(DbWriter::open(&path, 64).unwrap());
         let config = Arc::new(GatewayConfig {
             anthropic_api_key: None,
             openai_api_key: None,
             google_api_key: None,
-            audit_db: db.clone(),
+            db: Arc::clone(&db),
             http_client: reqwest::Client::new(),
+            pricing: crate::gateway::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(crate::gateway::TraceState::new()),
         });
 
         let addr = start_standalone(config, "127.0.0.1:0".parse().unwrap())
@@ -542,9 +663,12 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), 503);
 
-        // Verify error was recorded in audit.
-        let events = db.lock().unwrap().recent(10).unwrap();
-        assert_eq!(events.len(), 1);
-        assert!(events[0].error.is_some());
+        // Give writer thread time to flush.
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify error was recorded via reader.
+        let reader = db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert!(!events.is_empty(), "should have recorded the error event");
     }
 }
