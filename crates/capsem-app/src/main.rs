@@ -642,6 +642,8 @@ async fn setup_vsock(
                     policy: Arc::clone(&ns.policy),
                     db: Arc::clone(&ns.db),
                     upstream_tls: Arc::clone(&ns.upstream_tls),
+                    pricing: capsem_core::gateway::pricing::PricingTable::load(),
+                    trace_state: std::sync::Mutex::new(capsem_core::gateway::TraceState::new()),
                 })
             })
         } else {
@@ -991,6 +993,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
             policy: Arc::clone(&ns.policy),
             db: Arc::clone(&ns.db),
             upstream_tls: Arc::clone(&ns.upstream_tls),
+            pricing: capsem_core::gateway::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(capsem_core::gateway::TraceState::new()),
         })
     });
 
@@ -1463,13 +1467,13 @@ fn main() {
                         let app_state = app.state::<AppState>();
                         let mut vms = app_state.vms.lock().unwrap();
                         vms.insert(gui_session_id.clone(), VmInstance {
-                            vm,
+                            _vm: vm,
                             serial_input_fd: input_fd,
                             vsock_terminal_fd: None,
                             vsock_control_fd: None,
                             net_state,
                             state_machine: sm,
-                            scratch_disk_path: gui_scratch_path.clone(),
+                            _scratch_disk_path: gui_scratch_path.clone(),
                         });
                     }
 

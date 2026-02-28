@@ -48,6 +48,10 @@ pub struct MitmProxyConfig {
     pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,
+    /// Model pricing lookup table for cost estimation.
+    pub pricing: crate::gateway::pricing::PricingTable,
+    /// Trace state for linking multi-turn tool-use conversations.
+    pub trace_state: std::sync::Mutex<crate::gateway::TraceState>,
 }
 
 /// Detect AI provider from domain name.
@@ -125,7 +129,7 @@ pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
 /// on connection-level failure. Per-request telemetry is emitted by TelemetryBody.
 async fn handle_inner(
     vsock_fd: RawFd,
-    config: &MitmProxyConfig,
+    config: &Arc<MitmProxyConfig>,
 ) -> Result<String, (String, Decision, String)> {
     // Wrap vsock fd in a non-owning async stream.
     let vsock_file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(vsock_fd) });
@@ -227,6 +231,7 @@ async fn handle_inner(
     let upstream_tls = Arc::clone(&config.upstream_tls);
     let domain_for_svc = domain.clone();
     let db = Arc::clone(&config.db);
+    let config_arc = Arc::clone(config);
     let log_bodies = policy.log_bodies;
     let max_body = policy.max_body_capture;
     let process_name = Arc::new(process_name);
@@ -242,11 +247,12 @@ async fn handle_inner(
         let upstream_tls = Arc::clone(&upstream_tls);
         let domain = domain_for_svc.clone();
         let db = Arc::clone(&db);
+        let config_arc = Arc::clone(&config_arc);
         let process_name = Arc::clone(&process_name);
         let cached_upstream = Arc::clone(&cached_upstream);
 
         async move {
-            handle_request(req, &domain, &policy, &upstream_tls, &db, &process_name, ai_provider, log_bodies, max_body, &cached_upstream).await
+            handle_request(req, &domain, &policy, &upstream_tls, &db, &config_arc, &process_name, ai_provider, log_bodies, max_body, &cached_upstream).await
         }
     });
 
@@ -275,6 +281,7 @@ async fn handle_request(
     policy: &NetworkPolicy,
     upstream_tls: &Arc<rustls::ClientConfig>,
     db: &Arc<DbWriter>,
+    config: &Arc<MitmProxyConfig>,
     process_name: &Option<String>,
     ai_provider: Option<ProviderKind>,
     log_bodies: bool,
@@ -308,6 +315,7 @@ async fn handle_request(
 
         let emitter = TelemetryEmitter {
             db: Arc::clone(db),
+            config: Arc::clone(config),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -345,6 +353,7 @@ async fn handle_request(
 
         let emitter = TelemetryEmitter {
             db: Arc::clone(db),
+            config: Arc::clone(config),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -389,6 +398,7 @@ async fn handle_request(
         let body_text = format!("Capsem: upstream error ({error})\n");
         let emitter = TelemetryEmitter {
             db: Arc::clone(db),
+            config: Arc::clone(config),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -539,6 +549,7 @@ async fn handle_request(
 
     let emitter = TelemetryEmitter {
         db: Arc::clone(db),
+        config: Arc::clone(config),
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider,
@@ -591,6 +602,7 @@ enum RespStatsKind {
 /// when a single HTTP request/response cycle completes.
 struct TelemetryEmitter {
     db: Arc<DbWriter>,
+    config: Arc<MitmProxyConfig>,
     // Connection-level
     domain: String,
     process_name: Option<String>,
@@ -761,6 +773,38 @@ impl TelemetryEmitter {
             })
             .collect();
 
+        // Estimate cost from pricing table.
+        let model = req_meta.model.as_deref()
+            .or(summary.as_ref().and_then(|s| s.model.as_deref()));
+        let estimated_cost_usd = self.config.pricing.estimate_cost(
+            provider.as_str(),
+            model,
+            summary.as_ref().and_then(|s| s.input_tokens),
+            summary.as_ref().and_then(|s| s.output_tokens),
+        );
+
+        // Assign trace_id: look up from tool response call_ids, or create new.
+        let tool_response_ids: Vec<String> = req_meta.tool_results.iter()
+            .map(|tr| tr.call_id.clone()).collect();
+        let tool_call_ids: Vec<String> = tool_calls.iter()
+            .map(|tc| tc.call_id.clone()).collect();
+        let trace_id = {
+            let mut state = self.config.trace_state.lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let tid = state.lookup(&tool_response_ids)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let is_tool_use = !tool_call_ids.is_empty()
+                || stop_reason_str.as_deref()
+                    .map(|r| r.contains("tool") || r == "tool_use")
+                    .unwrap_or(false);
+            if is_tool_use && !tool_call_ids.is_empty() {
+                state.register_tool_calls(&tid, &tool_call_ids);
+            } else {
+                state.complete_trace(&tid);
+            }
+            tid
+        };
+
         let model_call = ModelCall {
             timestamp: SystemTime::now(),
             provider: provider.as_str().to_string(),
@@ -787,8 +831,8 @@ impl TelemetryEmitter {
             output_tokens: summary.as_ref().and_then(|s| s.output_tokens),
             duration_ms,
             response_bytes,
-            estimated_cost_usd: 0.0,
-            trace_id: None,
+            estimated_cost_usd,
+            trace_id: Some(trace_id),
             tool_calls,
             tool_responses,
         };
@@ -1151,6 +1195,8 @@ mod tests {
             policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
             db,
             upstream_tls: make_upstream_tls_config(),
+            pricing: crate::gateway::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(crate::gateway::TraceState::new()),
         })
     }
 
@@ -1615,6 +1661,7 @@ mod tests {
     fn make_emitter(db: &Arc<DbWriter>) -> TelemetryEmitter {
         TelemetryEmitter {
             db: Arc::clone(db),
+            config: make_config_dev(),
             domain: "example.com".to_string(),
             process_name: None,
             ai_provider: None,
@@ -1678,6 +1725,7 @@ mod tests {
 
         let emitter = TelemetryEmitter {
             db: Arc::clone(&db),
+            config: make_config_dev(),
             domain: "api.anthropic.com".to_string(),
             process_name: None,
             ai_provider: Some(ProviderKind::Anthropic),
@@ -1997,5 +2045,194 @@ mod tests {
         assert_eq!(events[0].decision, Decision::Error);
         assert_eq!(events[0].status_code, Some(502));
         assert_eq!(events[0].domain, "nonexistent.invalid");
+    }
+
+    /// Helper to build a TelemetryEmitter with AI provider for testing emit_model_call.
+    fn make_ai_emitter(config: &Arc<MitmProxyConfig>, provider: ProviderKind) -> TelemetryEmitter {
+        TelemetryEmitter {
+            db: Arc::clone(&config.db),
+            config: Arc::clone(config),
+            domain: "api.anthropic.com".to_string(),
+            process_name: Some("claude".to_string()),
+            ai_provider: Some(provider),
+            method: "POST".to_string(),
+            path: "/v1/messages".to_string(),
+            query: None,
+            status_code: Some(200),
+            decision: Decision::Allowed,
+            matched_rule: Some("ai-provider".to_string()),
+            request_headers: None,
+            response_headers: None,
+            req_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            resp_kind: RespStatsKind::Plain(Arc::new(Mutex::new(BodyStats::new(0)))),
+            start_time: Instant::now(),
+        }
+    }
+
+    /// Build an `AiStreamState` with pre-populated events for testing.
+    fn make_ai_state(events: Vec<crate::gateway::events::LlmEvent>) -> Arc<Mutex<crate::gateway::ai_body::AiStreamState>> {
+        use crate::gateway::anthropic::AnthropicStreamParserWithState;
+        Arc::new(Mutex::new(crate::gateway::ai_body::AiStreamState {
+            sse_parser: crate::gateway::sse::SseParser::new(),
+            provider_parser: Box::new(AnthropicStreamParserWithState::new()),
+            events,
+        }))
+    }
+
+    #[test]
+    fn emit_model_call_assigns_trace_id() {
+        let config = make_config_dev();
+        let emitter = make_ai_emitter(&config, ProviderKind::Anthropic);
+
+        // Emit with no AI state (simulates non-streaming or empty response).
+        emitter.emit_model_call(
+            ProviderKind::Anthropic, 100, 200, 50, &None,
+        );
+
+        // Flush the DB writer.
+        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+
+        let reader = config.db.reader().unwrap();
+        let calls = reader.recent_model_calls(10).unwrap();
+        assert_eq!(calls.len(), 1, "should have recorded one model call");
+        assert!(calls[0].1.trace_id.is_some(), "trace_id should be assigned");
+        assert!(!calls[0].1.trace_id.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn emit_model_call_estimates_cost() {
+        use crate::gateway::events::LlmEvent;
+        let config = make_config_dev();
+        let ai_state = make_ai_state(vec![
+            LlmEvent::MessageStart {
+                message_id: None,
+                model: Some("claude-sonnet-4-20250514".to_string()),
+            },
+            LlmEvent::Usage {
+                input_tokens: Some(1000),
+                output_tokens: Some(500),
+            },
+        ]);
+        let emitter = make_ai_emitter(&config, ProviderKind::Anthropic);
+
+        emitter.emit_model_call(
+            ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state),
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+
+        let reader = config.db.reader().unwrap();
+        let calls = reader.recent_model_calls(10).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].1.estimated_cost_usd > 0.0,
+            "cost should be positive for known model with tokens: got {}",
+            calls[0].1.estimated_cost_usd,
+        );
+    }
+
+    #[test]
+    fn trace_chains_across_tool_use() {
+        use crate::gateway::events::{LlmEvent, StopReason};
+        let config = make_config_dev();
+
+        // First call: model responds with tool_use, tool_call_id = "call_1".
+        let ai_state1 = make_ai_state(vec![
+            LlmEvent::ToolCallStart {
+                index: 0,
+                call_id: "call_1".to_string(),
+                name: "bash".to_string(),
+            },
+            LlmEvent::ToolCallEnd { index: 0 },
+            LlmEvent::MessageEnd {
+                stop_reason: Some(StopReason::ToolUse),
+            },
+        ]);
+        let emitter1 = make_ai_emitter(&config, ProviderKind::Anthropic);
+        emitter1.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state1));
+
+        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+
+        let reader = config.db.reader().unwrap();
+        let calls1 = reader.recent_model_calls(10).unwrap();
+        assert_eq!(calls1.len(), 1);
+        let trace_id_1 = calls1[0].1.trace_id.clone().unwrap();
+
+        // Second call: includes tool_response for call_1, model responds with end_turn.
+        let req_body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "call_1", "name": "bash", "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call_1", "content": "done"}
+                ]}
+            ]
+        });
+        let req_bytes = serde_json::to_vec(&req_body).unwrap();
+
+        let ai_state2 = make_ai_state(vec![
+            LlmEvent::MessageEnd {
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+
+        let emitter2 = TelemetryEmitter {
+            db: Arc::clone(&config.db),
+            config: Arc::clone(&config),
+            domain: "api.anthropic.com".to_string(),
+            process_name: Some("claude".to_string()),
+            ai_provider: Some(ProviderKind::Anthropic),
+            method: "POST".to_string(),
+            path: "/v1/messages".to_string(),
+            query: None,
+            status_code: Some(200),
+            decision: Decision::Allowed,
+            matched_rule: Some("ai-provider".to_string()),
+            request_headers: None,
+            response_headers: None,
+            req_stats: Arc::new(Mutex::new(BodyStats {
+                bytes: req_bytes.len() as u64,
+                preview: req_bytes,
+                max_preview: 64 * 1024,
+            })),
+            resp_kind: RespStatsKind::Plain(Arc::new(Mutex::new(BodyStats::new(0)))),
+            start_time: Instant::now(),
+        };
+        emitter2.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state2));
+
+        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+
+        let calls2 = reader.recent_model_calls(10).unwrap();
+        assert_eq!(calls2.len(), 2, "should have 2 model calls now");
+        // Most recent first -- calls2[0] is the second call.
+        let trace_id_2 = calls2[0].1.trace_id.clone().unwrap();
+        assert_eq!(
+            trace_id_1, trace_id_2,
+            "second call should share the same trace_id as first (chained via tool_use)"
+        );
+    }
+
+    #[test]
+    fn trace_completes_on_end_turn() {
+        use crate::gateway::events::{LlmEvent, StopReason};
+        let config = make_config_dev();
+
+        let ai_state = make_ai_state(vec![
+            LlmEvent::MessageEnd {
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+        let emitter = make_ai_emitter(&config, ProviderKind::Anthropic);
+        emitter.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state));
+
+        // After end_turn, trace_state should have no pending entries.
+        let state = config.trace_state.lock().unwrap();
+        assert!(
+            state.lookup(&["nonexistent".to_string()]).is_none(),
+            "trace_state should be empty after end_turn"
+        );
     }
 }

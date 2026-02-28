@@ -12,14 +12,14 @@
 mod vsock_io;
 
 use std::io;
-use std::os::unix::io::{AsRawFd, BorrowedFd, FromRawFd, RawFd};
+use std::os::unix::io::{BorrowedFd, FromRawFd, RawFd};
 use std::pin::Pin;
 use std::process;
 use std::task::{Context, Poll};
 
 use nix::libc;
 use tokio::io::unix::AsyncFd;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 

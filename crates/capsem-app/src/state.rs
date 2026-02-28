@@ -28,13 +28,13 @@ pub struct VmNetworkState {
 
 /// Per-VM instance state.
 pub struct VmInstance {
-    pub vm: VirtualMachine,
+    pub _vm: VirtualMachine,
     pub serial_input_fd: RawFd,
     pub vsock_terminal_fd: Option<RawFd>,
     pub vsock_control_fd: Option<RawFd>,
     pub net_state: Option<VmNetworkState>,
     pub state_machine: HostStateMachine,
-    pub scratch_disk_path: Option<PathBuf>,
+    pub _scratch_disk_path: Option<PathBuf>,
 }
 
 /// Max queued output chunks before dropping to prevent OOM when the frontend
@@ -99,12 +99,11 @@ impl TerminalOutputQueue {
         }
     }
 
-    /// Close the queue. Pending and future polls return `None` once drained.
+
+    /// Mark the queue as closed. Wakes any pending `poll()` which will return
+    /// `None` once the remaining data is drained.
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
-        // Use notify_one() to store a permit. notify_waiters() does NOT store
-        // a permit, so if poll() is between its lock release and .await, the
-        // wakeup would be lost and poll() would hang forever.
         self.notify.notify_one();
     }
 
@@ -136,15 +135,26 @@ impl AppState {
             let mut current_fd: Option<RawFd> = None;
             let mut current_file: Option<std::fs::File> = None;
 
+            /// Max bytes to coalesce before flushing to the PTY. Prevents
+            /// unbounded memory growth if the channel is flooded faster than
+            /// the inner try_recv loop can drain.
+            const MAX_BATCH_SIZE: usize = 64 * 1024;
+
             while let Ok((fd, data)) = rx.recv() {
                 let mut buf = data.into_bytes();
-                // Coalesce rapid sequential inputs for the same file descriptor
-                while let Ok((next_fd, next_data)) = rx.try_recv() {
-                    if next_fd == fd {
-                        buf.extend(next_data.into_bytes());
-                    } else {
-                        // Very rare: active VM switched in the middle of a microsecond burst.
-                        // We'll handle this in the next iteration.
+                // Coalesce rapid sequential inputs for the same file descriptor,
+                // up to MAX_BATCH_SIZE to guarantee forward progress.
+                while buf.len() < MAX_BATCH_SIZE {
+                    match rx.try_recv() {
+                        Ok((next_fd, next_data)) if next_fd == fd => {
+                            buf.extend(next_data.into_bytes());
+                        }
+                        Ok(_) => {
+                            // Very rare: active VM switched in the middle of a
+                            // microsecond burst. Handled in the next iteration.
+                            break;
+                        }
+                        Err(_) => break,
                     }
                 }
                 
@@ -299,6 +309,57 @@ mod tests {
         q.close();
         let result = handle.await.unwrap();
         assert!(result.is_none());
+    }
+
+    /// Verify that the terminal input batching thread flushes within bounded
+    /// time even when the channel is flooded. We send many messages to a pipe
+    /// fd and verify all data arrives (the thread did not get stuck coalescing).
+    #[test]
+    fn terminal_input_batch_caps_at_max_size() {
+        use std::io::Read;
+        use std::os::unix::io::{FromRawFd, IntoRawFd};
+
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let state = AppState::new(idx);
+
+        // Create a pipe: write end goes to the batching thread, read end we check.
+        let (read_end, write_end) = std::os::unix::net::UnixStream::pair().unwrap();
+        let fd = write_end.into_raw_fd();
+
+        // Flood the channel with many small messages (200 KB total, well above
+        // the 64 KB batch cap). If the cap is not enforced, the batching thread
+        // would spin forever coalescing and never write.
+        let msg_count = 200;
+        let msg = "x".repeat(1024); // 1 KB each
+        for _ in 0..msg_count {
+            state.terminal_input_tx.send((fd, msg.clone())).unwrap();
+        }
+
+        // Read from the pipe. The batching thread must flush multiple times
+        // (not get stuck). Use a timeout to avoid hanging if the fix is broken.
+        let mut total_read = 0usize;
+        let expected = msg_count * msg.len();
+        let mut read_end = read_end;
+        read_end.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let mut buf = [0u8; 8192];
+        while total_read < expected {
+            match read_end.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => total_read += n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+                       || e.kind() == std::io::ErrorKind::TimedOut => {
+                    panic!(
+                        "batching thread stalled: read {total_read}/{expected} bytes \
+                         (batch size cap may not be enforced)"
+                    );
+                }
+                Err(e) => panic!("unexpected read error: {e}"),
+            }
+        }
+        assert_eq!(total_read, expected, "all data should arrive");
+
+        // Clean up fd (take ownership back to drop it).
+        drop(unsafe { std::fs::File::from_raw_fd(fd) });
     }
 
     #[test]

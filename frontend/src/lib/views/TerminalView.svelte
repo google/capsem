@@ -34,7 +34,7 @@
     {/if}
     <span class="flex items-center gap-1.5">
       <span>{vmStore.vmState}</span>
-      <span class="inline-block size-1.5 rounded-full" style:background-color={vmStore.vmState === 'running' ? '#4ade80' : vmStore.vmState === 'booting' || vmStore.vmState === 'Booting' ? '#facc15' : '#ef4444'}></span>
+      <span class="inline-block size-1.5 rounded-full" style:background-color={vmStore.vmState === 'running' ? '#4ade80' : vmStore.vmState === 'booting' ? '#facc15' : '#ef4444'}></span>
     </span>
   </div>
 </div>

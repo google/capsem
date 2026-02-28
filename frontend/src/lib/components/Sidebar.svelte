@@ -23,6 +23,7 @@
     <ul class="flex flex-col gap-1 px-1.5">
       {#each items as item}
         {@const isActive = sidebarStore.activeView === item.view}
+        {@const Icon = item.icon}
         <li>
           <button
             class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors {isActive
@@ -31,7 +32,7 @@
             onclick={() => sidebarStore.setView(item.view)}
             title={sidebarStore.collapsed ? item.label : undefined}
           >
-            <svelte:component this={item.icon} />
+            <Icon />
             {#if !sidebarStore.collapsed}
               <span class="text-xs font-medium whitespace-nowrap">{item.label}</span>
             {/if}
@@ -47,7 +48,7 @@
       onclick={() => sidebarStore.setView(isSettings ? 'terminal' : 'settings')}
       title="Settings"
     >
-      <svelte:component this={SettingsIcon} />
+      <SettingsIcon />
     </button>
     <button
       class="btn btn-ghost btn-xs"

@@ -6,7 +6,6 @@
 /// SSE stream format: Each SSE event is a complete JSON object (not deltas).
 /// Parts contain `text`, `functionCall`, or `thought` fields.
 /// Gemini doesn't provide tool call IDs -- we generate synthetic ones.
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::events::{LlmEvent, ProviderStreamParser, StopReason};
 use super::provider::{Provider, ProviderKind};

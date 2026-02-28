@@ -29,12 +29,12 @@ class VmStore {
 
   async init() {
     try {
-      this.vmState = await vmStatus();
+      this.vmState = (await vmStatus()).toLowerCase();
     } catch {
       this.vmState = 'error';
     }
     onVmStateChanged((state) => {
-      this.vmState = state;
+      this.vmState = state.toLowerCase();
     });
   }
 }

@@ -56,6 +56,8 @@ fn make_proxy_config(
         policy,
         db: db.clone(),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
+        pricing: capsem_core::gateway::pricing::PricingTable::load(),
+        trace_state: std::sync::Mutex::new(capsem_core::gateway::TraceState::new()),
     });
     (config, db)
 }
