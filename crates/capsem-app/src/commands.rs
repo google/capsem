@@ -1,11 +1,27 @@
+//! Tauri IPC Commands
+//!
+//! **CRITICAL SAFETY RULE: Never perform blocking I/O in synchronous Tauri commands.**
+//! 
+//! Tauri processes synchronous commands in a limited thread pool. If a synchronous command
+//! performs a blocking operation (e.g., `file.write_all()` to a vsock descriptor whose buffer
+//! might be full, or a `rusqlite` database query), it can exhaust this pool. This causes the
+//! entire application UI and IPC channel to completely freeze ("barf" or lag on rapid input).
+//! 
+//! **Always** define commands that do I/O as `async fn` and wrap the blocking portions inside
+//! `tokio::task::spawn_blocking`. This offloads the work to Tokio's dedicated background
+//! thread pool, keeping the Tauri IPC channels responsive.
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 
 use capsem_core::net::policy_config::{self, ResolvedSetting, SettingEntry, SettingValue};
-use capsem_core::net::telemetry::NetEvent;
 use capsem_core::session::{self, SessionRecord};
 use capsem_core::{HostToGuest, encode_host_msg, validate_host_msg};
+use capsem_logger::{
+    validate_select_only, DomainCount, ModelCall, NetEvent, ProviderTokenUsage, SessionStats,
+    TimeBucket, ToolUsageCount, TraceDetail, TraceSummary,
+};
 use serde::Serialize;
 use tauri::State;
 
@@ -36,23 +52,23 @@ pub fn vm_status(state: State<'_, AppState>) -> String {
 }
 
 #[tauri::command]
-pub fn serial_input(input: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn serial_input(input: String, state: State<'_, AppState>) -> Result<(), String> {
     tracing::debug!("Received serial input: {:?}", input.as_bytes());
     let vm_id = active_vm_id(&state)?;
 
-    // Extract fd while holding the lock, then release before the blocking write.
-    // Holding the vms mutex during write_all() would block ALL other IPC commands
-    // (vm_status, terminal_resize, etc.) if the vsock buffer is full.
+    let tx = state.terminal_input_tx.clone();
+    
+    // Extract fd while holding the lock
     let fd = {
         let vms = state.vms.lock().unwrap();
         let instance = vms.get(&vm_id).ok_or("no VM running")?;
         instance.vsock_terminal_fd.unwrap_or(instance.serial_input_fd)
     };
 
-    let mut file = clone_fd(fd)
-        .map_err(|e| format!("clone fd failed: {e}"))?;
-    file.write_all(input.as_bytes())
-        .map_err(|e| format!("write failed: {e}"))
+    // Send the input to the dedicated background thread.
+    // This is instant, non-blocking, and avoids spawning a Tokio thread per keystroke.
+    tx.send((fd, input))
+        .map_err(|e| format!("send to input queue failed: {e}"))
 }
 
 /// Poll for terminal output data. Blocks until data is available or the
@@ -65,7 +81,7 @@ pub async fn terminal_poll(state: State<'_, AppState>) -> Result<Vec<u8>, String
 }
 
 #[tauri::command]
-pub fn terminal_resize(
+pub async fn terminal_resize(
     cols: u16,
     rows: u16,
     state: State<'_, AppState>,
@@ -88,19 +104,36 @@ pub fn terminal_resize(
 
     let mut file = clone_fd(control_fd)
         .map_err(|e| format!("clone control fd failed: {e}"))?;
-    file.write_all(&frame)
-        .map_err(|e| format!("control write failed: {e}"))
+    tokio::task::spawn_blocking(move || {
+        file.write_all(&frame)
+            .map_err(|e| format!("control write failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
-/// Query the most recent N network events from the VM's web.db.
+/// Query the most recent N network events from the session DB.
+/// Optionally filters by search substring (domain, path, method, rule).
 #[tauri::command]
-pub fn net_events(limit: Option<usize>, state: State<'_, AppState>) -> Result<Vec<NetEvent>, String> {
+pub async fn net_events(limit: Option<usize>, search: Option<String>, state: State<'_, AppState>) -> Result<Vec<NetEvent>, String> {
     let vm_id = active_vm_id(&state)?;
-    let vms = state.vms.lock().unwrap();
-    let instance = vms.get(&vm_id).ok_or("no VM running")?;
-    let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
-    let db = net_state.web_db.lock().map_err(|e| format!("web.db lock: {e}"))?;
-    db.recent(limit.unwrap_or(100)).map_err(|e| format!("web.db query: {e}"))
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        let lim = limit.unwrap_or(100);
+        match search.as_deref().filter(|s| !s.is_empty()) {
+            Some(q) => reader.search_net_events(q, lim).map_err(|e| format!("db query: {e}")),
+            None => reader.recent_net_events(lim).map_err(|e| format!("db query: {e}")),
+        }
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
 // ---------------------------------------------------------------------------
@@ -115,11 +148,15 @@ pub struct GuestConfigResponse {
 
 /// Returns merged guest config (env vars from user.toml + corp.toml). No VM required.
 #[tauri::command]
-pub fn get_guest_config() -> GuestConfigResponse {
-    let config = policy_config::load_merged_guest_config();
-    GuestConfigResponse {
-        env: config.env.unwrap_or_default(),
-    }
+pub async fn get_guest_config() -> Result<GuestConfigResponse, String> {
+    tokio::task::spawn_blocking(|| {
+        let config = policy_config::load_merged_guest_config();
+        GuestConfigResponse {
+            env: config.env.unwrap_or_default(),
+        }
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))
 }
 
 /// Response for get_network_policy.
@@ -129,90 +166,118 @@ pub struct NetworkPolicyResponse {
     pub block: Vec<String>,
     pub default_action: String,
     pub corp_managed: bool,
+    pub conflicts: Vec<String>,
 }
 
 /// Returns the merged network policy. No VM required.
 #[tauri::command]
-pub fn get_network_policy() -> NetworkPolicyResponse {
-    let (_user, corp) = policy_config::load_settings_files();
-    let corp_managed = !corp.settings.is_empty();
-    let policy = policy_config::load_merged_policy();
-    let dp = policy.domain_policy();
-    // Probe the default action by evaluating a domain that won't match any rule.
-    let (default_act, _) = dp.evaluate("__capsem_probe_nonexistent__.invalid");
-    NetworkPolicyResponse {
-        allow: dp.allowed_patterns(),
-        block: dp.blocked_patterns(),
-        default_action: if default_act == capsem_core::net::domain_policy::Action::Allow {
-            "allow".to_string()
-        } else {
-            "deny".to_string()
-        },
-        corp_managed,
-    }
+pub async fn get_network_policy() -> Result<NetworkPolicyResponse, String> {
+    tokio::task::spawn_blocking(|| {
+        let (_user, corp) = policy_config::load_settings_files();
+        let corp_managed = !corp.settings.is_empty();
+        let policy = policy_config::load_merged_policy();
+        let dp = policy.domain_policy();
+        // Probe the default action by evaluating a domain that won't match any rule.
+        let (default_act, _) = dp.evaluate("__capsem_probe_nonexistent__.invalid");
+        let allow_set = dp.allowed_patterns();
+        let block_set = dp.blocked_patterns();
+        let conflicts: Vec<String> = allow_set.iter()
+            .filter(|d| block_set.contains(d))
+            .cloned()
+            .collect();
+        NetworkPolicyResponse {
+            allow: allow_set,
+            block: block_set,
+            default_action: if default_act == capsem_core::net::domain_policy::Action::Allow {
+                "allow".to_string()
+            } else {
+                "deny".to_string()
+            },
+            corp_managed,
+            conflicts,
+        }
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))
 }
 
 /// Set a guest env var in ~/.capsem/user.toml via settings system.
 #[tauri::command]
-pub fn set_guest_env(key: String, value: String) -> Result<(), String> {
-    let path = policy_config::user_config_path()
-        .ok_or("HOME not set")?;
-    let mut file = policy_config::load_settings_file(&path)?;
-    let setting_id = format!("guest.env.{key}");
-    file.settings.insert(setting_id, SettingEntry {
-        value: SettingValue::Text(value),
-        modified: session::now_iso(),
-    });
-    policy_config::write_settings_file(&path, &file)
+pub async fn set_guest_env(key: String, value: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let path = policy_config::user_config_path()
+            .ok_or("HOME not set")?;
+        let mut file = policy_config::load_settings_file(&path)?;
+        let setting_id = format!("guest.env.{key}");
+        file.settings.insert(setting_id, SettingEntry {
+            value: SettingValue::Text(value),
+            modified: session::now_iso(),
+        });
+        policy_config::write_settings_file(&path, &file)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
 /// Remove a guest env var from ~/.capsem/user.toml via settings system.
 #[tauri::command]
-pub fn remove_guest_env(key: String) -> Result<(), String> {
-    let path = policy_config::user_config_path()
-        .ok_or("HOME not set")?;
-    let mut file = policy_config::load_settings_file(&path)?;
-    let setting_id = format!("guest.env.{key}");
-    file.settings.remove(&setting_id);
-    policy_config::write_settings_file(&path, &file)
+pub async fn remove_guest_env(key: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let path = policy_config::user_config_path()
+            .ok_or("HOME not set")?;
+        let mut file = policy_config::load_settings_file(&path)?;
+        let setting_id = format!("guest.env.{key}");
+        file.settings.remove(&setting_id);
+        policy_config::write_settings_file(&path, &file)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
 /// Returns all resolved settings for the UI.
 #[tauri::command]
-pub fn get_settings() -> Result<Vec<ResolvedSetting>, String> {
-    Ok(policy_config::load_merged_settings())
+pub async fn get_settings() -> Result<Vec<ResolvedSetting>, String> {
+    tokio::task::spawn_blocking(policy_config::load_merged_settings)
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))
 }
 
 /// Update a single user setting by ID. Hot-reloads the network policy so
 /// changes take effect immediately for new MITM proxy connections.
 #[tauri::command]
-pub fn update_setting(id: String, value: SettingValue, state: State<'_, AppState>) -> Result<(), String> {
-    // Validate before persisting (e.g. JSON check for File-type settings).
-    policy_config::validate_setting_value(&id, &value)?;
+pub async fn update_setting(id: String, value: SettingValue, app_handle: tauri::AppHandle) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        // Validate before persisting (e.g. JSON check for File-type settings).
+        policy_config::validate_setting_value(&id, &value)?;
 
-    let path = policy_config::user_config_path()
-        .ok_or("HOME not set")?;
-    let mut file = policy_config::load_settings_file(&path)?;
-    file.settings.insert(id, SettingEntry {
-        value,
-        modified: session::now_iso(),
-    });
-    policy_config::write_settings_file(&path, &file)?;
+        let path = policy_config::user_config_path()
+            .ok_or("HOME not set")?;
+        let mut file = policy_config::load_settings_file(&path)?;
+        file.settings.insert(id, SettingEntry {
+            value,
+            modified: session::now_iso(),
+        });
+        policy_config::write_settings_file(&path, &file)?;
 
-    // Hot-reload: rebuild the network policy from disk and swap it into the
-    // running MITM proxy. New connections will use the updated policy.
-    let new_policy = std::sync::Arc::new(policy_config::load_merged_network_policy());
-    if let Ok(vm_id) = active_vm_id(&state) {
-        let vms = state.vms.lock().unwrap();
-        if let Some(instance) = vms.get(&vm_id) {
-            if let Some(ns) = &instance.net_state {
-                *ns.policy.write().unwrap() = new_policy;
-                tracing::info!("hot-reloaded network policy");
+        // Hot-reload: rebuild the network policy from disk and swap it into the
+        // running MITM proxy. New connections will use the updated policy.
+        let new_policy = std::sync::Arc::new(policy_config::load_merged_network_policy());
+        let state = app_handle.state::<AppState>();
+        if let Ok(vm_id) = active_vm_id(&state) {
+            let vms = state.vms.lock().unwrap();
+            if let Some(instance) = vms.get(&vm_id) {
+                if let Some(ns) = &instance.net_state {
+                    *ns.policy.write().unwrap() = new_policy;
+                    tracing::info!("hot-reloaded network policy");
+                }
             }
         }
-    }
 
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
 /// Response for get_vm_state.
@@ -266,11 +331,19 @@ pub struct SessionInfoResponse {
     pub total_requests: u64,
     pub allowed_requests: u64,
     pub denied_requests: u64,
+    pub error_requests: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub model_call_count: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_tool_calls: u64,
+    pub total_estimated_cost_usd: f64,
 }
 
 /// Returns info about the current active session.
 #[tauri::command]
-pub fn get_session_info(state: State<'_, AppState>) -> Result<SessionInfoResponse, String> {
+pub async fn get_session_info(state: State<'_, AppState>) -> Result<SessionInfoResponse, String> {
     let vm_id = active_vm_id(&state)?;
 
     // Get uptime from state machine.
@@ -283,46 +356,233 @@ pub fn get_session_info(state: State<'_, AppState>) -> Result<SessionInfoRespons
     };
 
     // Get session record from index.
-    let idx = state.session_index.lock().map_err(|e| format!("session index lock: {e}"))?;
-    let records = idx.recent(50).map_err(|e| format!("session index query: {e}"))?;
-    let record = records.iter().find(|r| r.id == vm_id);
-
-    // Get live request counts from web.db if available.
-    let (total, allowed, denied) = {
-        let vms = state.vms.lock().unwrap();
-        if let Some(instance) = vms.get(&vm_id) {
-            if let Some(ns) = &instance.net_state {
-                let db = ns.web_db.lock().map_err(|e| format!("web.db lock: {e}"))?;
-                db.count_by_decision().map_err(|e| format!("web.db count: {e}"))?
-            } else {
-                (0, 0, 0)
-            }
-        } else {
-            (0, 0, 0)
-        }
+    let (mode, disk_gb, ram) = {
+        let idx = state.session_index.lock().map_err(|e| format!("session index lock: {e}"))?;
+        let records = idx.recent(50).map_err(|e| format!("session index query: {e}"))?;
+        let record = records.iter().find(|r| r.id == vm_id);
+        (
+            record.map(|r| r.mode.clone()).unwrap_or_else(|| "gui".to_string()),
+            record.map(|r| r.scratch_disk_size_gb).unwrap_or(16),
+            record.map(|r| r.ram_bytes).unwrap_or(4 * 1024 * 1024 * 1024),
+        )
     };
 
+    // Get live stats from session DB via spawn_blocking.
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        vms.get(&vm_id)
+            .and_then(|i| i.net_state.as_ref())
+            .map(|ns| Arc::clone(&ns.db))
+    };
+
+    let stats = if let Some(db) = db {
+        tokio::task::spawn_blocking(move || {
+            db.reader()
+                .ok()
+                .and_then(|r| r.session_stats().ok())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))?
+    } else {
+        None
+    };
+
+    let vm_id_out = vm_id;
     Ok(SessionInfoResponse {
-        session_id: vm_id,
-        mode: record.map(|r| r.mode.clone()).unwrap_or_else(|| "gui".to_string()),
+        session_id: vm_id_out,
+        mode,
         uptime_ms,
-        scratch_disk_size_gb: record.map(|r| r.scratch_disk_size_gb).unwrap_or(8),
-        ram_bytes: record.map(|r| r.ram_bytes).unwrap_or(512 * 1024 * 1024),
-        total_requests: total as u64,
-        allowed_requests: allowed as u64,
-        denied_requests: denied as u64,
+        scratch_disk_size_gb: disk_gb,
+        ram_bytes: ram,
+        total_requests: stats.as_ref().map(|s| s.net_total).unwrap_or(0),
+        allowed_requests: stats.as_ref().map(|s| s.net_allowed).unwrap_or(0),
+        denied_requests: stats.as_ref().map(|s| s.net_denied).unwrap_or(0),
+        error_requests: stats.as_ref().map(|s| s.net_error).unwrap_or(0),
+        bytes_sent: stats.as_ref().map(|s| s.net_bytes_sent).unwrap_or(0),
+        bytes_received: stats.as_ref().map(|s| s.net_bytes_received).unwrap_or(0),
+        model_call_count: stats.as_ref().map(|s| s.model_call_count).unwrap_or(0),
+        total_input_tokens: stats.as_ref().map(|s| s.total_input_tokens).unwrap_or(0),
+        total_output_tokens: stats.as_ref().map(|s| s.total_output_tokens).unwrap_or(0),
+        total_tool_calls: stats.as_ref().map(|s| s.total_tool_calls).unwrap_or(0),
+        total_estimated_cost_usd: stats.as_ref().map(|s| s.total_estimated_cost_usd).unwrap_or(0.0),
     })
 }
 
 /// Returns session history from main.db.
 #[tauri::command]
-pub fn get_session_history(
+pub async fn get_session_history(
+    limit: Option<usize>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<SessionRecord>, String> {
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app_handle.state::<AppState>();
+        let idx = state.session_index.lock().map_err(|e| format!("session index lock: {e}"))?;
+        idx.recent(limit.unwrap_or(50))
+            .map_err(|e| format!("session index query: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+// ---------------------------------------------------------------------------
+// Session stats + model calls
+// ---------------------------------------------------------------------------
+
+/// Full session statistics response (SQL-driven aggregates).
+#[derive(Serialize)]
+pub struct SessionStatsResponse {
+    pub stats: SessionStats,
+    pub top_domains: Vec<DomainCount>,
+    pub time_buckets: Vec<TimeBucket>,
+    pub provider_usage: Vec<ProviderTokenUsage>,
+    pub tool_usage: Vec<ToolUsageCount>,
+}
+
+/// Returns aggregate session stats for the active VM. Single spawn_blocking call.
+#[tauri::command]
+pub async fn get_session_stats(state: State<'_, AppState>) -> Result<SessionStatsResponse, String> {
+    let vm_id = active_vm_id(&state)?;
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        let stats = reader.session_stats().map_err(|e| format!("session_stats: {e}"))?;
+        let top_domains = reader.top_domains(10).map_err(|e| format!("top_domains: {e}"))?;
+        let time_buckets = reader.net_events_over_time(1, 6).map_err(|e| format!("time_buckets: {e}"))?;
+        let provider_usage = reader.token_usage_by_provider().map_err(|e| format!("provider_usage: {e}"))?;
+        let tool_usage = reader.tool_usage_frequency(20).map_err(|e| format!("tool_usage: {e}"))?;
+        Ok(SessionStatsResponse {
+            stats,
+            top_domains,
+            time_buckets,
+            provider_usage,
+            tool_usage,
+        })
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+/// Response wrapper for model calls.
+#[derive(Serialize)]
+pub struct ModelCallResponse {
+    pub id: i64,
+    #[serde(flatten)]
+    pub call: ModelCall,
+}
+
+/// Returns recent model calls with optional search.
+#[tauri::command]
+pub async fn get_model_calls(
+    limit: Option<usize>,
+    search: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ModelCallResponse>, String> {
+    let vm_id = active_vm_id(&state)?;
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        let lim = limit.unwrap_or(50);
+        let rows = match search.as_deref().filter(|s| !s.is_empty()) {
+            Some(q) => reader.search_model_calls(q, lim).map_err(|e| format!("db query: {e}"))?,
+            None => reader.recent_model_calls(lim).map_err(|e| format!("db query: {e}"))?,
+        };
+        Ok(rows
+            .into_iter()
+            .map(|(id, call)| ModelCallResponse { id, call })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+// ---------------------------------------------------------------------------
+// Trace queries
+// ---------------------------------------------------------------------------
+
+/// Returns recent traces (grouped agent turns), newest first.
+#[tauri::command]
+pub async fn get_traces(
     limit: Option<usize>,
     state: State<'_, AppState>,
-) -> Result<Vec<SessionRecord>, String> {
-    let idx = state.session_index.lock().map_err(|e| format!("session index lock: {e}"))?;
-    idx.recent(limit.unwrap_or(50))
-        .map_err(|e| format!("session index query: {e}"))
+) -> Result<Vec<TraceSummary>, String> {
+    let vm_id = active_vm_id(&state)?;
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        reader
+            .recent_traces(limit.unwrap_or(50))
+            .map_err(|e| format!("recent_traces: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+/// Returns full detail for a single trace (all calls with tool data).
+#[tauri::command]
+pub async fn get_trace_detail(
+    trace_id: String,
+    state: State<'_, AppState>,
+) -> Result<TraceDetail, String> {
+    let vm_id = active_vm_id(&state)?;
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        reader
+            .trace_detail(&trace_id)
+            .map_err(|e| format!("trace_detail: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+// ---------------------------------------------------------------------------
+// Raw SQL query
+// ---------------------------------------------------------------------------
+
+/// Execute a raw SELECT query against the active session's database.
+/// Returns a JSON string: `{"columns":[...],"rows":[[...],...]}`
+#[tauri::command]
+pub async fn query_db(sql: String, state: State<'_, AppState>) -> Result<String, String> {
+    let vm_id = active_vm_id(&state)?;
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        validate_select_only(&sql)?;
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        reader.query_raw(&sql)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
 #[cfg(test)]

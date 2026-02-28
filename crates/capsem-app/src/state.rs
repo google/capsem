@@ -8,8 +8,8 @@ use capsem_core::VirtualMachine;
 use capsem_core::HostStateMachine;
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::policy::NetworkPolicy;
-use capsem_core::net::telemetry::WebDb;
 use capsem_core::session::SessionIndex;
+use capsem_logger::DbWriter;
 
 /// Per-VM network state: policy, telemetry DB, and connection tracking.
 ///
@@ -20,7 +20,7 @@ pub struct VmNetworkState {
     /// it without restarting the VM. Readers (MITM proxy connections) clone the
     /// inner Arc cheaply; writers swap the entire Arc on policy change.
     pub policy: Arc<RwLock<Arc<NetworkPolicy>>>,
-    pub web_db: Arc<Mutex<WebDb>>,
+    pub db: Arc<DbWriter>,
     pub ca: Arc<CertAuthority>,
     /// Cached upstream TLS config, created once via `mitm_proxy::make_upstream_tls_config()`.
     pub upstream_tls: Arc<capsem_core::net::mitm_proxy::UpstreamTlsConfig>,
@@ -121,15 +121,52 @@ pub struct AppState {
     pub session_index: Mutex<SessionIndex>,
     pub active_session_id: Mutex<Option<String>>,
     pub terminal_output: Arc<TerminalOutputQueue>,
+    pub terminal_input_tx: std::sync::mpsc::Sender<(RawFd, String)>,
 }
 
 impl AppState {
     pub fn new(session_index: SessionIndex) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<(RawFd, String)>();
+        
+        // Spawn a dedicated global thread for batching terminal input writes.
+        // This prevents spawning a new Tokio thread per character typed,
+        // which causes severe CPU spikes and thread pool exhaustion.
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let mut current_fd: Option<RawFd> = None;
+            let mut current_file: Option<std::fs::File> = None;
+
+            while let Ok((fd, data)) = rx.recv() {
+                let mut buf = data.into_bytes();
+                // Coalesce rapid sequential inputs for the same file descriptor
+                while let Ok((next_fd, next_data)) = rx.try_recv() {
+                    if next_fd == fd {
+                        buf.extend(next_data.into_bytes());
+                    } else {
+                        // Very rare: active VM switched in the middle of a microsecond burst.
+                        // We'll handle this in the next iteration.
+                    }
+                }
+                
+                // Reuse the file handle if it's the same FD.
+                if current_fd != Some(fd) {
+                    current_fd = Some(fd);
+                    current_file = crate::clone_fd(fd).ok();
+                }
+
+                if let Some(mut file) = current_file.as_ref() {
+                    let _ = file.write_all(&buf);
+                    let _ = file.flush();
+                }
+            }
+        });
+
         Self {
             vms: Mutex::new(HashMap::new()),
             session_index: Mutex::new(session_index),
             active_session_id: Mutex::new(None),
             terminal_output: Arc::new(TerminalOutputQueue::new()),
+            terminal_input_tx: tx,
         }
     }
 }

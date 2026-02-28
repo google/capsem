@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 capsem-core = { path = "../capsem-core" }
+capsem-logger = { path = "../capsem-logger" }
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::mem::ManuallyDrop;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -19,7 +19,7 @@ use capsem_core::{
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
 use capsem_core::net::policy_config;
-use capsem_core::net::telemetry::WebDb;
+use capsem_logger::DbWriter;
 use capsem_core::session::{self, SessionIndex, SessionRecord};
 use state::{AppState, VmInstance, VmNetworkState};
 use tauri::{Emitter, Manager};
@@ -152,15 +152,15 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
     // Age-based culling.
     let settings = policy_config::load_merged_settings();
     let retention_days = settings.iter()
-        .find(|s| s.id == "session.retention_days")
+        .find(|s| s.id == "vm.retention_days")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(30) as u32;
     let max_sessions = settings.iter()
-        .find(|s| s.id == "session.max_sessions")
+        .find(|s| s.id == "vm.max_sessions")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(100) as usize;
     let max_disk_gb = settings.iter()
-        .find(|s| s.id == "session.max_disk_gb")
+        .find(|s| s.id == "vm.max_disk_gb")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(100) as u64;
 
@@ -231,11 +231,11 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
 
 /// Clean up a VM session: delete scratch.img, snapshot request counts, update status.
 fn cleanup_session(
-    session_dir: &Path,
+    _session_dir: &Path,
     scratch_path: Option<&Path>,
     session_id: &str,
     index: &SessionIndex,
-    web_db: Option<&std::sync::Mutex<WebDb>>,
+    db: Option<&DbWriter>,
 ) {
     if let Some(scratch) = scratch_path {
         if scratch.exists() {
@@ -247,9 +247,9 @@ fn cleanup_session(
     }
 
     // Snapshot request counts.
-    if let Some(db_lock) = web_db {
-        if let Ok(db) = db_lock.lock() {
-            if let Ok((total, allowed, denied)) = db.count_by_decision() {
+    if let Some(writer) = db {
+        if let Ok(reader) = writer.reader() {
+            if let Ok((total, allowed, denied)) = reader.net_event_counts() {
                 let _ = index.update_request_counts(
                     session_id,
                     total as u64,
@@ -267,7 +267,7 @@ fn cleanup_session(
 const CA_KEY_PEM: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT_PEM: &str = include_str!("../../../config/capsem-ca.crt");
 
-/// Create per-VM network state: load CA, network policy, and open web.db.
+/// Create per-VM network state: load CA, network policy, and open session DB.
 fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM)
         .context("failed to load MITM CA")?;
@@ -286,13 +286,13 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
         .join(".capsem")
         .join("sessions")
         .join(vm_id);
-    let db_path = session_dir.join("info.db");
-    let web_db = WebDb::open(&db_path).context("failed to open telemetry db")?;
-    info!(path = %db_path.display(), "opened telemetry db");
+    let db_path = session_dir.join("session.db");
+    let db = DbWriter::open(&db_path, 256).context("failed to open session db")?;
+    info!(path = %db_path.display(), "opened session db");
 
     Ok(VmNetworkState {
         policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
-        web_db: Arc::new(Mutex::new(web_db)),
+        db: Arc::new(db),
         ca: Arc::new(ca),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
     })
@@ -306,6 +306,8 @@ fn boot_vm(
     assets: &Path,
     cmdline: &str,
     scratch_disk_path: Option<&Path>,
+    cpu_count: u32,
+    ram_bytes: u64,
 ) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd, HostStateMachine)> {
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
@@ -313,8 +315,8 @@ fn boot_vm(
     let config = {
         let _span = debug_span!("config_build").entered();
         let mut builder = VmConfig::builder()
-            .cpu_count(2)
-            .ram_bytes(512 * 1024 * 1024)
+            .cpu_count(cpu_count)
+            .ram_bytes(ram_bytes)
             .kernel_path(assets.join("vmlinuz"))
             .kernel_cmdline(cmdline);
 
@@ -388,7 +390,8 @@ async fn vsock_terminal_to_events(
     terminal_output: Arc<state::TerminalOutputQueue>,
     vsock_fd: RawFd,
 ) {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8192);
+    // Reduce channel capacity to prevent memory bloat (128 * 64KB = 8MB max).
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(128);
 
     // Blocking reader thread: vsock fd -> channel
     std::thread::spawn(move || {
@@ -399,11 +402,13 @@ async fn vsock_terminal_to_events(
                 return;
             }
         };
-        let mut buf = [0u8; 262144];
+        // 64KB is plenty for a single read chunk.
+        let mut buf = [0u8; 65536];
         loop {
             match file.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
+                    // Send a copy to the async coalescer.
                     if tx.blocking_send(buf[..n].to_vec()).is_err() {
                         break;
                     }
@@ -635,7 +640,7 @@ async fn setup_vsock(
                 Arc::new(MitmProxyConfig {
                     ca: Arc::clone(&ns.ca),
                     policy: Arc::clone(&ns.policy),
-                    web_db: Arc::clone(&ns.web_db),
+                    db: Arc::clone(&ns.db),
                     upstream_tls: Arc::clone(&ns.upstream_tls),
                 })
             })
@@ -929,8 +934,10 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
 
     // Create session directory and scratch disk for CLI mode.
     let vm_settings = policy_config::load_merged_vm_settings();
-    let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
-    let ram_bytes: u64 = 512 * 1024 * 1024;
+    let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(16);
+    let cpu_count = vm_settings.cpu_count.unwrap_or(4);
+    let ram_gb = vm_settings.ram_gb.unwrap_or(4);
+    let ram_bytes: u64 = ram_gb as u64 * 1024 * 1024 * 1024;
     let cli_session_dir = session_dir_for(&cli_session_id);
     let scratch_path = cli_session_dir.as_ref().and_then(|d| {
         std::fs::create_dir_all(d).ok();
@@ -965,6 +972,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         &assets,
         "console=hvc0 ro loglevel=1",
         scratch_path.as_deref(),
+        cpu_count,
+        ram_bytes,
     )?;
 
     // Set up vsock listeners (including SNI proxy port).
@@ -980,7 +989,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         Arc::new(MitmProxyConfig {
             ca: Arc::clone(&ns.ca),
             policy: Arc::clone(&ns.policy),
-            web_db: Arc::clone(&ns.web_db),
+            db: Arc::clone(&ns.db),
             upstream_tls: Arc::clone(&ns.upstream_tls),
         })
     });
@@ -1231,9 +1240,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
 
     // Clean up session: delete scratch.img, snapshot counts, update status.
     if let Some(ref dir) = cli_session_dir {
-        let web_db_arc = net_state.as_ref().map(|ns| Arc::clone(&ns.web_db));
-        let web_db_ref = web_db_arc.as_deref();
-        cleanup_session(dir, scratch_path.as_deref(), &cli_session_id, session_index, web_db_ref);
+        let db_ref = net_state.as_ref().map(|ns| ns.db.as_ref());
+        cleanup_session(dir, scratch_path.as_deref(), &cli_session_id, session_index, db_ref);
     }
 
     // Ensure the host shell prompt starts on a fresh line.
@@ -1381,8 +1389,10 @@ fn main() {
 
             // Create session directory and scratch disk for GUI mode.
             let vm_settings = policy_config::load_merged_vm_settings();
-            let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(8);
-            let ram_bytes: u64 = 512 * 1024 * 1024;
+            let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(16);
+            let cpu_count = vm_settings.cpu_count.unwrap_or(4);
+            let ram_gb = vm_settings.ram_gb.unwrap_or(4);
+            let ram_bytes: u64 = ram_gb as u64 * 1024 * 1024 * 1024;
             let gui_session_dir = session_dir_for(&gui_session_id);
             let gui_scratch_path = gui_session_dir.as_ref().and_then(|d| {
                 std::fs::create_dir_all(d).ok();
@@ -1420,7 +1430,7 @@ fn main() {
             }
 
             // Headless mode: hvc0 is primary console (routed to the frontend)
-            match boot_vm(&assets, "console=hvc0 ro loglevel=1", gui_scratch_path.as_deref()) {
+            match boot_vm(&assets, "console=hvc0 ro loglevel=1", gui_scratch_path.as_deref(), cpu_count, ram_bytes) {
                 Ok((vm, rx, input_fd, sm)) => {
                     info!("VM booted successfully");
 
@@ -1519,6 +1529,11 @@ fn main() {
             commands::update_setting,
             commands::get_session_info,
             commands::get_session_history,
+            commands::get_session_stats,
+            commands::get_model_calls,
+            commands::get_traces,
+            commands::get_trace_detail,
+            commands::query_db,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
