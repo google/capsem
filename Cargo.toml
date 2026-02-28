@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/capsem-proto", "crates/capsem-core", "crates/capsem-app", "crates/capsem-agent"]
+members = ["crates/capsem-proto", "crates/capsem-core", "crates/capsem-app", "crates/capsem-agent", "crates/capsem-logger"]
 
 [workspace.package]
 version = "0.7.0"

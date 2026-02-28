@@ -16,6 +16,7 @@ block2 = { workspace = true }
 dispatch2 = { workspace = true }
 rmp-serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
+capsem-logger = { path = "../capsem-logger" }
 libc = "0.2"
 core-foundation-sys = "0.8"
 blake3 = "1"
@@ -38,6 +39,7 @@ reqwest = { workspace = true }
 futures = { workspace = true }
 tokio-stream = { workspace = true }
 serde_json = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
