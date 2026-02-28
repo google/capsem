@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Terminal UI overhaul: borderless look with 10px padding, thin styled scrollbar, theme-matching background (full black in dark mode)
+- Removed bottom status bar; session stats (tokens, tools, cost, VM status) now displayed inline below the terminal
+- Sidebar reorganized: Console + Sessions in nav, Settings/theme/collapse in footer
+- Network view moved into Settings as a collapsible "Network Statistics" section
+- Sessions panel (charts, spans, analytics) now accessible from sidebar nav
+- Session Statistics section added to bottom of Settings view
+
+### Fixed
+- Fixture-dependent test assertions in capsem-logger replaced with data-agnostic checks to prevent breakage on fixture regeneration
+
 ### Security
 - Sanitize HTTP headers in telemetry logs: allowlisted headers (content-type, host, server, etc.) stored verbatim; all others (authorization, x-api-key, cookies) have values replaced with BLAKE3 hash prefix (`hash:<12-char-hex>`) to prevent credential leakage while preserving header presence and enabling correlation
 

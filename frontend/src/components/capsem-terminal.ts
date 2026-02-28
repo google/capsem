@@ -34,16 +34,25 @@ const HOST_CSS = `
   }
   .terminal-wrapper {
     position: absolute;
-    top: 4px;
-    right: 4px;
-    bottom: 4px;
-    left: 4px;
+    top: 10px;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
   }
   .xterm {
     height: 100%;
   }
   .xterm-viewport {
     background-color: transparent !important;
+  }
+  .xterm-viewport::-webkit-scrollbar {
+    width: 6px;
+  }
+  .xterm-viewport::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .xterm-viewport::-webkit-scrollbar-thumb {
+    border-radius: 3px;
   }
 `;
 
@@ -80,9 +89,16 @@ export class CapsemTerminal extends HTMLElement {
     style.textContent = xtermCssText + HOST_CSS;
     this.shadow.appendChild(style);
 
+    // Dynamic scrollbar style (updated by setTheme)
+    const scrollbarStyle = document.createElement("style");
+    scrollbarStyle.className = "scrollbar-override";
+    scrollbarStyle.textContent = `.xterm-viewport::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); } .xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }`;
+    this.shadow.appendChild(scrollbarStyle);
+
     this.wrapper = document.createElement("div");
     this.wrapper.className = "terminal-wrapper";
     this.wrapper.style.backgroundColor = DARK_THEME.background;
+    this.style.backgroundColor = DARK_THEME.background;
     this.shadow.appendChild(this.wrapper);
 
     // Wait for fonts to load before opening terminal (prevents grid miscalculation)
@@ -176,12 +192,22 @@ export class CapsemTerminal extends HTMLElement {
     );
   }
 
-  /** Switch terminal color theme. */
+  /** Switch terminal color theme. Host background matches terminal for borderless look. */
   setTheme(mode: "light" | "dark") {
     const theme = mode === "light" ? LIGHT_THEME : DARK_THEME;
     this.terminal.options.theme = theme;
+    // Set both wrapper and host background so the padding area matches the
+    // terminal background -- gives a borderless appearance in dark mode.
+    this.style.backgroundColor = theme.background;
     if (this.wrapper) {
       this.wrapper.style.backgroundColor = theme.background;
+    }
+    // Update scrollbar thumb color to match theme
+    const thumbStyle = this.shadow.querySelector('.scrollbar-override') as HTMLStyleElement | null;
+    const thumbColor = mode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)';
+    const thumbHover = mode === 'dark' ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
+    if (thumbStyle) {
+      thumbStyle.textContent = `.xterm-viewport::-webkit-scrollbar-thumb { background: ${thumbColor}; } .xterm-viewport::-webkit-scrollbar-thumb:hover { background: ${thumbHover}; }`;
     }
     // Force full redraw so WebGL renderer picks up the new colors
     this.terminal.refresh(0, this.terminal.rows - 1);
