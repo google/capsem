@@ -11,35 +11,21 @@
 /// All tests are #[ignore] by default since they require real API keys.
 /// Run with: cargo test --test gateway_integration -- --ignored
 ///
-/// API keys loaded from .env file or environment variables:
-///   ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
+/// API keys loaded from ~/.capsem/user.toml (capsem settings).
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use capsem_core::gateway::audit::GatewayDb;
+use capsem_logger::DbWriter;
 use capsem_core::gateway::server::start_standalone;
 use capsem_core::gateway::GatewayConfig;
 
-/// Load API keys from .env file (project root) and environment.
-fn load_env() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let env_path = root.join(".env");
-    if env_path.exists() {
-        dotenvy::from_path(&env_path).ok();
-    }
-}
-
-/// Create a test gateway config with real API keys.
-fn test_config() -> (Arc<GatewayConfig>, Arc<Mutex<GatewayDb>>) {
-    load_env();
-    let db = Arc::new(Mutex::new(GatewayDb::open_in_memory().unwrap()));
-    let config = Arc::new(GatewayConfig::from_env(Arc::clone(&db)));
-    (config, db)
+/// Create a test gateway config with API keys from ~/.capsem/user.toml.
+/// Returns (config, db, _tempdir) -- caller must hold _tempdir to keep the DB alive.
+fn test_config() -> (Arc<GatewayConfig>, Arc<DbWriter>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
+    let config = Arc::new(GatewayConfig::from_capsem_settings(Arc::clone(&db)));
+    (config, db, dir)
 }
 
 /// Save a response to data/fixtures/ for building offline tests later.
@@ -70,7 +56,7 @@ fn save_fixture(name: &str, request_body: &str, response_body: &str) {
 #[tokio::test]
 #[ignore]
 async fn anthropic_messages_non_streaming() {
-    let (config, db) = test_config();
+    let (config, db, _dir) = test_config();
     if config.anthropic_api_key.is_none() {
         eprintln!("ANTHROPIC_API_KEY not set, skipping");
         return;
@@ -110,22 +96,23 @@ async fn anthropic_messages_non_streaming() {
         &body,
     );
 
-    // Verify audit.
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    let events = db.lock().unwrap().recent(10).unwrap();
-    assert!(!events.is_empty(), "audit should have recorded the event");
-    assert_eq!(events[0].provider, "anthropic");
-    assert_eq!(events[0].method, "POST");
-    assert_eq!(events[0].path, "/v1/messages");
-    assert_eq!(events[0].status_code, 200);
-    assert!(!events[0].streamed);
-    assert_eq!(events[0].model.as_deref(), Some("claude-haiku-4-5-20251001"));
+    // Give writer thread time to flush.
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    let reader = db.reader().unwrap();
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert!(!calls.is_empty(), "audit should have recorded the event");
+    assert_eq!(calls[0].1.provider, "anthropic");
+    assert_eq!(calls[0].1.method, "POST");
+    assert_eq!(calls[0].1.path, "/v1/messages");
+    assert_eq!(calls[0].1.status_code, Some(200));
+    assert!(!calls[0].1.stream);
+    assert_eq!(calls[0].1.model.as_deref(), Some("claude-haiku-4-5-20251001"));
 }
 
 #[tokio::test]
 #[ignore]
 async fn anthropic_messages_streaming() {
-    let (config, db) = test_config();
+    let (config, db, _dir) = test_config();
     if config.anthropic_api_key.is_none() {
         eprintln!("ANTHROPIC_API_KEY not set, skipping");
         return;
@@ -170,10 +157,11 @@ async fn anthropic_messages_streaming() {
 
     // Wait for audit task to complete.
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let events = db.lock().unwrap().recent(10).unwrap();
-    assert!(!events.is_empty(), "audit should have recorded streaming event");
-    assert_eq!(events[0].provider, "anthropic");
-    assert!(events[0].streamed);
+    let reader = db.reader().unwrap();
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert!(!calls.is_empty(), "audit should have recorded streaming event");
+    assert_eq!(calls[0].1.provider, "anthropic");
+    assert!(calls[0].1.stream);
 }
 
 // ---------------------------------------------------------------
@@ -183,7 +171,7 @@ async fn anthropic_messages_streaming() {
 #[tokio::test]
 #[ignore]
 async fn openai_chat_completions_non_streaming() {
-    let (config, db) = test_config();
+    let (config, db, _dir) = test_config();
     if config.openai_api_key.is_none() {
         eprintln!("OPENAI_API_KEY not set, skipping");
         return;
@@ -222,18 +210,19 @@ async fn openai_chat_completions_non_streaming() {
         &body,
     );
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    let events = db.lock().unwrap().recent(10).unwrap();
-    assert!(!events.is_empty());
-    assert_eq!(events[0].provider, "openai");
-    assert!(!events[0].streamed);
-    assert_eq!(events[0].model.as_deref(), Some("gpt-5-nano"));
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    let reader = db.reader().unwrap();
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert!(!calls.is_empty());
+    assert_eq!(calls[0].1.provider, "openai");
+    assert!(!calls[0].1.stream);
+    assert_eq!(calls[0].1.model.as_deref(), Some("gpt-5-nano"));
 }
 
 #[tokio::test]
 #[ignore]
 async fn openai_chat_completions_streaming() {
-    let (config, db) = test_config();
+    let (config, db, _dir) = test_config();
     if config.openai_api_key.is_none() {
         eprintln!("OPENAI_API_KEY not set, skipping");
         return;
@@ -275,10 +264,11 @@ async fn openai_chat_completions_streaming() {
     );
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let events = db.lock().unwrap().recent(10).unwrap();
-    assert!(!events.is_empty());
-    assert_eq!(events[0].provider, "openai");
-    assert!(events[0].streamed);
+    let reader = db.reader().unwrap();
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert!(!calls.is_empty());
+    assert_eq!(calls[0].1.provider, "openai");
+    assert!(calls[0].1.stream);
 }
 
 // ---------------------------------------------------------------
@@ -288,7 +278,7 @@ async fn openai_chat_completions_streaming() {
 #[tokio::test]
 #[ignore]
 async fn google_gemini_generate_content() {
-    let (config, db) = test_config();
+    let (config, db, _dir) = test_config();
     if config.google_api_key.is_none() {
         eprintln!("GEMINI_API_KEY not set, skipping");
         return;
@@ -327,17 +317,18 @@ async fn google_gemini_generate_content() {
         &body,
     );
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    let events = db.lock().unwrap().recent(10).unwrap();
-    assert!(!events.is_empty());
-    assert_eq!(events[0].provider, "google");
-    assert!(!events[0].streamed);
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    let reader = db.reader().unwrap();
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert!(!calls.is_empty());
+    assert_eq!(calls[0].1.provider, "google");
+    assert!(!calls[0].1.stream);
 }
 
 #[tokio::test]
 #[ignore]
 async fn google_gemini_stream_generate_content() {
-    let (config, db) = test_config();
+    let (config, db, _dir) = test_config();
     if config.google_api_key.is_none() {
         eprintln!("GEMINI_API_KEY not set, skipping");
         return;
@@ -377,10 +368,11 @@ async fn google_gemini_stream_generate_content() {
     );
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let events = db.lock().unwrap().recent(10).unwrap();
-    assert!(!events.is_empty());
-    assert_eq!(events[0].provider, "google");
-    assert!(events[0].streamed);
+    let reader = db.reader().unwrap();
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert!(!calls.is_empty());
+    assert_eq!(calls[0].1.provider, "google");
+    assert!(calls[0].1.stream);
 }
 
 // ---------------------------------------------------------------
@@ -390,7 +382,7 @@ async fn google_gemini_stream_generate_content() {
 #[tokio::test]
 #[ignore]
 async fn gateway_health_check() {
-    let (config, _db) = test_config();
+    let (config, _db, _dir) = test_config();
     let addr = start_standalone(config, "127.0.0.1:0".parse().unwrap())
         .await
         .unwrap();

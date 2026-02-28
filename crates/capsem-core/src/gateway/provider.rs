@@ -1,6 +1,8 @@
 /// Provider trait and routing: maps inbound request paths to upstream AI
 /// providers and handles provider-specific key injection.
 
+use super::events::ProviderStreamParser;
+
 /// Which AI provider handles this request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
@@ -16,6 +18,15 @@ impl ProviderKind {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::OpenAi => "openai",
             ProviderKind::Google => "google",
+        }
+    }
+
+    /// Create a new SSE stream parser for this provider.
+    pub fn create_parser(&self) -> Box<dyn ProviderStreamParser + Send> {
+        match self {
+            ProviderKind::Anthropic => Box::new(super::anthropic::AnthropicStreamParserWithState::new()),
+            ProviderKind::OpenAi => Box::new(super::openai::OpenAiStreamParser::new()),
+            ProviderKind::Google => Box::new(super::google::GoogleStreamParser::new()),
         }
     }
 }

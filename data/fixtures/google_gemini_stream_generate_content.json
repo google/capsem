@@ -14,5 +14,5 @@
       "temperature": 0
     }
   },
-  "response": "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"4\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 13,\"candidatesTokenCount\": 1,\"totalTokenCount\": 14,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 13}]},\"modelVersion\": \"gemini-2.5-flash-lite\",\"responseId\": \"kICfaZqVMrOVjMcP9vXs8Q0\",\"turnToken\": \"v1_ChdrSUNmYVpxVk1yT1ZqTWNQOXZYczhRMBIXa0lDZmFacVZNck9Wak1jUDl2WHM4UTA\"}\r\n\r\n"
+  "response": "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"4\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 13,\"candidatesTokenCount\": 1,\"totalTokenCount\": 14,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 13}]},\"modelVersion\": \"gemini-2.5-flash-lite\",\"responseId\": \"MfWhaaT7B4LB-sAPovu70A8\",\"turnToken\": \"v1_ChdNZldoYWFUN0I0TEItc0FQb3Z1NzBBOBIXTWZXaGFhVDdCNExCLXNBUG92dTcwQTg\"}\r\n\r\n"
 }
