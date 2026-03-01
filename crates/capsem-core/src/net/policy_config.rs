@@ -120,18 +120,21 @@ pub struct SettingMetadata {
     /// Env var name(s) to inject in the guest when this setting is non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_vars: Vec<String>,
+    /// Whether this setting or section starts collapsed in the UI.
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
-/// Schema definition for a setting (compile-time registry).
+/// Schema definition for a setting (loaded from defaults.toml at compile time).
 pub struct SettingDef {
-    pub id: &'static str,
-    pub category: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub id: String,
+    pub category: String,
+    pub name: String,
+    pub description: String,
     pub setting_type: SettingType,
     pub default_value: SettingValue,
     /// Parent toggle ID (child is greyed out when parent is off).
-    pub enabled_by: Option<&'static str>,
+    pub enabled_by: Option<String>,
     pub metadata: SettingMetadata,
 }
 
@@ -175,6 +178,9 @@ pub struct ResolvedSetting {
     /// Computed: is the parent toggle on? (true if no parent).
     pub enabled: bool,
     pub metadata: SettingMetadata,
+    /// Whether this setting starts collapsed in the UI.
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -208,588 +214,149 @@ pub struct VmSettings {
 // Setting registry
 // ---------------------------------------------------------------------------
 
-/// Returns the compile-time setting definitions.
+// ---------------------------------------------------------------------------
+// TOML registry parser
+// ---------------------------------------------------------------------------
+
+/// A setting leaf as it appears in TOML. Core fields at top level,
+/// metadata under `meta` sub-table.
+#[derive(Deserialize, Debug)]
+struct SettingDefToml {
+    name: String,
+    description: String,
+    #[serde(rename = "type")]
+    setting_type: SettingType,
+    default: SettingValue,
+    #[serde(default)]
+    collapsed: bool,
+    #[serde(default)]
+    meta: SettingMetaToml,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct SettingMetaToml {
+    #[serde(default)]
+    domains: Vec<String>,
+    #[serde(default)]
+    choices: Vec<String>,
+    #[serde(default)]
+    min: Option<i64>,
+    #[serde(default)]
+    max: Option<i64>,
+    #[serde(default)]
+    rules: HashMap<String, HttpMethodPermissions>,
+    #[serde(default)]
+    guest_path: Option<String>,
+    #[serde(default)]
+    env_vars: Vec<String>,
+}
+
+/// Category/group metadata from TOML grouping nodes.
+#[derive(Debug, Clone, Default)]
+struct GroupMeta {
+    /// Display name from nearest ancestor group with a `name` key.
+    category: String,
+    /// Parent toggle ID -- propagated to all child settings except the toggle.
+    enabled_by: Option<String>,
+    /// Whether the group starts collapsed in the UI.
+    collapsed: bool,
+}
+
+/// Recursively walk the TOML table, collecting setting leaves.
+///
+/// A table with a `type` key is a leaf setting; otherwise it is a group node
+/// whose `name`, `description`, `enabled_by`, and `collapsed` are group metadata.
+fn collect_settings(
+    path: &str,
+    table: &toml::value::Table,
+    parent: &GroupMeta,
+    out: &mut Vec<SettingDef>,
+) {
+    if table.contains_key("type") {
+        // Leaf setting -- deserialize the table into SettingDefToml
+        let val = toml::Value::Table(table.clone());
+        let def: SettingDefToml = val
+            .try_into()
+            .unwrap_or_else(|e| panic!("bad setting '{path}': {e}"));
+        // Inherit enabled_by from parent group, unless this IS the toggle itself
+        let enabled_by = if parent.enabled_by.as_deref() == Some(path) {
+            None
+        } else {
+            parent.enabled_by.clone()
+        };
+        out.push(SettingDef {
+            id: path.to_string(),
+            category: parent.category.clone(),
+            name: def.name,
+            description: def.description,
+            setting_type: def.setting_type,
+            default_value: def.default,
+            enabled_by,
+            metadata: SettingMetadata {
+                domains: def.meta.domains,
+                choices: def.meta.choices,
+                min: def.meta.min,
+                max: def.meta.max,
+                rules: def.meta.rules,
+                guest_path: def.meta.guest_path,
+                env_vars: def.meta.env_vars,
+                collapsed: def.collapsed,
+            },
+        });
+        return;
+    }
+
+    // Group node -- extract category metadata, recurse into children
+    let group = GroupMeta {
+        category: table
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| parent.category.clone()),
+        enabled_by: table
+            .get("enabled_by")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| parent.enabled_by.clone()),
+        collapsed: table
+            .get("collapsed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(parent.collapsed),
+    };
+
+    for (key, val) in table {
+        // Skip group metadata keys -- they are not child settings
+        if matches!(
+            key.as_str(),
+            "name" | "description" | "enabled_by" | "collapsed"
+        ) {
+            continue;
+        }
+        if let Some(child) = val.as_table() {
+            let child_path = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            collect_settings(&child_path, child, &group, out);
+        }
+    }
+}
+
+const DEFAULTS_TOML: &str = include_str!("../../../../config/defaults.toml");
+
+/// Returns the setting definitions parsed from the embedded defaults.toml.
 pub fn setting_definitions() -> Vec<SettingDef> {
-    vec![
-        // -- AI Providers --
-        SettingDef {
-            id: "ai.anthropic.allow",
-            category: "AI Providers",
-            name: "Allow Anthropic",
-            description: "Enable API access to Anthropic (api.anthropic.com).",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(false),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        post: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "ai.anthropic.api_key",
-            category: "AI Providers",
-            name: "Anthropic API Key",
-            description: "API key for Anthropic. Injected as ANTHROPIC_API_KEY env var.",
-            setting_type: SettingType::ApiKey,
-            default_value: SettingValue::Text(String::new()),
-            enabled_by: Some("ai.anthropic.allow"),
-            metadata: SettingMetadata {
-                env_vars: vec!["ANTHROPIC_API_KEY".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "ai.anthropic.domains",
-            category: "AI Providers",
-            name: "Anthropic Domains",
-            description: "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("*.anthropic.com, *.claude.com".into()),
-            enabled_by: Some("ai.anthropic.allow"),
-            metadata: SettingMetadata::default(),
-        },
-        SettingDef {
-            id: "ai.anthropic.claude.settings_json",
-            category: "AI Providers",
-            name: "Claude Code settings.json",
-            description: "Content for ~/.claude/settings.json. Bypass permissions, disable telemetry/updates for sandboxed execution.",
-            setting_type: SettingType::File,
-            default_value: SettingValue::Text(r#"{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}"#.into()),
-            enabled_by: Some("ai.anthropic.allow"),
-            metadata: SettingMetadata { guest_path: Some("/root/.claude/settings.json".into()), ..Default::default() },
-        },
-        SettingDef {
-            id: "ai.anthropic.claude.state_json",
-            category: "AI Providers",
-            name: "Claude Code state (.claude.json)",
-            description: "Content for ~/.claude.json. Skips onboarding, trust dialogs, and keybinding prompts.",
-            setting_type: SettingType::File,
-            default_value: SettingValue::Text(r#"{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark","numStartups":1,"projects":{"/root":{"allowedTools":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}}}"#.into()),
-            enabled_by: Some("ai.anthropic.allow"),
-            metadata: SettingMetadata { guest_path: Some("/root/.claude.json".into()), ..Default::default() },
-        },
-        SettingDef {
-            id: "ai.openai.allow",
-            category: "AI Providers",
-            name: "Allow OpenAI",
-            description: "Enable API access to OpenAI (api.openai.com).",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(false),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        post: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "ai.openai.api_key",
-            category: "AI Providers",
-            name: "OpenAI API Key",
-            description: "API key for OpenAI. Injected as OPENAI_API_KEY env var.",
-            setting_type: SettingType::ApiKey,
-            default_value: SettingValue::Text(String::new()),
-            enabled_by: Some("ai.openai.allow"),
-            metadata: SettingMetadata {
-                env_vars: vec!["OPENAI_API_KEY".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "ai.openai.domains",
-            category: "AI Providers",
-            name: "OpenAI Domains",
-            description: "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("*.openai.com".into()),
-            enabled_by: Some("ai.openai.allow"),
-            metadata: SettingMetadata::default(),
-        },
-        SettingDef {
-            id: "ai.google.allow",
-            category: "AI Providers",
-            name: "Allow Google AI",
-            description: "Enable API access to Google AI (*.googleapis.com).",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        post: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "ai.google.api_key",
-            category: "AI Providers",
-            name: "Google AI API Key",
-            description: "API key for Google AI. Injected as GEMINI_API_KEY env var.",
-            setting_type: SettingType::ApiKey,
-            default_value: SettingValue::Text(String::new()),
-            enabled_by: Some("ai.google.allow"),
-            metadata: SettingMetadata {
-                env_vars: vec!["GEMINI_API_KEY".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "ai.google.domains",
-            category: "AI Providers",
-            name: "Google AI Domains",
-            description: "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("*.googleapis.com".into()),
-            enabled_by: Some("ai.google.allow"),
-            metadata: SettingMetadata::default(),
-        },
-        SettingDef {
-            id: "ai.google.gemini.settings_json",
-            category: "AI Providers",
-            name: "Gemini settings.json",
-            description: "Content for ~/.gemini/settings.json. Session retention, auth, MCP servers, etc.",
-            setting_type: SettingType::File,
-            default_value: SettingValue::Text(r#"{"general":{"disableAutoUpdate":true,"disableUpdateNag":true},"ui":{"hideTips":true,"hideBanner":false},"privacy":{"usageStatisticsEnabled":false},"telemetry":{"enabled":false},"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust.enabled":false},"ide":{"hasSeenNudge":true},"tools":{"sandbox":false}}"#.into()),
-            enabled_by: Some("ai.google.allow"),
-            metadata: SettingMetadata { guest_path: Some("/root/.gemini/settings.json".into()), ..Default::default() },
-        },
-        SettingDef {
-            id: "ai.google.gemini.projects_json",
-            category: "AI Providers",
-            name: "Gemini projects.json",
-            description: "Content for ~/.gemini/projects.json. Project directory mappings.",
-            setting_type: SettingType::File,
-            default_value: SettingValue::Text(r#"{"projects":{"/root":"root"}}"#.into()),
-            enabled_by: Some("ai.google.allow"),
-            metadata: SettingMetadata { guest_path: Some("/root/.gemini/projects.json".into()), ..Default::default() },
-        },
-        SettingDef {
-            id: "ai.google.gemini.trusted_folders_json",
-            category: "AI Providers",
-            name: "Gemini trustedFolders.json",
-            description: "Content for ~/.gemini/trustedFolders.json. Pre-trusted workspace dirs.",
-            setting_type: SettingType::File,
-            default_value: SettingValue::Text(r#"{"/root":"TRUST_FOLDER"}"#.into()),
-            enabled_by: Some("ai.google.allow"),
-            metadata: SettingMetadata { guest_path: Some("/root/.gemini/trustedFolders.json".into()), ..Default::default() },
-        },
-        SettingDef {
-            id: "ai.google.gemini.installation_id",
-            category: "AI Providers",
-            name: "Gemini installation_id",
-            description: "Content for ~/.gemini/installation_id. Stable UUID avoids first-run prompts.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("capsem-sandbox-00000000-0000-0000-0000-000000000000".into()),
-            enabled_by: Some("ai.google.allow"),
-            metadata: SettingMetadata { guest_path: Some("/root/.gemini/installation_id".into()), ..Default::default() },
-        },
-        // -- Package Registries --
-        SettingDef {
-            id: "registry.github.allow",
-            category: "Package Registries",
-            name: "Allow GitHub",
-            description: "Enable access to GitHub and GitHub-hosted content.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                domains: vec![
-                    "github.com".into(),
-                    "*.github.com".into(),
-                    "*.githubusercontent.com".into(),
-                ],
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        post: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "registry.npm.allow",
-            category: "Package Registries",
-            name: "Allow npm",
-            description: "Enable access to the npm package registry.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                domains: vec!["registry.npmjs.org".into(), "*.npmjs.org".into()],
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "registry.pypi.allow",
-            category: "Package Registries",
-            name: "Allow PyPI",
-            description: "Enable access to the Python Package Index.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                domains: vec!["pypi.org".into(), "files.pythonhosted.org".into()],
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "registry.crates.allow",
-            category: "Package Registries",
-            name: "Allow crates.io",
-            description: "Enable access to the Rust crate registry.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                domains: vec!["crates.io".into(), "static.crates.io".into()],
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        // -- Search --
-        SettingDef {
-            id: "search.google.allow",
-            category: "Search",
-            name: "Allow Google Search",
-            description: "Enable access to Google web search.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                domains: vec!["www.google.com".into(), "google.com".into()],
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "search.perplexity.allow",
-            category: "Search",
-            name: "Allow Perplexity",
-            description: "Enable access to Perplexity AI search.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(false),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                domains: vec!["perplexity.ai".into(), "*.perplexity.ai".into()],
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        post: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "search.firecrawl.allow",
-            category: "Search",
-            name: "Allow Firecrawl",
-            description: "Enable access to Firecrawl web scraping API.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(false),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                domains: vec!["firecrawl.dev".into(), "api.firecrawl.dev".into()],
-                rules: HashMap::from([(
-                    "default".into(),
-                    HttpMethodPermissions {
-                        get: true,
-                        post: true,
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-        },
-        // -- Guest Environment --
-        SettingDef {
-            id: "guest.shell.term",
-            category: "Guest Environment",
-            name: "TERM",
-            description: "Terminal type for the guest shell.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("xterm-256color".into()),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                env_vars: vec!["TERM".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "guest.shell.home",
-            category: "Guest Environment",
-            name: "HOME",
-            description: "Home directory for the guest shell.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("/root".into()),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                env_vars: vec!["HOME".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "guest.shell.path",
-            category: "Guest Environment",
-            name: "PATH",
-            description: "Executable search path for the guest shell.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into()),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                env_vars: vec!["PATH".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "guest.shell.lang",
-            category: "Guest Environment",
-            name: "LANG",
-            description: "Locale for the guest shell.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("C".into()),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                env_vars: vec!["LANG".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "guest.tls.ca_bundle",
-            category: "Guest Environment",
-            name: "CA bundle path",
-            description: "Path to the CA certificate bundle in the guest. Injected as REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS, and SSL_CERT_FILE.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("/etc/ssl/certs/ca-certificates.crt".into()),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                env_vars: vec![
-                    "REQUESTS_CA_BUNDLE".into(),
-                    "NODE_EXTRA_CA_CERTS".into(),
-                    "SSL_CERT_FILE".into(),
-                ],
-                ..Default::default()
-            },
-        },
-        // -- Network --
-        SettingDef {
-            id: "network.default_action",
-            category: "Network",
-            name: "Default action",
-            description: "Action for domains not in any allow/block list.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("deny".into()),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                choices: vec!["allow".into(), "deny".into()],
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "vm.log_bodies",
-            category: "VM",
-            name: "Log request bodies",
-            description: "Capture request/response bodies in telemetry.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(false),
-            enabled_by: None,
-            metadata: SettingMetadata::default(),
-        },
-        SettingDef {
-            id: "vm.max_body_capture",
-            category: "VM",
-            name: "Max body capture",
-            description: "Maximum bytes of body to capture in telemetry.",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(4096),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(0),
-                max: Some(1_048_576),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "network.custom_allow",
-            category: "Network",
-            name: "Custom allowed domains",
-            description: "Comma-separated domain patterns to allow. Wildcards supported (*.example.com).",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text("elie.net, *.elie.net".into()),
-            enabled_by: None,
-            metadata: SettingMetadata::default(),
-        },
-        SettingDef {
-            id: "network.custom_block",
-            category: "Network",
-            name: "Custom blocked domains",
-            description: "Comma-separated domain patterns to block. Takes priority over custom allow list.",
-            setting_type: SettingType::Text,
-            default_value: SettingValue::Text(String::new()),
-            enabled_by: None,
-            metadata: SettingMetadata::default(),
-        },
-        // -- Session (in VM category) --
-        SettingDef {
-            id: "vm.retention_days",
-            category: "VM",
-            name: "Session retention",
-            description: "Number of days to retain session data.",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(30),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(1),
-                max: Some(365),
-                ..Default::default()
-            },
-        },
-        // -- Appearance --
-        SettingDef {
-            id: "appearance.dark_mode",
-            category: "Appearance",
-            name: "Dark mode",
-            description: "Use dark color scheme in the UI.",
-            setting_type: SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            enabled_by: None,
-            metadata: SettingMetadata::default(),
-        },
-        SettingDef {
-            id: "appearance.font_size",
-            category: "Appearance",
-            name: "Font size",
-            description: "Terminal font size in pixels.",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(14),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(8),
-                max: Some(32),
-                ..Default::default()
-            },
-        },
-        // -- VM --
-        SettingDef {
-            id: "vm.cpu_count",
-            category: "VM",
-            name: "CPU cores",
-            description: "Number of CPU cores allocated to the VM.",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(4),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(1),
-                max: Some(8),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "vm.ram_gb",
-            category: "VM",
-            name: "RAM",
-            description: "Amount of RAM allocated to the VM in GB.",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(4),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(1),
-                max: Some(16),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "vm.scratch_disk_size_gb",
-            category: "VM",
-            name: "Scratch disk size",
-            description: "Size of the ephemeral scratch disk in GB.",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(16),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(1),
-                max: Some(128),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "vm.max_sessions",
-            category: "VM",
-            name: "Maximum sessions",
-            description: "Keep at most this many sessions (oldest culled first).",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(100),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(1),
-                max: Some(10000),
-                ..Default::default()
-            },
-        },
-        SettingDef {
-            id: "vm.max_disk_gb",
-            category: "VM",
-            name: "Maximum disk usage",
-            description: "Maximum total disk usage for all sessions in GB.",
-            setting_type: SettingType::Number,
-            default_value: SettingValue::Number(100),
-            enabled_by: None,
-            metadata: SettingMetadata {
-                min: Some(1),
-                max: Some(1000),
-                ..Default::default()
-            },
-        },
-    ]
+    let root: toml::Value =
+        toml::from_str(DEFAULTS_TOML).expect("built-in defaults.toml is invalid");
+    let settings = root
+        .get("settings")
+        .and_then(|v| v.as_table())
+        .expect("defaults.toml missing [settings]");
+    let mut defs = Vec::new();
+    let root_group = GroupMeta::default();
+    collect_settings("", settings, &root_group, &mut defs);
+    defs
 }
 
 /// Returns an empty settings file (all defaults).
@@ -920,23 +487,24 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
     let mut resolved = Vec::new();
 
     for def in &defs {
-        let (effective_value, source, modified) = resolve_value(def.id, &def.default_value, user, corp);
-        let corp_locked = corp.settings.contains_key(def.id);
+        let (effective_value, source, modified) = resolve_value(&def.id, &def.default_value, user, corp);
+        let corp_locked = corp.settings.contains_key(&def.id);
 
         resolved.push(ResolvedSetting {
-            id: def.id.to_string(),
-            category: def.category.to_string(),
-            name: def.name.to_string(),
-            description: def.description.to_string(),
+            id: def.id.clone(),
+            category: def.category.clone(),
+            name: def.name.clone(),
+            description: def.description.clone(),
             setting_type: def.setting_type,
             default_value: def.default_value.clone(),
             effective_value,
             source,
             modified,
             corp_locked,
-            enabled_by: def.enabled_by.map(String::from),
+            enabled_by: def.enabled_by.clone(),
             enabled: true, // computed below
             metadata: def.metadata.clone(),
+            collapsed: def.metadata.collapsed,
         });
     }
 
@@ -961,6 +529,7 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
             enabled_by: None,
             enabled: true,
             metadata: SettingMetadata::default(),
+            collapsed: false,
         });
     }
 
@@ -1937,7 +1506,7 @@ mod tests {
     #[test]
     fn definitions_have_unique_ids() {
         let defs = setting_definitions();
-        let mut ids: Vec<&str> = defs.iter().map(|d| d.id).collect();
+        let mut ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
         let original_len = ids.len();
         ids.sort();
         ids.dedup();
@@ -3464,7 +3033,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         // Corp should be able to lock down built-in env settings.
         let defs = setting_definitions();
         let term_def = defs.iter().find(|d| d.metadata.env_vars.contains(&"TERM".to_string())).unwrap();
-        let corp = file_with(vec![(term_def.id, SettingValue::Text("dumb".into()))]);
+        let corp = file_with(vec![(&term_def.id, SettingValue::Text("dumb".into()))]);
         let resolved = resolve_settings(&empty_file(), &corp);
         let gc = settings_to_guest_config(&resolved);
         let env = gc.env.unwrap();
@@ -3475,7 +3044,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn user_can_override_builtin_env() {
         let defs = setting_definitions();
         let path_def = defs.iter().find(|d| d.metadata.env_vars.contains(&"PATH".to_string())).unwrap();
-        let user = file_with(vec![(path_def.id, SettingValue::Text("/custom/bin".into()))]);
+        let user = file_with(vec![(&path_def.id, SettingValue::Text("/custom/bin".into()))]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
         let env = gc.env.unwrap();
@@ -3609,7 +3178,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let resolved = resolve_settings(&empty_file(), &empty_file());
         let s = resolved.iter().find(|s| s.id == "search.google.allow").unwrap();
         assert_eq!(s.effective_value, SettingValue::Bool(true));
-        assert_eq!(s.category, "Search");
+        assert_eq!(s.category, "Google Search");
     }
 
     #[test]
@@ -3821,5 +3390,92 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let files = gc.files.unwrap();
         let projects = files.iter().find(|f| f.path == "/root/.gemini/projects.json").unwrap();
         assert!(!projects.content.contains("capsem"), "projects.json should not have capsem injected");
+    }
+
+    // -----------------------------------------------------------------------
+    // TOML registry tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn toml_registry_parses() {
+        // The embedded defaults.toml must parse without panicking.
+        let defs = setting_definitions();
+        assert!(!defs.is_empty(), "defaults.toml must produce at least one setting");
+    }
+
+    #[test]
+    fn toml_registry_setting_count() {
+        // Guard against accidental deletions. Update this if settings are
+        // intentionally added or removed.
+        let defs = setting_definitions();
+        assert!(
+            defs.len() >= 20,
+            "expected at least 20 settings from defaults.toml, got {}",
+            defs.len(),
+        );
+    }
+
+    #[test]
+    fn toml_registry_ids_from_path() {
+        // IDs are dot-separated paths derived from the TOML table nesting.
+        let defs = setting_definitions();
+        for def in &defs {
+            assert!(
+                def.id.contains('.'),
+                "setting id '{}' should be a dotted path",
+                def.id,
+            );
+        }
+    }
+
+    #[test]
+    fn toml_registry_category_inherited() {
+        // Category is inherited from the nearest ancestor group with a `name`.
+        let defs = setting_definitions();
+        let anthropic_allow = defs.iter().find(|d| d.id == "ai.anthropic.allow").unwrap();
+        assert!(
+            !anthropic_allow.category.is_empty(),
+            "ai.anthropic.allow should have a category inherited from its group",
+        );
+    }
+
+    #[test]
+    fn toml_registry_enabled_by_inherited() {
+        // enabled_by is inherited from the group and applied to children
+        // but NOT to the toggle setting itself.
+        let defs = setting_definitions();
+        let allow = defs.iter().find(|d| d.id == "ai.anthropic.allow").unwrap();
+        assert!(
+            allow.enabled_by.is_none(),
+            "the toggle itself should not have enabled_by",
+        );
+        let api_key = defs.iter().find(|d| d.id == "ai.anthropic.api_key").unwrap();
+        assert_eq!(
+            api_key.enabled_by.as_deref(),
+            Some("ai.anthropic.allow"),
+            "api_key should inherit enabled_by from its group",
+        );
+    }
+
+    #[test]
+    fn toml_registry_meta_fields() {
+        // Metadata fields (domains, choices, rules, guest_path, env_vars)
+        // are correctly parsed from the `meta` sub-table.
+        let defs = setting_definitions();
+
+        // Registry toggles should have domains in metadata
+        let github = defs.iter().find(|d| d.id == "registry.github.allow").unwrap();
+        assert!(!github.metadata.domains.is_empty(), "github toggle should have domain metadata");
+
+        // network.default_action should have choices
+        let da = defs.iter().find(|d| d.id == "network.default_action").unwrap();
+        assert!(!da.metadata.choices.is_empty(), "default_action should have choices");
+
+        // API key settings should have env_vars
+        let key = defs.iter().find(|d| d.id == "ai.anthropic.api_key").unwrap();
+        assert!(
+            !key.metadata.env_vars.is_empty(),
+            "api_key settings should have env_vars metadata",
+        );
     }
 }
