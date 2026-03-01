@@ -625,7 +625,7 @@ struct TelemetryEmitter {
 
 impl TelemetryEmitter {
     /// Build and write a NetEvent (and optionally a ModelCall) to the DB.
-    fn emit(self) {
+    async fn emit(self) {
         let duration_ms = self.start_time.elapsed().as_millis() as u64;
 
         // Read request body stats.
@@ -691,11 +691,11 @@ impl TelemetryEmitter {
             conn_type: Some("https-mitm".to_string()),
         };
 
-        self.db.try_write(WriteOp::NetEvent(event));
+        self.db.write(WriteOp::NetEvent(event)).await;
 
         // Emit ModelCall for AI providers.
         if let Some(provider) = self.ai_provider {
-            self.emit_model_call(provider, bytes_sent, bytes_received, duration_ms, &ai_state_ref);
+            self.emit_model_call(provider, bytes_sent, bytes_received, duration_ms, &ai_state_ref).await;
         }
 
         // Log.
@@ -724,7 +724,7 @@ impl TelemetryEmitter {
     }
 
     /// Build and write a ModelCall for AI provider traffic.
-    fn emit_model_call(
+    async fn emit_model_call(
         &self,
         provider: ProviderKind,
         request_bytes: u64,
@@ -781,6 +781,7 @@ impl TelemetryEmitter {
             model,
             summary.as_ref().and_then(|s| s.input_tokens),
             summary.as_ref().and_then(|s| s.output_tokens),
+            summary.as_ref().map(|s| &s.usage_details).unwrap_or(&std::collections::BTreeMap::new()),
         );
 
         // Assign trace_id: look up from tool response call_ids, or create new.
@@ -829,6 +830,7 @@ impl TelemetryEmitter {
             stop_reason: stop_reason_str,
             input_tokens: summary.as_ref().and_then(|s| s.input_tokens),
             output_tokens: summary.as_ref().and_then(|s| s.output_tokens),
+            usage_details: summary.as_ref().map(|s| s.usage_details.clone()).unwrap_or_default(),
             duration_ms,
             response_bytes,
             estimated_cost_usd,
@@ -837,7 +839,7 @@ impl TelemetryEmitter {
             tool_responses,
         };
 
-        self.db.try_write(WriteOp::ModelCall(model_call));
+        self.db.write(WriteOp::ModelCall(model_call)).await;
     }
 }
 
@@ -870,7 +872,9 @@ impl hyper::body::Body for TelemetryBody {
             Poll::Ready(None) => {
                 // Body complete -- emit telemetry.
                 if let Some(emitter) = this.emitter.take() {
-                    emitter.emit();
+                    tokio::spawn(async move {
+                        emitter.emit().await;
+                    });
                 }
                 Poll::Ready(None)
             }
@@ -892,7 +896,9 @@ impl Drop for TelemetryBody {
         // Fallback: if the body was dropped before completion (e.g. client
         // disconnect), emit whatever telemetry we have.
         if let Some(emitter) = self.emitter.take() {
-            emitter.emit();
+            tokio::spawn(async move {
+                emitter.emit().await;
+            });
         }
     }
 }
@@ -1684,7 +1690,7 @@ mod tests {
     async fn telemetry_emitter_writes_net_event() {
         let db = make_test_db();
         let emitter = make_emitter(&db);
-        emitter.emit();
+        emitter.emit().await;
 
         tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
 
@@ -1727,7 +1733,7 @@ mod tests {
             db: Arc::clone(&db),
             config: make_config_dev(),
             domain: "api.anthropic.com".to_string(),
-            process_name: None,
+            process_name: Some("test".to_string()),
             ai_provider: Some(ProviderKind::Anthropic),
             method: "POST".to_string(),
             path: "/v1/messages".to_string(),
@@ -1742,7 +1748,7 @@ mod tests {
             resp_kind: RespStatsKind::Ai { stats: ai_stats, state: ai_state },
             start_time: Instant::now(),
         };
-        emitter.emit();
+        emitter.emit().await;
 
         tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
 
@@ -2079,18 +2085,18 @@ mod tests {
         }))
     }
 
-    #[test]
-    fn emit_model_call_assigns_trace_id() {
+    #[tokio::test]
+    async fn emit_model_call_assigns_trace_id() {
         let config = make_config_dev();
         let emitter = make_ai_emitter(&config, ProviderKind::Anthropic);
 
         // Emit with no AI state (simulates non-streaming or empty response).
         emitter.emit_model_call(
             ProviderKind::Anthropic, 100, 200, 50, &None,
-        );
+        ).await;
 
         // Flush the DB writer.
-        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
 
         let reader = config.db.reader().unwrap();
         let calls = reader.recent_model_calls(10).unwrap();
@@ -2099,8 +2105,8 @@ mod tests {
         assert!(!calls[0].1.trace_id.as_ref().unwrap().is_empty());
     }
 
-    #[test]
-    fn emit_model_call_estimates_cost() {
+    #[tokio::test]
+    async fn emit_model_call_estimates_cost() {
         use crate::gateway::events::LlmEvent;
         let config = make_config_dev();
         let ai_state = make_ai_state(vec![
@@ -2111,15 +2117,16 @@ mod tests {
             LlmEvent::Usage {
                 input_tokens: Some(1000),
                 output_tokens: Some(500),
+                details: std::collections::BTreeMap::new(),
             },
         ]);
         let emitter = make_ai_emitter(&config, ProviderKind::Anthropic);
 
         emitter.emit_model_call(
             ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state),
-        );
+        ).await;
 
-        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
 
         let reader = config.db.reader().unwrap();
         let calls = reader.recent_model_calls(10).unwrap();
@@ -2131,8 +2138,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn trace_chains_across_tool_use() {
+    #[tokio::test]
+    async fn trace_chains_across_tool_use() {
         use crate::gateway::events::{LlmEvent, StopReason};
         let config = make_config_dev();
 
@@ -2149,9 +2156,9 @@ mod tests {
             },
         ]);
         let emitter1 = make_ai_emitter(&config, ProviderKind::Anthropic);
-        emitter1.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state1));
+        emitter1.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state1)).await;
 
-        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
 
         let reader = config.db.reader().unwrap();
         let calls1 = reader.recent_model_calls(10).unwrap();
@@ -2201,9 +2208,9 @@ mod tests {
             resp_kind: RespStatsKind::Plain(Arc::new(Mutex::new(BodyStats::new(0)))),
             start_time: Instant::now(),
         };
-        emitter2.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state2));
+        emitter2.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state2)).await;
 
-        std::thread::sleep(std::time::Duration::from_millis(DB_FLUSH_MS));
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
 
         let calls2 = reader.recent_model_calls(10).unwrap();
         assert_eq!(calls2.len(), 2, "should have 2 model calls now");
@@ -2215,8 +2222,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn trace_completes_on_end_turn() {
+    #[tokio::test]
+    async fn trace_completes_on_end_turn() {
         use crate::gateway::events::{LlmEvent, StopReason};
         let config = make_config_dev();
 
@@ -2226,7 +2233,7 @@ mod tests {
             },
         ]);
         let emitter = make_ai_emitter(&config, ProviderKind::Anthropic);
-        emitter.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state));
+        emitter.emit_model_call(ProviderKind::Anthropic, 100, 200, 50, &Some(ai_state)).await;
 
         // After end_turn, trace_state should have no pending entries.
         let state = config.trace_state.lock().unwrap();

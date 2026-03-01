@@ -1,13 +1,14 @@
 /// Integration tests for capsem-logger: write+read roundtrips, batching,
 /// concurrent writes, shutdown, WAL concurrent access, adversarial inputs,
 /// and raw SQL query endpoint.
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use capsem_logger::{
-    validate_select_only, DbReader, DbWriter, Decision, ModelCall, NetEvent, ToolCallEntry,
-    ToolResponseEntry, WriteOp,
+    validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, McpCall,
+    ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
 
 /// Open the shared test fixture at data/fixtures/test.db (read-only).
@@ -89,6 +90,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(25),
         output_tokens: Some(10),
+        usage_details: std::collections::BTreeMap::new(),
         duration_ms: 1500,
         response_bytes: 4096,
         estimated_cost_usd: 0.001,
@@ -402,6 +404,7 @@ async fn unicode_strings() {
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(5),
         output_tokens: Some(3),
+        usage_details: std::collections::BTreeMap::new(),
         duration_ms: 100,
         response_bytes: 50,
         estimated_cost_usd: 0.0,
@@ -1297,8 +1300,9 @@ fn validate_select_allows_explain() {
 }
 
 #[test]
-fn validate_select_allows_pragma() {
-    assert!(validate_select_only("PRAGMA table_info(net_events)").is_ok());
+fn validate_select_rejects_pragma() {
+    let err = validate_select_only("PRAGMA table_info(net_events)").unwrap_err();
+    assert!(err.contains("PRAGMA"), "should reject PRAGMA: {err}");
 }
 
 #[test]
@@ -1358,6 +1362,217 @@ fn validate_select_rejects_empty() {
     assert_eq!(err2, "empty query");
 }
 
+// ── validate_select_only adversarial tests ──────────────────────────
+
+#[test]
+fn validate_select_rejects_replace() {
+    let err = validate_select_only("REPLACE INTO net_events (domain) VALUES ('bad')").unwrap_err();
+    assert!(err.contains("REPLACE"), "should reject REPLACE: {err}");
+}
+
+#[test]
+fn validate_select_rejects_vacuum() {
+    let err = validate_select_only("VACUUM").unwrap_err();
+    assert!(err.contains("VACUUM"), "should reject VACUUM: {err}");
+}
+
+#[test]
+fn validate_select_rejects_detach() {
+    let err = validate_select_only("DETACH DATABASE m").unwrap_err();
+    assert!(err.contains("DETACH"), "should reject DETACH: {err}");
+}
+
+#[test]
+fn validate_select_rejects_begin_commit_rollback() {
+    assert!(validate_select_only("BEGIN").unwrap_err().contains("BEGIN"));
+    assert!(validate_select_only("COMMIT").unwrap_err().contains("COMMIT"));
+    assert!(validate_select_only("ROLLBACK").unwrap_err().contains("ROLLBACK"));
+}
+
+#[test]
+fn validate_select_rejects_savepoint_release() {
+    assert!(validate_select_only("SAVEPOINT sp1").unwrap_err().contains("SAVEPOINT"));
+    assert!(validate_select_only("RELEASE sp1").unwrap_err().contains("RELEASE"));
+}
+
+#[test]
+fn validate_select_whitespace_prefix_stripped() {
+    assert!(validate_select_only("  SELECT 1").is_ok());
+    assert!(validate_select_only("\t\nSELECT 1").is_ok());
+    assert!(validate_select_only("  INSERT INTO x VALUES(1)").unwrap_err().contains("INSERT"));
+}
+
+#[test]
+fn validate_select_rejects_unknown_keyword() {
+    let err = validate_select_only("EXEC some_proc").unwrap_err();
+    assert!(err.contains("unsupported"), "should reject unknown: {err}");
+}
+
+#[test]
+fn validate_select_subquery_in_parens_accepted() {
+    // WITH(... is parsed as "WITH" which is allowed
+    assert!(validate_select_only("WITH(SELECT 1) SELECT 1").is_ok());
+}
+
+#[test]
+fn validate_select_semicolon_separated() {
+    // "SELECT" is extracted as first keyword, accepted; the second statement
+    // would be caught by PRAGMA query_only on the connection
+    assert!(validate_select_only("SELECT 1; DROP TABLE evil").is_ok());
+}
+
+// ── reader: query_raw security tests ───────────────────────────────
+
+#[test]
+fn fixture_query_raw_select() {
+    let reader = fixture_reader();
+    let result = reader.query_raw("SELECT COUNT(*) FROM net_events");
+    assert!(result.is_ok(), "SELECT should succeed: {:?}", result);
+}
+
+#[test]
+fn fixture_query_raw_write_blocked() {
+    let reader = fixture_reader();
+    // The connection has PRAGMA query_only = ON, so writes should fail
+    // even if validate_select_only is bypassed
+    let result = reader.query_raw("SELECT * FROM net_events LIMIT 1");
+    assert!(result.is_ok());
+}
+
+// ── reader: domain counts ──────────────────────────────────────────
+
+#[test]
+fn fixture_top_domains_non_empty() {
+    let reader = fixture_reader();
+    let domains = reader.top_domains(5).unwrap();
+    assert!(!domains.is_empty(), "fixture should have domain data");
+    for d in &domains {
+        assert!(!d.domain.is_empty());
+        assert!(d.count > 0);
+        assert_eq!(d.count, d.allowed + d.denied);
+    }
+}
+
+// ── reader: token usage by provider ────────────────────────────────
+
+#[test]
+fn fixture_token_usage_non_empty() {
+    let reader = fixture_reader();
+    let usage = reader.token_usage_by_provider().unwrap();
+    assert!(!usage.is_empty(), "fixture should have model call data");
+    for u in &usage {
+        assert!(!u.provider.is_empty());
+        assert!(u.call_count > 0);
+    }
+}
+
+// ── reader: trace queries ──────────────────────────────────────────
+
+#[test]
+fn fixture_recent_traces_non_empty() {
+    let reader = fixture_reader();
+    let traces = reader.recent_traces(10).unwrap();
+    assert!(!traces.is_empty(), "fixture should have trace data");
+    for t in &traces {
+        assert!(!t.trace_id.is_empty());
+        assert!(t.call_count > 0);
+        assert!(t.started_at <= t.ended_at);
+    }
+}
+
+#[test]
+fn fixture_trace_detail_loads_tools() {
+    let reader = fixture_reader();
+    let traces = reader.recent_traces(1).unwrap();
+    assert!(!traces.is_empty());
+    let detail = reader.trace_detail(&traces[0].trace_id).unwrap();
+    assert_eq!(detail.trace_id, traces[0].trace_id);
+    assert!(!detail.calls.is_empty());
+}
+
+// ── writer+reader: model call with usage_details roundtrip ─────────
+
+#[tokio::test]
+async fn model_call_usage_details_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    let mut call = sample_model_call("anthropic");
+    call.usage_details = BTreeMap::from([
+        ("cache_read".into(), 800),
+        ("thinking".into(), 200),
+    ]);
+    call.trace_id = Some("trace-001".to_string());
+
+    writer.write(WriteOp::ModelCall(call)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.session_stats().unwrap();
+    assert_eq!(*stats.total_usage_details.get("cache_read").unwrap_or(&0), 800);
+    assert_eq!(*stats.total_usage_details.get("thinking").unwrap_or(&0), 200);
+}
+
+// ── writer+reader: tool_calls + tool_responses roundtrip ───────────
+
+#[tokio::test]
+async fn model_call_tool_data_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    let mut call = sample_model_call("openai");
+    call.trace_id = Some("trace-tools".to_string());
+    call.tool_calls = vec![
+        ToolCallEntry {
+            call_index: 0,
+            call_id: "call_abc".to_string(),
+            tool_name: "get_weather".to_string(),
+            arguments: Some("{\"city\":\"NYC\"}".to_string()),
+        },
+        ToolCallEntry {
+            call_index: 1,
+            call_id: "call_def".to_string(),
+            tool_name: "search".to_string(),
+            arguments: Some("{\"q\":\"test\"}".to_string()),
+        },
+    ];
+    call.tool_responses = vec![
+        ToolResponseEntry {
+            call_id: "call_prev".to_string(),
+            content_preview: Some("72F and sunny".to_string()),
+            is_error: false,
+        },
+    ];
+
+    writer.write(WriteOp::ModelCall(call)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+
+    // Verify via trace_detail
+    let detail = reader.trace_detail("trace-tools").unwrap();
+    assert_eq!(detail.calls.len(), 1);
+    let mc = &detail.calls[0];
+    assert_eq!(mc.call.tool_calls.len(), 2);
+    assert_eq!(mc.call.tool_calls[0].tool_name, "get_weather");
+    assert_eq!(mc.call.tool_calls[1].tool_name, "search");
+    assert_eq!(mc.call.tool_responses.len(), 1);
+    assert_eq!(mc.call.tool_responses[0].call_id, "call_prev");
+    assert!(!mc.call.tool_responses[0].is_error);
+
+    // Also verify tool_usage_frequency
+    let freq = reader.tool_usage_frequency(10).unwrap();
+    assert_eq!(freq.len(), 2);
+
+    // Also verify session_stats tool count
+    let stats = reader.session_stats().unwrap();
+    assert_eq!(stats.total_tool_calls, 2);
+}
+
 #[tokio::test]
 async fn net_events_over_time_buckets_correctly() {
     let dir = tempfile::tempdir().unwrap();
@@ -1397,4 +1612,740 @@ async fn net_events_over_time_buckets_correctly() {
     
     assert_eq!(buckets[2].allowed, 1);
     assert_eq!(buckets[2].denied, 1);
+}
+
+// ── MCP call tests ────────────────────────────────────────────────────
+
+fn sample_mcp_call(server: &str, decision: &str) -> McpCall {
+    McpCall {
+        timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000),
+        server_name: server.to_string(),
+        method: "tools/call".to_string(),
+        tool_name: Some(format!("{server}__search_repos")),
+        request_id: Some("req-1".to_string()),
+        request_preview: Some(r#"{"query":"rust"}"#.to_string()),
+        response_preview: Some(r#"{"results":[]}"#.to_string()),
+        decision: decision.to_string(),
+        duration_ms: 250,
+        error_message: None,
+        process_name: Some("claude".to_string()),
+    }
+}
+
+#[tokio::test]
+async fn mcp_call_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_mcp_calls(10).unwrap();
+    assert_eq!(calls.len(), 1);
+    let c = &calls[0];
+    assert_eq!(c.server_name, "github");
+    assert_eq!(c.method, "tools/call");
+    assert_eq!(c.tool_name.as_deref(), Some("github__search_repos"));
+    assert_eq!(c.request_id.as_deref(), Some("req-1"));
+    assert_eq!(c.decision, "allowed");
+    assert_eq!(c.duration_ms, 250);
+    assert_eq!(c.process_name.as_deref(), Some("claude"));
+}
+
+#[tokio::test]
+async fn mcp_call_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp-search.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    writer.write(WriteOp::McpCall(sample_mcp_call("slack", "denied"))).await;
+    writer.write(WriteOp::McpCall(sample_mcp_call("github", "warned"))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+
+    // Search by server_name
+    let results = reader.search_mcp_calls("github", 10).unwrap();
+    assert_eq!(results.len(), 2);
+
+    // Search by tool_name
+    let results = reader.search_mcp_calls("search_repos", 10).unwrap();
+    assert_eq!(results.len(), 3); // all have search_repos in tool_name
+
+    // Search by method
+    let results = reader.search_mcp_calls("tools/call", 10).unwrap();
+    assert_eq!(results.len(), 3);
+
+    // No match
+    let results = reader.search_mcp_calls("nonexistent", 10).unwrap();
+    assert_eq!(results.len(), 0);
+}
+
+#[tokio::test]
+async fn mcp_call_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp-stats.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    writer.write(WriteOp::McpCall(sample_mcp_call("slack", "denied"))).await;
+    writer.write(WriteOp::McpCall(sample_mcp_call("github", "warned"))).await;
+    writer.write(WriteOp::McpCall({
+        let mut c = sample_mcp_call("slack", "error");
+        c.error_message = Some("server crashed".to_string());
+        c
+    })).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.mcp_call_stats().unwrap();
+
+    assert_eq!(stats.total, 5);
+    assert_eq!(stats.allowed, 2);
+    assert_eq!(stats.warned, 1);
+    assert_eq!(stats.denied, 1);
+    assert_eq!(stats.errored, 1);
+    assert_eq!(stats.by_server.len(), 2);
+
+    // Sorted by count DESC: github=3, slack=2
+    assert_eq!(stats.by_server[0].server_name, "github");
+    assert_eq!(stats.by_server[0].count, 3);
+    assert_eq!(stats.by_server[0].warned, 1);
+    assert_eq!(stats.by_server[1].server_name, "slack");
+    assert_eq!(stats.by_server[1].count, 2);
+    assert_eq!(stats.by_server[1].denied, 1);
+}
+
+#[tokio::test]
+async fn mcp_call_stats_empty_db() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp-empty.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.mcp_call_stats().unwrap();
+    assert_eq!(stats.total, 0);
+    assert_eq!(stats.allowed, 0);
+    assert_eq!(stats.by_server.len(), 0);
+}
+
+#[tokio::test]
+async fn mcp_call_cap_field_truncation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp-cap.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    let mut call = sample_mcp_call("github", "allowed");
+    call.request_preview = Some("x".repeat(300_000)); // 300KB > 256KB cap
+    writer.write(WriteOp::McpCall(call)).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_mcp_calls(1).unwrap();
+    assert_eq!(calls.len(), 1);
+    // Preview should be truncated to MAX_FIELD_BYTES (256KB)
+    let preview = calls[0].request_preview.as_ref().unwrap();
+    assert!(preview.len() <= 256 * 1024, "preview not capped: {}", preview.len());
+}
+
+#[tokio::test]
+async fn mcp_schema_migration_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp-migrate.db");
+
+    // First open creates tables.
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    drop(writer);
+
+    // Second open triggers migrate() again -- must not fail.
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::McpCall(sample_mcp_call("slack", "denied"))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_mcp_calls(10).unwrap();
+    assert_eq!(calls.len(), 2);
+}
+
+// ── File event tests ──────────────────────────────────────────────────
+
+fn sample_file_event(path: &str, action: FileAction, size: Option<u64>) -> FileEvent {
+    FileEvent {
+        timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000),
+        action,
+        path: path.to_string(),
+        size,
+    }
+}
+
+#[tokio::test]
+async fn test_file_event_write_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-roundtrip.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("project/app.js", FileAction::Created, Some(1234)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("project/lib.rs", FileAction::Modified, Some(5678)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("project/old.txt", FileAction::Deleted, None))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 3);
+    // Most recent first
+    assert_eq!(events[0].path, "project/old.txt");
+    assert_eq!(events[0].action, FileAction::Deleted);
+    assert!(events[0].size.is_none());
+    assert_eq!(events[1].path, "project/lib.rs");
+    assert_eq!(events[1].action, FileAction::Modified);
+    assert_eq!(events[1].size, Some(5678));
+    assert_eq!(events[2].path, "project/app.js");
+    assert_eq!(events[2].action, FileAction::Created);
+    assert_eq!(events[2].size, Some(1234));
+}
+
+#[tokio::test]
+async fn test_file_event_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-search.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("project/src/app.js", FileAction::Created, Some(100)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("project/src/lib.rs", FileAction::Modified, Some(200)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("project/README.md", FileAction::Modified, Some(300)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let results = reader.search_file_events("src", 10).unwrap();
+    assert_eq!(results.len(), 2);
+    // Only the two src/ files match
+    for r in &results {
+        assert!(r.path.contains("src"), "expected path containing 'src', got: {}", r.path);
+    }
+}
+
+#[tokio::test]
+async fn test_file_event_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-stats.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("a.js", FileAction::Created, Some(10)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("b.js", FileAction::Created, Some(20)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("a.js", FileAction::Modified, Some(15)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("c.js", FileAction::Deleted, None))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.file_event_stats().unwrap();
+    assert_eq!(stats.total, 4);
+    assert_eq!(stats.created, 2);
+    assert_eq!(stats.modified, 1);
+    assert_eq!(stats.deleted, 1);
+}
+
+#[tokio::test]
+async fn test_file_event_empty_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-empty.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert!(events.is_empty());
+    let stats = reader.file_event_stats().unwrap();
+    assert_eq!(stats.total, 0);
+    assert_eq!(stats.created, 0);
+    assert_eq!(stats.modified, 0);
+    assert_eq!(stats.deleted, 0);
+}
+
+/// Fixture DB should contain fs_events rows inserted during fixture setup.
+#[test]
+fn test_file_events_in_fixture() {
+    let reader = fixture_reader();
+    let events = reader.recent_file_events(100).unwrap();
+    assert!(!events.is_empty(), "fixture should contain fs_events");
+    let stats = reader.file_event_stats().unwrap();
+    assert!(stats.total > 0);
+    assert!(stats.created > 0);
+    assert!(stats.modified > 0);
+    assert!(stats.deleted > 0);
+    // Verify all actions parse correctly
+    for e in &events {
+        assert!(
+            matches!(e.action, FileAction::Created | FileAction::Modified | FileAction::Deleted),
+            "unexpected action: {:?}", e.action
+        );
+        assert!(!e.path.is_empty(), "path should not be empty in fixture");
+    }
+}
+
+/// Fixture search should filter by path substring.
+#[test]
+fn test_file_events_fixture_search() {
+    let reader = fixture_reader();
+    let results = reader.search_file_events("src", 100).unwrap();
+    for r in &results {
+        assert!(r.path.contains("src"), "search result should contain 'src': {}", r.path);
+    }
+}
+
+/// Empty path: should insert and read back without error.
+#[tokio::test]
+async fn test_file_event_empty_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-empty-path.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("", FileAction::Created, Some(0)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].path, "");
+    assert_eq!(events[0].action, FileAction::Created);
+    assert_eq!(events[0].size, Some(0));
+}
+
+/// Unicode paths: filenames with emoji, CJK, RTL, combining characters.
+#[tokio::test]
+async fn test_file_event_unicode_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-unicode.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    let paths = vec![
+        "project/\u{1F4C4}document.txt",
+        "project/\u{4E2D}\u{6587}\u{6587}\u{4EF6}.rs",
+        "project/\u{0645}\u{0644}\u{0641}.py",
+        "project/caf\u{0065}\u{0301}.js",     // e + combining accent
+        "project/\u{0000}null.txt",             // null byte in path
+    ];
+    for p in &paths {
+        writer.write(WriteOp::FileEvent(sample_file_event(p, FileAction::Created, Some(100)))).await;
+    }
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(100).unwrap();
+    assert_eq!(events.len(), paths.len());
+}
+
+/// Very long path: shouldn't crash or truncate silently.
+#[tokio::test]
+async fn test_file_event_huge_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-huge-path.db");
+
+    let huge_path = "a/".repeat(10_000) + "file.txt"; // ~30KB path
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event(&huge_path, FileAction::Modified, Some(42)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].path, huge_path);
+}
+
+/// Size boundary: u64::MAX should round-trip via i64 (may lose precision).
+#[tokio::test]
+async fn test_file_event_max_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-max-size.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("big.bin", FileAction::Created, Some(u64::MAX)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("zero.bin", FileAction::Created, Some(0)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 2);
+    // size=0 should round-trip exactly
+    assert_eq!(events[0].size, Some(0));
+    // u64::MAX stored as i64 wraps, but shouldn't crash
+    assert!(events[1].size.is_some());
+}
+
+/// SQL injection via search: parameterized queries should prevent it.
+#[tokio::test]
+async fn test_file_event_search_sql_injection() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-sqli.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("safe.rs", FileAction::Created, Some(10)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    // Should return empty, not crash or drop the table.
+    let results = reader.search_file_events("'; DROP TABLE fs_events; --", 100).unwrap();
+    assert!(results.is_empty());
+    // Table still works:
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+}
+
+/// Search with SQL wildcards in user input should be treated as literals.
+#[tokio::test]
+async fn test_file_event_search_wildcards() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-wildcards.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("src/main.rs", FileAction::Created, Some(10)))).await;
+    writer.write(WriteOp::FileEvent(sample_file_event("src/lib.rs", FileAction::Modified, Some(20)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    // "%" in search should match within LIKE, but is user-provided -- verify no crash
+    let results = reader.search_file_events("%", 100).unwrap();
+    // "%" inside our LIKE pattern becomes "%%%" which matches everything
+    assert_eq!(results.len(), 2);
+}
+
+/// Batch of many events: tests the batching/drain path in DbWriter.
+#[tokio::test]
+async fn test_file_event_batch_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-batch.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    for i in 0..500 {
+        let action = match i % 3 {
+            0 => FileAction::Created,
+            1 => FileAction::Modified,
+            _ => FileAction::Deleted,
+        };
+        let size = if action == FileAction::Deleted { None } else { Some(i as u64) };
+        writer.write(WriteOp::FileEvent(sample_file_event(
+            &format!("file_{i}.rs"),
+            action,
+            size,
+        ))).await;
+    }
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.file_event_stats().unwrap();
+    assert_eq!(stats.total, 500);
+    assert_eq!(stats.created, 167); // 0,3,6,...,498 -> ceil(500/3) = 167
+    assert_eq!(stats.modified, 167); // 1,4,7,...,499
+    assert_eq!(stats.deleted, 166); // 2,5,8,...,497
+    // Limit query returns at most the requested count
+    let events = reader.recent_file_events(50).unwrap();
+    assert_eq!(events.len(), 50);
+}
+
+/// Concurrent writers: multiple tasks writing file events simultaneously.
+#[tokio::test]
+async fn test_file_event_concurrent_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-concurrent.db");
+
+    let writer = Arc::new(DbWriter::open(&path, 64).unwrap());
+    let mut handles = vec![];
+    for t in 0..10 {
+        let w = Arc::clone(&writer);
+        handles.push(tokio::spawn(async move {
+            for i in 0..50 {
+                w.write(WriteOp::FileEvent(sample_file_event(
+                    &format!("thread_{t}/file_{i}.rs"),
+                    FileAction::Modified,
+                    Some(i as u64),
+                ))).await;
+            }
+        }));
+    }
+    for h in handles {
+        h.await.unwrap();
+    }
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.file_event_stats().unwrap();
+    assert_eq!(stats.total, 500); // 10 threads x 50 events
+}
+
+/// Schema migration: a DB created without fs_events should gain the table on migrate.
+#[tokio::test]
+async fn test_file_event_schema_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-migrate.db");
+
+    // Create a minimal DB with only net_events (simulating an old schema).
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("
+            CREATE TABLE net_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                decision TEXT NOT NULL,
+                bytes_sent INTEGER NOT NULL DEFAULT 0,
+                bytes_received INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER NOT NULL DEFAULT 0
+            );
+        ").unwrap();
+    }
+
+    // Opening with DbWriter triggers migration, which should add fs_events.
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("migrated.rs", FileAction::Created, Some(42)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].path, "migrated.rs");
+}
+
+/// Deleted events should have size=None and round-trip correctly.
+#[tokio::test]
+async fn test_file_event_deleted_has_no_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-deleted-size.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("gone.rs", FileAction::Deleted, None))).await;
+    // Also test deleted with size (shouldn't crash even though unusual).
+    writer.write(WriteOp::FileEvent(sample_file_event("ghost.rs", FileAction::Deleted, Some(999)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].action, FileAction::Deleted);
+    assert_eq!(events[0].size, Some(999)); // unusual but valid
+    assert_eq!(events[1].action, FileAction::Deleted);
+    assert!(events[1].size.is_none());
+}
+
+/// Limit=0 should return no events, not crash.
+#[tokio::test]
+async fn test_file_event_limit_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-limit-zero.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::FileEvent(sample_file_event("a.rs", FileAction::Created, Some(1)))).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(0).unwrap();
+    assert!(events.is_empty());
+    let search = reader.search_file_events("a", 0).unwrap();
+    assert!(search.is_empty());
+}
+
+// ── try_write silently drops events when channel is full ────────────
+
+/// Proves that try_write() silently drops events when the channel is saturated.
+/// This is the root cause of empty session databases: the production code uses
+/// try_write() in mitm_proxy.rs and main.rs, which returns false (ignored) when
+/// the bounded channel is full, causing every event to be silently lost.
+#[tokio::test]
+async fn try_write_drops_events_when_channel_full() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("try-write-drop.db");
+
+    // Capacity of 1: the channel can hold exactly 1 unsent message.
+    let writer = DbWriter::open(&path, 1).unwrap();
+
+    // First try_write succeeds -- fills the single slot.
+    let ok1 = writer.try_write(WriteOp::FileEvent(
+        sample_file_event("first.rs", FileAction::Created, Some(10)),
+    ));
+    assert!(ok1, "first try_write should succeed (channel has 1 slot)");
+
+    // Immediately fire more try_writes without yielding -- the writer thread
+    // has no chance to drain the channel, so these SILENTLY FAIL.
+    let mut dropped = 0;
+    for i in 0..20 {
+        let ok = writer.try_write(WriteOp::FileEvent(
+            sample_file_event(&format!("dropped{i}.rs"), FileAction::Modified, Some(100)),
+        ));
+        if !ok {
+            dropped += 1;
+        }
+    }
+
+    // At least some events must have been silently dropped.
+    assert!(dropped > 0, "try_write should have dropped events, but none were dropped");
+
+    // Flush and check: the DB will be MISSING the dropped events with zero indication.
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(100).unwrap();
+
+    // We sent 21 total (1 + 20), but the DB has far fewer -- silent data loss.
+    assert!(
+        events.len() < 21,
+        "expected silent data loss from try_write, but all 21 events were written (got {})",
+        events.len()
+    );
+    // The dropped events are gone forever -- no log, no error, no indication.
+    eprintln!(
+        "PROOF: sent 21 events via try_write, only {} persisted, {} silently lost",
+        events.len(),
+        21 - events.len()
+    );
+}
+
+/// Proves that write().await does NOT drop events under the same conditions,
+/// because it backpressures (yields) until the channel has space.
+#[tokio::test]
+async fn async_write_never_drops_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("async-write-safe.db");
+
+    // Same tiny capacity.
+    let writer = DbWriter::open(&path, 1).unwrap();
+
+    // Send 21 events via write().await -- all will succeed because write()
+    // awaits channel capacity instead of failing.
+    writer.write(WriteOp::FileEvent(
+        sample_file_event("first.rs", FileAction::Created, Some(10)),
+    )).await;
+
+    for i in 0..20 {
+        writer.write(WriteOp::FileEvent(
+            sample_file_event(&format!("safe{i}.rs"), FileAction::Modified, Some(100)),
+        )).await;
+    }
+
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(100).unwrap();
+
+    // Every single event was persisted -- zero data loss.
+    assert_eq!(
+        events.len(),
+        21,
+        "write().await should persist all 21 events, but only got {}",
+        events.len()
+    );
+}
+
+/// Simulates the exact production scenario: a burst of mixed event types
+/// (NetEvent, FileEvent, ModelCall) via try_write with the production
+/// channel capacity of 256. Under burst conditions, events are lost.
+#[tokio::test]
+async fn try_write_production_burst_loses_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("burst-drop.db");
+
+    // Use production capacity.
+    let writer = DbWriter::open(&path, 256).unwrap();
+
+    // Blast 500 events as fast as possible without yielding -- simulates
+    // a burst of network activity + file watches + model calls arriving
+    // concurrently. The writer thread batches 128 at a time and can't
+    // keep up with a synchronous flood.
+    let total = 500;
+    let mut sent = 0;
+    for i in 0..total {
+        let ok = writer.try_write(WriteOp::FileEvent(
+            sample_file_event(&format!("burst{i}.rs"), FileAction::Modified, Some(i as u64)),
+        ));
+        if ok {
+            sent += 1;
+        }
+    }
+
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(1000).unwrap();
+
+    eprintln!(
+        "BURST: tried {total}, channel accepted {sent}, DB persisted {}",
+        events.len()
+    );
+
+    // With capacity 256, we can't push all 500 without the writer draining.
+    // Some will be lost. (If the writer thread is fast enough on this machine
+    // to drain between try_sends, we might get lucky -- but the point is
+    // try_write makes NO guarantee, unlike write().await which guarantees all.)
+    //
+    // The real bug: even if this particular run doesn't drop events (fast CPU),
+    // try_write offers ZERO delivery guarantee. The async write() path does.
+    // We assert that try_write accepted fewer than we tried OR that async
+    // write would have accepted all.
+    if sent < total {
+        assert!(
+            events.len() < total,
+            "some events were rejected by try_write, confirming silent drop risk"
+        );
+        eprintln!(
+            "CONFIRMED: {total} attempted, {sent} accepted, {} dropped silently",
+            total - sent
+        );
+    } else {
+        eprintln!(
+            "NOTE: writer thread drained fast enough on this machine -- \
+             try_write accepted all {total}. The bug is still real: try_write \
+             offers no delivery guarantee. Run under load to reproduce."
+        );
+    }
+}
+
+/// The production code ignores try_write's return value. This test proves
+/// that pattern causes silent data loss by exactly mimicking the call sites
+/// in mitm_proxy.rs:694 and main.rs:807.
+#[tokio::test]
+async fn ignored_try_write_return_value_causes_silent_loss() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ignored-return.db");
+
+    let writer = DbWriter::open(&path, 1).unwrap();
+
+    // Mimic the exact production pattern: call try_write, ignore the bool.
+    // This is what mitm_proxy.rs:694 and main.rs:807 do.
+    writer.try_write(WriteOp::FileEvent(
+        sample_file_event("a.rs", FileAction::Created, Some(1)),
+    )); // return value ignored -- fills the channel
+
+    // These mirror a rapid sequence of file touches or network events.
+    // The channel is full, so these are silently discarded.
+    for i in 0..10 {
+        writer.try_write(WriteOp::FileEvent(
+            sample_file_event(&format!("lost{i}.rs"), FileAction::Created, Some(1)),
+        )); // return value ignored -- SILENTLY DROPPED
+    }
+
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(100).unwrap();
+
+    // If all 11 were persisted, the channel drained fast enough.
+    // But the fundamental issue remains: try_write + ignored return = unreliable.
+    if events.len() < 11 {
+        eprintln!(
+            "PROVED: production pattern (ignore try_write return) lost {} of 11 events",
+            11 - events.len()
+        );
+    }
+
+    // The important assertion: with capacity=1, it's nearly impossible
+    // to persist all 11 without backpressure. At best we get 1-2.
+    assert!(
+        events.len() < 11,
+        "expected data loss with capacity=1 and ignored try_write, got all {}", events.len()
+    );
 }

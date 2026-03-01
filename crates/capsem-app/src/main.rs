@@ -13,9 +13,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use capsem_core::{
     CoalesceBuffer, GuestToHost, HostState, HostStateMachine, HostToGuest, VirtualMachine,
-    VmConfig, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+    VmConfig, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY,
+    VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
     create_scratch_disk, decode_guest_msg, encode_host_msg, validate_guest_msg, MAX_FRAME_SIZE,
 };
+use capsem_core::mcp::gateway::{self, McpGatewayConfig};
+use capsem_core::mcp::policy::McpPolicy;
+use capsem_core::mcp::server_manager::McpServerManager;
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
 use capsem_core::net::policy_config;
@@ -149,6 +153,39 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
         Err(e) => warn!("failed to mark stale sessions: {e}"),
     }
 
+    // Backfill: for crashed sessions with zero stats but an info.db on disk,
+    // retroactively populate the summary tables.
+    if let Ok(sessions) = index.recent(1000) {
+        for rec in &sessions {
+            if rec.status != "crashed" && rec.status != "stopped" {
+                continue;
+            }
+            // Skip sessions that already have data.
+            if rec.total_input_tokens > 0 || rec.total_tool_calls > 0 {
+                continue;
+            }
+            let db_path = base.join(&rec.id).join("info.db");
+            if !db_path.exists() {
+                continue;
+            }
+            if let Ok(reader) = capsem_logger::DbReader::open(&db_path) {
+                flush_session_summary(&rec.id, index, &reader);
+                // Also backfill request counts if zero.
+                if rec.total_requests == 0 {
+                    if let Ok((total, allowed, denied)) = reader.net_event_counts() {
+                        let _ = index.update_request_counts(
+                            &rec.id,
+                            total as u64,
+                            allowed as u64,
+                            denied as u64,
+                        );
+                    }
+                }
+                info!(id = %rec.id, "backfilled session summary");
+            }
+        }
+    }
+
     // Age-based culling.
     let settings = policy_config::load_merged_settings();
     let retention_days = settings.iter()
@@ -246,7 +283,7 @@ fn cleanup_session(
         }
     }
 
-    // Snapshot request counts.
+    // Snapshot request counts + summary data.
     if let Some(writer) = db {
         if let Ok(reader) = writer.reader() {
             if let Ok((total, allowed, denied)) = reader.net_event_counts() {
@@ -257,10 +294,80 @@ fn cleanup_session(
                     denied as u64,
                 );
             }
+            flush_session_summary(session_id, index, &reader);
         }
     }
 
     let _ = index.update_status(session_id, "stopped", Some(&session::now_iso()));
+}
+
+/// Flush per-session summary data from info.db into main.db.
+fn flush_session_summary(
+    session_id: &str,
+    index: &SessionIndex,
+    reader: &capsem_logger::DbReader,
+) {
+    use capsem_core::session::{McpToolSummary, ProviderSummary, ToolSummary};
+
+    // Session-level summary.
+    if let Ok(stats) = reader.session_stats() {
+        let file_events = reader.file_event_count().unwrap_or(0);
+        let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
+        let _ = index.update_session_summary(
+            session_id,
+            stats.total_input_tokens,
+            stats.total_output_tokens,
+            stats.total_estimated_cost_usd,
+            stats.total_tool_calls,
+            mcp_calls,
+            file_events,
+        );
+    }
+
+    // Provider usage.
+    if let Ok(providers) = reader.token_usage_by_provider() {
+        let summaries: Vec<ProviderSummary> = providers
+            .into_iter()
+            .map(|p| ProviderSummary {
+                provider: p.provider,
+                call_count: p.call_count,
+                input_tokens: p.total_input_tokens,
+                output_tokens: p.total_output_tokens,
+                estimated_cost: p.total_estimated_cost_usd,
+                total_duration_ms: p.total_duration_ms,
+            })
+            .collect();
+        let _ = index.replace_ai_usage(session_id, &summaries);
+    }
+
+    // Tool usage.
+    if let Ok(tools) = reader.tool_usage_with_stats(50) {
+        let summaries: Vec<ToolSummary> = tools
+            .into_iter()
+            .map(|t| ToolSummary {
+                tool_name: t.tool_name,
+                call_count: t.count,
+                total_bytes: t.total_bytes,
+                total_duration_ms: t.total_duration_ms,
+            })
+            .collect();
+        let _ = index.replace_tool_usage(session_id, &summaries);
+    }
+
+    // MCP tool usage.
+    if let Ok(mcp_tools) = reader.mcp_tool_usage(50) {
+        let summaries: Vec<McpToolSummary> = mcp_tools
+            .into_iter()
+            .map(|m| McpToolSummary {
+                tool_name: m.tool_name,
+                server_name: m.server_name,
+                call_count: m.count,
+                total_bytes: m.total_bytes,
+                total_duration_ms: m.total_duration_ms,
+            })
+            .collect();
+        let _ = index.replace_mcp_usage(session_id, &summaries);
+    }
 }
 
 /// Static CA keypair embedded at compile time.
@@ -287,7 +394,7 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
         .join("sessions")
         .join(vm_id);
     let db_path = session_dir.join("session.db");
-    let db = DbWriter::open(&db_path, 256).context("failed to open session db")?;
+    let db = DbWriter::open(&db_path, 4096).context("failed to open session db")?;
     info!(path = %db_path.display(), "opened session db");
 
     Ok(VmNetworkState {
@@ -568,9 +675,17 @@ async fn setup_vsock(
 
     info!("vsock: both channels connected, performing boot handshake");
 
+    let mut ctrl_file = match clone_fd(control.fd) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("vsock: failed to clone control fd: {e}");
+            return;
+        }
+    };
+
     // Boot handshake: wait for Ready, send BootConfig, wait for BootReady.
     // Read first control message -- expect GuestToHost::Ready.
-    match read_control_msg(control.fd) {
+    match read_control_msg(&mut ctrl_file) {
         Ok(GuestToHost::Ready { version }) => {
             info!("vsock: guest agent ready (version {version})");
             // Transition: VsockConnected -> Handshaking
@@ -594,7 +709,7 @@ async fn setup_vsock(
     }
 
     // Send boot config as individual messages.
-    if let Err(e) = send_boot_config(control.fd, &[]) {
+    if let Err(e) = send_boot_config(&mut ctrl_file, &[]) {
         warn!("vsock: failed to send boot config: {e}");
     }
 
@@ -602,7 +717,7 @@ async fn setup_vsock(
     let boot_ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut boot_ready_received = false;
     while Instant::now() < boot_ready_deadline {
-        match read_control_msg(control.fd) {
+        match read_control_msg(&mut ctrl_file) {
             Ok(GuestToHost::BootReady) => {
                 info!("vsock: guest boot ready");
                 boot_ready_received = true;
@@ -625,7 +740,7 @@ async fn setup_vsock(
     info!("vsock: boot handshake complete, stopping serial forwarding");
 
     // Store vsock fds and transition to Running.
-    let mitm_config = {
+    let (mitm_config, mcp_config) = {
         let state = app_handle.state::<AppState>();
         let vm_id = state.active_session_id.lock().unwrap().clone();
         let mut vms = state.vms.lock().unwrap();
@@ -636,7 +751,7 @@ async fn setup_vsock(
                 warn!("state machine: {e}");
             }
             write_perf_log(&instance.state_machine);
-            instance.net_state.as_ref().map(|ns| {
+            let mitm = instance.net_state.as_ref().map(|ns| {
                 Arc::new(MitmProxyConfig {
                     ca: Arc::clone(&ns.ca),
                     policy: Arc::clone(&ns.policy),
@@ -645,9 +760,11 @@ async fn setup_vsock(
                     pricing: capsem_core::gateway::pricing::PricingTable::load(),
                     trace_state: std::sync::Mutex::new(capsem_core::gateway::TraceState::new()),
                 })
-            })
+            });
+            let mcp = instance.mcp_state.clone();
+            (mitm, mcp)
         } else {
-            None
+            (None, None)
         }
     };
 
@@ -664,15 +781,64 @@ async fn setup_vsock(
         Arc::clone(&state.terminal_output)
     };
     tokio::spawn(vsock_terminal_to_events(terminal_output, terminal.fd));
-    tokio::spawn(vsock_control_handler(app_handle, control.fd));
+    let _app_handle_for_accept = app_handle.clone();
+    tokio::spawn(vsock_control_handler(app_handle.clone(), control.fd));
+
+    // Spawn periodic flush task: every 30s, sync session summary from info.db to main.db.
+    {
+        let flush_handle = app_handle.clone();
+        let state = app_handle.state::<AppState>();
+        let session_id = state.active_session_id.lock().unwrap().clone();
+        let db = {
+            let vms = state.vms.lock().unwrap();
+            session_id.as_ref()
+                .and_then(|id| vms.get(id))
+                .and_then(|i| i.net_state.as_ref())
+                .map(|ns| Arc::clone(&ns.db))
+        };
+        if let (Some(sid), Some(db)) = (session_id, db) {
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                interval.tick().await; // skip immediate first tick
+                loop {
+                    interval.tick().await;
+                    let sid = sid.clone();
+                    let db = Arc::clone(&db);
+                    let flush_handle = flush_handle.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        use tauri::Manager;
+                        let reader = match db.reader() {
+                            Ok(r) => r,
+                            Err(_) => return,
+                        };
+                        let state = flush_handle.state::<AppState>();
+                        let idx = match state.session_index.lock() {
+                            Ok(g) => g,
+                            Err(_) => return,
+                        };
+                        // Update request counts.
+                        if let Ok((total, allowed, denied)) = reader.net_event_counts() {
+                            let _ = idx.update_request_counts(
+                                &sid,
+                                total as u64,
+                                allowed as u64,
+                                denied as u64,
+                            );
+                        }
+                        flush_session_summary(&sid, &idx, &reader);
+                    }).await;
+                }
+            });
+        }
+    }
 
     // Keep terminal/control connections alive.
     let _keep_terminal = terminal;
     let _keep_control = control;
 
-    // Accept MITM proxy connections indefinitely on port 5002.
+    // Accept MITM proxy + fs-watch + MCP gateway connections indefinitely.
     if let Some(config) = mitm_config {
-        info!("vsock: listening for MITM proxy connections on port 5002");
+        info!("vsock: listening for proxy connections on ports 5002/5003/5005");
         loop {
             match vsock_manager.accept().await {
                 Some(conn) if conn.port == VSOCK_PORT_SNI_PROXY => {
@@ -683,11 +849,30 @@ async fn setup_vsock(
                         mitm_proxy::handle_connection(fd, config).await;
                     });
                 }
+                Some(conn) if conn.port == VSOCK_PORT_FS_WATCH => {
+                    info!("vsock: fs-watch connected (fd={})", conn.fd);
+                    let db = Arc::clone(&config.db);
+                    let fd = conn.fd;
+                    tokio::spawn(async move {
+                        let _conn = conn;
+                        handle_fs_watch(fd, db).await;
+                    });
+                }
+                Some(conn) if conn.port == VSOCK_PORT_MCP_GATEWAY => {
+                    if let Some(ref mcp) = mcp_config {
+                        let fd = conn.fd;
+                        let mcp = Arc::clone(mcp);
+                        tokio::spawn(async move {
+                            let _conn = conn;
+                            gateway::serve_mcp_session(fd, mcp).await;
+                        });
+                    }
+                }
                 Some(conn) => {
                     warn!(port = conn.port, "vsock: unexpected port after setup, ignoring");
                 }
                 None => {
-                    info!("vsock: manager channel closed, stopping MITM proxy accept loop");
+                    info!("vsock: manager channel closed, stopping accept loop");
                     break;
                 }
             }
@@ -701,43 +886,99 @@ async fn setup_vsock(
 
 const CLI_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Read exactly `n` bytes from a raw fd, retrying on partial reads.
-fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> std::io::Result<()> {
-    let mut file = clone_fd(fd)?;
-    let mut pos = 0;
-    while pos < buf.len() {
-        let n = file.read(&mut buf[pos..])?;
-        if n == 0 {
-            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "unexpected EOF"));
-        }
-        pos += n;
-    }
-    Ok(())
-}
+/// Handle the fs-watch vsock connection: read framed GuestToHost messages
+/// and write FileEvents to the session DB.
+async fn handle_fs_watch(fd: RawFd, db: Arc<DbWriter>) {
+    use capsem_logger::{FileAction, FileEvent, WriteOp};
+    use std::time::SystemTime;
+    use tokio::io::AsyncReadExt;
 
-/// Write all bytes to a raw fd.
-fn write_all_fd(fd: RawFd, data: &[u8]) -> std::io::Result<()> {
-    let mut file = clone_fd(fd)?;
-    file.write_all(data)?;
-    Ok(())
+    let std_file = match clone_fd(fd) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("fs-watch: failed to clone fd: {e}");
+            return;
+        }
+    };
+    let mut file = tokio::fs::File::from_std(std_file);
+
+    info!("fs-watch: handler started");
+    loop {
+        let mut len_buf = [0u8; 4];
+        match file.read_exact(&mut len_buf).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                info!("fs-watch: connection closed");
+                break;
+            }
+            Err(e) => {
+                warn!("fs-watch: read error: {e}");
+                break;
+            }
+        }
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > MAX_FRAME_SIZE as usize {
+            warn!("fs-watch: frame too large ({len} bytes), skipping");
+            break;
+        }
+        let mut payload = vec![0u8; len];
+        if let Err(e) = file.read_exact(&mut payload).await {
+            warn!("fs-watch: payload read error: {e}");
+            break;
+        }
+        let msg = match decode_guest_msg(&payload) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!("fs-watch: decode error: {e}");
+                continue;
+            }
+        };
+        let event = match msg {
+            GuestToHost::FileCreated { path, size } => FileEvent {
+                timestamp: SystemTime::now(),
+                action: FileAction::Created,
+                path,
+                size: Some(size),
+            },
+            GuestToHost::FileModified { path, size } => FileEvent {
+                timestamp: SystemTime::now(),
+                action: FileAction::Modified,
+                path,
+                size: Some(size),
+            },
+            GuestToHost::FileDeleted { path } => FileEvent {
+                timestamp: SystemTime::now(),
+                action: FileAction::Deleted,
+                path,
+                size: None,
+            },
+            other => {
+                warn!("fs-watch: unexpected message type: {other:?}");
+                continue;
+            }
+        };
+        db.write(WriteOp::FileEvent(event)).await;
+    }
+    info!("fs-watch: handler exiting");
 }
 
 /// Read one guest-to-host control message from an fd (blocking).
-fn read_control_msg(fd: RawFd) -> Result<GuestToHost> {
+fn read_control_msg(file: &mut std::fs::File) -> Result<GuestToHost> {
     let mut len_buf = [0u8; 4];
-    read_exact_fd(fd, &mut len_buf)?;
+    file.read_exact(&mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_FRAME_SIZE as usize {
         anyhow::bail!("control frame too large ({len} bytes)");
     }
     let mut payload = vec![0u8; len];
-    read_exact_fd(fd, &mut payload)?;
-    decode_guest_msg(&payload)}
+    file.read_exact(&mut payload)?;
+    decode_guest_msg(&payload)
+}
 
 /// Write one host-to-guest control message to an fd.
-fn write_control_msg(fd: RawFd, msg: &HostToGuest) -> Result<()> {
+fn write_control_msg(file: &mut std::fs::File, msg: &HostToGuest) -> Result<()> {
     let frame = encode_host_msg(msg)?;
-    write_all_fd(fd, &frame)?;
+    file.write_all(&frame)?;
     Ok(())
 }
 
@@ -752,7 +993,7 @@ fn write_control_msg(fd: RawFd, msg: &HostToGuest) -> Result<()> {
 /// MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES) to prevent unbounded allocations.
 ///
 /// Env var priority: settings registry defaults < user.toml overrides < CLI --env flags.
-fn send_boot_config(control_fd: RawFd, cli_env: &[(String, String)]) -> Result<()> {
+fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) -> Result<()> {
     use capsem_core::capsem_proto::{
         validate_env_key, validate_env_value, validate_file_path,
         MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
@@ -764,7 +1005,7 @@ fn send_boot_config(control_fd: RawFd, cli_env: &[(String, String)]) -> Result<(
         .as_secs();
 
     // 1. Send BootConfig with clock.
-    write_control_msg(control_fd, &HostToGuest::BootConfig { epoch_secs })?;
+    write_control_msg(file, &HostToGuest::BootConfig { epoch_secs })?;
 
     // 2. Send metadata-driven env vars from settings registry.
     let guest_config = policy_config::load_merged_guest_config();
@@ -784,7 +1025,7 @@ fn send_boot_config(control_fd: RawFd, cli_env: &[(String, String)]) -> Result<(
                 warn!("skipping boot env var {key}: {e}");
                 continue;
             }
-            write_control_msg(control_fd, &HostToGuest::SetEnv { key, value })?;
+            write_control_msg(file, &HostToGuest::SetEnv { key, value })?;
             env_count += 1;
         }
     }
@@ -804,7 +1045,7 @@ fn send_boot_config(control_fd: RawFd, cli_env: &[(String, String)]) -> Result<(
             continue;
         }
         write_control_msg(
-            control_fd,
+            file,
             &HostToGuest::SetEnv {
                 key: key.clone(),
                 value: value.clone(),
@@ -817,37 +1058,37 @@ fn send_boot_config(control_fd: RawFd, cli_env: &[(String, String)]) -> Result<(
     let mut file_count: usize = 0;
     let mut total_file_bytes: usize = 0;
 
-    for file in guest_config.files.unwrap_or_default() {
+    for f in guest_config.files.unwrap_or_default() {
         if file_count >= MAX_BOOT_FILES {
             warn!("boot file cap reached ({MAX_BOOT_FILES}), skipping remaining");
             break;
         }
-        let data = file.content.into_bytes();
+        let data = f.content.into_bytes();
         if total_file_bytes + data.len() > MAX_BOOT_FILE_BYTES {
             warn!(
                 "boot file bytes cap reached ({MAX_BOOT_FILE_BYTES}), skipping {}",
-                file.path
+                f.path
             );
             continue;
         }
-        if let Err(e) = validate_file_path(&file.path) {
+        if let Err(e) = validate_file_path(&f.path) {
             warn!("skipping invalid boot file path: {e}");
             continue;
         }
         total_file_bytes += data.len();
         file_count += 1;
         write_control_msg(
-            control_fd,
+            file,
             &HostToGuest::FileWrite {
-                path: file.path,
+                path: f.path,
                 data,
-                mode: file.mode,
+                mode: f.mode,
             },
         )?;
     }
 
     // 5. Signal done.
-    write_control_msg(control_fd, &HostToGuest::BootConfigDone)?;
+    write_control_msg(file, &HostToGuest::BootConfigDone)?;
 
     Ok(())
 }
@@ -965,6 +1206,12 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         total_requests: 0,
         allowed_requests: 0,
         denied_requests: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_estimated_cost: 0.0,
+        total_tool_calls: 0,
+        total_mcp_calls: 0,
+        total_file_events: 0,
     };
     if let Err(e) = session_index.create_session(&record) {
         warn!("failed to record session: {e}");
@@ -978,11 +1225,11 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         ram_bytes,
     )?;
 
-    // Set up vsock listeners (including SNI proxy port).
+    // Set up vsock listeners (including SNI proxy and MCP gateway ports).
     let socket_devices = vm.socket_devices();
     let mut mgr = VsockManager::new(
         &socket_devices,
-        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY],
+        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY],
     ).context("failed to set up vsock")?;
 
     // Create per-VM network state for MITM proxy.
@@ -995,6 +1242,23 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
             upstream_tls: Arc::clone(&ns.upstream_tls),
             pricing: capsem_core::gateway::pricing::PricingTable::load(),
             trace_state: std::sync::Mutex::new(capsem_core::gateway::TraceState::new()),
+        })
+    });
+
+    // Create MCP gateway config for vsock:5003.
+    let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
+        let domain_policy = policy_config::load_merged_domain_policy();
+        Arc::new(McpGatewayConfig {
+            server_manager: tokio::sync::Mutex::new(McpServerManager::new(vec![])),
+            db: Arc::clone(&ns.db),
+            policy: tokio::sync::RwLock::new(Arc::new(McpPolicy::new())),
+            domain_policy: std::sync::RwLock::new(Arc::new(domain_policy)),
+            http_client: reqwest::Client::builder()
+                .user_agent("capsem-mcp/0.8")
+                .timeout(std::time::Duration::from_secs(30))
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()
+                .expect("reqwest client"),
         })
     });
 
@@ -1056,6 +1320,28 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
                         continue; // conn moved, don't push to _conns
                     }
                 }
+                VSOCK_PORT_FS_WATCH => {
+                    if let Some(ref net_state) = net_state {
+                        let db = Arc::clone(&net_state.db);
+                        let fd = conn.fd;
+                        rt.spawn(async move {
+                            let _conn = conn;
+                            handle_fs_watch(fd, db).await;
+                        });
+                        continue;
+                    }
+                }
+                VSOCK_PORT_MCP_GATEWAY => {
+                    if let Some(ref config) = mcp_config {
+                        let fd = conn.fd;
+                        let config = Arc::clone(config);
+                        rt.spawn(async move {
+                            let _conn = conn;
+                            gateway::serve_mcp_session(fd, config).await;
+                        });
+                        continue;
+                    }
+                }
                 _ => {}
             }
             _conns.push(conn);
@@ -1067,10 +1353,13 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
 
     // Wait for Ready message from guest agent.
     let (ctrl_msg_tx, ctrl_msg_rx) = std::sync::mpsc::channel::<GuestToHost>();
-    let ctrl_fd_reader = control_fd;
+    let mut ctrl_fd_reader = match clone_fd(control_fd) {
+        Ok(f) => f,
+        Err(e) => anyhow::bail!("failed to clone control fd: {e}"),
+    };
     std::thread::spawn(move || {
         loop {
-            match read_control_msg(ctrl_fd_reader) {
+            match read_control_msg(&mut ctrl_fd_reader) {
                 Ok(msg) => {
                     if ctrl_msg_tx.send(msg).is_err() {
                         break;
@@ -1108,8 +1397,9 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         }
     }
 
+    let mut ctrl_fd_writer = clone_fd(control_fd)?;
     // Send boot config as individual messages.
-    send_boot_config(control_fd, cli_env)?;
+    send_boot_config(&mut ctrl_fd_writer, cli_env)?;
 
     // Wait for BootReady.
     let boot_ready_deadline = Instant::now() + Duration::from_secs(5);
@@ -1145,7 +1435,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    write_control_msg(control_fd, &HostToGuest::Exec {
+    let mut exec_file = clone_fd(control_fd)?;
+    write_control_msg(&mut exec_file, &HostToGuest::Exec {
         id: exec_id,
         command: command.to_string(),
     })?;
@@ -1198,7 +1489,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
                 0,
             );
         }
-        // Accept any incoming MITM proxy connections during exec.
+        // Accept any incoming proxy connections during exec.
         while let Ok(conn) = mgr.try_accept() {
             if conn.port == VSOCK_PORT_SNI_PROXY {
                 if let Some(ref config) = mitm_config {
@@ -1207,6 +1498,24 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
                     rt.spawn(async move {
                         let _conn = conn;
                         mitm_proxy::handle_connection(fd, config).await;
+                    });
+                }
+            } else if conn.port == VSOCK_PORT_FS_WATCH {
+                if let Some(ref net_state) = net_state {
+                    let db = Arc::clone(&net_state.db);
+                    let fd = conn.fd;
+                    rt.spawn(async move {
+                        let _conn = conn;
+                        handle_fs_watch(fd, db).await;
+                    });
+                }
+            } else if conn.port == VSOCK_PORT_MCP_GATEWAY {
+                if let Some(ref config) = mcp_config {
+                    let fd = conn.fd;
+                    let config = Arc::clone(config);
+                    rt.spawn(async move {
+                        let _conn = conn;
+                        gateway::serve_mcp_session(fd, config).await;
                     });
                 }
             } else {
@@ -1425,6 +1734,12 @@ fn main() {
                     total_requests: 0,
                     allowed_requests: 0,
                     denied_requests: 0,
+                    total_input_tokens: 0,
+                    total_output_tokens: 0,
+                    total_estimated_cost: 0.0,
+                    total_tool_calls: 0,
+                    total_mcp_calls: 0,
+                    total_file_events: 0,
                 };
                 if let Err(e) = idx.create_session(&record) {
                     warn!("failed to record session: {e}");
@@ -1438,12 +1753,12 @@ fn main() {
                 Ok((vm, rx, input_fd, sm)) => {
                     info!("VM booted successfully");
 
-                    // Register vsock listeners on the socket device (including SNI proxy port).
+                    // Register vsock listeners on the socket device (including SNI proxy and MCP gateway ports).
                     let vsock_manager = {
                         let socket_devices = vm.socket_devices();
                         match VsockManager::new(
                             &socket_devices,
-                            &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY],
+                            &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY],
                         ) {
                             Ok(mgr) => Some(mgr),
                             Err(e) => {
@@ -1462,6 +1777,23 @@ fn main() {
                         }
                     };
 
+                    // Create MCP gateway config for vsock:5003.
+                    let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
+                        let domain_policy = policy_config::load_merged_domain_policy();
+                        Arc::new(McpGatewayConfig {
+                            server_manager: tokio::sync::Mutex::new(McpServerManager::new(vec![])),
+                            db: Arc::clone(&ns.db),
+                            policy: tokio::sync::RwLock::new(Arc::new(McpPolicy::new())),
+                            domain_policy: std::sync::RwLock::new(Arc::new(domain_policy)),
+                            http_client: reqwest::Client::builder()
+                                .user_agent("capsem-mcp/0.8")
+                                .timeout(std::time::Duration::from_secs(30))
+                                .redirect(reqwest::redirect::Policy::limited(10))
+                                .build()
+                                .expect("reqwest client"),
+                        })
+                    });
+
                     // Store VM state.
                     {
                         let app_state = app.state::<AppState>();
@@ -1472,6 +1804,7 @@ fn main() {
                             vsock_terminal_fd: None,
                             vsock_control_fd: None,
                             net_state,
+                            mcp_state: mcp_config.clone(),
                             state_machine: sm,
                             _scratch_disk_path: gui_scratch_path.clone(),
                         });
@@ -1537,7 +1870,15 @@ fn main() {
             commands::get_model_calls,
             commands::get_traces,
             commands::get_trace_detail,
+            commands::get_mcp_calls,
+            commands::get_mcp_stats,
+            commands::get_file_events,
+            commands::get_file_stats,
             commands::query_db,
+            commands::get_global_stats,
+            commands::get_top_providers,
+            commands::get_top_tools,
+            commands::get_top_mcp_tools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
