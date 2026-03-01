@@ -60,16 +60,20 @@ repack-initrd:
     gzip -dc "$INITRD" | cpio -id 2>/dev/null
     cp "$ROOT/images/capsem-init" init
     chmod 755 init
-    rm -f capsem-pty-agent capsem-net-proxy
+    rm -f capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-fs-watch
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
     chmod 555 capsem-pty-agent
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-net-proxy" capsem-net-proxy
     chmod 555 capsem-net-proxy
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-mcp-server" capsem-mcp-server
+    chmod 555 capsem-mcp-server
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-fs-watch" capsem-fs-watch
+    chmod 555 capsem-fs-watch
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
     (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
-    echo "initrd repacked (with agent + net-proxy)"
+    echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch)"
 
 # Build and install the app to /Applications
 install: repack-initrd release
@@ -112,16 +116,20 @@ repack *CMD:
     gzip -dc "$INITRD" | cpio -id 2>/dev/null
     cp "$ROOT/images/capsem-init" init
     chmod 755 init
-    rm -f capsem-pty-agent capsem-net-proxy
+    rm -f capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-fs-watch
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
     chmod 555 capsem-pty-agent
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-net-proxy" capsem-net-proxy
     chmod 555 capsem-net-proxy
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-mcp-server" capsem-mcp-server
+    chmod 555 capsem-mcp-server
+    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-fs-watch" capsem-fs-watch
+    chmod 555 capsem-fs-watch
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
     (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
-    echo "initrd repacked (with agent + net-proxy)"
+    echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch)"
     echo ""
     echo "=== Build + sign ==="
     cargo build -p capsem 2>&1 | tail -3
@@ -162,9 +170,46 @@ update_prices:
         -o config/genai-prices.json
     @echo "Updated config/genai-prices.json"
 
-# Regenerate data/fixtures/test.db (shared test fixture)
-gen-test-db:
-    python3 data/fixtures/generate_test_db.py
+# Update test fixture DB from a real session.
+# Usage: just update-fixture ~/.capsem/sessions/<session-id>/web.db
+# Scrubs API keys, checkpoints WAL, copies to both data/ and frontend/.
+update-fixture src:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="{{src}}"
+    dst="data/fixtures/test.db"
+    pub="frontend/public/fixtures/test.db"
+    # Checkpoint WAL so we get a single clean file
+    sqlite3 "$src" "PRAGMA wal_checkpoint(TRUNCATE);"
+    cp "$src" "$dst"
+    # Scrub any leaked API keys (belt-and-suspenders)
+    sqlite3 "$dst" "
+        UPDATE net_events SET request_headers  = REPLACE(request_headers,  'x-api-key', 'x-api-key-REDACTED') WHERE request_headers  LIKE '%sk-%';
+        UPDATE net_events SET request_headers  = REPLACE(request_headers,  'authorization', 'authorization-REDACTED') WHERE request_headers  LIKE '%Bearer%';
+        UPDATE net_events SET request_body_preview  = '' WHERE request_body_preview  LIKE '%sk-%' OR request_body_preview  LIKE '%AIza%';
+        UPDATE net_events SET response_body_preview = '' WHERE response_body_preview LIKE '%sk-%' OR response_body_preview LIKE '%AIza%';
+    "
+    # Verify no keys leaked
+    count=$(sqlite3 "$dst" "SELECT COUNT(*) FROM (
+        SELECT 1 FROM net_events WHERE request_headers  LIKE '%sk-ant-%' OR request_headers  LIKE '%AIza%'
+        UNION ALL
+        SELECT 1 FROM net_events WHERE request_body_preview LIKE '%sk-ant-%' OR request_body_preview LIKE '%AIza%'
+        UNION ALL
+        SELECT 1 FROM net_events WHERE response_body_preview LIKE '%sk-ant-%' OR response_body_preview LIKE '%AIza%'
+    );")
+    if [ "$count" -ne 0 ]; then
+        echo "ERROR: Found $count rows with potential API keys -- aborting"
+        exit 1
+    fi
+    # Remove WAL/SHM leftovers
+    rm -f "$dst-wal" "$dst-shm"
+    # Copy to frontend public
+    cp "$dst" "$pub"
+    echo "Updated fixture: $(sqlite3 "$dst" 'SELECT COUNT(*) FROM net_events') net_events, $(sqlite3 "$dst" 'SELECT COUNT(*) FROM model_calls') model_calls"
+
+# Check session DB integrity and event summary (latest by default, or pass session ID)
+check-session *args='':
+    python3 scripts/check_session.py {{args}}
 
 # Frontend dev server with mock data (no Tauri/VM needed)
 ui:

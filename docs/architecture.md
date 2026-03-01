@@ -445,6 +445,43 @@ The current implementation covers Milestones 1-4 (VM boot, serial console, vsock
 
 See [docs/status.md](status.md) for milestone progress and [docs/overall_plan.md](overall_plan.md) for the full roadmap.
 
+## Analytics Data Architecture
+
+Capsem uses a two-database architecture for session telemetry:
+
+### Two Databases
+
+| Database | Location | Purpose | Query Method |
+|----------|----------|---------|--------------|
+| **info.db** | `~/.capsem/sessions/<vm_id>/info.db` | Raw per-session events (net_events, model_calls, tool_calls, tool_responses, mcp_calls, fs_events) | `queryDb(sql)` via frontend |
+| **main.db** | `~/.capsem/capsem.db` | Cross-session summaries (sessions table with aggregated counters) | Dedicated Tauri commands (`getGlobalStats`, `getTopProviders`, etc.) |
+
+### Data Flow
+
+```
+Guest VM telemetry
+  -> vsock (ports 5002, 5003, 5005)
+  -> Host MITM proxy / MCP gateway / FS watcher
+  -> DbWriter (capsem-logger) writes to info.db in real-time
+  -> 30s periodic flush: aggregates info.db into main.db session row
+```
+
+### Frontend Query Strategy
+
+**Per-session analytics** (Dashboard AI, MCP, Traffic, Files views): The frontend runs SQL directly via `queryDb(sql)` against the active session's info.db. SQL constants are centralized in `frontend/src/lib/sql.ts`. Helper functions `queryOne<T>()` and `queryAll<T>()` in `api.ts` convert columnar results to typed objects.
+
+**Cross-session analytics** (Dashboard global stats, session history): Uses dedicated Tauri commands that query main.db through the `SessionIndex` API. These return fully typed responses.
+
+### Polling Patterns
+
+| View | Poll Interval | Data Source |
+|------|---------------|-------------|
+| Traffic (network) | 2s | `queryDb` (NET_STATS_SQL, TOP_DOMAINS_SQL, etc.) + `netEvents()` |
+| MCP | 2s | `queryDb` (MCP_STATS_SQL, MCP_BY_SERVER_SQL) + `getMcpCalls()` |
+| AI Models | one-shot on mount | `queryDb` (PROVIDER_USAGE_SQL, MODEL_STATS_SQL) + `getTraces()` |
+| Dashboard | one-shot on mount | `getGlobalStats()`, `getTopProviders()`, `getSessionHistory()` |
+| Files | 2s | `getFileEvents()` + `queryDb` (FILE_STATS_SQL) |
+
 ## Development Guidelines
 
 When extending the Rust backend or guest agents, adhere to the following performance and concurrency guidelines to ensure system stability under heavy load:

@@ -24,8 +24,12 @@ pub const VSOCK_PORT_CONTROL: u32 = 5000;
 pub const VSOCK_PORT_TERMINAL: u32 = 5001;
 /// vsock port for SNI proxy (HTTPS/HTTP traffic from guest).
 pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
+/// vsock port for MCP gateway (MCP tool calls from guest).
+pub const VSOCK_PORT_MCP_GATEWAY: u32 = 5003;
 /// vsock port for AI audit gateway (LLM API traffic from guest).
 pub const VSOCK_PORT_AI_GATEWAY: u32 = 5004;
+/// vsock port for filesystem event watcher (inotify telemetry from guest).
+pub const VSOCK_PORT_FS_WATCH: u32 = 5005;
 
 // ---------------------------------------------------------------------------
 // Output coalescing buffer

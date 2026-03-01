@@ -837,50 +837,54 @@ async fn setup_vsock(
     let _keep_control = control;
 
     // Accept MITM proxy + fs-watch + MCP gateway connections indefinitely.
-    if let Some(config) = mitm_config {
-        info!("vsock: listening for proxy connections on ports 5002/5003/5005");
-        loop {
-            match vsock_manager.accept().await {
-                Some(conn) if conn.port == VSOCK_PORT_SNI_PROXY => {
+    info!("vsock: listening for proxy connections on ports 5002/5003/5005");
+    loop {
+        match vsock_manager.accept().await {
+            Some(conn) if conn.port == VSOCK_PORT_SNI_PROXY => {
+                if let Some(ref config) = mitm_config {
                     let fd = conn.fd;
-                    let config = Arc::clone(&config);
+                    let config = Arc::clone(config);
                     tokio::spawn(async move {
                         let _conn = conn; // keep VsockConnection alive
                         mitm_proxy::handle_connection(fd, config).await;
                     });
+                } else {
+                    warn!("vsock: SNI proxy connection rejected (no config)");
                 }
-                Some(conn) if conn.port == VSOCK_PORT_FS_WATCH => {
-                    info!("vsock: fs-watch connected (fd={})", conn.fd);
+            }
+            Some(conn) if conn.port == VSOCK_PORT_FS_WATCH => {
+                info!("vsock: fs-watch connected (fd={})", conn.fd);
+                if let Some(ref config) = mitm_config {
                     let db = Arc::clone(&config.db);
                     let fd = conn.fd;
                     tokio::spawn(async move {
                         let _conn = conn;
                         handle_fs_watch(fd, db).await;
                     });
-                }
-                Some(conn) if conn.port == VSOCK_PORT_MCP_GATEWAY => {
-                    if let Some(ref mcp) = mcp_config {
-                        let fd = conn.fd;
-                        let mcp = Arc::clone(mcp);
-                        tokio::spawn(async move {
-                            let _conn = conn;
-                            gateway::serve_mcp_session(fd, mcp).await;
-                        });
-                    }
-                }
-                Some(conn) => {
-                    warn!(port = conn.port, "vsock: unexpected port after setup, ignoring");
-                }
-                None => {
-                    info!("vsock: manager channel closed, stopping accept loop");
-                    break;
+                } else {
+                    warn!("vsock: fs-watch connection rejected (no db config)");
                 }
             }
+            Some(conn) if conn.port == VSOCK_PORT_MCP_GATEWAY => {
+                if let Some(ref mcp) = mcp_config {
+                    let fd = conn.fd;
+                    let mcp = Arc::clone(mcp);
+                    tokio::spawn(async move {
+                        let _conn = conn;
+                        gateway::serve_mcp_session(fd, mcp).await;
+                    });
+                } else {
+                    warn!("vsock: MCP connection rejected (no config)");
+                }
+            }
+            Some(conn) => {
+                warn!(port = conn.port, "vsock: unexpected port after setup, ignoring");
+            }
+            None => {
+                info!("vsock: manager channel closed, stopping accept loop");
+                break;
+            }
         }
-    } else {
-        warn!("vsock: no network state, MITM proxy disabled");
-        // Wait forever (connections are long-lived).
-        std::future::pending::<()>().await;
     }
 }
 
@@ -890,6 +894,7 @@ const CLI_TIMEOUT: Duration = Duration::from_secs(120);
 /// and write FileEvents to the session DB.
 async fn handle_fs_watch(fd: RawFd, db: Arc<DbWriter>) {
     use capsem_logger::{FileAction, FileEvent, WriteOp};
+    use std::os::unix::io::{FromRawFd, IntoRawFd};
     use std::time::SystemTime;
     use tokio::io::AsyncReadExt;
 
@@ -900,12 +905,25 @@ async fn handle_fs_watch(fd: RawFd, db: Arc<DbWriter>) {
             return;
         }
     };
-    let mut file = tokio::fs::File::from_std(std_file);
+    
+    let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(std_file.into_raw_fd()) };
+    if let Err(e) = std_stream.set_nonblocking(true) {
+        warn!("fs-watch: failed to set nonblocking: {e}");
+        return;
+    }
+    
+    let mut stream = match tokio::net::UnixStream::from_std(std_stream) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("fs-watch: failed to create async stream: {e}");
+            return;
+        }
+    };
 
     info!("fs-watch: handler started");
     loop {
         let mut len_buf = [0u8; 4];
-        match file.read_exact(&mut len_buf).await {
+        match stream.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 info!("fs-watch: connection closed");
@@ -922,7 +940,7 @@ async fn handle_fs_watch(fd: RawFd, db: Arc<DbWriter>) {
             break;
         }
         let mut payload = vec![0u8; len];
-        if let Err(e) = file.read_exact(&mut payload).await {
+        if let Err(e) = stream.read_exact(&mut payload).await {
             warn!("fs-watch: payload read error: {e}");
             break;
         }
@@ -1866,14 +1884,11 @@ fn main() {
             commands::update_setting,
             commands::get_session_info,
             commands::get_session_history,
-            commands::get_session_stats,
             commands::get_model_calls,
             commands::get_traces,
             commands::get_trace_detail,
             commands::get_mcp_calls,
-            commands::get_mcp_stats,
             commands::get_file_events,
-            commands::get_file_stats,
             commands::query_db,
             commands::get_global_stats,
             commands::get_top_providers,

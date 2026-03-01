@@ -7,16 +7,21 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isMock, mockApi } from './mock';
 import type {
+  FileEvent,
+  GlobalStats,
   GuestConfigResponse,
+  McpCall,
+  McpToolSummary,
   ModelCallResponse,
   NetEvent,
   NetworkPolicyResponse,
+  ProviderSummary,
   QueryResult,
   ResolvedSetting,
   SessionInfo,
   SessionRecord,
-  SessionStatsResponse,
   SettingValue,
+  ToolSummary,
   TraceDetail,
   TraceSummary,
   VmStateResponse,
@@ -109,11 +114,6 @@ export function getSessionHistory(limit?: number): Promise<SessionRecord[]> {
   return tauriInvoke<SessionRecord[]>('get_session_history', { limit: limit ?? 50 });
 }
 
-export function getSessionStats(): Promise<SessionStatsResponse> {
-  if (isMock) return mockApi.getSessionStats();
-  return tauriInvoke<SessionStatsResponse>('get_session_stats');
-}
-
 export function getModelCalls(limit?: number, search?: string): Promise<ModelCallResponse[]> {
   if (isMock) return mockApi.getModelCalls(limit, search);
   return tauriInvoke<ModelCallResponse[]>('get_model_calls', { limit: limit ?? 50, search: search ?? null });
@@ -129,10 +129,63 @@ export function getTraceDetail(traceId: string): Promise<TraceDetail> {
   return tauriInvoke<TraceDetail>('get_trace_detail', { traceId });
 }
 
+export function getFileEvents(limit?: number, search?: string): Promise<FileEvent[]> {
+  if (isMock) return mockApi.getFileEvents(limit, search);
+  return tauriInvoke<FileEvent[]>('get_file_events', { limit: limit ?? 200, search: search ?? null });
+}
+
+export function getMcpCalls(limit?: number, search?: string): Promise<McpCall[]> {
+  if (isMock) return mockApi.getMcpCalls(limit, search);
+  return tauriInvoke<McpCall[]>('get_mcp_calls', { limit: limit ?? 50, search: search ?? null });
+}
+
+export function getGlobalStats(): Promise<GlobalStats> {
+  if (isMock) return mockApi.getGlobalStats();
+  return tauriInvoke<GlobalStats>('get_global_stats');
+}
+
+export function getTopProviders(limit?: number): Promise<ProviderSummary[]> {
+  if (isMock) return mockApi.getTopProviders(limit);
+  return tauriInvoke<ProviderSummary[]>('get_top_providers', { limit: limit ?? 10 });
+}
+
+export function getTopTools(limit?: number): Promise<ToolSummary[]> {
+  if (isMock) return mockApi.getTopTools(limit);
+  return tauriInvoke<ToolSummary[]>('get_top_tools', { limit: limit ?? 10 });
+}
+
+export function getTopMcpTools(limit?: number): Promise<McpToolSummary[]> {
+  if (isMock) return mockApi.getTopMcpTools(limit);
+  return tauriInvoke<McpToolSummary[]>('get_top_mcp_tools', { limit: limit ?? 10 });
+}
+
 export async function queryDb(sql: string): Promise<QueryResult> {
   if (isMock) return mockApi.queryDb(sql);
   const raw = await tauriInvoke<string>('query_db', { sql });
   return JSON.parse(raw) as QueryResult;
+}
+
+/** Run SQL and return the first row as a typed object (or null). */
+export async function queryOne<T>(sql: string): Promise<T | null> {
+  const qr = await queryDb(sql);
+  if (qr.rows.length === 0) return null;
+  const obj: Record<string, unknown> = {};
+  for (let i = 0; i < qr.columns.length; i++) {
+    obj[qr.columns[i]] = qr.rows[0][i];
+  }
+  return obj as T;
+}
+
+/** Run SQL and return all rows as typed objects. */
+export async function queryAll<T>(sql: string): Promise<T[]> {
+  const qr = await queryDb(sql);
+  return qr.rows.map((row) => {
+    const obj: Record<string, unknown> = {};
+    for (let i = 0; i < qr.columns.length; i++) {
+      obj[qr.columns[i]] = row[i];
+    }
+    return obj as T;
+  });
 }
 
 // ---------------------------------------------------------------------------

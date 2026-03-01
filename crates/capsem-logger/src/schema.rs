@@ -49,7 +49,8 @@ pub const CREATE_SCHEMA: &str = "
         duration_ms INTEGER DEFAULT 0,
         response_bytes INTEGER DEFAULT 0,
         estimated_cost_usd REAL DEFAULT 0,
-        trace_id TEXT
+        trace_id TEXT,
+        usage_details TEXT
     );
 
     CREATE TABLE IF NOT EXISTS tool_calls (
@@ -81,6 +82,39 @@ pub const CREATE_SCHEMA: &str = "
         ON tool_responses(model_call_id);
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
+
+    CREATE TABLE IF NOT EXISTS mcp_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        server_name TEXT NOT NULL,
+        method TEXT NOT NULL,
+        tool_name TEXT,
+        request_id TEXT,
+        request_preview TEXT,
+        response_preview TEXT,
+        decision TEXT NOT NULL,
+        duration_ms INTEGER DEFAULT 0,
+        error_message TEXT,
+        process_name TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mcp_calls_server
+        ON mcp_calls(server_name);
+    CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp
+        ON mcp_calls(timestamp);
+
+    CREATE TABLE IF NOT EXISTS fs_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        action TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp
+        ON fs_events(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_fs_events_path
+        ON fs_events(path);
 ";
 
 /// Create all tables and indexes on the given connection.
@@ -96,13 +130,47 @@ pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Migrate existing databases to add trace_id column.
-/// Idempotent: safe to call on databases that already have the column.
+/// Migrate existing databases to add new columns/tables.
+/// Idempotent: safe to call on databases that already have the changes.
 pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN trace_id TEXT", []);
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id ON model_calls(trace_id)",
         [],
+    );
+    // Add mcp_calls table if not present (for DBs created before this feature).
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS mcp_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            server_name TEXT NOT NULL,
+            method TEXT NOT NULL,
+            tool_name TEXT,
+            request_id TEXT,
+            request_preview TEXT,
+            response_preview TEXT,
+            decision TEXT NOT NULL,
+            duration_ms INTEGER DEFAULT 0,
+            error_message TEXT,
+            process_name TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_mcp_calls_server ON mcp_calls(server_name);
+        CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp ON mcp_calls(timestamp);",
+    );
+    // Replace cache_read_tokens with usage_details TEXT column.
+    // SQLite doesn't support DROP COLUMN before 3.35, so just add the new one.
+    let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN usage_details TEXT", []);
+    // Add fs_events table if not present (for DBs created before this feature).
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS fs_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            action TEXT NOT NULL,
+            path TEXT NOT NULL,
+            size INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp ON fs_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_fs_events_path ON fs_events(path);",
     );
 }
 
@@ -158,6 +226,71 @@ mod tests {
             )
             .unwrap();
         assert_eq!(trace_id, "trace_abc");
+    }
+
+    #[test]
+    fn migrate_mcp_calls_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        migrate(&conn);
+        // Verify mcp_calls table exists.
+        conn.execute(
+            "INSERT INTO mcp_calls (timestamp, server_name, method, decision)
+             VALUES ('2024-01-01T00:00:00Z', 'github', 'tools/list', 'allowed')",
+            [],
+        )
+        .unwrap();
+        let server: String = conn
+            .query_row(
+                "SELECT server_name FROM mcp_calls WHERE server_name = 'github'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(server, "github");
+    }
+
+    #[test]
+    fn create_tables_includes_fs_events() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO fs_events (timestamp, action, path, size)
+             VALUES ('2026-01-01T00:00:00Z', 'created', 'project/app.js', 1234)",
+            [],
+        )
+        .unwrap();
+        let action: String = conn
+            .query_row(
+                "SELECT action FROM fs_events WHERE path = 'project/app.js'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(action, "created");
+    }
+
+    #[test]
+    fn migrate_fs_events_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        migrate(&conn);
+        conn.execute(
+            "INSERT INTO fs_events (timestamp, action, path)
+             VALUES ('2026-01-01T00:00:00Z', 'deleted', 'project/old.txt')",
+            [],
+        )
+        .unwrap();
+        let path: String = conn
+            .query_row(
+                "SELECT path FROM fs_events WHERE action = 'deleted'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(path, "project/old.txt");
     }
 
     /// Writer pragmas (WAL + synchronous) must only be applied to read-write

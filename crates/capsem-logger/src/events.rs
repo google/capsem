@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,47 @@ fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Syste
     Ok(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs_f64(secs))
 }
 
+/// The type of filesystem action observed via inotify.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileAction {
+    Created,
+    Modified,
+    Deleted,
+}
+
+impl FileAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FileAction::Created => "created",
+            FileAction::Modified => "modified",
+            FileAction::Deleted => "deleted",
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Self {
+        match s {
+            "created" => FileAction::Created,
+            "modified" => FileAction::Modified,
+            "deleted" => FileAction::Deleted,
+            other => {
+                tracing::warn!(value = other, "unknown file action string in DB, treating as Modified");
+                FileAction::Modified
+            }
+        }
+    }
+}
+
+/// A single filesystem event from the in-VM inotify watcher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEvent {
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    pub timestamp: SystemTime,
+    pub action: FileAction,
+    pub path: String,
+    pub size: Option<u64>,
+}
+
 /// A single network connection event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetEvent {
@@ -87,6 +129,24 @@ pub struct ToolResponseEntry {
     pub is_error: bool,
 }
 
+/// A single MCP tool call event (one row per tools/call or tools/list request).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpCall {
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    pub timestamp: SystemTime,
+    pub server_name: String,
+    pub method: String,
+    pub tool_name: Option<String>,
+    pub request_id: Option<String>,
+    pub request_preview: Option<String>,
+    pub response_preview: Option<String>,
+    /// "allowed", "warned", "denied", "error"
+    pub decision: String,
+    pub duration_ms: u64,
+    pub error_message: Option<String>,
+    pub process_name: Option<String>,
+}
+
 /// A denormalized AI model API call (one row per request+response cycle),
 /// with nested tool data inserted into separate tables.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +174,7 @@ pub struct ModelCall {
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    pub usage_details: BTreeMap<String, u64>,
     pub duration_ms: u64,
     pub response_bytes: u64,
     // Cost estimate
@@ -170,6 +231,19 @@ mod tests {
     fn decision_unknown_str() {
         assert_eq!(Decision::parse_str("bogus"), Decision::Error);
         assert_eq!(Decision::parse_str(""), Decision::Error);
+    }
+
+    #[test]
+    fn file_action_roundtrip() {
+        for action in [FileAction::Created, FileAction::Modified, FileAction::Deleted] {
+            assert_eq!(FileAction::parse_str(action.as_str()), action);
+        }
+    }
+
+    #[test]
+    fn file_action_unknown_str() {
+        assert_eq!(FileAction::parse_str("bogus"), FileAction::Modified);
+        assert_eq!(FileAction::parse_str(""), FileAction::Modified);
     }
 
     /// "error" must be an explicit match arm, not caught by the _ wildcard.

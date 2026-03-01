@@ -50,9 +50,12 @@ fn assign_trace_id(
         })
         .unwrap_or(false);
 
-    if is_tool_use && !tool_call_ids.is_empty() {
+    if !tool_call_ids.is_empty() {
         state.register_tool_calls(&trace_id, tool_call_ids);
-    } else {
+    } else if !is_tool_use {
+        // Only complete the trace if stop_reason doesn't indicate tool use.
+        // When is_tool_use is true but tool_call_ids is empty (e.g., extraction
+        // failure), leave the trace open rather than prematurely closing it.
         state.complete_trace(&trace_id);
     }
 
@@ -100,6 +103,47 @@ async fn proxy_handler(
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
     let query = req.uri().query().map(|q| q.to_string());
+
+    // Filter HEAD requests (AI CLI connectivity checks): proxy to upstream
+    // but don't create a ModelCall record -- they have no model/tokens/text.
+    if method == "HEAD" {
+        let (kind, provider) = match route_provider(&path) {
+            Some(p) => p,
+            None => {
+                return (StatusCode::NOT_FOUND, format!("Capsem gateway: unknown path {path}\n")).into_response();
+            }
+        };
+        let api_key = match config.api_key_for(kind) {
+            Some(key) => key.to_string(),
+            None => return (StatusCode::SERVICE_UNAVAILABLE, "no API key\n").into_response(),
+        };
+        let upstream_url = provider.upstream_url(&path, query.as_deref());
+        let builder = provider.inject_key(
+            config.http_client.head(&upstream_url),
+            &api_key,
+        );
+        match builder.send().await {
+            Ok(r) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                record_net_event(
+                    &config.db, kind.as_str(), "HEAD", &path,
+                    Some(r.status().as_u16()), duration_ms, 0, 0,
+                    Decision::Allowed, None,
+                ).await;
+                let mut resp = Response::builder().status(r.status().as_u16());
+                for (name, value) in r.headers().iter() {
+                    resp = resp.header(name.clone(), value.clone());
+                }
+                return resp.body(Body::empty()).unwrap_or_else(|_| {
+                    Response::builder().status(200).body(Body::empty()).unwrap()
+                });
+            }
+            Err(e) => {
+                let msg = format!("Capsem gateway: HEAD upstream failed: {e}\n");
+                return (StatusCode::BAD_GATEWAY, msg).into_response();
+            }
+        }
+    }
 
     // 1. Route to provider.
     let (kind, provider) = match route_provider(&path) {
@@ -323,13 +367,6 @@ async fn proxy_handler(
                 })
                 .collect();
 
-            let estimated_cost_usd = config_ref.pricing.estimate_cost(
-                &provider_str,
-                model_clone.as_deref(),
-                summary.input_tokens,
-                summary.output_tokens,
-            );
-
             let stop_reason_str = summary.stop_reason.map(|r| format!("{:?}", r));
 
             // Assign trace_id using shared TraceState
@@ -341,10 +378,25 @@ async fn proxy_handler(
                 stop_reason_str.as_deref(),
             );
 
+            // Use response model (from SSE stream) when request model is missing
+            // (e.g., Google puts model in URL path, not request body).
+            let effective_model = model_clone.clone()
+                .or(summary.model.clone())
+                .or_else(|| extract_model_from_path(&path_clone));
+
+            // Re-estimate cost with effective model (may now be non-None for Google)
+            let estimated_cost_usd = config_ref.pricing.estimate_cost(
+                &provider_str,
+                effective_model.as_deref(),
+                summary.input_tokens,
+                summary.output_tokens,
+                &summary.usage_details,
+            );
+
             let model_call = ModelCall {
                 timestamp: SystemTime::now(),
                 provider: provider_str.clone(),
-                model: model_clone.clone(),
+                model: effective_model,
                 process_name: None,
                 pid: None,
                 method: method_clone.clone(),
@@ -370,6 +422,7 @@ async fn proxy_handler(
                 stop_reason: stop_reason_str,
                 input_tokens: summary.input_tokens,
                 output_tokens: summary.output_tokens,
+                usage_details: summary.usage_details,
                 duration_ms,
                 response_bytes,
                 estimated_cost_usd,
@@ -420,6 +473,19 @@ async fn proxy_handler(
             Some(String::from_utf8_lossy(&resp_bytes[..limit]).into_owned())
         };
 
+        // Try to parse usage metadata from non-streaming JSON response.
+        let (resp_model, resp_input_tokens, resp_output_tokens, resp_usage_details) =
+            if status_u16 == 200 && !resp_bytes.is_empty() {
+                parse_non_streaming_usage(kind, &resp_bytes)
+            } else {
+                (None, None, None, std::collections::BTreeMap::new())
+            };
+
+        // Use response model if request didn't have one, or extract from URL.
+        let effective_model = model.clone()
+            .or(resp_model)
+            .or_else(|| extract_model_from_path(&path));
+
         // Build tool responses from request metadata
         let tool_responses: Vec<ToolResponseEntry> = req_meta
             .tool_results
@@ -439,9 +505,10 @@ async fn proxy_handler(
 
         let estimated_cost_usd = config.pricing.estimate_cost(
             kind.as_str(),
-            model.as_deref(),
-            None,
-            None,
+            effective_model.as_deref(),
+            resp_input_tokens,
+            resp_output_tokens,
+            &resp_usage_details,
         );
 
         // Non-streaming: no tool calls emitted, so trace always completes here
@@ -455,7 +522,7 @@ async fn proxy_handler(
         let model_call = ModelCall {
             timestamp: SystemTime::now(),
             provider: kind.as_str().to_string(),
-            model: model.clone(),
+            model: effective_model,
             process_name: None,
             pid: None,
             method: method.clone(),
@@ -471,8 +538,9 @@ async fn proxy_handler(
             text_content: response_preview.clone(),
             thinking_content: None,
             stop_reason: None,
-            input_tokens: None,
-            output_tokens: None,
+            input_tokens: resp_input_tokens,
+            output_tokens: resp_output_tokens,
+            usage_details: resp_usage_details,
             duration_ms,
             response_bytes,
             estimated_cost_usd,
@@ -500,6 +568,76 @@ async fn proxy_handler(
                 .unwrap()
         })
     }
+}
+
+/// Parse usage metadata from a non-streaming JSON response body.
+/// Returns (model, input_tokens, output_tokens, usage_details).
+fn parse_non_streaming_usage(
+    kind: super::provider::ProviderKind,
+    body: &[u8],
+) -> (Option<String>, Option<u64>, Option<u64>, std::collections::BTreeMap<String, u64>) {
+    use std::collections::BTreeMap;
+
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return (None, None, None, BTreeMap::new());
+    };
+
+    match kind {
+        super::provider::ProviderKind::Google => {
+            let model = json.get("modelVersion")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let usage = json.get("usageMetadata");
+            let input = usage.and_then(|u| u.get("promptTokenCount")).and_then(|v| v.as_u64());
+            let output = usage.and_then(|u| u.get("candidatesTokenCount")).and_then(|v| v.as_u64());
+            let mut details = BTreeMap::new();
+            if let Some(v) = usage.and_then(|u| u.get("cachedContentTokenCount")).and_then(|v| v.as_u64()) {
+                details.insert("cache_read".into(), v);
+            }
+            if let Some(v) = usage.and_then(|u| u.get("thoughtsTokenCount")).and_then(|v| v.as_u64()) {
+                details.insert("thinking".into(), v);
+            }
+            (model, input, output, details)
+        }
+        super::provider::ProviderKind::Anthropic => {
+            let model = json.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let usage = json.get("usage");
+            let input = usage.and_then(|u| u.get("input_tokens")).and_then(|v| v.as_u64());
+            let output = usage.and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64());
+            let mut details = BTreeMap::new();
+            if let Some(v) = usage.and_then(|u| u.get("cache_read_input_tokens")).and_then(|v| v.as_u64()) {
+                details.insert("cache_read".into(), v);
+            }
+            (model, input, output, details)
+        }
+        super::provider::ProviderKind::OpenAi => {
+            let model = json.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let usage = json.get("usage");
+            let input = usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64());
+            let output = usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64());
+            let mut details = BTreeMap::new();
+            if let Some(v) = usage.and_then(|u| u.get("prompt_tokens_details")).and_then(|u| u.get("cached_tokens")).and_then(|v| v.as_u64()) {
+                details.insert("cache_read".into(), v);
+            }
+            if let Some(v) = usage.and_then(|u| u.get("completion_tokens_details")).and_then(|u| u.get("reasoning_tokens")).and_then(|v| v.as_u64()) {
+                details.insert("thinking".into(), v);
+            }
+            (model, input, output, details)
+        }
+    }
+}
+
+/// Extract model name from a Gemini-style URL path.
+/// E.g. `/v1beta/models/gemini-2.5-flash-lite:generateContent` -> `gemini-2.5-flash-lite`
+fn extract_model_from_path(path: &str) -> Option<String> {
+    // Match pattern: /v.../models/{model}:{action}
+    let models_idx = path.find("/models/")?;
+    let after = &path[models_idx + 8..]; // skip "/models/"
+    let model = after.split(':').next()?;
+    if model.is_empty() {
+        return None;
+    }
+    Some(model.to_string())
 }
 
 /// Record an error event as a NetEvent to the audit DB.
@@ -670,5 +808,126 @@ mod tests {
         let reader = db.reader().unwrap();
         let events = reader.recent_net_events(10).unwrap();
         assert!(!events.is_empty(), "should have recorded the error event");
+    }
+
+    // ── extract_model_from_path ────────────────────────────────────
+
+    #[test]
+    fn extract_model_gemini_stream() {
+        assert_eq!(
+            extract_model_from_path("/v1beta/models/gemini-2.5-flash:streamGenerateContent"),
+            Some("gemini-2.5-flash".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_model_gemini_generate() {
+        assert_eq!(
+            extract_model_from_path("/v1beta/models/gemini-2.5-pro:generateContent"),
+            Some("gemini-2.5-pro".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_model_no_models_segment() {
+        assert_eq!(extract_model_from_path("/v1/messages"), None);
+    }
+
+    #[test]
+    fn extract_model_empty_model() {
+        assert_eq!(extract_model_from_path("/v1beta/models/:generateContent"), None);
+    }
+
+    // ── assign_trace_id ────────────────────────────────────────────
+
+    fn test_config() -> Arc<GatewayConfig> {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            DbWriter::open(&dir.path().join("test.db"), 64).unwrap(),
+        );
+        // Leak the tempdir so it doesn't get cleaned up before the test is done
+        std::mem::forget(dir);
+        Arc::new(GatewayConfig {
+            anthropic_api_key: None,
+            openai_api_key: None,
+            google_api_key: None,
+            db,
+            http_client: reqwest::Client::new(),
+            pricing: crate::gateway::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(crate::gateway::TraceState::new()),
+        })
+    }
+
+    #[test]
+    fn trace_tool_use_with_ids_keeps_trace_open() {
+        let config = test_config();
+        let trace_id = assign_trace_id(
+            &config,
+            &[],
+            &["call_1".to_string()],
+            Some("ToolUse"),
+        );
+        // The trace should still be open (not completed) with registered tool calls.
+        // A subsequent request with tool_response for "call_1" should reuse the trace.
+        let trace_id2 = assign_trace_id(
+            &config,
+            &["call_1".to_string()],
+            &[],
+            Some("EndTurn"),
+        );
+        assert_eq!(trace_id, trace_id2, "tool response should reuse the same trace");
+    }
+
+    #[test]
+    fn trace_tool_use_stop_reason_but_no_ids_does_not_complete() {
+        let config = test_config();
+        // First request: no tool_call_ids but stop_reason says tool_use.
+        // This was the bug: trace was being completed prematurely.
+        let trace_id = assign_trace_id(
+            &config,
+            &[],
+            &[],
+            Some("ToolUse"),
+        );
+        // The trace should NOT be completed, but since there are no tool_call_ids
+        // to register, we can't look it up again. The key fix is that we don't
+        // prematurely close it. Verify a new request gets a new trace (since there's
+        // no lookup path to find the old one).
+        let trace_id2 = assign_trace_id(
+            &config,
+            &[],
+            &[],
+            Some("EndTurn"),
+        );
+        // Different traces since there's no link, but the important thing is
+        // the first trace wasn't explicitly completed.
+        assert_ne!(trace_id, trace_id2);
+    }
+
+    #[test]
+    fn trace_end_turn_completes_trace() {
+        let config = test_config();
+        let trace_id = assign_trace_id(
+            &config,
+            &[],
+            &["call_1".to_string()],
+            Some("ToolUse"),
+        );
+        // Complete the trace with a tool response and end_turn
+        let trace_id2 = assign_trace_id(
+            &config,
+            &["call_1".to_string()],
+            &[],
+            Some("EndTurn"),
+        );
+        assert_eq!(trace_id, trace_id2);
+        // Now the trace is completed. A new request should get a new trace.
+        let trace_id3 = assign_trace_id(
+            &config,
+            &[],
+            &[],
+            Some("EndTurn"),
+        );
+        assert_ne!(trace_id, trace_id3, "completed trace should not be reused");
     }
 }

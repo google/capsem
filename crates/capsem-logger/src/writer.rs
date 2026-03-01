@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
-use crate::events::{ModelCall, NetEvent};
+use crate::events::{FileEvent, McpCall, ModelCall, NetEvent};
 use crate::schema;
 
 /// Maximum bytes stored for any preview/content field (256 KB).
@@ -32,6 +32,8 @@ fn cap_field(s: &Option<String>) -> Option<String> {
 pub enum WriteOp {
     NetEvent(NetEvent),
     ModelCall(ModelCall),
+    McpCall(McpCall),
+    FileEvent(FileEvent),
 }
 
 /// A dedicated writer thread that owns the SQLite connection.
@@ -171,6 +173,8 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
         match op {
             WriteOp::NetEvent(e) => insert_net_event(&tx, e)?,
             WriteOp::ModelCall(m) => insert_model_call(&tx, m)?,
+            WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
+            WriteOp::FileEvent(f) => insert_file_event(&tx, f)?,
         }
     }
     tx.commit()
@@ -230,9 +234,10 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
             request_bytes, request_body_preview,
             message_id, status_code, text_content, thinking_content,
             stop_reason, input_tokens, output_tokens,
-            duration_ms, response_bytes, estimated_cost_usd, trace_id
+            duration_ms, response_bytes, estimated_cost_usd, trace_id,
+            usage_details
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         params![
             timestamp,
             call.provider,
@@ -258,6 +263,7 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
             call.response_bytes as i64,
             call.estimated_cost_usd,
             call.trace_id,
+            if call.usage_details.is_empty() { None } else { Some(serde_json::to_string(&call.usage_details).unwrap_or_default()) },
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
@@ -289,5 +295,136 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
         )?;
     }
 
+    Ok(())
+}
+
+fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    conn.execute(
+        "INSERT INTO fs_events (timestamp, action, path, size)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            timestamp,
+            event.action.as_str(),
+            event.path,
+            event.size.map(|s| s as i64),
+        ],
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_field_none_returns_none() {
+        assert!(cap_field(&None).is_none());
+    }
+
+    #[test]
+    fn cap_field_short_string_unchanged() {
+        let s = Some("hello world".to_string());
+        assert_eq!(cap_field(&s).as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn cap_field_exact_limit_unchanged() {
+        let s = Some("x".repeat(MAX_FIELD_BYTES));
+        let result = cap_field(&s).unwrap();
+        assert_eq!(result.len(), MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn cap_field_over_limit_truncated() {
+        let s = Some("a".repeat(MAX_FIELD_BYTES + 100));
+        let result = cap_field(&s).unwrap();
+        assert_eq!(result.len(), MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn cap_field_utf8_boundary_safe() {
+        // Multi-byte UTF-8: each char is 4 bytes
+        let emoji = "\u{1F600}"; // 4-byte emoji
+        assert_eq!(emoji.len(), 4);
+        // Fill up to just past the limit with 4-byte chars
+        let count = MAX_FIELD_BYTES / 4 + 1; // slightly over
+        let s = Some(emoji.repeat(count));
+        let result = cap_field(&s).unwrap();
+        assert!(result.len() <= MAX_FIELD_BYTES);
+        // Truncated at a char boundary -- must be valid UTF-8
+        assert!(result.is_char_boundary(result.len()));
+        // Length should be a multiple of 4 (each emoji is 4 bytes)
+        assert_eq!(result.len() % 4, 0);
+    }
+
+    #[test]
+    fn cap_field_two_byte_utf8_boundary() {
+        // 2-byte char: e.g. 'a' with accent
+        let ch = "\u{00E9}"; // e-acute, 2 bytes
+        assert_eq!(ch.len(), 2);
+        let count = MAX_FIELD_BYTES / 2 + 1;
+        let s = Some(ch.repeat(count));
+        let result = cap_field(&s).unwrap();
+        assert!(result.len() <= MAX_FIELD_BYTES);
+        assert_eq!(result.len() % 2, 0);
+    }
+
+    #[test]
+    fn cap_field_three_byte_utf8_boundary() {
+        // 3-byte char: CJK character
+        let ch = "\u{4E16}"; // Chinese char, 3 bytes
+        assert_eq!(ch.len(), 3);
+        let count = MAX_FIELD_BYTES / 3 + 1;
+        let s = Some(ch.repeat(count));
+        let result = cap_field(&s).unwrap();
+        assert!(result.len() <= MAX_FIELD_BYTES);
+        assert_eq!(result.len() % 3, 0);
+    }
+
+    #[test]
+    fn cap_field_empty_string_unchanged() {
+        let s = Some(String::new());
+        assert_eq!(cap_field(&s).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn cap_field_mixed_ascii_and_multibyte() {
+        // Fill most of the buffer with ASCII, end with a 4-byte char that straddles the limit
+        let mut s = "x".repeat(MAX_FIELD_BYTES - 1);
+        s.push('\u{1F600}'); // 4 bytes, total = MAX_FIELD_BYTES + 3
+        let result = cap_field(&Some(s)).unwrap();
+        assert!(result.len() <= MAX_FIELD_BYTES);
+        // Should have truncated to MAX_FIELD_BYTES - 1 (dropping the emoji)
+        assert_eq!(result.len(), MAX_FIELD_BYTES - 1);
+        assert!(result.chars().all(|c| c == 'x'));
+    }
+}
+
+fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(call.timestamp).to_string();
+    let req_preview = cap_field(&call.request_preview);
+    let resp_preview = cap_field(&call.response_preview);
+    conn.execute(
+        "INSERT INTO mcp_calls (
+            timestamp, server_name, method, tool_name, request_id,
+            request_preview, response_preview, decision,
+            duration_ms, error_message, process_name
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            timestamp,
+            call.server_name,
+            call.method,
+            call.tool_name,
+            call.request_id,
+            req_preview,
+            resp_preview,
+            call.decision,
+            call.duration_ms as i64,
+            call.error_message,
+            call.process_name,
+        ],
+    )?;
     Ok(())
 }

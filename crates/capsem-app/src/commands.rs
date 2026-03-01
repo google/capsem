@@ -16,11 +16,13 @@ use std::io::Write;
 use std::sync::Arc;
 
 use capsem_core::net::policy_config::{self, ResolvedSetting, SettingEntry, SettingValue};
-use capsem_core::session::{self, SessionRecord};
+use capsem_core::session::{
+    self, GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary,
+};
 use capsem_core::{HostToGuest, encode_host_msg, validate_host_msg};
 use capsem_logger::{
-    validate_select_only, DomainCount, ModelCall, NetEvent, ProviderTokenUsage, SessionStats,
-    TimeBucket, ToolUsageCount, TraceDetail, TraceSummary,
+    validate_select_only, FileEvent, McpCall, ModelCall, NetEvent, SessionStats, TraceDetail,
+    TraceSummary,
 };
 use serde::Serialize;
 use tauri::State;
@@ -263,6 +265,7 @@ pub async fn update_setting(id: String, value: SettingValue, app_handle: tauri::
         // Hot-reload: rebuild the network policy from disk and swap it into the
         // running MITM proxy. New connections will use the updated policy.
         let new_policy = std::sync::Arc::new(policy_config::load_merged_network_policy());
+        let new_domain_policy = std::sync::Arc::new(policy_config::load_merged_domain_policy());
         let state = app_handle.state::<AppState>();
         if let Ok(vm_id) = active_vm_id(&state) {
             let vms = state.vms.lock().unwrap();
@@ -270,6 +273,11 @@ pub async fn update_setting(id: String, value: SettingValue, app_handle: tauri::
                 if let Some(ns) = &instance.net_state {
                     *ns.policy.write().unwrap() = new_policy;
                     tracing::info!("hot-reloaded network policy");
+                }
+                // Hot-reload MCP domain policy.
+                if let Some(mcp) = &instance.mcp_state {
+                    *mcp.domain_policy.write().unwrap() = new_domain_policy;
+                    tracing::info!("hot-reloaded MCP domain policy");
                 }
             }
         }
@@ -337,6 +345,7 @@ pub struct SessionInfoResponse {
     pub model_call_count: u64,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_usage_details: std::collections::BTreeMap<String, u64>,
     pub total_tool_calls: u64,
     pub total_estimated_cost_usd: f64,
 }
@@ -403,6 +412,7 @@ pub async fn get_session_info(state: State<'_, AppState>) -> Result<SessionInfoR
         model_call_count: stats.as_ref().map(|s| s.model_call_count).unwrap_or(0),
         total_input_tokens: stats.as_ref().map(|s| s.total_input_tokens).unwrap_or(0),
         total_output_tokens: stats.as_ref().map(|s| s.total_output_tokens).unwrap_or(0),
+        total_usage_details: stats.as_ref().map(|s| s.total_usage_details.clone()).unwrap_or_default(),
         total_tool_calls: stats.as_ref().map(|s| s.total_tool_calls).unwrap_or(0),
         total_estimated_cost_usd: stats.as_ref().map(|s| s.total_estimated_cost_usd).unwrap_or(0.0),
     })
@@ -420,50 +430,6 @@ pub async fn get_session_history(
         let idx = state.session_index.lock().map_err(|e| format!("session index lock: {e}"))?;
         idx.recent(limit.unwrap_or(50))
             .map_err(|e| format!("session index query: {e}"))
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))?
-}
-
-// ---------------------------------------------------------------------------
-// Session stats + model calls
-// ---------------------------------------------------------------------------
-
-/// Full session statistics response (SQL-driven aggregates).
-#[derive(Serialize)]
-pub struct SessionStatsResponse {
-    pub stats: SessionStats,
-    pub top_domains: Vec<DomainCount>,
-    pub time_buckets: Vec<TimeBucket>,
-    pub provider_usage: Vec<ProviderTokenUsage>,
-    pub tool_usage: Vec<ToolUsageCount>,
-}
-
-/// Returns aggregate session stats for the active VM. Single spawn_blocking call.
-#[tauri::command]
-pub async fn get_session_stats(state: State<'_, AppState>) -> Result<SessionStatsResponse, String> {
-    let vm_id = active_vm_id(&state)?;
-    let db = {
-        let vms = state.vms.lock().unwrap();
-        let instance = vms.get(&vm_id).ok_or("no VM running")?;
-        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
-        Arc::clone(&net_state.db)
-    };
-
-    tokio::task::spawn_blocking(move || {
-        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
-        let stats = reader.session_stats().map_err(|e| format!("session_stats: {e}"))?;
-        let top_domains = reader.top_domains(10).map_err(|e| format!("top_domains: {e}"))?;
-        let time_buckets = reader.net_events_over_time(1, 6).map_err(|e| format!("time_buckets: {e}"))?;
-        let provider_usage = reader.token_usage_by_provider().map_err(|e| format!("provider_usage: {e}"))?;
-        let tool_usage = reader.tool_usage_frequency(20).map_err(|e| format!("tool_usage: {e}"))?;
-        Ok(SessionStatsResponse {
-            stats,
-            top_domains,
-            time_buckets,
-            provider_usage,
-            tool_usage,
-        })
     })
     .await
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
@@ -555,6 +521,136 @@ pub async fn get_trace_detail(
         reader
             .trace_detail(&trace_id)
             .map_err(|e| format!("trace_detail: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+// ---------------------------------------------------------------------------
+// MCP calls
+// ---------------------------------------------------------------------------
+
+/// Returns recent MCP calls with optional search.
+#[tauri::command]
+pub async fn get_mcp_calls(
+    limit: Option<usize>,
+    search: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<McpCall>, String> {
+    let vm_id = active_vm_id(&state)?;
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        let lim = limit.unwrap_or(50);
+        match search.as_deref().filter(|s| !s.is_empty()) {
+            Some(q) => reader.search_mcp_calls(q, lim).map_err(|e| format!("db query: {e}")),
+            None => reader.recent_mcp_calls(lim).map_err(|e| format!("db query: {e}")),
+        }
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+// ---------------------------------------------------------------------------
+// File events
+// ---------------------------------------------------------------------------
+
+/// Returns recent file events with optional search.
+#[tauri::command]
+pub async fn get_file_events(
+    limit: Option<usize>,
+    search: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileEvent>, String> {
+    let vm_id = active_vm_id(&state)?;
+    let db = {
+        let vms = state.vms.lock().unwrap();
+        let instance = vms.get(&vm_id).ok_or("no VM running")?;
+        let net_state = instance.net_state.as_ref().ok_or("network not initialized")?;
+        Arc::clone(&net_state.db)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let reader = db.reader().map_err(|e| format!("db reader: {e}"))?;
+        let lim = limit.unwrap_or(100);
+        match search.as_deref().filter(|s| !s.is_empty()) {
+            Some(q) => reader.search_file_events(q, lim).map_err(|e| format!("db query: {e}")),
+            None => reader.recent_file_events(lim).map_err(|e| format!("db query: {e}")),
+        }
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+// ---------------------------------------------------------------------------
+// Cross-session dashboard stats
+// ---------------------------------------------------------------------------
+
+/// Returns aggregated stats across all sessions from main.db.
+#[tauri::command]
+pub async fn get_global_stats(app_handle: tauri::AppHandle) -> Result<GlobalStats, String> {
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app_handle.state::<AppState>();
+        let idx = state.session_index.lock().map_err(|e| format!("lock: {e}"))?;
+        idx.global_stats().map_err(|e| format!("global_stats: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+/// Returns top AI providers by call count across all sessions.
+#[tauri::command]
+pub async fn get_top_providers(
+    limit: Option<usize>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<ProviderSummary>, String> {
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app_handle.state::<AppState>();
+        let idx = state.session_index.lock().map_err(|e| format!("lock: {e}"))?;
+        idx.top_providers(limit.unwrap_or(10))
+            .map_err(|e| format!("top_providers: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+/// Returns top tools by call count across all sessions.
+#[tauri::command]
+pub async fn get_top_tools(
+    limit: Option<usize>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<ToolSummary>, String> {
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app_handle.state::<AppState>();
+        let idx = state.session_index.lock().map_err(|e| format!("lock: {e}"))?;
+        idx.top_tools(limit.unwrap_or(10))
+            .map_err(|e| format!("top_tools: {e}"))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+/// Returns top MCP tools by call count across all sessions.
+#[tauri::command]
+pub async fn get_top_mcp_tools(
+    limit: Option<usize>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<McpToolSummary>, String> {
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app_handle.state::<AppState>();
+        let idx = state.session_index.lock().map_err(|e| format!("lock: {e}"))?;
+        idx.top_mcp_tools(limit.unwrap_or(10))
+            .map_err(|e| format!("top_mcp_tools: {e}"))
     })
     .await
     .map_err(|e| format!("spawn_blocking failed: {e}"))?

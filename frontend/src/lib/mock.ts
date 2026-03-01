@@ -6,13 +6,18 @@
 // those tables don't exist in the session DB.
 import initSqlJs, { type Database } from 'sql.js';
 import type {
+  FileEvent,
+  GlobalStats,
+  McpCall,
+  McpToolSummary,
   ModelCallResponse,
   NetEvent,
+  ProviderSummary,
   QueryResult,
   ResolvedSetting,
   SessionInfo,
   SessionRecord,
-  SessionStatsResponse,
+  ToolSummary,
   TraceDetail,
   TraceSummary,
   VmStateResponse,
@@ -99,7 +104,7 @@ async function mockModelCalls(_limit?: number, _search?: string): Promise<ModelC
                     messages_count, tools_count, request_bytes,
                     request_body_preview, message_id, status_code,
                     text_content, thinking_content, stop_reason,
-                    input_tokens, output_tokens, duration_ms,
+                    input_tokens, output_tokens, usage_details, duration_ms,
                     response_bytes, estimated_cost_usd, trace_id
              FROM model_calls`;
   if (_search) {
@@ -117,6 +122,9 @@ async function mockModelCalls(_limit?: number, _search?: string): Promise<ModelC
       obj[qr.columns[i]] = row[i];
     }
     obj['stream'] = obj['stream'] !== 0;
+    // Parse usage_details JSON string into object
+    const udRaw = obj['usage_details'];
+    obj['usage_details'] = (typeof udRaw === 'string' && udRaw) ? JSON.parse(udRaw) : {};
     const mcId = obj['id'] as number;
 
     // tool_calls
@@ -145,85 +153,6 @@ async function mockModelCalls(_limit?: number, _search?: string): Promise<ModelC
   });
 }
 
-async function mockSessionStats(): Promise<SessionStatsResponse> {
-  const db = await getDb();
-
-  // Net aggregates
-  const netRow = db.exec(`SELECT COUNT(*),
-      COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
-      COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
-      COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0),
-      COALESCE(SUM(bytes_sent), 0),
-      COALESCE(SUM(bytes_received), 0)
-    FROM net_events`)[0].values[0];
-
-  // Model aggregates
-  const modelRow = db.exec(`SELECT COUNT(*),
-      COALESCE(SUM(COALESCE(input_tokens, 0)), 0),
-      COALESCE(SUM(COALESCE(output_tokens, 0)), 0),
-      COALESCE(SUM(duration_ms), 0),
-      COALESCE(SUM(estimated_cost_usd), 0.0)
-    FROM model_calls`)[0].values[0];
-
-  const toolCount = db.exec('SELECT COUNT(*) FROM tool_calls')[0].values[0][0] as number;
-
-  // Top domains
-  const domainResult = await queryFixture(
-    `SELECT domain, COUNT(*) as count,
-            SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END) as allowed,
-            SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END) as denied
-     FROM net_events GROUP BY domain ORDER BY count DESC LIMIT 10`
-  );
-  const top_domains = rowsToObjects<{ domain: string; count: number; allowed: number; denied: number }>(domainResult);
-
-  // Time buckets (static -- these are from the fixture's fixed timestamps)
-  const bucketResult = await queryFixture(
-    `SELECT substr(timestamp, 1, 16) || ':00Z' as bucket_start,
-            SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END) as allowed,
-            SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END) as denied
-     FROM net_events GROUP BY bucket_start ORDER BY bucket_start`
-  );
-  const time_buckets = rowsToObjects<{ bucket_start: string; allowed: number; denied: number }>(bucketResult);
-
-  // Provider usage
-  const provResult = await queryFixture(
-    `SELECT provider, COUNT(*) as call_count,
-            COALESCE(SUM(COALESCE(input_tokens, 0)), 0) as total_input_tokens,
-            COALESCE(SUM(COALESCE(output_tokens, 0)), 0) as total_output_tokens,
-            COALESCE(SUM(duration_ms), 0) as total_duration_ms,
-            COALESCE(SUM(estimated_cost_usd), 0.0) as total_estimated_cost_usd
-     FROM model_calls GROUP BY provider ORDER BY COUNT(*) DESC`
-  );
-  const provider_usage = rowsToObjects<SessionStatsResponse['provider_usage'][0]>(provResult);
-
-  // Tool usage
-  const toolResult = await queryFixture(
-    `SELECT tool_name, COUNT(*) as count FROM tool_calls GROUP BY tool_name ORDER BY count DESC LIMIT 20`
-  );
-  const tool_usage = rowsToObjects<{ tool_name: string; count: number }>(toolResult);
-
-  return {
-    stats: {
-      net_total: netRow[0] as number,
-      net_allowed: netRow[1] as number,
-      net_denied: netRow[2] as number,
-      net_error: netRow[3] as number,
-      net_bytes_sent: netRow[4] as number,
-      net_bytes_received: netRow[5] as number,
-      model_call_count: modelRow[0] as number,
-      total_input_tokens: modelRow[1] as number,
-      total_output_tokens: modelRow[2] as number,
-      total_model_duration_ms: modelRow[3] as number,
-      total_tool_calls: toolCount,
-      total_estimated_cost_usd: modelRow[4] as number,
-    },
-    top_domains,
-    time_buckets,
-    provider_usage,
-    tool_usage,
-  };
-}
-
 async function mockTraces(_limit?: number): Promise<TraceSummary[]> {
   const qr = await queryFixture(
     `SELECT trace_id,
@@ -236,13 +165,33 @@ async function mockTraces(_limit?: number): Promise<TraceSummary[]> {
             COALESCE(SUM(COALESCE(output_tokens, 0)), 0) as total_output_tokens,
             COALESCE(SUM(duration_ms), 0) as total_duration_ms,
             COALESCE(SUM(estimated_cost_usd), 0.0) as total_estimated_cost_usd,
+            (SELECT json_group_object(je.key, je.total) FROM (
+                SELECT je.key, SUM(je.value) as total
+                FROM model_calls mc6, json_each(mc6.usage_details) je
+                WHERE mc6.trace_id = model_calls.trace_id AND mc6.usage_details IS NOT NULL
+                GROUP BY je.key
+            ) je) as total_usage_details,
             (SELECT COUNT(*) FROM tool_calls tc JOIN model_calls mc ON tc.model_call_id = mc.id WHERE mc.trace_id = model_calls.trace_id) as total_tool_calls,
             (SELECT stop_reason FROM model_calls m4 WHERE m4.trace_id = model_calls.trace_id ORDER BY m4.id DESC LIMIT 1) as stop_reason,
             (SELECT system_prompt_preview FROM model_calls m5 WHERE m5.trace_id = model_calls.trace_id ORDER BY m5.id ASC LIMIT 1) as system_prompt_preview
      FROM model_calls WHERE trace_id IS NOT NULL
      GROUP BY trace_id ORDER BY MAX(id) DESC LIMIT ${_limit ?? 50}`
   );
-  return rowsToObjects<TraceSummary>(qr);
+  const traces = rowsToObjects<any>(qr);
+
+  for (const trace of traces) {
+    if (typeof trace.total_usage_details === 'string') {
+      try {
+        trace.total_usage_details = JSON.parse(trace.total_usage_details);
+      } catch {
+        trace.total_usage_details = {};
+      }
+    } else {
+      trace.total_usage_details = {};
+    }
+  }
+
+  return traces as TraceSummary[];
 }
 
 async function mockTraceDetail(traceId: string): Promise<TraceDetail> {
@@ -254,25 +203,149 @@ async function mockTraceDetail(traceId: string): Promise<TraceDetail> {
 }
 
 async function mockSessionInfo(): Promise<SessionInfo> {
-  const stats = await mockSessionStats();
+  const db = await getDb();
+  const netRow = db.exec(`SELECT COUNT(*),
+      COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0),
+      COALESCE(SUM(bytes_sent), 0),
+      COALESCE(SUM(bytes_received), 0)
+    FROM net_events`)[0].values[0];
+  const modelRow = db.exec(`SELECT COUNT(*),
+      COALESCE(SUM(COALESCE(input_tokens, 0)), 0),
+      COALESCE(SUM(COALESCE(output_tokens, 0)), 0),
+      COALESCE(SUM(estimated_cost_usd), 0.0)
+    FROM model_calls`)[0].values[0];
+  const toolCount = db.exec('SELECT COUNT(*) FROM tool_calls')[0].values[0][0] as number;
   return {
     session_id: '20260225-143052-a7f3',
     mode: 'gui',
     uptime_ms: 45000,
     scratch_disk_size_gb: 8,
     ram_bytes: 512 * 1024 * 1024,
-    total_requests: stats.stats.net_total,
-    allowed_requests: stats.stats.net_allowed,
-    denied_requests: stats.stats.net_denied,
-    error_requests: stats.stats.net_error,
-    bytes_sent: stats.stats.net_bytes_sent,
-    bytes_received: stats.stats.net_bytes_received,
-    model_call_count: stats.stats.model_call_count,
-    total_input_tokens: stats.stats.total_input_tokens,
-    total_output_tokens: stats.stats.total_output_tokens,
-    total_tool_calls: stats.stats.total_tool_calls,
-    total_estimated_cost_usd: stats.stats.total_estimated_cost_usd,
+    total_requests: netRow[0] as number,
+    allowed_requests: netRow[1] as number,
+    denied_requests: netRow[2] as number,
+    error_requests: netRow[3] as number,
+    bytes_sent: netRow[4] as number,
+    bytes_received: netRow[5] as number,
+    model_call_count: modelRow[0] as number,
+    total_input_tokens: modelRow[1] as number,
+    total_output_tokens: modelRow[2] as number,
+    total_usage_details: {},
+    total_tool_calls: toolCount,
+    total_estimated_cost_usd: modelRow[3] as number,
   };
+}
+
+// ---------------------------------------------------------------------------
+// File events mock data (DB-backed with inline fallback)
+// ---------------------------------------------------------------------------
+
+const MOCK_FILE_EVENTS: FileEvent[] = [
+  { timestamp: 1740502200, action: 'created', path: 'src/main.rs', size: 1240 },
+  { timestamp: 1740502205, action: 'created', path: 'src/lib.rs', size: 580 },
+  { timestamp: 1740502210, action: 'modified', path: 'Cargo.toml', size: 420 },
+  { timestamp: 1740502220, action: 'created', path: 'src/config.rs', size: 2100 },
+  { timestamp: 1740502225, action: 'modified', path: 'src/main.rs', size: 1580 },
+  { timestamp: 1740502230, action: 'created', path: 'tests/integration.rs', size: 890 },
+  { timestamp: 1740502240, action: 'deleted', path: 'src/old_module.rs', size: null },
+  { timestamp: 1740502245, action: 'modified', path: 'src/config.rs', size: 2340 },
+  { timestamp: 1740502250, action: 'created', path: 'README.md', size: 3200 },
+  { timestamp: 1740502260, action: 'modified', path: 'src/lib.rs', size: 920 },
+  { timestamp: 1740502270, action: 'created', path: 'src/utils.rs', size: 450 },
+  { timestamp: 1740502280, action: 'deleted', path: 'src/temp.rs', size: null },
+  { timestamp: 1740502290, action: 'modified', path: 'README.md', size: 3450 },
+];
+
+async function mockFileEvents(_limit?: number, search?: string): Promise<FileEvent[]> {
+  // Try DB first
+  try {
+    const db = await getDb();
+    const check = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='fs_events'");
+    if (check.length > 0) {
+      let sql = `SELECT CAST(strftime('%s', timestamp) AS INTEGER) AS timestamp,
+                        action, path, size
+                 FROM fs_events`;
+      if (search) {
+        const q = search.replace(/'/g, "''");
+        sql += ` WHERE path LIKE '%${q}%'`;
+      }
+      sql += ` ORDER BY id DESC LIMIT ${_limit ?? 200}`;
+      const qr = await queryFixture(sql);
+      if (qr.rows.length > 0) return rowsToObjects<FileEvent>(qr);
+    }
+  } catch { /* fallback to inline */ }
+
+  let events = [...MOCK_FILE_EVENTS];
+  if (search) {
+    const q = search.toLowerCase();
+    events = events.filter(e => e.path.toLowerCase().includes(q));
+  }
+  return events.slice(0, _limit ?? 200);
+}
+
+// ---------------------------------------------------------------------------
+// MCP mock data
+// ---------------------------------------------------------------------------
+
+const MOCK_MCP_CALLS: McpCall[] = [
+  {
+    timestamp: 1740502200, server_name: 'github', method: 'tools/list',
+    tool_name: null, request_id: '1', request_preview: null,
+    response_preview: '{"tools":[{"name":"github__search_repos",...}]}',
+    decision: 'allowed', duration_ms: 42, error_message: null, process_name: 'claude',
+  },
+  {
+    timestamp: 1740502210, server_name: 'github', method: 'tools/call',
+    tool_name: 'github__search_repos', request_id: '2',
+    request_preview: '{"name":"github__search_repos","arguments":{"query":"capsem"}}',
+    response_preview: '{"content":[{"type":"text","text":"Found 3 repos"}]}',
+    decision: 'allowed', duration_ms: 350, error_message: null, process_name: 'claude',
+  },
+  {
+    timestamp: 1740502230, server_name: 'github', method: 'tools/call',
+    tool_name: 'github__create_issue', request_id: '3',
+    request_preview: '{"name":"github__create_issue","arguments":{"title":"Bug fix"}}',
+    response_preview: null,
+    decision: 'warned', duration_ms: 180, error_message: null, process_name: 'claude',
+  },
+  {
+    timestamp: 1740502250, server_name: 'filesystem', method: 'tools/call',
+    tool_name: 'filesystem__read_file', request_id: '4',
+    request_preview: '{"name":"filesystem__read_file","arguments":{"path":"/etc/passwd"}}',
+    response_preview: null,
+    decision: 'denied', duration_ms: 1, error_message: 'tool blocked by policy: filesystem__read_file',
+    process_name: 'gemini',
+  },
+  {
+    timestamp: 1740502260, server_name: 'filesystem', method: 'tools/call',
+    tool_name: 'filesystem__write_file', request_id: '5',
+    request_preview: '{"name":"filesystem__write_file","arguments":{"path":"/tmp/out.txt"}}',
+    response_preview: '{"content":[{"type":"text","text":"Written 42 bytes"}]}',
+    decision: 'allowed', duration_ms: 12, error_message: null, process_name: 'gemini',
+  },
+  {
+    timestamp: 1740502280, server_name: 'slack', method: 'tools/call',
+    tool_name: 'slack__send_message', request_id: '6',
+    request_preview: '{"name":"slack__send_message","arguments":{"channel":"general"}}',
+    response_preview: null,
+    decision: 'error', duration_ms: 5020, error_message: 'MCP server not running: slack',
+    process_name: 'claude',
+  },
+];
+
+async function mockMcpCalls(_limit?: number, _search?: string): Promise<McpCall[]> {
+  let calls = [...MOCK_MCP_CALLS];
+  if (_search) {
+    const q = _search.toLowerCase();
+    calls = calls.filter(c =>
+      c.server_name.toLowerCase().includes(q) ||
+      (c.tool_name && c.tool_name.toLowerCase().includes(q)) ||
+      c.method.toLowerCase().includes(q)
+    );
+  }
+  return calls.slice(0, _limit ?? 50);
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +630,12 @@ const MOCK_SESSION_HISTORY: SessionRecord[] = [
     total_requests: 23,
     allowed_requests: 17,
     denied_requests: 6,
+    total_input_tokens: 45200,
+    total_output_tokens: 12800,
+    total_estimated_cost: 0.42,
+    total_tool_calls: 67,
+    total_mcp_calls: 5,
+    total_file_events: 23,
   },
   {
     id: '20260225-120000-b8e4',
@@ -570,6 +649,12 @@ const MOCK_SESSION_HISTORY: SessionRecord[] = [
     total_requests: 42,
     allowed_requests: 38,
     denied_requests: 4,
+    total_input_tokens: 128000,
+    total_output_tokens: 35000,
+    total_estimated_cost: 1.85,
+    total_tool_calls: 142,
+    total_mcp_calls: 12,
+    total_file_events: 89,
   },
   {
     id: '20260225-090000-c9d5',
@@ -583,6 +668,12 @@ const MOCK_SESSION_HISTORY: SessionRecord[] = [
     total_requests: 105,
     allowed_requests: 92,
     denied_requests: 13,
+    total_input_tokens: 256000,
+    total_output_tokens: 78000,
+    total_estimated_cost: 3.20,
+    total_tool_calls: 310,
+    total_mcp_calls: 28,
+    total_file_events: 156,
   },
   {
     id: '20260224-160000-d0e6',
@@ -596,8 +687,60 @@ const MOCK_SESSION_HISTORY: SessionRecord[] = [
     total_requests: 7,
     allowed_requests: 5,
     denied_requests: 2,
+    total_input_tokens: 8500,
+    total_output_tokens: 2200,
+    total_estimated_cost: 0.08,
+    total_tool_calls: 15,
+    total_mcp_calls: 0,
+    total_file_events: 4,
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Cross-session dashboard stats (mock)
+// ---------------------------------------------------------------------------
+
+async function mockGlobalStats(): Promise<GlobalStats> {
+  const sessions = MOCK_SESSION_HISTORY;
+  return {
+    total_sessions: sessions.length,
+    total_input_tokens: sessions.reduce((s, r) => s + r.total_input_tokens, 0),
+    total_output_tokens: sessions.reduce((s, r) => s + r.total_output_tokens, 0),
+    total_estimated_cost: sessions.reduce((s, r) => s + r.total_estimated_cost, 0),
+    total_tool_calls: sessions.reduce((s, r) => s + r.total_tool_calls, 0),
+    total_mcp_calls: sessions.reduce((s, r) => s + r.total_mcp_calls, 0),
+    total_file_events: sessions.reduce((s, r) => s + r.total_file_events, 0),
+    total_requests: sessions.reduce((s, r) => s + r.total_requests, 0),
+    total_allowed: sessions.reduce((s, r) => s + r.allowed_requests, 0),
+    total_denied: sessions.reduce((s, r) => s + r.denied_requests, 0),
+  };
+}
+
+async function mockTopProviders(_limit?: number): Promise<ProviderSummary[]> {
+  return [
+    { provider: 'anthropic', call_count: 85, input_tokens: 320000, output_tokens: 95000, estimated_cost: 3.80, total_duration_ms: 125000 },
+    { provider: 'google', call_count: 42, input_tokens: 110000, output_tokens: 28000, estimated_cost: 1.65, total_duration_ms: 68000 },
+    { provider: 'openai', call_count: 8, input_tokens: 7700, output_tokens: 5000, estimated_cost: 0.10, total_duration_ms: 12000 },
+  ];
+}
+
+async function mockTopTools(_limit?: number): Promise<ToolSummary[]> {
+  return [
+    { tool_name: 'Read', call_count: 142, total_bytes: 850000, total_duration_ms: 28000 },
+    { tool_name: 'Edit', call_count: 89, total_bytes: 420000, total_duration_ms: 35000 },
+    { tool_name: 'Bash', call_count: 67, total_bytes: 1200000, total_duration_ms: 95000 },
+    { tool_name: 'Write', call_count: 45, total_bytes: 380000, total_duration_ms: 18000 },
+    { tool_name: 'Grep', call_count: 38, total_bytes: 120000, total_duration_ms: 8500 },
+  ];
+}
+
+async function mockTopMcpTools(_limit?: number): Promise<McpToolSummary[]> {
+  return [
+    { tool_name: 'github__search_repos', server_name: 'github', call_count: 12, total_bytes: 45000, total_duration_ms: 4200 },
+    { tool_name: 'filesystem__write_file', server_name: 'filesystem', call_count: 8, total_bytes: 12000, total_duration_ms: 960 },
+    { tool_name: 'github__create_issue', server_name: 'github', call_count: 5, total_bytes: 8500, total_duration_ms: 2800 },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Exported mock API
@@ -636,10 +779,15 @@ export const mockApi = {
   getVmState: async () => MOCK_VM_STATE,
   getSessionInfo: mockSessionInfo,
   getSessionHistory: async (_limit?: number) => MOCK_SESSION_HISTORY,
-  getSessionStats: mockSessionStats,
   getModelCalls: mockModelCalls,
   getTraces: mockTraces,
   getTraceDetail: mockTraceDetail,
+  getFileEvents: mockFileEvents,
+  getMcpCalls: mockMcpCalls,
+  getGlobalStats: mockGlobalStats,
+  getTopProviders: mockTopProviders,
+  getTopTools: mockTopTools,
+  getTopMcpTools: mockTopMcpTools,
   queryDb: queryFixture,
 
   // Event listeners return no-op unsubscribers in mock mode

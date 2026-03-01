@@ -47,6 +47,20 @@
     return flat;
   });
 
+  // Track which call IDs have already shown their metrics to avoid double-counting.
+  const firstItemPerCall = $derived.by(() => {
+    const seen = new Set<number>();
+    const result = new Set<number>();
+    for (let i = 0; i < items.length; i++) {
+      const callId = items[i].call.id;
+      if (!seen.has(callId)) {
+        seen.add(callId);
+        result.add(i);
+      }
+    }
+    return result;
+  });
+
   function isSelected(item: FlatItem): boolean {
     if (!selectedItem) return false;
     if (item.type !== selectedItem.type || item.call.id !== selectedItem.call.id) return false;
@@ -67,7 +81,8 @@
       </tr>
     </thead>
     <tbody>
-      {#each items as item}
+      {#each items as item, idx}
+        {@const isFirst = firstItemPerCall.has(idx)}
         <tr
           class="cursor-pointer hover:bg-base-200/80 {isSelected(item) ? 'bg-info/10' : ''}"
           onclick={() => onSelectItem?.(item)}
@@ -84,10 +99,17 @@
               {/if}
             {/if}
           </td>
-          <td class="text-right tabular-nums">{item.call.input_tokens != null ? formatTokens(item.call.input_tokens) : '-'}</td>
-          <td class="text-right tabular-nums">{item.call.output_tokens != null ? formatTokens(item.call.output_tokens) : '-'}</td>
-          <td class="text-right tabular-nums text-info">{formatCost(item.call.estimated_cost_usd)}</td>
-          <td class="text-right tabular-nums">{item.call.duration_ms}ms</td>
+          {#if isFirst}
+            <td class="text-right tabular-nums">{item.call.input_tokens != null ? formatTokens(item.call.input_tokens) : '-'}{#if item.call.usage_details?.cache_read}<span class="text-base-content/30 ml-0.5">({formatTokens(item.call.usage_details.cache_read)} cached)</span>{/if}</td>
+            <td class="text-right tabular-nums">{item.call.output_tokens != null ? formatTokens(item.call.output_tokens) : '-'}</td>
+            <td class="text-right tabular-nums text-info">{formatCost(item.call.estimated_cost_usd)}</td>
+            <td class="text-right tabular-nums">{item.call.duration_ms}ms</td>
+          {:else}
+            <td class="text-right tabular-nums text-base-content/20">-</td>
+            <td class="text-right tabular-nums text-base-content/20">-</td>
+            <td class="text-right tabular-nums text-base-content/20">-</td>
+            <td class="text-right tabular-nums text-base-content/20">-</td>
+          {/if}
         </tr>
       {/each}
     </tbody>

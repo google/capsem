@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use capsem_core::VirtualMachine;
 use capsem_core::HostStateMachine;
+use capsem_core::mcp::gateway::McpGatewayConfig;
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::policy::NetworkPolicy;
 use capsem_core::session::SessionIndex;
@@ -33,6 +34,7 @@ pub struct VmInstance {
     pub vsock_terminal_fd: Option<RawFd>,
     pub vsock_control_fd: Option<RawFd>,
     pub net_state: Option<VmNetworkState>,
+    pub mcp_state: Option<Arc<McpGatewayConfig>>,
     pub state_machine: HostStateMachine,
     pub _scratch_disk_path: Option<PathBuf>,
 }

@@ -1,5 +1,6 @@
 pub mod gateway;
 pub mod host_state;
+pub mod mcp;
 pub mod net;
 pub mod session;
 pub mod vm;
@@ -17,8 +18,8 @@ pub use host_state::{
 pub use vm::config::VmConfig;
 pub use vm::machine::VirtualMachine;
 pub use vm::vsock::{
-    self, CoalesceBuffer, VsockConnection, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_SNI_PROXY,
-    VSOCK_PORT_TERMINAL,
+    self, CoalesceBuffer, VsockConnection, VsockManager, VSOCK_PORT_CONTROL,
+    VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
 
 /// Create a sparse scratch disk image file.

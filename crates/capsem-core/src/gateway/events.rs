@@ -4,6 +4,8 @@
 /// Provider-specific parsers convert those into these unified events, which
 /// are then collected into a `StreamSummary` for audit logging.
 
+use std::collections::BTreeMap;
+
 use super::sse::SseEvent;
 
 /// Why the model stopped generating.
@@ -44,6 +46,8 @@ pub enum LlmEvent {
     Usage {
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
+        /// Breakdowns: e.g. {"cache_read": 800, "thinking": 200}
+        details: BTreeMap<String, u64>,
     },
     /// Stream finished.
     MessageEnd {
@@ -75,6 +79,7 @@ pub struct StreamSummary {
     pub tool_calls: Vec<ToolCall>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    pub usage_details: BTreeMap<String, u64>,
     pub stop_reason: Option<StopReason>,
 }
 
@@ -98,6 +103,7 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
     let mut thinking = String::new();
     let mut input_tokens: Option<u64> = None;
     let mut output_tokens: Option<u64> = None;
+    let mut usage_details: BTreeMap<String, u64> = BTreeMap::new();
     let mut stop_reason: Option<StopReason> = None;
 
     // In-progress tool calls keyed by content block index.
@@ -146,12 +152,15 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
                     completed.push(ToolCall { index: idx, call_id, name, arguments });
                 }
             }
-            LlmEvent::Usage { input_tokens: it, output_tokens: ot } => {
+            LlmEvent::Usage { input_tokens: it, output_tokens: ot, details } => {
                 if let Some(t) = it {
                     input_tokens = Some(*t);
                 }
                 if let Some(t) = ot {
                     output_tokens = Some(*t);
+                }
+                for (k, v) in details {
+                    usage_details.insert(k.clone(), *v);
                 }
             }
             LlmEvent::MessageEnd { stop_reason: sr } => {
@@ -175,6 +184,7 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
         tool_calls: completed,
         input_tokens,
         output_tokens,
+        usage_details,
         stop_reason,
     }
 }
@@ -194,7 +204,7 @@ mod tests {
             },
             LlmEvent::TextDelta { index: 0, text: "Hello".into() },
             LlmEvent::TextDelta { index: 0, text: " world".into() },
-            LlmEvent::Usage { input_tokens: Some(10), output_tokens: Some(5) },
+            LlmEvent::Usage { input_tokens: Some(10), output_tokens: Some(5), details: BTreeMap::new() },
             LlmEvent::MessageEnd { stop_reason: Some(StopReason::EndTurn) },
         ];
 
@@ -250,7 +260,7 @@ mod tests {
             },
             LlmEvent::ToolCallArgumentDelta { index: 1, delta: "{}".into() },
             LlmEvent::ToolCallEnd { index: 1 },
-            LlmEvent::Usage { input_tokens: Some(20), output_tokens: Some(15) },
+            LlmEvent::Usage { input_tokens: Some(20), output_tokens: Some(15), details: BTreeMap::new() },
             LlmEvent::MessageEnd { stop_reason: Some(StopReason::ToolUse) },
         ];
 
@@ -320,6 +330,7 @@ mod tests {
         assert!(s.tool_calls.is_empty());
         assert!(s.input_tokens.is_none());
         assert!(s.output_tokens.is_none());
+        assert!(s.usage_details.is_empty());
         assert!(s.stop_reason.is_none());
     }
 
@@ -328,9 +339,9 @@ mod tests {
     #[test]
     fn summary_multiple_usage_events() {
         let events = vec![
-            LlmEvent::Usage { input_tokens: Some(10), output_tokens: Some(1) },
+            LlmEvent::Usage { input_tokens: Some(10), output_tokens: Some(1), details: BTreeMap::new() },
             LlmEvent::TextDelta { index: 0, text: "hi".into() },
-            LlmEvent::Usage { input_tokens: None, output_tokens: Some(5) },
+            LlmEvent::Usage { input_tokens: None, output_tokens: Some(5), details: BTreeMap::new() },
         ];
 
         let s = collect_summary(&events);
@@ -369,6 +380,32 @@ mod tests {
         let s = collect_summary(&events);
         assert_eq!(s.text, "hello");
         assert_eq!(s.stop_reason, Some(StopReason::EndTurn));
+    }
+
+    // ── collect_summary: usage_details propagated ────────────────────
+
+    #[test]
+    fn summary_usage_details() {
+        let events = vec![
+            LlmEvent::Usage {
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                details: BTreeMap::from([("cache_read".into(), 80)]),
+            },
+            LlmEvent::TextDelta { index: 0, text: "cached".into() },
+            LlmEvent::Usage {
+                input_tokens: None,
+                output_tokens: Some(60),
+                details: BTreeMap::from([("thinking".into(), 20)]),
+            },
+        ];
+
+        let s = collect_summary(&events);
+        assert_eq!(s.input_tokens, Some(100));
+        assert_eq!(s.output_tokens, Some(60));
+        // Both keys should be present (merge)
+        assert_eq!(s.usage_details.get("cache_read"), Some(&80));
+        assert_eq!(s.usage_details.get("thinking"), Some(&20));
     }
 
     // ── collect_summary: sorted tool calls ──────────────────────────

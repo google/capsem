@@ -1,16 +1,21 @@
-// Sidebar state: active view + collapsed toggle.
-import type { ViewName } from '../types';
+// Sidebar state: active view + sub-section tracking.
+import type { ViewName, AnalyticsSection, SettingsSection } from '../types';
 
 class SidebarStore {
   activeView = $state<ViewName>('terminal');
-  collapsed = $state(true);
+  analyticsSection = $state<AnalyticsSection>('dashboard');
+  settingsSection = $state<SettingsSection>('providers');
 
   setView(view: ViewName) {
     this.activeView = view;
   }
 
-  toggleCollapsed() {
-    this.collapsed = !this.collapsed;
+  setAnalyticsSection(section: AnalyticsSection) {
+    this.analyticsSection = section;
+  }
+
+  setSettingsSection(section: SettingsSection) {
+    this.settingsSection = section;
   }
 }
 

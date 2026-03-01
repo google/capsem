@@ -63,6 +63,7 @@ export interface ModelCall {
   stop_reason: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  usage_details: Record<string, number>;
   duration_ms: number;
   response_bytes: number;
   estimated_cost_usd: number;
@@ -94,6 +95,7 @@ export interface ModelCallResponse {
   stop_reason: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  usage_details: Record<string, number>;
   duration_ms: number;
   response_bytes: number;
   estimated_cost_usd: number;
@@ -112,6 +114,7 @@ export interface TraceSummary {
   call_count: number;
   total_input_tokens: number;
   total_output_tokens: number;
+  total_usage_details: Record<string, number>;
   total_duration_ms: number;
   total_estimated_cost_usd: number;
   total_tool_calls: number;
@@ -149,28 +152,13 @@ export interface TraceModelCall {
   stop_reason: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  usage_details: Record<string, number>;
   duration_ms: number;
   response_bytes: number;
   estimated_cost_usd: number;
   trace_id: string | null;
   tool_calls: ToolCallEntry[];
   tool_responses: ToolResponseEntry[];
-}
-
-/** Aggregate session statistics (from SQL). */
-export interface SessionStats {
-  net_total: number;
-  net_allowed: number;
-  net_denied: number;
-  net_error: number;
-  net_bytes_sent: number;
-  net_bytes_received: number;
-  model_call_count: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_model_duration_ms: number;
-  total_tool_calls: number;
-  total_estimated_cost_usd: number;
 }
 
 /** Domain request count (from GROUP BY). */
@@ -202,15 +190,6 @@ export interface ProviderTokenUsage {
 export interface ToolUsageCount {
   tool_name: string;
   count: number;
-}
-
-/** Full session stats response. */
-export interface SessionStatsResponse {
-  stats: SessionStats;
-  top_domains: DomainCount[];
-  time_buckets: TimeBucket[];
-  provider_usage: ProviderTokenUsage[];
-  tool_usage: ToolUsageCount[];
 }
 
 /** Response from get_network_policy. */
@@ -313,6 +292,7 @@ export interface SessionInfo {
   model_call_count: number;
   total_input_tokens: number;
   total_output_tokens: number;
+  total_usage_details: Record<string, number>;
   total_tool_calls: number;
   total_estimated_cost_usd: number;
 }
@@ -330,6 +310,53 @@ export interface SessionRecord {
   total_requests: number;
   allowed_requests: number;
   denied_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_estimated_cost: number;
+  total_tool_calls: number;
+  total_mcp_calls: number;
+  total_file_events: number;
+}
+
+/** Aggregated stats across all sessions (from main.db). */
+export interface GlobalStats {
+  total_sessions: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_estimated_cost: number;
+  total_tool_calls: number;
+  total_mcp_calls: number;
+  total_file_events: number;
+  total_requests: number;
+  total_allowed: number;
+  total_denied: number;
+}
+
+/** Per-provider AI usage summary across sessions. */
+export interface ProviderSummary {
+  provider: string;
+  call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  total_duration_ms: number;
+}
+
+/** Per-tool usage summary across sessions. */
+export interface ToolSummary {
+  tool_name: string;
+  call_count: number;
+  total_bytes: number;
+  total_duration_ms: number;
+}
+
+/** Per-MCP-tool usage summary across sessions. */
+export interface McpToolSummary {
+  tool_name: string;
+  server_name: string;
+  call_count: number;
+  total_bytes: number;
+  total_duration_ms: number;
 }
 
 /** Raw SQL query result (columnar format). */
@@ -338,5 +365,48 @@ export interface QueryResult {
   rows: unknown[][];
 }
 
+/** MCP call decision. */
+export type McpDecision = 'allowed' | 'warned' | 'denied' | 'error';
+
+/** A single MCP tool call record from mcp_calls table. */
+export interface McpCall {
+  timestamp: number;
+  server_name: string;
+  method: string;
+  tool_name: string | null;
+  request_id: string | null;
+  request_preview: string | null;
+  response_preview: string | null;
+  decision: string;
+  duration_ms: number;
+  error_message: string | null;
+  process_name: string | null;
+}
+
+/** Per-server MCP call count. */
+export interface McpServerCallCount {
+  server_name: string;
+  count: number;
+  denied: number;
+  warned: number;
+}
+
+/** File action type (serde rename_all = "lowercase"). */
+export type FileAction = 'created' | 'modified' | 'deleted';
+
+/** A single filesystem event from fs_events table. */
+export interface FileEvent {
+  timestamp: number; // epoch seconds
+  action: FileAction;
+  path: string;
+  size: number | null;
+}
+
 /** Sidebar view names. */
-export type ViewName = 'terminal' | 'sessions' | 'settings';
+export type ViewName = 'terminal' | 'analytics' | 'settings';
+
+/** Analytics sub-section identifiers. */
+export type AnalyticsSection = 'dashboard' | 'models' | 'mcp' | 'traffic' | 'files';
+
+/** Settings sub-section identifiers. */
+export type SettingsSection = 'providers' | 'mcp-servers' | 'network-policy' | 'environment' | 'resources' | 'appearance';

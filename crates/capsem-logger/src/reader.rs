@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use rusqlite::{params, Connection, OpenFlags, Row};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::events::{Decision, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry};
+use crate::events::{Decision, FileAction, FileEvent, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry};
 use crate::schema;
 
 /// Aggregate statistics for a session (computed from SQL queries).
@@ -22,6 +23,7 @@ pub struct SessionStats {
     pub model_call_count: u64,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_usage_details: BTreeMap<String, u64>,
     pub total_model_duration_ms: u64,
     pub total_tool_calls: u64,
     pub total_estimated_cost_usd: f64,
@@ -62,6 +64,25 @@ pub struct ToolUsageCount {
     pub count: u64,
 }
 
+/// Tool usage with response size and duration stats (from JOIN with model_calls).
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolUsageWithStats {
+    pub tool_name: String,
+    pub count: u64,
+    pub total_bytes: u64,
+    pub total_duration_ms: u64,
+}
+
+/// MCP tool usage aggregated by tool_name.
+#[derive(Debug, Clone, Serialize)]
+pub struct McpToolUsage {
+    pub tool_name: String,
+    pub server_name: String,
+    pub count: u64,
+    pub total_bytes: u64,
+    pub total_duration_ms: u64,
+}
+
 /// Summary of a trace (one agent turn) aggregated from grouped model calls.
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceSummary {
@@ -73,6 +94,7 @@ pub struct TraceSummary {
     pub call_count: u64,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_usage_details: BTreeMap<String, u64>,
     pub total_duration_ms: u64,
     pub total_estimated_cost_usd: f64,
     pub total_tool_calls: u64,
@@ -95,6 +117,35 @@ pub struct TraceModelCall {
     pub call: ModelCall,
 }
 
+/// Aggregate file event statistics.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileEventStats {
+    pub total: u64,
+    pub created: u64,
+    pub modified: u64,
+    pub deleted: u64,
+}
+
+/// Aggregate MCP call statistics.
+#[derive(Debug, Clone, Serialize)]
+pub struct McpCallStats {
+    pub total: u64,
+    pub allowed: u64,
+    pub warned: u64,
+    pub denied: u64,
+    pub errored: u64,
+    pub by_server: Vec<McpServerCallCount>,
+}
+
+/// Per-server MCP call counts.
+#[derive(Debug, Clone, Serialize)]
+pub struct McpServerCallCount {
+    pub server_name: String,
+    pub count: u64,
+    pub denied: u64,
+    pub warned: u64,
+}
+
 /// Shared SQL column list for model_calls SELECT queries.
 const MODEL_CALL_COLUMNS: &str =
     "id, timestamp, provider, model, process_name, pid,
@@ -103,7 +154,8 @@ const MODEL_CALL_COLUMNS: &str =
      request_bytes, request_body_preview,
      message_id, status_code, text_content, thinking_content,
      stop_reason, input_tokens, output_tokens,
-     duration_ms, response_bytes, estimated_cost_usd, trace_id";
+     duration_ms, response_bytes, estimated_cost_usd, trace_id,
+     usage_details";
 
 /// Parse a model_calls row into (id, ModelCall). Column order must match MODEL_CALL_COLUMNS.
 fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
@@ -132,6 +184,9 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
         stop_reason: row.get(18)?,
         input_tokens: row.get::<_, Option<i64>>(19)?.map(|t| t as u64),
         output_tokens: row.get::<_, Option<i64>>(20)?.map(|t| t as u64),
+        usage_details: row.get::<_, Option<String>>(25)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
         duration_ms: row.get::<_, i64>(21)? as u64,
         response_bytes: row.get::<_, i64>(22)? as u64,
         estimated_cost_usd: row.get::<_, f64>(23).unwrap_or(0.0),
@@ -159,10 +214,10 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
         .to_ascii_uppercase();
 
     match first.as_str() {
-        "SELECT" | "WITH" | "EXPLAIN" | "PRAGMA" => Ok(()),
-        "INSERT" | "UPDATE" | "DELETE" | "DROP" | "ALTER" | "CREATE" | "ATTACH"
-        | "DETACH" | "REPLACE" | "VACUUM" | "REINDEX" | "BEGIN" | "COMMIT"
-        | "ROLLBACK" | "SAVEPOINT" | "RELEASE" => {
+        "SELECT" | "WITH" | "EXPLAIN" => Ok(()),
+        "PRAGMA" | "INSERT" | "UPDATE" | "DELETE" | "DROP" | "ALTER" | "CREATE"
+        | "ATTACH" | "DETACH" | "REPLACE" | "VACUUM" | "REINDEX" | "BEGIN"
+        | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" => {
             Err(format!("{first} statements are not allowed"))
         }
         _ => Err(format!("unsupported statement type: {first}")),
@@ -346,27 +401,21 @@ impl DbReader {
 
     /// Count net events by decision: returns (total, allowed, denied).
     pub fn net_event_counts(&self) -> rusqlite::Result<(usize, usize, usize)> {
-        let mut stmt = self.conn.prepare(
-            "SELECT decision, COUNT(*) FROM net_events GROUP BY decision",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            let decision: String = row.get(0)?;
-            let count: i64 = row.get(1)?;
-            Ok((decision, count as usize))
-        })?;
-        let mut total = 0usize;
-        let mut allowed = 0usize;
-        let mut denied = 0usize;
-        for row in rows {
-            let (decision, count) = row?;
-            total += count;
-            match decision.as_str() {
-                "allowed" => allowed += count,
-                "denied" => denied += count,
-                _ => {}
-            }
-        }
-        Ok((total, allowed, denied))
+        self.conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0)
+             FROM net_events",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as usize,
+                    row.get::<_, i64>(1)? as usize,
+                    row.get::<_, i64>(2)? as usize,
+                ))
+            },
+        )
     }
 
     /// Count total model calls.
@@ -437,14 +486,20 @@ impl DbReader {
             )?;
 
         // Model call aggregates.
-        let (model_call_count, total_input_tokens, total_output_tokens, total_model_duration_ms, total_estimated_cost_usd) =
+        let (model_call_count, total_input_tokens, total_output_tokens, total_model_duration_ms, total_estimated_cost_usd, usage_details_json) =
             self.conn.query_row(
                 "SELECT
                     COUNT(*),
                     COALESCE(SUM(COALESCE(input_tokens, 0)), 0),
                     COALESCE(SUM(COALESCE(output_tokens, 0)), 0),
                     COALESCE(SUM(duration_ms), 0),
-                    COALESCE(SUM(estimated_cost_usd), 0.0)
+                    COALESCE(SUM(estimated_cost_usd), 0.0),
+                    (SELECT json_group_object(je.key, je.total) FROM (
+                        SELECT je.key, SUM(je.value) as total
+                        FROM model_calls mc2, json_each(mc2.usage_details) je
+                        WHERE mc2.usage_details IS NOT NULL
+                        GROUP BY je.key
+                    ) je)
                  FROM model_calls",
                 [],
                 |row| {
@@ -454,9 +509,14 @@ impl DbReader {
                         row.get::<_, i64>(2)? as u64,
                         row.get::<_, i64>(3)? as u64,
                         row.get::<_, f64>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )?;
+
+        let total_usage_details: BTreeMap<String, u64> = usage_details_json
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
 
         // Total tool calls.
         let total_tool_calls: u64 = self.conn.query_row(
@@ -475,6 +535,7 @@ impl DbReader {
             model_call_count,
             total_input_tokens,
             total_output_tokens,
+            total_usage_details,
             total_model_duration_ms,
             total_tool_calls,
             total_estimated_cost_usd,
@@ -511,27 +572,15 @@ impl DbReader {
         let bucket_sec = bucket_min * 60;
         let window_sec = bucket_sec * count as u64;
 
-        // Get timestamps + decisions from the last `window_sec` seconds.
-        let mut stmt = self.conn.prepare(
-            "SELECT timestamp, decision FROM net_events
-             WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)
-             ORDER BY timestamp",
-        )?;
-        let offset = format!("-{window_sec} seconds");
-        let rows = stmt.query_map(params![offset], |row| {
-            let ts_str: String = row.get(0)?;
-            let decision_str: String = row.get(1)?;
-            Ok((ts_str, decision_str))
-        })?;
-
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        let window_start = now.saturating_sub(window_sec);
 
         let mut buckets = Vec::with_capacity(count);
         for i in 0..count {
-            let start = now - (count as u64 - i as u64) * bucket_sec;
+            let start = window_start + (i as u64) * bucket_sec;
             let ts = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start);
             buckets.push(TimeBucket {
                 bucket_start: humantime::format_rfc3339_seconds(ts).to_string(),
@@ -540,26 +589,33 @@ impl DbReader {
             });
         }
 
+        let mut stmt = self.conn.prepare(
+            "SELECT 
+                CAST((CAST(strftime('%s', timestamp) AS INTEGER) - ?1) / ?2 AS INTEGER) as idx,
+                COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0)
+             FROM net_events
+             WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?3)
+               AND CAST(strftime('%s', timestamp) AS INTEGER) >= ?1
+             GROUP BY idx",
+        )?;
+
+        let offset = format!("-{window_sec} seconds");
+        let rows = stmt.query_map(params![window_start as i64, bucket_sec as i64, offset], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as usize,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+            ))
+        })?;
+
         for row in rows {
-            let (ts_str, decision_str) = row?;
-            if let Ok(ts) = humantime::parse_rfc3339(&ts_str) {
-                let ts_secs = ts
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let bucket_start = now - count as u64 * bucket_sec;
-                if ts_secs >= bucket_start {
-                    let mut idx = ((ts_secs - bucket_start) / bucket_sec) as usize;
-                    if idx >= count {
-                        idx = count - 1;
-                    }
-                    match decision_str.as_str() {
-                        "allowed" => buckets[idx].allowed += 1,
-                        "denied" => buckets[idx].denied += 1,
-                        _ => {}
-                    }
-                }
+            let (mut idx, allowed, denied) = row?;
+            if idx >= count {
+                idx = count - 1;
             }
+            buckets[idx].allowed += allowed;
+            buckets[idx].denied += denied;
         }
 
         Ok(buckets)
@@ -674,6 +730,62 @@ impl DbReader {
         rows.collect()
     }
 
+    // ── Cross-session summary queries ─────────────────────────────────
+
+    /// Count total file events in the session DB.
+    pub fn file_event_count(&self) -> rusqlite::Result<u64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM fs_events",
+            [],
+            |row| row.get::<_, i64>(0).map(|n| n as u64),
+        )
+    }
+
+    /// Tool usage with response byte and duration stats from model_calls.
+    pub fn tool_usage_with_stats(&self, limit: usize) -> rusqlite::Result<Vec<ToolUsageWithStats>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tc.tool_name, COUNT(*) as cnt,
+                    COALESCE(SUM(mc.response_bytes), 0),
+                    COALESCE(SUM(mc.duration_ms), 0)
+             FROM tool_calls tc
+             JOIN model_calls mc ON tc.model_call_id = mc.id
+             GROUP BY tc.tool_name
+             ORDER BY cnt DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(ToolUsageWithStats {
+                tool_name: row.get(0)?,
+                count: row.get::<_, i64>(1)? as u64,
+                total_bytes: row.get::<_, i64>(2)? as u64,
+                total_duration_ms: row.get::<_, i64>(3)? as u64,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// MCP tool usage grouped by tool_name with duration and response size.
+    pub fn mcp_tool_usage(&self, limit: usize) -> rusqlite::Result<Vec<McpToolUsage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tool_name, server_name, COUNT(*) as cnt,
+                    COALESCE(SUM(LENGTH(response_preview)), 0),
+                    COALESCE(SUM(duration_ms), 0)
+             FROM mcp_calls
+             WHERE tool_name IS NOT NULL
+             GROUP BY tool_name
+             ORDER BY cnt DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(McpToolUsage {
+                tool_name: row.get(0)?,
+                server_name: row.get(1)?,
+                count: row.get::<_, i64>(2)? as u64,
+                total_bytes: row.get::<_, i64>(3)? as u64,
+                total_duration_ms: row.get::<_, i64>(4)? as u64,
+            })
+        })?;
+        rows.collect()
+    }
+
     // ── Trace queries ───────────────────────────────────────────────
 
     /// Recent traces grouped by trace_id, ordered newest first.
@@ -697,6 +809,12 @@ impl DbReader {
                 COUNT(mc.id) as call_count,
                 COALESCE(SUM(COALESCE(mc.input_tokens, 0)), 0),
                 COALESCE(SUM(COALESCE(mc.output_tokens, 0)), 0),
+                (SELECT json_group_object(je.key, je.total) FROM (
+                    SELECT je.key, SUM(je.value) as total
+                    FROM model_calls mc6, json_each(mc6.usage_details) je
+                    WHERE mc6.trace_id = t.trace_id AND mc6.usage_details IS NOT NULL
+                    GROUP BY je.key
+                ) je),
                 COALESCE(SUM(mc.duration_ms), 0),
                 COALESCE(SUM(mc.estimated_cost_usd), 0.0),
                 (SELECT COUNT(*) FROM tool_calls tc
@@ -724,6 +842,10 @@ impl DbReader {
                 .unwrap_or_default()
                 .as_secs_f64();
 
+            let total_usage_details: BTreeMap<String, u64> = row.get::<_, Option<String>>(8)?
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+
             Ok(TraceSummary {
                 trace_id: row.get(0)?,
                 started_at,
@@ -733,11 +855,12 @@ impl DbReader {
                 call_count: row.get::<_, i64>(5)? as u64,
                 total_input_tokens: row.get::<_, i64>(6)? as u64,
                 total_output_tokens: row.get::<_, i64>(7)? as u64,
-                total_duration_ms: row.get::<_, i64>(8)? as u64,
-                total_estimated_cost_usd: row.get::<_, f64>(9)?,
-                total_tool_calls: row.get::<_, i64>(10)? as u64,
-                stop_reason: row.get(11)?,
-                system_prompt_preview: row.get(12)?,
+                total_usage_details,
+                total_duration_ms: row.get::<_, i64>(9)? as u64,
+                total_estimated_cost_usd: row.get::<_, f64>(10)?,
+                total_tool_calls: row.get::<_, i64>(11)? as u64,
+                stop_reason: row.get(12)?,
+                system_prompt_preview: row.get(13)?,
             })
         })?;
 
@@ -819,4 +942,169 @@ impl DbReader {
             calls,
         })
     }
+
+    // ── File event queries ────────────────────────────────────────────
+
+    /// Query the most recent N file events, ordered newest first.
+    pub fn recent_file_events(&self, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, action, path, size
+             FROM fs_events
+             ORDER BY id DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], read_file_event_row)?;
+        rows.collect()
+    }
+
+    /// Search file events by path substring.
+    pub fn search_file_events(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
+        let pattern = format!("%{query}%");
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, action, path, size
+             FROM fs_events
+             WHERE path LIKE ?1
+             ORDER BY id DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], read_file_event_row)?;
+        rows.collect()
+    }
+
+    /// Aggregate file event statistics. All aggregation done in SQL.
+    pub fn file_event_stats(&self) -> rusqlite::Result<FileEventStats> {
+        self.conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN action = 'created' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN action = 'modified' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN action = 'deleted' THEN 1 ELSE 0 END), 0)
+             FROM fs_events",
+            [],
+            |row| {
+                Ok(FileEventStats {
+                    total: row.get::<_, i64>(0)? as u64,
+                    created: row.get::<_, i64>(1)? as u64,
+                    modified: row.get::<_, i64>(2)? as u64,
+                    deleted: row.get::<_, i64>(3)? as u64,
+                })
+            },
+        )
+    }
+
+    // ── MCP call queries ──────────────────────────────────────────────
+
+    /// Query the most recent N MCP calls, ordered newest first.
+    pub fn recent_mcp_calls(&self, limit: usize) -> rusqlite::Result<Vec<McpCall>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, server_name, method, tool_name, request_id,
+                    request_preview, response_preview, decision,
+                    duration_ms, error_message, process_name
+             FROM mcp_calls
+             ORDER BY id DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], read_mcp_call_row)?;
+        rows.collect()
+    }
+
+    /// Search MCP calls by server_name, method, or tool_name substring.
+    pub fn search_mcp_calls(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<McpCall>> {
+        let pattern = format!("%{query}%");
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, server_name, method, tool_name, request_id,
+                    request_preview, response_preview, decision,
+                    duration_ms, error_message, process_name
+             FROM mcp_calls
+             WHERE server_name LIKE ?1
+                OR method LIKE ?1
+                OR tool_name LIKE ?1
+             ORDER BY id DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], read_mcp_call_row)?;
+        rows.collect()
+    }
+
+    /// Aggregate MCP call statistics. All aggregation done in SQL.
+    pub fn mcp_call_stats(&self) -> rusqlite::Result<McpCallStats> {
+        let (total, allowed, warned, denied, errored) = self.conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
+             FROM mcp_calls",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, i64>(1)? as u64,
+                    row.get::<_, i64>(2)? as u64,
+                    row.get::<_, i64>(3)? as u64,
+                    row.get::<_, i64>(4)? as u64,
+                ))
+            },
+        )?;
+
+        let mut stmt = self.conn.prepare(
+            "SELECT server_name,
+                    COUNT(*) as cnt,
+                    SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END)
+             FROM mcp_calls
+             GROUP BY server_name
+             ORDER BY cnt DESC",
+        )?;
+        let by_server = stmt.query_map([], |row| {
+            Ok(McpServerCallCount {
+                server_name: row.get(0)?,
+                count: row.get::<_, i64>(1)? as u64,
+                denied: row.get::<_, i64>(2)? as u64,
+                warned: row.get::<_, i64>(3)? as u64,
+            })
+        })?;
+
+        Ok(McpCallStats {
+            total,
+            allowed,
+            warned,
+            denied,
+            errored,
+            by_server: by_server.collect::<rusqlite::Result<Vec<_>>>()?,
+        })
+    }
+}
+
+/// Parse an fs_events row into FileEvent. Column order must match the SELECT in queries above.
+fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> {
+    let ts_str: String = row.get(0)?;
+    let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+    let action_str: String = row.get(1)?;
+    Ok(FileEvent {
+        timestamp,
+        action: FileAction::parse_str(&action_str),
+        path: row.get(2)?,
+        size: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
+    })
+}
+
+/// Parse an mcp_calls row into McpCall. Column order must match the SELECT in queries above.
+fn read_mcp_call_row(row: &Row<'_>) -> rusqlite::Result<McpCall> {
+    let ts_str: String = row.get(0)?;
+    let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+    Ok(McpCall {
+        timestamp,
+        server_name: row.get(1)?,
+        method: row.get(2)?,
+        tool_name: row.get(3)?,
+        request_id: row.get(4)?,
+        request_preview: row.get(5)?,
+        response_preview: row.get(6)?,
+        decision: row.get(7)?,
+        duration_ms: row.get::<_, i64>(8)? as u64,
+        error_message: row.get(9)?,
+        process_name: row.get(10)?,
+    })
 }

@@ -40,6 +40,8 @@ futures = { workspace = true }
 tokio-stream = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
+regex = { workspace = true }
+tl = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

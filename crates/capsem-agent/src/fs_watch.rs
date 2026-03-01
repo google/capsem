@@ -118,6 +118,14 @@ impl Debouncer {
         flushed
     }
 
+    /// Force flush all pending entries regardless of deadline.
+    fn flush_all(&mut self) -> Vec<(String, DebouncedAction, Option<u64>)> {
+        let mut flushed = Vec::new();
+        for (path, entry) in self.pending.drain() {
+            flushed.push((path, entry.action, entry.size));
+        }
+        flushed
+    }
     /// Time until the next pending entry expires, or None if empty.
     fn next_deadline_ms(&self) -> Option<u64> {
         let now = Instant::now();
@@ -153,6 +161,8 @@ fn send_event(fd: RawFd, msg: &GuestToHost) {
 fn run_watcher() {
     use nix::sys::inotify::{AddWatchFlags, InitFlags, Inotify, WatchDescriptor};
     use std::os::fd::AsFd;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     eprintln!("[capsem-fs-watch] starting (pid {})", std::process::id());
 
@@ -206,10 +216,39 @@ fn run_watcher() {
     );
 
     let mut debouncer = Debouncer::new();
+    
+    // Set up signal handler for graceful shutdown
+    let term_now = Arc::new(AtomicBool::new(false));
+    for sig in &[
+        signal_hook::consts::SIGTERM,
+        signal_hook::consts::SIGINT,
+        signal_hook::consts::SIGQUIT,
+    ] {
+        signal_hook::flag::register(*sig, Arc::clone(&term_now)).expect("register signal");
+    }
 
     loop {
+        if term_now.load(Ordering::Relaxed) {
+            eprintln!("[capsem-fs-watch] received termination signal, flushing events");
+            for (path, action, size) in debouncer.flush_all() {
+                let msg = match action {
+                    DebouncedAction::Created => GuestToHost::FileCreated {
+                        path: path.clone(),
+                        size: size.unwrap_or(0),
+                    },
+                    DebouncedAction::Modified => GuestToHost::FileModified {
+                        path: path.clone(),
+                        size: size.unwrap_or(0),
+                    },
+                    DebouncedAction::Deleted => GuestToHost::FileDeleted { path: path.clone() },
+                };
+                send_event(vsock_fd, &msg);
+            }
+            break;
+        }
+
         // Poll with timeout from debouncer.
-        let timeout_ms = debouncer.next_deadline_ms().unwrap_or(1000) as u16;
+        let timeout_ms = debouncer.next_deadline_ms().unwrap_or(100) as u16;
         let mut poll_fd = [nix::poll::PollFd::new(
             inotify.as_fd(),
             nix::poll::PollFlags::POLLIN,

@@ -1,6 +1,7 @@
 <script lang="ts">
   import Terminal from '../components/Terminal.svelte';
   import { networkStore } from '../stores/network.svelte';
+  import { sidebarStore } from '../stores/sidebar.svelte';
   import { themeStore } from '../stores/theme.svelte';
   import { vmStore } from '../stores/vm.svelte';
 
@@ -19,7 +20,7 @@
     return `$${usd.toFixed(2)}`;
   }
 
-  const stats = $derived(networkStore.stats?.stats);
+  const mStats = $derived(networkStore.modelStats);
 </script>
 
 <div class="flex h-full flex-col">
@@ -27,14 +28,20 @@
     <Terminal />
   </div>
   <div class="flex items-center justify-end gap-3 px-3 py-1 text-[11px] tabular-nums" style:background-color={termBg} style:color={termFg}>
-    {#if stats && stats.model_call_count > 0}
-      <span>{formatTokens(stats.total_input_tokens + stats.total_output_tokens)} tokens</span>
-      <span>{stats.total_tool_calls} tools</span>
-      <span>{formatCost(stats.total_estimated_cost_usd)}</span>
+    {#if mStats && mStats.model_call_count > 0}
+      <span>{formatTokens(mStats.total_input_tokens + mStats.total_output_tokens)} tokens</span>
+      <span>{networkStore.toolCount} tools</span>
+      <span>{formatCost(mStats.total_estimated_cost_usd)}</span>
     {/if}
-    <span class="flex items-center gap-1.5">
-      <span>{vmStore.vmState}</span>
-      <span class="inline-block size-1.5 rounded-full" style:background-color={vmStore.vmState === 'running' ? '#4ade80' : vmStore.vmState === 'booting' ? '#facc15' : '#ef4444'}></span>
-    </span>
+    <button
+      class="flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:text-info/80 cursor-pointer"
+      onclick={() => { sidebarStore.setAnalyticsSection('dashboard'); sidebarStore.setView('analytics'); }}
+      title="View session statistics"
+    >
+      <span>Session stats</span>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-3">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    </button>
   </div>
 </div>

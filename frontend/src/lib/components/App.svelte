@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import Sidebar from './Sidebar.svelte';
   import TerminalView from '../views/TerminalView.svelte';
-  import SessionsView from '../views/SessionsView.svelte';
+  import AnalyticsView from '../views/AnalyticsView.svelte';
   import SettingsView from '../views/SettingsView.svelte';
   import { sidebarStore } from '../stores/sidebar.svelte';
   import { themeStore } from '../stores/theme.svelte';
@@ -31,8 +31,8 @@
       >
         <TerminalView />
       </div>
-      {#if sidebarStore.activeView === 'sessions'}
-        <SessionsView />
+      {#if sidebarStore.activeView === 'analytics'}
+        <AnalyticsView />
       {:else if sidebarStore.activeView === 'settings'}
         <SettingsView />
       {/if}

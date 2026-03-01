@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 /// Anthropic provider: handles /v1/messages requests.
 ///
 /// Key injection: x-api-key header.
@@ -7,9 +6,7 @@
 /// SSE stream format: Anthropic uses `event:` lines to distinguish event types.
 /// Content blocks are interleaved (text, tool_use, thinking) with index-based
 /// tracking.
-use std::collections::HashMap;
-
-use serde::Deserialize;
+use std::collections::{BTreeMap, HashMap};
 
 use super::events::{LlmEvent, ProviderStreamParser, StopReason};
 use super::provider::{Provider, ProviderKind};
@@ -37,6 +34,7 @@ impl Provider for AnthropicProvider {
 
 // ── Wire format serde types (targeted, skip irrelevant fields) ──────
 
+#[allow(dead_code)] // Wire types: fields exist for serde deserialization
 mod wire {
     use serde::Deserialize;
 
@@ -102,6 +100,7 @@ mod wire {
     pub struct Usage {
         pub input_tokens: Option<u64>,
         pub output_tokens: Option<u64>,
+        pub cache_read_input_tokens: Option<u64>,
     }
 }
 
@@ -151,9 +150,14 @@ impl ProviderStreamParser for AnthropicStreamParser {
                     model: msg.and_then(|m| m.model.clone()),
                 });
                 if let Some(usage) = msg.and_then(|m| m.usage.as_ref()) {
+                    let mut details = BTreeMap::new();
+                    if let Some(crt) = usage.cache_read_input_tokens {
+                        details.insert("cache_read".into(), crt);
+                    }
                     events.push(LlmEvent::Usage {
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        details,
                     });
                 }
                 events
@@ -230,9 +234,14 @@ impl ProviderStreamParser for AnthropicStreamParser {
                 };
                 let mut events = Vec::with_capacity(2);
                 if let Some(usage) = payload.usage {
+                    let mut details = BTreeMap::new();
+                    if let Some(crt) = usage.cache_read_input_tokens {
+                        details.insert("cache_read".into(), crt);
+                    }
                     events.push(LlmEvent::Usage {
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        details,
                     });
                 }
                 if let Some(delta) = payload.delta {
@@ -244,17 +253,6 @@ impl ProviderStreamParser for AnthropicStreamParser {
             }
 
             "message_stop" => {
-                // Determine stop reason from the most recent message_delta
-                // Actually, we need to track it. But for simplicity, we emit
-                // MessageEnd. The stop_reason was captured in message_delta.
-                // Let's parse the message_stop event too -- it might have it.
-                #[derive(Deserialize)]
-                struct MsgStop {
-                    #[serde(rename = "type")]
-                    _type: Option<String>,
-                }
-                // message_stop has no stop_reason. It was in message_delta.
-                // We need to track it. Let's store it from message_delta.
                 vec![LlmEvent::MessageEnd { stop_reason: None }]
             }
 
@@ -311,9 +309,14 @@ impl ProviderStreamParser for AnthropicStreamParserWithState {
             if let Ok(payload) = serde_json::from_str::<wire::MessageDelta>(&sse.data) {
                 let mut events = Vec::with_capacity(2);
                 if let Some(usage) = payload.usage {
+                    let mut details = BTreeMap::new();
+                    if let Some(crt) = usage.cache_read_input_tokens {
+                        details.insert("cache_read".into(), crt);
+                    }
                     events.push(LlmEvent::Usage {
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        details,
                     });
                 }
                 if let Some(delta) = payload.delta {
@@ -510,6 +513,45 @@ data: {\"type\":\"message_stop\"}\n\
         let summary = collect_summary(&llm_events);
         assert_eq!(summary.thinking, "Let me reason.");
         assert_eq!(summary.text, "The answer.");
+    }
+
+    // ── Stream parser: cache_read_input_tokens ──────────────────────
+
+    #[test]
+    fn stream_cache_read_tokens() {
+        let raw = b"\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_cache\",\"model\":\"claude-sonnet-4-20250514\",\"usage\":{\"input_tokens\":500,\"output_tokens\":1,\"cache_read_input_tokens\":400}}}\n\
+\n\
+event: content_block_start\n\
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\
+\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Cached!\"}}\n\
+\n\
+event: content_block_stop\n\
+data: {\"type\":\"content_block_stop\",\"index\":0}\n\
+\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":10}}\n\
+\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n\
+\n";
+
+        let mut sse_parser = SseParser::new();
+        let sse_events = sse_parser.feed(raw);
+
+        let mut parser = AnthropicStreamParserWithState::new();
+        let mut llm_events = Vec::new();
+        for sse in &sse_events {
+            llm_events.extend(parser.parse_event(sse));
+        }
+
+        let summary = collect_summary(&llm_events);
+        assert_eq!(summary.input_tokens, Some(500));
+        assert_eq!(summary.usage_details.get("cache_read"), Some(&400));
+        assert_eq!(summary.text, "Cached!");
     }
 
     // ── Adversarial: malformed JSON in SSE data ─────────────────────

@@ -142,6 +142,7 @@ impl PricingTable {
         model: Option<&str>,
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
+        usage_details: &std::collections::BTreeMap<String, u64>,
     ) -> f64 {
         // Reject oversized model strings before any allocation. Real model
         // names are well under 128 bytes; anything larger is garbage or an
@@ -153,10 +154,15 @@ impl PricingTable {
             _ => return 0.0,
         };
 
-        let input = input_tokens.unwrap_or(0) as f64;
+        // Subtract cached tokens from input: cached tokens are typically
+        // priced much lower (10-25% of input price). We conservatively
+        // exclude them from input cost entirely (underestimates slightly).
+        let raw_input = input_tokens.unwrap_or(0);
+        let cache_read = usage_details.get("cache_read").copied().unwrap_or(0);
+        let effective_input = raw_input.saturating_sub(cache_read) as f64;
         let output = output_tokens.unwrap_or(0) as f64;
 
-        if input == 0.0 && output == 0.0 {
+        if effective_input == 0.0 && output == 0.0 {
             return 0.0;
         }
 
@@ -166,7 +172,7 @@ impl PricingTable {
         };
 
         // Pass 1: strict match
-        if let Some(cost) = Self::try_strict_match(prov, model_str, input, output) {
+        if let Some(cost) = Self::try_strict_match(prov, model_str, effective_input, output) {
             return cost;
         }
 
@@ -178,7 +184,7 @@ impl PricingTable {
             match candidate.rfind('-') {
                 Some(pos) if pos >= MIN_STRIP_LEN => {
                     candidate.truncate(pos);
-                    if let Some(cost) = Self::try_strict_match(prov, &candidate, input, output) {
+                    if let Some(cost) = Self::try_strict_match(prov, &candidate, effective_input, output) {
                         return cost;
                     }
                 }
@@ -187,7 +193,7 @@ impl PricingTable {
         }
 
         // Pass 3: longest common prefix match (min 8 chars shared)
-        if let Some(cost) = Self::try_prefix_match(prov, model_str, input, output) {
+        if let Some(cost) = Self::try_prefix_match(prov, model_str, effective_input, output) {
             return cost;
         }
 
@@ -282,6 +288,15 @@ fn extract_trailing_version(id: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    fn no_details() -> BTreeMap<String, u64> {
+        BTreeMap::new()
+    }
+
+    fn cache_details(cache_read: u64) -> BTreeMap<String, u64> {
+        BTreeMap::from([("cache_read".into(), cache_read)])
+    }
 
     #[test]
     fn load_succeeds() {
@@ -295,54 +310,54 @@ mod tests {
     #[test]
     fn estimate_cost_known_anthropic_model() {
         let table = PricingTable::load();
-        let cost = table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), Some(1000), Some(500));
+        let cost = table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), Some(1000), Some(500), &no_details());
         assert!(cost > 0.0, "cost should be positive for known model");
     }
 
     #[test]
     fn estimate_cost_known_google_model() {
         let table = PricingTable::load();
-        let cost = table.estimate_cost("google", Some("gemini-2.0-flash"), Some(1000), Some(500));
+        let cost = table.estimate_cost("google", Some("gemini-2.0-flash"), Some(1000), Some(500), &no_details());
         assert!(cost > 0.0, "cost should be positive for known model");
     }
 
     #[test]
     fn estimate_cost_known_openai_model() {
         let table = PricingTable::load();
-        let cost = table.estimate_cost("openai", Some("gpt-4o"), Some(1000), Some(500));
+        let cost = table.estimate_cost("openai", Some("gpt-4o"), Some(1000), Some(500), &no_details());
         assert!(cost > 0.0, "cost should be positive for known model");
     }
 
     #[test]
     fn estimate_cost_unknown_model() {
         let table = PricingTable::load();
-        let cost = table.estimate_cost("anthropic", Some("nonexistent-model-xyz"), Some(1000), Some(500));
+        let cost = table.estimate_cost("anthropic", Some("nonexistent-model-xyz"), Some(1000), Some(500), &no_details());
         assert_eq!(cost, 0.0, "unknown model should return 0");
     }
 
     #[test]
     fn estimate_cost_unknown_provider() {
         let table = PricingTable::load();
-        let cost = table.estimate_cost("azure", Some("gpt-4o"), Some(1000), Some(500));
+        let cost = table.estimate_cost("azure", Some("gpt-4o"), Some(1000), Some(500), &no_details());
         assert_eq!(cost, 0.0, "unknown provider should return 0");
     }
 
     #[test]
     fn estimate_cost_no_model() {
         let table = PricingTable::load();
-        assert_eq!(table.estimate_cost("anthropic", None, Some(1000), Some(500)), 0.0);
-        assert_eq!(table.estimate_cost("anthropic", Some(""), Some(1000), Some(500)), 0.0);
+        assert_eq!(table.estimate_cost("anthropic", None, Some(1000), Some(500), &no_details()), 0.0);
+        assert_eq!(table.estimate_cost("anthropic", Some(""), Some(1000), Some(500), &no_details()), 0.0);
     }
 
     #[test]
     fn estimate_cost_zero_tokens() {
         let table = PricingTable::load();
         assert_eq!(
-            table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), Some(0), Some(0)),
+            table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), Some(0), Some(0), &no_details()),
             0.0
         );
         assert_eq!(
-            table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), None, None),
+            table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), None, None, &no_details()),
             0.0
         );
     }
@@ -385,8 +400,7 @@ mod tests {
     #[test]
     fn tiered_price_uses_base_rate() {
         let table = PricingTable::load();
-        // claude-opus-4-6 has tiered pricing; should still return a cost
-        let cost = table.estimate_cost("anthropic", Some("claude-opus-4-6"), Some(1000), Some(500));
+        let cost = table.estimate_cost("anthropic", Some("claude-opus-4-6"), Some(1000), Some(500), &no_details());
         assert!(cost > 0.0, "tiered model should still return positive cost");
     }
 
@@ -395,39 +409,35 @@ mod tests {
     #[test]
     fn fuzzy_suffix_strip() {
         let table = PricingTable::load();
-        // gemini-3.1-pro-preview has starts_with rule; adding -customtools should
-        // still match after one round of suffix stripping
         let exact = table.estimate_cost(
             "google",
             Some("gemini-3.1-pro-preview"),
             Some(1000),
             Some(500),
+            &no_details(),
         );
         let fuzzy = table.estimate_cost(
             "google",
             Some("gemini-3.1-pro-preview-customtools"),
             Some(1000),
             Some(500),
+            &no_details(),
         );
         assert!(exact > 0.0, "exact match should have a cost");
-        // The suffixed variant already matches the starts_with rule directly,
-        // so it should match at the same price regardless of fuzzy logic
         assert_eq!(fuzzy, exact, "suffixed variant should match same price");
     }
 
     #[test]
     fn fuzzy_date_stamp_strip() {
         let table = PricingTable::load();
-        // gpt-4o uses equals:"gpt-4o" -- a date-stamped variant like
-        // gpt-4o-2025-01-15 won't match strictly but should match after
-        // stripping -15, -01, -2025 segments
         let base_cost =
-            table.estimate_cost("openai", Some("gpt-4o"), Some(1_000_000), Some(500_000));
+            table.estimate_cost("openai", Some("gpt-4o"), Some(1_000_000), Some(500_000), &no_details());
         let dated_cost = table.estimate_cost(
             "openai",
             Some("gpt-4o-2025-01-15"),
             Some(1_000_000),
             Some(500_000),
+            &no_details(),
         );
         assert!(base_cost > 0.0, "gpt-4o should have a cost");
         assert_eq!(
@@ -439,23 +449,19 @@ mod tests {
     #[test]
     fn fuzzy_version_closest() {
         let table = PricingTable::load();
-        // claude-opus-4-99 doesn't match any strict rule and stripping -99
-        // leaves claude-opus-4 which matches equals:"claude-opus-4" (strict).
-        // But test with a model that needs prefix fallback: use a name that
-        // won't match after stripping either, like "claude-sonnet-4.future"
-        // (dot, not dash, so no stripping). Should fall through to prefix match
-        // against claude-sonnet-4-* model IDs (prefix >= 15 chars).
         let cost = table.estimate_cost(
             "anthropic",
             Some("claude-sonnet-4.future"),
             Some(1000),
             Some(500),
+            &no_details(),
         );
         let known_cost = table.estimate_cost(
             "anthropic",
             Some("claude-sonnet-4-20250514"),
             Some(1000),
             Some(500),
+            &no_details(),
         );
         assert!(known_cost > 0.0, "known sonnet should have cost");
         assert_eq!(
@@ -467,13 +473,12 @@ mod tests {
     #[test]
     fn fuzzy_no_nonsense_match() {
         let table = PricingTable::load();
-        // A completely unrelated model name should not fuzzy-match anything.
-        // "totally-unknown-model" shares no meaningful prefix with any model.
         let cost = table.estimate_cost(
             "anthropic",
             Some("totally-unknown-model"),
             Some(1000),
             Some(500),
+            &no_details(),
         );
         assert_eq!(
             cost, 0.0,
@@ -484,15 +489,12 @@ mod tests {
     #[test]
     fn fuzzy_strip_depth_limit() {
         let table = PricingTable::load();
-        // "gpt-4o-z-z-z-z-z" needs 5 strips to reach "gpt-4o" but budget is 4.
-        // After 4 strips: "gpt-4o-z" -- no strict match.
-        // Prefix fallback: longest common prefix with any model is 7 chars
-        // ("gpt-4o-" with gpt-4o-audio-preview) which is below the 8-char minimum.
         let cost = table.estimate_cost(
             "openai",
             Some("gpt-4o-z-z-z-z-z"),
             Some(1_000_000),
             Some(500_000),
+            &no_details(),
         );
         assert_eq!(
             cost, 0.0,
@@ -517,11 +519,45 @@ mod tests {
     }
 
     #[test]
+    fn cache_read_tokens_reduce_cost() {
+        let table = PricingTable::load();
+        let full_cost = table.estimate_cost(
+            "anthropic",
+            Some("claude-sonnet-4-20250514"),
+            Some(1000),
+            Some(500),
+            &no_details(),
+        );
+        let cached_cost = table.estimate_cost(
+            "anthropic",
+            Some("claude-sonnet-4-20250514"),
+            Some(1000),
+            Some(500),
+            &cache_details(800), // 800 of 1000 input tokens are cached
+        );
+        assert!(full_cost > 0.0, "full cost should be positive");
+        assert!(cached_cost < full_cost, "cached cost should be lower than full cost");
+        assert!(cached_cost > 0.0, "cached cost should still be positive (output tokens)");
+    }
+
+    #[test]
+    fn cache_read_tokens_all_cached_zero_input_cost() {
+        let table = PricingTable::load();
+        let cost = table.estimate_cost(
+            "anthropic",
+            Some("claude-sonnet-4-20250514"),
+            Some(1000),
+            Some(0),
+            &cache_details(1000),
+        );
+        assert_eq!(cost, 0.0, "fully cached with no output should be free");
+    }
+
+    #[test]
     fn oversized_model_string_rejected() {
         let table = PricingTable::load();
-        // A multi-KB model string must be rejected before any allocation.
         let huge = "claude-sonnet-4-".to_string() + &"x".repeat(8192);
-        let cost = table.estimate_cost("anthropic", Some(&huge), Some(1000), Some(500));
+        let cost = table.estimate_cost("anthropic", Some(&huge), Some(1000), Some(500), &no_details());
         assert_eq!(cost, 0.0, "oversized model string should be rejected");
     }
 }

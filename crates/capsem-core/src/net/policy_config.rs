@@ -271,7 +271,7 @@ pub fn setting_definitions() -> Vec<SettingDef> {
             name: "Claude Code state (.claude.json)",
             description: "Content for ~/.claude.json. Skips onboarding, trust dialogs, and keybinding prompts.",
             setting_type: SettingType::File,
-            default_value: SettingValue::Text(r#"{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark"}"#.into()),
+            default_value: SettingValue::Text(r#"{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark","numStartups":1,"projects":{"/root":{"allowedTools":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}}}"#.into()),
             enabled_by: Some("ai.anthropic.allow"),
             metadata: SettingMetadata { guest_path: Some("/root/.claude.json".into()), ..Default::default() },
         },
@@ -1301,9 +1301,28 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
                     tracing::warn!("skipping boot file: {e}");
                     continue;
                 }
+
+                // Inject capsem MCP server into Claude/Gemini settings.json.
+                // The capsem entry is always added so every AI agent can use
+                // host-side MCP tools. User-provided mcpServers are preserved.
+                //
+                // For Claude state (.claude.json), inject API key approval
+                // and project trust so Claude starts without onboarding prompts.
+                let content = if s.id.ends_with(".settings_json") {
+                    inject_capsem_mcp_server(text_value)
+                } else if s.id == "ai.anthropic.claude.state_json" {
+                    if let Some(api_key) = env.get("ANTHROPIC_API_KEY") {
+                        inject_api_key_approval(text_value, api_key)
+                    } else {
+                        text_value.to_string()
+                    }
+                } else {
+                    text_value.to_string()
+                };
+
                 files.push(GuestFile {
                     path: guest_path.clone(),
-                    content: text_value.to_string(),
+                    content,
                     mode: 0o644,
                 });
             }
@@ -1329,6 +1348,76 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         env: if env.is_empty() { None } else { Some(env) },
         files: if files.is_empty() { None } else { Some(files) },
     }
+}
+
+/// Inject the capsem MCP server entry into a settings.json string.
+///
+/// Parses the JSON, inserts `{"capsem": {"command": "/run/capsem-mcp-server"}}`
+/// under `mcpServers`, preserving any user-provided entries. Returns the
+/// original string unchanged if parsing fails.
+fn inject_capsem_mcp_server(json_str: &str) -> String {
+    let mut json: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return json_str.to_string(),
+    };
+
+    let obj = match json.as_object_mut() {
+        Some(o) => o,
+        None => return json_str.to_string(),
+    };
+
+    let mcp_servers = obj
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+
+    if let Some(servers) = mcp_servers.as_object_mut() {
+        servers.insert(
+            "capsem".to_string(),
+            serde_json::json!({"command": "/run/capsem-mcp-server"}),
+        );
+    }
+
+    serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
+}
+
+/// Inject `customApiKeyResponses` into Claude state JSON.
+///
+/// Pre-approves the last 20 characters of the API key so Claude Code doesn't
+/// prompt the user to "trust" it on first use. Returns the original string
+/// unchanged if parsing fails.
+fn inject_api_key_approval(json_str: &str, api_key: &str) -> String {
+    let mut json: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return json_str.to_string(),
+    };
+
+    let obj = match json.as_object_mut() {
+        Some(o) => o,
+        None => return json_str.to_string(),
+    };
+
+    let key_suffix: String = if api_key.len() > 20 {
+        api_key[api_key.len() - 20..].to_string()
+    } else {
+        api_key.to_string()
+    };
+
+    let responses = obj
+        .entry("customApiKeyResponses")
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(r) = responses.as_object_mut() {
+        let approved = r
+            .entry("approved")
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(arr) = approved.as_array_mut() {
+            if !arr.iter().any(|v| v.as_str() == Some(&key_suffix)) {
+                arr.push(serde_json::json!(key_suffix));
+            }
+        }
+        r.entry("rejected").or_insert_with(|| serde_json::json!([]));
+    }
+
+    serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
 }
 
 /// Extract VM settings from resolved settings.
@@ -1367,6 +1456,16 @@ pub fn load_merged_policy() -> HttpPolicy {
     let (user, corp) = load_settings_files();
     let resolved = resolve_settings(&user, &corp);
     settings_to_http_policy(&resolved)
+}
+
+/// Build a `DomainPolicy` from merged settings.
+///
+/// Convenience wrapper matching the `load_merged_network_policy()` pattern.
+/// Used by the MCP gateway to check built-in HTTP tool domains.
+pub fn load_merged_domain_policy() -> DomainPolicy {
+    let (user, corp) = load_settings_files();
+    let resolved = resolve_settings(&user, &corp);
+    settings_to_domain_policy(&resolved)
 }
 
 /// Build a `NetworkPolicy` (new policy engine) from merged settings.
@@ -3619,5 +3718,108 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             allowed.iter().any(|d| d == "elie.net"),
             "elie.net should be in allowed patterns: {allowed:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // MCP server injection into settings.json
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn inject_capsem_mcp_server_into_empty_json() {
+        let result = inject_capsem_mcp_server(r#"{}"#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["capsem"]["command"],
+            "/run/capsem-mcp-server"
+        );
+    }
+
+    #[test]
+    fn inject_capsem_mcp_server_preserves_existing_servers() {
+        let input = r#"{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp"]}}}"#;
+        let result = inject_capsem_mcp_server(input);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["mcpServers"]["github"]["command"], "npx");
+        assert_eq!(
+            parsed["mcpServers"]["capsem"]["command"],
+            "/run/capsem-mcp-server"
+        );
+    }
+
+    #[test]
+    fn inject_capsem_mcp_server_preserves_other_keys() {
+        let input = r#"{"permissions":{"defaultMode":"bypassPermissions"}}"#;
+        let result = inject_capsem_mcp_server(input);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["permissions"]["defaultMode"], "bypassPermissions");
+        assert_eq!(
+            parsed["mcpServers"]["capsem"]["command"],
+            "/run/capsem-mcp-server"
+        );
+    }
+
+    #[test]
+    fn inject_capsem_mcp_server_invalid_json_passthrough() {
+        let input = "not json at all";
+        let result = inject_capsem_mcp_server(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn claude_default_settings_has_capsem_mcp_server() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let claude = files.iter().find(|f| f.path == "/root/.claude/settings.json").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["capsem"]["command"],
+            "/run/capsem-mcp-server",
+            "capsem MCP server should be injected into Claude settings.json"
+        );
+        // Original permissions should still be there
+        assert_eq!(parsed["permissions"]["defaultMode"], "bypassPermissions");
+    }
+
+    #[test]
+    fn gemini_default_settings_has_capsem_mcp_server() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let gemini = files.iter().find(|f| f.path == "/root/.gemini/settings.json").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["capsem"]["command"],
+            "/run/capsem-mcp-server",
+            "capsem MCP server should be injected into Gemini settings.json"
+        );
+    }
+
+    #[test]
+    fn user_mcp_servers_preserved_alongside_capsem() {
+        let custom = r#"{"mcpServers":{"myserver":{"command":"my-tool"}}}"#;
+        let user = file_with(vec![
+            ("ai.google.gemini.settings_json", SettingValue::Text(custom.into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let gemini = files.iter().find(|f| f.path == "/root/.gemini/settings.json").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
+        assert_eq!(parsed["mcpServers"]["myserver"]["command"], "my-tool");
+        assert_eq!(
+            parsed["mcpServers"]["capsem"]["command"],
+            "/run/capsem-mcp-server"
+        );
+    }
+
+    #[test]
+    fn capsem_mcp_not_in_non_settings_json_files() {
+        // Other boot files (projects.json, etc.) should NOT get mcpServers injected
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let projects = files.iter().find(|f| f.path == "/root/.gemini/projects.json").unwrap();
+        assert!(!projects.content.contains("capsem"), "projects.json should not have capsem injected");
     }
 }

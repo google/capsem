@@ -7,6 +7,8 @@
 /// Parts contain `text`, `functionCall`, or `thought` fields.
 /// Gemini doesn't provide tool call IDs -- we generate synthetic ones.
 
+use std::collections::BTreeMap;
+
 use super::events::{LlmEvent, ProviderStreamParser, StopReason};
 use super::provider::{Provider, ProviderKind};
 use super::sse::SseEvent;
@@ -85,6 +87,8 @@ mod wire {
     pub struct UsageMetadata {
         pub prompt_token_count: Option<u64>,
         pub candidates_token_count: Option<u64>,
+        pub cached_content_token_count: Option<u64>,
+        pub thoughts_token_count: Option<u64>,
     }
 }
 
@@ -203,9 +207,17 @@ impl ProviderStreamParser for GoogleStreamParser {
 
         // Usage metadata
         if let Some(usage) = &chunk.usage_metadata {
+            let mut details = BTreeMap::new();
+            if let Some(crt) = usage.cached_content_token_count {
+                details.insert("cache_read".into(), crt);
+            }
+            if let Some(tt) = usage.thoughts_token_count {
+                details.insert("thinking".into(), tt);
+            }
             events.push(LlmEvent::Usage {
                 input_tokens: usage.prompt_token_count,
                 output_tokens: usage.candidates_token_count,
+                details,
             });
         }
 
@@ -333,6 +345,54 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"The answer.\"}],\"ro
         let summary = collect_summary(&llm_events);
         assert_eq!(summary.thinking, "Let me reason.");
         assert_eq!(summary.text, "The answer.");
+    }
+
+    // ── Stream parser: cache read tokens ────────────────────────────
+
+    #[test]
+    fn stream_cache_read_tokens() {
+        let raw = b"\
+data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Cached reply\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":100,\"candidatesTokenCount\":20,\"cachedContentTokenCount\":80},\"modelVersion\":\"gemini-2.5-pro\"}\n\
+\n";
+
+        let mut sse_parser = SseParser::new();
+        let sse_events = sse_parser.feed(raw);
+
+        let mut parser = GoogleStreamParser::new();
+        let mut llm_events = Vec::new();
+        for sse in &sse_events {
+            llm_events.extend(parser.parse_event(sse));
+        }
+
+        let summary = collect_summary(&llm_events);
+        assert_eq!(summary.input_tokens, Some(100));
+        assert_eq!(summary.output_tokens, Some(20));
+        assert_eq!(summary.usage_details.get("cache_read"), Some(&80));
+    }
+
+    // ── Stream parser: thinking tokens in usage ─────────────────────
+
+    #[test]
+    fn stream_thinking_tokens_in_usage() {
+        let raw = b"\
+data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Let me think.\",\"thought\":true}],\"role\":\"model\"}}],\"usageMetadata\":{\"promptTokenCount\":50,\"candidatesTokenCount\":10,\"thoughtsTokenCount\":200},\"modelVersion\":\"gemini-2.5-pro\"}\n\
+\n\
+data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Answer.\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":50,\"candidatesTokenCount\":15,\"thoughtsTokenCount\":200}}\n\
+\n";
+
+        let mut sse_parser = SseParser::new();
+        let sse_events = sse_parser.feed(raw);
+
+        let mut parser = GoogleStreamParser::new();
+        let mut llm_events = Vec::new();
+        for sse in &sse_events {
+            llm_events.extend(parser.parse_event(sse));
+        }
+
+        let summary = collect_summary(&llm_events);
+        assert_eq!(summary.thinking, "Let me think.");
+        assert_eq!(summary.text, "Answer.");
+        assert_eq!(summary.usage_details.get("thinking"), Some(&200));
     }
 
     // ── Adversarial: malformed JSON ─────────────────────────────────

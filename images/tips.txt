@@ -1,11 +1,11 @@
 # Tips shown randomly at login. One tip per line. Lines starting with # are ignored.
 pip install and uv pip install work out of the box.
 npm install -g works -- packages go to your scratch disk.
-apt is not available (read-only rootfs). Use pip or npm instead.
+apt install works -- changes persist for the session and reset on reboot.
 Your /root directory is on a scratch disk -- files persist for the session.
 Run capsem-doctor to verify sandbox integrity.
 Use uv for faster Python package installs.
 AI CLI tools auto-update -- they live on the writable scratch disk.
-The rootfs is read-only. Only /root, /tmp, and /var are writable.
+The filesystem is fully writable -- changes persist for the session and reset on reboot.
 Python packages like numpy, pandas, and requests are pre-installed.
 Use capsem-doctor -k sandbox to run only sandbox security tests.

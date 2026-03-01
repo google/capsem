@@ -1009,6 +1009,110 @@ mod tests {
         assert_eq!(MAX_ENV_VALUE_LEN, 131_072);
     }
 
+    // -------------------------------------------------------------------
+    // File event edge cases
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn roundtrip_file_created_zero_size() {
+        let msg = GuestToHost::FileCreated {
+            path: "empty.txt".into(),
+            size: 0,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileCreated { path, size } => {
+                assert_eq!(path, "empty.txt");
+                assert_eq!(size, 0);
+            }
+            other => panic!("expected FileCreated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_created_max_size() {
+        let msg = GuestToHost::FileCreated {
+            path: "huge.bin".into(),
+            size: u64::MAX,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileCreated { path, size } => {
+                assert_eq!(path, "huge.bin");
+                assert_eq!(size, u64::MAX);
+            }
+            other => panic!("expected FileCreated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_created_empty_path() {
+        let msg = GuestToHost::FileCreated {
+            path: "".into(),
+            size: 42,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileCreated { path, size } => {
+                assert_eq!(path, "");
+                assert_eq!(size, 42);
+            }
+            other => panic!("expected FileCreated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_deleted_empty_path() {
+        let msg = GuestToHost::FileDeleted {
+            path: "".into(),
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileDeleted { path } => assert_eq!(path, ""),
+            other => panic!("expected FileDeleted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_modified_unicode_path() {
+        let unicode_path = "project/\u{1F4C4}\u{4E2D}\u{6587}/caf\u{00E9}.rs";
+        let msg = GuestToHost::FileModified {
+            path: unicode_path.into(),
+            size: 100,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileModified { path, size } => {
+                assert_eq!(path, unicode_path);
+                assert_eq!(size, 100);
+            }
+            other => panic!("expected FileModified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_file_created_long_path() {
+        let long_path = "a/".repeat(5000) + "file.txt";
+        let msg = GuestToHost::FileCreated {
+            path: long_path.clone(),
+            size: 1,
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileCreated { path, size } => {
+                assert_eq!(path, long_path);
+                assert_eq!(size, 1);
+            }
+            other => panic!("expected FileCreated, got {other:?}"),
+        }
+    }
+
     #[test]
     fn cross_decode_host_format() {
         // Encode with rmp_serde directly (simulating remote), decode with helper.
@@ -1026,4 +1130,5 @@ mod tests {
             other => panic!("expected Resize, got {other:?}"),
         }
     }
+
 }
