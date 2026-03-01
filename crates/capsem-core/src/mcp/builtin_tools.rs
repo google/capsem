@@ -12,35 +12,49 @@ use crate::net::domain_policy::{Action, DomainPolicy};
 
 use super::types::{JsonRpcResponse, McpToolDef};
 
+/// The three built-in tool names (without any namespace prefix).
+const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];
+
+/// Returns true if the given tool name is a built-in tool.
+pub fn is_builtin_tool(name: &str) -> bool {
+    BUILTIN_TOOL_NAMES.contains(&name)
+}
+
 /// Return the three built-in tool definitions.
 pub fn builtin_tool_defs() -> Vec<McpToolDef> {
     vec![
         McpToolDef {
-            namespaced_name: "builtin__fetch_http".into(),
+            namespaced_name: "fetch_http".into(),
             original_name: "fetch_http".into(),
-            description: Some(
-                "Fetch a URL and return its text content. Supports raw or extracted text mode."
-                    .into(),
-            ),
+            description: Some(concat!(
+                "Fetch a URL and return its text content. ",
+                "In 'content' mode (default), HTML is cleaned: scripts, styles, and hidden elements are stripped, ",
+                "and block-level elements (div, p, h1-h6, li, etc.) are converted to newlines. ",
+                "Output starts with metadata lines (URL, Domain, Content length) followed by the page text. ",
+                "Use start_index and max_length for pagination -- if the response is truncated, ",
+                "a 'Remaining' line shows the next start_index value to continue. ",
+                "The URL's domain must be allowed by network policy; blocked or unknown domains return an error. ",
+                "Errors: domain blocked by policy, invalid URL, HTTP request failed.",
+            ).into()),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The URL to fetch"
+                        "description": "The URL to fetch. The domain must be allowed by network policy or the request will be rejected."
                     },
                     "format": {
                         "type": "string",
                         "enum": ["raw", "content"],
-                        "description": "Output format: 'raw' returns body as-is, 'content' extracts text from HTML (default: content)"
+                        "description": "Output format: 'content' (default) extracts visible text from HTML, stripping scripts/styles and converting block elements to newlines. 'raw' returns the response body unchanged."
                     },
                     "start_index": {
                         "type": "integer",
-                        "description": "Character offset to start from (default: 0)"
+                        "description": "Character offset to start reading from (default: 0). Use the value from the 'Remaining' line in a previous response to continue paginating."
                     },
                     "max_length": {
                         "type": "integer",
-                        "description": "Maximum characters to return (default: 50000)"
+                        "description": "Maximum characters to return (default: 50000). If the content exceeds this, a 'Remaining' line indicates how to fetch the rest."
                     }
                 },
                 "required": ["url"]
@@ -48,41 +62,47 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
             server_name: "builtin".into(),
         },
         McpToolDef {
-            namespaced_name: "builtin__grep_http".into(),
+            namespaced_name: "grep_http".into(),
             original_name: "grep_http".into(),
-            description: Some(
-                "Fetch a URL and search for a regex pattern in the content.".into(),
-            ),
+            description: Some(concat!(
+                "Fetch a URL and search its content for a regex pattern (case-insensitive). ",
+                "By default, searches extracted text (HTML cleaned as in fetch_http); set raw=true to search the original HTML. ",
+                "Output starts with metadata (URL, Pattern, Matches found), then match blocks. ",
+                "Each match block shows context lines around the matching line, with '>>>' marking the match and line numbers. ",
+                "Use start_index and max_length for pagination of large result sets. ",
+                "The URL's domain must be allowed by network policy; blocked or unknown domains return an error. ",
+                "Errors: domain blocked by policy, invalid URL, invalid regex syntax, HTTP request failed.",
+            ).into()),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The URL to fetch"
+                        "description": "The URL to fetch and search. The domain must be allowed by network policy or the request will be rejected."
                     },
                     "pattern": {
                         "type": "string",
-                        "description": "Regex pattern to search for (case-insensitive)"
+                        "description": "Regex pattern to search for (case-insensitive). Uses Rust regex syntax (similar to PCRE without lookaround)."
                     },
                     "context_lines": {
                         "type": "integer",
-                        "description": "Lines of context around matches (default: 3)"
+                        "description": "Number of lines to show before and after each matching line (default: 3)"
                     },
                     "max_matches": {
                         "type": "integer",
-                        "description": "Maximum matches to return (default: 50)"
+                        "description": "Maximum number of matches to return (default: 50). If more matches exist, output notes the truncation."
                     },
                     "raw": {
                         "type": "boolean",
-                        "description": "Search raw HTML instead of extracted text (default: false)"
+                        "description": "If true, search the raw HTML source instead of extracted text (default: false)"
                     },
                     "start_index": {
                         "type": "integer",
-                        "description": "Character offset to start from (default: 0)"
+                        "description": "Character offset to start reading output from (default: 0). Use for paginating large result sets."
                     },
                     "max_length": {
                         "type": "integer",
-                        "description": "Maximum characters to return (default: 50000)"
+                        "description": "Maximum characters to return (default: 50000). If truncated, use the indicated start_index to continue."
                     }
                 },
                 "required": ["url", "pattern"]
@@ -90,28 +110,35 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
             server_name: "builtin".into(),
         },
         McpToolDef {
-            namespaced_name: "builtin__http_headers".into(),
+            namespaced_name: "http_headers".into(),
             original_name: "http_headers".into(),
-            description: Some("Return HTTP status and headers for a URL.".into()),
+            description: Some(concat!(
+                "Return HTTP status code and response headers for a URL. ",
+                "By default uses HEAD (no body downloaded, faster). Set method='GET' to see headers from a full response ",
+                "(some servers return different headers for HEAD vs GET). ",
+                "Output format: 'URL:' line, 'Status:' line, then 'Headers:' section with one 'name: value' per line. ",
+                "The URL's domain must be allowed by network policy; blocked or unknown domains return an error. ",
+                "Errors: domain blocked by policy, invalid URL, HTTP request failed.",
+            ).into()),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The URL to check"
+                        "description": "The URL to check. The domain must be allowed by network policy or the request will be rejected."
                     },
                     "method": {
                         "type": "string",
                         "enum": ["HEAD", "GET"],
-                        "description": "HTTP method (default: HEAD)"
+                        "description": "HTTP method to use (default: HEAD). HEAD is faster as it skips the body, but some servers return different headers for GET."
                     },
                     "start_index": {
                         "type": "integer",
-                        "description": "Character offset to start from (default: 0)"
+                        "description": "Character offset to start reading from (default: 0). Rarely needed since header output is typically small."
                     },
                     "max_length": {
                         "type": "integer",
-                        "description": "Maximum characters to return (default: 50000)"
+                        "description": "Maximum characters to return (default: 50000). Rarely needed since header output is typically small."
                     }
                 },
                 "required": ["url"]
@@ -174,12 +201,26 @@ async fn handle_fetch_http(
         .and_then(|v| v.as_u64())
         .unwrap_or(50000) as usize;
 
-    let body = match client.get(url).send().await {
-        Ok(resp) => match resp.text().await {
-            Ok(t) => t,
-            Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
-        },
+    let resp = match client.get(url).send().await {
+        Ok(r) => r,
         Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
+    };
+
+    // Reject binary content unless the user explicitly wants raw bytes
+    let ct = get_content_type(&resp);
+    if format != "raw" && is_binary_content_type(&ct) {
+        return tool_error(
+            id,
+            &format!(
+                "cannot extract text from binary content (content-type: {ct}). \
+                 Use format='raw' to fetch the raw bytes."
+            ),
+        );
+    }
+
+    let body = match resp.text().await {
+        Ok(t) => t,
+        Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };
 
     let text = if format == "raw" {
@@ -250,6 +291,10 @@ async fn handle_grep_http(
         .and_then(|v| v.as_u64())
         .unwrap_or(50000) as usize;
 
+    if pattern_str.is_empty() {
+        return tool_error(id, "pattern must not be empty");
+    }
+
     let re = match regex::RegexBuilder::new(pattern_str)
         .case_insensitive(true)
         .build()
@@ -258,12 +303,26 @@ async fn handle_grep_http(
         Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
     };
 
-    let body = match client.get(url).send().await {
-        Ok(resp) => match resp.text().await {
-            Ok(t) => t,
-            Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
-        },
+    let resp = match client.get(url).send().await {
+        Ok(r) => r,
         Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
+    };
+
+    // Reject binary content unless the user explicitly wants raw search
+    let ct = get_content_type(&resp);
+    if !raw && is_binary_content_type(&ct) {
+        return tool_error(
+            id,
+            &format!(
+                "cannot search binary content (content-type: {ct}). \
+                 Binary files like images and PDFs are not searchable."
+            ),
+        );
+    }
+
+    let body = match resp.text().await {
+        Ok(t) => t,
+        Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };
 
     let text = if raw {
@@ -375,12 +434,61 @@ async fn handle_http_headers(
 }
 
 // ---------------------------------------------------------------------------
+// Content-Type helpers
+// ---------------------------------------------------------------------------
+
+/// Known-binary MIME type prefixes. These cannot be meaningfully text-extracted.
+const BINARY_MIME_PREFIXES: &[&str] = &[
+    "image/",
+    "audio/",
+    "video/",
+    "font/",
+    "application/octet-stream",
+    "application/pdf",
+    "application/zip",
+    "application/gzip",
+    "application/x-tar",
+    "application/wasm",
+    "application/x-executable",
+];
+
+/// Returns true if the Content-Type indicates binary content.
+fn is_binary_content_type(content_type: &str) -> bool {
+    let ct = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    BINARY_MIME_PREFIXES
+        .iter()
+        .any(|prefix| ct.starts_with(prefix))
+}
+
+/// Extract the Content-Type header value from a response, defaulting to empty.
+fn get_content_type(resp: &reqwest::Response) -> String {
+    resp.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Check if the URL's domain is allowed by policy. Returns domain on success.
 fn check_domain_policy(url: &str, policy: &DomainPolicy) -> Result<String, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(format!(
+                "only http:// and https:// URLs are supported (got {other}://)"
+            ))
+        }
+    }
     let domain = parsed
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?
@@ -523,9 +631,25 @@ mod tests {
         assert_eq!(defs.len(), 3);
         assert!(defs.iter().all(|d| d.server_name == "builtin"));
         let names: Vec<&str> = defs.iter().map(|d| d.namespaced_name.as_str()).collect();
-        assert!(names.contains(&"builtin__fetch_http"));
-        assert!(names.contains(&"builtin__grep_http"));
-        assert!(names.contains(&"builtin__http_headers"));
+        assert!(names.contains(&"fetch_http"));
+        assert!(names.contains(&"grep_http"));
+        assert!(names.contains(&"http_headers"));
+        // Names must NOT have the builtin__ prefix
+        assert!(!names.iter().any(|n| n.starts_with("builtin__")));
+    }
+
+    #[test]
+    fn is_builtin_tool_recognizes_all_three() {
+        assert!(is_builtin_tool("fetch_http"));
+        assert!(is_builtin_tool("grep_http"));
+        assert!(is_builtin_tool("http_headers"));
+    }
+
+    #[test]
+    fn is_builtin_tool_rejects_unknown() {
+        assert!(!is_builtin_tool("unknown_tool"));
+        assert!(!is_builtin_tool("builtin__fetch_http"));
+        assert!(!is_builtin_tool(""));
     }
 
     #[test]
@@ -723,6 +847,485 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("invalid regex"));
+    }
+
+    // -----------------------------------------------------------------------
+    // is_binary_content_type unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn binary_ct_image_png() {
+        assert!(is_binary_content_type("image/png"));
+    }
+
+    #[test]
+    fn binary_ct_with_params() {
+        assert!(is_binary_content_type("image/jpeg; charset=utf-8"));
+    }
+
+    #[test]
+    fn binary_ct_application_pdf() {
+        assert!(is_binary_content_type("application/pdf"));
+    }
+
+    #[test]
+    fn binary_ct_audio() {
+        assert!(is_binary_content_type("audio/mpeg"));
+    }
+
+    #[test]
+    fn binary_ct_video() {
+        assert!(is_binary_content_type("video/mp4"));
+    }
+
+    #[test]
+    fn binary_ct_font() {
+        assert!(is_binary_content_type("font/woff2"));
+    }
+
+    #[test]
+    fn binary_ct_octet_stream() {
+        assert!(is_binary_content_type("application/octet-stream"));
+    }
+
+    #[test]
+    fn binary_ct_wasm() {
+        assert!(is_binary_content_type("application/wasm"));
+    }
+
+    #[test]
+    fn text_ct_html() {
+        assert!(!is_binary_content_type("text/html"));
+    }
+
+    #[test]
+    fn text_ct_json() {
+        assert!(!is_binary_content_type("application/json"));
+    }
+
+    #[test]
+    fn text_ct_xml() {
+        assert!(!is_binary_content_type("application/xml"));
+    }
+
+    #[test]
+    fn text_ct_javascript() {
+        assert!(!is_binary_content_type("application/javascript"));
+    }
+
+    #[test]
+    fn text_ct_empty() {
+        assert!(!is_binary_content_type(""));
+    }
+
+    // -----------------------------------------------------------------------
+    // check_domain_policy scheme rejection tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_domain_policy_rejects_ftp() {
+        let policy = DomainPolicy::default_dev();
+        let result = check_domain_policy("ftp://example.com/file", &policy);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only http"));
+    }
+
+    #[test]
+    fn check_domain_policy_rejects_file() {
+        let policy = DomainPolicy::default_dev();
+        let result = check_domain_policy("file:///etc/passwd", &policy);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only http"));
+    }
+
+    #[test]
+    fn check_domain_policy_rejects_data_uri() {
+        let policy = DomainPolicy::default_dev();
+        let result = check_domain_policy("data:text/html,<h1>hi</h1>", &policy);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only http"));
+    }
+
+    #[test]
+    fn check_domain_policy_rejects_javascript() {
+        let policy = DomainPolicy::default_dev();
+        let result = check_domain_policy("javascript:alert(1)", &policy);
+        assert!(result.is_err());
+        // reqwest::Url::parse may reject this as invalid, either way it errors
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn check_domain_policy_empty_url() {
+        let policy = DomainPolicy::default_dev();
+        let result = check_domain_policy("", &policy);
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // extract_text_from_html edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extract_text_empty_input() {
+        assert_eq!(extract_text_from_html(""), "");
+    }
+
+    #[test]
+    fn extract_text_plain_text_no_tags() {
+        assert_eq!(extract_text_from_html("just plain text"), "just plain text");
+    }
+
+    #[test]
+    fn extract_text_json_content() {
+        let text = extract_text_from_html(r#"{"key":"value"}"#);
+        assert!(text.contains("key"), "JSON keys preserved: {text:?}");
+        assert!(text.contains("value"), "JSON values preserved: {text:?}");
+    }
+
+    #[test]
+    fn extract_text_svg_only_returns_empty() {
+        let text = extract_text_from_html("<svg><text>hello</text></svg>");
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn extract_text_noscript_skipped() {
+        let text = extract_text_from_html("<noscript>hidden</noscript>visible");
+        assert!(text.contains("visible"), "visible text preserved: {text:?}");
+        assert!(!text.contains("hidden"), "noscript content skipped: {text:?}");
+    }
+
+    #[test]
+    fn extract_text_template_skipped() {
+        let text =
+            extract_text_from_html("<template><p>hidden</p></template>visible");
+        assert!(text.contains("visible"), "visible text preserved: {text:?}");
+        assert!(!text.contains("hidden"), "template content skipped: {text:?}");
+    }
+
+    #[test]
+    fn extract_text_html_entities_preserved() {
+        // tl parser preserves raw text nodes including HTML entities
+        let text = extract_text_from_html("&amp; &lt; &gt;");
+        // The raw entity strings are preserved in the output
+        assert!(!text.is_empty(), "non-empty output: {text:?}");
+    }
+
+    #[test]
+    fn extract_text_nested_scripts_in_divs() {
+        let text =
+            extract_text_from_html("<div><script>evil()</script>Good</div>");
+        assert!(text.contains("Good"), "visible text kept: {text:?}");
+        assert!(!text.contains("evil"), "script content dropped: {text:?}");
+    }
+
+    #[test]
+    fn extract_text_multiple_skip_tags() {
+        let html = concat!(
+            "<script>js()</script>",
+            "<style>.x{}</style>",
+            "<noscript>no</noscript>",
+            "<svg><text>svg</text></svg>",
+            "Visible content"
+        );
+        let text = extract_text_from_html(html);
+        assert_eq!(text, "Visible content");
+    }
+
+    // -----------------------------------------------------------------------
+    // paginate edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn paginate_max_zero() {
+        let (chunk, total, has_more) = paginate("Hello", 0, 0);
+        assert_eq!(chunk, "");
+        assert_eq!(total, 5);
+        assert!(has_more);
+    }
+
+    #[test]
+    fn paginate_start_at_exact_end() {
+        let (chunk, total, has_more) = paginate("ABC", 3, 100);
+        assert_eq!(chunk, "");
+        assert_eq!(total, 3);
+        assert!(!has_more);
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_http edge cases (async)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fetch_http_rejects_ftp_scheme() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": "ftp://example.com/file"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("only http"), "error should mention http: {text}");
+    }
+
+    #[tokio::test]
+    async fn fetch_http_rejects_file_scheme() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": "file:///etc/passwd"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("only http"), "error should mention http: {text}");
+    }
+
+    #[tokio::test]
+    async fn fetch_http_rejects_data_uri() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": "data:text/plain,hello"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+    }
+
+    #[tokio::test]
+    async fn fetch_http_url_is_number_not_string() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": 42}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("missing required parameter"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn fetch_http_url_is_null() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": null}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("missing required parameter"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn fetch_http_start_index_negative_defaults_to_zero() {
+        // as_u64() returns None for -1, so it should default to 0
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({
+                "url": "https://elie.net",
+                "start_index": -1
+            }),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        // Should succeed (negative start_index is silently treated as 0)
+        assert!(!is_tool_error(&resp), "should succeed with default start_index=0");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("URL: https://elie.net"), "got: {text}");
+    }
+
+    // -----------------------------------------------------------------------
+    // grep_http edge cases (async)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn grep_http_empty_pattern_rejected() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "grep_http",
+            &serde_json::json!({"url": "https://github.com", "pattern": ""}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("must not be empty"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn grep_http_missing_url_returns_error() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "grep_http",
+            &serde_json::json!({"pattern": "test"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("missing required parameter"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn grep_http_url_is_number() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "grep_http",
+            &serde_json::json!({"url": 123, "pattern": "test"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("missing required parameter"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn grep_http_rejects_ftp_scheme() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "grep_http",
+            &serde_json::json!({"url": "ftp://example.com", "pattern": "test"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("only http"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn grep_http_regex_catastrophic_backtracking_safe() {
+        // Rust regex crate uses finite automaton, no catastrophic backtracking.
+        // This test ensures (a+)+$ doesn't hang on an allowed domain.
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "grep_http",
+            &serde_json::json!({
+                "url": "https://elie.net",
+                "pattern": "(a+)+$"
+            }),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        // Should complete without hanging (pass or no matches, either is fine)
+        assert!(!is_tool_error(&resp), "should not error: {:?}", extract_tool_text(&resp));
+    }
+
+    // -----------------------------------------------------------------------
+    // http_headers edge cases (async)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn http_headers_missing_url() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "http_headers",
+            &serde_json::json!({}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("missing required parameter"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn http_headers_rejects_ftp_scheme() {
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "http_headers",
+            &serde_json::json!({"url": "ftp://example.com"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(is_tool_error(&resp));
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("only http"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn http_headers_invalid_method_falls_back_to_head() {
+        // Any method other than "GET" falls through to HEAD
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "http_headers",
+            &serde_json::json!({"url": "https://elie.net", "method": "POST"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        // Should succeed with HEAD fallback
+        assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("Status:"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn http_headers_method_case_sensitive() {
+        // "get" (lowercase) is not "GET", so falls through to HEAD
+        let client = Client::new();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "http_headers",
+            &serde_json::json!({"url": "https://elie.net", "method": "get"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");
     }
 
     // -----------------------------------------------------------------------
