@@ -101,6 +101,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
                 call_id: "toolu_01".to_string(),
                 tool_name: "get_weather".to_string(),
                 arguments: Some("{\"city\":\"NYC\"}".to_string()),
+                origin: "native".to_string(),
             },
         ],
         tool_responses: vec![
@@ -517,6 +518,7 @@ async fn model_call_many_tools() {
         call_id: format!("toolu_{i:02}"),
         tool_name: format!("tool_{i}"),
         arguments: Some(format!("{{\"arg\":{i}}}")),
+        origin: "native".to_string(),
     }).collect();
     call.tool_responses = (0..5).map(|i| ToolResponseEntry {
         call_id: format!("toolu_{i:02}"),
@@ -704,6 +706,7 @@ async fn multiple_model_calls_get_distinct_ids() {
         call_id: "tc_first".to_string(),
         tool_name: "tool_a".to_string(),
         arguments: None,
+        origin: "native".to_string(),
     }];
     call1.tool_responses = Vec::new();
 
@@ -713,6 +716,7 @@ async fn multiple_model_calls_get_distinct_ids() {
         call_id: "tc_second".to_string(),
         tool_name: "tool_b".to_string(),
         arguments: None,
+        origin: "native".to_string(),
     }];
     call2.tool_responses = Vec::new();
 
@@ -994,14 +998,14 @@ async fn tool_usage_frequency() {
 
     let mut call = sample_model_call("anthropic");
     call.tool_calls = vec![
-        ToolCallEntry { call_index: 0, call_id: "t1".into(), tool_name: "read_file".into(), arguments: None },
-        ToolCallEntry { call_index: 1, call_id: "t2".into(), tool_name: "write_file".into(), arguments: None },
+        ToolCallEntry { call_index: 0, call_id: "t1".into(), tool_name: "read_file".into(), arguments: None, origin: "native".into() },
+        ToolCallEntry { call_index: 1, call_id: "t2".into(), tool_name: "write_file".into(), arguments: None, origin: "native".into() },
     ];
     writer.write(WriteOp::ModelCall(call)).await;
 
     let mut call2 = sample_model_call("anthropic");
     call2.tool_calls = vec![
-        ToolCallEntry { call_index: 0, call_id: "t3".into(), tool_name: "read_file".into(), arguments: None },
+        ToolCallEntry { call_index: 0, call_id: "t3".into(), tool_name: "read_file".into(), arguments: None, origin: "native".into() },
     ];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);
@@ -1531,12 +1535,14 @@ async fn model_call_tool_data_roundtrip() {
             call_id: "call_abc".to_string(),
             tool_name: "get_weather".to_string(),
             arguments: Some("{\"city\":\"NYC\"}".to_string()),
+            origin: "native".to_string(),
         },
         ToolCallEntry {
             call_index: 1,
             call_id: "call_def".to_string(),
             tool_name: "search".to_string(),
             arguments: Some("{\"q\":\"test\"}".to_string()),
+            origin: "native".to_string(),
         },
     ];
     call.tool_responses = vec![

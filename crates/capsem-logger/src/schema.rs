@@ -59,7 +59,9 @@ pub const CREATE_SCHEMA: &str = "
         call_index INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
-        arguments TEXT
+        arguments TEXT,
+        origin TEXT NOT NULL DEFAULT 'native',
+        mcp_call_id INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS tool_responses (
@@ -160,6 +162,15 @@ pub fn migrate(conn: &Connection) {
     // Replace cache_read_tokens with usage_details TEXT column.
     // SQLite doesn't support DROP COLUMN before 3.35, so just add the new one.
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN usage_details TEXT", []);
+    // Add origin + mcp_call_id columns to tool_calls (for DBs created before this feature).
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN origin TEXT NOT NULL DEFAULT 'native'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN mcp_call_id INTEGER",
+        [],
+    );
     // Add fs_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS fs_events (
@@ -291,6 +302,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(path, "project/old.txt");
+    }
+
+    #[test]
+    fn migrate_tool_calls_origin_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        migrate(&conn);
+        // Verify origin and mcp_call_id columns exist by inserting a row.
+        conn.execute(
+            "INSERT INTO model_calls (timestamp, provider, method, path)
+             VALUES ('2024-01-01T00:00:00Z', 'test', 'POST', '/v1')",
+            [],
+        )
+        .unwrap();
+        let mc_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, origin, mcp_call_id)
+             VALUES (?1, 0, 'call_01', 'fetch_http', 'mcp', NULL)",
+            [mc_id],
+        )
+        .unwrap();
+        let origin: String = conn
+            .query_row(
+                "SELECT origin FROM tool_calls WHERE call_id = 'call_01'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(origin, "mcp");
     }
 
     /// Writer pragmas (WAL + synchronous) must only be applied to read-write

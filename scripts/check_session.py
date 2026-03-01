@@ -22,7 +22,7 @@ SESSION_TABLES = {
         "output_tokens", "stop_reason", "estimated_cost_usd", "duration_ms",
     ],
     "tool_calls": [
-        "id", "model_call_id", "tool_name", "call_id",
+        "id", "model_call_id", "tool_name", "call_id", "origin",
     ],
     "tool_responses": [
         "id", "model_call_id", "call_id", "is_error",
@@ -191,6 +191,73 @@ def check_session(db_path: Path, preview_rows: int = 5):
                 f"  {GREEN}{mc} model_calls from {net_ai}"
                 f" AI-provider net_events{RESET}\n"
             )
+
+    # -- Data quality warnings: model_calls with NULL critical fields --
+    if "model_calls" in existing:
+        mc_total = conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0]
+        if mc_total > 0:
+            null_model = conn.execute(
+                "SELECT COUNT(*) FROM model_calls WHERE model IS NULL"
+            ).fetchone()[0]
+            null_tokens = conn.execute(
+                "SELECT COUNT(*) FROM model_calls"
+                " WHERE input_tokens IS NULL AND output_tokens IS NULL"
+            ).fetchone()[0]
+            null_preview = conn.execute(
+                "SELECT COUNT(*) FROM model_calls WHERE request_body_preview IS NULL"
+            ).fetchone()[0]
+            warnings = []
+            if null_model > 0:
+                warnings.append(f"NULL model: {null_model}/{mc_total}")
+            if null_tokens > 0:
+                warnings.append(f"NULL tokens: {null_tokens}/{mc_total}")
+            if null_preview > 0:
+                warnings.append(f"NULL request_body_preview: {null_preview}/{mc_total}")
+            if warnings:
+                print(f"  {YELLOW}Data quality warnings:{RESET}")
+                for w in warnings:
+                    print(f"    {YELLOW}{w}{RESET}")
+                print()
+            else:
+                print(
+                    f"  {GREEN}All {mc_total} model_calls have"
+                    f" model, tokens, and preview populated{RESET}\n"
+                )
+
+    # -- Tool lifecycle: origin breakdown + mcp correlation --
+    if "tool_calls" in existing:
+        tc_total = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+        if tc_total > 0:
+            # Check if origin column exists (may be missing on old DBs)
+            tc_cols = {
+                r[1] for r in conn.execute("PRAGMA table_info(tool_calls)").fetchall()
+            }
+            if "origin" in tc_cols:
+                origin_rows = conn.execute(
+                    "SELECT origin, COUNT(*) FROM tool_calls GROUP BY origin"
+                ).fetchall()
+                parts = [f"{r[1]} {r[0]}" for r in origin_rows]
+                print(
+                    f"  {CYAN}Tool origins: {', '.join(parts)}"
+                    f" ({tc_total} total){RESET}"
+                )
+            # Show matching mcp_calls per tool if both tables exist
+            if "mcp_calls" in existing:
+                mcp_total = conn.execute(
+                    "SELECT COUNT(*) FROM mcp_calls"
+                ).fetchone()[0]
+                if mcp_total > 0:
+                    # Approximate match: same tool_name within 60s window
+                    matched = conn.execute(
+                        "SELECT COUNT(DISTINCT tc.id) FROM tool_calls tc"
+                        " JOIN mcp_calls mc ON tc.tool_name = mc.tool_name"
+                        " AND mc.timestamp >= tc.call_id"  # timestamps always exist
+                    ).fetchone()[0]
+                    print(
+                        f"  {CYAN}MCP gateway calls: {mcp_total}"
+                        f" (approx {matched} correlated with tool_calls){RESET}"
+                    )
+            print()
 
     # -- Preview rows per table --
     for tbl, cols in SESSION_TABLES.items():

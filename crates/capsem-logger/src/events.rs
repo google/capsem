@@ -119,6 +119,13 @@ pub struct ToolCallEntry {
     pub call_id: String,
     pub tool_name: String,
     pub arguments: Option<String>,
+    /// "native" (model built-in, executed in VM) or "mcp" (routed through MCP gateway).
+    #[serde(default = "default_origin")]
+    pub origin: String,
+}
+
+fn default_origin() -> String {
+    "native".to_string()
 }
 
 /// A tool result sent back to the model in a subsequent request.

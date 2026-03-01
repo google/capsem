@@ -429,7 +429,7 @@ impl DbReader {
     /// Get tool calls for a given model_call_id.
     pub fn tool_calls_for(&self, model_call_id: i64) -> rusqlite::Result<Vec<ToolCallEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT call_index, call_id, tool_name, arguments
+            "SELECT call_index, call_id, tool_name, arguments, origin
              FROM tool_calls WHERE model_call_id = ?1 ORDER BY call_index",
         )?;
         let rows = stmt.query_map(params![model_call_id], |row| {
@@ -438,6 +438,7 @@ impl DbReader {
                 call_id: row.get(1)?,
                 tool_name: row.get(2)?,
                 arguments: row.get(3)?,
+                origin: row.get::<_, String>(4).unwrap_or_else(|_| "native".to_string()),
             })
         })?;
         rows.collect()
@@ -879,7 +880,7 @@ impl DbReader {
 
         // Fetch all tool calls for this trace in one batch.
         let mut tool_calls_stmt = self.conn.prepare(
-            "SELECT tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments
+            "SELECT tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments, tc.origin
              FROM tool_calls tc
              JOIN model_calls mc ON tc.model_call_id = mc.id
              WHERE mc.trace_id = ?1
@@ -893,6 +894,7 @@ impl DbReader {
                     call_id: row.get(2)?,
                     tool_name: row.get(3)?,
                     arguments: row.get(4)?,
+                    origin: row.get::<_, String>(5).unwrap_or_else(|_| "native".to_string()),
                 },
             ))
         })?;

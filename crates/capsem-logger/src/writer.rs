@@ -270,14 +270,15 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
 
     for tc in &call.tool_calls {
         conn.execute(
-            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 model_call_id,
                 tc.call_index as i64,
                 tc.call_id,
                 tc.tool_name,
                 tc.arguments,
+                tc.origin,
             ],
         )?;
     }

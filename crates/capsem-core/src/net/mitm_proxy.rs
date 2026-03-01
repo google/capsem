@@ -762,6 +762,7 @@ impl TelemetryEmitter {
                 call_id: tc.call_id.clone(),
                 tool_name: tc.name.clone(),
                 arguments: if tc.arguments.is_empty() { None } else { Some(tc.arguments.clone()) },
+                origin: "native".to_string(),
             }).collect())
             .unwrap_or_default();
 

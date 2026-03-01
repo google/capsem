@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use axum::Router;
 use capsem_logger::{DbWriter, ModelCall, NetEvent, Decision, ToolCallEntry, ToolResponseEntry, WriteOp};
+use crate::mcp::builtin_tools::is_builtin_tool;
 use tracing::{info, warn};
 
 use super::ai_body::AiResponseBody;
@@ -60,6 +61,19 @@ fn assign_trace_id(
     }
 
     trace_id
+}
+
+/// Determine the origin of a tool call based on its name.
+///
+/// - Built-in MCP tools (fetch_http, grep_http, http_headers): "mcp"
+/// - External MCP tools with server__tool namespacing: "mcp"
+/// - Native model tools (write_file, bash, run_shell_command, etc.): "native"
+fn tool_origin(name: &str) -> String {
+    if is_builtin_tool(name) || name.contains("__") {
+        "mcp".to_string()
+    } else {
+        "native".to_string()
+    }
 }
 
 /// Maximum request body to capture in audit log (64 KB).
@@ -364,6 +378,7 @@ async fn proxy_handler(
                     } else {
                         Some(tc.arguments.clone())
                     },
+                    origin: tool_origin(&tc.name),
                 })
                 .collect();
 
@@ -430,6 +445,30 @@ async fn proxy_handler(
                 tool_calls,
                 tool_responses,
             };
+
+            // Diagnostic: warn if critical fields are missing (helps debug NULL data bug)
+            if model_call.model.is_none() {
+                warn!(
+                    provider = provider_str,
+                    path = path_clone,
+                    "gateway: model_call has NULL model after stream complete"
+                );
+            }
+            if model_call.input_tokens.is_none() && model_call.output_tokens.is_none() {
+                warn!(
+                    provider = provider_str,
+                    path = path_clone,
+                    event_count = events.len(),
+                    "gateway: model_call has NULL tokens after stream complete"
+                );
+            }
+            if model_call.request_body_preview.is_none() {
+                warn!(
+                    provider = provider_str,
+                    request_bytes,
+                    "gateway: model_call has NULL request_body_preview"
+                );
+            }
 
             db.write(WriteOp::ModelCall(model_call)).await;
 
@@ -808,6 +847,30 @@ mod tests {
         let reader = db.reader().unwrap();
         let events = reader.recent_net_events(10).unwrap();
         assert!(!events.is_empty(), "should have recorded the error event");
+    }
+
+    // ── tool_origin ──────────────────────────────────────────────────
+
+    #[test]
+    fn tool_origin_native_tools() {
+        assert_eq!(tool_origin("write_file"), "native");
+        assert_eq!(tool_origin("bash"), "native");
+        assert_eq!(tool_origin("run_shell_command"), "native");
+        assert_eq!(tool_origin("read_file"), "native");
+    }
+
+    #[test]
+    fn tool_origin_builtin_mcp_tools() {
+        assert_eq!(tool_origin("fetch_http"), "mcp");
+        assert_eq!(tool_origin("grep_http"), "mcp");
+        assert_eq!(tool_origin("http_headers"), "mcp");
+    }
+
+    #[test]
+    fn tool_origin_external_mcp_tools() {
+        assert_eq!(tool_origin("github__list_issues"), "mcp");
+        assert_eq!(tool_origin("jira__create_ticket"), "mcp");
+        assert_eq!(tool_origin("custom_server__my_tool"), "mcp");
     }
 
     // ── extract_model_from_path ────────────────────────────────────
