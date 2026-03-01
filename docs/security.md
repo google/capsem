@@ -262,17 +262,15 @@ The guest VM boots with epoch-0 clock. Without correct time, TLS cert validation
 - Requires `CAP_SYS_TIME` (satisfied: agent runs as root, launched by capsem-init PID 1).
 - If `clock_settime` fails (EPERM), a warning is logged but boot continues with incorrect time.
 
-### Read-only rootfs
+### Immutable rootfs (squashfs + overlayfs)
 
-The rootfs is mounted read-only. Writable areas are tmpfs overlays wiped on every reboot:
+The rootfs is a squashfs image (zstd-compressed, ~400-500MB) mounted as the immutable lower layer of an overlayfs stack. A tmpfs upper layer captures all writes, making the entire filesystem appear writable while the base image remains structurally immutable.
 
-- `/root` -- tmpfs
-- `/tmp` -- tmpfs
-- `/run` -- tmpfs
-- `/var/log` -- tmpfs
-- `/var/tmp` -- tmpfs
+- **squashfs lower** (`/dev/vda`): compressed, read-only by format (not just mount flags). Cannot be modified even with raw block device access.
+- **tmpfs upper**: ephemeral writes to any path (including `/usr`, `/bin`, `/etc`) go here and are lost on reboot.
+- **`/root`**: ext4 scratch disk (`/dev/vdb`) for per-session workspace persistence.
 
-System binaries, libraries, and configuration are immutable.
+This is more secure than ext4 mounted read-only: squashfs has no writable format, so even remounting cannot make the base writable. It is also more compatible with AI agents that may `pip install --system` or write to `/etc` -- these writes silently go to the ephemeral tmpfs upper layer and succeed without error.
 
 ### Boot asset integrity (BLAKE3)
 
@@ -282,7 +280,7 @@ When the application is compiled, `build.rs` reads `B3SUMS` and embeds the expec
 B3SUMS -> build.rs -> VMLINUZ_HASH, INITRD_HASH, ROOTFS_HASH
 ```
 
-At runtime, `capsem-core` computes the BLAKE3 hash of each file before loading it into the VM. If any hash does not match, the VM refuses to boot. BLAKE3 is used instead of SHA-256 for performance: hashing the 2GB rootfs takes ~40ms with BLAKE3 vs ~80s with unoptimized SHA-256.
+At runtime, `capsem-core` computes the BLAKE3 hash of each file before loading it into the VM. If any hash does not match, the VM refuses to boot. BLAKE3 is used instead of SHA-256 for performance: hashing the ~400MB squashfs rootfs takes ~10ms with BLAKE3.
 
 This ensures:
 - Tampered assets are detected before execution.
@@ -298,7 +296,7 @@ All host-controlled binaries deployed inside the VM follow strict hardening rule
 - **Rootfs path** (`/usr/local/bin/`): Set to `chmod 555` in `Dockerfile.rootfs`. The rootfs itself is mounted read-only, providing a second layer of protection.
 - **Initrd override path** (`/run/`): When `just repack` bundles a binary into the initrd, `capsem-init` copies it to `/newroot/run/` (a tmpfs) at boot with `chmod 555`. The tmpfs is writable by root, but the 555 permissions prevent casual overwrites. Future SELinux policy (M12) will enforce this at the MAC level.
 
-**Read-only rootfs backing**: The rootfs ext4 image is mounted with `mount -o ro`. Even if a binary had write permissions, the filesystem would reject modifications. The combination of read-only mount + read-only permissions provides defense in depth.
+**Immutable rootfs backing**: The rootfs is a squashfs image -- structurally immutable by format, not just mount flags. With overlayfs, writes to `/usr/local/bin/` go to the ephemeral tmpfs upper layer; the squashfs lower layer cannot be modified. The combination of immutable format + read-only permissions provides defense in depth.
 
 **Integrity verification**: Boot asset hashes (BLAKE3) are compiled into the host binary. The initrd (which contains the agent when repacked) is hashed along with the kernel and rootfs. Tampering with any asset causes a hash mismatch and the VM refuses to boot.
 
@@ -353,6 +351,24 @@ Implementation: `format_headers()` in `crates/capsem-core/src/net/mitm_proxy.rs`
 
 The VM runs capsem-init as PID 1. There is no systemd, no cron, no sshd, no service manager. The only processes are those explicitly started by capsem-init (bash, and whatever the user/agent runs). No background services, no listening ports, no scheduled tasks.
 
+### Sandbox fingerprinting
+
+An AI agent inside the VM can detect it is sandboxed through several vectors:
+
+| Vector | Visibility | Notes |
+|--------|-----------|-------|
+| `IS_SANDBOX=1` env var | Intentional | Set by capsem-init; agents should know |
+| `capsem-*` binaries in `/proc` | Process list | `pgrep capsem` reveals pty-agent, net-proxy, etc. |
+| `/proc/mounts` overlay topology | Mount table | Shows overlay on `/`, squashfs on `/dev/vda` |
+| dnsmasq `--address=/#/10.0.0.1` | DNS config | All domains resolve to a single local IP |
+| `dummy0` NIC | Network interfaces | No real ethernet adapter |
+| Kernel cmdline `console=hvc0` | `/proc/cmdline` | Virtio console, not a real serial port |
+| Custom kernel version string | `uname -r` | Custom LTS build, not stock Debian |
+
+**Mitigation approach**: Mount paths use generic names (`/mnt/a`, `/mnt/b`) instead of "capsem"-prefixed paths, keeping `/proc/mounts` clean. No "capsem" string appears in mount entries.
+
+**Non-goal**: Full stealth is not a security objective. Capsem is open source and the threat model (see T1) assumes the agent knows it is sandboxed. An agent that detects the sandbox and cooperates is the desired outcome. Fingerprinting reduction is defense-in-depth against agents that auto-detect sandboxes and silently change behavior (e.g., appearing compliant during evaluation but acting differently in production). Minimizing obvious markers raises the cost of detection without pretending it is impossible.
+
 ### Hardened custom kernel
 
 The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) built from source with a hardened defconfig (`images/defconfig`). The kernel is compiled with `CONFIG_MODULES=n` -- there is no module loading infrastructure at all.
@@ -366,7 +382,9 @@ The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) 
 | `virtio_blk` | Block device (rootfs on /dev/vda) |
 | `hw_random_virtio` | Hardware entropy from host |
 | `pl011` | ARM UART (early console) |
-| `ext4` | Root filesystem |
+| `ext4` | Scratch disk filesystem |
+| `squashfs` | Root filesystem (zstd-compressed, immutable) |
+| `overlay` | Writable layer over squashfs rootfs |
 
 **Exploit mitigations enabled:**
 

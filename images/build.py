@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build VM boot assets using Podman.
 
-Extracts vmlinuz + initrd from Debian ARM64, builds a populated ext4 rootfs
-with developer tools and AI CLIs pre-installed.
+Extracts vmlinuz + initrd from Debian ARM64, builds a squashfs rootfs
+(zstd-compressed) with developer tools and AI CLIs pre-installed.
 Output goes to ../assets/.
 """
 
@@ -18,7 +18,6 @@ ASSETS_DIR = REPO_ROOT / "assets"
 
 IMAGE_TAG = "capsem-kernel-builder"
 ROOTFS_IMAGE_TAG = "capsem-rootfs"
-ROOTFS_SIZE = "2G"  # ~1.2GB content (AI CLIs are 625MB alone) + ext4 overhead
 
 # Use podman, fall back to docker
 RUNTIME = "podman" if shutil.which("podman") else "docker"
@@ -98,7 +97,7 @@ def build_agent():
 
 
 def create_rootfs():
-    """Build populated ext4 rootfs with dev tools and AI CLIs."""
+    """Build squashfs rootfs (zstd-compressed) with dev tools and AI CLIs."""
     print("Building rootfs container image...")
 
     # Copy CA cert into images/ so Dockerfile.rootfs can COPY it
@@ -130,29 +129,22 @@ def create_rootfs():
     finally:
         run([RUNTIME, "rm", cid])
 
-    # 3. Create read-only ext4 from tar (mke2fs -d, no mount/privileged needed)
-    print(f"Creating {ROOTFS_SIZE} ext4 rootfs image...")
+    # 3. Create squashfs image from tar (zstd level 19 for best compression)
+    print("Creating squashfs rootfs image (zstd compression)...")
     abs_assets = str(ASSETS_DIR.resolve())
     run([
         RUNTIME, "run", "--rm",
         "-v", f"{abs_assets}:/assets",
         "debian:bookworm-slim", "bash", "-c",
-        "apt-get update && apt-get install -y e2fsprogs && "
+        "apt-get update && apt-get install -y squashfs-tools zstd && "
         "mkdir /rootfs && tar xf /assets/rootfs.tar -C /rootfs && "
-        f"mke2fs -t ext4 -d /rootfs -L capsem /assets/rootfs.img {ROOTFS_SIZE}",
+        "mksquashfs /rootfs /assets/rootfs.img -comp zstd -Xcompression-level 15 -b 64K -noappend",
     ])
 
     # 4. Cleanup tar
     tar_path.unlink()
 
-    # 5. Defragment: Docker volume writes through VirtioFS cause severe APFS
-    # fragmentation (e.g. 12GB on disk for a 2GB file). A simple copy produces
-    # a contiguous file at the correct size.
     img_path = ASSETS_DIR / "rootfs.img"
-    tmp_path = ASSETS_DIR / "rootfs.img.tmp"
-    print("Defragmenting rootfs.img (APFS volume-mount workaround)...")
-    shutil.copy2(str(img_path), str(tmp_path))
-    tmp_path.rename(img_path)
     print(f"  rootfs.img: {img_path} ({img_path.stat().st_size // (1024*1024)} MB)")
 
 

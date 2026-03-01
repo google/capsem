@@ -115,8 +115,17 @@ def test_root_scratch_disk_size():
         f"/root scratch disk too small: {size_bytes / (1024**3):.1f} GB"
 
 
-def test_tmp_is_writable_tmpfs():
-    """/tmp must be a writable tmpfs mount."""
-    result = run("mount | grep 'on /tmp '")
-    assert result.returncode == 0, "/tmp not mounted"
-    assert "tmpfs" in result.stdout, f"/tmp is not tmpfs: {result.stdout}"
+def test_tmp_is_writable():
+    """/tmp must be writable (writes go through overlayfs to tmpfs upper)."""
+    test_file = "/tmp/.capsem_write_test"
+    result = run(f'echo "writable" > {test_file} && cat {test_file}')
+    assert result.returncode == 0, "/tmp is not writable"
+    assert "writable" in result.stdout
+    run(f"rm -f {test_file}")
+
+
+def test_rootfs_is_overlay():
+    """Root filesystem must be an overlay mount."""
+    result = run("mount | grep 'on / '")
+    assert result.returncode == 0, "root mount not found"
+    assert "overlay" in result.stdout, f"/ is not overlay: {result.stdout}"

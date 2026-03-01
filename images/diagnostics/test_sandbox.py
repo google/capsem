@@ -23,16 +23,40 @@ def test_clock_is_synchronized():
 
 # -- Filesystem isolation --
 
-@pytest.mark.parametrize("path", ["/usr", "/bin", "/etc", "/lib", "/sbin", "/var"])
-def test_rootfs_readonly(path):
-    """Read-only rootfs dirs must reject writes."""
-    result = run(f"touch {path}/.capsem_ro_test")
-    assert result.returncode != 0, f"write to {path} should have failed"
+def test_squashfs_is_immutable():
+    """The rootfs block device (/dev/vda) must be squashfs (structurally immutable)."""
+    # blkid reads the filesystem type directly from the block device,
+    # independent of mount visibility from inside the chroot.
+    result = run("blkid -o value -s TYPE /dev/vda 2>&1")
+    assert result.returncode == 0, f"/dev/vda not found or blkid failed: {result.stdout}"
+    assert result.stdout.strip() == "squashfs", \
+        f"/dev/vda is not squashfs: {result.stdout}"
+
+
+def test_overlay_configured():
+    """An overlay mount must exist as the root filesystem."""
+    result = run("mount | grep 'on / '")
+    assert result.returncode == 0, "root mount not found"
+    assert "overlay" in result.stdout, f"root is not overlay: {result.stdout}"
+    # Verify overlay has lower and upper dirs configured
+    result = run("grep ' / overlay ' /proc/mounts")
+    assert result.returncode == 0, "overlay not in /proc/mounts"
+    assert "lowerdir=" in result.stdout, f"overlay missing lowerdir: {result.stdout}"
+    assert "upperdir=" in result.stdout, f"overlay missing upperdir: {result.stdout}"
+
+
+def test_overlay_writes_are_ephemeral():
+    """Writes to system paths succeed through overlay (goes to tmpfs upper, not squashfs)."""
+    test_file = "/usr/bin/.capsem_overlay_test"
+    result = run(f'echo "overlay-ok" > {test_file} && cat {test_file}')
+    assert result.returncode == 0, "write to /usr/bin through overlay failed"
+    assert "overlay-ok" in result.stdout
+    run(f"rm -f {test_file}")
 
 
 @pytest.mark.parametrize("path", ["/root", "/tmp", "/run", "/var/log", "/var/tmp"])
 def test_writable_mounts(path):
-    """Writable mounts (/root=ext4 scratch, others=tmpfs) must allow write + readback."""
+    """Writable paths (/root=ext4 scratch, others=overlay tmpfs upper) must allow write + readback."""
     test_file = f"{path}/.capsem_rw_test"
     payload = "capsem-writable-ok"
     result = run(f'echo "{payload}" > {test_file} && cat {test_file}')
