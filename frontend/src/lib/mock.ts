@@ -1,19 +1,9 @@
 // Mock data for browser-only dev mode (no Tauri backend).
 // Active when window.__TAURI_INTERNALS__ is absent.
-//
-// All DB-backed mock data comes from data/fixtures/test.db via sql.js.
-// Static data (settings, VM state, session history) stays inline since
-// those tables don't exist in the session DB.
-//
-// SQL queries (session + main) go through queryFixture / queryFixtureMain,
-// exported for use by db.ts.
-import initSqlJs, { type Database } from 'sql.js';
 import type {
   ConfigIssue,
-  QueryResult,
   ResolvedSetting,
   SessionInfo,
-  SessionRecord,
   SettingsNode,
   VmStateResponse,
   GuestConfigResponse,
@@ -23,173 +13,7 @@ import type {
 export const isMock = typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__;
 
 // ---------------------------------------------------------------------------
-// sql.js singleton -- lazy-loaded on first DB query
-// ---------------------------------------------------------------------------
-
-let dbPromise: Promise<Database> | null = null;
-
-function getDb(): Promise<Database> {
-  if (!dbPromise) {
-    dbPromise = (async () => {
-      const SQL = await initSqlJs({
-        locateFile: (file: string) => `/${file}`,
-      });
-      const resp = await fetch('/fixtures/test.db');
-      const buf = await resp.arrayBuffer();
-      return new SQL.Database(new Uint8Array(buf));
-    })();
-  }
-  return dbPromise;
-}
-
-/** Run a SQL query against the fixture DB and return columnar JSON. */
-export async function queryFixture(sql: string, params?: unknown[]): Promise<QueryResult> {
-  const db = await getDb();
-  const stmt = db.prepare(sql);
-  if (params && params.length > 0) {
-    stmt.bind(params as any[]);
-  }
-  const columns: string[] = stmt.getColumnNames();
-  const rows: unknown[][] = [];
-  while (stmt.step()) {
-    rows.push(stmt.get());
-  }
-  stmt.free();
-  return { columns, rows };
-}
-
-/** Run a SQL query against main.db (mock: returns static data inline). */
-export async function queryFixtureMain(sql: string, _params?: unknown[]): Promise<QueryResult> {
-  // main.db tables (sessions, ai_usage, tool_usage, mcp_usage) don't exist in
-  // the fixture DB. Return static mock data based on the query pattern.
-  const upper = sql.trim().toUpperCase();
-
-  if (upper.includes('FROM SESSIONS') && upper.includes('COUNT(*)')) {
-    // GLOBAL_STATS_SQL
-    const sessions = MOCK_SESSION_HISTORY;
-    return {
-      columns: ['total_sessions', 'total_input_tokens', 'total_output_tokens',
-                 'total_estimated_cost', 'total_tool_calls', 'total_mcp_calls',
-                 'total_file_events', 'total_requests', 'total_allowed', 'total_denied'],
-      rows: [[
-        sessions.length,
-        sessions.reduce((s, r) => s + r.total_input_tokens, 0),
-        sessions.reduce((s, r) => s + r.total_output_tokens, 0),
-        sessions.reduce((s, r) => s + r.total_estimated_cost, 0),
-        sessions.reduce((s, r) => s + r.total_tool_calls, 0),
-        sessions.reduce((s, r) => s + r.total_mcp_calls, 0),
-        sessions.reduce((s, r) => s + r.total_file_events, 0),
-        sessions.reduce((s, r) => s + r.total_requests, 0),
-        sessions.reduce((s, r) => s + r.allowed_requests, 0),
-        sessions.reduce((s, r) => s + r.denied_requests, 0),
-      ]],
-    };
-  }
-
-  if (upper.includes('FROM SESSIONS')) {
-    // SESSION_HISTORY_SQL
-    return {
-      columns: ['id', 'mode', 'command', 'status', 'created_at', 'stopped_at',
-                 'scratch_disk_size_gb', 'ram_bytes',
-                 'total_requests', 'allowed_requests', 'denied_requests',
-                 'total_input_tokens', 'total_output_tokens', 'total_estimated_cost',
-                 'total_tool_calls', 'total_mcp_calls', 'total_file_events',
-                 'compressed_size_bytes', 'vacuumed_at'],
-      rows: MOCK_SESSION_HISTORY.map(s => [
-        s.id, s.mode, s.command, s.status, s.created_at, s.stopped_at,
-        s.scratch_disk_size_gb, s.ram_bytes,
-        s.total_requests, s.allowed_requests, s.denied_requests,
-        s.total_input_tokens, s.total_output_tokens, s.total_estimated_cost,
-        s.total_tool_calls, s.total_mcp_calls, s.total_file_events,
-        s.compressed_size_bytes, s.vacuumed_at,
-      ]),
-    };
-  }
-
-  if (upper.includes('FROM AI_USAGE')) {
-    // TOP_PROVIDERS_SQL
-    const data = [
-      ['anthropic', 85, 320000, 95000, 3.80, 125000],
-      ['google', 42, 110000, 28000, 1.65, 68000],
-      ['openai', 8, 7700, 5000, 0.10, 12000],
-    ];
-    return {
-      columns: ['provider', 'call_count', 'input_tokens', 'output_tokens', 'estimated_cost', 'total_duration_ms'],
-      rows: data,
-    };
-  }
-
-  if (upper.includes('FROM TOOL_USAGE')) {
-    // TOP_TOOLS_SQL
-    const data = [
-      ['Read', 142, 850000, 28000],
-      ['Edit', 89, 420000, 35000],
-      ['Bash', 67, 1200000, 95000],
-      ['Write', 45, 380000, 18000],
-      ['Grep', 38, 120000, 8500],
-    ];
-    return {
-      columns: ['tool_name', 'call_count', 'total_bytes', 'total_duration_ms'],
-      rows: data,
-    };
-  }
-
-  if (upper.includes('FROM MCP_USAGE')) {
-    // TOP_MCP_TOOLS_SQL
-    const data = [
-      ['github__search_repos', 'github', 12, 45000, 4200],
-      ['filesystem__write_file', 'filesystem', 8, 12000, 960],
-      ['github__create_issue', 'github', 5, 8500, 2800],
-    ];
-    return {
-      columns: ['tool_name', 'server_name', 'call_count', 'total_bytes', 'total_duration_ms'],
-      rows: data,
-    };
-  }
-
-  // Fallback: empty result
-  return { columns: [], rows: [] };
-}
-
-
-async function mockSessionInfo(): Promise<SessionInfo> {
-  const db = await getDb();
-  const netRow = db.exec(`SELECT COUNT(*),
-      COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
-      COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
-      COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0),
-      COALESCE(SUM(bytes_sent), 0),
-      COALESCE(SUM(bytes_received), 0)
-    FROM net_events`)[0].values[0];
-  const modelRow = db.exec(`SELECT COUNT(*),
-      COALESCE(SUM(COALESCE(input_tokens, 0)), 0),
-      COALESCE(SUM(COALESCE(output_tokens, 0)), 0),
-      COALESCE(SUM(estimated_cost_usd), 0.0)
-    FROM model_calls`)[0].values[0];
-  const toolCount = db.exec('SELECT COUNT(*) FROM tool_calls')[0].values[0][0] as number;
-  return {
-    session_id: '20260225-143052-a7f3',
-    mode: 'gui',
-    uptime_ms: 45000,
-    scratch_disk_size_gb: 8,
-    ram_bytes: 512 * 1024 * 1024,
-    total_requests: netRow[0] as number,
-    allowed_requests: netRow[1] as number,
-    denied_requests: netRow[2] as number,
-    error_requests: netRow[3] as number,
-    bytes_sent: netRow[4] as number,
-    bytes_received: netRow[5] as number,
-    model_call_count: modelRow[0] as number,
-    total_input_tokens: modelRow[1] as number,
-    total_output_tokens: modelRow[2] as number,
-    total_usage_details: {},
-    total_tool_calls: toolCount,
-    total_estimated_cost_usd: modelRow[3] as number,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Static mock data (not in session DB)
+// Static mock data
 // ---------------------------------------------------------------------------
 
 // Helper: creates a default mock setting with sensible defaults for empty fields.
@@ -629,116 +453,8 @@ const MOCK_VM_STATE: VmStateResponse = {
   ],
 };
 
-const MOCK_SESSION_HISTORY: SessionRecord[] = [
-  {
-    id: '20260225-143052-a7f3',
-    mode: 'gui',
-    command: null,
-    status: 'running',
-    created_at: '2026-02-25T14:30:52Z',
-    stopped_at: null,
-    scratch_disk_size_gb: 8,
-    ram_bytes: 512 * 1024 * 1024,
-    total_requests: 23,
-    allowed_requests: 17,
-    denied_requests: 6,
-    total_input_tokens: 45200,
-    total_output_tokens: 12800,
-    total_estimated_cost: 0.42,
-    total_tool_calls: 67,
-    total_mcp_calls: 5,
-    total_file_events: 23,
-    compressed_size_bytes: null,
-    vacuumed_at: null,
-  },
-  {
-    id: '20260225-120000-b8e4',
-    mode: 'cli',
-    command: 'python3 train.py',
-    status: 'stopped',
-    created_at: '2026-02-25T12:00:00Z',
-    stopped_at: '2026-02-25T13:45:20Z',
-    scratch_disk_size_gb: 8,
-    ram_bytes: 512 * 1024 * 1024,
-    total_requests: 42,
-    allowed_requests: 38,
-    denied_requests: 4,
-    total_input_tokens: 128000,
-    total_output_tokens: 35000,
-    total_estimated_cost: 1.85,
-    total_tool_calls: 142,
-    total_mcp_calls: 12,
-    total_file_events: 89,
-    compressed_size_bytes: null,
-    vacuumed_at: null,
-  },
-  {
-    id: '20260225-090000-c9d5',
-    mode: 'gui',
-    command: null,
-    status: 'vacuumed',
-    created_at: '2026-02-25T09:00:00Z',
-    stopped_at: '2026-02-25T11:30:00Z',
-    scratch_disk_size_gb: 8,
-    ram_bytes: 512 * 1024 * 1024,
-    total_requests: 105,
-    allowed_requests: 92,
-    denied_requests: 13,
-    total_input_tokens: 256000,
-    total_output_tokens: 78000,
-    total_estimated_cost: 3.20,
-    total_tool_calls: 310,
-    total_mcp_calls: 28,
-    total_file_events: 156,
-    compressed_size_bytes: 245760,
-    vacuumed_at: '2026-02-25T11:31:00Z',
-  },
-  {
-    id: '20260224-160000-d0e6',
-    mode: 'cli',
-    command: 'npm test',
-    status: 'crashed',
-    created_at: '2026-02-24T16:00:00Z',
-    stopped_at: null,
-    scratch_disk_size_gb: 8,
-    ram_bytes: 512 * 1024 * 1024,
-    total_requests: 7,
-    allowed_requests: 5,
-    denied_requests: 2,
-    total_input_tokens: 8500,
-    total_output_tokens: 2200,
-    total_estimated_cost: 0.08,
-    total_tool_calls: 15,
-    total_mcp_calls: 0,
-    total_file_events: 4,
-    compressed_size_bytes: null,
-    vacuumed_at: null,
-  },
-  {
-    id: '20260223-100000-e1f7',
-    mode: 'gui',
-    command: null,
-    status: 'terminated',
-    created_at: '2026-02-23T10:00:00Z',
-    stopped_at: '2026-02-23T12:00:00Z',
-    scratch_disk_size_gb: 8,
-    ram_bytes: 512 * 1024 * 1024,
-    total_requests: 52,
-    allowed_requests: 45,
-    denied_requests: 7,
-    total_input_tokens: 98000,
-    total_output_tokens: 32000,
-    total_estimated_cost: 1.15,
-    total_tool_calls: 85,
-    total_mcp_calls: 6,
-    total_file_events: 42,
-    compressed_size_bytes: 189000,
-    vacuumed_at: '2026-02-23T12:01:00Z',
-  },
-];
-
 // ---------------------------------------------------------------------------
-// Exported mock API (non-SQL commands only; SQL goes through queryFixture)
+// Exported mock API (non-SQL commands only)
 // ---------------------------------------------------------------------------
 
 export const mockApi = {
@@ -780,7 +496,25 @@ export const mockApi = {
     recomputeEnabled();
   },
   getVmState: async () => MOCK_VM_STATE,
-  getSessionInfo: mockSessionInfo,
+  getSessionInfo: async (): Promise<SessionInfo> => ({
+    session_id: '20260225-143052-a7f3',
+    mode: 'gui',
+    uptime_ms: 45000,
+    scratch_disk_size_gb: 8,
+    ram_bytes: 512 * 1024 * 1024,
+    total_requests: 23,
+    allowed_requests: 17,
+    denied_requests: 6,
+    error_requests: 0,
+    bytes_sent: 45000,
+    bytes_received: 128000,
+    model_call_count: 12,
+    total_input_tokens: 45200,
+    total_output_tokens: 12800,
+    total_usage_details: {},
+    total_tool_calls: 67,
+    total_estimated_cost_usd: 0.42,
+  }),
 
   // Event listeners return no-op unsubscribers in mock mode
   onSerialOutput: async (_cb: (data: number[]) => void) => () => {},

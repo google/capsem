@@ -3,12 +3,10 @@
   import type { ViewName } from '../types';
   import type { Component } from 'svelte';
   import TerminalIcon from '../icons/TerminalIcon.svelte';
-  import AnalyticsIcon from '../icons/AnalyticsIcon.svelte';
   import SettingsIcon from '../icons/SettingsIcon.svelte';
 
   const items: { view: ViewName; label: string; icon: Component<{ class?: string }> }[] = [
     { view: 'terminal', label: 'Console', icon: TerminalIcon },
-    { view: 'analytics', label: 'Analytics', icon: AnalyticsIcon },
     { view: 'settings', label: 'Settings', icon: SettingsIcon },
   ];
 </script>

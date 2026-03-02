@@ -1,6 +1,4 @@
 // Typed Tauri IPC wrappers with automatic mock fallback for browser dev.
-//
-// Only non-SQL commands live here. All SQL queries go through db.ts.
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isMock, mockApi } from './mock';
