@@ -97,9 +97,9 @@ def test_mcp_tools_list():
     assert len(tools_resp) == 1
     tools = tools_resp[0]["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert "builtin__fetch_http" in names
-    assert "builtin__grep_http" in names
-    assert "builtin__http_headers" in names
+    assert "fetch_http" in names
+    assert "grep_http" in names
+    assert "http_headers" in names
 
 
 def test_mcp_fetch_http_allowed_domain():
@@ -121,7 +121,7 @@ def test_mcp_fetch_http_allowed_domain():
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "builtin__fetch_http",
+                "name": "fetch_http",
                 "arguments": {"url": "https://elie.net", "max_length": 1000},
             },
         },
@@ -153,7 +153,7 @@ def test_mcp_fetch_http_blocked_domain():
             "id": 4,
             "method": "tools/call",
             "params": {
-                "name": "builtin__fetch_http",
+                "name": "fetch_http",
                 "arguments": {"url": "https://evil-blocked-domain.xyz"},
             },
         },
@@ -198,7 +198,7 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
 def test_mcp_fetch_http_returns_real_content():
     """fetch_http on elie.net returns actual page content, not empty text."""
     result = _init_and_call(
-        "builtin__fetch_http",
+        "fetch_http",
         {"url": "https://elie.net", "max_length": 5000},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
@@ -219,7 +219,7 @@ def test_mcp_fetch_http_returns_real_content():
 def test_mcp_grep_http_finds_matches():
     """grep_http on elie.net with pattern 'elie' must find matches."""
     result = _init_and_call(
-        "builtin__grep_http",
+        "grep_http",
         {"url": "https://elie.net", "pattern": "elie"},
     )
     assert result.get("isError") is not True, f"grep failed: {result}"
@@ -239,7 +239,7 @@ def test_mcp_grep_http_finds_matches():
 def test_mcp_grep_http_blocked_domain():
     """grep_http on a blocked domain returns isError."""
     result = _init_and_call(
-        "builtin__grep_http",
+        "grep_http",
         {"url": "https://evil-blocked-domain.xyz", "pattern": "test"},
     )
     assert result["isError"] is True
@@ -249,7 +249,7 @@ def test_mcp_grep_http_blocked_domain():
 def test_mcp_http_headers_blocked_domain():
     """http_headers on a blocked domain returns isError."""
     result = _init_and_call(
-        "builtin__http_headers",
+        "http_headers",
         {"url": "https://evil-blocked-domain.xyz"},
     )
     assert result["isError"] is True
@@ -263,7 +263,7 @@ def test_mcp_http_headers_blocked_domain():
 def test_mcp_http_headers_allowed_domain():
     """http_headers on elie.net returns status and headers."""
     result = _init_and_call(
-        "builtin__http_headers",
+        "http_headers",
         {"url": "https://elie.net"},
     )
     assert result.get("isError") is not True, f"http_headers failed: {result}"

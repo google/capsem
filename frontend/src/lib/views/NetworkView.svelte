@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { networkStore } from '../stores/network.svelte';
-  import { getNetworkPolicy, netEvents } from '../api';
+  import { getNetworkPolicy } from '../api';
+  import { queryAll } from '../db';
+  import { NET_EVENTS_SQL, NET_EVENTS_SEARCH_SQL } from '../sql';
   import type { NetworkPolicyResponse, NetEvent } from '../types';
 
   let search = $state('');
@@ -30,7 +32,7 @@
     }
     searchTimeout = setTimeout(async () => {
       try {
-        searchResults = await netEvents(200, q);
+        searchResults = await queryAll<NetEvent>(NET_EVENTS_SEARCH_SQL, [q, q, q, q, 200]);
       } catch {
         searchResults = [];
       }

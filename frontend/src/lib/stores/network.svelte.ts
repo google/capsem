@@ -1,7 +1,7 @@
 // Network events store -- polls net_events + SQL aggregates every 2s.
 // All counts/aggregates come from individual SQL queries via queryOne/queryAll.
-import { netEvents, queryOne, queryAll } from '../api';
-import { NET_STATS_SQL, TOP_DOMAINS_SQL, NET_TIME_BUCKETS_SQL, AVG_LATENCY_SQL, METHOD_DIST_SQL, PROCESS_DIST_SQL, MODEL_STATS_SQL, TOOL_COUNT_SQL } from '../sql';
+import { queryOne, queryAll } from '../db';
+import { NET_STATS_SQL, TOP_DOMAINS_SQL, NET_TIME_BUCKETS_SQL, AVG_LATENCY_SQL, METHOD_DIST_SQL, PROCESS_DIST_SQL, MODEL_STATS_SQL, TOOL_COUNT_SQL, NET_EVENTS_SQL } from '../sql';
 import type { NetEvent, DomainCount, TimeBucket } from '../types';
 
 interface NetStatsRow {
@@ -72,7 +72,7 @@ class NetworkStore {
   private async poll() {
     try {
       const [events, stats, domains, buckets, latency, methods, processes, mStats, tCount] = await Promise.all([
-        netEvents(200),
+        queryAll<NetEvent>(NET_EVENTS_SQL, [200]),
         queryOne<NetStatsRow>(NET_STATS_SQL),
         queryAll<DomainCount>(TOP_DOMAINS_SQL),
         queryAll<TimeBucket>(NET_TIME_BUCKETS_SQL),

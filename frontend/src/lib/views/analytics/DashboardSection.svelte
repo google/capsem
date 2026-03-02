@@ -9,7 +9,8 @@
     Tooltip,
     Legend,
   } from 'chart.js';
-  import { getGlobalStats, getTopProviders, getTopTools, getSessionHistory } from '../../api';
+  import { queryOne, queryAll } from '../../db';
+  import { GLOBAL_STATS_SQL, TOP_PROVIDERS_SQL, TOP_TOOLS_SQL, SESSION_HISTORY_SQL } from '../../sql';
   import type { GlobalStats, ProviderSummary, ToolSummary, SessionRecord } from '../../types';
 
   Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
@@ -55,10 +56,10 @@
   onMount(async () => {
     try {
       [globalStats, providers, topTools, sessions] = await Promise.all([
-        getGlobalStats(),
-        getTopProviders(5),
-        getTopTools(5),
-        getSessionHistory(50),
+        queryOne<GlobalStats>(GLOBAL_STATS_SQL, [], 'main'),
+        queryAll<ProviderSummary>(TOP_PROVIDERS_SQL, [5], 'main'),
+        queryAll<ToolSummary>(TOP_TOOLS_SQL, [5], 'main'),
+        queryAll<SessionRecord>(SESSION_HISTORY_SQL, [50], 'main'),
       ]);
     } catch (e) {
       error = String(e);

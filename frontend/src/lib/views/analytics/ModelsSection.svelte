@@ -11,8 +11,8 @@
     Tooltip,
     Legend,
   } from 'chart.js';
-  import { queryAll, queryOne, getTraces, getSessionHistory } from '../../api';
-  import { PROVIDER_USAGE_SQL, TOOL_USAGE_SQL, MODEL_STATS_SQL } from '../../sql';
+  import { queryAll, queryOne } from '../../db';
+  import { PROVIDER_USAGE_SQL, TOOL_USAGE_SQL, MODEL_STATS_SQL, TRACES_SQL, SESSION_HISTORY_SQL } from '../../sql';
   import type { ProviderTokenUsage, ToolUsageCount, TraceSummary, SessionRecord } from '../../types';
 
   Chart.register(BarController, BarElement, CategoryScale, LinearScale, DoughnutController, ArcElement, Tooltip, Legend);
@@ -77,13 +77,33 @@
 
   onMount(async () => {
     try {
-      [providerUsage, toolUsage, modelStats, traces, sessions] = await Promise.all([
+      const [pu, tu, ms, rawTraces, sess] = await Promise.all([
         queryAll<ProviderTokenUsage>(PROVIDER_USAGE_SQL),
         queryAll<ToolUsageCount>(TOOL_USAGE_SQL),
         queryOne<ModelStatsRow>(MODEL_STATS_SQL),
-        getTraces(50),
-        getSessionHistory(50),
+        queryAll<any>(TRACES_SQL, [50]),
+        queryAll<SessionRecord>(SESSION_HISTORY_SQL, [50], 'main'),
       ]);
+      // Parse usage_details JSON string from traces
+      for (const t of rawTraces) {
+        if (typeof t.total_usage_details === 'string') {
+          try { t.total_usage_details = JSON.parse(t.total_usage_details); } catch { t.total_usage_details = {}; }
+        } else {
+          t.total_usage_details = t.total_usage_details ?? {};
+        }
+        // Convert timestamp strings to epoch seconds if needed
+        if (typeof t.started_at === 'string') {
+          t.started_at = Math.floor(new Date(t.started_at).getTime() / 1000);
+        }
+        if (typeof t.ended_at === 'string') {
+          t.ended_at = Math.floor(new Date(t.ended_at).getTime() / 1000);
+        }
+      }
+      providerUsage = pu;
+      toolUsage = tu;
+      modelStats = ms;
+      traces = rawTraces as TraceSummary[];
+      sessions = sess;
     } catch (e) {
       error = String(e);
     }

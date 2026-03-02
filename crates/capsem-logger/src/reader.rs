@@ -291,14 +291,79 @@ impl DbReader {
         })
     }
 
+    /// Execute an arbitrary read-only SQL query with bind parameters and return JSON.
+    ///
+    /// Same format as `query_raw`: `{"columns":[...],"rows":[[...], ...]}`.
+    /// Parameters use `?` positional placeholders (rusqlite native syntax).
+    /// Supported param types: null, i64, f64, string (from serde_json::Value).
+    pub fn query_raw_with_params(&self, sql: &str, params: &[Value]) -> Result<String, String> {
+        const MAX_ROWS: usize = 10_000;
+        const TIMEOUT_MS: u64 = 5_000;
+        const POLL_MS: u64 = 100;
+
+        let interrupt_handle = self.conn.get_interrupt_handle();
+        let done = Arc::new(AtomicBool::new(false));
+        let done_clone = Arc::clone(&done);
+        let timer = std::thread::spawn(move || {
+            let polls = TIMEOUT_MS / POLL_MS;
+            for _ in 0..polls {
+                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
+                if done_clone.load(Ordering::Relaxed) {
+                    return;
+                }
+            }
+            if !done_clone.load(Ordering::Relaxed) {
+                interrupt_handle.interrupt();
+            }
+        });
+
+        let result = self.query_raw_params_inner(sql, params, MAX_ROWS);
+
+        done.store(true, Ordering::Relaxed);
+        let _ = timer.join();
+
+        result.map_err(|e| {
+            if e.contains("interrupted") {
+                "query timed out after 5 seconds".to_string()
+            } else {
+                e
+            }
+        })
+    }
+
     fn query_raw_inner(&self, sql: &str, max_rows: usize) -> Result<String, String> {
+        self.query_raw_params_inner(sql, &[], max_rows)
+    }
+
+    fn query_raw_params_inner(&self, sql: &str, params: &[Value], max_rows: usize) -> Result<String, String> {
         let mut stmt = self.conn.prepare(sql).map_err(|e| e.to_string())?;
 
         let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
         let col_count = columns.len();
 
+        // Convert serde_json::Value params to rusqlite dynamic params.
+        let rusqlite_params: Vec<Box<dyn rusqlite::types::ToSql>> = params.iter().map(|v| {
+            let boxed: Box<dyn rusqlite::types::ToSql> = match v {
+                Value::Null => Box::new(rusqlite::types::Null),
+                Value::Bool(b) => Box::new(*b as i64),
+                Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        Box::new(i)
+                    } else if let Some(f) = n.as_f64() {
+                        Box::new(f)
+                    } else {
+                        Box::new(rusqlite::types::Null)
+                    }
+                }
+                Value::String(s) => Box::new(s.clone()),
+                _ => Box::new(rusqlite::types::Null),
+            };
+            boxed
+        }).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = rusqlite_params.iter().map(|b| b.as_ref()).collect();
+
         let mut rows: Vec<Vec<Value>> = Vec::new();
-        let mut raw_rows = stmt.query([]).map_err(|e| e.to_string())?;
+        let mut raw_rows = stmt.query(param_refs.as_slice()).map_err(|e| e.to_string())?;
 
         while let Some(row) = raw_rows.next().map_err(|e| e.to_string())? {
             if rows.len() >= max_rows {
@@ -1109,4 +1174,129 @@ fn read_mcp_call_row(row: &Row<'_>) -> rusqlite::Result<McpCall> {
         error_message: row.get(9)?,
         process_name: row.get(10)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn setup_reader_with_data() -> DbReader {
+        let reader = DbReader::open_in_memory().unwrap();
+        reader.conn.execute(
+            "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms)
+             VALUES ('2026-01-01T00:00:00Z', 'example.com', 443, 'allowed', 100, 200, 50)",
+            [],
+        ).unwrap();
+        reader.conn.execute(
+            "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms)
+             VALUES ('2026-01-01T00:01:00Z', 'evil.com', 443, 'denied', 0, 0, 1)",
+            [],
+        ).unwrap();
+        reader
+    }
+
+    #[test]
+    fn query_raw_returns_columnar_json() {
+        let reader = setup_reader_with_data();
+        let json_str = reader.query_raw("SELECT domain, decision FROM net_events ORDER BY id").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["columns"], json!(["domain", "decision"]));
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["rows"][0][0], "example.com");
+        assert_eq!(parsed["rows"][1][0], "evil.com");
+    }
+
+    #[test]
+    fn query_raw_with_params_binds_values() {
+        let reader = setup_reader_with_data();
+        let params = vec![json!("denied")];
+        let json_str = reader
+            .query_raw_with_params("SELECT domain FROM net_events WHERE decision = ?", &params)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["rows"][0][0], "evil.com");
+    }
+
+    #[test]
+    fn query_raw_with_params_integer_bind() {
+        let reader = setup_reader_with_data();
+        let params = vec![json!(1)];
+        let json_str = reader
+            .query_raw_with_params("SELECT domain FROM net_events ORDER BY id LIMIT ?", &params)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn query_raw_with_params_null_bind() {
+        let reader = setup_reader_with_data();
+        let params = vec![Value::Null];
+        let json_str = reader
+            .query_raw_with_params("SELECT domain FROM net_events WHERE method IS ?", &params)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        // Both rows have NULL method
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn query_raw_with_params_float_bind() {
+        let reader = setup_reader_with_data();
+        let params = vec![json!(49.5)];
+        let json_str = reader
+            .query_raw_with_params(
+                "SELECT domain FROM net_events WHERE duration_ms > ?",
+                &params,
+            )
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["rows"][0][0], "example.com");
+    }
+
+    #[test]
+    fn query_raw_with_empty_params_works() {
+        let reader = setup_reader_with_data();
+        let json_str = reader
+            .query_raw_with_params("SELECT COUNT(*) AS cnt FROM net_events", &[])
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["rows"][0][0], 2);
+    }
+
+    #[test]
+    fn validate_select_only_allows_select() {
+        assert!(validate_select_only("SELECT 1").is_ok());
+        assert!(validate_select_only("  select * from foo").is_ok());
+        assert!(validate_select_only("WITH cte AS (SELECT 1) SELECT * FROM cte").is_ok());
+        assert!(validate_select_only("EXPLAIN SELECT 1").is_ok());
+    }
+
+    #[test]
+    fn validate_select_only_rejects_writes() {
+        assert!(validate_select_only("INSERT INTO foo VALUES (1)").is_err());
+        assert!(validate_select_only("UPDATE foo SET x=1").is_err());
+        assert!(validate_select_only("DELETE FROM foo").is_err());
+        assert!(validate_select_only("DROP TABLE foo").is_err());
+        assert!(validate_select_only("CREATE TABLE foo (x INT)").is_err());
+        assert!(validate_select_only("PRAGMA journal_mode=OFF").is_err());
+        assert!(validate_select_only("ATTACH ':memory:' AS db2").is_err());
+    }
+
+    #[test]
+    fn validate_select_only_rejects_empty() {
+        assert!(validate_select_only("").is_err());
+        assert!(validate_select_only("   ").is_err());
+    }
+
+    #[test]
+    fn bind_params_do_not_bypass_validation() {
+        // Even with params, the SQL statement itself is validated first.
+        // The validate_select_only function checks the SQL text, not the params.
+        assert!(validate_select_only("DELETE FROM foo WHERE id = ?").is_err());
+        assert!(validate_select_only("INSERT INTO foo VALUES (?)").is_err());
+    }
 }

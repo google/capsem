@@ -1939,7 +1939,6 @@ fn main() {
             commands::serial_input,
             commands::terminal_poll,
             commands::terminal_resize,
-            commands::net_events,
             commands::get_guest_config,
             commands::get_network_policy,
             commands::set_guest_env,
@@ -1948,17 +1947,7 @@ fn main() {
             commands::get_settings,
             commands::update_setting,
             commands::get_session_info,
-            commands::get_session_history,
-            commands::get_model_calls,
-            commands::get_traces,
-            commands::get_trace_detail,
-            commands::get_mcp_calls,
-            commands::get_file_events,
             commands::query_db,
-            commands::get_global_stats,
-            commands::get_top_providers,
-            commands::get_top_tools,
-            commands::get_top_mcp_tools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

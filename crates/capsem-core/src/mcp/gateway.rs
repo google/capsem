@@ -205,7 +205,40 @@ async fn handle_json_rpc(
                 return Some(JsonRpcResponse::err(req.id.clone(), -32602, "missing tool name"));
             }
 
-            let (server_name, local_name) = parse_namespaced(tool_name)
+            let arguments = params
+                .and_then(|p| p.get("arguments"))
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+
+            // Route built-in tools first (no namespace prefix needed).
+            if builtin_tools::is_builtin_tool(tool_name) {
+                let decision = policy.evaluate("builtin", Some(tool_name));
+                match decision {
+                    ToolDecision::Block => {
+                        return Some(JsonRpcResponse::err(
+                            req.id.clone(),
+                            -32600,
+                            format!("tool blocked by policy: {tool_name}"),
+                        ));
+                    }
+                    ToolDecision::Warn => {
+                        debug!(tool = tool_name, "MCP tool call warned by policy");
+                    }
+                    ToolDecision::Allow => {}
+                }
+
+                let dp = config.domain_policy.read().unwrap().clone();
+                return Some(builtin_tools::call_builtin_tool(
+                    tool_name,
+                    &arguments,
+                    &config.http_client,
+                    &dp,
+                    req.id.clone(),
+                ).await);
+            }
+
+            // External server tools: parse namespace prefix.
+            let (server_name, _local_name) = parse_namespaced(tool_name)
                 .unwrap_or(("", tool_name));
 
             let decision = policy.evaluate(server_name, Some(tool_name));
@@ -221,23 +254,6 @@ async fn handle_json_rpc(
                     debug!(tool = tool_name, "MCP tool call warned by policy");
                 }
                 ToolDecision::Allow => {}
-            }
-
-            let arguments = params
-                .and_then(|p| p.get("arguments"))
-                .cloned()
-                .unwrap_or(serde_json::json!({}));
-
-            // Route built-in tools to the builtin handler.
-            if server_name == "builtin" {
-                let dp = config.domain_policy.read().unwrap().clone();
-                return Some(builtin_tools::call_builtin_tool(
-                    local_name,
-                    &arguments,
-                    &config.http_client,
-                    &dp,
-                    req.id.clone(),
-                ).await);
             }
 
             let mut mgr = config.server_manager.lock().await;
@@ -352,9 +368,11 @@ async fn log_mcp_call(
         .and_then(|p| p.get("name"))
         .and_then(|n| n.as_str());
 
-    let server_name = tool_name
-        .and_then(|t| parse_namespaced(t).map(|(s, _)| s))
-        .unwrap_or("gateway");
+    let server_name = match tool_name {
+        Some(t) if builtin_tools::is_builtin_tool(t) => "builtin",
+        Some(t) => parse_namespaced(t).map(|(s, _)| s).unwrap_or("gateway"),
+        None => "gateway",
+    };
 
     let decision = if resp.error.is_some() {
         if resp
@@ -493,9 +511,11 @@ mod tests {
         // 3 built-in tools, no external servers
         assert_eq!(tools.len(), 3);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert!(names.contains(&"builtin__fetch_http"));
-        assert!(names.contains(&"builtin__grep_http"));
-        assert!(names.contains(&"builtin__http_headers"));
+        assert!(names.contains(&"fetch_http"));
+        assert!(names.contains(&"grep_http"));
+        assert!(names.contains(&"http_headers"));
+        // Names must NOT have the builtin__ prefix
+        assert!(!names.iter().any(|n| n.starts_with("builtin__")));
     }
 
     #[test]
@@ -529,7 +549,7 @@ mod tests {
             id: Some(serde_json::json!(1)),
             method: "tools/call".into(),
             params: Some(serde_json::json!({
-                "name": "builtin__fetch_http",
+                "name": "fetch_http",
                 "arguments": {"url": "https://evil-unknown-domain.xyz"}
             })),
         };

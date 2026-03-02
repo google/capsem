@@ -1821,4 +1821,57 @@ mod tests {
         assert_eq!(stopped[0].id, "20260225-100000-0000");
         assert_eq!(stopped[1].id, "20260225-110000-0000");
     }
+
+    // -- query_raw --
+
+    #[test]
+    fn query_raw_returns_columnar_json() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+
+        let json_str = idx.query_raw("SELECT id, mode, status FROM sessions", &[]).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["columns"], serde_json::json!(["id", "mode", "status"]));
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["rows"][0][0], "20260225-143052-a7f3");
+    }
+
+    #[test]
+    fn query_raw_with_bind_params() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+        let mut r2 = sample_record("20260225-143053-b8e4", "stopped");
+        r2.created_at = "2026-02-25T14:30:53Z".to_string();
+        idx.create_session(&r2).unwrap();
+
+        let params = vec![serde_json::json!("stopped")];
+        let json_str = idx.query_raw("SELECT id FROM sessions WHERE status = ?", &params).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["rows"][0][0], "20260225-143053-b8e4");
+    }
+
+    #[test]
+    fn query_raw_empty_result() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let json_str = idx.query_raw("SELECT id FROM sessions", &[]).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["columns"], serde_json::json!(["id"]));
+    }
+
+    #[test]
+    fn query_raw_with_limit_param() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        for i in 0..5 {
+            let mut rec = sample_record(&format!("20260225-{i:06}-0000"), "running");
+            rec.created_at = format!("2026-02-25T{i:02}:00:00Z");
+            idx.create_session(&rec).unwrap();
+        }
+
+        let params = vec![serde_json::json!(2)];
+        let json_str = idx.query_raw("SELECT id FROM sessions LIMIT ?", &params).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 2);
+    }
 }

@@ -9,8 +9,8 @@
     Tooltip,
     Legend,
   } from 'chart.js';
-  import { getMcpCalls, queryOne, queryAll, getSessionHistory } from '../../api';
-  import { MCP_STATS_SQL, MCP_BY_SERVER_SQL } from '../../sql';
+  import { queryOne, queryAll } from '../../db';
+  import { MCP_STATS_SQL, MCP_BY_SERVER_SQL, MCP_CALLS_SQL, SESSION_HISTORY_SQL } from '../../sql';
   import type { McpCall, McpServerCallCount, SessionRecord } from '../../types';
 
   Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
@@ -54,7 +54,7 @@
   async function refresh() {
     try {
       const [c, s, srv] = await Promise.all([
-        getMcpCalls(100),
+        queryAll<McpCall>(MCP_CALLS_SQL, [100]),
         queryOne<McpStatsRow>(MCP_STATS_SQL),
         queryAll<McpServerCallCount>(MCP_BY_SERVER_SQL),
       ]);
@@ -70,7 +70,7 @@
     refresh();
     pollTimer = setInterval(refresh, 2000);
     try {
-      sessions = await getSessionHistory(50);
+      sessions = await queryAll<SessionRecord>(SESSION_HISTORY_SQL, [50], 'main');
     } catch {
       // not critical
     }
