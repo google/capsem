@@ -584,6 +584,23 @@ impl SessionIndex {
     /// against main.db. Returns columnar JSON: `{"columns":[...],"rows":[[...], ...]}`.
     /// Caps output at 10,000 rows.
     pub fn query_raw(&self, sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
+        // Defense-in-depth: this connection is read-write (used by other
+        // SessionIndex methods), so temporarily enable query_only to prevent
+        // writes even if validate_select_only is bypassed (e.g. semicolon
+        // injection like "SELECT 1; DROP TABLE sessions").
+        self.conn
+            .pragma_update(None, "query_only", "ON")
+            .map_err(|e| e.to_string())?;
+
+        let result = self.query_raw_inner(sql, params);
+
+        // Always restore write capability for other methods, even on error.
+        let _ = self.conn.pragma_update(None, "query_only", "OFF");
+
+        result
+    }
+
+    fn query_raw_inner(&self, sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
         use serde_json::Value;
 
         const MAX_ROWS: usize = 10_000;
@@ -1873,5 +1890,75 @@ mod tests {
         let json_str = idx.query_raw("SELECT id FROM sessions LIMIT ?", &params).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed["rows"].as_array().unwrap().len(), 2);
+    }
+
+    // -- query_raw read-only enforcement (PRAGMA query_only) --
+
+    #[test]
+    fn query_raw_rejects_insert() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+
+        let result = idx.query_raw(
+            "INSERT INTO sessions (id, mode, status, created_at) VALUES ('evil', 'gui', 'running', '2026-01-01T00:00:00Z')",
+            &[],
+        );
+        assert!(result.is_err(), "INSERT must be rejected by PRAGMA query_only");
+    }
+
+    #[test]
+    fn query_raw_rejects_semicolon_injection() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+
+        // Multi-statement: first is SELECT (passes validate_select_only),
+        // second is DROP TABLE (must be caught by PRAGMA query_only).
+        let _result = idx.query_raw("SELECT 1; DROP TABLE sessions", &[]);
+        // Either the prepare or execute step should reject this.
+        // The SELECT may succeed but DROP must not execute.
+        // Verify sessions table is intact regardless.
+        let count = idx.count().unwrap();
+        assert_eq!(count, 1, "sessions table must not be dropped");
+    }
+
+    #[test]
+    fn query_raw_select_works() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+
+        let result = idx.query_raw("SELECT COUNT(*) FROM sessions", &[]);
+        assert!(result.is_ok(), "SELECT must succeed: {:?}", result);
+        let parsed: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(parsed["rows"][0][0], 1);
+    }
+
+    #[test]
+    fn query_raw_other_methods_still_write() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+
+        // Call query_raw (sets PRAGMA query_only ON then OFF).
+        let _ = idx.query_raw("SELECT 1", &[]);
+
+        // Internal write methods must still work after query_raw restored
+        // the connection to read-write mode.
+        idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z"))
+            .unwrap();
+        let records = idx.recent(1).unwrap();
+        assert_eq!(records[0].status, "stopped");
+    }
+
+    #[test]
+    fn query_raw_restores_write_on_error() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+
+        // Trigger an error inside query_raw (bad SQL).
+        let _ = idx.query_raw("INSERT INTO sessions VALUES ('x')", &[]);
+
+        // PRAGMA query_only must be restored to OFF despite the error.
+        idx.create_session(&sample_record("20260225-143053-b8e4", "running"))
+            .unwrap();
+        assert_eq!(idx.count().unwrap(), 2);
     }
 }

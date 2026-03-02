@@ -1437,12 +1437,40 @@ fn fixture_query_raw_select() {
 }
 
 #[test]
-fn fixture_query_raw_write_blocked() {
+fn reader_rejects_insert() {
     let reader = fixture_reader();
-    // The connection has PRAGMA query_only = ON, so writes should fail
-    // even if validate_select_only is bypassed
-    let result = reader.query_raw("SELECT * FROM net_events LIMIT 1");
-    assert!(result.is_ok());
+    let result = reader.query_raw(
+        "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms) VALUES (0, 'evil.com', 443, 'allowed', 0, 0, 0)",
+    );
+    assert!(result.is_err(), "INSERT must be rejected by PRAGMA query_only on DbReader");
+}
+
+#[test]
+fn reader_rejects_create_table() {
+    let reader = fixture_reader();
+    let result = reader.query_raw("CREATE TABLE evil (id INTEGER)");
+    assert!(result.is_err(), "CREATE TABLE must be rejected");
+}
+
+#[test]
+fn reader_rejects_drop_table() {
+    let reader = fixture_reader();
+    let result = reader.query_raw("DROP TABLE net_events");
+    assert!(result.is_err(), "DROP TABLE must be rejected");
+    // Verify the table still works.
+    let check = reader.query_raw("SELECT COUNT(*) FROM net_events");
+    assert!(check.is_ok(), "net_events must still be accessible after rejected DROP");
+}
+
+#[test]
+fn reader_rejects_semicolon_injection() {
+    let reader = fixture_reader();
+    // Multi-statement: SELECT passes validate_select_only, but the DROP
+    // must be caught by PRAGMA query_only on the connection.
+    let _ = reader.query_raw("SELECT 1; DROP TABLE net_events");
+    // Regardless of whether the above returned Ok or Err, the table must be intact.
+    let check = reader.query_raw("SELECT COUNT(*) FROM net_events");
+    assert!(check.is_ok(), "net_events must survive semicolon injection attempt");
 }
 
 // ── reader: domain counts ──────────────────────────────────────────

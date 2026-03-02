@@ -184,6 +184,20 @@ The principal threat is an AI agent (Claude Code, Gemini CLI, or any future agen
 
 The enforcement chain is: **iptables REDIRECT (kernel) -> capsem-net-proxy (guest vsock bridge) -> SNI proxy (host) -> [future: audit gateway (host)]**. Three independent layers must be bypassed simultaneously.
 
+### T14: Data Exfiltration via WebView XSS
+
+**Threat**: An attacker who achieves XSS in the Tauri WebView (e.g., via a crafted terminal escape sequence that bypasses xterm.js parsing) invokes the `query_db` IPC command to read telemetry data (visited domains, tool call history, model usage, API key hash prefixes) and exfiltrates it to an external server.
+
+| Vector | Mitigation | Status |
+|--------|-----------|--------|
+| XSS invokes `query_db` to read telemetry (domains, tool calls, model usage) | `SQLITE_OPEN_READ_ONLY` + `PRAGMA query_only` on session.db; `PRAGMA query_only` guard on main.db; `validate_select_only` parser; 10K row cap | Implemented |
+| XSS exfiltrates query results to external server | CSP should restrict `connect-src` to `self` only | **Not implemented** (see CSP gap below) |
+| Semicolon SQL injection (e.g., `SELECT 1; DROP TABLE sessions`) | `PRAGMA query_only = ON` rejects writes even in multi-statement queries; `SQLITE_OPEN_READ_ONLY` on session.db provides kernel-level enforcement | Implemented |
+| XSS reads credential data from session DB | Header sanitization (BLAKE3 hashes) strips real API keys before storage; only hash prefixes exist in DB | Implemented |
+| XSS modifies settings or policy via SQL mutation | `query_db` enforces read-only at both parser and SQLite pragma level; no write path exposed to the frontend SQL gateway | Implemented |
+
+**CSP gap**: `"csp": null` in `tauri.conf.json` disables Tauri's default Content Security Policy. This means an XSS payload could use `fetch()` or `XMLHttpRequest` to send stolen data to any external server. Planned fix: set CSP to restrict `script-src 'self'`, `connect-src 'self'`, `default-src 'self'` in tauri.conf.json. This would prevent exfiltration even if XSS is achieved. See also T8 (XSS via Terminal Output).
+
 ---
 
 ## Security Controls (Implemented)
@@ -346,6 +360,18 @@ This design:
 4. **Minimal allowlist approach**: The allowlist is deliberately small and contains only structural/metadata headers that carry no authentication material. New headers default to hashed, not verbatim. Adding a header to the allowlist requires a code change and review.
 
 Implementation: `format_headers()` in `crates/capsem-core/src/net/mitm_proxy.rs`. Tests verify that allowlisted headers pass through, sensitive headers are hashed, hashing is deterministic, and different values produce different hashes.
+
+### Frontend SQL gateway (`query_db`)
+
+The `query_db` IPC command exposes a read-only SQL interface to the frontend WebView, allowing per-session analytics (charts, tables, search) to run SQL against session.db and main.db without per-query Rust boilerplate. Defense-in-depth ensures that even if the frontend is compromised (XSS), no data mutation is possible:
+
+1. **`validate_select_only()`** -- keyword parser rejects non-SELECT first statements (INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, etc.) with a clear error. This is the fast-path check that catches obvious mistakes.
+2. **`SQLITE_OPEN_READ_ONLY`** on session.db -- the `DbReader` connection is opened with `OpenFlags::SQLITE_OPEN_READ_ONLY`, enforced at the SQLite kernel level. No amount of SQL trickery can bypass this.
+3. **`PRAGMA query_only = ON`** on both databases -- session.db sets this at connection open; main.db sets it transiently around each `query_raw` call (since the same connection is used for legitimate writes by other `SessionIndex` methods). Catches multi-statement injection (e.g., `SELECT 1; DROP TABLE sessions`) that bypasses the keyword parser.
+4. **10,000 row output cap** -- prevents memory exhaustion from `SELECT * FROM` on large tables.
+5. **Bind parameter support** -- frontend passes values via `params` array, not string interpolation, eliminating SQL injection from user-controlled filter inputs.
+
+The layered approach means an attacker must bypass all three SQL enforcement mechanisms simultaneously (keyword parser + PRAGMA + open flags) to mutate any data. No single bypass is sufficient.
 
 ### No systemd, no services
 
