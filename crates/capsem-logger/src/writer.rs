@@ -165,6 +165,9 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
             warn!(error = %e, count = batch.len(), "db write batch failed");
         }
     }
+
+    // All senders dropped -- checkpoint WAL before closing connection.
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
 }
 
 fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
@@ -399,6 +402,43 @@ mod tests {
         // Should have truncated to MAX_FIELD_BYTES - 1 (dropping the emoji)
         assert_eq!(result.len(), MAX_FIELD_BYTES - 1);
         assert!(result.chars().all(|c| c == 'x'));
+    }
+
+    #[test]
+    fn db_writer_checkpoints_wal_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Write some events, then drop the writer.
+        {
+            let writer = DbWriter::open(&db_path, 64).unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            rt.block_on(async {
+                writer
+                    .write(WriteOp::FileEvent(crate::events::FileEvent {
+                        timestamp: std::time::SystemTime::now(),
+                        action: crate::events::FileAction::Created,
+                        path: "/tmp/test".to_string(),
+                        size: Some(42),
+                    }))
+                    .await;
+            });
+            // DbWriter::drop runs here -- should checkpoint WAL.
+        }
+
+        // After drop, WAL should be truncated (empty or zero-length).
+        let wal_path = dir.path().join("test.db-wal");
+        if wal_path.exists() {
+            let wal_size = std::fs::metadata(&wal_path).unwrap().len();
+            assert_eq!(wal_size, 0, "WAL should be empty after checkpoint");
+        }
+
+        // Verify data is in the main DB file (not just WAL).
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }
 

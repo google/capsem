@@ -110,6 +110,8 @@
       case 'running': return 'badge-info';
       case 'stopped': return 'badge-ghost';
       case 'crashed': return 'badge-secondary';
+      case 'vacuumed': return 'badge-ghost';
+      case 'terminated': return 'badge-ghost opacity-50';
       default: return 'badge-ghost';
     }
   }

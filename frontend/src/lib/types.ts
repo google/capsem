@@ -316,6 +316,8 @@ export interface SessionRecord {
   total_tool_calls: number;
   total_mcp_calls: number;
   total_file_events: number;
+  compressed_size_bytes: number | null;
+  vacuumed_at: string | null;
 }
 
 /** Aggregated stats across all sessions (from main.db). */

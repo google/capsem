@@ -124,7 +124,7 @@ fn session_dir_for(vm_id: &str) -> Option<PathBuf> {
 ///
 /// Deletes any leftover scratch.img files (always ephemeral) and marks
 /// any "running" sessions as "crashed" (stale from ungraceful exit).
-/// Also runs age-based, count-based, and disk-based culling.
+/// Also runs vacuum recovery, age/count/disk-based culling, and terminated purging.
 fn cleanup_stale_sessions(index: &SessionIndex) {
     let base = match sessions_dir() {
         Some(d) => d,
@@ -153,7 +153,7 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
         Err(e) => warn!("failed to mark stale sessions: {e}"),
     }
 
-    // Backfill: for crashed sessions with zero stats but an info.db on disk,
+    // Backfill: for crashed sessions with zero stats but a session.db on disk,
     // retroactively populate the summary tables.
     if let Ok(sessions) = index.recent(1000) {
         for rec in &sessions {
@@ -164,7 +164,7 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
             if rec.total_input_tokens > 0 || rec.total_tool_calls > 0 {
                 continue;
             }
-            let db_path = base.join(&rec.id).join("info.db");
+            let db_path = base.join(&rec.id).join("session.db");
             if !db_path.exists() {
                 continue;
             }
@@ -186,7 +186,15 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
         }
     }
 
-    // Age-based culling.
+    // Vacuum recovery: compress any stopped/crashed sessions not yet vacuumed.
+    if let Ok(unvacuumed) = index.unvacuumed_sessions() {
+        for rec in &unvacuumed {
+            let session_dir = base.join(&rec.id);
+            vacuum_session(&rec.id, index, &session_dir);
+        }
+    }
+
+    // Age-based culling (terminate, not delete).
     let settings = policy_config::load_merged_settings();
     let retention_days = settings.iter()
         .find(|s| s.id == "vm.retention_days")
@@ -200,15 +208,19 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
         .find(|s| s.id == "vm.max_disk_gb")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(100) as u64;
+    let terminated_retention_days = settings.iter()
+        .find(|s| s.id == "vm.terminated_retention_days")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(365) as u32;
 
-    if let Ok(n) = index.delete_older_than_days(retention_days) {
+    if let Ok(n) = index.terminate_older_than_days(retention_days) {
         if n > 0 {
-            info!(count = n, "culled old sessions (>{retention_days} days)");
+            info!(count = n, "terminated old sessions (>{retention_days} days)");
         }
     }
-    if let Ok(n) = index.delete_keeping_newest(max_sessions) {
+    if let Ok(n) = index.terminate_excess_sessions(max_sessions) {
         if n > 0 {
-            info!(count = n, "culled sessions over cap ({max_sessions})");
+            info!(count = n, "terminated sessions over cap ({max_sessions})");
         }
     }
 
@@ -229,9 +241,27 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
                         continue;
                     }
                     usage = usage.saturating_sub(dir_bytes);
+                    let _ = index.mark_terminated(&rec.id);
                     info!(id = %rec.id, "culled session dir for disk budget");
                 }
             }
+        }
+    }
+
+    // Delete disk artifacts for terminated sessions that still have directories.
+    if let Ok(terminated) = index.sessions_by_status("terminated") {
+        for rec in &terminated {
+            let dir = base.join(&rec.id);
+            if dir.is_dir() {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+        }
+    }
+
+    // Purge old terminated records from main.db.
+    if let Ok(n) = index.purge_terminated_older_than_days(terminated_retention_days) {
+        if n > 0 {
+            info!(count = n, "purged terminated records (>{terminated_retention_days} days)");
         }
     }
 
@@ -262,6 +292,22 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
                     info!(id = %name, "removed orphan session dir");
                 }
             }
+        }
+    }
+
+    // Checkpoint main.db after all cleanup.
+    let _ = index.checkpoint();
+}
+
+/// Vacuum and compress a session DB, updating the index on success.
+fn vacuum_session(session_id: &str, index: &SessionIndex, session_dir: &std::path::Path) {
+    match session::vacuum_and_compress_session_db(session_dir) {
+        Ok(compressed_size) => {
+            let _ = index.mark_vacuumed(session_id, compressed_size, &session::now_iso());
+            info!(id = %session_id, compressed_size, "vacuumed session DB");
+        }
+        Err(e) => {
+            warn!(id = %session_id, "failed to vacuum session DB: {e:#}");
         }
     }
 }
@@ -800,11 +846,14 @@ async fn setup_vsock(
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(30));
                 interval.tick().await; // skip immediate first tick
+                let mut tick_count: u64 = 0;
                 loop {
                     interval.tick().await;
+                    tick_count += 1;
                     let sid = sid.clone();
                     let db = Arc::clone(&db);
                     let flush_handle = flush_handle.clone();
+                    let checkpoint_main = tick_count % 10 == 0; // every 5 minutes
                     let _ = tokio::task::spawn_blocking(move || {
                         use tauri::Manager;
                         let reader = match db.reader() {
@@ -826,6 +875,10 @@ async fn setup_vsock(
                             );
                         }
                         flush_session_summary(&sid, &idx, &reader);
+                        // Periodically checkpoint main.db WAL.
+                        if checkpoint_main {
+                            let _ = idx.checkpoint();
+                        }
                     }).await;
                 }
             });
@@ -1230,6 +1283,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         total_tool_calls: 0,
         total_mcp_calls: 0,
         total_file_events: 0,
+        compressed_size_bytes: None,
+        vacuumed_at: None,
     };
     if let Err(e) = session_index.create_session(&record) {
         warn!("failed to record session: {e}");
@@ -1575,6 +1630,14 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         cleanup_session(dir, scratch_path.as_deref(), &cli_session_id, session_index, db_ref);
     }
 
+    // Drop network state to close DbWriter (flushes WAL via checkpoint on drop).
+    drop(net_state);
+
+    // Vacuum and compress the session DB.
+    if let Some(ref dir) = cli_session_dir {
+        vacuum_session(&cli_session_id, session_index, dir);
+    }
+
     // Ensure the host shell prompt starts on a fresh line.
     if !last_was_newline.load(std::sync::atomic::Ordering::Relaxed) {
         let _ = std::io::stdout().write_all(b"\n");
@@ -1758,6 +1821,8 @@ fn main() {
                     total_tool_calls: 0,
                     total_mcp_calls: 0,
                     total_file_events: 0,
+                    compressed_size_bytes: None,
+                    vacuumed_at: None,
                 };
                 if let Err(e) = idx.create_session(&record) {
                     warn!("failed to record session: {e}");

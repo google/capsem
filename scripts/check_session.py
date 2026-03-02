@@ -2,10 +2,12 @@
 """Check session DB integrity and show a summary of recorded events."""
 
 import argparse
+import gzip
 import json
 import os
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 SESSIONS_DIR = Path.home() / ".capsem" / "sessions"
@@ -89,31 +91,39 @@ def list_recent_sessions(n: int = 5) -> list[dict]:
 
 
 def resolve_session(session_id: str | None) -> Path:
-    """Resolve a session ID (or latest) to its session.db path."""
+    """Resolve a session ID (or latest) to its session.db path.
+
+    If the DB has been compressed (session.db.gz), decompress to a temp file.
+    """
     if session_id:
-        db = SESSIONS_DIR / session_id / "session.db"
-        if not db.exists():
-            print(
-                f"{RED}session.db not found for {session_id}{RESET}",
-                file=sys.stderr,
-            )
+        session_dir = SESSIONS_DIR / session_id
+    else:
+        sessions = list_recent_sessions(1)
+        if not sessions:
+            print(f"{RED}No sessions found in main.db{RESET}", file=sys.stderr)
             sys.exit(1)
+        session_dir = SESSIONS_DIR / sessions[0]["id"]
+
+    db = session_dir / "session.db"
+    if db.exists():
         return db
 
-    # Find latest by scanning main.db
-    sessions = list_recent_sessions(1)
-    if not sessions:
-        print(f"{RED}No sessions found in main.db{RESET}", file=sys.stderr)
-        sys.exit(1)
-    sid = sessions[0]["id"]
-    db = SESSIONS_DIR / sid / "session.db"
-    if not db.exists():
-        print(
-            f"{RED}session.db not found for latest session {sid}{RESET}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return db
+    gz = session_dir / "session.db.gz"
+    if gz.exists():
+        # Decompress to a temp file.
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        with gzip.open(gz, "rb") as f:
+            tmp.write(f.read())
+        tmp.close()
+        print(f"  {DIM}(decompressed {gz.name} to temp file){RESET}")
+        return Path(tmp.name)
+
+    sid = session_dir.name
+    print(
+        f"{RED}session.db not found for {sid}{RESET}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def check_session(db_path: Path, preview_rows: int = 5):

@@ -2,7 +2,14 @@
 ///
 /// Each VM boot creates a new session with a unique ID (YYYYMMDD-HHMMSS-XXXX).
 /// The session index (`main.db`) tracks metadata across sessions. Per-session
-/// telemetry lives in `<session_dir>/info.db`.
+/// telemetry lives in `<session_dir>/session.db`.
+///
+/// Session lifecycle:
+///   running -> stopped    (graceful shutdown, rollup done)
+///   running -> crashed    (ungraceful, backfill on next startup)
+///   stopped/crashed -> vacuumed   (DB checkpointed + vacuumed + gzipped)
+///   vacuumed -> terminated        (disk artifacts deleted, only main.db record)
+use std::io::Write;
 use std::path::Path;
 
 use rusqlite::{params, Connection};
@@ -61,6 +68,8 @@ pub struct SessionRecord {
     pub total_tool_calls: u64,
     pub total_mcp_calls: u64,
     pub total_file_events: u64,
+    pub compressed_size_bytes: Option<u64>,
+    pub vacuumed_at: Option<String>,
 }
 
 /// Aggregated statistics across all sessions.
@@ -114,7 +123,7 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
@@ -134,7 +143,9 @@ const SESSION_SCHEMA: &str = "
         total_estimated_cost REAL NOT NULL DEFAULT 0.0,
         total_tool_calls INTEGER NOT NULL DEFAULT 0,
         total_mcp_calls INTEGER NOT NULL DEFAULT 0,
-        total_file_events INTEGER NOT NULL DEFAULT 0
+        total_file_events INTEGER NOT NULL DEFAULT 0,
+        compressed_size_bytes INTEGER,
+        vacuumed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_created
         ON sessions(created_at);
@@ -196,8 +207,15 @@ impl SessionIndex {
     /// Check user_version and migrate if needed.
     fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version < SCHEMA_VERSION {
-            // Drop old tables (idempotent -- IF EXISTS).
+        if version == 2 {
+            // Additive migration v2->v3: add new nullable columns.
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN compressed_size_bytes INTEGER;
+                 ALTER TABLE sessions ADD COLUMN vacuumed_at TEXT;"
+            )?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        } else if version < 2 {
+            // Old schema -- drop and recreate.
             conn.execute_batch(
                 "DROP TABLE IF EXISTS sessions;
                  DROP TABLE IF EXISTS ai_usage;
@@ -219,8 +237,9 @@ impl SessionIndex {
             "INSERT INTO sessions (id, mode, command, status, created_at, stopped_at,
                 scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
                 total_input_tokens, total_output_tokens, total_estimated_cost,
-                total_tool_calls, total_mcp_calls, total_file_events)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                total_tool_calls, total_mcp_calls, total_file_events,
+                compressed_size_bytes, vacuumed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 record.id,
                 record.mode,
@@ -239,6 +258,8 @@ impl SessionIndex {
                 record.total_tool_calls as i64,
                 record.total_mcp_calls as i64,
                 record.total_file_events as i64,
+                record.compressed_size_bytes.map(|v| v as i64),
+                record.vacuumed_at,
             ],
         )?;
         Ok(())
@@ -288,7 +309,8 @@ impl SessionIndex {
         "id, mode, command, status, created_at, stopped_at,
          scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
          total_input_tokens, total_output_tokens, total_estimated_cost,
-         total_tool_calls, total_mcp_calls, total_file_events";
+         total_tool_calls, total_mcp_calls, total_file_events,
+         compressed_size_bytes, vacuumed_at";
 
     /// Parse a row into a SessionRecord. Column order must match SESSION_COLUMNS.
     fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
@@ -310,6 +332,8 @@ impl SessionIndex {
             total_tool_calls: row.get::<_, i64>(14)? as u64,
             total_mcp_calls: row.get::<_, i64>(15)? as u64,
             total_file_events: row.get::<_, i64>(16)? as u64,
+            compressed_size_bytes: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
+            vacuumed_at: row.get(18)?,
         })
     }
 
@@ -324,10 +348,10 @@ impl SessionIndex {
         rows.collect()
     }
 
-    /// Delete sessions with created_at older than `days` days ago.
-    /// Only deletes stopped/crashed sessions (not running).
-    /// Returns count of deleted rows.
-    pub fn delete_older_than_days(&self, days: u32) -> rusqlite::Result<usize> {
+    /// Terminate sessions with created_at older than `days` days ago.
+    /// Sets status='terminated' on stopped/crashed/vacuumed sessions (not running).
+    /// Returns count of affected rows.
+    pub fn terminate_older_than_days(&self, days: u32) -> rusqlite::Result<usize> {
         let cutoff_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -336,19 +360,20 @@ impl SessionIndex {
         // created_at is ISO 8601 -- string comparison works for our format.
         let cutoff_str = epoch_to_iso(cutoff_secs);
         let count = self.conn.execute(
-            "DELETE FROM sessions WHERE created_at < ?1 AND status IN ('stopped', 'crashed')",
+            "UPDATE sessions SET status = 'terminated'
+             WHERE created_at < ?1 AND status IN ('stopped', 'crashed', 'vacuumed')",
             params![cutoff_str],
         )?;
         Ok(count)
     }
 
-    /// Delete oldest sessions, keeping only the newest `max` sessions.
-    /// Only deletes stopped/crashed sessions (not running).
-    /// Returns count of deleted rows.
-    pub fn delete_keeping_newest(&self, max: usize) -> rusqlite::Result<usize> {
-        // Count non-running sessions.
+    /// Terminate oldest sessions beyond the cap.
+    /// Sets status='terminated' on excess stopped/crashed/vacuumed sessions.
+    /// Returns count of affected rows.
+    pub fn terminate_excess_sessions(&self, max: usize) -> rusqlite::Result<usize> {
         let count = self.conn.execute(
-            "DELETE FROM sessions WHERE status IN ('stopped', 'crashed')
+            "UPDATE sessions SET status = 'terminated'
+             WHERE status IN ('stopped', 'crashed', 'vacuumed')
              AND id NOT IN (
                 SELECT id FROM sessions ORDER BY created_at DESC LIMIT ?1
              )",
@@ -357,15 +382,81 @@ impl SessionIndex {
         Ok(count)
     }
 
-    /// Return stopped/crashed sessions ordered oldest first (for disk culling).
+    /// Return stopped/crashed/vacuumed sessions ordered oldest first (for disk culling).
     pub fn stopped_sessions_oldest_first(&self) -> rusqlite::Result<Vec<SessionRecord>> {
         let sql = format!(
-            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed') ORDER BY created_at ASC",
+            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') ORDER BY created_at ASC",
             Self::SESSION_COLUMNS
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], Self::read_session_row)?;
         rows.collect()
+    }
+
+    /// Return sessions with a specific status.
+    pub fn sessions_by_status(&self, status: &str) -> rusqlite::Result<Vec<SessionRecord>> {
+        let sql = format!(
+            "SELECT {} FROM sessions WHERE status = ?1 ORDER BY created_at ASC",
+            Self::SESSION_COLUMNS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![status], Self::read_session_row)?;
+        rows.collect()
+    }
+
+    /// Return stopped/crashed sessions that have not been vacuumed yet.
+    pub fn unvacuumed_sessions(&self) -> rusqlite::Result<Vec<SessionRecord>> {
+        let sql = format!(
+            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed') AND vacuumed_at IS NULL ORDER BY created_at ASC",
+            Self::SESSION_COLUMNS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], Self::read_session_row)?;
+        rows.collect()
+    }
+
+    /// Mark a session as vacuumed with compressed size and timestamp.
+    pub fn mark_vacuumed(
+        &self,
+        id: &str,
+        compressed_size_bytes: u64,
+        vacuumed_at: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET status = 'vacuumed', compressed_size_bytes = ?1, vacuumed_at = ?2 WHERE id = ?3",
+            params![compressed_size_bytes as i64, vacuumed_at, id],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a session as terminated (disk artifacts deleted, record retained).
+    pub fn mark_terminated(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET status = 'terminated' WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Checkpoint the main.db WAL (flush and truncate).
+    pub fn checkpoint(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        Ok(())
+    }
+
+    /// Permanently delete terminated session records older than `days` days.
+    pub fn purge_terminated_older_than_days(&self, days: u32) -> rusqlite::Result<usize> {
+        let cutoff_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(days as u64 * 86400);
+        let cutoff_str = epoch_to_iso(cutoff_secs);
+        let count = self.conn.execute(
+            "DELETE FROM sessions WHERE status = 'terminated' AND created_at < ?1",
+            params![cutoff_str],
+        )?;
+        Ok(count)
     }
 
     /// Total count of sessions.
@@ -487,6 +578,85 @@ impl SessionIndex {
         rows.collect()
     }
 
+    // ── Raw SQL query ─────────────────────────────────────────────
+
+    /// Execute an arbitrary read-only SQL query with optional bind parameters
+    /// against main.db. Returns columnar JSON: `{"columns":[...],"rows":[[...], ...]}`.
+    /// Caps output at 10,000 rows.
+    pub fn query_raw(&self, sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
+        use serde_json::Value;
+
+        const MAX_ROWS: usize = 10_000;
+
+        let mut stmt = self.conn.prepare(sql).map_err(|e| e.to_string())?;
+        let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+        let col_count = columns.len();
+
+        // Convert serde_json::Value to rusqlite dynamic params.
+        let rusqlite_params: Vec<Box<dyn rusqlite::types::ToSql>> = params.iter().map(|v| {
+            let boxed: Box<dyn rusqlite::types::ToSql> = match v {
+                Value::Null => Box::new(rusqlite::types::Null),
+                Value::Bool(b) => Box::new(*b as i64),
+                Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        Box::new(i)
+                    } else if let Some(f) = n.as_f64() {
+                        Box::new(f)
+                    } else {
+                        Box::new(rusqlite::types::Null)
+                    }
+                }
+                Value::String(s) => Box::new(s.clone()),
+                _ => Box::new(rusqlite::types::Null),
+            };
+            boxed
+        }).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = rusqlite_params.iter().map(|b| b.as_ref()).collect();
+
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        let mut raw_rows = stmt.query(param_refs.as_slice()).map_err(|e| e.to_string())?;
+
+        while let Some(row) = raw_rows.next().map_err(|e| e.to_string())? {
+            if rows.len() >= MAX_ROWS {
+                break;
+            }
+            let mut values = Vec::with_capacity(col_count);
+            for i in 0..col_count {
+                let val = row.get_ref(i).map_err(|e| e.to_string())?;
+                let json_val = match val {
+                    rusqlite::types::ValueRef::Null => Value::Null,
+                    rusqlite::types::ValueRef::Integer(n) => {
+                        Value::Number(serde_json::Number::from(n))
+                    }
+                    rusqlite::types::ValueRef::Real(f) => {
+                        if f.is_finite() {
+                            serde_json::Number::from_f64(f)
+                                .map(Value::Number)
+                                .unwrap_or(Value::Null)
+                        } else {
+                            Value::Null
+                        }
+                    }
+                    rusqlite::types::ValueRef::Text(t) => {
+                        let s = std::str::from_utf8(t).unwrap_or("<invalid utf8>");
+                        Value::String(s.to_string())
+                    }
+                    rusqlite::types::ValueRef::Blob(b) => {
+                        Value::String(format!("<blob {} bytes>", b.len()))
+                    }
+                };
+                values.push(json_val);
+            }
+            rows.push(values);
+        }
+
+        let result = serde_json::json!({
+            "columns": columns,
+            "rows": rows,
+        });
+        serde_json::to_string(&result).map_err(|e| e.to_string())
+    }
+
     // ── Per-session summary writes ──────────────────────────────────
 
     /// Update the summary columns on a session row.
@@ -603,6 +773,49 @@ impl SessionIndex {
         }
         Ok(())
     }
+}
+
+/// Checkpoint, vacuum, and gzip-compress a session database.
+///
+/// 1. Opens `session.db` in the given directory
+/// 2. Checkpoints WAL (TRUNCATE mode)
+/// 3. VACUUMs the database
+/// 4. Closes the connection
+/// 5. Gzip-compresses to `session.db.gz`
+/// 6. Removes `session.db`, `session.db-wal`, `session.db-shm`
+///
+/// Returns the compressed file size in bytes.
+pub fn vacuum_and_compress_session_db(session_dir: &Path) -> anyhow::Result<u64> {
+    let db_path = session_dir.join("session.db");
+    if !db_path.exists() {
+        return Err(anyhow::anyhow!("session.db not found in {}", session_dir.display()));
+    }
+
+    // Open, checkpoint, vacuum, close.
+    {
+        let conn = Connection::open(&db_path)?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        conn.execute_batch("VACUUM")?;
+    }
+
+    // Gzip compress session.db -> session.db.gz.
+    let gz_path = session_dir.join("session.db.gz");
+    let input = std::fs::read(&db_path)?;
+    {
+        let gz_file = std::fs::File::create(&gz_path)?;
+        let mut encoder = flate2::write::GzEncoder::new(gz_file, flate2::Compression::default());
+        encoder.write_all(&input)?;
+        encoder.finish()?;
+    }
+
+    let compressed_size = std::fs::metadata(&gz_path)?.len();
+
+    // Remove uncompressed files.
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(session_dir.join("session.db-wal"));
+    let _ = std::fs::remove_file(session_dir.join("session.db-shm"));
+
+    Ok(compressed_size)
 }
 
 /// Break epoch seconds into (year, month, day, hour, minute, second) UTC components.
@@ -754,6 +967,8 @@ mod tests {
             total_tool_calls: 0,
             total_mcp_calls: 0,
             total_file_events: 0,
+            compressed_size_bytes: None,
+            vacuumed_at: None,
         }
     }
 
@@ -933,7 +1148,7 @@ mod tests {
     // -- Age-based culling --
 
     #[test]
-    fn delete_older_than_days() {
+    fn terminate_older_than_days() {
         let idx = SessionIndex::open_in_memory().unwrap();
 
         // Old session (2020).
@@ -946,42 +1161,62 @@ mod tests {
         recent.created_at = "2026-02-25T14:30:52Z".to_string();
         idx.create_session(&recent).unwrap();
 
-        let deleted = idx.delete_older_than_days(7).unwrap();
-        assert_eq!(deleted, 1);
-        assert_eq!(idx.count().unwrap(), 1);
-        assert_eq!(idx.recent(1).unwrap()[0].id, "20260225-143052-a7f3");
+        let terminated = idx.terminate_older_than_days(7).unwrap();
+        assert_eq!(terminated, 1);
+        // Row still exists, just status changed.
+        assert_eq!(idx.count().unwrap(), 2);
+        let records = idx.recent(10).unwrap();
+        let old_rec = records.iter().find(|r| r.id == "20200101-120000-0000").unwrap();
+        assert_eq!(old_rec.status, "terminated");
     }
 
     #[test]
-    fn delete_older_preserves_running() {
+    fn terminate_older_preserves_running() {
         let idx = SessionIndex::open_in_memory().unwrap();
 
         let mut old_running = sample_record("20200101-120000-0000", "running");
         old_running.created_at = "2020-01-01T12:00:00Z".to_string();
         idx.create_session(&old_running).unwrap();
 
-        let deleted = idx.delete_older_than_days(7).unwrap();
-        assert_eq!(deleted, 0);
-        assert_eq!(idx.count().unwrap(), 1);
+        let terminated = idx.terminate_older_than_days(7).unwrap();
+        assert_eq!(terminated, 0);
+        assert_eq!(idx.recent(1).unwrap()[0].status, "running");
+    }
+
+    #[test]
+    fn terminate_older_includes_vacuumed() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        let mut old = sample_record("20200101-120000-0000", "vacuumed");
+        old.created_at = "2020-01-01T12:00:00Z".to_string();
+        idx.create_session(&old).unwrap();
+
+        let terminated = idx.terminate_older_than_days(7).unwrap();
+        assert_eq!(terminated, 1);
+        let records = idx.recent(1).unwrap();
+        assert_eq!(records[0].status, "terminated");
     }
 
     // -- Count-based culling --
 
     #[test]
-    fn delete_keeping_newest() {
+    fn terminate_excess_sessions() {
         let idx = SessionIndex::open_in_memory().unwrap();
         for i in 0..5 {
             let mut rec = sample_record(&format!("20260225-{i:06}-0000"), "stopped");
             rec.created_at = format!("2026-02-25T{i:02}:00:00Z");
             idx.create_session(&rec).unwrap();
         }
-        let deleted = idx.delete_keeping_newest(3).unwrap();
-        assert_eq!(deleted, 2);
-        assert_eq!(idx.count().unwrap(), 3);
+        let terminated = idx.terminate_excess_sessions(3).unwrap();
+        assert_eq!(terminated, 2);
+        // All rows still exist, 2 are now terminated.
+        assert_eq!(idx.count().unwrap(), 5);
+        let terminated_recs = idx.sessions_by_status("terminated").unwrap();
+        assert_eq!(terminated_recs.len(), 2);
     }
 
     #[test]
-    fn delete_keeping_newest_ignores_running() {
+    fn terminate_excess_ignores_running() {
         let idx = SessionIndex::open_in_memory().unwrap();
         for i in 0..3 {
             let mut rec = sample_record(&format!("20260225-{i:06}-0000"), "stopped");
@@ -992,19 +1227,20 @@ mod tests {
         running.created_at = "2026-02-24T00:00:00Z".to_string();
         idx.create_session(&running).unwrap();
 
-        let deleted = idx.delete_keeping_newest(2).unwrap();
-        assert_eq!(deleted, 1);
-        // 2 stopped + 1 running = 3
-        assert_eq!(idx.count().unwrap(), 3);
+        let terminated = idx.terminate_excess_sessions(2).unwrap();
+        assert_eq!(terminated, 1);
+        // running session untouched.
+        let r = idx.recent(10).unwrap();
+        assert!(r.iter().any(|rec| rec.id == "20260225-100000-0000" && rec.status == "running"));
     }
 
     #[test]
-    fn delete_keeping_newest_noop_under_cap() {
+    fn terminate_excess_noop_under_cap() {
         let idx = SessionIndex::open_in_memory().unwrap();
         idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
             .unwrap();
-        let deleted = idx.delete_keeping_newest(10).unwrap();
-        assert_eq!(deleted, 0);
+        let terminated = idx.terminate_excess_sessions(10).unwrap();
+        assert_eq!(terminated, 0);
     }
 
     // -- Disk culling helper --
@@ -1079,13 +1315,24 @@ mod tests {
         // Create old-style sessions table without new columns.
         conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY, mode TEXT NOT NULL)").unwrap();
         conn.execute("INSERT INTO sessions (id, mode) VALUES ('old', 'gui')", []).unwrap();
-        // Now ensure_schema should drop and recreate.
+        // Now ensure_schema should drop and recreate (v0 < v2 path).
         SessionIndex::ensure_schema(&conn).unwrap();
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
         assert_eq!(version, SCHEMA_VERSION);
         // Old data is gone (clean slate).
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0)).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn schema_upgrade_from_v1() {
+        // v1 < v2, so same drop+recreate behavior.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", 1u32).unwrap();
+        conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY)").unwrap();
+        SessionIndex::ensure_schema(&conn).unwrap();
+        let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -1285,5 +1532,293 @@ mod tests {
         assert_eq!(providers.len(), 1); // grouped by provider
         assert_eq!(providers[0].call_count, 15);
         assert_eq!(providers[0].input_tokens, 7000);
+    }
+
+    // -- Schema migration v2->v3 --
+
+    #[test]
+    fn schema_upgrade_from_v2_preserves_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Create a v2 schema manually.
+        conn.pragma_update(None, "user_version", 2u32).unwrap();
+        conn.execute_batch("
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, mode TEXT NOT NULL, command TEXT,
+                status TEXT NOT NULL DEFAULT 'running', created_at TEXT NOT NULL,
+                stopped_at TEXT, scratch_disk_size_gb INTEGER NOT NULL DEFAULT 16,
+                ram_bytes INTEGER NOT NULL DEFAULT 4294967296,
+                total_requests INTEGER NOT NULL DEFAULT 0,
+                allowed_requests INTEGER NOT NULL DEFAULT 0,
+                denied_requests INTEGER NOT NULL DEFAULT 0,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                total_output_tokens INTEGER NOT NULL DEFAULT 0,
+                total_estimated_cost REAL NOT NULL DEFAULT 0.0,
+                total_tool_calls INTEGER NOT NULL DEFAULT 0,
+                total_mcp_calls INTEGER NOT NULL DEFAULT 0,
+                total_file_events INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE ai_usage (session_id TEXT, provider TEXT, call_count INTEGER DEFAULT 0, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, estimated_cost REAL DEFAULT 0.0, total_duration_ms INTEGER DEFAULT 0, PRIMARY KEY (session_id, provider));
+            CREATE TABLE tool_usage (session_id TEXT, tool_name TEXT, call_count INTEGER DEFAULT 0, total_bytes INTEGER DEFAULT 0, total_duration_ms INTEGER DEFAULT 0, PRIMARY KEY (session_id, tool_name));
+            CREATE TABLE mcp_usage (session_id TEXT, tool_name TEXT, server_name TEXT, call_count INTEGER DEFAULT 0, total_bytes INTEGER DEFAULT 0, total_duration_ms INTEGER DEFAULT 0, PRIMARY KEY (session_id, tool_name));
+        ").unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, mode, status, created_at) VALUES ('test-id', 'gui', 'stopped', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+
+        // Migrate.
+        SessionIndex::ensure_schema(&conn).unwrap();
+
+        // Check version bumped.
+        let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // Old data preserved.
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 1);
+
+        // New columns exist with NULL defaults.
+        let compressed: Option<i64> = conn.query_row(
+            "SELECT compressed_size_bytes FROM sessions WHERE id = 'test-id'", [], |row| row.get(0)
+        ).unwrap();
+        assert!(compressed.is_none());
+
+        let vacuumed: Option<String> = conn.query_row(
+            "SELECT vacuumed_at FROM sessions WHERE id = 'test-id'", [], |row| row.get(0)
+        ).unwrap();
+        assert!(vacuumed.is_none());
+    }
+
+    // -- New lifecycle methods --
+
+    #[test]
+    fn mark_vacuumed_sets_fields() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+        idx.mark_vacuumed("20260225-143052-a7f3", 12345, "2026-02-25T15:00:00Z").unwrap();
+
+        let records = idx.recent(1).unwrap();
+        assert_eq!(records[0].status, "vacuumed");
+        assert_eq!(records[0].compressed_size_bytes, Some(12345));
+        assert_eq!(records[0].vacuumed_at.as_deref(), Some("2026-02-25T15:00:00Z"));
+    }
+
+    #[test]
+    fn mark_terminated_sets_status() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "vacuumed")).unwrap();
+        idx.mark_terminated("20260225-143052-a7f3").unwrap();
+
+        let records = idx.recent(1).unwrap();
+        assert_eq!(records[0].status, "terminated");
+    }
+
+    #[test]
+    fn unvacuumed_sessions_returns_correct_set() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // Stopped without vacuum -- should be returned.
+        let mut s1 = sample_record("20260225-100000-0000", "stopped");
+        s1.created_at = "2026-02-25T10:00:00Z".to_string();
+        idx.create_session(&s1).unwrap();
+
+        // Crashed without vacuum -- should be returned.
+        let mut s2 = sample_record("20260225-110000-0000", "crashed");
+        s2.created_at = "2026-02-25T11:00:00Z".to_string();
+        idx.create_session(&s2).unwrap();
+
+        // Running -- should NOT be returned.
+        let mut s3 = sample_record("20260225-120000-0000", "running");
+        s3.created_at = "2026-02-25T12:00:00Z".to_string();
+        idx.create_session(&s3).unwrap();
+
+        // Already vacuumed -- should NOT be returned.
+        let mut s4 = sample_record("20260225-130000-0000", "vacuumed");
+        s4.created_at = "2026-02-25T13:00:00Z".to_string();
+        s4.vacuumed_at = Some("2026-02-25T14:00:00Z".to_string());
+        idx.create_session(&s4).unwrap();
+
+        let unvacuumed = idx.unvacuumed_sessions().unwrap();
+        assert_eq!(unvacuumed.len(), 2);
+        assert_eq!(unvacuumed[0].id, "20260225-100000-0000");
+        assert_eq!(unvacuumed[1].id, "20260225-110000-0000");
+    }
+
+    #[test]
+    fn sessions_by_status_filters_correctly() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+        let mut r2 = sample_record("20260225-143053-b8e4", "running");
+        r2.created_at = "2026-02-25T14:30:53Z".to_string();
+        idx.create_session(&r2).unwrap();
+        let mut r3 = sample_record("20260225-143054-c9d5", "stopped");
+        r3.created_at = "2026-02-25T14:30:54Z".to_string();
+        idx.create_session(&r3).unwrap();
+
+        let stopped = idx.sessions_by_status("stopped").unwrap();
+        assert_eq!(stopped.len(), 2);
+        let running = idx.sessions_by_status("running").unwrap();
+        assert_eq!(running.len(), 1);
+        let terminated = idx.sessions_by_status("terminated").unwrap();
+        assert_eq!(terminated.len(), 0);
+    }
+
+    #[test]
+    fn purge_terminated_older_than_days() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // Old terminated session.
+        let mut old = sample_record("20200101-120000-0000", "terminated");
+        old.created_at = "2020-01-01T12:00:00Z".to_string();
+        idx.create_session(&old).unwrap();
+
+        // Recent terminated session.
+        let mut recent = sample_record("20260225-143052-a7f3", "terminated");
+        recent.created_at = "2026-02-25T14:30:52Z".to_string();
+        idx.create_session(&recent).unwrap();
+
+        // Non-terminated session.
+        let mut stopped = sample_record("20200101-130000-0000", "stopped");
+        stopped.created_at = "2020-01-01T13:00:00Z".to_string();
+        idx.create_session(&stopped).unwrap();
+
+        let purged = idx.purge_terminated_older_than_days(7).unwrap();
+        assert_eq!(purged, 1); // only old terminated
+        assert_eq!(idx.count().unwrap(), 2); // recent terminated + stopped remain
+    }
+
+    #[test]
+    fn full_lifecycle_running_to_terminated() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+
+        // running -> stopped
+        idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z")).unwrap();
+        assert_eq!(idx.recent(1).unwrap()[0].status, "stopped");
+
+        // stopped -> vacuumed
+        idx.mark_vacuumed("20260225-143052-a7f3", 5000, "2026-02-25T15:01:00Z").unwrap();
+        let rec = &idx.recent(1).unwrap()[0];
+        assert_eq!(rec.status, "vacuumed");
+        assert_eq!(rec.compressed_size_bytes, Some(5000));
+
+        // vacuumed -> terminated
+        idx.mark_terminated("20260225-143052-a7f3").unwrap();
+        assert_eq!(idx.recent(1).unwrap()[0].status, "terminated");
+
+        // Row still exists in the audit trail.
+        assert_eq!(idx.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn checkpoint_succeeds_on_in_memory_db() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        // Should not error (even though in-memory WAL is a no-op).
+        idx.checkpoint().unwrap();
+    }
+
+    #[test]
+    fn new_columns_null_by_default() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+        let records = idx.recent(1).unwrap();
+        assert!(records[0].compressed_size_bytes.is_none());
+        assert!(records[0].vacuumed_at.is_none());
+    }
+
+    // -- Vacuum + compress --
+
+    #[test]
+    fn vacuum_and_compress_creates_gz_and_removes_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("20260225-143052-a7f3");
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        // Create a real session DB with some data.
+        let db_path = session_dir.join("session.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+            conn.execute_batch("CREATE TABLE test (id INTEGER, data TEXT)").unwrap();
+            for i in 0..100 {
+                conn.execute("INSERT INTO test (id, data) VALUES (?1, ?2)", params![i, format!("row-{i}")]).unwrap();
+            }
+        }
+        // Create fake WAL/SHM files.
+        std::fs::write(session_dir.join("session.db-wal"), b"fake wal").unwrap();
+        std::fs::write(session_dir.join("session.db-shm"), b"fake shm").unwrap();
+
+        let compressed_size = vacuum_and_compress_session_db(&session_dir).unwrap();
+        assert!(compressed_size > 0);
+
+        // .gz exists, .db/.wal/.shm are gone.
+        assert!(session_dir.join("session.db.gz").exists());
+        assert!(!session_dir.join("session.db").exists());
+        assert!(!session_dir.join("session.db-wal").exists());
+        assert!(!session_dir.join("session.db-shm").exists());
+
+        // Decompress and verify data integrity.
+        let gz_data = std::fs::read(session_dir.join("session.db.gz")).unwrap();
+        let mut decoder = flate2::read::GzDecoder::new(&gz_data[..]);
+        let mut decompressed = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut decompressed).unwrap();
+
+        let temp_db = session_dir.join("verify.db");
+        std::fs::write(&temp_db, &decompressed).unwrap();
+        let conn = Connection::open(&temp_db).unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM test", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 100);
+    }
+
+    #[test]
+    fn vacuum_and_compress_nonexistent_db_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("nonexistent");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let result = vacuum_and_compress_session_db(&session_dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn vacuum_and_compress_double_call_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("20260225-143052-a7f3");
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        let db_path = session_dir.join("session.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("CREATE TABLE test (id INTEGER)").unwrap();
+        }
+
+        // First call succeeds.
+        vacuum_and_compress_session_db(&session_dir).unwrap();
+        assert!(session_dir.join("session.db.gz").exists());
+
+        // Second call fails (no .db file).
+        let result = vacuum_and_compress_session_db(&session_dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stopped_sessions_includes_vacuumed() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        let mut s1 = sample_record("20260225-100000-0000", "stopped");
+        s1.created_at = "2026-02-25T10:00:00Z".to_string();
+        idx.create_session(&s1).unwrap();
+
+        let mut s2 = sample_record("20260225-110000-0000", "vacuumed");
+        s2.created_at = "2026-02-25T11:00:00Z".to_string();
+        idx.create_session(&s2).unwrap();
+
+        let mut s3 = sample_record("20260225-120000-0000", "terminated");
+        s3.created_at = "2026-02-25T12:00:00Z".to_string();
+        idx.create_session(&s3).unwrap();
+
+        let stopped = idx.stopped_sessions_oldest_first().unwrap();
+        assert_eq!(stopped.len(), 2); // stopped + vacuumed, not terminated
+        assert_eq!(stopped[0].id, "20260225-100000-0000");
+        assert_eq!(stopped[1].id, "20260225-110000-0000");
     }
 }

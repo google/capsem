@@ -483,6 +483,16 @@ default = 100
 min = 1
 max = 1000
 
+[settings.vm.terminated_retention_days]
+name = "Terminated session retention"
+description = "Days to keep terminated session records in the index. After this, the record is permanently deleted."
+type = "number"
+default = 365
+
+[settings.vm.terminated_retention_days.meta]
+min = 30
+max = 3650
+
 # -- Appearance --------------------------------------------------------------
 
 [settings.appearance]
