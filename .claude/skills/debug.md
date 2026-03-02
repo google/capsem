@@ -6,9 +6,9 @@ Use this skill when debugging capsem issues, verifying telemetry pipelines, or v
 
 When debugging or verifying a feature works end-to-end:
 
-1. **Build & boot**: `just repack "<command>"` (fast path) or `just run` (interactive)
-2. **Check session DB**: `just check-session` (latest) or `just check-session <id>`
-3. **Run in-VM diagnostics**: `just repack "capsem-doctor"` or `just smoke-test`
+1. **Build & boot**: `just run "<command>"` (fast path, ~10s) or `just run` (interactive)
+2. **Check session DB**: `just inspect-session` (latest) or `just inspect-session <id>`
+3. **Run in-VM diagnostics**: `just run "capsem-doctor"`
 
 ## Verifying Telemetry Pipelines
 
@@ -17,13 +17,13 @@ When debugging or verifying a feature works end-to-end:
 Boot a short-lived VM that creates a file and waits for the debouncer to flush:
 
 ```bash
-just repack 'touch /root/test_file.txt && echo hello > /root/test_file.txt && sleep 1 && echo done'
+just run 'touch /root/test_file.txt && echo hello > /root/test_file.txt && sleep 1 && echo done'
 ```
 
 Then check the session:
 
 ```bash
-just check-session
+just inspect-session
 ```
 
 Look for `fs_events` rows. Expect:
@@ -41,7 +41,7 @@ If fs_events is 0, investigate:
 Boot with a command that makes an HTTPS request:
 
 ```bash
-just repack 'curl -s https://api.anthropic.com/ && sleep 1 && echo done'
+just run 'curl -s https://api.anthropic.com/ && sleep 1 && echo done'
 ```
 
 Check the session for `net_events` rows with domain, decision, status_code, etc.
@@ -73,10 +73,9 @@ Check session for mcp_calls rows with server_name, method, tool_name, decision.
 Run the full diagnostic suite inside the VM:
 
 ```bash
-just repack "capsem-doctor"          # Full suite
-just repack "capsem-doctor -k sandbox"  # Only sandbox tests
-just repack "capsem-doctor -x"       # Stop on first failure
-just smoke-test                      # Standalone: build + sign + boot + doctor
+just run "capsem-doctor"              # Full suite
+just run "capsem-doctor -k sandbox"   # Only sandbox tests
+just run "capsem-doctor -x"           # Stop on first failure
 ```
 
 Test categories:
@@ -92,10 +91,10 @@ Test categories:
 ## Session Inspection
 
 ```bash
-just check-session              # Latest session
-just check-session <session-id> # Specific session
-just check-session --list       # List recent sessions
-just check-session -n 10        # Show 10 preview rows per table
+just inspect-session              # Latest session
+just inspect-session <session-id> # Specific session
+just inspect-session --list       # List recent sessions
+just inspect-session -n 10        # Show 10 preview rows per table
 ```
 
 The script checks:
@@ -161,8 +160,8 @@ The test fixture (`data/fixtures/test.db`) must come from a real session that ex
 
 ### "Guest binary not picking up changes"
 
-- Changed `capsem-init`, agent, or repacked binary? -> `just repack`
-- Changed rootfs (Dockerfile, bashrc, diagnostics)? -> `just build`
+- Changed `capsem-init`, agent, or repacked binary? -> `just run` (auto-repacks initrd)
+- Changed rootfs (Dockerfile, bashrc, diagnostics)? -> `just build-assets`
 - Binary on rootfs vs initrd: initrd copies take priority (capsem-init checks `/binary` before rootfs path)
 
 ### "Cross-compile failure"

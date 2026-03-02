@@ -63,38 +63,41 @@ All build workflows use `just`. Run `just --list` to see all targets.
 
 | Command | What it does |
 |---------|-------------|
-| `just build` | Build VM assets from scratch (kernel, initrd, rootfs) via Docker/Podman |
-| `just repack` | Repack initrd with current `capsem-init`, rebuild binary, and boot to test (~5s) |
-| `just dev` | Run the app in development mode with hot-reloading |
-| `just compile` | Build the debug Rust binary (includes frontend) |
-| `just sign` | Compile + codesign with virtualization entitlement |
-| `just run` | Sign + run the debug binary |
-| `just release` | Build the release `.app` bundle and codesign it |
-| `just install` | Release build + install to `/Applications` + launch |
-| `just rebuild` | Full rebuild: VM assets + app + sign + smoke test |
-| `just check` | Check Rust + frontend for errors |
+| `just dev` | Hot-reload app (frontend + Rust, full Tauri app) |
+| `just ui` | Frontend-only dev server (mock mode, no VM) |
+| `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
+| `just run "CMD"` | Same but run a command instead of interactive shell |
+| `just build-assets` | Full VM asset rebuild (kernel, initrd, rootfs) via Docker/Podman |
+| `just test` | Unit tests + cross-compile check + frontend type-check (no VM) |
+| `just full-test` | test + capsem-doctor + integration test + bench (boots VM) |
+| `just bench` | In-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP) |
+| `just release` | full-test + release `.app` + codesign + DMG |
+| `just install` | full-test + release `.app` + install to /Applications + launch |
 | `just clean` | Remove all build artifacts |
+| `just inspect-session` | Inspect session DB integrity and event summary |
+| `just update-fixture` | Copy + scrub a real session DB as the test fixture |
 
 ### First-Time Setup
 
 ```sh
 podman machine init && podman machine start   # first time only
 cd frontend && pnpm install
-just build                                     # build VM assets (~10 min)
+just build-assets                              # build VM assets (~10 min)
 ```
 
 ### Development Workflow
 
 ```sh
-just dev        # hot-reloading dev server
-just run        # debug build + run (no hot-reload)
-just repack     # iterate on capsem-init without full asset rebuild
+just dev        # hot-reloading dev server (frontend + Rust)
+just ui         # frontend-only dev server (mock mode, no VM)
+just run        # cross-compile + repack + build + sign + boot VM (~10s)
 ```
 
 ### Release
 
 ```sh
-just install    # build, sign, install to /Applications, launch
+just release    # full-test + build + sign + DMG (target/release/Capsem.dmg)
+just install    # full-test + build + sign + install to /Applications + launch
 ```
 
 ### Testing
@@ -105,7 +108,7 @@ Testing has three layers: host-side Rust tests, frontend checks, and in-VM diagn
 
 ```sh
 cargo test --workspace
-just check                            # cargo llvm-cov + frontend build + svelte-check
+just test                             # cargo llvm-cov + cross-compile + frontend check
 ```
 
 **Frontend** -- the UI can be developed and tested in a browser without booting a VM. Mock data (fake VM state, network events, settings) is served automatically when Tauri is not present:
@@ -121,20 +124,20 @@ The mock mode is transparent -- `src/lib/api.ts` detects the absence of `window.
 **In-VM diagnostics** -- a pytest suite that runs inside the guest VM to verify the sandbox actually works end-to-end. It checks sandbox security (read-only rootfs, no kernel modules, no networking), unix utilities, dev runtimes (Python, Node.js, git), AI CLI availability, and file I/O workflows.
 
 ```sh
-just smoke-test                       # build, sign, boot VM, run capsem-doctor, exit
+just run "capsem-doctor"              # repack + build + sign + boot VM + run diagnostics (~10s)
 just run                              # or boot interactively, then:
 capsem-doctor                         # run all diagnostics
 capsem-doctor -k sandbox              # run only sandbox tests
 capsem-doctor -x                      # stop on first failure
 ```
 
-The diagnostic suite lives in `images/diagnostics/` and is baked into the rootfs via `Dockerfile.rootfs`. `capsem-doctor` (aliased as `capsem-test`) is the entry point. It returns a non-zero exit code on failure, so `just smoke-test` fails the build when tests fail.
+The diagnostic suite lives in `images/diagnostics/` and is baked into the rootfs via `Dockerfile.rootfs`. `capsem-doctor` (aliased as `capsem-test`) is the entry point. It returns a non-zero exit code on failure, so `just run "capsem-doctor"` fails the build when tests fail.
 
-**Full validation** -- to test everything end-to-end (Rust tests + frontend build + VM boot + in-VM diagnostics):
+**Full validation** -- to test everything end-to-end (Rust tests + cross-compile + frontend + VM boot + diagnostics + integration + bench):
 
 ```sh
-just check                            # host-side: cargo llvm-cov + frontend build
-just smoke-test                       # VM-side: boot + capsem-doctor
+just test                             # host-side: llvm-cov + cross-compile + frontend
+just full-test                        # everything: test + capsem-doctor + integration + bench
 ```
 
 ### Entitlements
