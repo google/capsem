@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
 // capsem-fs-watch: In-VM inotify file watcher daemon.
 //
 // Recursively watches /root for file create/modify/delete events and streams

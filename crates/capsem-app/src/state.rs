@@ -104,6 +104,7 @@ impl TerminalOutputQueue {
 
     /// Mark the queue as closed. Wakes any pending `poll()` which will return
     /// `None` once the remaining data is drained.
+    #[cfg(test)]
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
         self.notify.notify_one();
