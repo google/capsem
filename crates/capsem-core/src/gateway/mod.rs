@@ -1,18 +1,14 @@
-/// AI audit gateway: proxies LLM API traffic from the sandboxed VM to real
-/// upstream providers (Anthropic, OpenAI, Google Gemini).
+/// AI traffic parsing and telemetry: SSE stream parsing, request metadata
+/// extraction, and provider-agnostic event normalization for AI provider
+/// traffic flowing through the MITM proxy (vsock:5002).
 ///
-/// The gateway receives plain HTTP from the guest (via vsock:5004), routes by
-/// request path to the correct provider, injects real API keys, forwards the
-/// request (including SSE streaming), and logs everything to an audit DB.
-///
-/// Architecture (from overall_plan.md Milestone 6):
-///   VM agent -> HTTP POST http://10.0.0.1:8080/v1/messages
-///     -> iptables REDIRECT -> vsock-bridge -> vsock:5004
-///     -> host gateway (this module)
-///     -> inject real API key
-///     -> upstream HTTPS to api.anthropic.com
-///     -> stream SSE response back to agent
-///     -> log to audit DB
+/// All AI traffic goes through the MITM proxy, which uses these modules for:
+/// - Provider detection and routing (`provider.rs`)
+/// - Request body parsing for metadata (`request_parser.rs`)
+/// - SSE stream parsing for response events (`sse.rs`, `ai_body.rs`)
+/// - Provider-specific SSE parsers (`anthropic.rs`, `openai.rs`, `google.rs`)
+/// - Unified event collection and summarization (`events.rs`)
+/// - Model pricing estimation (`pricing.rs`)
 pub mod ai_body;
 pub mod anthropic;
 pub mod events;
@@ -21,16 +17,11 @@ pub mod openai;
 pub mod pricing;
 pub mod provider;
 pub mod request_parser;
-pub mod server;
 pub mod sse;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
-use capsem_logger::DbWriter;
 
 pub use provider::{Provider, ProviderKind};
-pub use server::router;
 
 /// Tracks in-flight traces: maps pending tool call_ids to their trace_id.
 ///
@@ -78,71 +69,6 @@ impl TraceState {
     /// stop_reason is not ToolUse, meaning the trace is done).
     pub fn complete_trace(&mut self, trace_id: &str) {
         self.pending.retain(|_, v| v != trace_id);
-    }
-}
-
-/// Configuration for the AI gateway, shared across all handler invocations.
-pub struct GatewayConfig {
-    pub anthropic_api_key: Option<String>,
-    pub openai_api_key: Option<String>,
-    pub google_api_key: Option<String>,
-    pub db: Arc<DbWriter>,
-    pub http_client: reqwest::Client,
-    pub pricing: pricing::PricingTable,
-    pub trace_state: Mutex<TraceState>,
-}
-
-impl GatewayConfig {
-    /// Look up the API key for a given provider.
-    pub fn api_key_for(&self, kind: ProviderKind) -> Option<&str> {
-        match kind {
-            ProviderKind::Anthropic => self.anthropic_api_key.as_deref(),
-            ProviderKind::OpenAi => self.openai_api_key.as_deref(),
-            ProviderKind::Google => self.google_api_key.as_deref(),
-        }
-    }
-
-    /// Create a config from environment variables (for testing).
-    pub fn from_env(db: Arc<DbWriter>) -> Self {
-        Self {
-            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
-            openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
-            google_api_key: std::env::var("GEMINI_API_KEY")
-                .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-                .ok(),
-            db,
-            http_client: reqwest::Client::new(),
-            pricing: pricing::PricingTable::load(),
-            trace_state: Mutex::new(TraceState::new()),
-        }
-    }
-
-    /// Create a config from `~/.capsem/user.toml` settings (the canonical
-    /// source of API keys for the capsem app).
-    pub fn from_capsem_settings(db: Arc<DbWriter>) -> Self {
-        use crate::net::policy_config::{load_settings_files, resolve_settings};
-
-        let (user, corp) = load_settings_files();
-        let resolved = resolve_settings(&user, &corp);
-
-        let get_key = |id: &str| -> Option<String> {
-            resolved
-                .iter()
-                .find(|s| s.id == id)
-                .and_then(|s| s.effective_value.as_text())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-        };
-
-        Self {
-            anthropic_api_key: get_key("ai.anthropic.api_key"),
-            openai_api_key: get_key("ai.openai.api_key"),
-            google_api_key: get_key("ai.google.api_key"),
-            db,
-            http_client: reqwest::Client::new(),
-            pricing: pricing::PricingTable::load(),
-            trace_state: Mutex::new(TraceState::new()),
-        }
     }
 }
 

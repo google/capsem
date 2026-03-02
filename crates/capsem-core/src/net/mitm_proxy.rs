@@ -491,10 +491,16 @@ async fn handle_request(
     builder = builder.header("host", domain);
 
     // Track request body (boxed for consistent sender type across requests).
+    // Always capture AI provider request bodies for telemetry parsing
+    // (model name, tool results, etc.) regardless of log_bodies setting.
+    const AI_BODY_PREVIEW: usize = 64 * 1024;
+    let req_max_preview = if ai_provider.is_some() {
+        AI_BODY_PREVIEW.max(if log_bodies { max_body } else { 0 })
+    } else if log_bodies { max_body } else { 0 };
     let req_stats = Arc::new(Mutex::new(BodyStats {
         bytes: 0,
         preview: Vec::new(),
-        max_preview: if log_bodies { max_body } else { 0 },
+        max_preview: req_max_preview,
     }));
     let tracked_req_body = TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024);
     let upstream_req = builder.body(tracked_req_body.boxed())?;
@@ -529,8 +535,10 @@ async fn handle_request(
             ProviderKind::Google => Box::new(GoogleStreamParser::new()),
         };
 
-        let max_preview = if log_bodies { max_body } else { 0 };
-        let ai_body = AiResponseBody::new(resp_body, provider_parser, max_preview, 100 * 1024 * 1024);
+        let resp_max_preview = if ai_provider.is_some() {
+            AI_BODY_PREVIEW.max(if log_bodies { max_body } else { 0 })
+        } else if log_bodies { max_body } else { 0 };
+        let ai_body = AiResponseBody::new(resp_body, provider_parser, resp_max_preview, 100 * 1024 * 1024);
         let ai_state = ai_body.ai_state();
         let ai_stats = ai_body.stats();
 
@@ -693,9 +701,12 @@ impl TelemetryEmitter {
 
         self.db.write(WriteOp::NetEvent(event)).await;
 
-        // Emit ModelCall for AI providers.
+        // Emit ModelCall for AI providers (skip HEAD requests -- connectivity
+        // probes have no body/model/tokens and should not pollute model_calls).
         if let Some(provider) = self.ai_provider {
-            self.emit_model_call(provider, bytes_sent, bytes_received, duration_ms, &ai_state_ref).await;
+            if self.method != "HEAD" {
+                self.emit_model_call(provider, bytes_sent, bytes_received, duration_ms, &ai_state_ref).await;
+            }
         }
 
         // Log.
@@ -723,6 +734,16 @@ impl TelemetryEmitter {
         }
     }
 
+    /// Get raw response body preview bytes for non-streaming usage parsing.
+    fn get_response_preview_bytes(&self) -> Vec<u8> {
+        match &self.resp_kind {
+            RespStatsKind::Plain(stats) => stats.lock().ok()
+                .map(|st| st.preview.clone()).unwrap_or_default(),
+            RespStatsKind::Ai { stats, .. } => stats.lock().ok()
+                .map(|st| st.preview.clone()).unwrap_or_default(),
+        }
+    }
+
     /// Build and write a ModelCall for AI provider traffic.
     async fn emit_model_call(
         &self,
@@ -732,6 +753,8 @@ impl TelemetryEmitter {
         duration_ms: u64,
         ai_state_ref: &Option<Arc<Mutex<crate::gateway::ai_body::AiStreamState>>>,
     ) {
+        use crate::gateway::events::parse_non_streaming_usage;
+        use crate::gateway::provider::{extract_model_from_path, tool_origin};
         use crate::gateway::request_parser;
 
         // Parse request body for metadata.
@@ -745,6 +768,10 @@ impl TelemetryEmitter {
         let summary = ai_state_ref.as_ref().and_then(|state| {
             state.lock().ok().map(|ai| collect_summary(&ai.events))
         });
+
+        // Detect streaming from URL path (most reliable source of truth).
+        // Google uses streamGenerateContent vs generateContent in the URL.
+        let stream = req_meta.stream || self.path.contains("stream");
 
         let stop_reason_str = summary.as_ref().and_then(|s| s.stop_reason.as_ref()).map(|sr| {
             match sr {
@@ -762,7 +789,7 @@ impl TelemetryEmitter {
                 call_id: tc.call_id.clone(),
                 tool_name: tc.name.clone(),
                 arguments: if tc.arguments.is_empty() { None } else { Some(tc.arguments.clone()) },
-                origin: "native".to_string(),
+                origin: tool_origin(&tc.name).to_string(),
             }).collect())
             .unwrap_or_default();
 
@@ -774,15 +801,43 @@ impl TelemetryEmitter {
             })
             .collect();
 
+        // For non-streaming responses where SSE parsing yields no tokens,
+        // parse the JSON response body for usage metadata.
+        let (resp_model, resp_input, resp_output, resp_details) =
+            if summary.as_ref().map(|s| s.input_tokens.is_none()).unwrap_or(true) {
+                let resp_bytes = self.get_response_preview_bytes();
+                if !resp_bytes.is_empty() && self.status_code == Some(200) {
+                    parse_non_streaming_usage(provider, &resp_bytes)
+                } else {
+                    (None, None, None, std::collections::BTreeMap::new())
+                }
+            } else {
+                (None, None, None, std::collections::BTreeMap::new())
+            };
+
+        // Resolve model: request body > SSE stream > response JSON > URL path
+        let effective_model = req_meta.model.clone()
+            .or_else(|| summary.as_ref().and_then(|s| s.model.clone()))
+            .or(resp_model)
+            .or_else(|| extract_model_from_path(&self.path));
+
+        // Resolve tokens: SSE stream > response JSON
+        let input_tokens = summary.as_ref().and_then(|s| s.input_tokens).or(resp_input);
+        let output_tokens = summary.as_ref().and_then(|s| s.output_tokens).or(resp_output);
+        let mut usage_details = summary.as_ref()
+            .map(|s| s.usage_details.clone())
+            .unwrap_or_default();
+        if usage_details.is_empty() {
+            usage_details = resp_details;
+        }
+
         // Estimate cost from pricing table.
-        let model = req_meta.model.as_deref()
-            .or(summary.as_ref().and_then(|s| s.model.as_deref()));
         let estimated_cost_usd = self.config.pricing.estimate_cost(
             provider.as_str(),
-            model,
-            summary.as_ref().and_then(|s| s.input_tokens),
-            summary.as_ref().and_then(|s| s.output_tokens),
-            summary.as_ref().map(|s| &s.usage_details).unwrap_or(&std::collections::BTreeMap::new()),
+            effective_model.as_deref(),
+            input_tokens,
+            output_tokens,
+            &usage_details,
         );
 
         // Assign trace_id: look up from tool response call_ids, or create new.
@@ -801,7 +856,7 @@ impl TelemetryEmitter {
                     .unwrap_or(false);
             if is_tool_use && !tool_call_ids.is_empty() {
                 state.register_tool_calls(&tid, &tool_call_ids);
-            } else {
+            } else if !is_tool_use {
                 state.complete_trace(&tid);
             }
             tid
@@ -810,12 +865,12 @@ impl TelemetryEmitter {
         let model_call = ModelCall {
             timestamp: SystemTime::now(),
             provider: provider.as_str().to_string(),
-            model: req_meta.model.or_else(|| summary.as_ref().and_then(|s| s.model.clone())),
+            model: effective_model,
             process_name: self.process_name.clone(),
             pid: None,
             method: self.method.clone(),
             path: self.path.clone(),
-            stream: req_meta.stream,
+            stream,
             system_prompt_preview: req_meta.system_prompt_preview,
             messages_count: req_meta.messages_count,
             tools_count: req_meta.tools_count,
@@ -829,9 +884,9 @@ impl TelemetryEmitter {
             text_content: summary.as_ref().map(|s| s.text.clone()).filter(|s| !s.is_empty()),
             thinking_content: summary.as_ref().map(|s| s.thinking.clone()).filter(|s| !s.is_empty()),
             stop_reason: stop_reason_str,
-            input_tokens: summary.as_ref().and_then(|s| s.input_tokens),
-            output_tokens: summary.as_ref().and_then(|s| s.output_tokens),
-            usage_details: summary.as_ref().map(|s| s.usage_details.clone()).unwrap_or_default(),
+            input_tokens,
+            output_tokens,
+            usage_details,
             duration_ms,
             response_bytes,
             estimated_cost_usd,
@@ -839,6 +894,14 @@ impl TelemetryEmitter {
             tool_calls,
             tool_responses,
         };
+
+        if model_call.model.is_none() {
+            warn!(
+                provider = provider.as_str(),
+                path = self.path,
+                "MITM proxy: model_call has NULL model"
+            );
+        }
 
         self.db.write(WriteOp::ModelCall(model_call)).await;
     }

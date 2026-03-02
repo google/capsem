@@ -370,7 +370,7 @@ fn parse_google(body: &[u8]) -> RequestMeta {
 
     RequestMeta {
         model: None, // Gemini model is in the URL path, not the body
-        stream: true, // streamGenerateContent is always streaming
+        stream: false, // Streaming detected from URL path in emit_model_call
         system_prompt_preview,
         messages_count,
         tools_count,
@@ -536,7 +536,7 @@ mod tests {
 
         let meta = parse_request(ProviderKind::Google, body);
         assert!(meta.model.is_none()); // model is in URL for Google
-        assert!(meta.stream);
+        assert!(!meta.stream); // streaming detected from URL path, not body
         assert_eq!(meta.system_prompt_preview.as_deref(), Some("Be helpful."));
         assert_eq!(meta.messages_count, 2);
         assert_eq!(meta.tools_count, 2);

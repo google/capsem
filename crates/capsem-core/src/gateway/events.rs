@@ -189,6 +189,79 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
     }
 }
 
+/// Parse usage metadata from a non-streaming JSON response body.
+/// Handles gzip-compressed responses (common when upstream sends
+/// Content-Encoding: gzip through the MITM proxy).
+/// Returns (model, input_tokens, output_tokens, usage_details).
+pub fn parse_non_streaming_usage(
+    kind: super::provider::ProviderKind,
+    body: &[u8],
+) -> (Option<String>, Option<u64>, Option<u64>, BTreeMap<String, u64>) {
+    // Try plain JSON first, then gzip-decompress if it fails.
+    let json: serde_json::Value = if let Ok(v) = serde_json::from_slice(body) {
+        v
+    } else if body.len() >= 2 && body[0] == 0x1f && body[1] == 0x8b {
+        // Gzip magic bytes -- decompress and retry.
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(body);
+        let mut decompressed = Vec::new();
+        if decoder.read_to_end(&mut decompressed).is_err() {
+            return (None, None, None, BTreeMap::new());
+        }
+        match serde_json::from_slice(&decompressed) {
+            Ok(v) => v,
+            Err(_) => return (None, None, None, BTreeMap::new()),
+        }
+    } else {
+        return (None, None, None, BTreeMap::new());
+    };
+
+    match kind {
+        super::provider::ProviderKind::Google => {
+            let model = json.get("modelVersion")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let usage = json.get("usageMetadata");
+            let input = usage.and_then(|u| u.get("promptTokenCount")).and_then(|v| v.as_u64());
+            let output = usage.and_then(|u| u.get("candidatesTokenCount")).and_then(|v| v.as_u64());
+            let mut details = BTreeMap::new();
+            if let Some(v) = usage.and_then(|u| u.get("cachedContentTokenCount")).and_then(|v| v.as_u64()) {
+                details.insert("cache_read".into(), v);
+            }
+            if let Some(v) = usage.and_then(|u| u.get("thoughtsTokenCount")).and_then(|v| v.as_u64()) {
+                details.insert("thinking".into(), v);
+            }
+            (model, input, output, details)
+        }
+        super::provider::ProviderKind::Anthropic => {
+            let model = json.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let usage = json.get("usage");
+            let input = usage.and_then(|u| u.get("input_tokens")).and_then(|v| v.as_u64());
+            let output = usage.and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64());
+            let mut details = BTreeMap::new();
+            if let Some(v) = usage.and_then(|u| u.get("cache_read_input_tokens")).and_then(|v| v.as_u64()) {
+                details.insert("cache_read".into(), v);
+            }
+            (model, input, output, details)
+        }
+        super::provider::ProviderKind::OpenAi => {
+            let model = json.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let usage = json.get("usage");
+            let input = usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64());
+            let output = usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64());
+            let mut details = BTreeMap::new();
+            if let Some(v) = usage.and_then(|u| u.get("prompt_tokens_details")).and_then(|u| u.get("cached_tokens")).and_then(|v| v.as_u64()) {
+                details.insert("cache_read".into(), v);
+            }
+            if let Some(v) = usage.and_then(|u| u.get("completion_tokens_details")).and_then(|u| u.get("reasoning_tokens")).and_then(|v| v.as_u64()) {
+                details.insert("thinking".into(), v);
+            }
+            (model, input, output, details)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +495,114 @@ mod tests {
         let s = collect_summary(&events);
         assert_eq!(s.tool_calls[0].index, 0);
         assert_eq!(s.tool_calls[1].index, 2);
+    }
+
+    // ── parse_non_streaming_usage ────────────────────────────────────
+
+    use super::super::provider::ProviderKind;
+
+    #[test]
+    fn non_streaming_google_usage() {
+        let body = br#"{
+            "modelVersion": "gemini-2.5-flash-preview-05-20",
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+                "thoughtsTokenCount": 20
+            }
+        }"#;
+        let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Google, body);
+        assert_eq!(model.as_deref(), Some("gemini-2.5-flash-preview-05-20"));
+        assert_eq!(input, Some(100));
+        assert_eq!(output, Some(50));
+        assert_eq!(details.get("thinking"), Some(&20));
+    }
+
+    #[test]
+    fn non_streaming_anthropic_usage() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "usage": {
+                "input_tokens": 200,
+                "output_tokens": 80,
+                "cache_read_input_tokens": 150
+            }
+        }"#;
+        let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Anthropic, body);
+        assert_eq!(model.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(input, Some(200));
+        assert_eq!(output, Some(80));
+        assert_eq!(details.get("cache_read"), Some(&150));
+    }
+
+    #[test]
+    fn non_streaming_openai_usage() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "usage": {
+                "prompt_tokens": 300,
+                "completion_tokens": 120,
+                "prompt_tokens_details": {"cached_tokens": 50},
+                "completion_tokens_details": {"reasoning_tokens": 30}
+            }
+        }"#;
+        let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::OpenAi, body);
+        assert_eq!(model.as_deref(), Some("gpt-4o"));
+        assert_eq!(input, Some(300));
+        assert_eq!(output, Some(120));
+        assert_eq!(details.get("cache_read"), Some(&50));
+        assert_eq!(details.get("thinking"), Some(&30));
+    }
+
+    #[test]
+    fn non_streaming_invalid_json() {
+        let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Google, b"not json");
+        assert!(model.is_none());
+        assert!(input.is_none());
+        assert!(output.is_none());
+        assert!(details.is_empty());
+    }
+
+    #[test]
+    fn non_streaming_empty_body() {
+        let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Anthropic, b"");
+        assert!(model.is_none());
+        assert!(input.is_none());
+        assert!(output.is_none());
+        assert!(details.is_empty());
+    }
+
+    #[test]
+    fn non_streaming_gzip_compressed() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let json = br#"{
+            "modelVersion": "gemini-2.5-flash-lite",
+            "usageMetadata": {
+                "promptTokenCount": 42,
+                "candidatesTokenCount": 7
+            }
+        }"#;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(json).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let (model, input, output, _) = parse_non_streaming_usage(ProviderKind::Google, &compressed);
+        assert_eq!(model.as_deref(), Some("gemini-2.5-flash-lite"));
+        assert_eq!(input, Some(42));
+        assert_eq!(output, Some(7));
+    }
+
+    #[test]
+    fn non_streaming_corrupt_gzip() {
+        // Gzip magic bytes but corrupt data
+        let body = &[0x1f, 0x8b, 0x00, 0x00, 0xff, 0xff];
+        let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Google, body);
+        assert!(model.is_none());
+        assert!(input.is_none());
+        assert!(output.is_none());
+        assert!(details.is_empty());
     }
 }

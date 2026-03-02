@@ -79,6 +79,32 @@ pub fn route_provider(path: &str) -> Option<(ProviderKind, Box<dyn Provider>)> {
     }
 }
 
+/// Extract model name from a Gemini-style URL path.
+/// E.g. `/v1beta/models/gemini-2.5-flash-lite:generateContent` -> `gemini-2.5-flash-lite`
+pub fn extract_model_from_path(path: &str) -> Option<String> {
+    // Match pattern: /v.../models/{model}:{action}
+    let models_idx = path.find("/models/")?;
+    let after = &path[models_idx + 8..]; // skip "/models/"
+    let model = after.split(':').next()?;
+    if model.is_empty() {
+        return None;
+    }
+    Some(model.to_string())
+}
+
+/// Determine the origin of a tool call based on its name.
+///
+/// - Built-in MCP tools (fetch_http, grep_http, http_headers): "mcp"
+/// - External MCP tools with server__tool namespacing: "mcp"
+/// - Native model tools (write_file, bash, run_shell_command, etc.): "native"
+pub fn tool_origin(name: &str) -> &'static str {
+    if crate::mcp::builtin_tools::is_builtin_tool(name) || name.contains("__") {
+        "mcp"
+    } else {
+        "native"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +159,57 @@ mod tests {
         assert_eq!(ProviderKind::Anthropic.as_str(), "anthropic");
         assert_eq!(ProviderKind::OpenAi.as_str(), "openai");
         assert_eq!(ProviderKind::Google.as_str(), "google");
+    }
+
+    // -- extract_model_from_path --
+
+    #[test]
+    fn extract_model_gemini_stream() {
+        assert_eq!(
+            extract_model_from_path("/v1beta/models/gemini-2.5-flash:streamGenerateContent"),
+            Some("gemini-2.5-flash".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_model_gemini_generate() {
+        assert_eq!(
+            extract_model_from_path("/v1beta/models/gemini-2.5-pro:generateContent"),
+            Some("gemini-2.5-pro".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_model_no_models_segment() {
+        assert_eq!(extract_model_from_path("/v1/messages"), None);
+    }
+
+    #[test]
+    fn extract_model_empty_model() {
+        assert_eq!(extract_model_from_path("/v1beta/models/:generateContent"), None);
+    }
+
+    // -- tool_origin --
+
+    #[test]
+    fn tool_origin_native_tools() {
+        assert_eq!(tool_origin("write_file"), "native");
+        assert_eq!(tool_origin("bash"), "native");
+        assert_eq!(tool_origin("run_shell_command"), "native");
+        assert_eq!(tool_origin("read_file"), "native");
+    }
+
+    #[test]
+    fn tool_origin_builtin_mcp_tools() {
+        assert_eq!(tool_origin("fetch_http"), "mcp");
+        assert_eq!(tool_origin("grep_http"), "mcp");
+        assert_eq!(tool_origin("http_headers"), "mcp");
+    }
+
+    #[test]
+    fn tool_origin_external_mcp_tools() {
+        assert_eq!(tool_origin("github__list_issues"), "mcp");
+        assert_eq!(tool_origin("jira__create_ticket"), "mcp");
+        assert_eq!(tool_origin("custom_server__my_tool"), "mcp");
     }
 }

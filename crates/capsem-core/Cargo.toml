@@ -34,12 +34,12 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 http = { workspace = true }
 pin-project-lite = "0.2"
-axum = { workspace = true }
 reqwest = { workspace = true }
 futures = { workspace = true }
 tokio-stream = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
+flate2 = "1"
 regex = { workspace = true }
 tl = "0.7"
 
