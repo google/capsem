@@ -10,8 +10,8 @@
     Legend,
   } from 'chart.js';
   import { queryOne, queryAll } from '../../db';
-  import { MCP_STATS_SQL, MCP_BY_SERVER_SQL, MCP_CALLS_SQL, SESSION_HISTORY_SQL } from '../../sql';
-  import type { McpCall, McpServerCallCount, SessionRecord } from '../../types';
+  import { MCP_STATS_SQL, MCP_BY_SERVER_SQL, MCP_CALLS_SQL } from '../../sql';
+  import type { McpCall, McpServerCallCount } from '../../types';
 
   Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
@@ -38,7 +38,6 @@
   let calls = $state<McpCall[]>([]);
   let mcpStats = $state<McpStatsRow | null>(null);
   let byServer = $state<McpServerCallCount[]>([]);
-  let sessions = $state<SessionRecord[]>([]);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   // Canvas refs
@@ -66,14 +65,9 @@
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
     refresh();
     pollTimer = setInterval(refresh, 2000);
-    try {
-      sessions = await queryAll<SessionRecord>(SESSION_HISTORY_SQL, [50], 'main');
-    } catch {
-      // not critical
-    }
   });
 
   onDestroy(() => {
@@ -87,12 +81,6 @@
   const tickColor = 'rgba(128,128,128,0.6)';
   const tickFont = { size: 10 as const };
   const monoFont = { size: 10 as const, family: 'monospace' };
-
-  // Avg calls per session
-  const avgCallsPerSession = $derived.by(() => {
-    if (!mcpStats || sessions.length === 0) return 0;
-    return Math.round(mcpStats.total / sessions.length);
-  });
 
   // Server color map
   const serverColorMap = $derived.by(() => {
@@ -247,14 +235,22 @@
 
 <div class="space-y-6">
   <!-- Top stat cards -->
-  <div class="grid grid-cols-2 gap-3">
+  <div class="grid grid-cols-4 gap-3">
     <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
       <div class="text-[10px] font-semibold text-base-content/50 uppercase tracking-wider">Total Calls</div>
       <div class="mt-1 text-xl font-semibold tabular-nums">{mcpStats?.total ?? 0}</div>
     </div>
     <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
-      <div class="text-[10px] font-semibold text-base-content/50 uppercase tracking-wider">Avg Calls / Session</div>
-      <div class="mt-1 text-xl font-semibold tabular-nums">{avgCallsPerSession}</div>
+      <div class="text-[10px] font-semibold text-base-content/50 uppercase tracking-wider">Allowed</div>
+      <div class="mt-1 text-xl font-semibold tabular-nums text-info">{mcpStats?.allowed ?? 0}</div>
+    </div>
+    <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
+      <div class="text-[10px] font-semibold text-base-content/50 uppercase tracking-wider">Warned</div>
+      <div class="mt-1 text-xl font-semibold tabular-nums text-warning">{mcpStats?.warned ?? 0}</div>
+    </div>
+    <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
+      <div class="text-[10px] font-semibold text-base-content/50 uppercase tracking-wider">Denied</div>
+      <div class="mt-1 text-xl font-semibold tabular-nums text-secondary">{mcpStats?.denied ?? 0}</div>
     </div>
   </div>
 

@@ -35,7 +35,7 @@
     {/if}
     <button
       class="flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:text-info/80 cursor-pointer"
-      onclick={() => { sidebarStore.setAnalyticsSection('dashboard'); sidebarStore.setView('analytics'); }}
+      onclick={() => { sidebarStore.setAnalyticsSection('models'); sidebarStore.setView('analytics'); }}
       title="View session statistics"
     >
       <span>Session stats</span>

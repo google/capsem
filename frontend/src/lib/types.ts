@@ -232,8 +232,8 @@ export type SettingType =
   | 'bool'
   | 'file';
 
-/** A setting value (serde untagged -- bool | number | string). */
-export type SettingValue = boolean | number | string;
+/** A setting value (serde untagged -- bool | number | { path, content } | string). */
+export type SettingValue = boolean | number | string | { path: string; content: string };
 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
 export type PolicySource = 'default' | 'user' | 'corp';
@@ -256,7 +256,6 @@ export interface SettingMetadata {
   min: number | null;
   max: number | null;
   rules: Record<string, HttpMethodPermissions>;
-  guest_path?: string | null;
 }
 
 /** A fully resolved setting for UI consumption. */
@@ -405,10 +404,50 @@ export interface FileEvent {
 }
 
 /** Sidebar view names. */
-export type ViewName = 'terminal' | 'analytics' | 'settings';
+export type ViewName = 'terminal' | 'analytics' | 'settings' | 'wizard';
 
 /** Analytics sub-section identifiers. */
 export type AnalyticsSection = 'dashboard' | 'models' | 'mcp' | 'traffic' | 'files';
 
-/** Settings sub-section identifiers. */
-export type SettingsSection = 'providers' | 'mcp-servers' | 'network-policy' | 'environment' | 'resources' | 'appearance';
+/** Settings sub-section identifier (dynamic, derived from TOML tree). */
+export type SettingsSection = string;
+
+/** A config validation issue from config_lint(). */
+export interface ConfigIssue {
+  id: string;
+  severity: 'error' | 'warning';
+  message: string;
+}
+
+/** A settings tree group node. */
+export interface SettingsGroup {
+  kind: 'group';
+  key: string;
+  name: string;
+  description?: string | null;
+  enabled_by?: string | null;
+  collapsed: boolean;
+  children: SettingsNode[];
+}
+
+/** A settings tree leaf node (resolved setting). */
+export interface SettingsLeaf {
+  kind: 'leaf';
+  id: string;
+  category: string;
+  name: string;
+  description: string;
+  setting_type: SettingType;
+  default_value: SettingValue;
+  effective_value: SettingValue;
+  source: PolicySource;
+  modified: string | null;
+  corp_locked: boolean;
+  enabled_by: string | null;
+  enabled: boolean;
+  metadata: SettingMetadata;
+  collapsed?: boolean;
+}
+
+/** A settings tree node: either a group or a leaf. */
+export type SettingsNode = SettingsGroup | SettingsLeaf;

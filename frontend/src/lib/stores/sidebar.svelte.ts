@@ -4,7 +4,7 @@ import type { ViewName, AnalyticsSection, SettingsSection } from '../types';
 class SidebarStore {
   activeView = $state<ViewName>('terminal');
   analyticsSection = $state<AnalyticsSection>('dashboard');
-  settingsSection = $state<SettingsSection>('providers');
+  settingsSection = $state<SettingsSection>('');
 
   setView(view: ViewName) {
     this.activeView = view;

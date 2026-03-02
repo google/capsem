@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `config_lint()` function: validates all settings (JSON files, number ranges, choices, API key format, nul bytes, URL format) with clear human-readable error messages displayed inline in the settings UI
+- `SettingsNode` tree API: backend exposes the TOML settings hierarchy as a nested tree with resolved values at leaves, replacing the flat list for UI rendering
+- `get_settings_tree` and `lint_config` Tauri commands for the new tree-based settings UI
+- UI debug skill (`.claude/skills/UI_debug.md`): comprehensive Chrome DevTools MCP-based visual verification checklist for the settings UI
+
+### Changed
+- File settings now store path and content together as `{ path, content }` objects instead of keeping `guest_path` in metadata -- path is the source of truth for MCP injection and guest config generation
+- Guest config file permissions tightened from 0o644 to 0o600 (owner-only) since settings files may contain API keys
+- JSON validation uses zero-allocation `serde::de::IgnoredAny` instead of parsing into `serde_json::Value`
+- Settings UI fully rewritten: left nav and section content are auto-generated from the TOML settings tree. Adding new categories or settings to `defaults.toml` automatically appears in the UI with no frontend code changes. Replaced 6 hardcoded section components (ProvidersSection, McpSection, NetworkPolicySection, EnvironmentSection, ResourcesSection, AppearanceSection) and their icon imports with a single generic recursive renderer (`SettingsSection.svelte`)
+- SubMenu component now supports optional icons (icon-less items render label only)
+
+### Security
+- File setting paths are validated: must start with `/`, must not contain `..`, warns on unusual paths not under `/root/` or `/etc/`
+
+### Added
+- File analytics section: stat cards, action breakdown chart, events-over-time chart, and searchable event table for filesystem activity tracking
+- Setup wizard hook: auto-detects first run (no API keys configured) and shows a welcome view with provider setup shortcut
+- Reveal/hide toggle for API key and password fields in provider settings
+- Range hints (min/max) shown below number inputs in VM resource and appearance settings
+- Dropdown rendering for settings with predefined choices
+
+### Changed
+- Analytics data separation: Models and MCP analytics sections now exclusively query session.db; cross-session data (sessions over time, avg calls per session) moved to Dashboard
+- "Session stats" button in terminal footer now navigates to session-level AI analytics instead of cross-session dashboard
+- MCP analytics stat cards expanded from 2 (total + avg/session) to 4 (total, allowed, warned, denied)
+
 ### Security
 - main.db `query_raw` now enforces `PRAGMA query_only = ON` around user SQL execution, preventing write-through via SQL injection (e.g., `SELECT 1; DROP TABLE sessions`) in the `query_db` IPC command
 - Read-only enforcement tests for both session.db (`DbReader`) and main.db (`SessionIndex`) query paths: INSERT, CREATE TABLE, DROP TABLE, and semicolon injection all verified to fail at the SQLite level

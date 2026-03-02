@@ -43,6 +43,7 @@ assets/*
 crates/capsem-app/gen/
 
 # Frontend
+.astro/
 frontend/.astro/
 frontend/dist/
 frontend/node_modules/

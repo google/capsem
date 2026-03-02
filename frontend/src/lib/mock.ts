@@ -9,10 +9,12 @@
 // exported for use by db.ts.
 import initSqlJs, { type Database } from 'sql.js';
 import type {
+  ConfigIssue,
   QueryResult,
   ResolvedSetting,
   SessionInfo,
   SessionRecord,
+  SettingsNode,
   VmStateResponse,
   GuestConfigResponse,
   NetworkPolicyResponse,
@@ -206,7 +208,7 @@ function ms(overrides: Partial<ResolvedSetting> & { id: string; category: string
   };
 }
 
-const MOCK_SETTINGS: ResolvedSetting[] = [
+let mockSettings: ResolvedSetting[] = [
   // -- AI Providers --
   ms({
     id: 'ai.anthropic.allow', category: 'AI Providers', name: 'Allow Anthropic', setting_type: 'bool',
@@ -227,23 +229,22 @@ const MOCK_SETTINGS: ResolvedSetting[] = [
   ms({
     id: 'ai.anthropic.claude.settings_json', category: 'AI Providers', name: 'Claude Code settings.json', setting_type: 'file',
     description: 'Content for ~/.claude/settings.json.',
-    default_value: '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}',
-    effective_value: '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}',
+    default_value: { path: '/root/.claude/settings.json', content: '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}' },
+    effective_value: { path: '/root/.claude/settings.json', content: '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}' },
     enabled_by: 'ai.anthropic.allow', enabled: false,
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, guest_path: '/root/.claude/settings.json' },
   }),
   ms({
     id: 'ai.anthropic.claude.state_json', category: 'AI Providers', name: 'Claude Code state (.claude.json)', setting_type: 'file',
     description: 'Content for ~/.claude.json. Skips onboarding.',
-    default_value: '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true}',
-    effective_value: '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true}',
+    default_value: { path: '/root/.claude.json', content: '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true}' },
+    effective_value: { path: '/root/.claude.json', content: '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true}' },
     enabled_by: 'ai.anthropic.allow', enabled: false,
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, guest_path: '/root/.claude.json' },
   }),
   ms({
     id: 'ai.openai.allow', category: 'AI Providers', name: 'Allow OpenAI', setting_type: 'bool',
     description: 'Enable API access to OpenAI (api.openai.com).',
     default_value: false, effective_value: false,
+    corp_locked: true, source: 'corp',
   }),
   ms({
     id: 'ai.openai.api_key', category: 'AI Providers', name: 'OpenAI API Key', setting_type: 'apikey',
@@ -275,34 +276,30 @@ const MOCK_SETTINGS: ResolvedSetting[] = [
   ms({
     id: 'ai.google.gemini.settings_json', category: 'AI Providers', name: 'Gemini settings.json', setting_type: 'file',
     description: 'Content for ~/.gemini/settings.json.',
-    default_value: '{"approvalMode":"yolo","general":{"enableAutoUpdate":false}}',
-    effective_value: '{"approvalMode":"yolo","general":{"enableAutoUpdate":false}}',
+    default_value: { path: '/root/.gemini/settings.json', content: '{"approvalMode":"yolo","general":{"enableAutoUpdate":false}}' },
+    effective_value: { path: '/root/.gemini/settings.json', content: '{"approvalMode":"yolo","general":{"enableAutoUpdate":false}}' },
     enabled_by: 'ai.google.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, guest_path: '/root/.gemini/settings.json' },
   }),
   ms({
     id: 'ai.google.gemini.projects_json', category: 'AI Providers', name: 'Gemini projects.json', setting_type: 'file',
     description: 'Content for ~/.gemini/projects.json.',
-    default_value: '{"projects":{"/root":"root"}}',
-    effective_value: '{"projects":{"/root":"root"}}',
+    default_value: { path: '/root/.gemini/projects.json', content: '{"projects":{"/root":"root"}}' },
+    effective_value: { path: '/root/.gemini/projects.json', content: '{"projects":{"/root":"root"}}' },
     enabled_by: 'ai.google.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, guest_path: '/root/.gemini/projects.json' },
   }),
   ms({
     id: 'ai.google.gemini.trusted_folders_json', category: 'AI Providers', name: 'Gemini trustedFolders.json', setting_type: 'file',
     description: 'Content for ~/.gemini/trustedFolders.json.',
-    default_value: '{"/root":"TRUST_FOLDER"}',
-    effective_value: '{"/root":"TRUST_FOLDER"}',
+    default_value: { path: '/root/.gemini/trustedFolders.json', content: '{"/root":"TRUST_FOLDER"}' },
+    effective_value: { path: '/root/.gemini/trustedFolders.json', content: '{"/root":"TRUST_FOLDER"}' },
     enabled_by: 'ai.google.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, guest_path: '/root/.gemini/trustedFolders.json' },
   }),
   ms({
-    id: 'ai.google.gemini.installation_id', category: 'AI Providers', name: 'Gemini installation_id', setting_type: 'text',
+    id: 'ai.google.gemini.installation_id', category: 'AI Providers', name: 'Gemini installation_id', setting_type: 'file',
     description: 'Stable UUID avoids first-run prompts.',
-    default_value: 'capsem-sandbox-00000000-0000-0000-0000-000000000000',
-    effective_value: 'capsem-sandbox-00000000-0000-0000-0000-000000000000',
+    default_value: { path: '/root/.gemini/installation_id', content: 'capsem-sandbox-00000000-0000-0000-0000-000000000000' },
+    effective_value: { path: '/root/.gemini/installation_id', content: 'capsem-sandbox-00000000-0000-0000-0000-000000000000' },
     enabled_by: 'ai.google.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, guest_path: '/root/.gemini/installation_id' },
   }),
   // -- Search --
   ms({
@@ -328,6 +325,7 @@ const MOCK_SETTINGS: ResolvedSetting[] = [
     id: 'registry.github.allow', category: 'Package Registries', name: 'Allow GitHub', setting_type: 'bool',
     description: 'Enable access to GitHub and GitHub-hosted content.',
     default_value: true, effective_value: true,
+    corp_locked: true, source: 'corp',
     metadata: { domains: ['github.com', '*.github.com', '*.githubusercontent.com'], choices: [], min: null, max: null, rules: {} },
   }),
   ms({
@@ -381,6 +379,7 @@ const MOCK_SETTINGS: ResolvedSetting[] = [
     id: 'network.default_action', category: 'Network', name: 'Default action', setting_type: 'text',
     description: 'Action for domains not in any allow/block list.',
     default_value: 'deny', effective_value: 'deny',
+    corp_locked: true, source: 'corp',
     metadata: { domains: [], choices: ['allow', 'deny'], min: null, max: null, rules: {} },
   }),
   ms({
@@ -443,6 +442,181 @@ const MOCK_SETTINGS: ResolvedSetting[] = [
     metadata: { domains: [], choices: [], min: 1, max: 128, rules: {} },
   }),
 ];
+
+/** Recompute `enabled` flags based on parent toggle values. */
+function recomputeEnabled() {
+  const values = new Map<string, boolean>();
+  for (const s of mockSettings) {
+    if (typeof s.effective_value === 'boolean') {
+      values.set(s.id, s.effective_value as boolean);
+    }
+  }
+  for (const s of mockSettings) {
+    if (s.enabled_by) {
+      s.enabled = values.get(s.enabled_by) ?? false;
+    }
+  }
+}
+
+/** Compute lint issues dynamically from current mock settings. */
+function computeMockLint(): ConfigIssue[] {
+  const issues: ConfigIssue[] = [];
+  for (const s of mockSettings) {
+    if (s.setting_type === 'apikey' && s.enabled_by) {
+      const toggle = mockSettings.find(t => t.id === s.enabled_by);
+      if (toggle?.effective_value === true && !String(s.effective_value).trim()) {
+        issues.push({
+          id: s.id,
+          severity: 'warning',
+          message: `${s.id}: provider is enabled but API key is empty`,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+// Set initial enabled flags from the declared settings.
+recomputeEnabled();
+
+// Helper: wrap a flat ResolvedSetting into a SettingsLeaf node.
+function leaf(s: ResolvedSetting): SettingsNode {
+  return { kind: 'leaf', ...s };
+}
+
+function buildMockTree(): SettingsNode[] {
+  return [
+  {
+    kind: 'group', key: 'ai', name: 'AI Providers', description: 'AI model provider configuration',
+    collapsed: false, children: [
+      {
+        kind: 'group', key: 'ai.anthropic', name: 'Anthropic', description: 'Claude Code AI agent',
+        enabled_by: 'ai.anthropic.allow', collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'ai.anthropic.allow')!),
+          leaf(mockSettings.find(s => s.id === 'ai.anthropic.api_key')!),
+          leaf(mockSettings.find(s => s.id === 'ai.anthropic.domains')!),
+          {
+            kind: 'group', key: 'ai.anthropic.claude', name: 'Claude Code', description: 'Claude Code configuration files',
+            collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'ai.anthropic.claude.settings_json')!),
+              leaf(mockSettings.find(s => s.id === 'ai.anthropic.claude.state_json')!),
+            ],
+          },
+        ],
+      },
+      {
+        kind: 'group', key: 'ai.openai', name: 'OpenAI', description: 'OpenAI API provider',
+        enabled_by: 'ai.openai.allow', collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'ai.openai.allow')!),
+          leaf(mockSettings.find(s => s.id === 'ai.openai.api_key')!),
+          leaf(mockSettings.find(s => s.id === 'ai.openai.domains')!),
+        ],
+      },
+      {
+        kind: 'group', key: 'ai.google', name: 'Google AI', description: 'Google Gemini AI provider',
+        enabled_by: 'ai.google.allow', collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'ai.google.allow')!),
+          leaf(mockSettings.find(s => s.id === 'ai.google.api_key')!),
+          leaf(mockSettings.find(s => s.id === 'ai.google.domains')!),
+          {
+            kind: 'group', key: 'ai.google.gemini', name: 'Gemini CLI', description: 'Gemini CLI configuration files',
+            collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'ai.google.gemini.settings_json')!),
+              leaf(mockSettings.find(s => s.id === 'ai.google.gemini.projects_json')!),
+              leaf(mockSettings.find(s => s.id === 'ai.google.gemini.trusted_folders_json')!),
+              leaf(mockSettings.find(s => s.id === 'ai.google.gemini.installation_id')!),
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    kind: 'group', key: 'registry', name: 'Package Registries', description: 'Package manager and code hosting access',
+    collapsed: false, children: [
+      {
+        kind: 'group', key: 'registry.github', name: 'GitHub', description: 'GitHub and GitHub-hosted content',
+        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.github.allow')!)],
+      },
+      {
+        kind: 'group', key: 'registry.npm', name: 'npm', description: 'npm package registry',
+        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.npm.allow')!)],
+      },
+      {
+        kind: 'group', key: 'registry.pypi', name: 'PyPI', description: 'Python Package Index',
+        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.pypi.allow')!)],
+      },
+      {
+        kind: 'group', key: 'registry.crates', name: 'crates.io', description: 'Rust crate registry',
+        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.crates.allow')!)],
+      },
+    ],
+  },
+  {
+    kind: 'group', key: 'search', name: 'Search', description: 'Web search engine access',
+    collapsed: false, children: [
+      {
+        kind: 'group', key: 'search.google', name: 'Google Search', description: 'Google web search',
+        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'search.google.allow')!)],
+      },
+      {
+        kind: 'group', key: 'search.perplexity', name: 'Perplexity', description: 'Perplexity AI search',
+        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'search.perplexity.allow')!)],
+      },
+      {
+        kind: 'group', key: 'search.firecrawl', name: 'Firecrawl', description: 'Firecrawl web scraping API',
+        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'search.firecrawl.allow')!)],
+      },
+    ],
+  },
+  {
+    kind: 'group', key: 'guest', name: 'Guest Environment', description: 'Guest VM shell and environment configuration',
+    collapsed: false, children: [
+      {
+        kind: 'group', key: 'guest.shell', name: 'Shell', description: 'Guest shell settings',
+        collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'guest.shell.term')!),
+          leaf(mockSettings.find(s => s.id === 'guest.shell.home')!),
+          leaf(mockSettings.find(s => s.id === 'guest.shell.path')!),
+          leaf(mockSettings.find(s => s.id === 'guest.shell.lang')!),
+        ],
+      },
+      {
+        kind: 'group', key: 'guest.tls', name: 'TLS', description: 'TLS certificate configuration',
+        collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'guest.tls.ca_bundle')!),
+        ],
+      },
+    ],
+  },
+  {
+    kind: 'group', key: 'network', name: 'Network', description: 'Network access control and domain filtering',
+    collapsed: false, children: [
+      leaf(mockSettings.find(s => s.id === 'network.default_action')!),
+      leaf(mockSettings.find(s => s.id === 'network.custom_allow')!),
+      leaf(mockSettings.find(s => s.id === 'network.custom_block')!),
+    ],
+  },
+  {
+    kind: 'group', key: 'vm', name: 'VM', description: 'Virtual machine resource configuration',
+    collapsed: false, children: [
+      leaf(mockSettings.find(s => s.id === 'vm.log_bodies')!),
+      leaf(mockSettings.find(s => s.id === 'vm.max_body_capture')!),
+      leaf(mockSettings.find(s => s.id === 'vm.retention_days')!),
+      leaf(mockSettings.find(s => s.id === 'vm.max_sessions')!),
+      leaf(mockSettings.find(s => s.id === 'vm.max_disk_gb')!),
+      leaf(mockSettings.find(s => s.id === 'vm.scratch_disk_size_gb')!),
+    ],
+  },
+  {
+    kind: 'group', key: 'appearance', name: 'Appearance', description: 'UI appearance and display settings',
+    collapsed: false, children: [
+      leaf(mockSettings.find(s => s.id === 'appearance.dark_mode')!),
+      leaf(mockSettings.find(s => s.id === 'appearance.font_size')!),
+    ],
+  },
+  ];
+}
 
 const MOCK_VM_STATE: VmStateResponse = {
   state: 'Running',
@@ -594,8 +768,17 @@ export const mockApi = {
   }),
   setGuestEnv: async (_key: string, _value: string) => {},
   removeGuestEnv: async (_key: string) => {},
-  getSettings: async () => MOCK_SETTINGS,
-  updateSetting: async (_id: string, _value: any) => {},
+  getSettings: async () => mockSettings.map(s => ({ ...s })),
+  getSettingsTree: async () => buildMockTree(),
+  lintConfig: async () => computeMockLint(),
+  updateSetting: async (id: string, value: any) => {
+    const s = mockSettings.find(s => s.id === id);
+    if (!s || s.corp_locked) return;
+    s.effective_value = value;
+    s.source = 'user';
+    s.modified = new Date().toISOString();
+    recomputeEnabled();
+  },
   getVmState: async () => MOCK_VM_STATE,
   getSessionInfo: mockSessionInfo,
 

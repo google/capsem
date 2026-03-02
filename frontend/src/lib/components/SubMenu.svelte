@@ -4,7 +4,7 @@
   interface SubMenuItem {
     id: string;
     label: string;
-    icon: Component<{ class?: string }>;
+    icon?: Component<{ class?: string }>;
   }
 
   interface SubMenuGroup {
@@ -32,7 +32,6 @@
     <ul class="flex flex-col gap-0.5">
       {#each group.items as item}
         {@const isActive = active === item.id}
-        {@const Icon = item.icon}
         <li>
           <button
             class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors {isActive
@@ -40,7 +39,10 @@
               : 'text-base-content/60 hover:bg-base-300 hover:text-base-content'}"
             onclick={() => onSelect(item.id)}
           >
-            <Icon class="size-4" />
+            {#if item.icon}
+              {@const Icon = item.icon}
+              <Icon class="size-4" />
+            {/if}
             <span class="whitespace-nowrap">{item.label}</span>
           </button>
         </li>

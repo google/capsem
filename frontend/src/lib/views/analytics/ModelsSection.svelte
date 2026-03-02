@@ -12,8 +12,8 @@
     Legend,
   } from 'chart.js';
   import { queryAll, queryOne } from '../../db';
-  import { PROVIDER_USAGE_SQL, TOOL_USAGE_SQL, MODEL_STATS_SQL, TRACES_SQL, SESSION_HISTORY_SQL } from '../../sql';
-  import type { ProviderTokenUsage, ToolUsageCount, TraceSummary, SessionRecord } from '../../types';
+  import { PROVIDER_USAGE_SQL, TOOL_USAGE_SQL, MODEL_STATS_SQL, TRACES_SQL } from '../../sql';
+  import type { ProviderTokenUsage, ToolUsageCount, TraceSummary } from '../../types';
 
   Chart.register(BarController, BarElement, CategoryScale, LinearScale, DoughnutController, ArcElement, Tooltip, Legend);
 
@@ -54,13 +54,11 @@
   let toolUsage = $state<ToolUsageCount[]>([]);
   let modelStats = $state<ModelStatsRow | null>(null);
   let traces = $state<TraceSummary[]>([]);
-  let sessions = $state<SessionRecord[]>([]);
   let error = $state<string | null>(null);
 
   // Canvas refs
   let usageCanvas = $state<HTMLCanvasElement | undefined>();
   let costDoughnutCanvas = $state<HTMLCanvasElement | undefined>();
-  let sessionsTimeCanvas = $state<HTMLCanvasElement | undefined>();
   let tokensTimeCanvas = $state<HTMLCanvasElement | undefined>();
   let costTimeCanvas = $state<HTMLCanvasElement | undefined>();
   let modelUsageCanvas = $state<HTMLCanvasElement | undefined>();
@@ -69,7 +67,6 @@
   // Chart instances
   let usageChart: Chart | null = null;
   let costDoughnutChart: Chart | null = null;
-  let sessionsTimeChart: Chart | null = null;
   let tokensTimeChart: Chart | null = null;
   let costTimeChart: Chart | null = null;
   let modelUsageChart: Chart | null = null;
@@ -77,12 +74,11 @@
 
   onMount(async () => {
     try {
-      const [pu, tu, ms, rawTraces, sess] = await Promise.all([
+      const [pu, tu, ms, rawTraces] = await Promise.all([
         queryAll<ProviderTokenUsage>(PROVIDER_USAGE_SQL),
         queryAll<ToolUsageCount>(TOOL_USAGE_SQL),
         queryOne<ModelStatsRow>(MODEL_STATS_SQL),
         queryAll<any>(TRACES_SQL, [50]),
-        queryAll<SessionRecord>(SESSION_HISTORY_SQL, [50], 'main'),
       ]);
       // Parse usage_details JSON string from traces
       for (const t of rawTraces) {
@@ -103,7 +99,6 @@
       toolUsage = tu;
       modelStats = ms;
       traces = rawTraces as TraceSummary[];
-      sessions = sess;
     } catch (e) {
       error = String(e);
     }
@@ -112,7 +107,6 @@
   onDestroy(() => {
     usageChart?.destroy();
     costDoughnutChart?.destroy();
-    sessionsTimeChart?.destroy();
     tokensTimeChart?.destroy();
     costTimeChart?.destroy();
     modelUsageChart?.destroy();
@@ -217,40 +211,7 @@
     });
   });
 
-  // Row 2: Sessions over time
-  $effect(() => {
-    if (!sessionsTimeCanvas || sessions.length === 0) return;
-    if (sessionsTimeChart) return;
-    // Bucket sessions by date
-    const dateCounts = new Map<string, number>();
-    for (const s of sessions) {
-      const day = s.created_at.slice(0, 10);
-      dateCounts.set(day, (dateCounts.get(day) ?? 0) + 1);
-    }
-    const sorted = Array.from(dateCounts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    sessionsTimeChart = new Chart(sessionsTimeCanvas, {
-      type: 'bar',
-      data: {
-        labels: sorted.map(([d]) => d),
-        datasets: [{
-          label: 'Sessions',
-          data: sorted.map(([, c]) => c),
-          backgroundColor: 'rgba(59, 130, 246, 0.85)',
-          borderRadius: 3, borderSkipped: false,
-        }],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
-        scales: {
-          x: { grid: { display: false }, ticks: { color: tickColor, font: monoFont } },
-          y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: tickColor, font: tickFont, stepSize: 1 } },
-        },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (item) => `${item.raw} sessions` } } },
-      },
-    });
-  });
-
-  // Row 3: Tokens over time (from traces, bucketed by time)
+  // Row 2: Tokens over time (from traces, bucketed by time)
   const traceBuckets = $derived.by(() => {
     if (traces.length === 0) return [];
     const sorted = [...traces].sort((a, b) => a.started_at - b.started_at);
@@ -291,7 +252,7 @@
     });
   });
 
-  // Row 3: Cost over time (from traces, bucketed, colored by provider)
+  // Row 2: Cost over time (from traces, bucketed, colored by provider)
   const costBuckets = $derived.by(() => {
     if (traces.length === 0) return { labels: [] as string[], datasets: [] as { label: string; data: number[]; backgroundColor: string }[] };
     const sorted = [...traces].sort((a, b) => a.started_at - b.started_at);
@@ -345,7 +306,7 @@
     });
   });
 
-  // Row 4: Model usage (tokens) and model cost -- grouped by model, colored by provider
+  // Row 3: Model usage (tokens) and model cost -- grouped by model, colored by provider
   const modelData = $derived.by(() => {
     if (traces.length === 0) return [];
     const models = new Map<string, { model: string; provider: string; tokens: number; cost: number }>();
@@ -451,15 +412,7 @@
       </div>
     </div>
 
-    <!-- Row 2: Sessions over time -->
-    {#if sessions.length > 0}
-      <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
-        <h4 class="text-xs font-semibold text-base-content/60 mb-2">Sessions over time</h4>
-        <div class="h-40"><canvas bind:this={sessionsTimeCanvas}></canvas></div>
-      </div>
-    {/if}
-
-    <!-- Row 3: Tokens over time + Cost over time -->
+    <!-- Row 2: Tokens over time + Cost over time -->
     {#if traces.length > 0}
       <div class="grid grid-cols-2 gap-4">
         <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
@@ -473,7 +426,7 @@
       </div>
     {/if}
 
-    <!-- Row 4: Model usage (tokens) + Model cost -->
+    <!-- Row 3: Model usage (tokens) + Model cost -->
     {#if modelData.length > 0}
       <div class="grid grid-cols-2 gap-4">
         <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">

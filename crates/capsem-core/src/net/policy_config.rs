@@ -31,17 +31,23 @@ pub enum SettingType {
     Email,
     ApiKey,
     Bool,
-    /// File content to write to a guest path (declared in metadata.guest_path).
-    /// JSON files (.json) are validated on save.
+    /// File to write to a guest path. Value is `{ path, content }`.
+    /// JSON files (.json extension) are validated on save.
     File,
 }
 
 /// A setting value (untagged for clean TOML serialization).
+///
+/// Variant order matters: `#[serde(untagged)]` tries variants top-to-bottom.
+/// `File` (a table with `path` + `content`) must come before `Text` (a plain
+/// string) so TOML tables like `{ path = "...", content = "..." }` deserialize
+/// as `File` rather than failing on `Text`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum SettingValue {
     Bool(bool),
     Number(i64),
+    File { path: String, content: String },
     Text(String),
 }
 
@@ -63,6 +69,13 @@ impl SettingValue {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             SettingValue::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_file(&self) -> Option<(&str, &str)> {
+        match self {
+            SettingValue::File { path, content } => Some((path, content)),
             _ => None,
         }
     }
@@ -114,9 +127,6 @@ pub struct SettingMetadata {
     /// HTTP rules (keyed by rule name).
     #[serde(default)]
     pub rules: HashMap<String, HttpMethodPermissions>,
-    /// Guest file path for File-type settings (e.g. "/root/.gemini/settings.json").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub guest_path: Option<String>,
     /// Env var name(s) to inject in the guest when this setting is non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_vars: Vec<String>,
@@ -246,8 +256,6 @@ struct SettingMetaToml {
     #[serde(default)]
     rules: HashMap<String, HttpMethodPermissions>,
     #[serde(default)]
-    guest_path: Option<String>,
-    #[serde(default)]
     env_vars: Vec<String>,
 }
 
@@ -298,7 +306,6 @@ fn collect_settings(
                 min: def.meta.min,
                 max: def.meta.max,
                 rules: def.meta.rules,
-                guest_path: def.meta.guest_path,
                 env_vars: def.meta.env_vars,
                 collapsed: def.collapsed,
             },
@@ -435,36 +442,20 @@ pub fn can_write_corp_settings() -> bool {
 
 /// Validate a setting value before persisting.
 ///
-/// For `File`-type settings whose `guest_path` ends in `.json`, the value
-/// must be valid JSON (or empty). Other types pass through without validation.
+/// For `File` values, validates the path and checks JSON content if the path
+/// ends in `.json`. Other types pass through without validation.
 pub fn validate_setting_value(id: &str, value: &SettingValue) -> Result<(), String> {
-    let defs = setting_definitions();
-    let def = match defs.iter().find(|d| d.id == id) {
-        Some(d) => d,
-        None => return Ok(()), // dynamic / unknown settings pass through
-    };
-
-    if def.setting_type != SettingType::File {
-        return Ok(());
-    }
-
-    let text = match value.as_text() {
-        Some(t) => t,
-        None => return Ok(()), // non-text value for a File setting is odd but not our problem here
-    };
-
-    if text.is_empty() {
-        return Ok(()); // empty means "use default" or "don't inject"
-    }
-
-    // JSON validation for .json guest paths
-    if let Some(path) = &def.metadata.guest_path {
-        if path.ends_with(".json") {
-            serde_json::from_str::<serde_json::Value>(text)
+    if let SettingValue::File { path, content } = value {
+        // Validate path
+        capsem_proto::validate_file_path(path)
+            .map_err(|e| format!("invalid path for {id}: {e}"))?;
+        // Validate JSON syntax for .json paths (zero-allocation check).
+        if path.ends_with(".json") && !content.is_empty() {
+            serde_json::from_str::<serde::de::IgnoredAny>(content)
                 .map_err(|e| format!("invalid JSON for {id}: {e}"))?;
         }
+        return Ok(());
     }
-
     Ok(())
 }
 
@@ -845,54 +836,62 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
 
         // Metadata-driven env var injection: if the setting declares env_vars
         // and the effective value is non-empty text, inject each env var.
-        if !s.metadata.env_vars.is_empty() && !text_value.is_empty() {
-            for var_name in &s.metadata.env_vars {
-                if let Err(e) = validate_env_key(var_name) {
-                    tracing::warn!("skipping invalid env var from metadata: {e}");
-                    continue;
+        // For File values, the content is used as the env value.
+        let env_text = match &s.effective_value {
+            SettingValue::Text(t) => Some(t.as_str()),
+            SettingValue::File { content, .. } => Some(content.as_str()),
+            _ => None,
+        };
+        if let Some(ev) = env_text {
+            if !s.metadata.env_vars.is_empty() && !ev.is_empty() {
+                for var_name in &s.metadata.env_vars {
+                    if let Err(e) = validate_env_key(var_name) {
+                        tracing::warn!("skipping invalid env var from metadata: {e}");
+                        continue;
+                    }
+                    if let Err(e) = validate_env_value(ev) {
+                        tracing::warn!("skipping env var {var_name}: invalid value: {e}");
+                        continue;
+                    }
+                    env.insert(var_name.clone(), ev.to_string());
                 }
-                if let Err(e) = validate_env_value(text_value) {
-                    tracing::warn!("skipping env var {var_name}: invalid value: {e}");
-                    continue;
-                }
-                env.insert(var_name.clone(), text_value.to_string());
             }
         }
 
-        // Boot files: File-type or Text-type settings with a guest_path.
+        // Boot files: File values with non-empty content.
         // Always inject if non-empty -- the allow toggle controls network
         // policy, not file availability.
-        if (s.setting_type == SettingType::File || s.setting_type == SettingType::Text)
-            && !text_value.is_empty()
-        {
-            if let Some(ref guest_path) = s.metadata.guest_path {
-                if let Err(e) = validate_file_path(guest_path) {
+        if let SettingValue::File { path: file_path, content: file_content } = &s.effective_value {
+            if !file_content.is_empty() {
+                if let Err(e) = validate_file_path(file_path) {
                     tracing::warn!("skipping boot file: {e}");
                     continue;
                 }
 
                 // Inject capsem MCP server into Claude/Gemini settings.json.
-                // The capsem entry is always added so every AI agent can use
-                // host-side MCP tools. User-provided mcpServers are preserved.
+                // Pattern-match on the guest path (not the setting ID) since
+                // the path is the source of truth for what the file represents.
                 //
                 // For Claude state (.claude.json), inject API key approval
                 // and project trust so Claude starts without onboarding prompts.
-                let content = if s.id.ends_with(".settings_json") {
-                    inject_capsem_mcp_server(text_value)
-                } else if s.id == "ai.anthropic.claude.state_json" {
+                let content = if file_path.ends_with("/settings.json") {
+                    inject_capsem_mcp_server(file_content)
+                } else if file_path == "/root/.claude.json" {
                     if let Some(api_key) = env.get("ANTHROPIC_API_KEY") {
-                        inject_api_key_approval(text_value, api_key)
+                        inject_api_key_approval(file_content, api_key)
                     } else {
-                        text_value.to_string()
+                        file_content.clone()
                     }
                 } else {
-                    text_value.to_string()
+                    file_content.clone()
                 };
 
+                // Settings files may contain API keys or sensitive config --
+                // restrict to owner-only (0o600) rather than world-readable.
                 files.push(GuestFile {
-                    path: guest_path.clone(),
+                    path: file_path.clone(),
                     content,
-                    mode: 0o644,
+                    mode: 0o600,
                 });
             }
         }
@@ -1200,6 +1199,399 @@ pub fn load_merged_vm_settings() -> VmSettings {
 pub fn load_merged_settings() -> Vec<ResolvedSetting> {
     let (user, corp) = load_settings_files();
     resolve_settings(&user, &corp)
+}
+
+// ---------------------------------------------------------------------------
+// Config lint
+// ---------------------------------------------------------------------------
+
+/// A single config validation issue.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ConfigIssue {
+    /// Setting ID (e.g. "ai.anthropic.api_key").
+    pub id: String,
+    /// "error" | "warning".
+    pub severity: String,
+    /// Human-readable message shown in the UI.
+    pub message: String,
+}
+
+/// Validate all resolved settings and return a list of issues.
+///
+/// Checks: number ranges, choice validity, JSON file content, API key format,
+/// enabled-provider-with-empty-key, nul bytes in text.
+pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
+    let mut issues = Vec::new();
+
+    // Build a lookup for toggle values (for enabled-provider checks).
+    let toggle_values: HashMap<String, bool> = resolved
+        .iter()
+        .filter(|s| s.setting_type == SettingType::Bool)
+        .filter_map(|s| s.effective_value.as_bool().map(|b| (s.id.clone(), b)))
+        .collect();
+
+    for s in resolved {
+        let text_value = match &s.effective_value {
+            SettingValue::Text(t) => Some(t.as_str()),
+            _ => None,
+        };
+
+        // -- Nul byte check (all text values) --
+        if let Some(text) = text_value {
+            if text.contains('\0') {
+                issues.push(ConfigIssue {
+                    id: s.id.clone(),
+                    severity: "error".into(),
+                    message: format!("{}: value contains invalid characters", s.id),
+                });
+            }
+        }
+
+        // -- Number range --
+        if s.setting_type == SettingType::Number {
+            if let Some(n) = s.effective_value.as_number() {
+                if let Some(min) = s.metadata.min {
+                    if n < min {
+                        issues.push(ConfigIssue {
+                            id: s.id.clone(),
+                            severity: "error".into(),
+                            message: format!(
+                                "{}: value {} is below minimum {}",
+                                s.id, n, min
+                            ),
+                        });
+                    }
+                }
+                if let Some(max) = s.metadata.max {
+                    if n > max {
+                        issues.push(ConfigIssue {
+                            id: s.id.clone(),
+                            severity: "error".into(),
+                            message: format!(
+                                "{}: value {} exceeds maximum {}",
+                                s.id, n, max
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        // -- Choice validation --
+        if !s.metadata.choices.is_empty() {
+            if let Some(text) = text_value {
+                if !s.metadata.choices.iter().any(|c| c == text) {
+                    issues.push(ConfigIssue {
+                        id: s.id.clone(),
+                        severity: "error".into(),
+                        message: format!(
+                            "{}: '{}' is not a valid choice ({})",
+                            s.id,
+                            text,
+                            s.metadata.choices.join(", ")
+                        ),
+                    });
+                }
+            }
+        }
+
+        // -- File value validation (path + JSON content) --
+        if let SettingValue::File { path: file_path, content: file_content } = &s.effective_value {
+            // Path validation
+            if !file_path.starts_with('/') {
+                issues.push(ConfigIssue {
+                    id: s.id.clone(),
+                    severity: "error".into(),
+                    message: format!("{}: file path must be absolute", s.id),
+                });
+            }
+            if file_path.contains("..") {
+                issues.push(ConfigIssue {
+                    id: s.id.clone(),
+                    severity: "error".into(),
+                    message: format!("{}: file path must not contain '..'", s.id),
+                });
+            }
+            if !file_path.starts_with("/root/") && !file_path.starts_with("/root/.") && !file_path.starts_with("/etc/") {
+                issues.push(ConfigIssue {
+                    id: s.id.clone(),
+                    severity: "warning".into(),
+                    message: format!("{}: unusual file path (expected under /root/ or /etc/)", s.id),
+                });
+            }
+            // JSON content validation for .json paths
+            if file_path.ends_with(".json") && !file_content.is_empty() {
+                match serde_json::from_str::<serde_json::Value>(file_content) {
+                    Ok(val) => {
+                        if !val.is_object() && !val.is_array() {
+                            issues.push(ConfigIssue {
+                                id: s.id.clone(),
+                                severity: "warning".into(),
+                                message: format!(
+                                    "{}: JSON parsed but is not an object",
+                                    s.id
+                                ),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        issues.push(ConfigIssue {
+                            id: s.id.clone(),
+                            severity: "error".into(),
+                            message: format!("{}: invalid JSON -- {}", s.id, e),
+                        });
+                    }
+                }
+            }
+        }
+
+        // -- API key whitespace check --
+        if s.setting_type == SettingType::ApiKey {
+            if let Some(text) = text_value {
+                if !text.is_empty() {
+                    if text.contains(' ') || text.contains('\n') || text.contains('\r') || text.contains('\t') {
+                        issues.push(ConfigIssue {
+                            id: s.id.clone(),
+                            severity: "warning".into(),
+                            message: format!(
+                                "{}: key contains whitespace -- check for copy-paste errors",
+                                s.id
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        // -- Enabled provider with empty API key --
+        if s.setting_type == SettingType::ApiKey {
+            if let Some(text) = text_value {
+                if text.trim().is_empty() {
+                    // Check if the parent toggle is on
+                    if let Some(ref parent_id) = s.enabled_by {
+                        if toggle_values.get(parent_id).copied().unwrap_or(false) {
+                            issues.push(ConfigIssue {
+                                id: s.id.clone(),
+                                severity: "warning".into(),
+                                message: format!(
+                                    "{}: provider is enabled but API key is empty",
+                                    s.id
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // -- URL validation --
+        if s.setting_type == SettingType::Url {
+            if let Some(text) = text_value {
+                if !text.is_empty()
+                    && !text.starts_with("http://")
+                    && !text.starts_with("https://")
+                {
+                    issues.push(ConfigIssue {
+                        id: s.id.clone(),
+                        severity: "warning".into(),
+                        message: format!("{}: not a valid URL", s.id),
+                    });
+                }
+            }
+        }
+    }
+
+    issues
+}
+
+/// Run lint on current merged settings.
+pub fn load_merged_lint() -> Vec<ConfigIssue> {
+    let (user, corp) = load_settings_files();
+    let resolved = resolve_settings(&user, &corp);
+    config_lint(&resolved)
+}
+
+// ---------------------------------------------------------------------------
+// Settings tree
+// ---------------------------------------------------------------------------
+
+/// A settings tree node: either a group of children or a leaf setting.
+///
+/// Serialized with `tag = "kind"` so JSON includes `{"kind": "group", ...}` or
+/// `{"kind": "leaf", ...}`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind")]
+pub enum SettingsNode {
+    #[serde(rename = "group")]
+    Group {
+        key: String,
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enabled_by: Option<String>,
+        collapsed: bool,
+        children: Vec<SettingsNode>,
+    },
+    #[serde(rename = "leaf")]
+    Leaf(ResolvedSetting),
+}
+
+/// Build a settings tree mirroring the TOML hierarchy with resolved values at leaves.
+///
+/// Walks the TOML structure like `collect_settings` but produces nested
+/// `SettingsNode::Group` / `SettingsNode::Leaf` instead of flattening.
+fn build_tree_from_table(
+    path: &str,
+    table: &toml::value::Table,
+    parent_enabled_by: &Option<String>,
+    parent_collapsed: bool,
+    resolved_map: &HashMap<String, ResolvedSetting>,
+) -> Vec<SettingsNode> {
+    // Check if this is a leaf (has "type" key)
+    if table.contains_key("type") {
+        if let Some(resolved) = resolved_map.get(path) {
+            return vec![SettingsNode::Leaf(resolved.clone())];
+        }
+        return vec![];
+    }
+
+    // Group node
+    let group_name = table
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let group_description = table
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let group_enabled_by = table
+        .get("enabled_by")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| parent_enabled_by.clone());
+    let group_collapsed = table
+        .get("collapsed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(parent_collapsed);
+
+    let mut children = Vec::new();
+    for (key, val) in table {
+        if matches!(
+            key.as_str(),
+            "name" | "description" | "enabled_by" | "collapsed"
+        ) {
+            continue;
+        }
+        if let Some(child_table) = val.as_table() {
+            let child_path = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            let child_nodes = build_tree_from_table(
+                &child_path,
+                child_table,
+                &group_enabled_by,
+                group_collapsed,
+                resolved_map,
+            );
+            children.extend(child_nodes);
+        }
+    }
+
+    // If we have a group name (this is a named group), wrap children.
+    // Top-level call (path is empty) skips wrapping.
+    if let Some(name) = group_name {
+        if !path.is_empty() {
+            return vec![SettingsNode::Group {
+                key: path.to_string(),
+                name,
+                description: group_description,
+                enabled_by: if parent_enabled_by.is_some() {
+                    // Sub-group inherits parent enabled_by but the group node
+                    // itself should show its own enabled_by.
+                    group_enabled_by
+                } else {
+                    table
+                        .get("enabled_by")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                },
+                collapsed: group_collapsed,
+                children,
+            }];
+        }
+    }
+
+    children
+}
+
+/// Build the full settings tree from defaults.toml + resolved values.
+///
+/// Returns top-level groups (AI Providers, Package Registries, etc.).
+/// Dynamic `guest.env.*` settings are appended to the Guest Environment group.
+pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
+    let root: toml::Value =
+        toml::from_str(DEFAULTS_TOML).expect("built-in defaults.toml is invalid");
+    let settings = root
+        .get("settings")
+        .and_then(|v| v.as_table())
+        .expect("defaults.toml missing [settings]");
+
+    // Build a lookup from ID to resolved setting.
+    let resolved_map: HashMap<String, ResolvedSetting> = resolved
+        .iter()
+        .map(|s| (s.id.clone(), s.clone()))
+        .collect();
+
+    let mut tree = Vec::new();
+    for (key, val) in settings {
+        if let Some(child_table) = val.as_table() {
+            let nodes = build_tree_from_table(
+                key,
+                child_table,
+                &None,
+                false,
+                &resolved_map,
+            );
+            tree.extend(nodes);
+        }
+    }
+
+    // Append dynamic guest.env.* settings to the Guest Environment group.
+    let dynamic_envs: Vec<&ResolvedSetting> = resolved
+        .iter()
+        .filter(|s| s.id.starts_with("guest.env.") && !resolved_map.contains_key(&s.id)
+            || (s.id.starts_with("guest.env.") && s.category == "Guest Environment" && setting_definitions().iter().all(|d| d.id != s.id)))
+        .collect();
+
+    if !dynamic_envs.is_empty() {
+        // Find the Guest Environment group and append
+        fn append_dynamic(nodes: &mut Vec<SettingsNode>, envs: &[&ResolvedSetting]) {
+            for node in nodes.iter_mut() {
+                if let SettingsNode::Group { name, children, .. } = node {
+                    if name == "Guest Environment" {
+                        for env in envs {
+                            children.push(SettingsNode::Leaf((*env).clone()));
+                        }
+                        return;
+                    }
+                    append_dynamic(children, envs);
+                }
+            }
+        }
+        append_dynamic(&mut tree, &dynamic_envs);
+    }
+
+    tree
+}
+
+/// Load settings tree from standard locations.
+pub fn load_settings_tree() -> Vec<SettingsNode> {
+    let (user, corp) = load_settings_files();
+    let resolved = resolve_settings(&user, &corp);
+    build_settings_tree(&resolved)
 }
 
 // ---------------------------------------------------------------------------
@@ -1751,6 +2143,10 @@ mod tests {
             ("ai.anthropic.allow", SettingValue::Bool(true)),
             ("vm.max_body_capture", SettingValue::Number(8192)),
             ("guest.env.EDITOR", SettingValue::Text("vim".into())),
+            ("ai.google.gemini.settings_json", SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: r#"{"key":"value"}"#.into(),
+            }),
         ]);
         let toml_str = toml::to_string_pretty(&file).unwrap();
         let parsed: SettingsFile = toml::from_str(&toml_str).unwrap();
@@ -2720,7 +3116,10 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn gemini_settings_json_user_override() {
         let custom = r#"{"homeDirectoryWarningDismissed":true,"mcpServers":{"myserver":{}}}"#;
         let user = file_with(vec![
-            ("ai.google.gemini.settings_json", SettingValue::Text(custom.into())),
+            ("ai.google.gemini.settings_json", SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: custom.into(),
+            }),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
@@ -2747,7 +3146,10 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let custom = r#"{"mcpServers":{"custom":{}}}"#;
         let user = file_with(vec![
             ("ai.google.allow", SettingValue::Bool(false)),
-            ("ai.google.gemini.settings_json", SettingValue::Text(custom.into())),
+            ("ai.google.gemini.settings_json", SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: custom.into(),
+            }),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
@@ -2758,17 +3160,16 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn gemini_boot_files_empty_value_skipped() {
-        // If a file setting is explicitly set to empty, it should not be injected.
+        // If a file setting is explicitly set to empty content, it should not be injected.
         let user = file_with(vec![
-            ("ai.google.gemini.settings_json", SettingValue::Text("".into())),
-            ("ai.google.gemini.projects_json", SettingValue::Text("".into())),
-            ("ai.google.gemini.trusted_folders_json", SettingValue::Text("".into())),
-            ("ai.google.gemini.installation_id", SettingValue::Text("".into())),
-            ("ai.anthropic.claude.settings_json", SettingValue::Text("".into())),
+            ("ai.google.gemini.settings_json", SettingValue::File { path: "/root/.gemini/settings.json".into(), content: "".into() }),
+            ("ai.google.gemini.projects_json", SettingValue::File { path: "/root/.gemini/projects.json".into(), content: "".into() }),
+            ("ai.google.gemini.trusted_folders_json", SettingValue::File { path: "/root/.gemini/trustedFolders.json".into(), content: "".into() }),
+            ("ai.google.gemini.installation_id", SettingValue::File { path: "/root/.gemini/installation_id".into(), content: "".into() }),
+            ("ai.anthropic.claude.settings_json", SettingValue::File { path: "/root/.claude/settings.json".into(), content: "".into() }),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
-        // Only TLS CA bundle boot files (if any) should remain.
         let file_paths: Vec<&str> = gc.files.as_ref().map_or(vec![], |f| f.iter().map(|x| x.path.as_str()).collect());
         assert!(!file_paths.contains(&"/root/.gemini/settings.json"));
         assert!(!file_paths.contains(&"/root/.claude/settings.json"));
@@ -2780,7 +3181,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let gc = settings_to_guest_config(&resolved);
         let files = gc.files.unwrap();
         for f in &files {
-            assert_eq!(f.mode, 0o644, "boot file {} should have mode 0644", f.path);
+            assert_eq!(f.mode, 0o600, "boot file {} should have mode 0600 (owner-only)", f.path);
         }
     }
 
@@ -2836,43 +3237,41 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     }
 
     #[test]
-    fn gemini_installation_id_stays_text() {
-        // installation_id is plain text, not JSON -- stays Text.
+    fn gemini_installation_id_is_file_type() {
+        // installation_id is now a File type (path + content).
         let defs = setting_definitions();
         let def = defs.iter().find(|d| d.id == "ai.google.gemini.installation_id").unwrap();
-        assert_eq!(def.setting_type, SettingType::Text);
+        assert_eq!(def.setting_type, SettingType::File);
+        let (path, content) = def.default_value.as_file().expect("should be File value");
+        assert_eq!(path, "/root/.gemini/installation_id");
+        assert!(content.starts_with("capsem-sandbox-"));
     }
 
     #[test]
-    fn file_settings_have_guest_path_metadata() {
-        // Every File-type setting must declare its guest_path in metadata.
+    fn file_settings_have_path_in_default_value() {
+        // Every File-type setting must have a File default with a valid path.
         let defs = setting_definitions();
         for def in &defs {
             if def.setting_type == SettingType::File {
-                assert!(
-                    def.metadata.guest_path.is_some(),
-                    "File setting {} must have guest_path metadata",
-                    def.id,
-                );
-                let path = def.metadata.guest_path.as_ref().unwrap();
-                assert!(path.starts_with('/'), "guest_path must be absolute: {path}");
+                let (path, _) = def.default_value.as_file().unwrap_or_else(|| {
+                    panic!("File setting {} must have File default value", def.id)
+                });
+                assert!(path.starts_with('/'), "path must be absolute: {path} (setting {})", def.id);
             }
         }
     }
 
     #[test]
     fn guest_config_collects_file_type_settings() {
-        // settings_to_guest_config should pick up File-type settings via
-        // metadata.guest_path instead of the hardcoded FILE_MAP.
+        // settings_to_guest_config should pick up File values directly.
         let resolved = resolve_settings(&empty_file(), &empty_file());
         let gc = settings_to_guest_config(&resolved);
         let files = gc.files.unwrap();
         let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        // JSON files come from File-type settings
+        // All file settings come from SettingValue::File
         assert!(paths.contains(&"/root/.gemini/settings.json"));
         assert!(paths.contains(&"/root/.gemini/projects.json"));
         assert!(paths.contains(&"/root/.gemini/trustedFolders.json"));
-        // installation_id comes from the legacy FILE_MAP (Text type)
         assert!(paths.contains(&"/root/.gemini/installation_id"));
     }
 
@@ -2882,10 +3281,12 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn validate_file_setting_rejects_invalid_json() {
-        // File settings whose guest_path ends in .json must contain valid JSON.
         let err = validate_setting_value(
             "ai.google.gemini.settings_json",
-            &SettingValue::Text("{not valid json".into()),
+            &SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: "{not valid json".into(),
+            },
         );
         assert!(err.is_err(), "invalid JSON should be rejected");
         assert!(err.unwrap_err().contains("invalid JSON"));
@@ -2895,27 +3296,36 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn validate_file_setting_accepts_valid_json() {
         let result = validate_setting_value(
             "ai.google.gemini.settings_json",
-            &SettingValue::Text(r#"{"key":"value"}"#.into()),
+            &SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: r#"{"key":"value"}"#.into(),
+            },
         );
         assert!(result.is_ok());
     }
 
     #[test]
-    fn validate_file_setting_accepts_empty() {
-        // Empty is fine -- means "use default" or "don't inject".
+    fn validate_file_setting_accepts_empty_content() {
+        // Empty content is fine -- means "use default" or "don't inject".
         let result = validate_setting_value(
             "ai.google.gemini.settings_json",
-            &SettingValue::Text("".into()),
+            &SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: "".into(),
+            },
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn validate_non_json_file_accepts_anything() {
-        // installation_id is a Text, not File -- no JSON validation.
+        // installation_id path doesn't end in .json -- no JSON validation.
         let result = validate_setting_value(
             "ai.google.gemini.installation_id",
-            &SettingValue::Text("not json at all".into()),
+            &SettingValue::File {
+                path: "/root/.gemini/installation_id".into(),
+                content: "not json at all".into(),
+            },
         );
         assert!(result.is_ok());
     }
@@ -2931,15 +3341,13 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     }
 
     #[test]
-    fn file_type_resolved_setting_has_guest_path() {
-        // The resolved setting for a File type should carry guest_path in metadata.
+    fn file_type_resolved_setting_has_file_value() {
+        // The resolved setting for a File type should have a File value with path.
         let resolved = resolve_settings(&empty_file(), &empty_file());
         let s = resolved.iter().find(|s| s.id == "ai.google.gemini.settings_json").unwrap();
         assert_eq!(s.setting_type, SettingType::File);
-        assert_eq!(
-            s.metadata.guest_path.as_deref(),
-            Some("/root/.gemini/settings.json"),
-        );
+        let (path, _content) = s.effective_value.as_file().expect("should be a File value");
+        assert_eq!(path, "/root/.gemini/settings.json");
     }
 
     // -----------------------------------------------------------------------
@@ -3368,7 +3776,10 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn user_mcp_servers_preserved_alongside_capsem() {
         let custom = r#"{"mcpServers":{"myserver":{"command":"my-tool"}}}"#;
         let user = file_with(vec![
-            ("ai.google.gemini.settings_json", SettingValue::Text(custom.into())),
+            ("ai.google.gemini.settings_json", SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: custom.into(),
+            }),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let gc = settings_to_guest_config(&resolved);
@@ -3459,7 +3870,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn toml_registry_meta_fields() {
-        // Metadata fields (domains, choices, rules, guest_path, env_vars)
+        // Metadata fields (domains, choices, rules, env_vars)
         // are correctly parsed from the `meta` sub-table.
         let defs = setting_definitions();
 
@@ -3477,5 +3888,462 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             !key.metadata.env_vars.is_empty(),
             "api_key settings should have env_vars metadata",
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Config lint tests
+    // -----------------------------------------------------------------------
+
+    fn make_resolved(id: &str, stype: SettingType, value: SettingValue, meta: SettingMetadata, enabled_by: Option<&str>) -> ResolvedSetting {
+        ResolvedSetting {
+            id: id.to_string(),
+            category: "Test".to_string(),
+            name: id.to_string(),
+            description: "test".to_string(),
+            setting_type: stype,
+            default_value: value.clone(),
+            effective_value: value,
+            source: PolicySource::Default,
+            modified: None,
+            corp_locked: false,
+            enabled_by: enabled_by.map(String::from),
+            enabled: true,
+            metadata: meta,
+            collapsed: false,
+        }
+    }
+
+    // -- JSON validation (File values) --
+
+    fn file_val(path: &str, content: &str) -> SettingValue {
+        SettingValue::File { path: path.into(), content: content.into() }
+    }
+
+    #[test]
+    fn config_lint_valid_json_passes() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", r#"{"key":"val"}"#), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_malformed_json_gives_clear_error() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", "{bad json}"), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("invalid JSON")));
+    }
+
+    #[test]
+    fn config_lint_json_not_object_warns() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", "42"), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("not an object")));
+    }
+
+    #[test]
+    fn config_lint_empty_json_file_ok() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", ""), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_json_with_trailing_comma_gives_error() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", r#"{"a":1,}"#), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "error"));
+    }
+
+    #[test]
+    fn config_lint_json_with_unicode_passes() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", r#"{"name":"cafe\u0301"}"#), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_json_deeply_nested_passes() {
+        let json = r#"{"a":{"b":{"c":{"d":{"e":"deep"}}}}}"#;
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", json), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_json_huge_payload_passes() {
+        let big_val = "x".repeat(1_000_000);
+        let json = format!(r#"{{"data":"{}"}}"#, big_val);
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", &json), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_file_path_must_be_absolute() {
+        let s = make_resolved("test.file", SettingType::File, file_val("relative/path.json", "{}"), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("absolute")));
+    }
+
+    #[test]
+    fn config_lint_file_path_no_traversal() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/root/../etc/passwd", "{}"), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("..")));
+    }
+
+    #[test]
+    fn config_lint_file_unusual_path_warns() {
+        let s = make_resolved("test.file", SettingType::File, file_val("/tmp/test.json", "{}"), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("unusual")));
+    }
+
+    // -- Number validation --
+
+    #[test]
+    fn config_lint_number_in_range_ok() {
+        let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
+        let s = make_resolved("vm.cpu", SettingType::Number, SettingValue::Number(4), meta, None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_number_below_min_error() {
+        let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
+        let s = make_resolved("vm.cpu", SettingType::Number, SettingValue::Number(0), meta, None);
+        let issues = config_lint(&[s]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, "error");
+        assert!(issues[0].message.contains("below minimum"));
+    }
+
+    #[test]
+    fn config_lint_number_above_max_error() {
+        let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
+        let s = make_resolved("vm.disk", SettingType::Number, SettingValue::Number(256), meta, None);
+        let issues = config_lint(&[s]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, "error");
+        assert!(issues[0].message.contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn config_lint_number_at_boundary_ok() {
+        let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
+        let s1 = make_resolved("vm.min", SettingType::Number, SettingValue::Number(1), meta.clone(), None);
+        let s2 = make_resolved("vm.max", SettingType::Number, SettingValue::Number(128), meta, None);
+        let issues = config_lint(&[s1, s2]);
+        assert!(issues.is_empty());
+    }
+
+    // -- Choice validation --
+
+    #[test]
+    fn config_lint_valid_choice_ok() {
+        let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
+        let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("deny".into()), meta, None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_invalid_choice_error() {
+        let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
+        let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("block".into()), meta, None);
+        let issues = config_lint(&[s]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, "error");
+        assert!(issues[0].message.contains("not a valid choice"));
+    }
+
+    #[test]
+    fn config_lint_empty_choice_when_choices_defined_error() {
+        let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
+        let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("".into()), meta, None);
+        let issues = config_lint(&[s]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, "error");
+    }
+
+    #[test]
+    fn config_lint_case_sensitive_choice() {
+        let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
+        let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("Allow".into()), meta, None);
+        let issues = config_lint(&[s]);
+        assert_eq!(issues.len(), 1, "'Allow' != 'allow' -- case sensitive");
+    }
+
+    // -- API key validation --
+
+    #[test]
+    fn config_lint_apikey_with_whitespace_warns() {
+        let s = make_resolved("ai.key", SettingType::ApiKey, SettingValue::Text("sk-ant key".into()), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("whitespace")));
+    }
+
+    #[test]
+    fn config_lint_apikey_with_newline_warns() {
+        let s = make_resolved("ai.key", SettingType::ApiKey, SettingValue::Text("sk-ant\n".into()), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("whitespace")));
+    }
+
+    #[test]
+    fn config_lint_apikey_empty_when_enabled_warns() {
+        let toggle = make_resolved("ai.provider.allow", SettingType::Bool, SettingValue::Bool(true), SettingMetadata::default(), None);
+        let key = make_resolved("ai.provider.key", SettingType::ApiKey, SettingValue::Text("".into()), SettingMetadata::default(), Some("ai.provider.allow"));
+        let issues = config_lint(&[toggle, key]);
+        assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("empty")));
+    }
+
+    #[test]
+    fn config_lint_apikey_empty_when_disabled_ok() {
+        let toggle = make_resolved("ai.provider.allow", SettingType::Bool, SettingValue::Bool(false), SettingMetadata::default(), None);
+        let key = make_resolved("ai.provider.key", SettingType::ApiKey, SettingValue::Text("".into()), SettingMetadata::default(), Some("ai.provider.allow"));
+        let issues = config_lint(&[toggle, key]);
+        assert!(issues.is_empty(), "disabled provider with empty key is fine");
+    }
+
+    #[test]
+    fn config_lint_apikey_normal_value_ok() {
+        let s = make_resolved("ai.key", SettingType::ApiKey, SettingValue::Text("sk-ant-api03-valid".into()), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    // -- Text validation --
+
+    #[test]
+    fn config_lint_text_with_nul_byte_error() {
+        let s = make_resolved("t.val", SettingType::Text, SettingValue::Text("hello\0world".into()), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, "error");
+        assert!(issues[0].message.contains("invalid characters"));
+    }
+
+    #[test]
+    fn config_lint_text_normal_ok() {
+        let s = make_resolved("t.val", SettingType::Text, SettingValue::Text("hello".into()), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_text_unicode_ok() {
+        let s = make_resolved("t.val", SettingType::Text, SettingValue::Text("cafe\u{0301}".into()), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_lint_text_very_long_ok() {
+        let long_val = "x".repeat(10_000);
+        let s = make_resolved("t.val", SettingType::Text, SettingValue::Text(long_val), SettingMetadata::default(), None);
+        let issues = config_lint(&[s]);
+        assert!(issues.is_empty());
+    }
+
+    // -- Serialization roundtrip --
+
+    #[test]
+    fn config_lint_all_issues_serialize_deserialize() {
+        let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
+        let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
+        let issues = config_lint(&[s]);
+        let json = serde_json::to_string(&issues).unwrap();
+        let roundtrip: Vec<ConfigIssue> = serde_json::from_str(&json).unwrap();
+        assert_eq!(issues, roundtrip);
+    }
+
+    #[test]
+    fn config_lint_issue_messages_are_nonempty() {
+        let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
+        let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
+        let issues = config_lint(&[s]);
+        for issue in &issues {
+            assert!(!issue.message.is_empty());
+            assert!(!issue.id.is_empty());
+        }
+    }
+
+    #[test]
+    fn config_lint_issue_ids_are_valid_setting_ids() {
+        let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
+        let s = make_resolved("vm.cpu_count", SettingType::Number, SettingValue::Number(99), meta, None);
+        let issues = config_lint(&[s]);
+        for issue in &issues {
+            assert_eq!(issue.id, "vm.cpu_count");
+        }
+    }
+
+    // -- Integration --
+
+    #[test]
+    fn config_lint_default_config_has_no_errors() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let issues = config_lint(&resolved);
+        let errors: Vec<_> = issues.iter().filter(|i| i.severity == "error").collect();
+        assert!(errors.is_empty(), "default config should have no errors: {errors:?}");
+    }
+
+    #[test]
+    fn config_lint_returns_multiple_issues() {
+        let meta_num = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
+        let s1 = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta_num, None);
+        let s2 = make_resolved("v.f", SettingType::File, file_val("/root/test.json", "{bad}"), SettingMetadata::default(), None);
+        let issues = config_lint(&[s1, s2]);
+        assert!(issues.len() >= 2, "expected multiple issues: {issues:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings tree tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn settings_tree_has_top_level_groups() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let tree = build_settings_tree(&resolved);
+        assert!(!tree.is_empty(), "tree should have top-level nodes");
+        // All top-level nodes should be groups
+        for node in &tree {
+            match node {
+                SettingsNode::Group { name, .. } => {
+                    assert!(!name.is_empty());
+                }
+                SettingsNode::Leaf(_) => {
+                    panic!("top-level nodes should be groups, not leaves");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn settings_tree_contains_all_definitions() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let tree = build_settings_tree(&resolved);
+        let defs = setting_definitions();
+
+        fn collect_leaf_ids(nodes: &[SettingsNode]) -> Vec<String> {
+            let mut ids = Vec::new();
+            for node in nodes {
+                match node {
+                    SettingsNode::Leaf(s) => ids.push(s.id.clone()),
+                    SettingsNode::Group { children, .. } => {
+                        ids.extend(collect_leaf_ids(children));
+                    }
+                }
+            }
+            ids
+        }
+
+        let leaf_ids = collect_leaf_ids(&tree);
+        for def in &defs {
+            assert!(
+                leaf_ids.contains(&def.id),
+                "tree missing definition: {}",
+                def.id,
+            );
+        }
+    }
+
+    #[test]
+    fn settings_tree_groups_have_expected_names() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let tree = build_settings_tree(&resolved);
+
+        fn collect_group_names(nodes: &[SettingsNode]) -> Vec<String> {
+            let mut names = Vec::new();
+            for node in nodes {
+                if let SettingsNode::Group { name, children, .. } = node {
+                    names.push(name.clone());
+                    names.extend(collect_group_names(children));
+                }
+            }
+            names
+        }
+
+        let names = collect_group_names(&tree);
+        for expected in &["AI Providers", "Package Registries", "Guest Environment", "Network", "VM", "Appearance"] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "tree missing group: {expected}",
+            );
+        }
+    }
+
+    #[test]
+    fn settings_tree_serializes_to_json() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let tree = build_settings_tree(&resolved);
+        let json = serde_json::to_string(&tree).unwrap();
+        // Verify it round-trips
+        let _: Vec<SettingsNode> = serde_json::from_str(&json).unwrap();
+        assert!(json.contains("\"kind\":\"group\""));
+        assert!(json.contains("\"kind\":\"leaf\""));
+    }
+
+    #[test]
+    fn settings_tree_dynamic_env_appended_to_guest() {
+        let user = file_with(vec![("guest.env.EDITOR", SettingValue::Text("vim".into()))]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let tree = build_settings_tree(&resolved);
+
+        fn find_leaf_in_group(nodes: &[SettingsNode], group_name: &str, leaf_id: &str) -> bool {
+            for node in nodes {
+                if let SettingsNode::Group { name, children, .. } = node {
+                    if name == group_name {
+                        return children.iter().any(|c| match c {
+                            SettingsNode::Leaf(s) => s.id == leaf_id,
+                            SettingsNode::Group { children, .. } => {
+                                children.iter().any(|cc| match cc {
+                                    SettingsNode::Leaf(s) => s.id == leaf_id,
+                                    _ => false,
+                                })
+                            }
+                        });
+                    }
+                    if find_leaf_in_group(children, group_name, leaf_id) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        assert!(
+            find_leaf_in_group(&tree, "Guest Environment", "guest.env.EDITOR"),
+            "dynamic guest.env.EDITOR should appear in Guest Environment group",
+        );
+    }
+
+    #[test]
+    fn settings_tree_enabled_by_on_groups() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let tree = build_settings_tree(&resolved);
+
+        fn find_group(nodes: &[SettingsNode], key: &str) -> Option<SettingsNode> {
+            for node in nodes {
+                if let SettingsNode::Group { key: k, children, .. } = node {
+                    if k == key {
+                        return Some(node.clone());
+                    }
+                    if let Some(found) = find_group(children, key) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+
+        // ai.anthropic group should have enabled_by = "ai.anthropic.allow"
+        let anthropic = find_group(&tree, "ai.anthropic");
+        assert!(anthropic.is_some(), "should find ai.anthropic group");
+        if let Some(SettingsNode::Group { enabled_by, .. }) = anthropic {
+            assert_eq!(enabled_by, Some("ai.anthropic.allow".to_string()));
+        }
     }
 }

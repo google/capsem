@@ -1945,6 +1945,8 @@ fn main() {
             commands::remove_guest_env,
             commands::get_vm_state,
             commands::get_settings,
+            commands::get_settings_tree,
+            commands::lint_config,
             commands::update_setting,
             commands::get_session_info,
             commands::query_db,

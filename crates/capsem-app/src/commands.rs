@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 
-use capsem_core::net::policy_config::{self, ResolvedSetting, SettingEntry, SettingValue};
+use capsem_core::net::policy_config::{self, ConfigIssue, ResolvedSetting, SettingEntry, SettingsNode, SettingValue};
 use capsem_core::session;
 use capsem_core::{HostToGuest, encode_host_msg, validate_host_msg};
 use capsem_logger::validate_select_only;
@@ -211,6 +211,22 @@ pub async fn remove_guest_env(key: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_settings() -> Result<Vec<ResolvedSetting>, String> {
     tokio::task::spawn_blocking(policy_config::load_merged_settings)
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))
+}
+
+/// Returns the settings tree (nested groups + leaves) for the UI.
+#[tauri::command]
+pub async fn get_settings_tree() -> Result<Vec<SettingsNode>, String> {
+    tokio::task::spawn_blocking(policy_config::load_settings_tree)
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))
+}
+
+/// Validate all settings and return a list of issues.
+#[tauri::command]
+pub async fn lint_config() -> Result<Vec<ConfigIssue>, String> {
+    tokio::task::spawn_blocking(policy_config::load_merged_lint)
         .await
         .map_err(|e| format!("spawn_blocking failed: {e}"))
 }

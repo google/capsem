@@ -4,15 +4,29 @@
   import TerminalView from '../views/TerminalView.svelte';
   import AnalyticsView from '../views/AnalyticsView.svelte';
   import SettingsView from '../views/SettingsView.svelte';
+  import WizardView from '../views/WizardView.svelte';
   import { sidebarStore } from '../stores/sidebar.svelte';
+  import { settingsStore } from '../stores/settings.svelte';
   import { themeStore } from '../stores/theme.svelte';
   import { vmStore } from '../stores/vm.svelte';
   import { networkStore } from '../stores/network.svelte';
+
+  let checkedFirstRun = $state(false);
 
   onMount(() => {
     themeStore.init();
     vmStore.init();
     networkStore.start();
+    settingsStore.load();
+  });
+
+  $effect(() => {
+    if (!checkedFirstRun && !settingsStore.loading && settingsStore.tree.length > 0) {
+      checkedFirstRun = true;
+      if (settingsStore.needsSetup) {
+        sidebarStore.setView('wizard');
+      }
+    }
   });
 
   onDestroy(() => {
@@ -35,6 +49,8 @@
         <AnalyticsView />
       {:else if sidebarStore.activeView === 'settings'}
         <SettingsView />
+      {:else if sidebarStore.activeView === 'wizard'}
+        <WizardView />
       {/if}
     </div>
   </div>

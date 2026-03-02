@@ -1,5 +1,5 @@
 // Centralized SQL queries for per-session analytics.
-// All queries run against info.db via queryDb() / queryAll() / queryOne().
+// All queries run against session.db via queryDb() / queryAll() / queryOne().
 
 /** Aggregate counts from net_events. */
 export const NET_STATS_SQL = `

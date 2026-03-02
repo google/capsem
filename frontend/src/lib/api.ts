@@ -5,10 +5,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isMock, mockApi } from './mock';
 import type {
+  ConfigIssue,
   GuestConfigResponse,
   NetworkPolicyResponse,
   ResolvedSetting,
   SessionInfo,
+  SettingsNode,
   SettingValue,
   VmStateResponse,
 } from './types';
@@ -73,6 +75,16 @@ export function removeGuestEnv(key: string): Promise<void> {
 export function getSettings(): Promise<ResolvedSetting[]> {
   if (isMock) return mockApi.getSettings();
   return tauriInvoke<ResolvedSetting[]>('get_settings');
+}
+
+export function getSettingsTree(): Promise<SettingsNode[]> {
+  if (isMock) return mockApi.getSettingsTree();
+  return tauriInvoke<SettingsNode[]>('get_settings_tree');
+}
+
+export function lintConfig(): Promise<ConfigIssue[]> {
+  if (isMock) return mockApi.lintConfig();
+  return tauriInvoke<ConfigIssue[]>('lint_config');
 }
 
 export function updateSetting(id: string, value: SettingValue): Promise<void> {
