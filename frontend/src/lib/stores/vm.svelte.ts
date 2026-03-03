@@ -6,22 +6,22 @@ class VmStore {
 
   statusColor = $derived(
     this.vmState === 'running'
-      ? 'text-info'
+      ? 'text-allowed'
       : this.vmState === 'stopped' || this.vmState === 'error'
-        ? 'text-secondary'
+        ? 'text-denied'
         : this.vmState === 'not created'
           ? 'text-base-content/30'
-          : 'text-warning',
+          : 'text-caution',
   );
 
   dotColor = $derived(
     this.vmState === 'running'
-      ? 'bg-info'
+      ? 'bg-allowed'
       : this.vmState === 'stopped' || this.vmState === 'error'
-        ? 'bg-secondary'
+        ? 'bg-denied'
         : this.vmState === 'not created'
           ? 'bg-base-content/30'
-          : 'bg-warning',
+          : 'bg-caution',
   );
 
   isRunning = $derived(this.vmState === 'running');

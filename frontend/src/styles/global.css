@@ -3,7 +3,73 @@
 @source "../lib/**/*.ts";
 @source "../pages/**/*.astro";
 @source "../components/**/*.ts";
+
 @plugin "daisyui";
+
+/* --- Design tokens (see docs/design.md) --- */
+
+@theme {
+  /* Interactive (purple H=277 -- matches DaisyUI primary) */
+  --color-interactive: oklch(0.58 0.233 277);
+
+  /* Status */
+  --color-allowed: oklch(0.74 0.16 233);
+  --color-denied: oklch(0.65 0.15 300);
+  --color-caution: oklch(0.82 0.189 84);
+
+  /* Providers (brand identity) */
+  --color-provider-anthropic: oklch(0.75 0.14 60);
+  --color-provider-google: oklch(0.7 0.15 250);
+  --color-provider-openai: oklch(0.72 0.14 145);
+  --color-provider-mistral: oklch(0.65 0.2 25);
+  --color-provider-fallback: oklch(0.6 0.05 250);
+
+  /* Token types */
+  --color-token-input: oklch(0.7 0.15 250);
+  --color-token-output: oklch(0.72 0.14 145);
+  --color-token-cache: oklch(0.65 0.12 210);
+
+  /* File actions */
+  --color-file-created: oklch(0.74 0.16 233);
+  --color-file-modified: oklch(0.72 0.14 210);
+  --color-file-deleted: oklch(0.65 0.15 300);
+
+  /* JSON syntax */
+  --color-json-key: oklch(0.75 0.15 250);
+  --color-json-string: oklch(0.72 0.14 145);
+  --color-json-bool: oklch(0.7 0.16 300);
+  --color-json-number: oklch(0.75 0.14 60);
+
+  /* Span types (trace viewer) */
+  --color-span-thinking: oklch(0.7 0.15 250);   /* blue */
+  --color-span-tool: oklch(0.72 0.14 145);       /* green */
+  --color-span-answer: oklch(0.65 0.15 300);     /* purple */
+
+  /* Chart infrastructure */
+  --color-chart-grid: oklch(0.4 0.01 250 / 0.15);
+  --color-chart-label: oklch(0.6 0.02 250);
+}
+
+/* --- Component CSS var overrides --- */
+
+/* Toggle checked uses interactive */
+.toggle:checked {
+  --input-color: var(--color-interactive);
+}
+
+/* Menu active state uses interactive */
+.menu :where(li > *):where(.menu-active),
+.menu :where(li > *):is(:active) {
+  background-color: oklch(from var(--color-interactive) l c h / 0.15);
+  color: var(--color-interactive);
+}
+
+/* --- JSON syntax highlight classes (consolidated) --- */
+
+.json-key    { color: var(--color-json-key); }
+.json-string { color: var(--color-json-string); }
+.json-bool   { color: var(--color-json-bool); }
+.json-number { color: var(--color-json-number); }
 
 :root {
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,

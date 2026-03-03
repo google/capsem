@@ -22,21 +22,17 @@
 <aside class="flex-shrink-0 w-[200px] border-r border-base-300 bg-base-200/50 overflow-y-auto py-3 px-2">
   {#each groups as group, gi}
     {#if gi > 0}
-      <div class="my-2 border-t border-base-300"></div>
+      <div class="divider my-1"></div>
     {/if}
-    {#if group.items.length > 1}
-      <div class="px-2 mb-1">
-        <span class="text-[10px] font-semibold text-base-content/40 uppercase tracking-wider">{group.label}</span>
-      </div>
-    {/if}
-    <ul class="flex flex-col gap-0.5">
+    <ul class="menu menu-sm p-0">
+      {#if group.items.length > 1 && group.label}
+        <li class="menu-title text-[10px] uppercase tracking-wider">{group.label}</li>
+      {/if}
       {#each group.items as item}
         {@const isActive = active === item.id}
         <li>
           <button
-            class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors {isActive
-              ? 'bg-primary/15 text-primary font-medium'
-              : 'text-base-content/60 hover:bg-base-300 hover:text-base-content'}"
+            class="text-xs {isActive ? 'menu-active' : ''}"
             onclick={() => onSelect(item.id)}
           >
             {#if item.icon}

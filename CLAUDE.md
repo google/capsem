@@ -273,6 +273,10 @@ Walk through all four views (Console, Sessions, Network, Settings) and toggle th
 - `frontend/src/lib/mock.ts` -- fake data for browser dev mode
 - `frontend/src/lib/types.ts` -- TS types mirroring Rust IPC structs
 - `frontend/src/styles/global.css` -- Tailwind config with `@source` directives and DaisyUI plugin
+### Design System
+
+**Read `docs/design.md` before building or modifying any UI component.** It defines the color system, DaisyUI component usage policy, custom `@theme` tokens, and chart color semantics. Use the `frontend-design` skill for UI work.
+
 ### Gotchas
 
 - Tailwind v4 + `client:only` Svelte: Tailwind's Vite plugin cannot see `client:only` components in the SSR module graph. The `@source` directives in `global.css` explicitly include `.svelte` and `.ts` files.

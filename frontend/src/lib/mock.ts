@@ -2,6 +2,7 @@
 // Active when window.__TAURI_INTERNALS__ is absent.
 import type {
   ConfigIssue,
+  QueryResult,
   ResolvedSetting,
   SessionInfo,
   SettingsNode,
@@ -521,3 +522,53 @@ export const mockApi = {
   onVmStateChanged: async (_cb: (state: string) => void) => () => {},
   onTerminalSourceChanged: async (_cb: (source: string) => void) => () => {},
 };
+
+// ---------------------------------------------------------------------------
+// sql.js-backed fixture queries for mock mode
+// ---------------------------------------------------------------------------
+
+import initSqlJs, { type Database } from 'sql.js';
+
+let fixtureDb: Database | null = null;
+let fixtureLoading: Promise<Database> | null = null;
+
+async function getFixtureDb(): Promise<Database> {
+  if (fixtureDb) return fixtureDb;
+  if (fixtureLoading) return fixtureLoading;
+  fixtureLoading = (async () => {
+    const SQL = await initSqlJs({
+      locateFile: (file: string) => `/node_modules/sql.js/dist/${file}`,
+    });
+    const resp = await fetch('/fixtures/test.db');
+    const buf = await resp.arrayBuffer();
+    fixtureDb = new SQL.Database(new Uint8Array(buf));
+    return fixtureDb;
+  })();
+  return fixtureLoading;
+}
+
+function runQuery(db: Database, sql: string, params?: unknown[]): QueryResult {
+  const stmt = db.prepare(sql);
+  if (params && params.length > 0) {
+    stmt.bind(params as any);
+  }
+  const columns: string[] = stmt.getColumnNames();
+  const rows: unknown[][] = [];
+  while (stmt.step()) {
+    rows.push(stmt.get());
+  }
+  stmt.free();
+  return { columns, rows };
+}
+
+/** Run a query against the fixture session DB (test.db). */
+export async function queryFixture(sql: string, params?: unknown[]): Promise<QueryResult> {
+  const db = await getFixtureDb();
+  return runQuery(db, sql, params);
+}
+
+/** Run a query against fixture -- same DB in mock mode (no separate main.db). */
+export async function queryFixtureMain(sql: string, params?: unknown[]): Promise<QueryResult> {
+  const db = await getFixtureDb();
+  return runQuery(db, sql, params);
+}

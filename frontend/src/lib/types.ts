@@ -111,7 +111,76 @@ export interface QueryResult {
 }
 
 /** Sidebar view names. */
-export type ViewName = 'terminal' | 'settings' | 'wizard';
+export type ViewName = 'terminal' | 'stats' | 'settings' | 'wizard';
+
+/** Stats panel tab names. */
+export type StatsTab = 'models' | 'tools' | 'network' | 'files';
+
+/** Aggregated model stats (from stats bar polling). */
+export interface ModelStatsRow {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: number;
+  call_count: number;
+}
+
+/** A trace summary row (from TRACES_SQL). */
+export interface TraceSummary {
+  trace_id: string;
+  started_at: string;
+  provider: string;
+  model: string;
+  call_count: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_duration_ms: number;
+  total_cost: number;
+  total_tool_calls: number;
+  stop_reason: string | null;
+}
+
+/** A single model call within a trace. */
+export interface TraceModelCall {
+  id: number;
+  timestamp: string;
+  provider: string;
+  model: string;
+  thinking_content: string | null;
+  text_content: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  estimated_cost_usd: number;
+  stop_reason: string | null;
+}
+
+/** A tool call entry (joined from tool_calls table). */
+export interface ToolCallEntry {
+  id: number;
+  model_call_id: number;
+  call_index: number;
+  call_id: string;
+  tool_name: string;
+  arguments: string | null;
+  origin: string;
+}
+
+/** A tool response entry (joined from tool_responses table). */
+export interface ToolResponseEntry {
+  model_call_id: number;
+  call_id: string;
+  content_preview: string | null;
+  is_error: number;
+}
+
+/** A span within the trace viewer (thinking, text, or tool call). */
+export type SpanType = 'thinking' | 'text' | 'tool' | 'net_event' | 'mcp_call' | 'file_event';
+
+/** Detail panel selection. */
+export interface DetailSelection {
+  type: SpanType;
+  data: Record<string, unknown>;
+}
 
 /** Settings sub-section identifier (dynamic, derived from TOML tree). */
 export type SettingsSection = string;

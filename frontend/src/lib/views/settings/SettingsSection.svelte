@@ -176,27 +176,12 @@
   }
 </script>
 
-<style>
-  :global(.json-key) {
-    color: oklch(0.75 0.15 250); /* blue */
-  }
-  :global(.json-string) {
-    color: oklch(0.72 0.14 150); /* green-teal */
-  }
-  :global(.json-bool) {
-    color: oklch(0.7 0.16 300); /* purple */
-  }
-  :global(.json-number) {
-    color: oklch(0.75 0.14 60); /* orange */
-  }
-</style>
-
 {#snippet fileControl(s: SettingsLeaf)}
   {@const issues = settingsStore.issuesFor(s.id)}
   {@const disabled = s.corp_locked || !s.enabled}
   {@const isEditing = editingFiles.has(s.id)}
   {@const fv = fileValue(s.effective_value)}
-  <div class="rounded-md border border-base-300 bg-base-200/30 overflow-hidden">
+  <div class="card card-bordered card-compact bg-base-200/30 overflow-hidden">
     <!-- File header bar -->
     <div class="flex items-center gap-2 px-3 py-1.5 border-b border-base-300/50 bg-base-200/50">
       <svg class="size-3.5 text-base-content/40 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -205,7 +190,7 @@
         {#if isEditing}
           <input
             type="text"
-            class="text-[10px] font-mono text-base-content/50 bg-transparent border-b border-base-content/20 focus:outline-none focus:border-primary w-48 text-right px-0.5"
+            class="text-[10px] font-mono text-base-content/50 bg-transparent border-b border-base-content/20 focus:outline-none focus:border-interactive w-48 text-right px-0.5"
             value={pathDrafts.get(s.id) ?? fv.path}
             oninput={(e) => {
               const paths = new Map(pathDrafts);
@@ -218,10 +203,10 @@
         {/if}
       {/if}
       {#if s.corp_locked}
-        <span class="badge badge-xs badge-secondary">corp</span>
+        <span class="badge badge-xs bg-denied/15 text-denied">corp</span>
       {/if}
       {#if s.source === 'user'}
-        <span class="badge badge-xs badge-info badge-outline">modified</span>
+        <span class="badge badge-xs badge-outline text-file-modified">modified</span>
       {/if}
       <!-- Copy button -->
       <button
@@ -230,7 +215,7 @@
         title="Copy to clipboard"
       >
         {#if copiedId === s.id}
-          <svg class="size-3.5 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>
+          <svg class="size-3.5 text-allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>
         {:else}
           <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
         {/if}
@@ -242,7 +227,7 @@
             onclick={() => cancelEditing(s.id)}
           >Cancel</button>
           <button
-            class="btn btn-primary btn-xs"
+            class="btn bg-interactive text-white btn-xs"
             onclick={() => saveFile(s.id)}
           >Save</button>
         {:else}
@@ -272,7 +257,7 @@
     {#if issues.length > 0}
       <div class="px-3 pb-2 flex flex-col gap-0.5">
         {#each issues as issue}
-          <span class="text-xs {issue.severity === 'error' ? 'text-error' : 'text-warning'}">
+          <span class="text-xs {issue.severity === 'error' ? 'text-denied' : 'text-caution'}">
             {issue.message}
           </span>
         {/each}
@@ -293,10 +278,10 @@
         <div class="flex items-center gap-2 mb-0.5">
           <span class="text-sm font-medium">{s.name}</span>
           {#if s.corp_locked}
-            <span class="badge badge-xs badge-secondary">corp</span>
+            <span class="badge badge-xs bg-denied/15 text-denied">corp</span>
           {/if}
           {#if s.source === 'user'}
-            <span class="badge badge-xs badge-info badge-outline">modified</span>
+            <span class="badge badge-xs badge-outline text-file-modified">modified</span>
           {/if}
         </div>
         {#if s.description}
@@ -307,7 +292,7 @@
         {#if s.setting_type === 'bool'}
           <input
             type="checkbox"
-            class="toggle toggle-sm toggle-primary"
+            class="toggle toggle-sm"
             checked={s.effective_value === true}
             {disabled}
             onchange={(e) => handleUpdate(s.id, e.currentTarget.checked)}
@@ -377,7 +362,7 @@
     {#if issues.length > 0}
       <div class="mt-1 flex flex-col gap-0.5">
         {#each issues as issue}
-          <span class="text-xs {issue.severity === 'error' ? 'text-error' : 'text-warning'}">
+          <span class="text-xs {issue.severity === 'error' ? 'text-denied' : 'text-caution'}">
             {issue.message}
           </span>
         {/each}
@@ -411,13 +396,13 @@
     {@const isExpanded = expandedGroups.has(child.key) || !hasToggle}
     {@const showAdv = showAdvanced.has(child.key)}
 
-    <div class="rounded-lg border border-base-300 mb-3 overflow-hidden">
+    <div class="card card-bordered mb-3 overflow-hidden">
       <!-- Group header -->
       <div class="flex items-center gap-3 px-4 py-2.5 bg-base-200/40">
         {#if hasToggle && toggle}
           <input
             type="checkbox"
-            class="toggle toggle-sm toggle-primary"
+            class="toggle toggle-sm"
             checked={toggle.effective_value === true}
             disabled={toggle.corp_locked}
             onchange={(e) => handleUpdate(toggle.id, e.currentTarget.checked)}
@@ -429,7 +414,7 @@
         >
           <span class="text-sm font-medium">{child.name}</span>
           {#if toggle?.corp_locked}
-            <span class="badge badge-xs badge-secondary ml-1">corp</span>
+            <span class="badge badge-xs bg-denied/15 text-denied ml-1">corp</span>
           {/if}
           {#if child.description}
             <span class="text-xs text-base-content/40 ml-2">{child.description}</span>

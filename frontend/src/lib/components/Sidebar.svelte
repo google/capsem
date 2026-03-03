@@ -15,15 +15,13 @@
   class="flex flex-col flex-shrink-0 border-r border-base-300 bg-base-200 w-12 overflow-hidden"
 >
   <nav class="flex-1 py-2">
-    <ul class="flex flex-col gap-1 px-1.5">
+    <ul class="menu menu-vertical gap-1 px-1.5">
       {#each items as item}
         {@const isActive = sidebarStore.activeView === item.view}
         {@const Icon = item.icon}
         <li>
           <button
-            class="flex w-full items-center justify-center rounded-lg px-2 py-2 transition-colors {isActive
-              ? 'bg-primary/15 text-primary'
-              : 'text-base-content/60 hover:bg-base-300 hover:text-base-content'}"
+            class="flex items-center justify-center px-2 py-2 {isActive ? 'menu-active' : ''}"
             onclick={() => sidebarStore.setView(item.view)}
             title={item.label}
           >

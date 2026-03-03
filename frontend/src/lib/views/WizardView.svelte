@@ -9,7 +9,7 @@
     <p class="text-sm text-base-content/60">Get started by configuring an AI provider with an API key. You can always change this later in Settings.</p>
     <div class="flex justify-center gap-3 pt-2">
       <button
-        class="btn btn-primary btn-sm"
+        class="btn bg-interactive text-white btn-sm"
         onclick={() => {
           const first = settingsStore.sections[0] || 'AI Providers';
           sidebarStore.setSettingsSection(first);

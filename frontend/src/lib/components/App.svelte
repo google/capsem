@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Sidebar from './Sidebar.svelte';
   import TerminalView from '../views/TerminalView.svelte';
+  import StatsView from '../views/StatsView.svelte';
   import SettingsView from '../views/SettingsView.svelte';
   import WizardView from '../views/WizardView.svelte';
   import { sidebarStore } from '../stores/sidebar.svelte';
@@ -38,7 +39,9 @@
       >
         <TerminalView />
       </div>
-      {#if sidebarStore.activeView === 'settings'}
+      {#if sidebarStore.activeView === 'stats'}
+        <StatsView />
+      {:else if sidebarStore.activeView === 'settings'}
         <SettingsView />
       {:else if sidebarStore.activeView === 'wizard'}
         <WizardView />
