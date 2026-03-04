@@ -681,6 +681,7 @@ async fn setup_vsock(
     // Wait for both terminal and control connections from the guest agent.
     let mut terminal_conn = None;
     let mut control_conn = None;
+    let mut deferred_conns = Vec::new();
 
     while terminal_conn.is_none() || control_conn.is_none() {
         match vsock_manager.accept().await {
@@ -689,8 +690,9 @@ async fn setup_vsock(
                 match conn.port {
                     VSOCK_PORT_TERMINAL => terminal_conn = Some(conn),
                     VSOCK_PORT_CONTROL => control_conn = Some(conn),
-                    VSOCK_PORT_SNI_PROXY => {
-                        info!("vsock: SNI proxy connection before terminal/control ready, deferring");
+                    VSOCK_PORT_SNI_PROXY | VSOCK_PORT_FS_WATCH | VSOCK_PORT_MCP_GATEWAY => {
+                        info!("vsock: port {} connection before terminal/control ready, deferring", conn.port);
+                        deferred_conns.push(conn);
                     }
                     other => warn!("vsock: unexpected port {other}, ignoring"),
                 }
@@ -888,6 +890,43 @@ async fn setup_vsock(
     // Keep terminal/control connections alive.
     let _keep_terminal = terminal;
     let _keep_control = control;
+
+    // Process any connections that arrived during the handshake phase.
+    for conn in deferred_conns {
+        match conn.port {
+            VSOCK_PORT_SNI_PROXY => {
+                if let Some(ref config) = mitm_config {
+                    let fd = conn.fd;
+                    let config = Arc::clone(config);
+                    tokio::spawn(async move {
+                        let _conn = conn;
+                        mitm_proxy::handle_connection(fd, config).await;
+                    });
+                }
+            }
+            VSOCK_PORT_FS_WATCH => {
+                if let Some(ref config) = mitm_config {
+                    let db = Arc::clone(&config.db);
+                    let fd = conn.fd;
+                    tokio::spawn(async move {
+                        let _conn = conn;
+                        handle_fs_watch(fd, db).await;
+                    });
+                }
+            }
+            VSOCK_PORT_MCP_GATEWAY => {
+                if let Some(ref mcp) = mcp_config {
+                    let fd = conn.fd;
+                    let mcp = Arc::clone(mcp);
+                    tokio::spawn(async move {
+                        let _conn = conn;
+                        gateway::serve_mcp_session(fd, mcp).await;
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
 
     // Accept MITM proxy + fs-watch + MCP gateway connections indefinitely.
     info!("vsock: listening for proxy connections on ports 5002/5003/5005");

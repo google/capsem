@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Instant, SystemTime};
 
+use bytes::BytesMut;
 use capsem_logger::{DbWriter, Decision, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp};
 use http_body_util::Full;
 use hyper::body::Bytes;
@@ -484,11 +485,14 @@ async fn handle_request(
         .method(original_method)
         .uri(&full_path);
     for (name, value) in original_headers.iter() {
-        if name != "host" {
-            builder = builder.header(name.clone(), value.clone());
+        if name == "host" || name == "accept-encoding" {
+            continue;
         }
+        builder = builder.header(name.clone(), value.clone());
     }
     builder = builder.header("host", domain);
+    // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
+    builder = builder.header("accept-encoding", "gzip");
 
     // Track request body (boxed for consistent sender type across requests).
     // Always capture AI provider request bodies for telemetry parsing
@@ -517,10 +521,29 @@ async fn handle_request(
     // body completes (hyper 1.x keep-alive semantics).
     cached_upstream.lock().await.replace(sender);
     let resp_status = resp.status().as_u16();
-    let (resp_parts, resp_body) = resp.into_parts();
+    let (mut resp_parts, resp_body) = resp.into_parts();
 
-    // Capture response headers.
+    // Capture response headers BEFORE stripping Content-Encoding.
+    // Telemetry logs still record the original headers (useful for debugging).
     let resp_hdrs = format_headers(&resp_parts.headers);
+
+    // Decompress gzip responses -- all downstream consumers (SSE parser,
+    // body preview, telemetry) receive decompressed bytes. The guest also
+    // receives uncompressed data (vsock is local, compression unnecessary).
+    let is_gzip = resp_parts.headers.get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("gzip"))
+        .unwrap_or(false);
+
+    let resp_body: ProxyBoxBody = if is_gzip {
+        use http_body_util::BodyExt;
+        resp_parts.headers.remove("content-encoding");
+        resp_parts.headers.remove("content-length");
+        DecompressBody::new(resp_body).boxed()
+    } else {
+        use http_body_util::BodyExt;
+        resp_body.map_err(|e| -> anyhow::Error { e.into() }).boxed()
+    };
 
     // Build the response body with telemetry wrapper.
     let (inner_body, resp_kind) = if let Some(provider) = ai_provider {
@@ -701,10 +724,11 @@ impl TelemetryEmitter {
 
         self.db.write(WriteOp::NetEvent(event)).await;
 
-        // Emit ModelCall for AI providers (skip HEAD requests -- connectivity
-        // probes have no body/model/tokens and should not pollute model_calls).
+        // Emit ModelCall for AI providers -- only for actual LLM API endpoints.
+        // Skip HEAD requests (connectivity probes) and non-API paths like
+        // /api/claude_code/metrics, /v1/models, etc.
         if let Some(provider) = self.ai_provider {
-            if self.method != "HEAD" {
+            if self.method != "HEAD" && is_llm_api_path(provider, &self.path) {
                 self.emit_model_call(provider, bytes_sent, bytes_received, duration_ms, &ai_state_ref).await;
             }
         }
@@ -1025,6 +1049,160 @@ where
 
     fn size_hint(&self) -> hyper::body::SizeHint {
         self.inner.size_hint()
+    }
+}
+
+// ── Gzip decompression body wrapper ──────────────────────────────
+//
+// Pipeline: Body -> BodyStream (Stream adapter) -> StreamReader -> GzipDecoder
+//
+// This is the same pattern used by reqwest and tower-http for transparent
+// gzip decompression.  async-compression's GzipDecoder correctly handles
+// RFC 1952 gzip headers, CRC-32 verification, and multi-member streams.
+
+/// Adapts a `hyper::body::Body` into a `futures::Stream<Item = Result<Bytes, io::Error>>`.
+///
+/// Extracts data frames and converts errors to `io::Error` so the stream
+/// can feed into `tokio_util::io::StreamReader`.
+struct BodyStream<B> {
+    body: B,
+}
+
+impl<B> BodyStream<B> {
+    fn new(body: B) -> Self {
+        Self { body }
+    }
+}
+
+impl<B> futures::Stream for BodyStream<B>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+    B::Error: Into<anyhow::Error>,
+{
+    type Item = Result<Bytes, io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match Pin::new(&mut self.body).poll_frame(cx) {
+                Poll::Ready(Some(Ok(frame))) => {
+                    if let Ok(data) = frame.into_data() {
+                        return Poll::Ready(Some(Ok(data)));
+                    }
+                    // Non-data frame (trailers) -- skip and poll again.
+                    continue;
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    let err: anyhow::Error = e.into();
+                    return Poll::Ready(Some(Err(io::Error::new(io::ErrorKind::Other, err))));
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+/// Streaming gzip decompression wrapper for hyper bodies.
+///
+/// Transparently decompresses gzip-encoded upstream responses so all
+/// downstream consumers (SSE parser, body preview, telemetry) receive
+/// plain bytes.  The guest also gets uncompressed data (vsock is local,
+/// compression is unnecessary).
+struct DecompressBody<B: hyper::body::Body<Data = Bytes> + Unpin> {
+    decoder: async_compression::tokio::bufread::GzipDecoder<
+        tokio_util::io::StreamReader<BodyStream<B>, Bytes>,
+    >,
+    buf: BytesMut,
+    done: bool,
+}
+
+impl<B> DecompressBody<B>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+    B::Error: Into<anyhow::Error>,
+{
+    fn new(body: B) -> Self {
+        let stream = BodyStream::new(body);
+        let reader = tokio_util::io::StreamReader::new(stream);
+        let decoder = async_compression::tokio::bufread::GzipDecoder::new(reader);
+        Self {
+            decoder,
+            buf: BytesMut::with_capacity(8192),
+            done: false,
+        }
+    }
+}
+
+impl<B> hyper::body::Body for DecompressBody<B>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+    B::Error: Into<anyhow::Error>,
+{
+    type Data = Bytes;
+    type Error = anyhow::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        if this.done {
+            return Poll::Ready(None);
+        }
+
+        // Reserve space for the next read.
+        this.buf.reserve(8192);
+
+        match tokio_util::io::poll_read_buf(Pin::new(&mut this.decoder), cx, &mut this.buf) {
+            Poll::Ready(Ok(0)) => {
+                this.done = true;
+                if this.buf.is_empty() {
+                    Poll::Ready(None)
+                } else {
+                    Poll::Ready(Some(Ok(hyper::body::Frame::data(this.buf.split().freeze()))))
+                }
+            }
+            Poll::Ready(Ok(_n)) => {
+                Poll::Ready(Some(Ok(hyper::body::Frame::data(this.buf.split().freeze()))))
+            }
+            Poll::Ready(Err(e)) => {
+                Poll::Ready(Some(Err(anyhow::Error::new(e))))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.done
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        // After decompression, size is unknown.
+        hyper::body::SizeHint::default()
+    }
+}
+
+/// Returns true only for paths that are actual LLM API endpoints
+/// (generation, embeddings, audio -- anything billed per token/request).
+fn is_llm_api_path(provider: ProviderKind, path: &str) -> bool {
+    match provider {
+        ProviderKind::Anthropic => {
+            path.starts_with("/v1/messages")
+                || path.starts_with("/v1/complete")
+        }
+        ProviderKind::OpenAi => {
+            path.starts_with("/v1/chat/completions")
+                || path.starts_with("/v1/responses")
+                || path.starts_with("/v1/completions")
+                || path.starts_with("/v1/embeddings")
+                || path.starts_with("/v1/audio")
+        }
+        ProviderKind::Google => {
+            path.contains(":generateContent")
+                || path.contains(":streamGenerateContent")
+                || path.contains(":embedContent")
+                || path.contains(":batchEmbedContents")
+        }
     }
 }
 

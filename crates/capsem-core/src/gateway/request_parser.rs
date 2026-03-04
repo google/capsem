@@ -8,6 +8,16 @@
 
 use super::provider::ProviderKind;
 
+/// Fallback for truncated JSON: search for "model":"..." in the first few KB
+/// using a simple byte scan.
+fn extract_model_field(body: &[u8]) -> Option<String> {
+    let s = String::from_utf8_lossy(body);
+    // Look for "model": "..." or "model":"..."
+    let pattern = r#""model"\s*:\s*"([^"]+)""#;
+    let re = regex::Regex::new(pattern).ok()?;
+    re.captures(&s).and_then(|cap| cap.get(1)).map(|m| m.as_str().to_string())
+}
+
 /// Metadata extracted from an inbound LLM API request body.
 #[derive(Debug, Clone, Default)]
 pub struct RequestMeta {
@@ -112,7 +122,12 @@ mod anthropic_wire {
 
 fn parse_anthropic(body: &[u8]) -> RequestMeta {
     let Ok(req) = serde_json::from_slice::<anthropic_wire::Request>(body) else {
-        return RequestMeta::default();
+        // Fallback for truncated JSON: try to extract the model name
+        // so we at least have that metadata for the trace.
+        return RequestMeta {
+            model: extract_model_field(body),
+            ..Default::default()
+        };
     };
 
     let system_prompt_preview = req.system.as_ref().map(|s| {
@@ -219,7 +234,11 @@ mod openai_wire {
 
 fn parse_openai(body: &[u8]) -> RequestMeta {
     let Ok(req) = serde_json::from_slice::<openai_wire::Request>(body) else {
-        return RequestMeta::default();
+        // Fallback for truncated JSON
+        return RequestMeta {
+            model: extract_model_field(body),
+            ..Default::default()
+        };
     };
 
     // Messages can come from `messages` (Chat Completions) or `input` (Responses API)
@@ -381,6 +400,29 @@ fn parse_google(body: &[u8]) -> RequestMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extract_model_field() {
+        let body = br#"{"model":"claude-3-opus-20240229","messages":[]}"#;
+        assert_eq!(extract_model_field(body), Some("claude-3-opus-20240229".to_string()));
+
+        let truncated = br#"{"model": "gpt-4o", "messages": [{"role": "user", "content": "..."#;
+        assert_eq!(extract_model_field(truncated), Some("gpt-4o".to_string()));
+
+        let spaced = br#"{ "model" : "test-model" }"#;
+        assert_eq!(extract_model_field(spaced), Some("test-model".to_string()));
+
+        let none = br#"{"messages":[]}"#;
+        assert_eq!(extract_model_field(none), None);
+    }
+
+    #[test]
+    fn test_truncated_json_fallback() {
+        let truncated = br#"{"model": "claude-3-5-sonnet-20240620", "messages": [{"role": "user", "con"#;
+        let meta = parse_request(ProviderKind::Anthropic, truncated);
+        assert_eq!(meta.model.as_deref(), Some("claude-3-5-sonnet-20240620"));
+        assert_eq!(meta.messages_count, 0); // parsing failed, but model was extracted
+    }
 
     // ── Anthropic ───────────────────────────────────────────────────
 
