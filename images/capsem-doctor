@@ -7,7 +7,7 @@
 #   capsem-doctor -x           # stop on first failure
 
 set -o pipefail
-export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export PATH=/root/.npm-global/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 TESTS_DIR="/usr/local/lib/capsem-tests"
 

@@ -10,7 +10,7 @@ class StatsStore {
   toolCount = $state(0);
 
   // View state.
-  activeTab = $state<StatsTab>('models');
+  activeTab = $state<StatsTab>('ai');
 
   private interval: ReturnType<typeof setInterval> | null = null;
 

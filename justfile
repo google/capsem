@@ -31,7 +31,7 @@ test: _ensure-tools
     cd frontend && pnpm run check && pnpm run build
 
 # Full validation: test + capsem-doctor + integration test + bench (boots VM)
-full-test: test _sign
+full-test: test _pack-initrd _sign
     @echo ""
     @echo "=== capsem-doctor ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
@@ -171,8 +171,12 @@ _pack-initrd:
     chmod 555 capsem-mcp-server
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-fs-watch" capsem-fs-watch
     chmod 555 capsem-fs-watch
+    cp "$ROOT/images/capsem-doctor" capsem-doctor
+    chmod 755 capsem-doctor
+    rm -rf diagnostics
+    cp -r "$ROOT/images/diagnostics" diagnostics
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
     (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
-    echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch)"
+    echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch + doctor)"

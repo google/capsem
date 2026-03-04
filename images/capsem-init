@@ -179,6 +179,18 @@ else
     echo "[capsem-init] WARNING: capsem-fs-watch not found, no file telemetry"
 fi
 
+# Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).
+# Overwrites rootfs copies via the overlayfs upper layer.
+if [ -x /capsem-doctor ]; then
+    cp /capsem-doctor /newroot/usr/local/bin/capsem-doctor
+    chmod 755 /newroot/usr/local/bin/capsem-doctor
+    echo "[capsem-init] capsem-doctor deployed"
+fi
+if [ -d /diagnostics ]; then
+    cp -a /diagnostics/* /newroot/usr/local/lib/capsem-tests/
+    echo "[capsem-init] diagnostics deployed"
+fi
+
 # Increase open file descriptor limit to prevent EMFILE/Errno 24 crashes
 ulimit -n 65536
 
@@ -187,7 +199,7 @@ ulimit -n 65536
 export TERM=xterm-256color
 export COLORTERM=truecolor
 export HOME=/root
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/root/.npm-global/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LANG=C
 
 # Signal to AI CLIs that we are inside a sandbox (allows root + bypass permissions).

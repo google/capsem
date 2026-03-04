@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- AI stats tab: unified model analytics with stat cards (total calls, tokens, cost, models), model usage chart, token breakdown, cost-over-time, and provider distribution
+- `StatCards.svelte` reusable component for stat card rows across all analytics tabs
+- Chart color system (`css-var.ts`): provider hue families, model color assignment, file action colors, server palette -- all using oklch() constants (no CSS var lookups)
+- LayerChart v2 API documentation (`docs/libs/layercharts.md`) for LLM-friendly chart development
+
+### Changed
+- Stats "Models" tab renamed to "Model" (AITab.svelte replaces ModelsTab.svelte)
+- Network, Tools, and Files stats tabs rebuilt with LayerChart v2 simplified chart components (BarChart, PieChart) replacing raw D3/Chart.js primitives
+- SQL queries expanded: per-model token/cost breakdowns, provider distribution, cost-over-time, tool success rates, file action breakdowns
+- Wizard auto-show on first run removed (setup wizard is still accessible from sidebar)
+
+### Fixed
+- capsem-doctor PATH: writable bin dirs (`/root/.npm-global/bin`, `/root/.local/bin`) now included so AI CLIs and npm globals are found
+- Gemini CLI settings.json: added `homeDirectoryWarningDismissed` and `sessionRetention` to suppress first-run prompts
+- AI provider domain-blocked test now skips when the provider is explicitly enabled by policy
+- Integration test handles compressed session DBs (`session.db.gz`) after vacuum
+- Integration test accepts `vacuumed` as valid terminal session status
+
+### Changed
+- capsem-doctor and diagnostics are now repacked into the initrd, so changes take effect with `just run` instead of requiring `just build-assets`
+- `just full-test` now includes initrd repack to ensure latest guest code is deployed
+
+### Added
 - `config_lint()` function: validates all settings (JSON files, number ranges, choices, API key format, nul bytes, URL format) with clear human-readable error messages displayed inline in the settings UI
 - `SettingsNode` tree API: backend exposes the TOML settings hierarchy as a nested tree with resolved values at leaves, replacing the flat list for UI rendering
 - `get_settings_tree` and `lint_config` Tauri commands for the new tree-based settings UI

@@ -21,9 +21,6 @@
   $effect(() => {
     if (!checkedFirstRun && !settingsStore.loading && settingsStore.tree.length > 0) {
       checkedFirstRun = true;
-      if (settingsStore.needsSetup) {
-        sidebarStore.setView('wizard');
-      }
     }
   });
 </script>

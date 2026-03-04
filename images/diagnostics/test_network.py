@@ -299,12 +299,14 @@ def test_post_to_random_domain_denied():
     assert "403" in result.stdout or result.returncode != 0, "POST to denied domain should return 403 or fail"
 
 
-@pytest.mark.parametrize("domain", [
-    "api.anthropic.com",
-    "api.openai.com",
+@pytest.mark.parametrize("domain,env_var", [
+    ("api.anthropic.com", "CAPSEM_ANTHROPIC_ALLOWED"),
+    ("api.openai.com", "CAPSEM_OPENAI_ALLOWED"),
 ])
-def test_ai_provider_domain_blocked(domain):
-    """AI provider domains must be blocked at the MITM proxy (403 or refused)."""
+def test_ai_provider_domain_blocked(domain, env_var):
+    """AI provider domains must be blocked unless explicitly allowed by policy."""
+    if os.environ.get(env_var) == "1":
+        pytest.skip(f"{domain} allowed by policy ({env_var}=1)")
     result = run(
         f"curl -skI --connect-timeout 10 https://{domain} 2>&1",
         timeout=20,

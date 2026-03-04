@@ -71,6 +71,62 @@ export const TRACE_TOOL_RESPONSES_SQL = `
   WHERE mc.trace_id = ?
 `;
 
+// -- Tools tab (charts) -----------------------------------------------------
+
+export const TOOLS_STATS_SQL = `
+  SELECT
+    (SELECT COUNT(*) FROM tool_calls) + (SELECT COUNT(*) FROM mcp_calls) as total,
+    (SELECT COUNT(*) FROM tool_calls) as native,
+    (SELECT COUNT(*) FROM mcp_calls) as mcp,
+    (SELECT COUNT(*) FROM mcp_calls WHERE decision = 'allowed') as allowed,
+    (SELECT COUNT(*) FROM mcp_calls WHERE decision != 'allowed') as denied
+`;
+
+export const TOOLS_TOP_TOOLS_SQL = `
+  SELECT tool_name, cnt, source FROM (
+    SELECT tc.tool_name, COUNT(*) as cnt, 'native' as source
+    FROM tool_calls tc
+    GROUP BY tc.tool_name
+    UNION ALL
+    SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
+    FROM mcp_calls
+    WHERE tool_name IS NOT NULL
+    GROUP BY tool_name
+  )
+  ORDER BY cnt DESC
+  LIMIT 10
+`;
+
+export const TOOLS_TOP_SERVERS_SQL = `
+  SELECT server_name, COUNT(*) as cnt
+  FROM mcp_calls
+  GROUP BY server_name
+  ORDER BY cnt DESC
+  LIMIT 8
+`;
+
+export const TOOLS_OVER_TIME_SQL = `
+  WITH all_calls AS (
+    SELECT mc.timestamp, 'native' as source
+    FROM tool_calls tc
+    JOIN model_calls mc ON tc.model_call_id = mc.id
+    UNION ALL
+    SELECT timestamp, 'mcp' as source
+    FROM mcp_calls
+  ),
+  numbered AS (
+    SELECT source,
+      (ROW_NUMBER() OVER (ORDER BY timestamp) - 1) / 5 as bucket
+    FROM all_calls
+  )
+  SELECT bucket,
+    SUM(CASE WHEN source = 'native' THEN 1 ELSE 0 END) as native,
+    SUM(CASE WHEN source = 'mcp' THEN 1 ELSE 0 END) as mcp
+  FROM numbered
+  GROUP BY bucket
+  ORDER BY bucket
+`;
+
 // -- Tools tab (unified native + MCP) ----------------------------------------
 
 export const TOOLS_UNIFIED_SQL = `
@@ -122,7 +178,111 @@ export const TOOLS_UNIFIED_SEARCH_SQL = `
   ORDER BY timestamp DESC
 `;
 
-// -- Network tab -----------------------------------------------------------
+// -- AI tab (charts) -------------------------------------------------------
+
+export const AI_USAGE_PER_PROVIDER_SQL = `
+  SELECT provider,
+    COALESCE(SUM(input_tokens), 0) as input_tokens,
+    COALESCE(SUM(output_tokens), 0) as output_tokens,
+    COALESCE(SUM(estimated_cost_usd), 0.0) as cost,
+    COUNT(*) as call_count
+  FROM model_calls
+  GROUP BY provider
+  ORDER BY cost DESC
+`;
+
+export const AI_TOKENS_OVER_TIME_SQL = `
+  WITH numbered AS (
+    SELECT id, provider,
+      COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) as tokens,
+      (ROW_NUMBER() OVER (ORDER BY id) - 1) / 5 as bucket
+    FROM model_calls
+  )
+  SELECT bucket, provider, SUM(tokens) as tokens
+  FROM numbered
+  GROUP BY bucket, provider
+  ORDER BY bucket, provider
+`;
+
+export const AI_TOKENS_OVER_TIME_BY_MODEL_SQL = `
+  SELECT id as bucket,
+    COALESCE(model, 'unknown') as model,
+    COALESCE(provider, 'unknown') as provider,
+    COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) as tokens
+  FROM model_calls
+  WHERE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) > 0
+  ORDER BY id
+`;
+
+export const AI_COST_OVER_TIME_SQL = `
+  WITH numbered AS (
+    SELECT id, provider,
+      COALESCE(estimated_cost_usd, 0.0) as cost,
+      (ROW_NUMBER() OVER (ORDER BY id) - 1) / 5 as bucket
+    FROM model_calls
+  )
+  SELECT bucket, provider, SUM(cost) as cost
+  FROM numbered
+  GROUP BY bucket, provider
+  ORDER BY bucket, provider
+`;
+
+export const AI_MODEL_USAGE_SQL = `
+  SELECT model,
+    COALESCE(provider, 'unknown') as provider,
+    COALESCE(SUM(input_tokens), 0) as input_tokens,
+    COALESCE(SUM(output_tokens), 0) as output_tokens,
+    COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) as tokens,
+    COALESCE(SUM(estimated_cost_usd), 0.0) as cost,
+    COUNT(*) as call_count
+  FROM model_calls
+  GROUP BY model
+  ORDER BY tokens DESC
+`;
+
+// -- Network tab (charts) --------------------------------------------------
+
+export const NET_STATS_SQL = `
+  SELECT
+    COUNT(*) as total,
+    SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END) as allowed,
+    SUM(CASE WHEN decision != 'allowed' THEN 1 ELSE 0 END) as denied,
+    COALESCE(AVG(duration_ms), 0) as avg_latency
+  FROM net_events
+`;
+
+export const NET_REQUESTS_OVER_TIME_SQL = `
+  WITH numbered AS (
+    SELECT id, decision,
+      (ROW_NUMBER() OVER (ORDER BY id) - 1) / 3 as bucket
+    FROM net_events
+  )
+  SELECT bucket,
+    SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END) as allowed,
+    SUM(CASE WHEN decision != 'allowed' THEN 1 ELSE 0 END) as denied
+  FROM numbered
+  GROUP BY bucket
+  ORDER BY bucket
+`;
+
+export const NET_METHODS_SQL = `
+  SELECT COALESCE(method, 'CONNECT') as method, COUNT(*) as cnt
+  FROM net_events
+  GROUP BY method
+  ORDER BY cnt DESC
+`;
+
+export const NET_TOP_DOMAINS_SQL = `
+  SELECT domain,
+    SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END) as allowed,
+    SUM(CASE WHEN decision != 'allowed' THEN 1 ELSE 0 END) as denied
+  FROM net_events
+  GROUP BY domain
+  ORDER BY COUNT(*) DESC
+  LIMIT 8
+`;
+
+// -- Network tab (event list) ----------------------------------------------
 
 export const NET_EVENTS_ALL_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
@@ -141,7 +301,37 @@ export const NET_EVENTS_SEARCH_SQL = `
   ORDER BY id DESC
 `;
 
-// -- Files tab -------------------------------------------------------------
+// -- Files tab (charts) ----------------------------------------------------
+
+export const FILE_STATS_SQL = `
+  SELECT
+    COUNT(*) as total,
+    SUM(CASE WHEN action = 'created' THEN 1 ELSE 0 END) as created,
+    SUM(CASE WHEN action = 'modified' THEN 1 ELSE 0 END) as modified,
+    SUM(CASE WHEN action = 'deleted' THEN 1 ELSE 0 END) as deleted
+  FROM fs_events
+`;
+
+export const FILE_ACTIONS_SQL = `
+  SELECT action, COUNT(*) as cnt
+  FROM fs_events
+  GROUP BY action
+  ORDER BY cnt DESC
+`;
+
+export const FILE_EVENTS_OVER_TIME_SQL = `
+  WITH numbered AS (
+    SELECT id, action,
+      (ROW_NUMBER() OVER (ORDER BY id) - 1) / 10 as bucket
+    FROM fs_events
+  )
+  SELECT bucket, action, COUNT(*) as cnt
+  FROM numbered
+  GROUP BY bucket, action
+  ORDER BY bucket, action
+`;
+
+// -- Files tab (event list) ------------------------------------------------
 
 export const FILE_EVENTS_ALL_SQL = `
   SELECT id, timestamp, action, path, size

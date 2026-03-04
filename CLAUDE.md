@@ -176,6 +176,8 @@ The `capsem-doctor` suite runs inside the guest VM to verify sandbox integrity, 
 - `capsem-net-proxy` -- TCP-to-vsock relay for air-gapped HTTPS proxying
 - `capsem-mcp-server` -- MCP stdio-to-vsock relay for AI agent tool access
 - `capsem-fs-watch` -- inotify file watcher daemon for filesystem telemetry
+- `capsem-doctor` -- VM self-diagnostic suite (bash script)
+- `diagnostics/` -- pytest test files for capsem-doctor
 
 **When adding a new guest binary**, update three places:
 1. `_pack-initrd` recipe in `justfile` -- add the cross-compile + copy step
@@ -183,8 +185,8 @@ The `capsem-doctor` suite runs inside the guest VM to verify sandbox integrity, 
 3. This section in `CLAUDE.md` -- add it to the list above
 
 **When to use which:**
-- `just run` -- changed `capsem-init`, `capsem-agent`, or any repacked binary (~10s)
-- `just build-assets` -- changed `Dockerfile.rootfs`, `capsem-bashrc`, `diagnostics/`, installed packages, or added new rootfs files (minutes)
+- `just run` -- changed `capsem-init`, `capsem-agent`, `capsem-doctor`, `diagnostics/`, or any repacked binary (~10s)
+- `just build-assets` -- changed `Dockerfile.rootfs`, `capsem-bashrc`, installed packages, or added new rootfs files (minutes)
 
 ## Guest Binary Security
 
@@ -276,6 +278,22 @@ Walk through all four views (Console, Sessions, Network, Settings) and toggle th
 ### Design System
 
 **Read `docs/design.md` before building or modifying any UI component.** It defines the color system, DaisyUI component usage policy, custom `@theme` tokens, and chart color semantics. Use the `frontend-design` skill for UI work.
+
+### Chart Library (LayerChart v2)
+
+Charts use [LayerChart](https://layerchart.com) v2 -- a composable Svelte charting library built on D3. **Full API docs are in `docs/libs/layercharts.md`** -- read it before building or modifying any chart component.
+
+**Simplified chart components** (preferred for common patterns):
+- `BarChart` -- vertical/horizontal bars, stacked/grouped series
+- `PieChart` -- pie/donut charts with series support
+- `AreaChart`, `LineChart` -- time-series and continuous data
+
+**Key patterns used in stats views:**
+- `series` prop: array of `{ key, label, color }` for multi-series charts
+- `seriesLayout="stack"` for stacked bar charts
+- `orientation="horizontal"` for horizontal bar charts
+- `props={{ legend: { placement: 'bottom' } }}` for chart sub-component props
+- Colors come from `css-var.ts` (never hardcoded in templates)
 
 ### Gotchas
 

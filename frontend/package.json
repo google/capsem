@@ -15,7 +15,7 @@
     "@xterm/addon-fit": "^0.11",
     "@xterm/addon-webgl": "^0.19",
     "@xterm/xterm": "^6",
-    "chart.js": "^4.5.1",
+    "layerchart": "2.0.0-next.46",
     "sql.js": "^1.14.0"
   },
   "devDependencies": {

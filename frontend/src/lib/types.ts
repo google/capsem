@@ -114,7 +114,7 @@ export interface QueryResult {
 export type ViewName = 'terminal' | 'stats' | 'settings' | 'wizard';
 
 /** Stats panel tab names. */
-export type StatsTab = 'models' | 'tools' | 'network' | 'files';
+export type StatsTab = 'ai' | 'tools' | 'network' | 'files';
 
 /** Aggregated model stats (from stats bar polling). */
 export interface ModelStatsRow {

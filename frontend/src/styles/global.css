@@ -3,12 +3,17 @@
 @source "../lib/**/*.ts";
 @source "../pages/**/*.astro";
 @source "../components/**/*.ts";
+@source "../../node_modules/layerchart/dist/**/*.svelte";
 
 @plugin "daisyui";
 
 /* --- Design tokens (see docs/design.md) --- */
 
 @theme {
+  /* Layerchart surface colors (mapped to DaisyUI base palette) */
+  --color-surface-content: var(--color-base-content);
+  --color-surface-100: var(--color-base-100);
+
   /* Interactive (purple H=277 -- matches DaisyUI primary) */
   --color-interactive: oklch(0.58 0.233 277);
 
@@ -31,7 +36,7 @@
 
   /* File actions */
   --color-file-created: oklch(0.74 0.16 233);
-  --color-file-modified: oklch(0.72 0.14 210);
+  --color-file-modified: oklch(0.72 0.14 185);
   --color-file-deleted: oklch(0.65 0.15 300);
 
   /* JSON syntax */
