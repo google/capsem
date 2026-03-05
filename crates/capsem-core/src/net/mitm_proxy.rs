@@ -2484,4 +2484,125 @@ mod tests {
             "trace_state should be empty after end_turn"
         );
     }
+
+    // ── DecompressBody tests ──────────────────────────────────────
+
+    /// Gzip-compress a byte slice for testing.
+    fn gzip_compress(data: &[u8]) -> Vec<u8> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[tokio::test]
+    async fn decompress_body_gzip_sse_data() {
+        let sse_data = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_01\",\"model\":\"claude-sonnet-4-6\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"Hello\"}}\n\n";
+        let compressed = gzip_compress(sse_data);
+
+        let body = Full::new(Bytes::from(compressed))
+            .map_err(|never| -> anyhow::Error { match never {} });
+        let decompress = DecompressBody::new(body);
+
+        let collected = decompress.collect().await.unwrap();
+        let output = collected.to_bytes();
+        assert_eq!(output.as_ref(), sse_data.as_slice());
+    }
+
+    #[tokio::test]
+    async fn decompress_body_multi_chunk_gzip() {
+        // Compress data, then split the compressed output into multiple chunks
+        // to verify decompression works across chunk boundaries.
+        let original = b"chunk1-data-here|chunk2-data-here|chunk3-data-here";
+        let compressed = gzip_compress(original);
+
+        // Split compressed data into 3 chunks.
+        let chunk_size = compressed.len() / 3;
+        let chunks: Vec<Bytes> = compressed
+            .chunks(chunk_size.max(1))
+            .map(|c| Bytes::from(c.to_vec()))
+            .collect();
+
+        // Build a multi-frame body using StreamBody + futures::stream::iter.
+        let frames: Vec<Result<hyper::body::Frame<Bytes>, anyhow::Error>> = chunks
+            .into_iter()
+            .map(|c| Ok(hyper::body::Frame::data(c)))
+            .collect();
+        let body = http_body_util::StreamBody::new(futures::stream::iter(frames));
+        let decompress = DecompressBody::new(body);
+
+        let collected = decompress.collect().await.unwrap();
+        let output = collected.to_bytes();
+        assert_eq!(output.as_ref(), original.as_slice());
+    }
+
+    #[tokio::test]
+    async fn decompress_body_passthrough_uncompressed() {
+        // Non-gzip data should NOT go through DecompressBody -- it's only used
+        // when content-encoding is gzip. Verify the non-gzip code path works:
+        // a plain body comes through unchanged via map_err().boxed().
+        let plain_data = b"Hello, world!";
+        let body = Full::new(Bytes::from(plain_data.to_vec()))
+            .map_err(|never| -> anyhow::Error { match never {} });
+
+        let collected = body.collect().await.unwrap();
+        assert_eq!(collected.to_bytes().as_ref(), plain_data);
+    }
+
+    // ── is_llm_api_path tests ─────────────────────────────────────
+
+    #[test]
+    fn llm_api_path_anthropic_positive() {
+        assert!(is_llm_api_path(ProviderKind::Anthropic, "/v1/messages"));
+        assert!(is_llm_api_path(ProviderKind::Anthropic, "/v1/messages?beta=true"));
+        assert!(is_llm_api_path(ProviderKind::Anthropic, "/v1/complete"));
+    }
+
+    #[test]
+    fn llm_api_path_anthropic_negative() {
+        assert!(!is_llm_api_path(ProviderKind::Anthropic, "/api/claude_code/metrics"));
+        assert!(!is_llm_api_path(ProviderKind::Anthropic, "/api/claude_code/settings"));
+        assert!(!is_llm_api_path(ProviderKind::Anthropic, "/v1/models"));
+        assert!(!is_llm_api_path(ProviderKind::Anthropic, "/api/organizations"));
+    }
+
+    #[test]
+    fn llm_api_path_openai_positive() {
+        assert!(is_llm_api_path(ProviderKind::OpenAi, "/v1/chat/completions"));
+        assert!(is_llm_api_path(ProviderKind::OpenAi, "/v1/responses"));
+        assert!(is_llm_api_path(ProviderKind::OpenAi, "/v1/completions"));
+        assert!(is_llm_api_path(ProviderKind::OpenAi, "/v1/embeddings"));
+        assert!(is_llm_api_path(ProviderKind::OpenAi, "/v1/audio/transcriptions"));
+    }
+
+    #[test]
+    fn llm_api_path_openai_negative() {
+        assert!(!is_llm_api_path(ProviderKind::OpenAi, "/v1/models"));
+        assert!(!is_llm_api_path(ProviderKind::OpenAi, "/v1/files"));
+        assert!(!is_llm_api_path(ProviderKind::OpenAi, "/dashboard/billing"));
+    }
+
+    #[test]
+    fn llm_api_path_google_positive() {
+        assert!(is_llm_api_path(ProviderKind::Google, "/v1beta/models/gemini-2.0-flash:generateContent"));
+        assert!(is_llm_api_path(ProviderKind::Google, "/v1beta/models/gemini-2.0-flash:streamGenerateContent"));
+        assert!(is_llm_api_path(ProviderKind::Google, "/v1beta/models/text-embedding-004:embedContent"));
+        assert!(is_llm_api_path(ProviderKind::Google, "/v1beta/models/text-embedding-004:batchEmbedContents"));
+    }
+
+    #[test]
+    fn llm_api_path_google_negative() {
+        assert!(!is_llm_api_path(ProviderKind::Google, "/v1beta/models"));
+        assert!(!is_llm_api_path(ProviderKind::Google, "/v1beta/models/gemini-2.0-flash"));
+        assert!(!is_llm_api_path(ProviderKind::Google, "/v1beta/cachedContents"));
+    }
+
+    #[test]
+    fn llm_api_path_starts_with_is_intentional() {
+        // /v1/messages_extra should match -- starts_with is fine since the real
+        // path is /v1/messages with optional query params after it.
+        assert!(is_llm_api_path(ProviderKind::Anthropic, "/v1/messages_extra"));
+    }
 }

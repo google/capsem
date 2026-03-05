@@ -37,6 +37,9 @@ pin-project-lite = "0.2"
 reqwest = { workspace = true }
 futures = { workspace = true }
 tokio-stream = { workspace = true }
+async-compression = { workspace = true }
+tokio-util = { workspace = true }
+bytes = "1"
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
