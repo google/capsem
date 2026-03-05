@@ -10,6 +10,39 @@ permissions:
   id-token: write
 
 jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        run: cargo test --workspace
+
+      - name: Cross-compile guest binaries
+        run: cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent
+
+      - name: Frontend type-check and build
+        run: cd frontend && pnpm run check && pnpm run build
+
   build-assets:
     runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
     steps:
@@ -38,7 +71,7 @@ jobs:
           path: assets/
 
   build-app:
-    needs: build-assets
+    needs: [test, build-assets]  # Tests must pass before we package a release
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
