@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Thin DMG distribution: rootfs excluded from app bundle, downloaded on first launch via asset manager with blake3 hash verification
+- Asset manager (`asset_manager.rs`): checks, downloads, and verifies VM assets from GitHub Releases with streaming progress
+- Download progress UI: full-screen progress bar shown during first-launch rootfs download
+- CLI download support: `capsem "command"` auto-downloads rootfs with stderr progress if missing
+- Squashfs support: boot_vm accepts both rootfs.squashfs (new) and rootfs.img (legacy) formats
+- Release workflow uploads rootfs.squashfs as separate GitHub Release asset alongside the thin DMG
+- Onboarding plan (`docs/onboarding.md`): first-launch wizard scope for credentials, MCP config, and guided setup
 - AI stats tab: unified model analytics with stat cards (total calls, tokens, cost, models), model usage chart, token breakdown, cost-over-time, and provider distribution
 - `StatCards.svelte` reusable component for stat card rows across all analytics tabs
 - Chart color system (`css-var.ts`): provider hue families, model color assignment, file action colors, server palette -- all using oklch() constants (no CSS var lookups)

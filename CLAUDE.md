@@ -220,6 +220,25 @@ When bumping the version, update both:
 1. `workspace.package.version` in `/Cargo.toml`
 2. `version` in `crates/capsem-app/tauri.conf.json`
 
+## CI Secrets (GitHub Actions)
+
+All secrets are set on the repo and used by `release.yaml`:
+
+| Secret | Purpose |
+|--------|---------|
+| `APPLE_CERTIFICATE` | Base64-encoded `.p12` (Developer ID Application cert + private key) |
+| `APPLE_CERTIFICATE_PASSWORD` | Password protecting the `.p12` file |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Elie Bursztein (L8EGK4X86T)` |
+| `APPLE_API_ISSUER` | App Store Connect API issuer UUID (for notarization) |
+| `APPLE_API_KEY` | App Store Connect API key ID (for notarization) |
+| `APPLE_API_KEY_PATH` | Contents of the `.p8` private key file (for notarization) |
+| `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater signing private key (minisign) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password protecting the Tauri signing key |
+
+Local backups of all credentials are in `private/` (gitignored):
+- `private/apple-certificate/` -- `.p12`, `.p8`, base64, passwords, team ID
+- `private/tauri/` -- signing key, public key, password
+
 ## Release Process
 
 `just release` and `just install` automatically run `just full-test` before building. The full-test gates are:
