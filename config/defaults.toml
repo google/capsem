@@ -202,11 +202,27 @@ type = "bool"
 default = true
 
 [settings.registry.github.allow.meta]
-domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
+domains = ["github.com", "*.github.com", "*.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"]
 
 [settings.registry.github.allow.meta.rules.default]
 get = true
 post = true
+
+[settings.registry.debian]
+name = "Debian"
+description = "Debian package repositories"
+
+[settings.registry.debian.allow]
+name = "Allow Debian"
+description = "Enable access to deb.debian.org and security.debian.org."
+type = "bool"
+default = true
+
+[settings.registry.debian.allow.meta]
+domains = ["deb.debian.org", "security.debian.org"]
+
+[settings.registry.debian.allow.meta.rules.default]
+get = true
 
 [settings.registry.npm]
 name = "npm"
@@ -400,6 +416,16 @@ name = "Custom blocked domains"
 description = "Comma-separated domain patterns to block. Takes priority over custom allow list."
 type = "text"
 default = ""
+
+[settings.network.max_body_size_mb]
+name = "Max transfer size"
+description = "Maximum body size in Megabytes (MB) for network requests/responses. Default 1024 (1GB)."
+type = "number"
+default = 1024
+
+[settings.network.max_body_size_mb.meta]
+min = 0
+max = 102400
 
 # -- VM ----------------------------------------------------------------------
 

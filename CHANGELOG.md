@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LayerChart v2 API documentation (`docs/libs/layercharts.md`) for LLM-friendly chart development
 
 ### Changed
+- Proxy body size limit made configurable via `network.max_body_size_mb` setting (default 1024 MB), allowing for large file downloads while preventing unbounded transfers.
 - Asset resolution in macOS app bundle now searches multiple paths in `Resources` (including nested Tauri v2 paths) for better reliability.
 - Integration test isolated from host user settings and correctly maps `GOOGLE_API_KEY` to `GEMINI_API_KEY` for the internal VM CLI.
 - Tauri asset bundling now uses a flat map to prevent deeply nested `_up_/_up_/assets` structures in the final package.

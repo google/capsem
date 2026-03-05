@@ -1181,9 +1181,16 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(4096) as usize;
 
+    let max_body_size = resolved
+        .iter()
+        .find(|s| s.id == "network.max_body_size_mb")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(1024) as u64;
+
     let mut policy = NetworkPolicy::new(rules, default_action, default_action);
     policy.log_bodies = log_bodies;
     policy.max_body_capture = max_body_capture;
+    policy.max_body_size_mb = max_body_size;
     policy
 }
 

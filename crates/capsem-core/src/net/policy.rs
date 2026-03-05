@@ -82,10 +82,14 @@ pub struct NetworkPolicy {
     pub log_bodies: bool,
     /// Maximum bytes of body preview to capture in telemetry.
     pub max_body_capture: usize,
+    /// Maximum total body size allowed through the proxy (in MB).
+    pub max_body_size_mb: u64,
 }
 
 /// Default max body capture size (4 KB).
 const DEFAULT_MAX_BODY_CAPTURE: usize = 4096;
+/// Default max body transfer size (100 MB).
+const DEFAULT_MAX_BODY_SIZE_MB: u64 = 100;
 
 impl NetworkPolicy {
     /// Create a policy with explicit rules and defaults.
@@ -100,6 +104,7 @@ impl NetworkPolicy {
             default_allow_write,
             log_bodies: true,
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
+            max_body_size_mb: DEFAULT_MAX_BODY_SIZE_MB,
         }
     }
 
