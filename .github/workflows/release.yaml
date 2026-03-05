@@ -11,12 +11,27 @@ permissions:
 
 jobs:
   build-assets:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          key: build-assets
+
+      - name: Install b3sum
+        run: cargo install b3sum --locked
+
       - name: Build VM assets
         run: python3 images/build.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: vm-assets
@@ -33,6 +48,10 @@ jobs:
           path: assets/
 
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-app
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -44,7 +63,7 @@ jobs:
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Install cargo-auditable and cargo-sbom
-        run: cargo install cargo-auditable cargo-sbom
+        run: cargo install cargo-auditable cargo-sbom --locked
 
       - name: Import Apple certificate
         if: env.APPLE_CERTIFICATE != ''

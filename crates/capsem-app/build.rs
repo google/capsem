@@ -18,7 +18,7 @@ fn main() {
                 match filename {
                     "vmlinuz" => println!("cargo:rustc-env=VMLINUZ_HASH={}", hash),
                     "initrd.img" => println!("cargo:rustc-env=INITRD_HASH={}", hash),
-                    "rootfs.img" | "rootfs.squashfs" => {
+                    "rootfs.squashfs" => {
                         println!("cargo:rustc-env=ROOTFS_HASH={}", hash);
                         println!("cargo:rustc-env=ROOTFS_FILENAME={}", filename);
                     }

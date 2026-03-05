@@ -32,8 +32,8 @@ fn make_config(assets: &std::path::Path) -> VmConfig {
     if assets.join("initrd.img").exists() {
         builder = builder.initrd_path(assets.join("initrd.img"));
     }
-    if assets.join("rootfs.img").exists() {
-        builder = builder.disk_path(assets.join("rootfs.img"));
+    if assets.join("rootfs.squashfs").exists() {
+        builder = builder.disk_path(assets.join("rootfs.squashfs"));
     }
 
     builder.build().expect("VmConfig should be valid with real assets")

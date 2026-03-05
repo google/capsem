@@ -88,20 +88,15 @@ fn resolve_assets_dir() -> Result<PathBuf> {
 }
 
 /// Resolve rootfs path, checking bundled assets first, then ~/.capsem/assets/.
-/// Supports both squashfs (new) and raw img (legacy) formats.
 fn resolve_rootfs(bundled_assets: &Path) -> Option<PathBuf> {
-    for name in &["rootfs.squashfs", "rootfs.img"] {
-        let bundled = bundled_assets.join(name);
-        if bundled.exists() {
-            return Some(bundled);
-        }
+    let bundled = bundled_assets.join("rootfs.squashfs");
+    if bundled.exists() {
+        return Some(bundled);
     }
     if let Some(download_dir) = asset_manager::default_assets_dir() {
-        for name in &["rootfs.squashfs", "rootfs.img"] {
-            let downloaded = download_dir.join(name);
-            if downloaded.exists() {
-                return Some(downloaded);
-            }
+        let downloaded = download_dir.join("rootfs.squashfs");
+        if downloaded.exists() {
+            return Some(downloaded);
         }
     }
     None
@@ -119,7 +114,7 @@ fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager> {
     AssetManager::new(download_dir, base_url, &b3sums_content)
 }
 
-/// Find the rootfs filename in the manifest (e.g. "rootfs.squashfs" or "rootfs.img").
+/// Find the rootfs filename in the manifest.
 fn rootfs_manifest_name(mgr: &AssetManager) -> Result<String> {
     mgr.manifest_filenames()
         .into_iter()
@@ -532,9 +527,8 @@ fn boot_vm(
         let rootfs_path = rootfs_override
             .map(|p| p.to_path_buf())
             .or_else(|| {
-                ["rootfs.squashfs", "rootfs.img"].iter()
-                    .map(|n| assets.join(n))
-                    .find(|p| p.exists())
+                Some(assets.join("rootfs.squashfs"))
+                    .filter(|p| p.exists())
             });
 
         if let Some(ref rootfs) = rootfs_path {
