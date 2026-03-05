@@ -61,10 +61,18 @@ fn resolve_assets_dir() -> Result<PathBuf> {
     // 2. macOS .app bundle: Contents/Resources/ (sibling of Contents/MacOS/)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(macos_dir) = exe.parent() {
-            let resources = macos_dir.parent().map(|p| p.join("Resources"));
-            if let Some(ref res) = resources {
-                if res.join("vmlinuz").exists() {
-                    return Ok(res.clone());
+            if let Some(resources) = macos_dir.parent().map(|p| p.join("Resources")) {
+                let search_paths = [
+                    resources.clone(),
+                    resources.join("assets"),
+                    // Tauri v2 relative structure fallback
+                    resources.join("_up_/_up_/assets"),
+                ];
+                for path in search_paths {
+                    if path.join("vmlinuz").exists() {
+                        info!(path = %path.display(), "found bundled assets");
+                        return Ok(path);
+                    }
                 }
             }
         }
