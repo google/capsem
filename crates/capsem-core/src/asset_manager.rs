@@ -372,7 +372,7 @@ mod tests {
     const SAMPLE_B3SUMS: &str = "\
 a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c  vmlinuz
 cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456  initrd.img
-b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.img
+b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashfs
 ";
 
     // ---- parse_b3sums tests ----
@@ -387,7 +387,7 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.img
             "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"
         );
         assert_eq!(entries[1].filename, "initrd.img");
-        assert_eq!(entries[2].filename, "rootfs.img");
+        assert_eq!(entries[2].filename, "rootfs.squashfs");
     }
 
     #[test]
@@ -466,7 +466,7 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.img
         )
         .unwrap();
         assert_eq!(mgr.manifest.len(), 3);
-        assert_eq!(mgr.manifest_filenames(), vec!["vmlinuz", "initrd.img", "rootfs.img"]);
+        assert_eq!(mgr.manifest_filenames(), vec!["vmlinuz", "initrd.img", "rootfs.squashfs"]);
     }
 
     #[test]

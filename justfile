@@ -126,28 +126,47 @@ update-prices:
 _ensure-tools:
     #!/bin/bash
     set -euo pipefail
+    err=0
+    # Container runtime (Docker or Podman) -- needed for build-assets
+    if ! command -v docker &>/dev/null && ! command -v podman &>/dev/null; then
+        echo "ERROR: docker or podman required (for VM image builds)"
+        err=1
+    fi
+    # Musl target for cross-compiling guest binaries
+    if ! rustup target list --installed | grep -q aarch64-unknown-linux-musl; then
+        echo "Installing aarch64-unknown-linux-musl target..."
+        rustup target add aarch64-unknown-linux-musl
+    fi
+    # rust-lld linker (from llvm-tools component) -- needed for musl linking
+    if ! rustup component list --installed | grep -q llvm-tools; then
+        echo "Installing llvm-tools (provides rust-lld)..."
+        rustup component add llvm-tools
+    fi
+    # cargo-llvm-cov for coverage
     if ! command -v cargo-llvm-cov &>/dev/null; then
         echo "Installing cargo-llvm-cov..."
         cargo install cargo-llvm-cov
     fi
-    if ! rustup component list --installed | grep -q llvm-tools; then
-        echo "Installing llvm-tools-preview..."
-        rustup component add llvm-tools-preview
+    # b3sum for BLAKE3 checksums
+    if ! command -v b3sum &>/dev/null; then
+        echo "Installing b3sum..."
+        cargo install b3sum --locked
     fi
     if ! command -v podman &>/dev/null && ! command -v docker &>/dev/null; then
         echo "ERROR: Podman or Docker is required to build VM assets."
         echo "Install podman: brew install podman && podman machine init && podman machine start"
-        exit 1
+        err=1
     fi
     if ! command -v b3sum &>/dev/null; then
         echo "ERROR: b3sum is required for checksum verification."
         echo "Install it via brew: brew install b3sum"
-        exit 1
+        err=1
     fi
     if ! cargo tauri --version &>/dev/null; then
         echo "Installing Tauri CLI..."
         cargo install tauri-cli
     fi
+    if [ "$err" -ne 0 ]; then exit 1; fi
 
 _frontend:
     cd frontend && pnpm build
@@ -192,5 +211,5 @@ _pack-initrd:
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
-    (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.img > B3SUMS)
+    (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.squashfs > B3SUMS)
     echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch + doctor)"

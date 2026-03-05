@@ -436,7 +436,7 @@ mod tests {
         let kernel = temp_file("vmlinuz-disk-bad");
         let err = VmConfig::builder()
             .kernel_path(&kernel)
-            .disk_path("/nonexistent/rootfs.img")
+            .disk_path("/nonexistent/rootfs.squashfs")
             .build();
         assert!(matches!(err, Err(ConfigError::MissingDisk(_))));
     }
