@@ -224,6 +224,27 @@ domains = ["deb.debian.org", "security.debian.org"]
 [settings.registry.debian.allow.meta.rules.default]
 get = true
 
+[settings.registry.debian.sources]
+name = "Debian sources"
+description = "Content for /etc/apt/sources.list.d/debian.sources. Configures HTTPS mirrors."
+type = "file"
+collapsed = false
+
+[settings.registry.debian.sources.default]
+path = "/etc/apt/sources.list.d/debian.sources"
+content = """
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: https://security.debian.org/debian-security
+Suites: bookworm-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg"""
+
 [settings.registry.npm]
 name = "npm"
 description = "npm package registry"
