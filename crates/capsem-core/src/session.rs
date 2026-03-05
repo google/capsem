@@ -1173,9 +1173,9 @@ mod tests {
         old.created_at = "2020-01-01T12:00:00Z".to_string();
         idx.create_session(&old).unwrap();
 
-        // Recent session.
+        // Recent session (use a date far in the future to avoid flaking).
         let mut recent = sample_record("20260225-143052-a7f3", "stopped");
-        recent.created_at = "2026-02-25T14:30:52Z".to_string();
+        recent.created_at = "2099-01-01T00:00:00Z".to_string();
         idx.create_session(&recent).unwrap();
 
         let terminated = idx.terminate_older_than_days(7).unwrap();
@@ -1689,9 +1689,9 @@ mod tests {
         old.created_at = "2020-01-01T12:00:00Z".to_string();
         idx.create_session(&old).unwrap();
 
-        // Recent terminated session.
+        // Recent terminated session (use a date far in the future to avoid flaking).
         let mut recent = sample_record("20260225-143052-a7f3", "terminated");
-        recent.created_at = "2026-02-25T14:30:52Z".to_string();
+        recent.created_at = "2099-01-01T00:00:00Z".to_string();
         idx.create_session(&recent).unwrap();
 
         // Non-terminated session.
