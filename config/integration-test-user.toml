@@ -1,0 +1,13 @@
+# Configuration for end-to-end integration tests.
+# This file is used by scripts/integration_test.py to ensure isolation from the user's ~/.capsem/user.toml.
+
+[settings]
+"network.custom_allow" = { value = "elie.net, *.googleapis.com", modified = "2026-03-05T00:00:00Z" }
+"network.custom_block" = { value = "deny.example.com", modified = "2026-03-05T00:00:00Z" }
+"network.default_action" = { value = "deny", modified = "2026-03-05T00:00:00Z" }
+
+"ai.openai.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
+"ai.anthropic.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
+
+"ai.google.allow" = { value = true, modified = "2026-03-05T00:00:00Z" }
+"ai.google.api_key" = { value = "AIzaSy_dummy_key_for_integration_test", modified = "2026-03-05T00:00:00Z" }
