@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Persistence enabled for the scratch disk: installed packages and files now persist across VM reboots by avoiding redundant reformatting of the ext4 layer.
+- Writable layer "warm-up" phase implemented during boot to resolve "Invalid cross-device link" (EXDEV) errors by pre-seeding critical directory structures on the scratch disk.
+- Kernel configuration updated to enable `REDIRECT_DIR` and `INDEX` features for `overlayfs`, natively resolving directory rename issues in future builds.
 - Configuration overrides via `CAPSEM_USER_CONFIG` and `CAPSEM_CORP_CONFIG` environment variables to support isolated testing and CI.
 - Dedicated integration test configurations (`config/integration-test-user.toml` and `config/integration-test-corp.toml`) for reproducible end-to-end validation.
 - Debian package mirrors now configured to use HTTPS by default via injected `/etc/apt/sources.list.d/debian.sources`.
@@ -35,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wizard auto-show on first run removed (setup wizard is still accessible from sidebar)
 
 ### Fixed
+- Guest OS robustness significantly improved by re-architecting the mount logic to use the scratch disk as the global overlay upper layer (when available).
+- Kernel configuration updated to enable `REDIRECT_DIR` and `INDEX` features for `overlayfs`, natively resolving "Invalid cross-device link" errors during package updates.
 - Integration test SQLite connection robustness improved by using plain paths instead of URI formatting.
 - Anthropic API tracking: MITM proxy now strips `accept-encoding` for AI providers so SSE streaming responses arrive uncompressed. This fixes the issue where Anthropic usage and cost were recorded as NULL.
 - AI telemetry pollution: `model_call` records are now strictly filtered to valid LLM API paths (e.g., `/v1/messages`), preventing metadata endpoints from generating spurious NULL traces.

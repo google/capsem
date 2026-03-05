@@ -45,59 +45,85 @@ echo "[capsem-init] mounting /dev/vda (squashfs)..."
 mount -t squashfs /dev/vda /mnt/a
 echo "[capsem-init] mount exit: $?"
 
-echo "[capsem-init] checking /mnt/a/bin/bash..."
-ls /mnt/a/bin/bash 2>&1
+# Create upper + workdir for global overlay.
+# Prefer the scratch disk (vdb) if present, as it supports atomic renames,
+# provides persistence, and much more space than tmpfs.
+UPPER=""
+WORK=""
+SCRATCH=""
+if [ -b /dev/vdb ]; then
+    SCRATCH=/dev/vdb
+    echo "[capsem-init] checking scratch disk ($SCRATCH)..."
+    
+    # We bind-mount /dev so chroot can see the block device.
+    mount --bind /dev /mnt/a/dev
+    
+    # Only format if the disk is not already ext4 (provides persistence!)
+    if ! chroot /mnt/a /usr/bin/file -s "$SCRATCH" | grep -q "ext4"; then
+        echo "[capsem-init] formatting scratch disk ($SCRATCH) as ext4..."
+        chroot /mnt/a /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1
+    else
+        echo "[capsem-init] found existing ext4 filesystem on scratch disk"
+    fi
+    
+    mkdir -p /mnt/scratch
+    if mount -t ext4 -o rw,noatime,nodiratime "$SCRATCH" /mnt/scratch; then
+        echo "[capsem-init] using scratch disk for overlay upper layer"
+        mkdir -p /mnt/scratch/u /mnt/scratch/w
+        UPPER=/mnt/scratch/u
+        WORK=/mnt/scratch/w
+        
+        # EXDEV Workaround: "Warm up" the upper layer by copying critical
+        # directory structures. This allows dpkg to perform atomic renames 
+        # that would otherwise fail on overlayfs without redirect_dir support.
+        echo "[capsem-init] warming up writable layer..."
+        for d in etc var/lib/dpkg usr/share/doc; do
+            if [ -d "/mnt/a/$d" ]; then
+                mkdir -p "/mnt/scratch/u/$d"
+                cp -a "/mnt/a/$d/." "/mnt/scratch/u/$d/" 2>/dev/null
+            fi
+        done
+    fi
+    umount /mnt/a/dev
+fi
 
-# Create tmpfs for overlay upper + workdir
-mount -t tmpfs tmpfs /mnt/b
-mkdir -p /mnt/b/u /mnt/b/w
+if [ -z "$UPPER" ]; then
+    echo "[capsem-init] using tmpfs for overlay (no scratch disk)"
+    mount -t tmpfs -o size=1G tmpfs /mnt/b
+    mkdir -p /mnt/b/u /mnt/b/w
+    UPPER=/mnt/b/u
+    WORK=/mnt/b/w
+fi
 
-# Stack overlayfs: squashfs (read-only) + tmpfs (ephemeral writes)
+# Stack overlayfs: squashfs (read-only) + writable upper
+# Enable redirect_dir=on and metacopy=on to support atomic directory renames.
 mkdir -p /newroot
 mount -t overlay overlay \
-  -o lowerdir=/mnt/a,upperdir=/mnt/b/u,workdir=/mnt/b/w \
+  -o lowerdir=/mnt/a,upperdir=$UPPER,workdir=$WORK,index=on,redirect_dir=on,metacopy=on \
+  /newroot || \
+mount -t overlay overlay \
+  -o lowerdir=/mnt/a,upperdir=$UPPER,workdir=$WORK \
   /newroot
 
 # Mount virtual filesystems fresh in the new root.
-# /proc, /sys, /dev exist as empty dirs from docker export.
-# /dev/pts is created after devtmpfs is mounted (devtmpfs is writable).
 mount -t proc     proc     /newroot/proc
 mount -t sysfs    sysfs    /newroot/sys
 mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
 
-# Mount /root: prefer scratch disk (virtio block device), fall back to tmpfs.
-# The scratch disk provides ~8GB of workspace instead of RAM-limited tmpfs.
-# Must happen AFTER /newroot/dev is mounted so device nodes resolve in chroot.
-# Uses rootfs e2fsprogs (not busybox) for ext4 support.
-SCRATCH=""
-if [ -b /dev/vdb ]; then
-    SCRATCH=/dev/vdb
-fi
-
-if [ -n "$SCRATCH" ]; then
-    echo "[capsem-init] formatting scratch disk ($SCRATCH)..."
-    if chroot /newroot /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1; then
-        if mount -t ext4 -o rw,noatime,nodiratime "$SCRATCH" /newroot/root; then
-            echo "[capsem-init] /root mounted from scratch disk"
-            # Create a 1GB swap file on the scratch disk.
-            dd if=/dev/zero of=/newroot/root/.swapfile bs=1M count=1024 2>/dev/null
-            chmod 600 /newroot/root/.swapfile
-            mkswap /newroot/root/.swapfile >/dev/null 2>&1
-            swapon /newroot/root/.swapfile
-            echo "[capsem-init] swap enabled (1GB)"
-        else
-            echo "[capsem-init] WARNING: scratch disk mount failed, falling back to tmpfs"
-            mount -t tmpfs tmpfs /newroot/root
-        fi
-    else
-        echo "[capsem-init] WARNING: scratch disk format failed, falling back to tmpfs"
-        mount -t tmpfs tmpfs /newroot/root
+# Enable swap if we have a scratch disk
+if [ -d /mnt/scratch ]; then
+    # Create a 1GB swap file on the scratch disk if it doesn't exist.
+    if [ ! -f /mnt/scratch/swapfile ]; then
+        echo "[capsem-init] creating 1GB swapfile..."
+        dd if=/dev/zero of=/mnt/scratch/swapfile bs=1M count=1024 2>/dev/null
+        chmod 600 /mnt/scratch/swapfile
+        # Format swap using host-side tool if possible
+        mkswap /mnt/scratch/swapfile >/dev/null 2>&1 || true
     fi
-else
-    mount -t tmpfs tmpfs /newroot/root
-    echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
+    swapon /mnt/scratch/swapfile 2>/dev/null
+    echo "[capsem-init] swap enabled"
 fi
 
 # === Network: air-gapped IP stack ===
@@ -106,6 +132,14 @@ fi
 # redirect port 443 to our vsock-backed proxy. The host SNI proxy then
 # inspects TLS ClientHello for the domain and bridges to the real server.
 echo "[capsem-init] setting up network..."
+
+# Clean up legacy HTTP sources from the base image to ensure HTTPS is used.
+rm -f /newroot/etc/apt/sources.list
+mkdir -p /newroot/etc/apt/sources.list.d
+# Optional: force-unsafe-io for dpkg to avoid atomic rename issues on overlayfs.
+mkdir -p /newroot/etc/dpkg/dpkg.cfg.d
+echo "force-unsafe-io" > /newroot/etc/dpkg/dpkg.cfg.d/force-unsafe-io
+
 chroot /newroot ip link set lo up 2>/dev/null || true
 chroot /newroot ip link add dummy0 type dummy
 chroot /newroot ip addr add 10.0.0.1/24 dev dummy0
