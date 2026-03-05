@@ -30,8 +30,10 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile
 
-      - name: Unit tests
-        run: cargo test --workspace
+      # capsem-app requires VM assets to compile (Tauri resource bundling),
+      # so we test the library crates only. Full workspace test runs in release.
+      - name: Unit tests (library crates)
+        run: cargo test -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto
 
       - name: Cross-compile guest binaries
         run: cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent
