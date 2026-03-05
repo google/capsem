@@ -45,16 +45,37 @@ jobs:
       - name: Install cargo-auditable and cargo-sbom
         run: cargo install cargo-auditable cargo-sbom
 
+      - name: Import Apple certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          security create-keychain -p "" build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "" build.keychain
+          security list-keychains -d user -s build.keychain
+
+      - name: Write Apple API key file
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_PATH }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
+
+      # Build thin DMG: exclude rootfs from bundle (downloaded on first launch).
+      # The TAURI_CONFIG override ensures only vmlinuz, initrd.img, and B3SUMS
+      # are bundled, keeping the DMG under ~25 MB.
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":true}}'
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         with:
           tagName: v__VERSION__
           releaseName: 'Capsem v__VERSION__'
@@ -62,6 +83,14 @@ jobs:
           releaseDraft: true
           prerelease: false
           projectPath: crates/capsem-app
+
+      # Upload rootfs as a separate release asset (not in the DMG).
+      # The asset manager downloads it on first launch via the B3SUMS manifest.
+      - name: Upload rootfs to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/rootfs.squashfs
+          tag_name: ${{ github.ref_name }}
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v3
