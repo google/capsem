@@ -375,13 +375,19 @@ pub fn default_settings_file() -> SettingsFile {
 // File I/O
 // ---------------------------------------------------------------------------
 
-/// User config path: ~/.capsem/user.toml
+/// User config path: ~/.capsem/user.toml (overridable via CAPSEM_USER_CONFIG)
 pub fn user_config_path() -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var("CAPSEM_USER_CONFIG") {
+        return Some(std::path::PathBuf::from(path));
+    }
     dirs_path("HOME").map(|h| h.join(".capsem").join("user.toml"))
 }
 
-/// Corporate config path: /etc/capsem/corp.toml
+/// Corporate config path: /etc/capsem/corp.toml (overridable via CAPSEM_CORP_CONFIG)
 pub fn corp_config_path() -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("CAPSEM_CORP_CONFIG") {
+        return std::path::PathBuf::from(path);
+    }
     std::path::PathBuf::from("/etc/capsem/corp.toml")
 }
 

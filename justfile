@@ -10,7 +10,7 @@ dev:
     @echo "Stopping running instances..."
     -@pkill -x capsem 2>/dev/null || true
     -@pkill -x Capsem 2>/dev/null || true
-    cargo tauri dev --config crates/capsem-app/tauri.conf.json
+    CAPSEM_ASSETS_DIR={{assets_dir}} cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
 ui:
@@ -21,7 +21,7 @@ run *CMD: _pack-initrd _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
 
 # Full VM asset rebuild (kernel, initrd, rootfs) via Docker/Podman
-build-assets: _ensure-tools test
+build-assets: _ensure-tools
     cd images && python3 build.py
 
 # Unit tests + cross-compile check + frontend type-check (no VM)
@@ -151,6 +151,20 @@ _ensure-tools:
     if ! command -v b3sum &>/dev/null; then
         echo "Installing b3sum..."
         cargo install b3sum --locked
+    fi
+    if ! command -v podman &>/dev/null && ! command -v docker &>/dev/null; then
+        echo "ERROR: Podman or Docker is required to build VM assets."
+        echo "Install podman: brew install podman && podman machine init && podman machine start"
+        err=1
+    fi
+    if ! command -v b3sum &>/dev/null; then
+        echo "ERROR: b3sum is required for checksum verification."
+        echo "Install it via brew: brew install b3sum"
+        err=1
+    fi
+    if ! cargo tauri --version &>/dev/null; then
+        echo "Installing Tauri CLI..."
+        cargo install tauri-cli
     fi
     if [ "$err" -ne 0 ]; then exit 1; fi
 

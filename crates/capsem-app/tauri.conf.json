@@ -29,9 +29,10 @@
     "targets": ["app"],
     "createUpdaterArtifacts": false,
     "resources": {
-      "../../assets/vmlinuz": "",
-      "../../assets/initrd.img": "",
-      "../../assets/B3SUMS": ""
+      "../../assets/vmlinuz": "vmlinuz",
+      "../../assets/initrd.img": "initrd.img",
+      "../../assets/rootfs.img": "rootfs.img",
+      "../../assets/B3SUMS": "B3SUMS"
     },
     "macOS": {
       "entitlements": "../../entitlements.plist",

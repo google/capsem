@@ -44,7 +44,11 @@ The CLI binary lives at `/Applications/Capsem.app/Contents/MacOS/capsem`.
 - Rust via [rustup](https://rustup.rs/)
 - Node.js 20+ and pnpm (`npm install -g pnpm`)
 - [just](https://github.com/casey/just) (`brew install just`)
+- Tauri CLI (`cargo install tauri-cli`)
 - Podman (`brew install podman` or [podman.io](https://podman.io/))
+- `b3sum` (`brew install b3sum`)
+- `aarch64-unknown-linux-musl` toolchain (required to cross-compile the guest agent)
+  - `brew install messense/tap/musl-cross`
 
 ### Project Structure
 
