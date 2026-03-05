@@ -521,6 +521,7 @@ export const mockApi = {
   onSerialOutput: async (_cb: (data: number[]) => void) => () => {},
   onVmStateChanged: async (_cb: (state: string) => void) => () => {},
   onTerminalSourceChanged: async (_cb: (source: string) => void) => () => {},
+  onDownloadProgress: async (_cb: (progress: any) => void) => () => {},
 };
 
 // ---------------------------------------------------------------------------

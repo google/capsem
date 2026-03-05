@@ -1,8 +1,10 @@
 // VM state store using Svelte 5 runes.
-import { vmStatus, onVmStateChanged } from '../api';
+import { vmStatus, onVmStateChanged, onDownloadProgress } from '../api';
+import type { DownloadProgress } from '../types';
 
 class VmStore {
   vmState = $state('not created');
+  downloadProgress = $state<DownloadProgress | null>(null);
 
   statusColor = $derived(
     this.vmState === 'running'
@@ -25,6 +27,7 @@ class VmStore {
   );
 
   isRunning = $derived(this.vmState === 'running');
+  isDownloading = $derived(this.vmState === 'downloading');
   terminalRenderer = $state<'webgl' | 'canvas' | ''>('');
 
   async init() {
@@ -35,6 +38,9 @@ class VmStore {
     }
     onVmStateChanged((state) => {
       this.vmState = state.toLowerCase();
+    });
+    onDownloadProgress((progress) => {
+      this.downloadProgress = progress;
     });
   }
 }

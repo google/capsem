@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { isMock, mockApi } from './mock';
 import type {
   ConfigIssue,
+  DownloadProgress,
   GuestConfigResponse,
   NetworkPolicyResponse,
   ResolvedSetting,
@@ -131,4 +132,11 @@ export function onTerminalSourceChanged(
 ): Promise<UnlistenFn> {
   if (isMock) return mockApi.onTerminalSourceChanged(callback);
   return tauriListen<string>('terminal-source-changed', callback);
+}
+
+export function onDownloadProgress(
+  callback: (progress: DownloadProgress) => void,
+): Promise<UnlistenFn> {
+  if (isMock) return mockApi.onDownloadProgress(callback);
+  return tauriListen<DownloadProgress>('download-progress', callback);
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Sidebar from './Sidebar.svelte';
+  import DownloadProgress from './DownloadProgress.svelte';
   import TerminalView from '../views/TerminalView.svelte';
   import StatsView from '../views/StatsView.svelte';
   import SettingsView from '../views/SettingsView.svelte';
@@ -28,21 +29,25 @@
 <div class="flex h-screen w-screen overflow-hidden bg-base-100 text-base-content">
   <Sidebar />
   <div class="flex flex-1 flex-col min-w-0">
-    <!-- Content area: terminal is always mounted, hidden with visibility to avoid refit flash -->
-    <div class="flex-1 min-h-0 relative">
-      <div
-        class="absolute inset-0"
-        style:visibility={sidebarStore.activeView === 'terminal' ? 'visible' : 'hidden'}
-      >
-        <TerminalView />
+    {#if vmStore.isDownloading}
+      <DownloadProgress />
+    {:else}
+      <!-- Content area: terminal is always mounted, hidden with visibility to avoid refit flash -->
+      <div class="flex-1 min-h-0 relative">
+        <div
+          class="absolute inset-0"
+          style:visibility={sidebarStore.activeView === 'terminal' ? 'visible' : 'hidden'}
+        >
+          <TerminalView />
+        </div>
+        {#if sidebarStore.activeView === 'stats'}
+          <StatsView />
+        {:else if sidebarStore.activeView === 'settings'}
+          <SettingsView />
+        {:else if sidebarStore.activeView === 'wizard'}
+          <WizardView />
+        {/if}
       </div>
-      {#if sidebarStore.activeView === 'stats'}
-        <StatsView />
-      {:else if sidebarStore.activeView === 'settings'}
-        <SettingsView />
-      {:else if sidebarStore.activeView === 'wizard'}
-        <WizardView />
-      {/if}
-    </div>
+    {/if}
   </div>
 </div>

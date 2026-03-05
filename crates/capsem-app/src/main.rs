@@ -17,6 +17,7 @@ use capsem_core::{
     VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
     create_scratch_disk, decode_guest_msg, encode_host_msg, validate_guest_msg, MAX_FRAME_SIZE,
 };
+use capsem_core::asset_manager::{self, AssetManager, AssetStatus, DownloadProgress};
 use capsem_core::mcp::gateway::{self, McpGatewayConfig};
 use capsem_core::mcp::policy::McpPolicy;
 use capsem_core::mcp::server_manager::McpServerManager;
@@ -84,6 +85,47 @@ fn resolve_assets_dir() -> Result<PathBuf> {
     Err(anyhow::anyhow!(
         "VM assets not found. Set CAPSEM_ASSETS_DIR or run from workspace root."
     ))
+}
+
+/// Resolve rootfs path, checking bundled assets first, then ~/.capsem/assets/.
+/// Supports both squashfs (new) and raw img (legacy) formats.
+fn resolve_rootfs(bundled_assets: &Path) -> Option<PathBuf> {
+    for name in &["rootfs.squashfs", "rootfs.img"] {
+        let bundled = bundled_assets.join(name);
+        if bundled.exists() {
+            return Some(bundled);
+        }
+    }
+    if let Some(download_dir) = asset_manager::default_assets_dir() {
+        for name in &["rootfs.squashfs", "rootfs.img"] {
+            let downloaded = download_dir.join(name);
+            if downloaded.exists() {
+                return Some(downloaded);
+            }
+        }
+    }
+    None
+}
+
+/// Load B3SUMS manifest from bundled assets and create an AssetManager.
+fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager> {
+    let b3sums_path = bundled_assets.join("B3SUMS");
+    let b3sums_content = std::fs::read_to_string(&b3sums_path)
+        .context("B3SUMS not found in app bundle")?;
+    let version = env!("CARGO_PKG_VERSION");
+    let download_dir = asset_manager::default_assets_dir()
+        .context("cannot determine home directory")?;
+    let base_url = asset_manager::release_url(version);
+    AssetManager::new(download_dir, base_url, &b3sums_content)
+}
+
+/// Find the rootfs filename in the manifest (e.g. "rootfs.squashfs" or "rootfs.img").
+fn rootfs_manifest_name(mgr: &AssetManager) -> Result<String> {
+    mgr.manifest_filenames()
+        .into_iter()
+        .find(|f| f.starts_with("rootfs"))
+        .map(String::from)
+        .context("no rootfs entry in B3SUMS manifest")
 }
 
 /// Write boot performance data from the state machine to ~/.capsem/perf/<timestamp>.log
@@ -457,6 +499,7 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
 /// block device (read-write) for the guest `/root` workspace.
 fn boot_vm(
     assets: &Path,
+    rootfs_override: Option<&Path>,
     cmdline: &str,
     scratch_disk_path: Option<&Path>,
     cpu_count: u32,
@@ -484,8 +527,18 @@ fn boot_vm(
             }
         }
 
-        if assets.join("rootfs.img").exists() {
-            builder = builder.disk_path(assets.join("rootfs.img"));
+        // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
+        // otherwise check bundled assets dir for both squashfs and legacy img.
+        let rootfs_path = rootfs_override
+            .map(|p| p.to_path_buf())
+            .or_else(|| {
+                ["rootfs.squashfs", "rootfs.img"].iter()
+                    .map(|n| assets.join(n))
+                    .find(|p| p.exists())
+            });
+
+        if let Some(ref rootfs) = rootfs_path {
+            builder = builder.disk_path(rootfs);
             if let Some(hash) = option_env!("ROOTFS_HASH") {
                 builder = builder.expected_disk_hash(hash);
             }
@@ -1281,6 +1334,30 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
 
     let assets = resolve_assets_dir()?;
 
+    // Resolve rootfs: check bundled assets first, then ~/.capsem/assets/.
+    // If missing, download it before booting.
+    let rootfs_path = match resolve_rootfs(&assets) {
+        Some(path) => Some(path),
+        None => {
+            eprintln!("[capsem] rootfs not found, downloading...");
+            let mgr = create_asset_manager(&assets)?;
+            let name = rootfs_manifest_name(&mgr)?;
+            let _ = mgr.cleanup_unrecognized();
+            let client = reqwest::Client::new();
+            let downloaded = rt.block_on(mgr.download_asset(&name, &client, |p| {
+                if p.total_bytes > 0 {
+                    let pct = (p.bytes_downloaded as f64 / p.total_bytes as f64 * 100.0) as u32;
+                    eprint!("\r[capsem] {}: {}% ({}/{} bytes)   ",
+                        p.phase, pct, p.bytes_downloaded, p.total_bytes);
+                } else {
+                    eprint!("\r[capsem] {}: {} bytes   ", p.phase, p.bytes_downloaded);
+                }
+            }))?;
+            eprintln!();
+            Some(downloaded)
+        }
+    };
+
     // Generate unique session ID.
     let cli_session_id = session::generate_session_id();
     eprintln!("[capsem] session: {cli_session_id}");
@@ -1331,6 +1408,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
 
     let (vm, mut rx, _serial_input_fd, _sm) = boot_vm(
         &assets,
+        rootfs_path.as_deref(),
         "console=hvc0 ro loglevel=1",
         scratch_path.as_deref(),
         cpu_count,
@@ -1732,6 +1810,119 @@ async fn check_for_update(app: tauri::AppHandle) {
     }
 }
 
+/// Boot the VM and set up all subsystems (vsock, serial, MITM proxy, MCP gateway).
+/// Called either immediately from the setup hook (rootfs available in bundle) or
+/// after async rootfs download completes.
+fn gui_boot_vm(
+    handle: &tauri::AppHandle,
+    assets: &Path,
+    rootfs: Option<&Path>,
+    session_id: &str,
+    scratch_path: Option<PathBuf>,
+    cpu_count: u32,
+    ram_bytes: u64,
+) {
+    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1", scratch_path.as_deref(), cpu_count, ram_bytes) {
+        Ok((vm, rx, input_fd, sm)) => {
+            info!("VM booted successfully");
+
+            // Register vsock listeners on the socket device.
+            let vsock_manager = {
+                let socket_devices = vm.socket_devices();
+                match VsockManager::new(
+                    &socket_devices,
+                    &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY],
+                ) {
+                    Ok(mgr) => Some(mgr),
+                    Err(e) => {
+                        warn!("vsock setup failed: {e:#}, using serial-only mode");
+                        None
+                    }
+                }
+            };
+
+            // Create per-VM network state (policy + info.db).
+            let net_state = match create_net_state(session_id) {
+                Ok(ns) => Some(ns),
+                Err(e) => {
+                    warn!("network state init failed: {e:#}, SNI proxy disabled");
+                    None
+                }
+            };
+
+            // Create MCP gateway config for vsock:5003.
+            let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
+                let domain_policy = policy_config::load_merged_domain_policy();
+                Arc::new(McpGatewayConfig {
+                    server_manager: tokio::sync::Mutex::new(McpServerManager::new(vec![])),
+                    db: Arc::clone(&ns.db),
+                    policy: tokio::sync::RwLock::new(Arc::new(McpPolicy::new())),
+                    domain_policy: std::sync::RwLock::new(Arc::new(domain_policy)),
+                    http_client: reqwest::Client::builder()
+                        .user_agent("capsem-mcp/0.8")
+                        .timeout(std::time::Duration::from_secs(30))
+                        .redirect(reqwest::redirect::Policy::limited(10))
+                        .build()
+                        .expect("reqwest client"),
+                })
+            });
+
+            // Store VM state.
+            {
+                let app_state = handle.state::<AppState>();
+                let mut vms = app_state.vms.lock().unwrap();
+                vms.insert(session_id.to_string(), VmInstance {
+                    _vm: vm,
+                    serial_input_fd: input_fd,
+                    vsock_terminal_fd: None,
+                    vsock_control_fd: None,
+                    net_state,
+                    mcp_state: mcp_config.clone(),
+                    state_machine: sm,
+                    _scratch_disk_path: scratch_path,
+                });
+            }
+
+            // Reset the terminal output queue for the new session.
+            {
+                let app_state = handle.state::<AppState>();
+                app_state.terminal_output.reset();
+            }
+
+            // Serial forwarding for boot logs (aborted once vsock connects).
+            let serial_output = {
+                let app_state = handle.state::<AppState>();
+                Arc::clone(&app_state.terminal_output)
+            };
+            let serial_task = tauri::async_runtime::spawn(
+                serial_to_events(serial_output, rx),
+            );
+
+            // Spawn vsock connection handler if available.
+            let h = handle.clone();
+            if let Some(mgr) = vsock_manager {
+                tauri::async_runtime::spawn(
+                    setup_vsock(h.clone(), mgr, serial_task),
+                );
+            }
+
+            // Push initial state to frontend (Booting, not yet Running).
+            let _ = h.emit("vm-state-changed", serde_json::json!({
+                "state": "Booting",
+                "trigger": "vm_started",
+            }));
+        }
+        Err(e) => {
+            error!("VM boot failed: {e:#}");
+            info!("continuing without VM (unsigned binary or missing entitlement)");
+            let _ = handle.emit("vm-state-changed", serde_json::json!({
+                "state": "Error",
+                "trigger": "boot_failed",
+            }));
+        }
+    }
+}
+
 fn main() {
     let cli_args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -1870,105 +2061,76 @@ fn main() {
                 *app_state.active_session_id.lock().unwrap() = Some(gui_session_id.clone());
             }
 
-            // Headless mode: hvc0 is primary console (routed to the frontend)
-            match boot_vm(&assets, "console=hvc0 ro loglevel=1", gui_scratch_path.as_deref(), cpu_count, ram_bytes) {
-                Ok((vm, rx, input_fd, sm)) => {
-                    info!("VM booted successfully");
+            // Resolve rootfs: check bundled assets dir, then ~/.capsem/assets/.
+            let rootfs_path = resolve_rootfs(&assets);
 
-                    // Register vsock listeners on the socket device (including SNI proxy and MCP gateway ports).
-                    let vsock_manager = {
-                        let socket_devices = vm.socket_devices();
-                        match VsockManager::new(
-                            &socket_devices,
-                            &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY],
-                        ) {
-                            Ok(mgr) => Some(mgr),
-                            Err(e) => {
-                                warn!("vsock setup failed: {e:#}, using serial-only mode");
-                                None
-                            }
-                        }
-                    };
+            if rootfs_path.is_some() {
+                // Rootfs available (dev mode or already downloaded) -- boot immediately.
+                gui_boot_vm(
+                    app.handle(), &assets, rootfs_path.as_deref(),
+                    &gui_session_id, gui_scratch_path, cpu_count, ram_bytes,
+                );
+            } else {
+                // Rootfs not found -- download it first.
+                info!("rootfs not found, initiating download");
+                let _ = app.handle().emit("vm-state-changed", serde_json::json!({
+                    "state": "Downloading",
+                    "trigger": "rootfs_missing",
+                }));
 
-                    // Create per-VM network state (policy + info.db).
-                    let net_state = match create_net_state(&gui_session_id) {
-                        Ok(ns) => Some(ns),
+                let handle = app.handle().clone();
+                let assets_clone = assets.clone();
+                let session_id = gui_session_id.clone();
+                let scratch = gui_scratch_path;
+                tauri::async_runtime::spawn(async move {
+                    let mgr = match create_asset_manager(&assets_clone) {
+                        Ok(m) => m,
                         Err(e) => {
-                            warn!("network state init failed: {e:#}, SNI proxy disabled");
-                            None
+                            error!("asset manager init failed: {e:#}");
+                            let _ = handle.emit("vm-state-changed", serde_json::json!({
+                                "state": "Error",
+                                "trigger": "asset_init_failed",
+                            }));
+                            return;
                         }
                     };
 
-                    // Create MCP gateway config for vsock:5003.
-                    let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
-                        let domain_policy = policy_config::load_merged_domain_policy();
-                        Arc::new(McpGatewayConfig {
-                            server_manager: tokio::sync::Mutex::new(McpServerManager::new(vec![])),
-                            db: Arc::clone(&ns.db),
-                            policy: tokio::sync::RwLock::new(Arc::new(McpPolicy::new())),
-                            domain_policy: std::sync::RwLock::new(Arc::new(domain_policy)),
-                            http_client: reqwest::Client::builder()
-                                .user_agent("capsem-mcp/0.8")
-                                .timeout(std::time::Duration::from_secs(30))
-                                .redirect(reqwest::redirect::Policy::limited(10))
-                                .build()
-                                .expect("reqwest client"),
-                        })
-                    });
-
-                    // Store VM state.
-                    {
-                        let app_state = app.state::<AppState>();
-                        let mut vms = app_state.vms.lock().unwrap();
-                        vms.insert(gui_session_id.clone(), VmInstance {
-                            _vm: vm,
-                            serial_input_fd: input_fd,
-                            vsock_terminal_fd: None,
-                            vsock_control_fd: None,
-                            net_state,
-                            mcp_state: mcp_config.clone(),
-                            state_machine: sm,
-                            _scratch_disk_path: gui_scratch_path.clone(),
-                        });
-                    }
-
-                    let handle = app.handle().clone();
-                    // Reset the terminal output queue for the new session.
-                    {
-                        let app_state = app.state::<AppState>();
-                        app_state.terminal_output.reset();
-                    }
-
-                    // Serial forwarding for boot logs (aborted once vsock connects).
-                    let serial_output = {
-                        let app_state = app.state::<AppState>();
-                        Arc::clone(&app_state.terminal_output)
+                    let name = match rootfs_manifest_name(&mgr) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            error!("rootfs not in manifest: {e:#}");
+                            let _ = handle.emit("vm-state-changed", serde_json::json!({
+                                "state": "Error",
+                                "trigger": "manifest_error",
+                            }));
+                            return;
+                        }
                     };
-                    let serial_task = tauri::async_runtime::spawn(
-                        serial_to_events(serial_output, rx),
-                    );
 
-                    // Spawn vsock connection handler if available.
-                    if let Some(mgr) = vsock_manager {
-                        tauri::async_runtime::spawn(
-                            setup_vsock(handle.clone(), mgr, serial_task),
-                        );
+                    // Clean up stale assets from previous versions.
+                    let _ = mgr.cleanup_unrecognized();
+
+                    let h2 = handle.clone();
+                    let client = reqwest::Client::new();
+                    match mgr.download_asset(&name, &client, move |progress| {
+                        let _ = h2.emit("download-progress", &progress);
+                    }).await {
+                        Ok(rootfs) => {
+                            info!("rootfs downloaded to {}", rootfs.display());
+                            gui_boot_vm(
+                                &handle, &assets_clone, Some(&rootfs),
+                                &session_id, scratch, cpu_count, ram_bytes,
+                            );
+                        }
+                        Err(e) => {
+                            error!("rootfs download failed: {e:#}");
+                            let _ = handle.emit("vm-state-changed", serde_json::json!({
+                                "state": "Error",
+                                "trigger": "download_failed",
+                            }));
+                        }
                     }
-
-                    // Push initial state to frontend (Booting, not yet Running).
-                    let _ = handle.emit("vm-state-changed", serde_json::json!({
-                        "state": "Booting",
-                        "trigger": "vm_started",
-                    }));
-                }
-                Err(e) => {
-                    error!("VM boot failed: {e:#}");
-                    info!("continuing without VM (unsigned binary or missing entitlement)");
-                    let _ = app.handle().emit("vm-state-changed", serde_json::json!({
-                        "state": "Error",
-                        "trigger": "boot_failed",
-                    }));
-                }
+                });
             }
 
             Ok(())
