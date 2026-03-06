@@ -248,6 +248,8 @@ When bumping the version, update both:
 1. `workspace.package.version` in `/Cargo.toml`
 2. `version` in `crates/capsem-app/tauri.conf.json`
 
+**Never reuse or move a tag.** Always increment the version number. Git tags are immutable references -- moving them breaks caches, artifact references, and is not proper git practice.
+
 ## CI Secrets (GitHub Actions)
 
 All secrets are set on the repo and used by `release.yaml`:
