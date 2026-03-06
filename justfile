@@ -1,4 +1,24 @@
 # Capsem Justfile
+#
+# Dependency chains:
+#
+#   doctor          read-only check of all required tools (user-facing)
+#   _install-tools  auto-installs rust targets, components, cargo tools (internal)
+#   _check-assets   verifies VM assets exist, tells you to run build-assets if not
+#
+#   run          -> _check-assets -> _pack-initrd -> _sign -> _compile -> _frontend
+#   test         -> _install-tools
+#   build-assets -> doctor + _install-tools
+#   full-test    -> test + _check-assets + _pack-initrd + _sign
+#   install      -> doctor + full-test + _frontend
+#
+# First-time setup:
+#   just doctor       (shows what's missing)
+#   just build-assets (builds kernel, initrd, rootfs -- needs docker/podman)
+#
+# Daily dev:          just run     (fast ~10s, auto-repacks initrd)
+# Before install:     just install (doctor + full-test + /Applications)
+# Releases:           CI only -- push a vX.Y.Z tag to trigger .github/workflows/release.yaml
 
 binary := "target/debug/capsem"
 release_app := "target/release/bundle/macos/Capsem.app"
@@ -17,21 +37,21 @@ ui:
     cd frontend && pnpm run dev
 
 # Pack + boot VM (interactive or with command, ~10s)
-run *CMD: _pack-initrd _sign
+run *CMD: _check-assets _pack-initrd _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
 
 # Full VM asset rebuild (kernel, initrd, rootfs) via Docker/Podman
-build-assets: _ensure-tools
+build-assets: doctor _install-tools
     cd images && python3 build.py
 
 # Unit tests + cross-compile check + frontend type-check (no VM)
-test: _ensure-tools
+test: _install-tools
     cargo llvm-cov --workspace --no-cfg-coverage
     cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
     cd frontend && pnpm run check && pnpm run build
 
 # Full validation: test + capsem-doctor + integration test + bench (boots VM)
-full-test: test _pack-initrd _sign
+full-test: test _check-assets _pack-initrd _sign
     @echo ""
     @echo "=== capsem-doctor ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
@@ -43,22 +63,11 @@ full-test: test _pack-initrd _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
 # Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
-bench: _sign
+bench: _check-assets _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
-# Build release .app + codesign + produce DMG
-release: full-test _frontend
-    cd crates/capsem-app && cargo tauri build
-    codesign --sign - --entitlements {{entitlements}} --force --deep "{{release_app}}"
-    @echo ""
-    @echo "=== Create DMG ==="
-    rm -f target/release/Capsem.dmg
-    hdiutil create -volname Capsem -srcfolder "{{release_app}}" \
-        -ov -format UDZO target/release/Capsem.dmg
-    @echo "DMG: target/release/Capsem.dmg"
-
 # Build release .app + install to /Applications + launch
-install: full-test _frontend
+install: doctor full-test _frontend
     cd crates/capsem-app && cargo tauri build
     codesign --sign - --entitlements {{entitlements}} --force --deep "{{release_app}}"
     @echo "Stopping running Capsem..."
@@ -69,6 +78,80 @@ install: full-test _frontend
     cp -R "{{release_app}}" "/Applications/"
     @echo "Launching Capsem..."
     open "/Applications/Capsem.app"
+
+# Check that all required dev tools and dependencies are installed
+doctor:
+    #!/bin/bash
+    set -euo pipefail
+    PASS=0; FAIL=0
+    pass() { echo "  [PASS] $1"; PASS=$((PASS + 1)); }
+    fail() { echo "  [FAIL] $1"; FAIL=$((FAIL + 1)); }
+
+    echo "Capsem Doctor"
+    echo "============="
+
+    echo ""
+    echo "== System Tools =="
+    for tool in cargo rustup codesign pnpm node python3 sqlite3 git; do
+        if command -v "$tool" &>/dev/null; then
+            pass "$tool"
+        else
+            fail "$tool not found"
+        fi
+    done
+
+    echo ""
+    echo "== Container Runtime =="
+    if command -v docker &>/dev/null; then
+        pass "docker"
+    elif command -v podman &>/dev/null; then
+        pass "podman"
+    else
+        fail "docker or podman -- brew install podman && podman machine init && podman machine start"
+    fi
+
+    echo ""
+    echo "== Rust Toolchain =="
+    if rustup target list --installed 2>/dev/null | grep -q aarch64-unknown-linux-musl; then
+        pass "target: aarch64-unknown-linux-musl"
+    else
+        fail "target: aarch64-unknown-linux-musl -- run: rustup target add aarch64-unknown-linux-musl"
+    fi
+    if rustup component list --installed 2>/dev/null | grep -q llvm-tools; then
+        pass "component: llvm-tools (provides rust-lld)"
+    else
+        fail "component: llvm-tools -- run: rustup component add llvm-tools"
+    fi
+
+    echo ""
+    echo "== Cargo Tools =="
+    for tool in cargo-llvm-cov b3sum cargo-tauri; do
+        if command -v "$tool" &>/dev/null; then
+            pass "$tool"
+        else
+            fail "$tool -- run: cargo install ${tool/cargo-/}"
+        fi
+    done
+
+    echo ""
+    echo "== Optional (CI/Release) =="
+    for tool in gh openssl; do
+        if command -v "$tool" &>/dev/null; then
+            pass "$tool"
+        else
+            echo "  [SKIP] $tool -- brew install $tool (only needed for releases)"
+        fi
+    done
+
+    echo ""
+    echo "============="
+    echo "Results: $PASS passed, $FAIL failed"
+    if [ "$FAIL" -gt 0 ]; then
+        echo ""
+        echo "Install missing tools, or run: just _install-tools (auto-installs Rust components + cargo tools)"
+        exit 1
+    fi
+    echo "All good!"
 
 # Clean build artifacts
 clean:
@@ -123,21 +206,16 @@ update-prices:
 
 # --- Internal helpers (hidden from `just --list`) ---
 
-_ensure-tools:
+# Auto-install Rust targets, components, and cargo tools
+_install-tools:
     #!/bin/bash
     set -euo pipefail
-    err=0
-    # Container runtime (Docker or Podman) -- needed for build-assets
-    if ! command -v docker &>/dev/null && ! command -v podman &>/dev/null; then
-        echo "ERROR: docker or podman required (for VM image builds)"
-        err=1
-    fi
     # Musl target for cross-compiling guest binaries
     if ! rustup target list --installed | grep -q aarch64-unknown-linux-musl; then
         echo "Installing aarch64-unknown-linux-musl target..."
         rustup target add aarch64-unknown-linux-musl
     fi
-    # rust-lld linker (from llvm-tools component) -- needed for musl linking
+    # rust-lld linker (from llvm-tools component)
     if ! rustup component list --installed | grep -q llvm-tools; then
         echo "Installing llvm-tools (provides rust-lld)..."
         rustup component add llvm-tools
@@ -152,21 +230,31 @@ _ensure-tools:
         echo "Installing b3sum..."
         cargo install b3sum --locked
     fi
-    if ! command -v podman &>/dev/null && ! command -v docker &>/dev/null; then
-        echo "ERROR: Podman or Docker is required to build VM assets."
-        echo "Install podman: brew install podman && podman machine init && podman machine start"
-        err=1
-    fi
-    if ! command -v b3sum &>/dev/null; then
-        echo "ERROR: b3sum is required for checksum verification."
-        echo "Install it via brew: brew install b3sum"
-        err=1
-    fi
+    # Tauri CLI
     if ! cargo tauri --version &>/dev/null; then
         echo "Installing Tauri CLI..."
         cargo install tauri-cli
     fi
-    if [ "$err" -ne 0 ]; then exit 1; fi
+
+# Verify VM assets exist (vmlinuz, initrd.img, rootfs)
+_check-assets:
+    #!/bin/bash
+    set -euo pipefail
+    dir="{{assets_dir}}"
+    missing=()
+    for f in vmlinuz initrd.img; do
+        [ -f "$dir/$f" ] || missing+=("$f")
+    done
+    # Accept either rootfs format
+    if [ ! -f "$dir/rootfs.squashfs" ] && [ ! -f "$dir/rootfs.img" ]; then
+        missing+=("rootfs.squashfs")
+    fi
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "ERROR: Missing VM assets in $dir/: ${missing[*]}"
+        echo ""
+        echo "Run 'just build-assets' to build them (requires docker or podman)."
+        exit 1
+    fi
 
 _frontend:
     cd frontend && pnpm build

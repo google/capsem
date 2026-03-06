@@ -6,20 +6,37 @@ Native macOS app that sandboxes AI agents in Linux VMs using Apple's Virtualizat
 
 All workflows use `just` (not make):
 
+- `just doctor` -- check all required tools are installed (run first on a new machine)
 - `just dev` -- hot-reloading dev server (Tauri dev mode)
 - `just ui` -- frontend-only dev server with mock data (no VM needed)
 - `just run` -- cross-compile agent + repack initrd + build + codesign + boot VM (~10s)
 - `just run "CMD"` -- same but run a command instead of interactive shell
-- `just build-assets` -- full VM asset build from scratch (kernel, initrd, rootfs) via Docker/Podman
+- `just build-assets` -- doctor + full VM asset build from scratch (kernel, initrd, rootfs) via Docker/Podman
 - `just test` -- unit tests + cross-compile check + frontend type-check (no VM)
 - `just full-test` -- test + capsem-doctor + integration test + bench (boots VM multiple times)
 - `just bench` -- in-VM benchmarks (scratch disk I/O, rootfs read, CLI startup latency, HTTP throughput)
-- `just release` -- full-test + release `.app` bundle + codesign + DMG
-- `just install` -- full-test + release `.app` + codesign + install to /Applications + launch
+- `just install` -- doctor + full-test + release `.app` + codesign + install to /Applications + launch
 - `just clean` -- clean build artifacts
 - `just inspect-session [id]` -- inspect session DB integrity and event summary (latest by default)
 - `just update-fixture <path>` -- copy a real session DB as the test fixture (scrubs keys, syncs to frontend)
 - `just update-prices` -- update model pricing JSON
+
+### Dependency chains
+
+```
+doctor           read-only tool check (user-facing, fails on missing)
+_install-tools   auto-installs rust targets/components/cargo tools (internal)
+_check-assets    verifies VM assets exist, fails with "run just build-assets" if not
+
+run            -> _check-assets + _pack-initrd -> _sign -> _compile -> _frontend
+test           -> _install-tools
+build-assets   -> doctor + _install-tools
+full-test      -> test + _check-assets + _pack-initrd + _sign
+install        -> doctor + full-test + _frontend
+```
+
+First-time setup: `just doctor` then `just build-assets`.
+Daily dev: `just run` (fast, ~10s). Before release: `just release`.
 
 ## Project Layout
 
@@ -160,6 +177,17 @@ The `capsem-doctor` suite runs inside the guest VM to verify sandbox integrity, 
 4. Rebuild rootfs with `just build` to pick up new/modified test files
 5. Verify with `just run "capsem-doctor"`
 
+## Ephemeral VM Model -- Invariants (do not break)
+
+Every VM session is fully stateless. Two invariants in `images/capsem-init` must never be violated:
+
+1. **`mke2fs` runs unconditionally** at boot -- the scratch disk is always formatted fresh. No ext4 detection, no skip.
+2. **Overlay `upperdir` is always tmpfs** (`mount -t tmpfs tmpfs /mnt/b`). It must never be the scratch disk.
+
+Breaking either invariant allows rootfs writes to survive across sessions, violating the sandbox model. `scripts/preflight.sh` (`check_ephemeral_model`) enforces both statically. `scripts/integration_test.py` (`check_persistence`) verifies ephemerality end-to-end by booting two consecutive VMs and confirming a file written in the first is absent in the second.
+
+**To add packages to the VM:** edit `images/Dockerfile.rootfs` and run `just build-assets`. Never try to make the overlay upper layer persistent.
+
 ## Notes
 
 - The binary must be codesigned with `com.apple.security.virtualization` or VZ calls crash. The justfile handles this.
@@ -239,9 +267,23 @@ Local backups of all credentials are in `private/` (gitignored):
 - `private/apple-certificate/` -- `.p12`, `.p8`, base64, passwords, team ID
 - `private/tauri/` -- signing key, public key, password
 
+**p12 encryption gotcha**: macOS `security import` only supports legacy PKCS12 (3DES/SHA1). OpenSSL 3.x creates PBES2/AES-256-CBC by default, which Keychain rejects with a misleading "wrong password" error. If the p12 was created or re-exported with modern OpenSSL, run `scripts/fix_p12_legacy.sh` to convert it, then upload with `gh secret set APPLE_CERTIFICATE < private/apple-certificate/capsem-b64.txt`.
+
+## Release Preflight
+
+The CI release workflow runs a `preflight` job before anything else to fail fast on credential/config issues. Locally, run `scripts/preflight.sh` to validate:
+- Required tools (openssl, codesign, cargo, pnpm, node, gh)
+- Rust cross-compile target (aarch64-unknown-linux-musl)
+- Apple certificate format and keychain import
+- Base64 file in sync with p12
+
+When adding new release prerequisites, add a `check_*` function to `scripts/preflight.sh`.
+
 ## Release Process
 
-`just release` and `just install` automatically run `just full-test` before building. The full-test gates are:
+Releases are CI-only via `.github/workflows/release.yaml`. Push a `vX.Y.Z` tag to trigger the pipeline (preflight -> build-assets -> test -> build-app with codesign + notarize + DMG + GitHub Release).
+
+`just install` runs `doctor` + `full-test` before building locally. The full-test gates are:
 
 | Gate | What it does |
 |------|-------------|
@@ -252,9 +294,9 @@ Local backups of all credentials are in `private/` (gitignored):
 | Integration test | Boot VM, exercise all 6 telemetry pipelines, verify session DB + main.db rollup |
 | Benchmark | Boot VM, run `capsem-bench` (disk I/O, rootfs read, CLI startup, HTTP latency) |
 
-All gates must pass before the release `.app` bundle is built. `just release` also produces a DMG at `target/release/Capsem.dmg`. Requires API keys in `~/.capsem/user.toml` (Gemini key needed for the integration test's model_calls verification).
+All gates must pass before the `.app` bundle is built. Requires API keys in `~/.capsem/user.toml` (Gemini key needed for the integration test's model_calls verification).
 
-To run the full validation suite without building a release: `just full-test`
+To run the full validation suite without building: `just full-test`
 
 ## Frontend / UI Development
 

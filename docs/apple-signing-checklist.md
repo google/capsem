@@ -46,3 +46,15 @@ Required before the first CI release. All steps are manual (portal/Xcode).
 - `tauri-action@v1` may handle certificate import automatically if `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` are set. The explicit import step in `release.yaml` is a fallback.
 - The `.p8` key file should be stored securely outside the repo. Only the Key ID and Issuer ID go into GitHub secrets.
 - The Tauri updater public key is checked into `tauri.conf.json` -- it is NOT secret.
+
+## Gotcha: p12 encryption format
+
+macOS `security import` only supports legacy PKCS12 encryption (3DES/SHA1, aka `pbeWithSHA1And3-KeyTripleDES-CBC`). OpenSSL 3.x defaults to modern PBES2/AES-256-CBC, which Keychain rejects with a misleading "wrong password?" error -- the password is fine, the encryption format is wrong.
+
+**Symptoms**: CI fails at "Import Apple certificate" with `security import` error despite correct password.
+
+**Diagnosis**: `openssl pkcs12 -in cert.p12 -info -nokeys -nocerts -passin pass:PWD 2>&1 | head -5` -- if you see `PBES2`, it needs conversion.
+
+**Fix**: Run `scripts/fix_p12_legacy.sh`, then upload with `gh secret set APPLE_CERTIFICATE < private/apple-certificate/capsem-b64.txt`.
+
+**Prevention**: Always verify with `scripts/preflight.sh` before uploading secrets.

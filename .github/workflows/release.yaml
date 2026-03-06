@@ -10,7 +10,44 @@ permissions:
   id-token: write
 
 jobs:
+  preflight:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import Apple certificate (preflight)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          KEYCHAIN="preflight-$$.keychain"
+          security create-keychain -p "" "$KEYCHAIN"
+          security import cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep "Developer ID" || true)
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No Developer ID signing identity found. Check APPLE_CERTIFICATE secret."
+            echo "::error::If the p12 was created with OpenSSL 3.x, it uses PBES2/AES encryption."
+            echo "::error::macOS requires legacy 3DES. Re-export with: scripts/fix_p12_legacy.sh"
+            exit 1
+          fi
+          echo "Signing identity: $IDENTITY"
+          security delete-keychain "$KEYCHAIN"
+          rm cert.p12
+
+      - name: Verify Tauri signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          echo "Tauri signing key is set"
+
   build-assets:
+    needs: preflight
     runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
     steps:
       - uses: actions/checkout@v4
