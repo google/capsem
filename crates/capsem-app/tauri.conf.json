@@ -31,7 +31,7 @@
     "resources": {
       "../../assets/vmlinuz": "vmlinuz",
       "../../assets/initrd.img": "initrd.img",
-      "../../assets/rootfs.img": "rootfs.img",
+      "../../assets/rootfs.squashfs": "rootfs.squashfs",
       "../../assets/B3SUMS": "B3SUMS"
     },
     "macOS": {
