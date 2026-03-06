@@ -138,6 +138,9 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile
 
+      - name: Build frontend
+        run: cd frontend && pnpm build
+
       - name: Install cargo-auditable and cargo-sbom
         run: cargo install cargo-auditable cargo-sbom --locked
 
