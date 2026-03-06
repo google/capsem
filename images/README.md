@@ -6,22 +6,48 @@ This directory contains everything that goes into the guest Linux VM: the kernel
 
 The VM runs Debian bookworm-slim on aarch64 with a **read-only rootfs**. Only `/root` (scratch disk or tmpfs), `/tmp`, `/run`, and `/var` are writable.
 
-### Package Installation
+### Adding Packages to the VM
 
-| Method | Works? | Details |
-|--------|--------|---------|
-| `pip install <pkg>` | Yes | Installs to `/root/.venv` (auto-activated at boot) |
-| `uv pip install <pkg>` | Yes | Same venv, faster |
-| `npm install <pkg>` | Yes | Local install to `./node_modules/` |
-| `npm install -g <pkg>` | Yes | Installs to `/root/.npm-global/` (writable scratch disk) |
-| `apt install <pkg>` | No | Rootfs is read-only. Add packages to `Dockerfile.rootfs` and rebuild with `just build`. |
+Each package ecosystem has a manifest file. Edit the relevant file and run `just build-assets` to rebuild the rootfs. All installs are baked into the squashfs — they survive reboots but are read-only at runtime (writes go to the overlayfs upper layer on tmpfs).
 
-### Pre-installed Packages
+#### `apt-packages.txt` — System packages (Debian apt)
 
-Python packages and npm globals are declared in manifest files so they're easy to version and edit:
+```
+# add a line:
+ripgrep
+```
 
-- **`requirements.txt`** -- Python packages installed system-wide in the rootfs. The boot-time venv inherits them via `--system-site-packages`. Agents can install additional packages at runtime with `pip` or `uv`.
-- **`npm-globals.txt`** -- npm packages (AI CLIs) installed to `/opt/ai-clis/` during Docker build. Copied to the writable scratch disk at boot so they can self-update.
+Then `just build-assets`. Sources use HTTPS (`deb.debian.org`, `security.debian.org`). Both domains are in the default allow list so they work through the MITM proxy. The package lists are pre-populated at build time so `apt-get install` works inside a running VM without a prior `apt-get update` (lists will be as fresh as the last `just build-assets`).
+
+#### `requirements.txt` — Python packages (pip/uv)
+
+```
+# add a line:
+httpx
+```
+
+Then `just build-assets`. Packages are installed system-wide; the boot-time venv at `/root/.venv` inherits them via `--system-site-packages`. Agents can also install additional packages at runtime with `pip install` or `uv pip install` — those go to the venv on the writable scratch disk.
+
+#### `npm-globals.txt` — npm global packages (AI CLIs)
+
+```
+# add a line:
+@anthropic-ai/claude-code
+```
+
+Then `just build-assets`. Packages are installed to `/opt/ai-clis/` during the Docker build and copied to the writable scratch disk at boot (`/root/.npm-global/`) so they can self-update at runtime.
+
+#### Runtime installs (session-only, gone after shutdown)
+
+| Command | Where it goes | Persists? |
+|---------|--------------|-----------|
+| `pip install <pkg>` | `/root/.venv` (scratch disk) | No |
+| `uv pip install <pkg>` | `/root/.venv` (scratch disk) | No |
+| `npm install <pkg>` | `./node_modules/` | No |
+| `npm install -g <pkg>` | `/root/.npm-global/` (scratch disk) | No |
+| `apt-get install <pkg>` | overlayfs upper (tmpfs) | No |
+
+All runtime installs are ephemeral — the scratch disk and tmpfs upper layer are wiped on every boot.
 
 ### Python Environment
 
@@ -61,15 +87,16 @@ The login experience is composed of three files:
 
 | File | Purpose | Rebuild |
 |------|---------|---------|
-| `Dockerfile.rootfs` | Rootfs image (packages, tools, CLIs) | `just build` |
-| `Dockerfile.kernel` | Custom Linux kernel | `just build` |
-| `capsem-init` | PID 1 init script (mounts, networking, agent launch) | `just repack` |
-| `capsem-bashrc` | Guest shell config (venv, npm prefix, banner, AI status) | `just build` |
-| `banner.txt` | Login banner | `just build` |
-| `tips.txt` | Random developer tips | `just build` |
-| `requirements.txt` | Pre-installed Python packages | `just build` |
-| `npm-globals.txt` | Pre-installed npm global packages (AI CLIs) | `just build` |
-| `capsem-doctor` | In-VM diagnostic runner | `just build` |
-| `diagnostics/` | pytest-based VM test suite | `just build` |
+| `Dockerfile.rootfs` | Rootfs image (packages, tools, CLIs) | `just build-assets` |
+| `Dockerfile.kernel` | Custom Linux kernel | `just build-assets` |
+| `capsem-init` | PID 1 init script (mounts, networking, agent launch) | `just run` |
+| `capsem-bashrc` | Guest shell config (venv, npm prefix, banner, AI status) | `just build-assets` |
+| `banner.txt` | Login banner | `just build-assets` |
+| `tips.txt` | Random developer tips | `just build-assets` |
+| `apt-packages.txt` | Pre-installed system packages (apt) | `just build-assets` |
+| `requirements.txt` | Pre-installed Python packages | `just build-assets` |
+| `npm-globals.txt` | Pre-installed npm global packages (AI CLIs) | `just build-assets` |
+| `capsem-doctor` | In-VM diagnostic runner | `just build-assets` |
+| `diagnostics/` | pytest-based VM test suite | `just build-assets` |
 | `build.py` | Build orchestrator (kernel, rootfs, initrd) | -- |
-| `defconfig` | Kernel .config | `just build` |
+| `defconfig` | Kernel .config | `just build-assets` |

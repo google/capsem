@@ -4,23 +4,16 @@
 
 FROM --platform=linux/arm64 debian:bookworm-slim
 
-# Core utilities and inspection tools
+# Core utilities and inspection tools (see apt-packages.txt to add/remove packages)
 # apt-get upgrade pulls latest security patches and package versions at build time.
+COPY apt-packages.txt /tmp/apt-packages.txt
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-        coreutils util-linux procps psmisc findutils diffutils \
-        lsof strace file less man-db \
-        grep sed gawk \
-        tar gzip bzip2 xz-utils \
-        vim-tiny \
-        git \
-        curl ca-certificates wrk \
-        iproute2 iptables dnsmasq \
-        python3 python3-pip python3-venv && \
+    grep -v '^\s*#' /tmp/apt-packages.txt | grep -v '^\s*$' | \
+    xargs apt-get install -y --no-install-recommends && \
     ln -sf vim.tiny /usr/bin/vim && \
     pip3 install --break-system-packages --upgrade pip && \
-    rm -rf /var/lib/apt/lists/*
+    rm /tmp/apt-packages.txt
 
 # Node.js 24 LTS via nvm (Debian bookworm ships v18 which lacks the 'v'
 # regex flag needed by modern npm packages like @google/gemini-cli).
@@ -36,7 +29,15 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 
     install -m 555 /root/.local/bin/uv /usr/local/bin/uv && \
     install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
 
-# AI coding CLIs -- installed to /opt/ai-clis (staging area).
+# Claude Code -- download binary directly using the URL from the official install script.
+# Extracts the GCS bucket and latest version from install.sh so we don't depend on
+# the installer's HOME layout. Binary goes straight to /usr/local/bin/claude.
+RUN GCS_BUCKET=$(curl -fsSL https://claude.ai/install.sh | grep 'GCS_BUCKET=' | head -1 | cut -d'"' -f2) && \
+    VERSION=$(curl -fsSL "$GCS_BUCKET/latest") && \
+    curl -fsSL "$GCS_BUCKET/$VERSION/linux-arm64/claude" -o /usr/local/bin/claude && \
+    chmod 755 /usr/local/bin/claude
+
+# Other AI coding CLIs -- installed to /opt/ai-clis (staging area).
 # Copied to writable scratch disk at boot by capsem-init so that
 # auto-update works (CLIs self-update and need writable node_modules).
 COPY npm-globals.txt /tmp/npm-globals.txt
@@ -103,3 +104,7 @@ RUN find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -exec chmod u-s,g-s {}
 
 # /root is a tmpfs at runtime, so don't put anything here
 RUN rm -rf /root && mkdir -p /root
+
+# Switch apt sources to HTTPS for runtime use.
+# Build uses HTTP (ca-certificates not available earlier); VM blocks port 80.
+RUN sed -i 's|URIs: http://|URIs: https://|g' /etc/apt/sources.list.d/debian.sources
