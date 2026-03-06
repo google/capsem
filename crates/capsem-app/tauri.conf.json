@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
   "productName": "Capsem",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "identifier": "com.capsem.capsem",
   "build": {
-    "beforeDevCommand": "cd ../../frontend && pnpm dev",
+    "beforeDevCommand": "cd frontend && pnpm dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "cd ../../frontend && pnpm build",
+    "beforeBuildCommand": "cd frontend && pnpm build",
     "frontendDist": "../../frontend/dist"
   },
   "app": {

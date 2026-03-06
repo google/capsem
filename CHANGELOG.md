@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.2] - 2026-03-06
+## [0.8.3] - 2026-03-06
 
 ### Added
 - `apt install` support inside the VM: overlayfs now mounts with `redirect_dir=on,metacopy=on`, enabling dpkg directory renames without EXDEV errors. Packages installed in a session are gone after shutdown (ephemeral model preserved).
