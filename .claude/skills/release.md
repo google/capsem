@@ -99,6 +99,7 @@ Checks:
 - Rust aarch64-unknown-linux-musl target
 - Apple p12 encryption format + keychain import test
 - Base64 file matches p12 on disk
+- Notarization credentials (.p8 key, API Key ID, Issuer ID) + live `notarytool history` test
 
 To add a new check: add a `check_*` function to `scripts/preflight.sh`.
 
@@ -109,10 +110,14 @@ To add a new check: add a `check_*` function to `scripts/preflight.sh`.
 2. Fix: `scripts/fix_p12_legacy.sh` + re-upload secret
 3. Verify: `scripts/preflight.sh`
 
-### Notarization fails
+### Notarization fails or hangs
+- CI uses `--skip-stapling` so `tauri build` submits but does not wait for Apple's response
+- First-time notarization can take hours -- `--skip-stapling` prevents this from blocking CI
 - Check `.p8` key is valid and has "Developer" role
 - Check `APPLE_API_ISSUER` and `APPLE_API_KEY` match the key
 - Verify team membership is active ($99/year Apple Developer Program)
+- Verify credentials locally: `xcrun notarytool history --key private/apple-certificate/capsem.p8 --key-id KEY_ID --issuer ISSUER_ID`
+- Check notarization status after CI: `xcrun notarytool log <submission-id> --key ... --key-id ... --issuer ...`
 
 ### DMG not signed
 - Check `APPLE_SIGNING_IDENTITY` matches certificate CN exactly

@@ -46,6 +46,27 @@ jobs:
           fi
           echo "Tauri signing key is set"
 
+      - name: Verify notarization credentials
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_PATH }}
+        run: |
+          if [ -z "$APPLE_API_ISSUER" ] || [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_KEY_CONTENT" ]; then
+            echo "::error::Notarization secrets missing (APPLE_API_ISSUER, APPLE_API_KEY, or APPLE_API_KEY_PATH)"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          xcrun notarytool history \
+            --key "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            >/dev/null 2>&1 \
+            && echo "Notarization credentials verified (notarytool history succeeded)" \
+            || { echo "::error::notarytool history failed -- check APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_PATH secrets"; exit 1; }
+          rm -rf "$RUNNER_TEMP/private_keys"
+
   build-assets:
     needs: preflight
     runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
@@ -182,6 +203,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           projectPath: crates/capsem-app
+          args: --skip-stapling
 
       # Upload rootfs as a separate release asset (not in the DMG).
       # The asset manager downloads it on first launch via the B3SUMS manifest.

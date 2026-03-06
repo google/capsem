@@ -33,11 +33,26 @@ Required before the first CI release. All steps are manual (portal/Xcode).
 - [ ] Set GitHub secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password you chose
 - [ ] Verify: public key in `crates/capsem-app/tauri.conf.json` matches the generated public key
 
-## 5. Verify
+## 5. Verify Notarization Credentials
+
+Before your first release, verify notarization credentials work:
+
+```bash
+# Quick check (no upload, just verifies API key works)
+xcrun notarytool history \
+  --key private/apple-certificate/capsem.p8 \
+  --key-id YOUR_KEY_ID \
+  --issuer YOUR_ISSUER_ID
+```
+
+- [ ] `notarytool history` succeeds (credentials valid against Apple's API)
+- [ ] Or run `scripts/preflight.sh` which includes this check
+
+## 6. End-to-End Verify
 
 - [ ] All 8 GitHub secrets are set: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_KEY_PATH`, `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 - [ ] Tag a test release (`git tag v0.8.0-rc1 && git push origin v0.8.0-rc1`)
-- [ ] Verify release.yaml runs: certificate imports, DMG is signed, notarization succeeds
+- [ ] Verify release.yaml runs: certificate imports, DMG is signed, notarization submitted
 - [ ] Verify `latest.json` updater manifest is uploaded to the release
 - [ ] Test auto-update detection from a previously installed version
 
@@ -46,6 +61,7 @@ Required before the first CI release. All steps are manual (portal/Xcode).
 - `tauri-action@v1` may handle certificate import automatically if `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` are set. The explicit import step in `release.yaml` is a fallback.
 - The `.p8` key file should be stored securely outside the repo. Only the Key ID and Issuer ID go into GitHub secrets.
 - The Tauri updater public key is checked into `tauri.conf.json` -- it is NOT secret.
+- CI uses `--skip-stapling` so the build submits for notarization but does not wait for Apple's response. First-time notarization can take hours. The app is notarized asynchronously -- Gatekeeper checks online on first launch.
 
 ## Gotcha: p12 encryption format
 
