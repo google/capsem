@@ -1715,6 +1715,7 @@ mod tests {
             ("registry.npm.allow", SettingValue::Bool(false)),
             ("registry.pypi.allow", SettingValue::Bool(false)),
             ("registry.crates.allow", SettingValue::Bool(false)),
+            ("registry.debian.allow", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&empty_file(), &corp);
         for s in &resolved {
