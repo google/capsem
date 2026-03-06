@@ -269,6 +269,8 @@ Local backups of all credentials are in `private/` (gitignored):
 
 **p12 encryption gotcha**: macOS `security import` only supports legacy PKCS12 (3DES/SHA1). OpenSSL 3.x creates PBES2/AES-256-CBC by default, which Keychain rejects with a misleading "wrong password" error. If the p12 was created or re-exported with modern OpenSSL, run `scripts/fix_p12_legacy.sh` to convert it, then upload with `gh secret set APPLE_CERTIFICATE < private/apple-certificate/capsem-b64.txt`.
 
+**Notarization gotcha**: First-time notarization can take hours per Apple's docs. The CI workflow uses `--skip-stapling` so `tauri build` submits for notarization but does not wait for Apple's response. The app is notarized asynchronously -- Gatekeeper checks with Apple's servers on first launch. On subsequent releases (after Apple has seen your Developer ID), notarization is near-instant. To verify credentials locally: `xcrun notarytool history --key private/apple-certificate/capsem.p8 --key-id KEY_ID --issuer ISSUER_ID`.
+
 ## Release Preflight
 
 The CI release workflow runs a `preflight` job before anything else to fail fast on credential/config issues. Locally, run `scripts/preflight.sh` to validate:
@@ -276,6 +278,7 @@ The CI release workflow runs a `preflight` job before anything else to fail fast
 - Rust cross-compile target (aarch64-unknown-linux-musl)
 - Apple certificate format and keychain import
 - Base64 file in sync with p12
+- Notarization credentials (.p8 key + live `notarytool history` check)
 
 When adding new release prerequisites, add a `check_*` function to `scripts/preflight.sh`.
 

@@ -134,6 +134,67 @@ check_rust_targets() {
 
 
 # --------------------------------------------------------------------------
+# Check: Apple notarization credentials are present and work
+# --------------------------------------------------------------------------
+check_notarization() {
+    echo ""
+    echo "== Notarization =="
+
+    local cert_dir="$ROOT_DIR/private/apple-certificate"
+    local p8="$cert_dir/capsem.p8"
+    local info="$cert_dir/api-key-info.txt"
+
+    if [[ ! -f "$p8" ]]; then
+        fail ".p8 key not found at $p8"
+        return
+    fi
+    pass ".p8 key file exists"
+
+    if [[ ! -f "$info" ]]; then
+        fail "api-key-info.txt not found at $info"
+        return
+    fi
+
+    local api_key api_issuer
+    api_key=$(grep '^APPLE_API_KEY=' "$info" | head -1 | cut -d= -f2)
+    api_issuer=$(grep '^APPLE_API_ISSUER=' "$info" | head -1 | cut -d= -f2)
+
+    if [[ -z "$api_key" ]]; then
+        fail "API Key ID not found in api-key-info.txt"
+        return
+    fi
+    pass "API Key ID: $api_key"
+
+    if [[ -z "$api_issuer" ]]; then
+        fail "API Issuer ID not found in api-key-info.txt"
+        return
+    fi
+    pass "API Issuer ID: $api_issuer"
+
+    if ! command -v xcrun >/dev/null 2>&1; then
+        fail "xcrun not found"
+        return
+    fi
+
+    if ! xcrun notarytool --help >/dev/null 2>&1; then
+        fail "xcrun notarytool not available"
+        return
+    fi
+    pass "xcrun notarytool available"
+
+    # Live check: verify credentials work against Apple's API (fast, no upload)
+    if xcrun notarytool history \
+        --key "$p8" \
+        --key-id "$api_key" \
+        --issuer "$api_issuer" \
+        >/dev/null 2>&1; then
+        pass "notarytool history succeeded (credentials valid)"
+    else
+        fail "notarytool history failed -- check .p8 key, Key ID, and Issuer ID"
+    fi
+}
+
+# --------------------------------------------------------------------------
 # Check: capsem-init does not allow state to persist between VM sessions.
 # Invariants:
 #   (1) scratch disk is always formatted unconditionally at boot (no ext4 detection skip)
@@ -178,6 +239,13 @@ check_ephemeral_model() {
     else
         fail "capsem-init: tmpfs overlay upper not found -- writes may persist"
     fi
+
+    # PASS: tmpfs mount failure must abort boot (no silent degraded mode)
+    if grep -qE 'exit 1' "$init" && grep -A3 'mount -t tmpfs tmpfs /mnt/b' "$init" | grep -q 'exit 1'; then
+        pass "capsem-init: tmpfs mount failure aborts boot (no silent degraded fallback)"
+    else
+        fail "capsem-init: tmpfs mount failure does not abort boot -- VM may start with wrong upper layer"
+    fi
 }
 
 # --------------------------------------------------------------------------
@@ -191,6 +259,7 @@ main() {
     check_rust_targets
     check_apple_certificate
     check_b64_matches_p12
+    check_notarization
     check_ephemeral_model
 
     echo ""

@@ -49,6 +49,14 @@ VM_COMMAND = "; ".join([
     "curl -sf https://elie.net -o /dev/null",
     "curl -sf https://deny.example.com/ -o /dev/null || true",  # denied by policy
 
+    # -- throughput: 100MB download through the full MITM proxy pipeline --
+    (
+        "curl -s -o /dev/null"
+        " -w 'throughput: %{speed_download} B/s in %{time_total}s\\n'"
+        " --connect-timeout 15"
+        " https://ash-speed.hetzner.com/100MB.bin"
+    ),
+
     # -- mcp_calls: capsem-doctor MCP test subset --
     "capsem-doctor -k mcp",
 
@@ -269,6 +277,22 @@ def verify_session(session_id: str) -> bool:
         f"{google_net} googleapis.com net_events (Gemini API calls)",
         "no googleapis.com net_events (Gemini API call not captured)",
     )
+
+    # ash-speed.hetzner.com throughput download.
+    hetzner = conn.execute(
+        "SELECT * FROM net_events WHERE domain = 'ash-speed.hetzner.com'"
+    ).fetchone()
+    r.check(
+        hetzner is not None,
+        "ash-speed.hetzner.com request logged (100MB throughput test)",
+        "ash-speed.hetzner.com NOT found in net_events (throughput download may have failed)",
+    )
+    if hetzner:
+        r.check(
+            hetzner["decision"] == "allowed",
+            "ash-speed.hetzner.com decision = allowed",
+            f"ash-speed.hetzner.com decision = {hetzner['decision']} (expected allowed)",
+        )
 
     # At least one allowed net_event with an HTTP status code.
     with_status = conn.execute(
@@ -526,6 +550,58 @@ def verify_session(session_id: str) -> bool:
     return r.success
 
 
+PERSISTENCE_WRITE_CMD = (
+    "echo capsem-persistence-sentinel > /root/.capsem_persistence_test "
+    "&& echo CAPSEM_PERSISTENCE_WRITTEN"
+)
+PERSISTENCE_CHECK_CMD = (
+    "test ! -f /root/.capsem_persistence_test "
+    "&& echo CAPSEM_EPHEMERAL_OK "
+    "|| { echo CAPSEM_EPHEMERAL_FAIL; exit 1; }"
+)
+
+
+def check_persistence(binary: str, assets_dir: str) -> bool:
+    """Boot two consecutive VMs; verify a file written in the first is gone in the second."""
+    print(f"\n{BOLD}=== Ephemeral model check ==={RESET}")
+    env = {
+        **os.environ,
+        "CAPSEM_ASSETS_DIR": assets_dir,
+        "RUST_LOG": "capsem=warn",
+        "CAPSEM_USER_CONFIG": "config/integration-test-user.toml",
+        "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
+    }
+
+    print("  Invocation 1: writing sentinel file...")
+    proc1 = subprocess.run(
+        [binary, PERSISTENCE_WRITE_CMD],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+    output1 = proc1.stdout + "\n" + proc1.stderr
+    if "CAPSEM_PERSISTENCE_WRITTEN" not in output1:
+        print(f"  {RED}FAIL{RESET}  sentinel write failed (invocation 1 did not confirm)")
+        print(output1[:1000])
+        return False
+    print(f"  {GREEN}PASS{RESET}  sentinel written in invocation 1")
+
+    print("  Invocation 2: checking sentinel is absent...")
+    proc2 = subprocess.run(
+        [binary, PERSISTENCE_CHECK_CMD],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+    output2 = proc2.stdout + "\n" + proc2.stderr
+    # Use exit code as the definitive indicator -- the command string itself contains
+    # "CAPSEM_EPHEMERAL_FAIL" so searching for it in output would always match (PTY echo).
+    if proc2.returncode != 0:
+        print(f"  {RED}FAIL{RESET}  sentinel persisted across VM invocations -- SECURITY BREACH")
+        return False
+    if "CAPSEM_EPHEMERAL_OK" not in output2:
+        print(f"  {RED}FAIL{RESET}  ephemeral check did not confirm (no CAPSEM_EPHEMERAL_OK)")
+        return False
+    print(f"  {GREEN}PASS{RESET}  sentinel absent in invocation 2 (VM is fully ephemeral)")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="End-to-end integration test for capsem telemetry pipelines.",
@@ -549,8 +625,9 @@ def main():
     if exit_code != 0:
         print(f"{YELLOW}VM exited with code {exit_code} (non-fatal, checking DB){RESET}")
 
-    ok = verify_session(session_id)
-    sys.exit(0 if ok else 1)
+    telemetry_ok = verify_session(session_id)
+    ephemeral_ok = check_persistence(args.binary, args.assets)
+    sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 
 
 if __name__ == "__main__":

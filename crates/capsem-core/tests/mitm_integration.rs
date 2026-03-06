@@ -424,3 +424,82 @@ async fn multiple_requests_reuse_upstream_connection() {
         assert_eq!(event.method.as_deref(), Some("HEAD"));
     }
 }
+
+/// Download 100 MB through the MITM proxy and assert throughput >= 1 MB/s.
+///
+/// Exercises the full proxy pipeline on the host: TLS termination from the
+/// "guest" client, upstream TLS to a real CDN, and body streaming back.
+/// Marked #[ignore] so it doesn't run on every `cargo test` -- run explicitly
+/// with `cargo test -p capsem-core -- --ignored mitm_proxy_download_throughput`.
+#[tokio::test]
+#[ignore = "downloads 100 MB; run explicitly to test proxy throughput"]
+async fn mitm_proxy_download_throughput() {
+    const DOMAIN: &str = "ash-speed.hetzner.com";
+    const PATH: &str = "/100MB.bin";
+    const EXPECTED_BYTES: u64 = 100 * 1024 * 1024;
+    const MIN_MBPS: f64 = 1.0;
+
+    let (config, _db) = make_proxy_config(&[DOMAIN], &[], false);
+    let (proxy_task, addr) = spawn_proxy(config).await;
+
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
+    let sni = ServerName::try_from(DOMAIN).unwrap();
+    let tls = connector
+        .connect(sni, tcp)
+        .await
+        .expect("TLS handshake to ash-speed.hetzner.com should succeed");
+
+    let io = TokioIo::new(tls);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+    tokio::spawn(conn);
+
+    let req = hyper::Request::builder()
+        .method("GET")
+        .uri(PATH)
+        .header("host", DOMAIN)
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+
+    let start = std::time::Instant::now();
+    let resp = sender.send_request(req).await.unwrap();
+    let status = resp.status().as_u16();
+    assert_eq!(status, 200, "expected 200 from {DOMAIN}, got {status}");
+
+    // Stream body without buffering 100 MB in one allocation.
+    let mut body = resp.into_body();
+    let mut total_bytes: u64 = 0;
+    loop {
+        match BodyExt::frame(&mut body).await {
+            Some(Ok(frame)) => {
+                if let Ok(data) = frame.into_data() {
+                    total_bytes += data.len() as u64;
+                }
+            }
+            Some(Err(e)) => panic!("body error: {e}"),
+            None => break,
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let mbps = (total_bytes as f64 / (1024.0 * 1024.0)) / elapsed.as_secs_f64();
+    println!(
+        "\nProxy throughput: {:.1} MB in {:.2}s = {:.2} MB/s",
+        total_bytes as f64 / (1024.0 * 1024.0),
+        elapsed.as_secs_f64(),
+        mbps,
+    );
+
+    drop(sender);
+    let _ = proxy_task.await;
+
+    assert!(
+        total_bytes >= EXPECTED_BYTES,
+        "incomplete download: {:.1} MB (expected 100 MB)",
+        total_bytes as f64 / (1024.0 * 1024.0)
+    );
+    assert!(
+        mbps >= MIN_MBPS,
+        "throughput too low: {mbps:.2} MB/s (minimum {MIN_MBPS} MB/s)"
+    );
+}

@@ -48,15 +48,32 @@ echo "[capsem-init] mount exit: $?"
 echo "[capsem-init] checking /mnt/a/bin/bash..."
 ls /mnt/a/bin/bash 2>&1
 
-# Create tmpfs for overlay upper + workdir
-mount -t tmpfs tmpfs /mnt/b
+# Create tmpfs for overlay upper + workdir.
+# INVARIANT: upperdir MUST be tmpfs -- never the initramfs or scratch disk.
+# A non-tmpfs upper layer would allow writes to persist across reboots.
+# If this mount fails, abort loudly rather than silently boot degraded.
+mkdir -p /mnt/b
+mount -t tmpfs tmpfs /mnt/b || {
+    echo "[capsem-init] FATAL: cannot mount tmpfs on /mnt/b -- aborting"
+    exit 1
+}
 mkdir -p /mnt/b/u /mnt/b/w
 
-# Stack overlayfs: squashfs (read-only) + tmpfs (ephemeral writes)
+# Stack overlayfs: squashfs (read-only lower) + tmpfs (ephemeral upper).
+# redirect_dir=on enables directory renames via xattr redirects (required for dpkg/apt).
+# metacopy=on defers data copies until writes occur (speeds up layer transitions).
+# Fall back to plain overlayfs if the kernel lacks redirect_dir support.
+# Either way, both attempts use /mnt/b/u (tmpfs) as upperdir -- never degrade further.
 mkdir -p /newroot
 mount -t overlay overlay \
+  -o lowerdir=/mnt/a,upperdir=/mnt/b/u,workdir=/mnt/b/w,redirect_dir=on,metacopy=on \
+  /newroot || \
+mount -t overlay overlay \
   -o lowerdir=/mnt/a,upperdir=/mnt/b/u,workdir=/mnt/b/w \
-  /newroot
+  /newroot || {
+    echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
+    exit 1
+}
 
 # Mount virtual filesystems fresh in the new root.
 # /proc, /sys, /dev exist as empty dirs from docker export.
@@ -99,6 +116,14 @@ else
     mount -t tmpfs tmpfs /newroot/root
     echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
 fi
+
+# Remove legacy HTTP sources.list if present (belt-and-suspenders).
+# The rootfs already has HTTPS-only debian.sources from the Docker build.
+rm -f /newroot/etc/apt/sources.list
+
+# dpkg: skip fsync/atomic-rename; overlayfs redirect_dir handles consistency.
+mkdir -p /newroot/etc/dpkg/dpkg.cfg.d
+echo "force-unsafe-io" > /newroot/etc/dpkg/dpkg.cfg.d/force-unsafe-io
 
 # === Network: air-gapped IP stack ===
 # The guest has no real NIC. We create a dummy interface with a local IP,
@@ -185,6 +210,11 @@ if [ -x /capsem-doctor ]; then
     cp /capsem-doctor /newroot/usr/local/bin/capsem-doctor
     chmod 755 /newroot/usr/local/bin/capsem-doctor
     echo "[capsem-init] capsem-doctor deployed"
+fi
+if [ -x /capsem-bench ]; then
+    cp /capsem-bench /newroot/usr/local/bin/capsem-bench
+    chmod 755 /newroot/usr/local/bin/capsem-bench
+    echo "[capsem-init] capsem-bench deployed"
 fi
 if [ -d /diagnostics ]; then
     cp -a /diagnostics/* /newroot/usr/local/lib/capsem-tests/

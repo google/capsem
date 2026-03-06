@@ -343,3 +343,56 @@ def test_direct_ip_no_route():
     )
     assert result.returncode != 0, \
         "Direct IP connection should fail (no real route)"
+
+
+# ---------------------------------------------------------------
+# Layer 7: Proxy throughput
+# ---------------------------------------------------------------
+
+_THROUGHPUT_URL = "https://ash-speed.hetzner.com/100MB.bin"
+_THROUGHPUT_DOMAIN = "ash-speed.hetzner.com"
+_MIN_SPEED_MBPS = 1.0
+
+
+def test_proxy_download_throughput():
+    """100MB download through the MITM proxy must complete above minimum speed.
+
+    Exercises the full pipeline: guest curl -> iptables -> net-proxy ->
+    vsock -> host MITM proxy -> upstream TLS -> back.  Skipped when the
+    speed-test domain is not in the allow list.
+    """
+    # Probe reachability first so we can skip cleanly rather than fail.
+    probe = run(
+        f"curl -skI --connect-timeout 10 {_THROUGHPUT_URL} 2>&1",
+        timeout=20,
+    )
+    if probe.returncode != 0 or "403" in probe.stdout:
+        pytest.skip(f"{_THROUGHPUT_DOMAIN} not in allow list (add to network.custom_allow to run)")
+
+    result = run(
+        f"curl -s -o /dev/null"
+        f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
+        f" --connect-timeout 15"
+        f" {_THROUGHPUT_URL}",
+        timeout=180,
+    )
+    assert result.returncode == 0, \
+        f"download failed (exit {result.returncode}):\n{result.stderr}"
+
+    parts = result.stdout.strip().split()
+    assert len(parts) == 3, f"unexpected curl output: {result.stdout!r}"
+
+    speed_bps = float(parts[0])
+    size_bytes = int(parts[1])
+    time_s = float(parts[2])
+    speed_mbps = speed_bps / (1024 * 1024)
+
+    print(
+        f"\nProxy throughput: {size_bytes / (1024*1024):.1f} MB"
+        f" in {time_s:.1f}s = {speed_mbps:.2f} MB/s"
+    )
+
+    assert size_bytes >= 100 * 1024 * 1024, \
+        f"incomplete download: {size_bytes / (1024*1024):.1f} MB (expected 100 MB)"
+    assert speed_mbps >= _MIN_SPEED_MBPS, \
+        f"throughput too low: {speed_mbps:.2f} MB/s (minimum {_MIN_SPEED_MBPS} MB/s)"

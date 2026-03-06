@@ -38,6 +38,9 @@ ui:
 
 # Pack + boot VM (interactive or with command, ~10s)
 run *CMD: _check-assets _pack-initrd _sign
+    #!/bin/bash
+    set -euo pipefail
+    pkill -x capsem 2>/dev/null || true
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
 
 # Full VM asset rebuild (kernel, initrd, rootfs) via Docker/Podman
@@ -294,6 +297,8 @@ _pack-initrd:
     chmod 555 capsem-fs-watch
     cp "$ROOT/images/capsem-doctor" capsem-doctor
     chmod 755 capsem-doctor
+    cp "$ROOT/images/capsem-bench" capsem-bench
+    chmod 755 capsem-bench
     rm -rf diagnostics
     cp -r "$ROOT/images/diagnostics" diagnostics
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"

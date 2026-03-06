@@ -72,7 +72,7 @@ collapsed = true
 
 [settings.ai.anthropic.claude.state_json.default]
 path = "/root/.claude.json"
-content = '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark","numStartups":1,"projects":{"/root":{"allowedTools":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}}}'
+content = '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark","numStartups":1,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"projects":{"/root":{"allowedTools":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}}}'
 
 # -- OpenAI ------------------------------------------------------------------
 
@@ -207,6 +207,22 @@ domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
 [settings.registry.github.allow.meta.rules.default]
 get = true
 post = true
+
+[settings.registry.debian]
+name = "Debian"
+description = "Debian package repositories"
+
+[settings.registry.debian.allow]
+name = "Allow Debian"
+description = "Enable access to deb.debian.org and security.debian.org for apt package installs."
+type = "bool"
+default = true
+
+[settings.registry.debian.allow.meta]
+domains = ["deb.debian.org", "security.debian.org"]
+
+[settings.registry.debian.allow.meta.rules.default]
+get = true
 
 [settings.registry.npm]
 name = "npm"
@@ -393,7 +409,7 @@ choices = ["allow", "deny"]
 name = "Custom allowed domains"
 description = "Comma-separated domain patterns to allow. Wildcards supported (*.example.com)."
 type = "text"
-default = "elie.net, *.elie.net"
+default = "elie.net, *.elie.net, ash-speed.hetzner.com"
 
 [settings.network.custom_block]
 name = "Custom blocked domains"
