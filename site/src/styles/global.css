@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Capsem Site Theme
+   All colors live here. Change the palette by editing :root.
+   ============================================================ */
+
+@theme {
+  /* -- Accent colors (the only color in the entire site) -- */
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-accent-secondary: #7c3aed;
+  --color-accent-glow: oklch(0.62 0.18 250 / 0.15);
+
+  /* -- Gradient stops -- */
+  --color-grad-from: #3b82f6;
+  --color-grad-to: #7c3aed;
+
+  /* -- Surfaces -- */
+  --color-surface: #ffffff;
+  --color-surface-alt: #f9fafb;
+  --color-surface-dark: #0a0a0a;
+  --color-surface-dark-alt: #141414;
+  --color-surface-card: #ffffff;
+  --color-surface-card-dark: #141414;
+
+  /* -- Borders -- */
+  --color-border: #e5e7eb;
+  --color-border-dark: #262626;
+
+  /* -- Text -- */
+  --color-heading: #0a0a0a;
+  --color-body: #4b5563;
+  --color-muted: #9ca3af;
+  --color-heading-dark: #ffffff;
+  --color-body-dark: #a1a1aa;
+  --color-muted-dark: #71717a;
+
+  /* -- Section badge -- */
+  --color-badge-bg: #f3f4f6;
+  --color-badge-text: #374151;
+  --color-badge-border: #e5e7eb;
+}
+
+/* ============================================================
+   Base styles
+   ============================================================ */
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    background: var(--color-surface);
+    color: var(--color-body);
+  }
+}
+
+/* ============================================================
+   Utility classes
+   ============================================================ */
+
+@utility gradient-text {
+  background: linear-gradient(135deg, var(--color-grad-from), var(--color-grad-to));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@utility gradient-border {
+  position: relative;
+}
+
+@utility section-dark {
+  background: var(--color-surface-dark);
+  color: var(--color-body-dark);
+}
