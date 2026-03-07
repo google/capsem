@@ -216,7 +216,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: target/release/bundle/dmg/*.dmg
+          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
 
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
@@ -224,5 +224,5 @@ jobs:
       - name: Attest SBOM
         uses: actions/attest-sbom@v2
         with:
-          subject-path: target/release/bundle/dmg/*.dmg
+          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
           sbom-path: capsem-sbom.spdx.json
