@@ -17,6 +17,16 @@
     themeStore.init();
     vmStore.init();
     settingsStore.load();
+
+    const handleKeydown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        const nextView = sidebarStore.activeView === 'settings' ? 'terminal' : 'settings';
+        sidebarStore.setView(nextView);
+      }
+    };
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
   });
 
   $effect(() => {
