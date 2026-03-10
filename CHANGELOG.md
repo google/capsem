@@ -8,11 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Auto-detect latest stable kernel version from kernel.org during `just build-assets`
+
+### Security
+- Kernel hardening: heap zeroing (`INIT_ON_ALLOC`), SLUB freelist hardening, page allocator randomization, KPTI (`UNMAP_KERNEL_AT_EL0`), ARM64 BTI + PAC, `HARDENED_USERCOPY`, seccomp filter, cmdline hardening (`init_on_alloc=1 slab_nomerge page_alloc.shuffle=1`)
+
+### Fixed
+- tmux sessions can now find `gemini` and other npm-global binaries (PATH was lost when tmux started a login shell that reset it via `/etc/profile`)
+- `gh auth status` injection test no longer fails with fake test tokens (test now verifies token detection, not authentication)
+
+### Changed
+- `just install` now runs validation gates only (doctor + full-test); `.app` bundling is CI-only
+
+### Added
 - Documentation URLs for API key settings (links to provider console/settings pages)
 - Repositories section in settings with git identity (author name/email) for VM commits
 - Personal access token settings for GitHub and GitLab (enables git push over HTTPS via .git-credentials)
 - GitLab as a repository provider with domain allow/block and token support
 - Added `tmux` and `gh` to the default rootfs for terminal multiplexing and GitHub CLI support
+- Token prefix hints in settings UI -- apikey inputs show expected format (e.g., `ghp_...`, `sk-ant-...`) with a warning if the entered value doesn't match
+- `GH_TOKEN` / `GITHUB_TOKEN` env vars injected in VM when GitHub token is configured, enabling `gh` CLI without `gh auth login`
+- `GITLAB_TOKEN` env var injected in VM when GitLab token is configured
 
 ### Changed
 - Missing API key warnings now appear in the group header when collapsed, with a "Get key" link
@@ -22,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Git authentication in VM: switched from `.netrc` to `.git-credentials` + `credential.helper=store` so `git push` works out of the box
+- "Get one" links in settings now open in host browser via `tauri-plugin-opener` (previously broken in Tauri webview)
 
 ### Security
 - Git credential tokens now reject `@` and `:` characters (in addition to newlines) to prevent URL injection in `.git-credentials`

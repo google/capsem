@@ -174,3 +174,36 @@ class TestGitCredentials:
             assert "password=" in result.stdout, (
                 f"git credential fill failed for {host}: {result.stdout}"
             )
+
+
+# -- GitHub CLI --
+
+
+class TestGitHubCli:
+    def test_gh_token_set(self):
+        """GH_TOKEN env var must be set when GitHub is enabled with a token."""
+        m = _load_manifest()
+        env = m["env"]
+        if "GH_TOKEN" not in env:
+            pytest.skip("GH_TOKEN not in manifest (GitHub not configured)")
+        actual = os.environ.get("GH_TOKEN")
+        assert actual, "GH_TOKEN env var is not set in the guest"
+
+    def test_gh_auth_status(self):
+        """gh auth status must detect the GH_TOKEN env var.
+
+        Injection tests use fake tokens, so authentication failure is expected.
+        We only verify that gh detected GH_TOKEN and attempted to use it.
+        """
+        if not os.environ.get("GH_TOKEN"):
+            pytest.skip("GH_TOKEN not set")
+        result = run("gh auth status", timeout=10)
+        output = result.stdout + result.stderr
+        # gh auth status should mention github.com and GH_TOKEN regardless of
+        # whether the token is valid (injection tests use fake tokens).
+        assert "github.com" in output, (
+            f"gh did not detect github.com: {output}"
+        )
+        assert "GH_TOKEN" in output, (
+            f"gh did not detect GH_TOKEN env var: {output}"
+        )

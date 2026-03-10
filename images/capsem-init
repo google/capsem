@@ -263,6 +263,16 @@ else
 fi
 chroot /newroot npm config set prefix /root/.npm-global 2>/dev/null || true
 
+# Ensure custom PATH and venv survive tmux login shells.
+# /etc/profile sources /etc/profile.d/*.sh, so this runs in every login shell
+# (including tmux panes) -- without re-running the capsem-bashrc banner.
+cat > /newroot/etc/profile.d/capsem.sh << 'PROFILE'
+export PATH="/root/.npm-global/bin:/root/.local/bin:$PATH"
+if [ -f /root/.venv/bin/activate ]; then
+    . /root/.venv/bin/activate
+fi
+PROFILE
+
 echo "[capsem-init] about to chroot..."
 
 # Launch the PTY agent for vsock-based terminal I/O.

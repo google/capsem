@@ -6,22 +6,22 @@
 #   _install-tools  auto-installs rust targets, components, cargo tools (internal)
 #   _check-assets   verifies VM assets exist, tells you to run build-assets if not
 #
-#   run          -> _check-assets -> _pack-initrd -> _sign -> _compile -> _frontend
-#   test         -> _install-tools
-#   build-assets -> doctor + _install-tools
-#   full-test    -> test + _check-assets + _pack-initrd + _sign
-#   install      -> doctor + full-test + _frontend
+#   run             -> _check-assets -> _pack-initrd -> _sign -> _compile -> _frontend
+#   test            -> _install-tools
+#   build-assets    -> doctor + _install-tools
+#   test-injection  -> _check-assets + _pack-initrd + _sign
+#   full-test       -> test + _check-assets + _pack-initrd + _sign
+#   install         -> doctor + full-test
 #
 # First-time setup:
 #   just doctor       (shows what's missing)
 #   just build-assets (builds kernel, initrd, rootfs -- needs docker/podman)
 #
 # Daily dev:          just run     (fast ~10s, auto-repacks initrd)
-# Before install:     just install (doctor + full-test + /Applications)
+# Before release:     just install (doctor + full-test -- all validation gates)
 # Releases:           CI only -- push a vX.Y.Z tag to trigger .github/workflows/release.yaml
 
 binary := "target/debug/capsem"
-release_app := "target/release/bundle/macos/Capsem.app"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
 
@@ -48,16 +48,19 @@ build-assets: doctor _install-tools
     cd images && python3 build.py
 
 # Unit tests + cross-compile check + frontend type-check (no VM)
-test: _install-tools
+test: _install-tools _clean-stale
     cargo llvm-cov --workspace --no-cfg-coverage
     cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
     cd frontend && pnpm run check && pnpm run build
 
-# Full validation: test + capsem-doctor + integration test + bench (boots VM)
+# Full validation: test + capsem-doctor + injection test + integration test + bench (boots VM)
 full-test: test _check-assets _pack-initrd _sign
     @echo ""
     @echo "=== capsem-doctor ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
+    @echo ""
+    @echo "=== Injection test ==="
+    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
     @echo ""
     @echo "=== Integration test ==="
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
@@ -65,22 +68,18 @@ full-test: test _check-assets _pack-initrd _sign
     @echo "=== Benchmarks ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
+# End-to-end injection test: boot VM with generated configs, verify all injection paths
+test-injection: _check-assets _pack-initrd _sign
+    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
+
 # Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
 bench: _check-assets _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
-# Build release .app + install to /Applications + launch
-install: doctor full-test _frontend
-    cd crates/capsem-app && cargo tauri build
-    codesign --sign - --entitlements {{entitlements}} --force --deep "{{release_app}}"
-    @echo "Stopping running Capsem..."
-    -@pkill -x Capsem 2>/dev/null || true
-    -@pkill -x capsem 2>/dev/null || true
-    @echo "Installing to /Applications..."
-    rm -rf "/Applications/Capsem.app"
-    cp -R "{{release_app}}" "/Applications/"
-    @echo "Launching Capsem..."
-    open "/Applications/Capsem.app"
+# Full validation (test + doctor + bench). Use `just run` for daily dev.
+install: doctor full-test
+    @echo ""
+    @echo "All gates passed. Use 'just run' to boot the VM."
 
 # Check that all required dev tools and dependencies are installed
 doctor:
@@ -160,7 +159,23 @@ doctor:
 clean:
     cargo clean
     cd frontend && rm -rf dist node_modules
-    rm -rf target/release/bundle/macos/Capsem.app target/release/Capsem.dmg
+
+# Deep clean: build artifacts + container images + podman cache
+clean-all: clean
+    #!/bin/bash
+    set -euo pipefail
+    # Remove stale rootfs files from target dirs
+    find target -name "rootfs.img" -delete 2>/dev/null || true
+    find target -name "rootfs.squashfs" -delete 2>/dev/null || true
+    rm -rf target/llvm-cov-target
+    # Prune container images
+    if command -v podman &>/dev/null; then
+        echo "Pruning podman images..."
+        podman system prune -af
+    elif command -v docker &>/dev/null; then
+        echo "Pruning docker images..."
+        docker system prune -af
+    fi
 
 # Inspect session DB integrity and event summary (latest by default)
 inspect-session *args='':
@@ -207,6 +222,14 @@ update-prices:
         -o config/genai-prices.json
     @echo "Updated config/genai-prices.json"
 
+# Remove stale rootfs copies from target dirs (fast, harmless)
+_clean-stale:
+    #!/bin/bash
+    find target -path "*/debug/rootfs.*" -delete 2>/dev/null || true
+    find target -path "*/release/rootfs.*" -delete 2>/dev/null || true
+    find target -path "*/_up_" -type d -exec rm -rf {} + 2>/dev/null || true
+    find target -path "*/llvm-cov-target/debug/rootfs.*" -delete 2>/dev/null || true
+
 # --- Internal helpers (hidden from `just --list`) ---
 
 # Auto-install Rust targets, components, and cargo tools
@@ -248,8 +271,7 @@ _check-assets:
     for f in vmlinuz initrd.img; do
         [ -f "$dir/$f" ] || missing+=("$f")
     done
-    # Accept either rootfs format
-    if [ ! -f "$dir/rootfs.squashfs" ] && [ ! -f "$dir/rootfs.img" ]; then
+    if [ ! -f "$dir/rootfs.squashfs" ]; then
         missing+=("rootfs.squashfs")
     fi
     if [ ${#missing[@]} -gt 0 ]; then
@@ -262,7 +284,7 @@ _check-assets:
 _frontend:
     cd frontend && pnpm build
 
-_compile: _frontend
+_compile: _frontend _clean-stale
     cargo build -p capsem
 
 _sign: _compile
@@ -305,4 +327,6 @@ _pack-initrd:
     rm -rf "$WORKDIR"
     cd "$ROOT"
     (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.squashfs > B3SUMS)
+    # Force cargo to re-run build.rs so it picks up the new B3SUMS hashes
+    touch "$ROOT/crates/capsem-app/build.rs"
     echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch + doctor)"
