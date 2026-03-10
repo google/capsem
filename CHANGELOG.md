@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Documentation URLs for API key settings (links to provider console/settings pages)
+- Repositories section in settings with git identity (author name/email) for VM commits
+- Personal access token settings for GitHub and GitLab (enables git push over HTTPS via .git-credentials)
+- GitLab as a repository provider with domain allow/block and token support
+- Added `tmux` and `gh` to the default rootfs for terminal multiplexing and GitHub CLI support
+
+### Changed
+- Missing API key warnings now appear in the group header when collapsed, with a "Get key" link
+- GitHub moved from "Package Registries" to "Repositories" section
+- `registry.github.*` setting IDs renamed to `repository.github.*`
+- Package Registries description updated to "Package manager registries"
+
+### Fixed
+- Git authentication in VM: switched from `.netrc` to `.git-credentials` + `credential.helper=store` so `git push` works out of the box
+
+### Security
+- Git credential tokens now reject `@` and `:` characters (in addition to newlines) to prevent URL injection in `.git-credentials`
+
 ## [0.8.8] - 2026-03-07
 
 ### Added

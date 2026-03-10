@@ -17,6 +17,21 @@ use super::domain_policy::{Action, DomainPolicy};
 use super::http_policy::{HttpPolicy, HttpRule};
 
 // ---------------------------------------------------------------------------
+// Setting ID constants (must match defaults.toml paths)
+// ---------------------------------------------------------------------------
+
+pub const SETTING_ANTHROPIC_ALLOW: &str = "ai.anthropic.allow";
+pub const SETTING_ANTHROPIC_API_KEY: &str = "ai.anthropic.api_key";
+pub const SETTING_OPENAI_ALLOW: &str = "ai.openai.allow";
+pub const SETTING_OPENAI_API_KEY: &str = "ai.openai.api_key";
+pub const SETTING_GOOGLE_ALLOW: &str = "ai.google.allow";
+pub const SETTING_GOOGLE_API_KEY: &str = "ai.google.api_key";
+pub const SETTING_GITHUB_ALLOW: &str = "repository.providers.github.allow";
+pub const SETTING_GITHUB_TOKEN: &str = "repository.providers.github.token";
+pub const SETTING_GITLAB_ALLOW: &str = "repository.providers.gitlab.allow";
+pub const SETTING_GITLAB_TOKEN: &str = "repository.providers.gitlab.token";
+
+// ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
 
@@ -133,6 +148,12 @@ pub struct SettingMetadata {
     /// Whether this setting or section starts collapsed in the UI.
     #[serde(default)]
     pub collapsed: bool,
+    /// Display format hint (e.g. "domain_list" for chip editor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    /// Documentation URL for getting an API key / token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
 }
 
 /// Schema definition for a setting (loaded from defaults.toml at compile time).
@@ -160,6 +181,9 @@ pub struct SettingEntry {
 pub struct SettingsFile {
     #[serde(default)]
     pub settings: HashMap<String, SettingEntry>,
+    /// MCP server configuration (optional section in user.toml / corp.toml).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<crate::mcp::policy::McpUserConfig>,
 }
 
 /// Where a setting's effective value came from.
@@ -257,6 +281,10 @@ struct SettingMetaToml {
     rules: HashMap<String, HttpMethodPermissions>,
     #[serde(default)]
     env_vars: Vec<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    docs_url: Option<String>,
 }
 
 /// Category/group metadata from TOML grouping nodes.
@@ -308,6 +336,8 @@ fn collect_settings(
                 rules: def.meta.rules,
                 env_vars: def.meta.env_vars,
                 collapsed: def.collapsed,
+                format: def.meta.format,
+                docs_url: def.meta.docs_url,
             },
         });
         return;
@@ -446,6 +476,31 @@ pub fn can_write_corp_settings() -> bool {
     false
 }
 
+/// Load the merged MCP user config (user + corp).
+/// Corp fields override user fields.
+pub fn load_mcp_user_config() -> crate::mcp::policy::McpUserConfig {
+    let (user, corp) = load_settings_files();
+    let user_mcp = user.mcp.unwrap_or_default();
+    let _corp_mcp = corp.mcp.unwrap_or_default();
+    // Note: merging is done at policy evaluation time via to_policy().
+    // This returns the user's config; corp is loaded separately.
+    user_mcp
+}
+
+/// Load the corp MCP config.
+pub fn load_mcp_corp_config() -> crate::mcp::policy::McpUserConfig {
+    let (_, corp) = load_settings_files();
+    corp.mcp.unwrap_or_default()
+}
+
+/// Save MCP user config to user.toml without clobbering settings.
+pub fn save_mcp_user_config(mcp: &crate::mcp::policy::McpUserConfig) -> Result<(), String> {
+    let path = user_config_path().ok_or("HOME not set")?;
+    let mut file = load_settings_file(&path)?;
+    file.mcp = Some(mcp.clone());
+    write_settings_file(&path, &file)
+}
+
 /// Validate a setting value before persisting.
 ///
 /// For `File` values, validates the path and checks JSON content if the path
@@ -514,7 +569,7 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
 
         resolved.push(ResolvedSetting {
             id: key.clone(),
-            category: "Guest Environment".to_string(),
+            category: "VM".to_string(),
             name: key.strip_prefix("guest.env.").unwrap_or(&key).to_string(),
             description: format!("Guest environment variable: {}", key.strip_prefix("guest.env.").unwrap_or(&key)),
             setting_type: SettingType::Text,
@@ -617,7 +672,7 @@ fn corp_blocked_matches(candidate: &str, corp_blocked: &[String]) -> bool {
 /// - Bool toggles with domain metadata (registries) -> allow/block those domains
 /// - `.domains` Text settings -> allow/block parsed domain patterns
 /// - Corp-locked-off services use UNION of default + effective domains for blocking
-/// - Default action from network.default_action
+/// - Default action from web.defaults.allow_read / web.defaults.allow_write
 pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
     let mut allow_list: Vec<String> = Vec::new();
     let mut block_list: Vec<String> = Vec::new();
@@ -698,16 +753,16 @@ pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
         }
     }
 
-    // Custom allow/block lists from network.custom_allow / network.custom_block.
+    // Custom allow/block lists from web.custom_allow / web.custom_block.
     // Block takes priority over allow for overlapping domains.
     let custom_allow = resolved
         .iter()
-        .find(|s| s.id == "network.custom_allow")
+        .find(|s| s.id == "web.custom_allow")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_block = resolved
         .iter()
-        .find(|s| s.id == "network.custom_block")
+        .find(|s| s.id == "web.custom_block")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_allow_domains = parse_domain_list(custom_allow);
@@ -723,16 +778,22 @@ pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
     }
     block_list.extend(custom_block_domains);
 
-    let default_action = resolved
+    let allow_read = resolved
         .iter()
-        .find(|s| s.id == "network.default_action")
-        .and_then(|s| s.effective_value.as_text())
-        .and_then(|s| match s {
-            "allow" => Some(Action::Allow),
-            "deny" => Some(Action::Deny),
-            _ => None,
-        })
-        .unwrap_or(Action::Deny);
+        .find(|s| s.id == "web.defaults.allow_read")
+        .and_then(|s| s.effective_value.as_bool())
+        .unwrap_or(false);
+    let allow_write = resolved
+        .iter()
+        .find(|s| s.id == "web.defaults.allow_write")
+        .and_then(|s| s.effective_value.as_bool())
+        .unwrap_or(false);
+    // Domain policy only has a single default action: allow if either read or write is allowed.
+    let default_action = if allow_read || allow_write {
+        Action::Allow
+    } else {
+        Action::Deny
+    };
 
     DomainPolicy::new(&allow_list, &block_list, default_action)
 }
@@ -796,13 +857,13 @@ pub fn settings_to_http_policy(resolved: &[ResolvedSetting]) -> HttpPolicy {
 
     let log_bodies = resolved
         .iter()
-        .find(|s| s.id == "vm.log_bodies")
+        .find(|s| s.id == "vm.resources.log_bodies")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(false);
 
     let max_body_capture = resolved
         .iter()
-        .find(|s| s.id == "vm.max_body_capture")
+        .find(|s| s.id == "vm.resources.max_body_capture")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(4096) as usize;
 
@@ -829,9 +890,9 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         // so the guest banner can show which AI tools are enabled.
         if s.setting_type == SettingType::Bool {
             let provider_env = match s.id.as_str() {
-                "ai.anthropic.allow" => Some("CAPSEM_ANTHROPIC_ALLOWED"),
-                "ai.openai.allow" => Some("CAPSEM_OPENAI_ALLOWED"),
-                "ai.google.allow" => Some("CAPSEM_GOOGLE_ALLOWED"),
+                SETTING_ANTHROPIC_ALLOW => Some("CAPSEM_ANTHROPIC_ALLOWED"),
+                SETTING_OPENAI_ALLOW => Some("CAPSEM_OPENAI_ALLOWED"),
+                SETTING_GOOGLE_ALLOW => Some("CAPSEM_GOOGLE_ALLOWED"),
                 _ => None,
             };
             if let Some(var_name) = provider_env {
@@ -918,6 +979,61 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         }
     }
 
+    // .git-credentials generation: inject credentials for git push over HTTPS.
+    // Format: https://oauth2:TOKEN@github.com (one line per provider).
+    // Requires credential.helper=store in .gitconfig (generated below).
+    let token_providers = [
+        (SETTING_GITHUB_TOKEN, SETTING_GITHUB_ALLOW, "github.com"),
+        (SETTING_GITLAB_TOKEN, SETTING_GITLAB_ALLOW, "gitlab.com"),
+    ];
+
+    let mut credential_lines: Vec<String> = Vec::new();
+    for (token_id, allow_id, host) in &token_providers {
+        let allowed = resolved
+            .iter()
+            .find(|s| s.id == *allow_id)
+            .and_then(|s| s.effective_value.as_bool())
+            .unwrap_or(false);
+        if !allowed {
+            continue;
+        }
+        let token = resolved
+            .iter()
+            .find(|s| s.id == *token_id)
+            .and_then(|s| s.effective_value.as_text())
+            .unwrap_or("");
+        if token.is_empty() {
+            continue;
+        }
+        // Security: reject tokens with newlines, @, or : to prevent URL injection.
+        if token.contains('\n')
+            || token.contains('\r')
+            || token.contains('@')
+            || token.contains(':')
+        {
+            tracing::warn!(
+                "skipping git credential for {host}: token contains forbidden characters"
+            );
+            continue;
+        }
+        credential_lines.push(format!("https://oauth2:{token}@{host}"));
+    }
+
+    if !credential_lines.is_empty() {
+        files.push(GuestFile {
+            path: "/root/.git-credentials".to_string(),
+            content: credential_lines.join("\n") + "\n",
+            mode: 0o600,
+        });
+        // Generate .gitconfig with credential.helper = store so git reads .git-credentials.
+        // Also include safe.directory = * to avoid "dubious ownership" errors in the sandbox.
+        files.push(GuestFile {
+            path: "/root/.gitconfig".to_string(),
+            content: "[credential]\n\thelper = store\n[safe]\n\tdirectory = *\n".to_string(),
+            mode: 0o644,
+        });
+    }
+
     GuestConfig {
         env: if env.is_empty() { None } else { Some(env) },
         files: if files.is_empty() { None } else { Some(files) },
@@ -998,19 +1114,19 @@ fn inject_api_key_approval(json_str: &str, api_key: &str) -> String {
 pub fn settings_to_vm_settings(resolved: &[ResolvedSetting]) -> VmSettings {
     let cpu_count = resolved
         .iter()
-        .find(|s| s.id == "vm.cpu_count")
+        .find(|s| s.id == "vm.resources.cpu_count")
         .and_then(|s| s.effective_value.as_number())
         .map(|n| n as u32);
 
     let scratch_disk_size_gb = resolved
         .iter()
-        .find(|s| s.id == "vm.scratch_disk_size_gb")
+        .find(|s| s.id == "vm.resources.scratch_disk_size_gb")
         .and_then(|s| s.effective_value.as_number())
         .map(|n| n as u32);
 
     let ram_gb = resolved
         .iter()
-        .find(|s| s.id == "vm.ram_gb")
+        .find(|s| s.id == "vm.resources.ram_gb")
         .and_then(|s| s.effective_value.as_number())
         .map(|n| n as u32);
 
@@ -1134,12 +1250,12 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
     // Custom allow/block lists: same pattern as settings_to_domain_policy
     let custom_allow_text = resolved
         .iter()
-        .find(|s| s.id == "network.custom_allow")
+        .find(|s| s.id == "web.custom_allow")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_block_text = resolved
         .iter()
-        .find(|s| s.id == "network.custom_block")
+        .find(|s| s.id == "web.custom_block")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_allow_domains = parse_domain_list(custom_allow_text);
@@ -1162,26 +1278,30 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
         });
     }
 
-    let default_action = resolved
+    let default_allow_read = resolved
         .iter()
-        .find(|s| s.id == "network.default_action")
-        .and_then(|s| s.effective_value.as_text())
-        .map(|s| s == "allow")
+        .find(|s| s.id == "web.defaults.allow_read")
+        .and_then(|s| s.effective_value.as_bool())
+        .unwrap_or(false);
+    let default_allow_write = resolved
+        .iter()
+        .find(|s| s.id == "web.defaults.allow_write")
+        .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(false);
 
     let log_bodies = resolved
         .iter()
-        .find(|s| s.id == "vm.log_bodies")
+        .find(|s| s.id == "vm.resources.log_bodies")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(true);
 
     let max_body_capture = resolved
         .iter()
-        .find(|s| s.id == "vm.max_body_capture")
+        .find(|s| s.id == "vm.resources.max_body_capture")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(4096) as usize;
 
-    let mut policy = NetworkPolicy::new(rules, default_action, default_action);
+    let mut policy = NetworkPolicy::new(rules, default_allow_read, default_allow_write);
     policy.log_bodies = log_bodies;
     policy.max_body_capture = max_body_capture;
     policy
@@ -1220,6 +1340,9 @@ pub struct ConfigIssue {
     pub severity: String,
     /// Human-readable message shown in the UI.
     pub message: String,
+    /// Documentation URL for getting an API key (shown as "Get key" link).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
 }
 
 /// Validate all resolved settings and return a list of issues.
@@ -1249,6 +1372,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                     id: s.id.clone(),
                     severity: "error".into(),
                     message: format!("{}: value contains invalid characters", s.id),
+                    docs_url: None,
                 });
             }
         }
@@ -1265,6 +1389,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                                 "{}: value {} is below minimum {}",
                                 s.id, n, min
                             ),
+                            docs_url: None,
                         });
                     }
                 }
@@ -1277,6 +1402,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                                 "{}: value {} exceeds maximum {}",
                                 s.id, n, max
                             ),
+                            docs_url: None,
                         });
                     }
                 }
@@ -1296,6 +1422,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                             text,
                             s.metadata.choices.join(", ")
                         ),
+                        docs_url: None,
                     });
                 }
             }
@@ -1309,6 +1436,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                     id: s.id.clone(),
                     severity: "error".into(),
                     message: format!("{}: file path must be absolute", s.id),
+                    docs_url: None,
                 });
             }
             if file_path.contains("..") {
@@ -1316,6 +1444,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                     id: s.id.clone(),
                     severity: "error".into(),
                     message: format!("{}: file path must not contain '..'", s.id),
+                    docs_url: None,
                 });
             }
             if !file_path.starts_with("/root/") && !file_path.starts_with("/root/.") && !file_path.starts_with("/etc/") {
@@ -1323,6 +1452,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                     id: s.id.clone(),
                     severity: "warning".into(),
                     message: format!("{}: unusual file path (expected under /root/ or /etc/)", s.id),
+                    docs_url: None,
                 });
             }
             // JSON content validation for .json paths
@@ -1337,6 +1467,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                                     "{}: JSON parsed but is not an object",
                                     s.id
                                 ),
+                                docs_url: None,
                             });
                         }
                     }
@@ -1345,6 +1476,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                             id: s.id.clone(),
                             severity: "error".into(),
                             message: format!("{}: invalid JSON -- {}", s.id, e),
+                            docs_url: None,
                         });
                     }
                 }
@@ -1363,6 +1495,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                                 "{}: key contains whitespace -- check for copy-paste errors",
                                 s.id
                             ),
+                            docs_url: None,
                         });
                     }
                 }
@@ -1379,10 +1512,8 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                             issues.push(ConfigIssue {
                                 id: s.id.clone(),
                                 severity: "warning".into(),
-                                message: format!(
-                                    "{}: provider is enabled but API key is empty",
-                                    s.id
-                                ),
+                                message: format!("{} not set", s.name),
+                                docs_url: s.metadata.docs_url.clone(),
                             });
                         }
                     }
@@ -1401,6 +1532,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                         id: s.id.clone(),
                         severity: "warning".into(),
                         message: format!("{}: not a valid URL", s.id),
+                        docs_url: None,
                     });
                 }
             }
@@ -1565,19 +1697,19 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
         }
     }
 
-    // Append dynamic guest.env.* settings to the Guest Environment group.
+    // Append dynamic guest.env.* settings to the Environment group (under VM).
     let dynamic_envs: Vec<&ResolvedSetting> = resolved
         .iter()
         .filter(|s| s.id.starts_with("guest.env.") && !resolved_map.contains_key(&s.id)
-            || (s.id.starts_with("guest.env.") && s.category == "Guest Environment" && setting_definitions().iter().all(|d| d.id != s.id)))
+            || (s.id.starts_with("guest.env.") && s.category == "VM" && setting_definitions().iter().all(|d| d.id != s.id)))
         .collect();
 
     if !dynamic_envs.is_empty() {
-        // Find the Guest Environment group and append
+        // Find the Environment group (child of VM) and append
         fn append_dynamic(nodes: &mut Vec<SettingsNode>, envs: &[&ResolvedSetting]) {
             for node in nodes.iter_mut() {
                 if let SettingsNode::Group { name, children, .. } = node {
-                    if name == "Guest Environment" {
+                    if name == "Environment" {
                         for env in envs {
                             children.push(SettingsNode::Leaf((*env).clone()));
                         }
@@ -1624,7 +1756,7 @@ mod tests {
                 modified: now_str(),
             });
         }
-        SettingsFile { settings }
+        SettingsFile { settings, mcp: None }
     }
 
     // -----------------------------------------------------------------------
@@ -1642,21 +1774,21 @@ mod tests {
     }
 
     #[test]
-    fn corp_override_text() {
-        let user = file_with(vec![("network.default_action", SettingValue::Text("allow".into()))]);
-        let corp = file_with(vec![("network.default_action", SettingValue::Text("deny".into()))]);
+    fn corp_override_bool_web_defaults() {
+        let user = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "network.default_action").unwrap();
-        assert_eq!(s.effective_value, SettingValue::Text("deny".into()));
+        let s = resolved.iter().find(|s| s.id == "web.defaults.allow_read").unwrap();
+        assert_eq!(s.effective_value, SettingValue::Bool(false));
         assert_eq!(s.source, PolicySource::Corp);
     }
 
     #[test]
     fn corp_override_number() {
-        let user = file_with(vec![("vm.max_body_capture", SettingValue::Number(8192))]);
-        let corp = file_with(vec![("vm.max_body_capture", SettingValue::Number(1024))]);
+        let user = file_with(vec![("vm.resources.max_body_capture", SettingValue::Number(8192))]);
+        let corp = file_with(vec![("vm.resources.max_body_capture", SettingValue::Number(1024))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "vm.max_body_capture").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.resources.max_body_capture").unwrap();
         assert_eq!(s.effective_value, SettingValue::Number(1024));
         assert_eq!(s.source, PolicySource::Corp);
     }
@@ -1685,12 +1817,12 @@ mod tests {
     fn corp_override_mixed_categories() {
         let user = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("vm.log_bodies", SettingValue::Bool(true)),
+            ("vm.resources.log_bodies", SettingValue::Bool(true)),
             ("appearance.dark_mode", SettingValue::Bool(false)),
         ]);
         let corp = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(false)),
-            ("vm.log_bodies", SettingValue::Bool(false)),
+            ("vm.resources.log_bodies", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&user, &corp);
 
@@ -1698,7 +1830,7 @@ mod tests {
         assert_eq!(ai.effective_value, SettingValue::Bool(false));
         assert_eq!(ai.source, PolicySource::Corp);
 
-        let log = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
+        let log = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
         assert_eq!(log.effective_value, SettingValue::Bool(false));
         assert_eq!(log.source, PolicySource::Corp);
 
@@ -1709,9 +1841,10 @@ mod tests {
     }
 
     #[test]
-    fn corp_overrides_all_registry_toggles() {
+    fn corp_overrides_all_registry_and_repository_toggles() {
         let corp = file_with(vec![
-            ("registry.github.allow", SettingValue::Bool(false)),
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
+            (SETTING_GITLAB_ALLOW, SettingValue::Bool(false)),
             ("registry.npm.allow", SettingValue::Bool(false)),
             ("registry.pypi.allow", SettingValue::Bool(false)),
             ("registry.crates.allow", SettingValue::Bool(false)),
@@ -1719,7 +1852,9 @@ mod tests {
         ]);
         let resolved = resolve_settings(&empty_file(), &corp);
         for s in &resolved {
-            if s.id.starts_with("registry.") && s.id.ends_with(".allow") {
+            let is_registry_toggle = s.id.starts_with("registry.") && s.id.ends_with(".allow");
+            let is_repo_toggle = s.id == SETTING_GITHUB_ALLOW || s.id == SETTING_GITLAB_ALLOW;
+            if is_registry_toggle || is_repo_toggle {
                 assert_eq!(s.effective_value, SettingValue::Bool(false), "failed for {}", s.id);
                 assert_eq!(s.source, PolicySource::Corp);
             }
@@ -1742,12 +1877,12 @@ mod tests {
     }
 
     #[test]
-    fn user_cannot_change_corp_default_action() {
-        let user = file_with(vec![("network.default_action", SettingValue::Text("allow".into()))]);
-        let corp = file_with(vec![("network.default_action", SettingValue::Text("deny".into()))]);
+    fn user_cannot_change_corp_web_defaults() {
+        let user = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "network.default_action").unwrap();
-        assert_eq!(s.effective_value, SettingValue::Text("deny".into()));
+        let s = resolved.iter().find(|s| s.id == "web.defaults.allow_read").unwrap();
+        assert_eq!(s.effective_value, SettingValue::Bool(false));
         assert!(s.corp_locked);
     }
 
@@ -1774,7 +1909,7 @@ mod tests {
     fn write_user_settings_creates_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test_user.toml");
-        let file = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
+        let file = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
         write_settings_file(&path, &file).unwrap();
         assert!(path.exists());
     }
@@ -1785,7 +1920,7 @@ mod tests {
         let path = dir.path().join("roundtrip.toml");
         let file = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("vm.max_body_capture", SettingValue::Number(8192)),
+            ("vm.resources.max_body_capture", SettingValue::Number(8192)),
             ("guest.env.EDITOR", SettingValue::Text("vim".into())),
         ]);
         write_settings_file(&path, &file).unwrap();
@@ -1803,12 +1938,12 @@ mod tests {
         let path = dir.path().join("preserve.toml");
         let mut file = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("vm.log_bodies", SettingValue::Bool(false)),
+            ("vm.resources.log_bodies", SettingValue::Bool(false)),
         ]);
         write_settings_file(&path, &file).unwrap();
 
         // Update one setting
-        file.settings.get_mut("vm.log_bodies").unwrap().value = SettingValue::Bool(true);
+        file.settings.get_mut("vm.resources.log_bodies").unwrap().value = SettingValue::Bool(true);
         write_settings_file(&path, &file).unwrap();
 
         let loaded = load_settings_file(&path).unwrap();
@@ -1817,7 +1952,7 @@ mod tests {
             SettingValue::Bool(true),
         );
         assert_eq!(
-            loaded.settings.get("vm.log_bodies").unwrap().value,
+            loaded.settings.get("vm.resources.log_bodies").unwrap().value,
             SettingValue::Bool(true),
         );
     }
@@ -1865,7 +2000,7 @@ mod tests {
     fn default_registries_allowed() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
         for id in &[
-            "registry.github.allow",
+            SETTING_GITHUB_ALLOW,
             "registry.npm.allow",
             "registry.pypi.allow",
             "registry.crates.allow",
@@ -1876,19 +2011,22 @@ mod tests {
     }
 
     #[test]
-    fn default_network_session_appearance() {
+    fn default_web_session_appearance() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
 
-        let da = resolved.iter().find(|s| s.id == "network.default_action").unwrap();
-        assert_eq!(da.effective_value, SettingValue::Text("deny".into()));
+        let ar = resolved.iter().find(|s| s.id == "web.defaults.allow_read").unwrap();
+        assert_eq!(ar.effective_value, SettingValue::Bool(false));
 
-        let lb = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
+        let aw = resolved.iter().find(|s| s.id == "web.defaults.allow_write").unwrap();
+        assert_eq!(aw.effective_value, SettingValue::Bool(false));
+
+        let lb = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
         assert_eq!(lb.effective_value, SettingValue::Bool(false));
 
-        let mbc = resolved.iter().find(|s| s.id == "vm.max_body_capture").unwrap();
+        let mbc = resolved.iter().find(|s| s.id == "vm.resources.max_body_capture").unwrap();
         assert_eq!(mbc.effective_value, SettingValue::Number(4096));
 
-        let rd = resolved.iter().find(|s| s.id == "vm.retention_days").unwrap();
+        let rd = resolved.iter().find(|s| s.id == "vm.resources.retention_days").unwrap();
         assert_eq!(rd.effective_value, SettingValue::Number(30));
 
         let dm = resolved.iter().find(|s| s.id == "appearance.dark_mode").unwrap();
@@ -1948,12 +2086,12 @@ mod tests {
     }
 
     #[test]
-    fn choice_settings_have_choices_metadata() {
+    fn web_defaults_are_bool_settings() {
         let defs = setting_definitions();
-        let da = defs.iter().find(|d| d.id == "network.default_action").unwrap();
-        assert!(!da.metadata.choices.is_empty());
-        assert!(da.metadata.choices.contains(&"allow".to_string()));
-        assert!(da.metadata.choices.contains(&"deny".to_string()));
+        let ar = defs.iter().find(|d| d.id == "web.defaults.allow_read").unwrap();
+        assert_eq!(ar.setting_type, SettingType::Bool);
+        let aw = defs.iter().find(|d| d.id == "web.defaults.allow_write").unwrap();
+        assert_eq!(aw.setting_type, SettingType::Bool);
     }
 
     // -----------------------------------------------------------------------
@@ -1963,35 +2101,35 @@ mod tests {
     #[test]
     fn source_default() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::Default);
         assert!(s.modified.is_none());
     }
 
     #[test]
     fn source_user() {
-        let user = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
+        let user = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
         let resolved = resolve_settings(&user, &empty_file());
-        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::User);
         assert!(s.modified.is_some());
     }
 
     #[test]
     fn source_corp() {
-        let corp = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
         let resolved = resolve_settings(&empty_file(), &corp);
-        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::Corp);
         assert!(s.modified.is_some());
     }
 
     #[test]
     fn source_corp_beats_user() {
-        let user = file_with(vec![("vm.log_bodies", SettingValue::Bool(true))]);
-        let corp = file_with(vec![("vm.log_bodies", SettingValue::Bool(false))]);
+        let user = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
         assert_eq!(s.source, PolicySource::Corp);
         assert_eq!(s.effective_value, SettingValue::Bool(false));
     }
@@ -2002,7 +2140,7 @@ mod tests {
         let resolved = resolve_settings(&user, &empty_file());
         let s = resolved.iter().find(|s| s.id == "guest.env.FOO").unwrap();
         assert_eq!(s.source, PolicySource::User);
-        assert_eq!(s.category, "Guest Environment");
+        assert_eq!(s.category, "VM");
     }
 
     #[test]
@@ -2036,7 +2174,7 @@ mod tests {
     #[test]
     fn enabled_by_none_always_enabled() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        let s = resolved.iter().find(|s| s.id == "vm.log_bodies").unwrap();
+        let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
         assert!(s.enabled);
         assert!(s.enabled_by.is_none());
     }
@@ -2094,7 +2232,7 @@ mod tests {
 
     #[test]
     fn settings_to_domain_policy_toggle_off_registry() {
-        let user = file_with(vec![("registry.github.allow", SettingValue::Bool(false))]);
+        let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
 
@@ -2127,7 +2265,7 @@ mod tests {
 
     #[test]
     fn settings_to_http_policy_from_metadata_rules() {
-        let user = file_with(vec![("registry.github.allow", SettingValue::Bool(true))]);
+        let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
         let resolved = resolve_settings(&user, &empty_file());
         let hp = settings_to_http_policy(&resolved);
 
@@ -2148,7 +2286,7 @@ mod tests {
     fn settings_file_toml_roundtrip() {
         let file = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("vm.max_body_capture", SettingValue::Number(8192)),
+            ("vm.resources.max_body_capture", SettingValue::Number(8192)),
             ("guest.env.EDITOR", SettingValue::Text("vim".into())),
             ("ai.google.gemini.settings_json", SettingValue::File {
                 path: "/root/.gemini/settings.json".into(),
@@ -2168,7 +2306,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("disk_roundtrip.toml");
         let file = file_with(vec![
-            ("registry.github.allow", SettingValue::Bool(true)),
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
             ("appearance.font_size", SettingValue::Number(16)),
         ]);
         write_settings_file(&path, &file).unwrap();
@@ -2226,15 +2364,15 @@ mod tests {
     fn parse_toml_mixed_value_types() {
         let toml_str = r#"
 [settings]
-"vm.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"vm.max_body_capture" = { value = 8192, modified = "2026-01-01T00:00:00Z" }
-"network.default_action" = { value = "deny", modified = "2026-01-01T00:00:00Z" }
+"vm.resources.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"vm.resources.max_body_capture" = { value = 8192, modified = "2026-01-01T00:00:00Z" }
+"web.defaults.allow_read" = { value = false, modified = "2026-01-01T00:00:00Z" }
 "appearance.font_size" = { value = 16, modified = "2026-01-01T00:00:00Z" }
 "#;
         let file: SettingsFile = toml::from_str(toml_str).expect("should parse mixed types");
-        assert_eq!(file.settings["vm.log_bodies"].value, SettingValue::Bool(true));
-        assert_eq!(file.settings["vm.max_body_capture"].value, SettingValue::Number(8192));
-        assert_eq!(file.settings["network.default_action"].value, SettingValue::Text("deny".into()));
+        assert_eq!(file.settings["vm.resources.log_bodies"].value, SettingValue::Bool(true));
+        assert_eq!(file.settings["vm.resources.max_body_capture"].value, SettingValue::Number(8192));
+        assert_eq!(file.settings["web.defaults.allow_read"].value, SettingValue::Bool(false));
         assert_eq!(file.settings["appearance.font_size"].value, SettingValue::Number(16));
     }
 
@@ -2363,7 +2501,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let file = file_with(vec![
             ("ai.google.api_key", SettingValue::Text("AIzaTest".into())),
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("vm.max_body_capture", SettingValue::Number(4096)),
+            ("vm.resources.max_body_capture", SettingValue::Number(4096)),
         ]);
         let serialized = toml::to_string_pretty(&file).unwrap();
         let parsed: SettingsFile = toml::from_str(&serialized)
@@ -2495,7 +2633,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn vm_settings_from_user() {
-        let user = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(32))]);
+        let user = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(32))]);
         let resolved = resolve_settings(&user, &empty_file());
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.scratch_disk_size_gb, Some(32));
@@ -2503,7 +2641,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn vm_settings_ram_from_user() {
-        let user = file_with(vec![("vm.ram_gb", SettingValue::Number(8))]);
+        let user = file_with(vec![("vm.resources.ram_gb", SettingValue::Number(8))]);
         let resolved = resolve_settings(&user, &empty_file());
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.ram_gb, Some(8));
@@ -2511,8 +2649,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn vm_settings_corp_overrides_user() {
-        let user = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(32))]);
-        let corp = file_with(vec![("vm.scratch_disk_size_gb", SettingValue::Number(4))]);
+        let user = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(32))]);
+        let corp = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(4))]);
         let resolved = resolve_settings(&user, &corp);
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.scratch_disk_size_gb, Some(4));
@@ -2520,8 +2658,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn vm_settings_ram_corp_overrides_user() {
-        let user = file_with(vec![("vm.ram_gb", SettingValue::Number(8))]);
-        let corp = file_with(vec![("vm.ram_gb", SettingValue::Number(2))]);
+        let user = file_with(vec![("vm.resources.ram_gb", SettingValue::Number(8))]);
+        let corp = file_with(vec![("vm.resources.ram_gb", SettingValue::Number(2))]);
         let resolved = resolve_settings(&user, &corp);
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.ram_gb, Some(2));
@@ -2529,7 +2667,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn vm_settings_cpu_from_user() {
-        let user = file_with(vec![("vm.cpu_count", SettingValue::Number(2))]);
+        let user = file_with(vec![("vm.resources.cpu_count", SettingValue::Number(2))]);
         let resolved = resolve_settings(&user, &empty_file());
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.cpu_count, Some(2));
@@ -2537,8 +2675,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn vm_settings_cpu_corp_overrides_user() {
-        let user = file_with(vec![("vm.cpu_count", SettingValue::Number(8))]);
-        let corp = file_with(vec![("vm.cpu_count", SettingValue::Number(2))]);
+        let user = file_with(vec![("vm.resources.cpu_count", SettingValue::Number(8))]);
+        let corp = file_with(vec![("vm.resources.cpu_count", SettingValue::Number(2))]);
         let resolved = resolve_settings(&user, &corp);
         let vs = settings_to_vm_settings(&resolved);
         assert_eq!(vs.cpu_count, Some(2));
@@ -2654,15 +2792,16 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn stress_disabled_provider_always_blocked_regardless_of_default() {
-        // Provider off + default_action=allow => domains must still be blocked.
+        // Provider off + default allow_read/write => domains must still be blocked.
         let user = file_with(vec![
-            ("network.default_action", SettingValue::Text("allow".into())),
+            ("web.defaults.allow_read", SettingValue::Bool(true)),
+            ("web.defaults.allow_write", SettingValue::Bool(true)),
             // anthropic defaults to off
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
         let (action, _) = dp.evaluate("api.anthropic.com");
-        assert_eq!(action, Action::Deny, "disabled provider must be blocked even with default=allow");
+        assert_eq!(action, Action::Deny, "disabled provider must be blocked even with defaults=allow");
     }
 
     #[test]
@@ -2694,7 +2833,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
         let user = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("network.default_action", SettingValue::Text("allow".into())),
+            ("web.defaults.allow_read", SettingValue::Bool(true)),
+            ("web.defaults.allow_write", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &corp);
         let dp = settings_to_domain_policy(&resolved);
@@ -2757,22 +2897,23 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn stress_user_disable_blocks_even_with_default_allow() {
-        // User disables a provider. Even with default_action=allow,
+        // User disables a provider. Even with defaults=allow,
         // that provider's domains must be explicitly blocked.
         let user = file_with(vec![
             ("ai.openai.allow", SettingValue::Bool(false)),
-            ("network.default_action", SettingValue::Text("allow".into())),
+            ("web.defaults.allow_read", SettingValue::Bool(true)),
+            ("web.defaults.allow_write", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
         let (action, _) = dp.evaluate("api.openai.com");
-        assert_eq!(action, Action::Deny, "user-disabled provider must be blocked even with default=allow");
+        assert_eq!(action, Action::Deny, "user-disabled provider must be blocked even with defaults=allow");
     }
 
     #[test]
     fn stress_registry_disable_blocks_all_domains() {
         // Disabling a registry blocks ALL its domains, not just some.
-        let user = file_with(vec![("registry.github.allow", SettingValue::Bool(false))]);
+        let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
         let (action, _) = dp.evaluate("github.com");
@@ -2790,7 +2931,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             ("ai.anthropic.allow", SettingValue::Bool(false)),
             ("ai.openai.allow", SettingValue::Bool(false)),
             ("ai.google.allow", SettingValue::Bool(false)),
-            ("registry.github.allow", SettingValue::Bool(false)),
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
             ("registry.pypi.allow", SettingValue::Bool(false)),
             ("registry.npm.allow", SettingValue::Bool(false)),
             ("registry.crates.allow", SettingValue::Bool(false)),
@@ -2816,7 +2957,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             ("ai.anthropic.allow", SettingValue::Bool(true)),
             ("ai.openai.allow", SettingValue::Bool(true)),
             ("ai.google.allow", SettingValue::Bool(true)),
-            ("registry.github.allow", SettingValue::Bool(true)),
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -2843,7 +2984,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn stress_unknown_domain_follows_default_allow() {
         let user = file_with(vec![
-            ("network.default_action", SettingValue::Text("allow".into())),
+            ("web.defaults.allow_read", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -2864,7 +3005,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             ("ai.anthropic.allow", SettingValue::Bool(true)),
             ("ai.openai.allow", SettingValue::Bool(true)),
             ("ai.google.allow", SettingValue::Bool(true)),
-            ("network.default_action", SettingValue::Text("allow".into())),
+            ("web.defaults.allow_read", SettingValue::Bool(true)),
+            ("web.defaults.allow_write", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &corp);
         let dp = settings_to_domain_policy(&resolved);
@@ -3585,28 +3727,28 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     }
 
     // -----------------------------------------------------------------------
-    // Search category
+    // Web search category
     // -----------------------------------------------------------------------
 
     #[test]
-    fn search_google_allowed_by_default() {
+    fn web_search_google_allowed_by_default() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        let s = resolved.iter().find(|s| s.id == "search.google.allow").unwrap();
+        let s = resolved.iter().find(|s| s.id == "web.search.google.allow").unwrap();
         assert_eq!(s.effective_value, SettingValue::Bool(true));
-        assert_eq!(s.category, "Google Search");
+        assert_eq!(s.category, "Google");
     }
 
     #[test]
-    fn search_perplexity_firecrawl_blocked_by_default() {
+    fn web_search_bing_duckduckgo_blocked_by_default() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        for id in &["search.perplexity.allow", "search.firecrawl.allow"] {
+        for id in &["web.search.bing.allow", "web.search.duckduckgo.allow"] {
             let s = resolved.iter().find(|s| s.id == *id).unwrap();
             assert_eq!(s.effective_value, SettingValue::Bool(false), "expected {id} to be false");
         }
     }
 
     #[test]
-    fn search_google_domains_in_policy() {
+    fn web_search_google_domains_in_policy() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
         let dp = settings_to_domain_policy(&resolved);
         let (action, _) = dp.evaluate("www.google.com");
@@ -3637,7 +3779,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_block_blocks_domains() {
         let user = file_with(vec![
-            ("network.custom_block", SettingValue::Text("evil.com".into())),
+            ("web.custom_block", SettingValue::Text("evil.com".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3648,8 +3790,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_block_beats_custom_allow_on_overlap() {
         let user = file_with(vec![
-            ("network.custom_allow", SettingValue::Text("overlap.com".into())),
-            ("network.custom_block", SettingValue::Text("overlap.com".into())),
+            ("web.custom_allow", SettingValue::Text("overlap.com".into())),
+            ("web.custom_block", SettingValue::Text("overlap.com".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3660,7 +3802,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_allow_empty_entries_tolerated() {
         let user = file_with(vec![
-            ("network.custom_allow", SettingValue::Text(",, , foo.com , ,".into())),
+            ("web.custom_allow", SettingValue::Text(",, , foo.com , ,".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3671,7 +3813,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_block_empty_is_noop() {
         let user = file_with(vec![
-            ("network.custom_block", SettingValue::Text("".into())),
+            ("web.custom_block", SettingValue::Text("".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3684,7 +3826,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn custom_allow_corp_override() {
         // Corp sets custom_allow to empty -> user's default elie.net is gone
         let corp = file_with(vec![
-            ("network.custom_allow", SettingValue::Text("".into())),
+            ("web.custom_allow", SettingValue::Text("".into())),
         ]);
         let resolved = resolve_settings(&empty_file(), &corp);
         let dp = settings_to_domain_policy(&resolved);
@@ -3882,12 +4024,12 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let defs = setting_definitions();
 
         // Registry toggles should have domains in metadata
-        let github = defs.iter().find(|d| d.id == "registry.github.allow").unwrap();
+        let github = defs.iter().find(|d| d.id == SETTING_GITHUB_ALLOW).unwrap();
         assert!(!github.metadata.domains.is_empty(), "github toggle should have domain metadata");
 
-        // network.default_action should have choices
-        let da = defs.iter().find(|d| d.id == "network.default_action").unwrap();
-        assert!(!da.metadata.choices.is_empty(), "default_action should have choices");
+        // web.defaults.allow_read should be a bool
+        let ar = defs.iter().find(|d| d.id == "web.defaults.allow_read").unwrap();
+        assert_eq!(ar.setting_type, SettingType::Bool, "allow_read should be bool");
 
         // API key settings should have env_vars
         let key = defs.iter().find(|d| d.id == "ai.anthropic.api_key").unwrap();
@@ -4103,7 +4245,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let toggle = make_resolved("ai.provider.allow", SettingType::Bool, SettingValue::Bool(true), SettingMetadata::default(), None);
         let key = make_resolved("ai.provider.key", SettingType::ApiKey, SettingValue::Text("".into()), SettingMetadata::default(), Some("ai.provider.allow"));
         let issues = config_lint(&[toggle, key]);
-        assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("empty")));
+        assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("not set")));
     }
 
     #[test]
@@ -4180,10 +4322,10 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn config_lint_issue_ids_are_valid_setting_ids() {
         let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
-        let s = make_resolved("vm.cpu_count", SettingType::Number, SettingValue::Number(99), meta, None);
+        let s = make_resolved("vm.resources.cpu_count", SettingType::Number, SettingValue::Number(99), meta, None);
         let issues = config_lint(&[s]);
         for issue in &issues {
-            assert_eq!(issue.id, "vm.cpu_count");
+            assert_eq!(issue.id, "vm.resources.cpu_count");
         }
     }
 
@@ -4204,6 +4346,41 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let s2 = make_resolved("v.f", SettingType::File, file_val("/root/test.json", "{bad}"), SettingMetadata::default(), None);
         let issues = config_lint(&[s1, s2]);
         assert!(issues.len() >= 2, "expected multiple issues: {issues:?}");
+    }
+
+    // -- docs_url --
+
+    #[test]
+    fn config_lint_empty_key_has_docs_url() {
+        let meta = SettingMetadata {
+            docs_url: Some("https://example.com/keys".into()),
+            ..Default::default()
+        };
+        let toggle = make_resolved("ai.provider.allow", SettingType::Bool, SettingValue::Bool(true), SettingMetadata::default(), None);
+        let key = make_resolved("ai.provider.key", SettingType::ApiKey, SettingValue::Text("".into()), meta, Some("ai.provider.allow"));
+        let issues = config_lint(&[toggle, key]);
+        let empty_key_issue = issues.iter().find(|i| i.message.contains("not set")).unwrap();
+        assert_eq!(empty_key_issue.docs_url.as_deref(), Some("https://example.com/keys"));
+    }
+
+    #[test]
+    fn config_lint_non_key_issue_no_docs_url() {
+        let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
+        let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
+        let issues = config_lint(&[s]);
+        assert!(!issues.is_empty());
+        for issue in &issues {
+            assert!(issue.docs_url.is_none(), "non-key issues should not have docs_url");
+        }
+    }
+
+    #[test]
+    fn docs_url_parsed_from_toml() {
+        let defs = setting_definitions();
+        let anthropic_key = defs.iter().find(|d| d.id == "ai.anthropic.api_key").unwrap();
+        assert_eq!(anthropic_key.metadata.docs_url.as_deref(), Some("https://console.anthropic.com/settings/keys"));
+        let github_token = defs.iter().find(|d| d.id == SETTING_GITHUB_TOKEN).unwrap();
+        assert_eq!(github_token.metadata.docs_url.as_deref(), Some("https://github.com/settings/tokens"));
     }
 
     // -----------------------------------------------------------------------
@@ -4274,7 +4451,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         }
 
         let names = collect_group_names(&tree);
-        for expected in &["AI Providers", "Package Registries", "Guest Environment", "Network", "VM", "Appearance"] {
+        for expected in &["AI Providers", "Package Registries", "Web", "Defaults", "Search Engines", "Appearance", "VM", "Environment", "Resources"] {
             assert!(
                 names.contains(&expected.to_string()),
                 "tree missing group: {expected}",
@@ -4322,8 +4499,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         }
 
         assert!(
-            find_leaf_in_group(&tree, "Guest Environment", "guest.env.EDITOR"),
-            "dynamic guest.env.EDITOR should appear in Guest Environment group",
+            find_leaf_in_group(&tree, "Environment", "guest.env.EDITOR"),
+            "dynamic guest.env.EDITOR should appear in Environment group (under VM)",
         );
     }
 
@@ -4351,6 +4528,265 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         assert!(anthropic.is_some(), "should find ai.anthropic group");
         if let Some(SettingsNode::Group { enabled_by, .. }) = anthropic {
             assert_eq!(enabled_by, Some("ai.anthropic.allow".to_string()));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // .git-credentials generation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn git_credentials_generated_with_github_token() {
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
+            (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let creds = files
+            .iter()
+            .find(|f| f.path == "/root/.git-credentials")
+            .expect(".git-credentials should be generated");
+        assert_eq!(creds.mode, 0o600);
+        assert!(creds
+            .content
+            .contains("https://oauth2:ghp_test123@github.com"));
+        // .gitconfig must also be generated with credential.helper = store
+        let gitconfig = files
+            .iter()
+            .find(|f| f.path == "/root/.gitconfig")
+            .expect(".gitconfig should be generated");
+        assert_eq!(gitconfig.mode, 0o644);
+        assert!(gitconfig.content.contains("helper = store"));
+    }
+
+    #[test]
+    fn git_credentials_generated_with_multiple_providers() {
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
+            (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+            (SETTING_GITLAB_ALLOW, SettingValue::Bool(true)),
+            (SETTING_GITLAB_TOKEN, SettingValue::Text("glpat-test456".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let creds = files
+            .iter()
+            .find(|f| f.path == "/root/.git-credentials")
+            .expect(".git-credentials should be generated");
+        assert!(creds
+            .content
+            .contains("https://oauth2:ghp_test123@github.com"));
+        assert!(creds
+            .content
+            .contains("https://oauth2:glpat-test456@gitlab.com"));
+    }
+
+    #[test]
+    fn git_credentials_not_generated_when_allow_false() {
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
+            (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let has_creds = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+        assert!(
+            !has_creds,
+            ".git-credentials should not be generated when allow=false"
+        );
+    }
+
+    #[test]
+    fn git_credentials_not_generated_when_token_empty() {
+        let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let has_creds = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+        assert!(
+            !has_creds,
+            ".git-credentials should not be generated when token is empty"
+        );
+    }
+
+    #[test]
+    fn git_credentials_not_generated_when_corp_blocks() {
+        let user = file_with(vec![(
+            SETTING_GITHUB_TOKEN,
+            SettingValue::Text("ghp_test123".into()),
+        )]);
+        let corp = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
+        let resolved = resolve_settings(&user, &corp);
+        let gc = settings_to_guest_config(&resolved);
+        let has_creds = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+        assert!(
+            !has_creds,
+            ".git-credentials should not be generated when corp blocks provider"
+        );
+    }
+
+    #[test]
+    fn git_credentials_rejects_token_with_special_chars() {
+        // Newlines
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
+            (
+                SETTING_GITHUB_TOKEN,
+                SettingValue::Text("ghp_test\ninjected".into()),
+            ),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let has_creds = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+        assert!(
+            !has_creds,
+            ".git-credentials should not be generated when token contains newlines"
+        );
+
+        // @ sign (could inject a different host)
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
+            (
+                SETTING_GITHUB_TOKEN,
+                SettingValue::Text("ghp_test@evil.com".into()),
+            ),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let has_creds = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+        assert!(
+            !has_creds,
+            ".git-credentials should not be generated when token contains @"
+        );
+
+        // : colon (could break URL structure)
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
+            (
+                SETTING_GITHUB_TOKEN,
+                SettingValue::Text("ghp_test:injected".into()),
+            ),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let has_creds = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+        assert!(
+            !has_creds,
+            ".git-credentials should not be generated when token contains :"
+        );
+    }
+
+    #[test]
+    fn git_credentials_gitconfig_not_generated_without_tokens() {
+        // No tokens at all -- neither .git-credentials nor .gitconfig should exist
+        let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let has_creds = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+        let has_gitconfig = gc
+            .files
+            .as_ref()
+            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.gitconfig"));
+        assert!(!has_creds, ".git-credentials should not exist without tokens");
+        assert!(!has_gitconfig, ".gitconfig should not exist without tokens");
+    }
+
+    // -----------------------------------------------------------------------
+    // Git identity env var tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn git_identity_env_vars_injected() {
+        let user = file_with(vec![
+            ("repository.git.identity.author_name", SettingValue::Text("Test User".into())),
+            ("repository.git.identity.author_email", SettingValue::Text("test@example.com".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let env = gc.env.unwrap();
+        assert_eq!(env.get("GIT_AUTHOR_NAME").unwrap(), "Test User");
+        assert_eq!(env.get("GIT_COMMITTER_NAME").unwrap(), "Test User");
+        assert_eq!(env.get("GIT_AUTHOR_EMAIL").unwrap(), "test@example.com");
+        assert_eq!(env.get("GIT_COMMITTER_EMAIL").unwrap(), "test@example.com");
+    }
+
+    #[test]
+    fn git_identity_env_vars_absent_when_empty() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let env = gc.env.unwrap_or_default();
+        assert!(!env.contains_key("GIT_AUTHOR_NAME"), "GIT_AUTHOR_NAME should not be set when empty");
+        assert!(!env.contains_key("GIT_COMMITTER_NAME"), "GIT_COMMITTER_NAME should not be set when empty");
+        assert!(!env.contains_key("GIT_AUTHOR_EMAIL"), "GIT_AUTHOR_EMAIL should not be set when empty");
+        assert!(!env.contains_key("GIT_COMMITTER_EMAIL"), "GIT_COMMITTER_EMAIL should not be set when empty");
+    }
+
+    // -----------------------------------------------------------------------
+    // Repository section definitions tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn repository_settings_exist_in_definitions() {
+        let defs = setting_definitions();
+        let ids = [
+            "repository.git.identity.author_name",
+            "repository.git.identity.author_email",
+            SETTING_GITHUB_ALLOW,
+            "repository.providers.github.domains",
+            SETTING_GITHUB_TOKEN,
+            SETTING_GITLAB_ALLOW,
+            "repository.providers.gitlab.domains",
+            SETTING_GITLAB_TOKEN,
+        ];
+        for id in &ids {
+            assert!(defs.iter().any(|d| d.id == *id), "missing setting definition: {id}");
+        }
+    }
+
+    #[test]
+    fn default_github_allowed_gitlab_not() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gh = resolved.iter().find(|s| s.id == SETTING_GITHUB_ALLOW).unwrap();
+        assert_eq!(gh.effective_value, SettingValue::Bool(true));
+        let gl = resolved.iter().find(|s| s.id == SETTING_GITLAB_ALLOW).unwrap();
+        assert_eq!(gl.effective_value, SettingValue::Bool(false));
+    }
+
+    #[test]
+    fn setting_id_constants_exist_in_registry() {
+        let defs = setting_definitions();
+        let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
+        for constant in [
+            SETTING_ANTHROPIC_ALLOW, SETTING_ANTHROPIC_API_KEY,
+            SETTING_OPENAI_ALLOW, SETTING_OPENAI_API_KEY,
+            SETTING_GOOGLE_ALLOW, SETTING_GOOGLE_API_KEY,
+            SETTING_GITHUB_ALLOW, SETTING_GITHUB_TOKEN,
+            SETTING_GITLAB_ALLOW, SETTING_GITLAB_TOKEN,
+        ] {
+            assert!(ids.contains(&constant), "constant '{constant}' not found in setting_definitions()");
         }
     }
 }

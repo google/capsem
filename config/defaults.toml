@@ -43,6 +43,7 @@ default = ""
 
 [settings.ai.anthropic.api_key.meta]
 env_vars = ["ANTHROPIC_API_KEY"]
+docs_url = "https://console.anthropic.com/settings/keys"
 
 [settings.ai.anthropic.domains]
 name = "Anthropic Domains"
@@ -58,7 +59,6 @@ description = "Claude Code configuration files"
 name = "Claude Code settings.json"
 description = "Content for ~/.claude/settings.json. Bypass permissions, disable telemetry/updates for sandboxed execution."
 type = "file"
-collapsed = true
 
 [settings.ai.anthropic.claude.settings_json.default]
 path = "/root/.claude/settings.json"
@@ -68,7 +68,6 @@ content = '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_COD
 name = "Claude Code state (.claude.json)"
 description = "Content for ~/.claude.json. Skips onboarding, trust dialogs, and keybinding prompts."
 type = "file"
-collapsed = true
 
 [settings.ai.anthropic.claude.state_json.default]
 path = "/root/.claude.json"
@@ -100,6 +99,7 @@ default = ""
 
 [settings.ai.openai.api_key.meta]
 env_vars = ["OPENAI_API_KEY"]
+docs_url = "https://platform.openai.com/api-keys"
 
 [settings.ai.openai.domains]
 name = "OpenAI Domains"
@@ -133,6 +133,7 @@ default = ""
 
 [settings.ai.google.api_key.meta]
 env_vars = ["GEMINI_API_KEY"]
+docs_url = "https://aistudio.google.com/apikey"
 
 [settings.ai.google.domains]
 name = "Google AI Domains"
@@ -148,7 +149,6 @@ description = "Gemini CLI configuration files"
 name = "Gemini settings.json"
 description = "Content for ~/.gemini/settings.json. Session retention, auth, MCP servers, etc."
 type = "file"
-collapsed = true
 
 [settings.ai.google.gemini.settings_json.default]
 path = "/root/.gemini/settings.json"
@@ -158,7 +158,6 @@ content = '{"homeDirectoryWarningDismissed":true,"general":{"disableAutoUpdate":
 name = "Gemini projects.json"
 description = "Content for ~/.gemini/projects.json. Project directory mappings."
 type = "file"
-collapsed = true
 
 [settings.ai.google.gemini.projects_json.default]
 path = "/root/.gemini/projects.json"
@@ -168,7 +167,6 @@ content = '{"projects":{"/root":"root"}}'
 name = "Gemini trustedFolders.json"
 description = "Content for ~/.gemini/trustedFolders.json. Pre-trusted workspace dirs."
 type = "file"
-collapsed = true
 
 [settings.ai.google.gemini.trusted_folders_json.default]
 path = "/root/.gemini/trustedFolders.json"
@@ -178,39 +176,138 @@ content = '{"/root":"TRUST_FOLDER"}'
 name = "Gemini installation_id"
 description = "Content for ~/.gemini/installation_id. Stable UUID avoids first-run prompts."
 type = "file"
-collapsed = true
 
 [settings.ai.google.gemini.installation_id.default]
 path = "/root/.gemini/installation_id"
 content = "capsem-sandbox-00000000-0000-0000-0000-000000000000"
 
-# -- Package Registries ------------------------------------------------------
+# -- Repositories --------------------------------------------------------------
 
-[settings.registry]
-name = "Package Registries"
-description = "Package manager and code hosting access"
+[settings.repository]
+name = "Repositories"
+description = "Code hosting and git configuration"
 collapsed = false
 
-[settings.registry.github]
+# -- Git Identity --------------------------------------------------------------
+
+[settings.repository.git]
+# No name -- avoids an empty heading; Identity renders directly under Repositories.
+
+[settings.repository.git.identity]
+name = "Git Identity"
+description = "Author name and email for commits inside the VM"
+
+[settings.repository.git.identity.author_name]
+name = "Author name"
+description = "Name used for git commits. Injected as GIT_AUTHOR_NAME and GIT_COMMITTER_NAME."
+type = "text"
+default = ""
+
+[settings.repository.git.identity.author_name.meta]
+env_vars = ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"]
+
+[settings.repository.git.identity.author_email]
+name = "Author email"
+description = "Email used for git commits. Injected as GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL."
+type = "text"
+default = ""
+
+[settings.repository.git.identity.author_email.meta]
+env_vars = ["GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"]
+
+# -- Repository Providers ------------------------------------------------------
+
+[settings.repository.providers]
+name = "Providers"
+description = "Code hosting platforms"
+
+# -- GitHub --------------------------------------------------------------------
+
+[settings.repository.providers.github]
 name = "GitHub"
 description = "GitHub and GitHub-hosted content"
+enabled_by = "repository.providers.github.allow"
 
-[settings.registry.github.allow]
+[settings.repository.providers.github.allow]
 name = "Allow GitHub"
 description = "Enable access to GitHub and GitHub-hosted content."
 type = "bool"
 default = true
 
-[settings.registry.github.allow.meta]
+[settings.repository.providers.github.allow.meta]
 domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
 
-[settings.registry.github.allow.meta.rules.default]
+[settings.repository.providers.github.allow.meta.rules.default]
 get = true
 post = true
+
+[settings.repository.providers.github.domains]
+name = "GitHub Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "github.com, *.github.com, *.githubusercontent.com"
+
+[settings.repository.providers.github.domains.meta]
+format = "domain_list"
+
+[settings.repository.providers.github.token]
+name = "GitHub Token"
+description = "Personal access token for git push over HTTPS. Injected into .git-credentials."
+type = "apikey"
+default = ""
+
+[settings.repository.providers.github.token.meta]
+docs_url = "https://github.com/settings/tokens"
+
+# -- GitLab --------------------------------------------------------------------
+
+[settings.repository.providers.gitlab]
+name = "GitLab"
+description = "GitLab and GitLab-hosted content"
+enabled_by = "repository.providers.gitlab.allow"
+
+[settings.repository.providers.gitlab.allow]
+name = "Allow GitLab"
+description = "Enable access to GitLab and GitLab-hosted content."
+type = "bool"
+default = false
+
+[settings.repository.providers.gitlab.allow.meta]
+domains = ["gitlab.com", "*.gitlab.com"]
+
+[settings.repository.providers.gitlab.allow.meta.rules.default]
+get = true
+post = true
+
+[settings.repository.providers.gitlab.domains]
+name = "GitLab Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "gitlab.com, *.gitlab.com"
+
+[settings.repository.providers.gitlab.domains.meta]
+format = "domain_list"
+
+[settings.repository.providers.gitlab.token]
+name = "GitLab Token"
+description = "Personal access token for git push over HTTPS. Injected into .git-credentials."
+type = "apikey"
+default = ""
+
+[settings.repository.providers.gitlab.token.meta]
+docs_url = "https://gitlab.com/-/user_settings/personal_access_tokens"
+
+# -- Package Registries ------------------------------------------------------
+
+[settings.registry]
+name = "Package Registries"
+description = "Package manager registries"
+collapsed = false
 
 [settings.registry.debian]
 name = "Debian"
 description = "Debian package repositories"
+enabled_by = "registry.debian.allow"
 
 [settings.registry.debian.allow]
 name = "Allow Debian"
@@ -224,9 +321,19 @@ domains = ["deb.debian.org", "security.debian.org"]
 [settings.registry.debian.allow.meta.rules.default]
 get = true
 
+[settings.registry.debian.domains]
+name = "Debian Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "deb.debian.org, security.debian.org"
+
+[settings.registry.debian.domains.meta]
+format = "domain_list"
+
 [settings.registry.npm]
 name = "npm"
 description = "npm package registry"
+enabled_by = "registry.npm.allow"
 
 [settings.registry.npm.allow]
 name = "Allow npm"
@@ -240,9 +347,19 @@ domains = ["registry.npmjs.org", "*.npmjs.org"]
 [settings.registry.npm.allow.meta.rules.default]
 get = true
 
+[settings.registry.npm.domains]
+name = "npm Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "registry.npmjs.org, *.npmjs.org"
+
+[settings.registry.npm.domains.meta]
+format = "domain_list"
+
 [settings.registry.pypi]
 name = "PyPI"
 description = "Python Package Index"
+enabled_by = "registry.pypi.allow"
 
 [settings.registry.pypi.allow]
 name = "Allow PyPI"
@@ -256,9 +373,19 @@ domains = ["pypi.org", "files.pythonhosted.org"]
 [settings.registry.pypi.allow.meta.rules.default]
 get = true
 
+[settings.registry.pypi.domains]
+name = "PyPI Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "pypi.org, files.pythonhosted.org"
+
+[settings.registry.pypi.domains.meta]
+format = "domain_list"
+
 [settings.registry.crates]
 name = "crates.io"
 description = "Rust crate registry"
+enabled_by = "registry.crates.allow"
 
 [settings.registry.crates.allow]
 name = "Allow crates.io"
@@ -272,241 +399,293 @@ domains = ["crates.io", "static.crates.io"]
 [settings.registry.crates.allow.meta.rules.default]
 get = true
 
-# -- Search ------------------------------------------------------------------
+[settings.registry.crates.domains]
+name = "crates.io Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "crates.io, static.crates.io"
 
-[settings.search]
-name = "Search"
-description = "Web search engine access"
+[settings.registry.crates.domains.meta]
+format = "domain_list"
+
+# -- Web ---------------------------------------------------------------------
+
+[settings.web]
+name = "Web"
+description = "Network access control and web services"
 collapsed = false
 
-[settings.search.google]
-name = "Google Search"
-description = "Google web search"
+[settings.web.defaults]
+name = "Defaults"
+description = "Default actions for unknown domains"
 
-[settings.search.google.allow]
-name = "Allow Google Search"
-description = "Enable access to Google web search."
-type = "bool"
-default = true
-
-[settings.search.google.allow.meta]
-domains = ["www.google.com", "google.com"]
-
-[settings.search.google.allow.meta.rules.default]
-get = true
-
-[settings.search.perplexity]
-name = "Perplexity"
-description = "Perplexity AI search"
-
-[settings.search.perplexity.allow]
-name = "Allow Perplexity"
-description = "Enable access to Perplexity AI search."
+[settings.web.defaults.allow_read]
+name = "Allow read requests"
+description = "Allow GET/HEAD/OPTIONS for domains not in any allow/block list."
 type = "bool"
 default = false
 
-[settings.search.perplexity.allow.meta]
-domains = ["perplexity.ai", "*.perplexity.ai"]
-
-[settings.search.perplexity.allow.meta.rules.default]
-get = true
-post = true
-
-[settings.search.firecrawl]
-name = "Firecrawl"
-description = "Firecrawl web scraping API"
-
-[settings.search.firecrawl.allow]
-name = "Allow Firecrawl"
-description = "Enable access to Firecrawl web scraping API."
+[settings.web.defaults.allow_write]
+name = "Allow write requests"
+description = "Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list."
 type = "bool"
 default = false
 
-[settings.search.firecrawl.allow.meta]
-domains = ["firecrawl.dev", "api.firecrawl.dev"]
-
-[settings.search.firecrawl.allow.meta.rules.default]
-get = true
-post = true
-
-# -- Guest Environment -------------------------------------------------------
-
-[settings.guest]
-name = "Guest Environment"
-description = "Guest VM shell and environment configuration"
-collapsed = false
-
-[settings.guest.shell]
-name = "Shell"
-description = "Guest shell settings"
-
-[settings.guest.shell.term]
-name = "TERM"
-description = "Terminal type for the guest shell."
-type = "text"
-default = "xterm-256color"
-
-[settings.guest.shell.term.meta]
-env_vars = ["TERM"]
-
-[settings.guest.shell.home]
-name = "HOME"
-description = "Home directory for the guest shell."
-type = "text"
-default = "/root"
-
-[settings.guest.shell.home.meta]
-env_vars = ["HOME"]
-
-[settings.guest.shell.path]
-name = "PATH"
-description = "Executable search path for the guest shell."
-type = "text"
-default = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-[settings.guest.shell.path.meta]
-env_vars = ["PATH"]
-
-[settings.guest.shell.lang]
-name = "LANG"
-description = "Locale for the guest shell."
-type = "text"
-default = "C"
-
-[settings.guest.shell.lang.meta]
-env_vars = ["LANG"]
-
-[settings.guest.tls]
-name = "TLS"
-description = "TLS certificate configuration"
-
-[settings.guest.tls.ca_bundle]
-name = "CA bundle path"
-description = "Path to the CA certificate bundle in the guest. Injected as REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS, and SSL_CERT_FILE."
-type = "text"
-default = "/etc/ssl/certs/ca-certificates.crt"
-
-[settings.guest.tls.ca_bundle.meta]
-env_vars = ["REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"]
-
-# -- Network -----------------------------------------------------------------
-
-[settings.network]
-name = "Network"
-description = "Network access control and domain filtering"
-collapsed = false
-
-[settings.network.default_action]
-name = "Default action"
-description = "Action for domains not in any allow/block list."
-type = "text"
-default = "deny"
-
-[settings.network.default_action.meta]
-choices = ["allow", "deny"]
-
-[settings.network.custom_allow]
-name = "Custom allowed domains"
+[settings.web.custom_allow]
+name = "Allowed domains"
 description = "Comma-separated domain patterns to allow. Wildcards supported (*.example.com)."
 type = "text"
 default = "elie.net, *.elie.net, ash-speed.hetzner.com"
 
-[settings.network.custom_block]
-name = "Custom blocked domains"
+[settings.web.custom_allow.meta]
+format = "domain_list"
+
+[settings.web.custom_block]
+name = "Blocked domains"
 description = "Comma-separated domain patterns to block. Takes priority over custom allow list."
 type = "text"
 default = ""
+
+[settings.web.custom_block.meta]
+format = "domain_list"
+
+[settings.web.search]
+name = "Search Engines"
+description = "Web search engine access"
+
+[settings.web.search.google]
+name = "Google"
+description = "Google web search"
+enabled_by = "web.search.google.allow"
+
+[settings.web.search.google.allow]
+name = "Allow Google"
+description = "Enable access to Google web search."
+type = "bool"
+default = true
+
+[settings.web.search.google.allow.meta]
+domains = ["www.google.com", "google.com"]
+
+[settings.web.search.google.allow.meta.rules.default]
+get = true
+
+[settings.web.search.google.domains]
+name = "Google Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "www.google.com, google.com"
+
+[settings.web.search.google.domains.meta]
+format = "domain_list"
+
+[settings.web.search.bing]
+name = "Bing"
+description = "Microsoft Bing web search"
+enabled_by = "web.search.bing.allow"
+
+[settings.web.search.bing.allow]
+name = "Allow Bing"
+description = "Enable access to Bing web search."
+type = "bool"
+default = false
+
+[settings.web.search.bing.allow.meta]
+domains = ["www.bing.com", "bing.com"]
+
+[settings.web.search.bing.allow.meta.rules.default]
+get = true
+
+[settings.web.search.bing.domains]
+name = "Bing Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "www.bing.com, bing.com"
+
+[settings.web.search.bing.domains.meta]
+format = "domain_list"
+
+[settings.web.search.duckduckgo]
+name = "DuckDuckGo"
+description = "DuckDuckGo web search"
+enabled_by = "web.search.duckduckgo.allow"
+
+[settings.web.search.duckduckgo.allow]
+name = "Allow DuckDuckGo"
+description = "Enable access to DuckDuckGo web search."
+type = "bool"
+default = false
+
+[settings.web.search.duckduckgo.allow.meta]
+domains = ["duckduckgo.com", "*.duckduckgo.com"]
+
+[settings.web.search.duckduckgo.allow.meta.rules.default]
+get = true
+
+[settings.web.search.duckduckgo.domains]
+name = "DuckDuckGo Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "duckduckgo.com, *.duckduckgo.com"
+
+[settings.web.search.duckduckgo.domains.meta]
+format = "domain_list"
 
 # -- VM ----------------------------------------------------------------------
 
 [settings.vm]
 name = "VM"
-description = "Virtual machine resource configuration"
+description = "Virtual machine configuration"
 collapsed = false
 
-[settings.vm.log_bodies]
-name = "Log request bodies"
-description = "Capture request/response bodies in telemetry."
-type = "bool"
-default = false
+# -- VM > Environment --------------------------------------------------------
 
-[settings.vm.max_body_capture]
-name = "Max body capture"
-description = "Maximum bytes of body to capture in telemetry."
-type = "number"
-default = 4096
+[settings.vm.environment]
+name = "Environment"
+description = "Shell and environment variables"
 
-[settings.vm.max_body_capture.meta]
-min = 0
-max = 1048576
+[settings.vm.environment.shell]
+name = "Shell"
+description = "Guest shell settings"
 
-[settings.vm.retention_days]
-name = "Session retention"
-description = "Number of days to retain session data."
-type = "number"
-default = 30
+[settings.vm.environment.shell.term]
+name = "TERM"
+description = "Terminal type for the guest shell."
+type = "text"
+default = "xterm-256color"
 
-[settings.vm.retention_days.meta]
-min = 1
-max = 365
+[settings.vm.environment.shell.term.meta]
+env_vars = ["TERM"]
 
-[settings.vm.cpu_count]
+[settings.vm.environment.shell.home]
+name = "HOME"
+description = "Home directory for the guest shell."
+type = "text"
+default = "/root"
+
+[settings.vm.environment.shell.home.meta]
+env_vars = ["HOME"]
+
+[settings.vm.environment.shell.path]
+name = "PATH"
+description = "Executable search path for the guest shell."
+type = "text"
+default = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[settings.vm.environment.shell.path.meta]
+env_vars = ["PATH"]
+
+[settings.vm.environment.shell.lang]
+name = "LANG"
+description = "Locale for the guest shell."
+type = "text"
+default = "C"
+
+[settings.vm.environment.shell.lang.meta]
+env_vars = ["LANG"]
+
+[settings.vm.environment.tls]
+name = "TLS"
+description = "TLS certificate configuration"
+
+[settings.vm.environment.tls.ca_bundle]
+name = "CA bundle path"
+description = "Path to the CA certificate bundle in the guest. Injected as REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS, and SSL_CERT_FILE."
+type = "text"
+default = "/etc/ssl/certs/ca-certificates.crt"
+
+[settings.vm.environment.tls.ca_bundle.meta]
+env_vars = ["REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"]
+
+# -- VM > Resources ----------------------------------------------------------
+
+[settings.vm.resources]
+name = "Resources"
+description = "Hardware, telemetry, and session limits"
+
+[settings.vm.resources.cpu_count]
 name = "CPU cores"
 description = "Number of CPU cores allocated to the VM."
 type = "number"
 default = 4
 
-[settings.vm.cpu_count.meta]
+[settings.vm.resources.cpu_count.meta]
 min = 1
 max = 8
 
-[settings.vm.ram_gb]
+[settings.vm.resources.ram_gb]
 name = "RAM"
 description = "Amount of RAM allocated to the VM in GB."
 type = "number"
 default = 4
 
-[settings.vm.ram_gb.meta]
+[settings.vm.resources.ram_gb.meta]
 min = 1
 max = 16
 
-[settings.vm.scratch_disk_size_gb]
+[settings.vm.resources.scratch_disk_size_gb]
 name = "Scratch disk size"
 description = "Size of the ephemeral scratch disk in GB."
 type = "number"
 default = 16
 
-[settings.vm.scratch_disk_size_gb.meta]
+[settings.vm.resources.scratch_disk_size_gb.meta]
 min = 1
 max = 128
 
-[settings.vm.max_sessions]
+[settings.vm.resources.log_bodies]
+name = "Log request bodies"
+description = "Capture request/response bodies in telemetry."
+type = "bool"
+default = false
+
+[settings.vm.resources.max_body_capture]
+name = "Max body capture"
+description = "Maximum bytes of body to capture in telemetry."
+type = "number"
+default = 4096
+
+[settings.vm.resources.max_body_capture.meta]
+min = 0
+max = 1048576
+
+[settings.vm.resources.retention_days]
+name = "Session retention"
+description = "Number of days to retain session data."
+type = "number"
+default = 30
+
+[settings.vm.resources.retention_days.meta]
+min = 1
+max = 365
+
+[settings.vm.resources.max_sessions]
 name = "Maximum sessions"
 description = "Keep at most this many sessions (oldest culled first)."
 type = "number"
 default = 100
 
-[settings.vm.max_sessions.meta]
+[settings.vm.resources.max_sessions.meta]
 min = 1
 max = 10000
 
-[settings.vm.max_disk_gb]
+[settings.vm.resources.max_disk_gb]
 name = "Maximum disk usage"
 description = "Maximum total disk usage for all sessions in GB."
 type = "number"
 default = 100
 
-[settings.vm.max_disk_gb.meta]
+[settings.vm.resources.max_disk_gb.meta]
 min = 1
 max = 1000
 
-[settings.vm.terminated_retention_days]
+[settings.vm.resources.terminated_retention_days]
 name = "Terminated session retention"
 description = "Days to keep terminated session records in the index. After this, the record is permanently deleted."
 type = "number"
 default = 365
 
-[settings.vm.terminated_retention_days.meta]
+[settings.vm.resources.terminated_retention_days.meta]
 min = 30
 max = 3650
 

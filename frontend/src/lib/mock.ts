@@ -2,6 +2,9 @@
 // Active when window.__TAURI_INTERNALS__ is absent.
 import type {
   ConfigIssue,
+  McpPolicyInfo,
+  McpServerInfo,
+  McpToolInfo,
   QueryResult,
   ResolvedSetting,
   SessionInfo,
@@ -44,6 +47,7 @@ let mockSettings: ResolvedSetting[] = [
     id: 'ai.anthropic.api_key', category: 'AI Providers', name: 'Anthropic API Key', setting_type: 'apikey',
     description: 'API key for Anthropic. Injected as ANTHROPIC_API_KEY env var.',
     default_value: '', effective_value: '', enabled_by: 'ai.anthropic.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://console.anthropic.com/settings/keys' },
   }),
   ms({
     id: 'ai.anthropic.domains', category: 'AI Providers', name: 'Anthropic Domains', setting_type: 'text',
@@ -75,6 +79,7 @@ let mockSettings: ResolvedSetting[] = [
     id: 'ai.openai.api_key', category: 'AI Providers', name: 'OpenAI API Key', setting_type: 'apikey',
     description: 'API key for OpenAI. Injected as OPENAI_API_KEY env var.',
     default_value: '', effective_value: '', enabled_by: 'ai.openai.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://platform.openai.com/api-keys' },
   }),
   ms({
     id: 'ai.openai.domains', category: 'AI Providers', name: 'OpenAI Domains', setting_type: 'text',
@@ -91,6 +96,7 @@ let mockSettings: ResolvedSetting[] = [
     id: 'ai.google.api_key', category: 'AI Providers', name: 'Google AI API Key', setting_type: 'apikey',
     description: 'API key for Google AI. Injected as GEMINI_API_KEY env var.',
     default_value: '', effective_value: '', enabled_by: 'ai.google.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://aistudio.google.com/apikey' },
   }),
   ms({
     id: 'ai.google.domains', category: 'AI Providers', name: 'Google AI Domains', setting_type: 'text',
@@ -126,32 +132,74 @@ let mockSettings: ResolvedSetting[] = [
     effective_value: { path: '/root/.gemini/installation_id', content: 'capsem-sandbox-00000000-0000-0000-0000-000000000000' },
     enabled_by: 'ai.google.allow',
   }),
-  // -- Search --
+  // -- Repositories --
   ms({
-    id: 'search.google.allow', category: 'Search', name: 'Allow Google Search', setting_type: 'bool',
-    description: 'Enable access to Google web search.',
-    default_value: true, effective_value: true,
-    metadata: { domains: ['www.google.com', 'google.com'], choices: [], min: null, max: null, rules: {} },
+    id: 'repository.git.identity.author_name', category: 'Repositories', name: 'Author name', setting_type: 'text',
+    description: 'Name used for git commits. Injected as GIT_AUTHOR_NAME and GIT_COMMITTER_NAME.',
+    default_value: '', effective_value: '',
   }),
   ms({
-    id: 'search.perplexity.allow', category: 'Search', name: 'Allow Perplexity', setting_type: 'bool',
-    description: 'Enable access to Perplexity AI search.',
-    default_value: false, effective_value: false,
-    metadata: { domains: ['perplexity.ai', '*.perplexity.ai'], choices: [], min: null, max: null, rules: {} },
+    id: 'repository.git.identity.author_email', category: 'Repositories', name: 'Author email', setting_type: 'text',
+    description: 'Email used for git commits. Injected as GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL.',
+    default_value: '', effective_value: '',
   }),
   ms({
-    id: 'search.firecrawl.allow', category: 'Search', name: 'Allow Firecrawl', setting_type: 'bool',
-    description: 'Enable access to Firecrawl web scraping API.',
-    default_value: false, effective_value: false,
-    metadata: { domains: ['firecrawl.dev', 'api.firecrawl.dev'], choices: [], min: null, max: null, rules: {} },
-  }),
-  // -- Package Registries --
-  ms({
-    id: 'registry.github.allow', category: 'Package Registries', name: 'Allow GitHub', setting_type: 'bool',
+    id: 'repository.providers.github.allow', category: 'Repositories', name: 'Allow GitHub', setting_type: 'bool',
     description: 'Enable access to GitHub and GitHub-hosted content.',
     default_value: true, effective_value: true,
     corp_locked: true, source: 'corp',
     metadata: { domains: ['github.com', '*.github.com', '*.githubusercontent.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'repository.providers.github.domains', category: 'Repositories', name: 'GitHub Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'github.com, *.github.com, *.githubusercontent.com',
+    effective_value: 'github.com, *.github.com, *.githubusercontent.com',
+    enabled_by: 'repository.providers.github.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'repository.providers.github.token', category: 'Repositories', name: 'GitHub Token', setting_type: 'apikey',
+    description: 'Personal access token for git push over HTTPS. Injected into .git-credentials.',
+    default_value: '', effective_value: '',
+    enabled_by: 'repository.providers.github.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://github.com/settings/tokens' },
+  }),
+  ms({
+    id: 'repository.providers.gitlab.allow', category: 'Repositories', name: 'Allow GitLab', setting_type: 'bool',
+    description: 'Enable access to GitLab and GitLab-hosted content.',
+    default_value: false, effective_value: false,
+    metadata: { domains: ['gitlab.com', '*.gitlab.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'repository.providers.gitlab.domains', category: 'Repositories', name: 'GitLab Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'gitlab.com, *.gitlab.com',
+    effective_value: 'gitlab.com, *.gitlab.com',
+    enabled_by: 'repository.providers.gitlab.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'repository.providers.gitlab.token', category: 'Repositories', name: 'GitLab Token', setting_type: 'apikey',
+    description: 'Personal access token for git push over HTTPS. Injected into .git-credentials.',
+    default_value: '', effective_value: '',
+    enabled_by: 'repository.providers.gitlab.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://gitlab.com/-/user_settings/personal_access_tokens' },
+  }),
+  // -- Package Registries --
+  ms({
+    id: 'registry.debian.allow', category: 'Package Registries', name: 'Allow Debian', setting_type: 'bool',
+    description: 'Enable access to Debian package repositories.',
+    default_value: true, effective_value: true,
+    metadata: { domains: ['deb.debian.org', 'security.debian.org'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'registry.debian.domains', category: 'Package Registries', name: 'Debian Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'deb.debian.org, security.debian.org',
+    effective_value: 'deb.debian.org, security.debian.org',
+    enabled_by: 'registry.debian.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
   }),
   ms({
     id: 'registry.npm.allow', category: 'Package Registries', name: 'Allow npm', setting_type: 'bool',
@@ -160,10 +208,26 @@ let mockSettings: ResolvedSetting[] = [
     metadata: { domains: ['registry.npmjs.org', '*.npmjs.org'], choices: [], min: null, max: null, rules: {} },
   }),
   ms({
+    id: 'registry.npm.domains', category: 'Package Registries', name: 'npm Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'registry.npmjs.org, *.npmjs.org',
+    effective_value: 'registry.npmjs.org, *.npmjs.org',
+    enabled_by: 'registry.npm.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
     id: 'registry.pypi.allow', category: 'Package Registries', name: 'Allow PyPI', setting_type: 'bool',
     description: 'Enable access to the Python Package Index.',
     default_value: true, effective_value: true,
     metadata: { domains: ['pypi.org', 'files.pythonhosted.org'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'registry.pypi.domains', category: 'Package Registries', name: 'PyPI Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'pypi.org, files.pythonhosted.org',
+    effective_value: 'pypi.org, files.pythonhosted.org',
+    enabled_by: 'registry.pypi.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
   }),
   ms({
     id: 'registry.crates.allow', category: 'Package Registries', name: 'Allow crates.io', setting_type: 'bool',
@@ -171,81 +235,79 @@ let mockSettings: ResolvedSetting[] = [
     default_value: true, effective_value: true,
     metadata: { domains: ['crates.io', 'static.crates.io'], choices: [], min: null, max: null, rules: {} },
   }),
-  // -- Guest Environment --
   ms({
-    id: 'guest.shell.term', category: 'Guest Environment', name: 'TERM', setting_type: 'text',
-    description: 'Terminal type for the guest shell.',
-    default_value: 'xterm-256color', effective_value: 'xterm-256color',
+    id: 'registry.crates.domains', category: 'Package Registries', name: 'crates.io Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'crates.io, static.crates.io',
+    effective_value: 'crates.io, static.crates.io',
+    enabled_by: 'registry.crates.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
   }),
+  // -- Web --
   ms({
-    id: 'guest.shell.home', category: 'Guest Environment', name: 'HOME', setting_type: 'text',
-    description: 'Home directory for the guest shell.',
-    default_value: '/root', effective_value: '/root',
-  }),
-  ms({
-    id: 'guest.shell.path', category: 'Guest Environment', name: 'PATH', setting_type: 'text',
-    description: 'Executable search path for the guest shell.',
-    default_value: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-    effective_value: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-  }),
-  ms({
-    id: 'guest.shell.lang', category: 'Guest Environment', name: 'LANG', setting_type: 'text',
-    description: 'Locale for the guest shell.',
-    default_value: 'C', effective_value: 'C',
-  }),
-  ms({
-    id: 'guest.tls.ca_bundle', category: 'Guest Environment', name: 'CA bundle path', setting_type: 'text',
-    description: 'Path to the CA certificate bundle in the guest.',
-    default_value: '/etc/ssl/certs/ca-certificates.crt',
-    effective_value: '/etc/ssl/certs/ca-certificates.crt',
-  }),
-  // -- Network --
-  ms({
-    id: 'network.default_action', category: 'Network', name: 'Default action', setting_type: 'text',
-    description: 'Action for domains not in any allow/block list.',
-    default_value: 'deny', effective_value: 'deny',
-    corp_locked: true, source: 'corp',
-    metadata: { domains: [], choices: ['allow', 'deny'], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'vm.log_bodies', category: 'VM', name: 'Log request bodies', setting_type: 'bool',
-    description: 'Capture request/response bodies in telemetry.',
+    id: 'web.defaults.allow_read', category: 'Web', name: 'Allow read requests', setting_type: 'bool',
+    description: 'Allow GET/HEAD/OPTIONS for domains not in any allow/block list.',
     default_value: false, effective_value: false,
   }),
   ms({
-    id: 'vm.max_body_capture', category: 'VM', name: 'Max body capture', setting_type: 'number',
-    description: 'Maximum bytes of body to capture in telemetry.',
-    default_value: 4096, effective_value: 4096,
-    metadata: { domains: [], choices: [], min: 0, max: 1048576, rules: {} },
+    id: 'web.defaults.allow_write', category: 'Web', name: 'Allow write requests', setting_type: 'bool',
+    description: 'Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list.',
+    default_value: false, effective_value: false,
   }),
   ms({
-    id: 'network.custom_allow', category: 'Network', name: 'Custom allowed domains', setting_type: 'text',
+    id: 'web.search.google.allow', category: 'Web', name: 'Allow Google', setting_type: 'bool',
+    description: 'Enable access to Google web search.',
+    default_value: true, effective_value: true,
+    metadata: { domains: ['www.google.com', 'google.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'web.search.google.domains', category: 'Web', name: 'Google Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'www.google.com, google.com',
+    effective_value: 'www.google.com, google.com',
+    enabled_by: 'web.search.google.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'web.search.bing.allow', category: 'Web', name: 'Allow Bing', setting_type: 'bool',
+    description: 'Enable access to Bing web search.',
+    default_value: false, effective_value: false,
+    metadata: { domains: ['www.bing.com', 'bing.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'web.search.bing.domains', category: 'Web', name: 'Bing Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'www.bing.com, bing.com',
+    effective_value: 'www.bing.com, bing.com',
+    enabled_by: 'web.search.bing.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'web.search.duckduckgo.allow', category: 'Web', name: 'Allow DuckDuckGo', setting_type: 'bool',
+    description: 'Enable access to DuckDuckGo web search.',
+    default_value: false, effective_value: false,
+    metadata: { domains: ['duckduckgo.com', '*.duckduckgo.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'web.search.duckduckgo.domains', category: 'Web', name: 'DuckDuckGo Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'duckduckgo.com, *.duckduckgo.com',
+    effective_value: 'duckduckgo.com, *.duckduckgo.com',
+    enabled_by: 'web.search.duckduckgo.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'web.custom_allow', category: 'Web', name: 'Allowed domains', setting_type: 'text',
     description: 'Comma-separated domain patterns to allow. Wildcards supported (*.example.com).',
-    default_value: 'elie.net, *.elie.net', effective_value: 'elie.net, *.elie.net',
+    default_value: 'elie.net, *.elie.net, ash-speed.hetzner.com',
+    effective_value: 'elie.net, *.elie.net, ash-speed.hetzner.com',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
   }),
   ms({
-    id: 'network.custom_block', category: 'Network', name: 'Custom blocked domains', setting_type: 'text',
+    id: 'web.custom_block', category: 'Web', name: 'Blocked domains', setting_type: 'text',
     description: 'Comma-separated domain patterns to block. Takes priority over custom allow list.',
     default_value: '', effective_value: '',
-  }),
-  // -- Session (in VM category) --
-  ms({
-    id: 'vm.retention_days', category: 'VM', name: 'Session retention', setting_type: 'number',
-    description: 'Number of days to retain session data.',
-    default_value: 30, effective_value: 30,
-    metadata: { domains: [], choices: [], min: 1, max: 365, rules: {} },
-  }),
-  ms({
-    id: 'vm.max_sessions', category: 'VM', name: 'Maximum sessions', setting_type: 'number',
-    description: 'Keep at most this many sessions (oldest culled first).',
-    default_value: 100, effective_value: 100,
-    metadata: { domains: [], choices: [], min: 1, max: 10000, rules: {} },
-  }),
-  ms({
-    id: 'vm.max_disk_gb', category: 'VM', name: 'Maximum disk usage', setting_type: 'number',
-    description: 'Maximum total disk usage for all sessions in GB.',
-    default_value: 100, effective_value: 100,
-    metadata: { domains: [], choices: [], min: 1, max: 1000, rules: {} },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
   }),
   // -- Appearance --
   ms({
@@ -259,12 +321,81 @@ let mockSettings: ResolvedSetting[] = [
     default_value: 14, effective_value: 14,
     metadata: { domains: [], choices: [], min: 8, max: 32, rules: {} },
   }),
-  // -- VM --
+  // -- VM > Environment --
   ms({
-    id: 'vm.scratch_disk_size_gb', category: 'VM', name: 'Scratch disk size', setting_type: 'number',
+    id: 'vm.environment.shell.term', category: 'VM', name: 'TERM', setting_type: 'text',
+    description: 'Terminal type for the guest shell.',
+    default_value: 'xterm-256color', effective_value: 'xterm-256color',
+  }),
+  ms({
+    id: 'vm.environment.shell.home', category: 'VM', name: 'HOME', setting_type: 'text',
+    description: 'Home directory for the guest shell.',
+    default_value: '/root', effective_value: '/root',
+  }),
+  ms({
+    id: 'vm.environment.shell.path', category: 'VM', name: 'PATH', setting_type: 'text',
+    description: 'Executable search path for the guest shell.',
+    default_value: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    effective_value: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+  }),
+  ms({
+    id: 'vm.environment.shell.lang', category: 'VM', name: 'LANG', setting_type: 'text',
+    description: 'Locale for the guest shell.',
+    default_value: 'C', effective_value: 'C',
+  }),
+  ms({
+    id: 'vm.environment.tls.ca_bundle', category: 'VM', name: 'CA bundle path', setting_type: 'text',
+    description: 'Path to the CA certificate bundle in the guest.',
+    default_value: '/etc/ssl/certs/ca-certificates.crt',
+    effective_value: '/etc/ssl/certs/ca-certificates.crt',
+  }),
+  // -- VM > Resources --
+  ms({
+    id: 'vm.resources.cpu_count', category: 'VM', name: 'CPU cores', setting_type: 'number',
+    description: 'Number of CPU cores allocated to the VM.',
+    default_value: 4, effective_value: 4,
+    metadata: { domains: [], choices: [], min: 1, max: 8, rules: {} },
+  }),
+  ms({
+    id: 'vm.resources.ram_gb', category: 'VM', name: 'RAM', setting_type: 'number',
+    description: 'Amount of RAM allocated to the VM in GB.',
+    default_value: 4, effective_value: 4,
+    metadata: { domains: [], choices: [], min: 1, max: 16, rules: {} },
+  }),
+  ms({
+    id: 'vm.resources.scratch_disk_size_gb', category: 'VM', name: 'Scratch disk size', setting_type: 'number',
     description: 'Size of the ephemeral scratch disk in GB.',
-    default_value: 8, effective_value: 8,
+    default_value: 16, effective_value: 16,
     metadata: { domains: [], choices: [], min: 1, max: 128, rules: {} },
+  }),
+  ms({
+    id: 'vm.resources.log_bodies', category: 'VM', name: 'Log request bodies', setting_type: 'bool',
+    description: 'Capture request/response bodies in telemetry.',
+    default_value: false, effective_value: false,
+  }),
+  ms({
+    id: 'vm.resources.max_body_capture', category: 'VM', name: 'Max body capture', setting_type: 'number',
+    description: 'Maximum bytes of body to capture in telemetry.',
+    default_value: 4096, effective_value: 4096,
+    metadata: { domains: [], choices: [], min: 0, max: 1048576, rules: {} },
+  }),
+  ms({
+    id: 'vm.resources.retention_days', category: 'VM', name: 'Session retention', setting_type: 'number',
+    description: 'Number of days to retain session data.',
+    default_value: 30, effective_value: 30,
+    metadata: { domains: [], choices: [], min: 1, max: 365, rules: {} },
+  }),
+  ms({
+    id: 'vm.resources.max_sessions', category: 'VM', name: 'Maximum sessions', setting_type: 'number',
+    description: 'Keep at most this many sessions (oldest culled first).',
+    default_value: 100, effective_value: 100,
+    metadata: { domains: [], choices: [], min: 1, max: 10000, rules: {} },
+  }),
+  ms({
+    id: 'vm.resources.max_disk_gb', category: 'VM', name: 'Maximum disk usage', setting_type: 'number',
+    description: 'Maximum total disk usage for all sessions in GB.',
+    default_value: 100, effective_value: 100,
+    metadata: { domains: [], choices: [], min: 1, max: 1000, rules: {} },
   }),
 ];
 
@@ -293,7 +424,8 @@ function computeMockLint(): ConfigIssue[] {
         issues.push({
           id: s.id,
           severity: 'warning',
-          message: `${s.id}: provider is enabled but API key is empty`,
+          message: `${s.name} not set`,
+          docs_url: s.metadata.docs_url ?? null,
         });
       }
     }
@@ -357,80 +489,109 @@ function buildMockTree(): SettingsNode[] {
     ],
   },
   {
-    kind: 'group', key: 'registry', name: 'Package Registries', description: 'Package manager and code hosting access',
+    kind: 'group', key: 'repository', name: 'Repositories', description: 'Code hosting and git configuration',
     collapsed: false, children: [
       {
-        kind: 'group', key: 'registry.github', name: 'GitHub', description: 'GitHub and GitHub-hosted content',
-        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.github.allow')!)],
+        kind: 'group', key: 'repository.git.identity', name: 'Git Identity', description: 'Author name and email for commits inside the VM',
+        collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'repository.git.identity.author_name')!),
+          leaf(mockSettings.find(s => s.id === 'repository.git.identity.author_email')!),
+        ],
+      },
+      {
+        kind: 'group', key: 'repository.providers', name: 'Providers', description: 'Code hosting platforms',
+        collapsed: false, children: [
+          {
+            kind: 'group', key: 'repository.providers.github', name: 'GitHub', description: 'GitHub and GitHub-hosted content',
+            enabled_by: 'repository.providers.github.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'repository.providers.github.allow')!),
+              leaf(mockSettings.find(s => s.id === 'repository.providers.github.domains')!),
+              leaf(mockSettings.find(s => s.id === 'repository.providers.github.token')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'repository.providers.gitlab', name: 'GitLab', description: 'GitLab and GitLab-hosted content',
+            enabled_by: 'repository.providers.gitlab.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'repository.providers.gitlab.allow')!),
+              leaf(mockSettings.find(s => s.id === 'repository.providers.gitlab.domains')!),
+              leaf(mockSettings.find(s => s.id === 'repository.providers.gitlab.token')!),
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    kind: 'group', key: 'registry', name: 'Package Registries', description: 'Package manager registries',
+    collapsed: false, children: [
+      {
+        kind: 'group', key: 'registry.debian', name: 'Debian', description: 'Debian package repositories',
+        enabled_by: 'registry.debian.allow', collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'registry.debian.allow')!),
+          leaf(mockSettings.find(s => s.id === 'registry.debian.domains')!),
+        ],
       },
       {
         kind: 'group', key: 'registry.npm', name: 'npm', description: 'npm package registry',
-        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.npm.allow')!)],
+        enabled_by: 'registry.npm.allow', collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'registry.npm.allow')!),
+          leaf(mockSettings.find(s => s.id === 'registry.npm.domains')!),
+        ],
       },
       {
         kind: 'group', key: 'registry.pypi', name: 'PyPI', description: 'Python Package Index',
-        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.pypi.allow')!)],
+        enabled_by: 'registry.pypi.allow', collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'registry.pypi.allow')!),
+          leaf(mockSettings.find(s => s.id === 'registry.pypi.domains')!),
+        ],
       },
       {
         kind: 'group', key: 'registry.crates', name: 'crates.io', description: 'Rust crate registry',
-        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'registry.crates.allow')!)],
-      },
-    ],
-  },
-  {
-    kind: 'group', key: 'search', name: 'Search', description: 'Web search engine access',
-    collapsed: false, children: [
-      {
-        kind: 'group', key: 'search.google', name: 'Google Search', description: 'Google web search',
-        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'search.google.allow')!)],
-      },
-      {
-        kind: 'group', key: 'search.perplexity', name: 'Perplexity', description: 'Perplexity AI search',
-        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'search.perplexity.allow')!)],
-      },
-      {
-        kind: 'group', key: 'search.firecrawl', name: 'Firecrawl', description: 'Firecrawl web scraping API',
-        collapsed: false, children: [leaf(mockSettings.find(s => s.id === 'search.firecrawl.allow')!)],
-      },
-    ],
-  },
-  {
-    kind: 'group', key: 'guest', name: 'Guest Environment', description: 'Guest VM shell and environment configuration',
-    collapsed: false, children: [
-      {
-        kind: 'group', key: 'guest.shell', name: 'Shell', description: 'Guest shell settings',
-        collapsed: false, children: [
-          leaf(mockSettings.find(s => s.id === 'guest.shell.term')!),
-          leaf(mockSettings.find(s => s.id === 'guest.shell.home')!),
-          leaf(mockSettings.find(s => s.id === 'guest.shell.path')!),
-          leaf(mockSettings.find(s => s.id === 'guest.shell.lang')!),
-        ],
-      },
-      {
-        kind: 'group', key: 'guest.tls', name: 'TLS', description: 'TLS certificate configuration',
-        collapsed: false, children: [
-          leaf(mockSettings.find(s => s.id === 'guest.tls.ca_bundle')!),
+        enabled_by: 'registry.crates.allow', collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'registry.crates.allow')!),
+          leaf(mockSettings.find(s => s.id === 'registry.crates.domains')!),
         ],
       },
     ],
   },
   {
-    kind: 'group', key: 'network', name: 'Network', description: 'Network access control and domain filtering',
+    kind: 'group', key: 'web', name: 'Web', description: 'Network access control and web services',
     collapsed: false, children: [
-      leaf(mockSettings.find(s => s.id === 'network.default_action')!),
-      leaf(mockSettings.find(s => s.id === 'network.custom_allow')!),
-      leaf(mockSettings.find(s => s.id === 'network.custom_block')!),
-    ],
-  },
-  {
-    kind: 'group', key: 'vm', name: 'VM', description: 'Virtual machine resource configuration',
-    collapsed: false, children: [
-      leaf(mockSettings.find(s => s.id === 'vm.log_bodies')!),
-      leaf(mockSettings.find(s => s.id === 'vm.max_body_capture')!),
-      leaf(mockSettings.find(s => s.id === 'vm.retention_days')!),
-      leaf(mockSettings.find(s => s.id === 'vm.max_sessions')!),
-      leaf(mockSettings.find(s => s.id === 'vm.max_disk_gb')!),
-      leaf(mockSettings.find(s => s.id === 'vm.scratch_disk_size_gb')!),
+      {
+        kind: 'group', key: 'web.defaults', name: 'Defaults', description: 'Default actions for unknown domains',
+        collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'web.defaults.allow_read')!),
+          leaf(mockSettings.find(s => s.id === 'web.defaults.allow_write')!),
+        ],
+      },
+      leaf(mockSettings.find(s => s.id === 'web.custom_allow')!),
+      leaf(mockSettings.find(s => s.id === 'web.custom_block')!),
+      {
+        kind: 'group', key: 'web.search', name: 'Search Engines', description: 'Web search engine access',
+        collapsed: false, children: [
+          {
+            kind: 'group', key: 'web.search.google', name: 'Google', description: 'Google web search',
+            enabled_by: 'web.search.google.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'web.search.google.allow')!),
+              leaf(mockSettings.find(s => s.id === 'web.search.google.domains')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'web.search.bing', name: 'Bing', description: 'Microsoft Bing web search',
+            enabled_by: 'web.search.bing.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'web.search.bing.allow')!),
+              leaf(mockSettings.find(s => s.id === 'web.search.bing.domains')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'web.search.duckduckgo', name: 'DuckDuckGo', description: 'DuckDuckGo web search',
+            enabled_by: 'web.search.duckduckgo.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'web.search.duckduckgo.allow')!),
+              leaf(mockSettings.find(s => s.id === 'web.search.duckduckgo.domains')!),
+            ],
+          },
+        ],
+      },
     ],
   },
   {
@@ -440,8 +601,172 @@ function buildMockTree(): SettingsNode[] {
       leaf(mockSettings.find(s => s.id === 'appearance.font_size')!),
     ],
   },
+  {
+    kind: 'group', key: 'vm', name: 'VM', description: 'Virtual machine configuration',
+    collapsed: false, children: [
+      {
+        kind: 'group', key: 'vm.environment', name: 'Environment', description: 'Shell and environment variables',
+        collapsed: false, children: [
+          {
+            kind: 'group', key: 'vm.environment.shell', name: 'Shell', description: 'Guest shell settings',
+            collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'vm.environment.shell.term')!),
+              leaf(mockSettings.find(s => s.id === 'vm.environment.shell.home')!),
+              leaf(mockSettings.find(s => s.id === 'vm.environment.shell.path')!),
+              leaf(mockSettings.find(s => s.id === 'vm.environment.shell.lang')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'vm.environment.tls', name: 'TLS', description: 'TLS certificate configuration',
+            collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'vm.environment.tls.ca_bundle')!),
+            ],
+          },
+        ],
+      },
+      {
+        kind: 'group', key: 'vm.resources', name: 'Resources', description: 'Hardware, telemetry, and session limits',
+        collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'vm.resources.cpu_count')!),
+          leaf(mockSettings.find(s => s.id === 'vm.resources.ram_gb')!),
+          leaf(mockSettings.find(s => s.id === 'vm.resources.scratch_disk_size_gb')!),
+          leaf(mockSettings.find(s => s.id === 'vm.resources.log_bodies')!),
+          leaf(mockSettings.find(s => s.id === 'vm.resources.max_body_capture')!),
+          leaf(mockSettings.find(s => s.id === 'vm.resources.retention_days')!),
+          leaf(mockSettings.find(s => s.id === 'vm.resources.max_sessions')!),
+          leaf(mockSettings.find(s => s.id === 'vm.resources.max_disk_gb')!),
+        ],
+      },
+    ],
+  },
   ];
 }
+
+// ---------------------------------------------------------------------------
+// MCP mock data
+// ---------------------------------------------------------------------------
+
+const MOCK_MCP_SERVERS: McpServerInfo[] = [
+  {
+    name: 'github',
+    command: 'npx',
+    args: ['-y', '@github/mcp-server'],
+    source: 'claude',
+    enabled: true,
+    running: true,
+    tool_count: 4,
+  },
+  {
+    name: 'slack',
+    command: 'npx',
+    args: ['-y', '@slack/mcp-server'],
+    source: 'gemini',
+    enabled: true,
+    running: true,
+    tool_count: 3,
+  },
+  {
+    name: 'internal-tools',
+    command: '/usr/local/bin/corp-mcp',
+    args: ['--config', '/etc/corp/mcp.json'],
+    source: 'manual',
+    enabled: false,
+    running: false,
+    tool_count: 0,
+  },
+];
+
+const MOCK_MCP_TOOLS: McpToolInfo[] = [
+  {
+    namespaced_name: 'github__search_repos',
+    original_name: 'search_repos',
+    description: 'Search GitHub repositories by query string',
+    server_name: 'github',
+    annotations: { title: 'Search Repos', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: 'a1b2c3',
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'github__create_issue',
+    original_name: 'create_issue',
+    description: 'Create a new issue on a repository',
+    server_name: 'github',
+    annotations: { title: 'Create Issue', read_only_hint: false, destructive_hint: false, idempotent_hint: false, open_world_hint: true },
+    pin_hash: 'd4e5f6',
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'github__delete_repo',
+    original_name: 'delete_repo',
+    description: 'Delete a repository (destructive)',
+    server_name: 'github',
+    annotations: { title: 'Delete Repo', read_only_hint: false, destructive_hint: true, idempotent_hint: false, open_world_hint: true },
+    pin_hash: 'g7h8i9',
+    approved: false,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'github__list_prs',
+    original_name: 'list_prs',
+    description: 'List pull requests on a repository',
+    server_name: 'github',
+    annotations: { title: 'List PRs', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: 'j1k2l3',
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'slack__send_message',
+    original_name: 'send_message',
+    description: 'Send a message to a Slack channel',
+    server_name: 'slack',
+    annotations: { title: 'Send Message', read_only_hint: false, destructive_hint: false, idempotent_hint: false, open_world_hint: true },
+    pin_hash: 'm4n5o6',
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'slack__list_channels',
+    original_name: 'list_channels',
+    description: 'List available Slack channels',
+    server_name: 'slack',
+    annotations: { title: 'List Channels', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false },
+    pin_hash: 'p7q8r9',
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'slack__upload_file',
+    original_name: 'upload_file',
+    description: 'Upload a file to a Slack channel',
+    server_name: 'slack',
+    annotations: null,
+    pin_hash: 's1t2u3',
+    approved: false,
+    pin_changed: true,
+  },
+  {
+    namespaced_name: 'github__read_file',
+    original_name: 'read_file',
+    description: 'Read a file from a repository (definition changed)',
+    server_name: 'github',
+    annotations: { title: 'Read File', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: 'changed_hash',
+    approved: false,
+    pin_changed: true,
+  },
+];
+
+const MOCK_MCP_POLICY: McpPolicyInfo = {
+  global_policy: 'allow',
+  default_tool_permission: 'allow',
+  blocked_servers: [],
+  tool_permissions: {
+    'github__delete_repo': 'block',
+  },
+};
 
 const MOCK_VM_STATE: VmStateResponse = {
   state: 'Running',
@@ -466,18 +791,19 @@ export const mockApi = {
   getNetworkPolicy: async (): Promise<NetworkPolicyResponse> => ({
     allow: [
       'github.com', '*.github.com', '*.githubusercontent.com',
+      'deb.debian.org', 'security.debian.org',
       'registry.npmjs.org', '*.npmjs.org',
       'pypi.org', 'files.pythonhosted.org',
       'crates.io', 'static.crates.io',
       '*.googleapis.com',
       'www.google.com', 'google.com',
-      'elie.net', '*.elie.net',
+      'elie.net', '*.elie.net', 'ash-speed.hetzner.com',
     ],
     block: [
       '*.anthropic.com', '*.claude.com',
       '*.openai.com',
-      'perplexity.ai', '*.perplexity.ai',
-      'firecrawl.dev', 'api.firecrawl.dev',
+      'www.bing.com', 'bing.com',
+      'duckduckgo.com', '*.duckduckgo.com',
     ],
     default_action: 'deny',
     corp_managed: false,
@@ -497,6 +823,17 @@ export const mockApi = {
     recomputeEnabled();
   },
   getVmState: async () => MOCK_VM_STATE,
+  getMcpServers: async (): Promise<McpServerInfo[]> => MOCK_MCP_SERVERS.map(s => ({ ...s })),
+  getMcpTools: async (): Promise<McpToolInfo[]> => MOCK_MCP_TOOLS.map(t => ({ ...t })),
+  getMcpPolicy: async (): Promise<McpPolicyInfo> => ({ ...MOCK_MCP_POLICY, tool_permissions: { ...MOCK_MCP_POLICY.tool_permissions } }),
+  setMcpServerEnabled: async (_name: string, _enabled: boolean) => {},
+  addMcpServer: async (_name: string, _command: string, _args: string[], _env: Record<string, string>) => {},
+  removeMcpServer: async (_name: string) => {},
+  setMcpGlobalPolicy: async (_policy: string) => {},
+  setMcpDefaultPermission: async (_permission: string) => {},
+  setMcpToolPermission: async (_tool: string, _permission: string) => {},
+  approveMcpTool: async (_tool: string) => {},
+  refreshMcpTools: async (_server?: string) => {},
   getSessionInfo: async (): Promise<SessionInfo> => ({
     session_id: '20260225-143052-a7f3',
     mode: 'gui',
@@ -521,7 +858,19 @@ export const mockApi = {
   onSerialOutput: async (_cb: (data: number[]) => void) => () => {},
   onVmStateChanged: async (_cb: (state: string) => void) => () => {},
   onTerminalSourceChanged: async (_cb: (source: string) => void) => () => {},
-  onDownloadProgress: async (_cb: (progress: any) => void) => () => {},
+  onDownloadProgress: async (cb: (progress: any) => void) => {
+    // Simulate download progress for UI preview
+    let bytes = 0;
+    const total = 437 * 1024 * 1024; // 437 MB
+    const step = total / 50;
+    cb({ asset: 'rootfs.squashfs', bytes_downloaded: 0, total_bytes: total, phase: 'connecting' });
+    const iv = setInterval(() => {
+      bytes = Math.min(bytes + step, total);
+      cb({ asset: 'rootfs.squashfs', bytes_downloaded: bytes, total_bytes: total, phase: bytes >= total ? 'verifying' : 'downloading' });
+      if (bytes >= total) clearInterval(iv);
+    }, 400);
+    return () => clearInterval(iv);
+  },
 };
 
 // ---------------------------------------------------------------------------
