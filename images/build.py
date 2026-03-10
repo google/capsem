@@ -6,6 +6,8 @@ Extracts vmlinuz + initrd from Debian ARM64, builds a squashfs rootfs
 Output goes to ../assets/.
 """
 
+import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -31,10 +33,10 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=True, **kwargs)
 
 
-def _docker_build(tag: str, dockerfile: str, context: str):
+def _docker_build(tag: str, dockerfile: str, context: str, no_cache: bool = False):
     """Build a container image, using BuildKit GHA cache in CI."""
     if CI and RUNTIME == "docker":
-        run([
+        cmd = [
             "docker", "buildx", "build",
             "--platform", "linux/arm64",
             "--cache-from", "type=gha,scope=" + tag,
@@ -43,21 +45,27 @@ def _docker_build(tag: str, dockerfile: str, context: str):
             "-t", tag,
             "-f", dockerfile,
             context,
-        ])
+        ]
+        if no_cache:
+            cmd.insert(3, "--no-cache")
+        run(cmd)
     else:
-        run([
+        cmd = [
             RUNTIME, "build",
             "--platform", "linux/arm64",
             "-t", tag,
             "-f", dockerfile,
             context,
-        ])
+        ]
+        if no_cache:
+            cmd.insert(2, "--no-cache")
+        run(cmd)
 
 
-def build_kernel_image():
+def build_kernel_image(no_cache: bool = False):
     """Build the container image that extracts kernel + initrd."""
     print(f"Building kernel extraction image with {RUNTIME}...")
-    _docker_build(IMAGE_TAG, str(SCRIPT_DIR / "Dockerfile.kernel"), str(SCRIPT_DIR))
+    _docker_build(IMAGE_TAG, str(SCRIPT_DIR / "Dockerfile.kernel"), str(SCRIPT_DIR), no_cache=no_cache)
 
 
 def extract_assets():
@@ -115,7 +123,7 @@ def build_agent():
         print(f"  {binary_name}: {dst} ({dst.stat().st_size} bytes)")
 
 
-def create_rootfs():
+def create_rootfs(no_cache: bool = False):
     """Build squashfs rootfs (zstd-compressed) with dev tools and AI CLIs."""
     print("Building rootfs container image...")
 
@@ -126,7 +134,7 @@ def create_rootfs():
     print(f"  capsem-ca.crt: {ca_dst}")
 
     # 1. Build rootfs container (arm64 binaries)
-    _docker_build(ROOTFS_IMAGE_TAG, str(SCRIPT_DIR / "Dockerfile.rootfs"), str(SCRIPT_DIR))
+    _docker_build(ROOTFS_IMAGE_TAG, str(SCRIPT_DIR / "Dockerfile.rootfs"), str(SCRIPT_DIR), no_cache=no_cache)
 
     # 2. Export container filesystem as tar
     print("Exporting rootfs filesystem...")
@@ -178,13 +186,17 @@ def generate_checksums():
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build VM boot assets.")
+    parser.add_argument("--no-cache", action="store_true", help="Build without container cache.")
+    args = parser.parse_args()
+
     print(f"Using container runtime: {RUNTIME}")
     if CI:
         print("  CI mode: Docker BuildKit GHA cache enabled")
-    build_kernel_image()
+    build_kernel_image(no_cache=args.no_cache)
     extract_assets()
     build_agent()
-    create_rootfs()
+    create_rootfs(no_cache=args.no_cache)
     generate_checksums()
     print(f"\nDone! Assets are in {ASSETS_DIR}/")
 

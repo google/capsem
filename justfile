@@ -47,6 +47,10 @@ run *CMD: _check-assets _pack-initrd _sign
 build-assets: doctor _install-tools
     cd images && python3 build.py
 
+# Clean VM asset rebuild (no container cache)
+clean-assets: _ensure-tools
+    cd images && python3 build.py --no-cache
+
 # Unit tests + cross-compile check + frontend type-check (no VM)
 test: _install-tools
     cargo llvm-cov --workspace --no-cfg-coverage
