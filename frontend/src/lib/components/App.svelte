@@ -19,7 +19,7 @@
     settingsStore.load();
 
     const handleKeydown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+      if (e.metaKey && e.key === ',') {
         e.preventDefault();
         const nextView = sidebarStore.activeView === 'settings' ? 'terminal' : 'settings';
         sidebarStore.setView(nextView);

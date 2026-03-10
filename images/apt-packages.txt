@@ -13,6 +13,7 @@ strace
 file
 less
 man-db
+tmux
 
 # Text processing
 grep
