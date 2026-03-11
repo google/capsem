@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- MCP gateway rewritten to use rmcp (official Rust MCP SDK) -- replaces hand-rolled JSON-RPC/SSE client with proper Streamable HTTP transport, automatic pagination, and typed tool/resource/prompt routing
+- Upgraded reqwest from 0.12 to 0.13
+- MCP server UI redesigned: collapsible server cards with URL/auth config, "verified"/"definition changed" status labels
+- Tool origin telemetry expanded from 2 values (native/mcp) to 3 values (native/mcp_proxy/local)
+- Auto-detected stdio MCP servers from Claude/Gemini settings shown with unsupported warning instead of silently dropped
+
+### Removed
+- Stdio bridge for MCP servers (`stdio_bridge.rs`) -- replaced by HTTP client
+
 ### Added
 - Auto-detect latest stable kernel version from kernel.org during `just build-assets`
 - User-editable bashrc and tmux.conf as file settings in Settings > VM > Shell

@@ -46,6 +46,8 @@ flate2 = "1"
 regex = { workspace = true }
 tl = "0.7"
 
+rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+
 [dev-dependencies]
 tempfile = "3"
 dotenvy = "0.15"
