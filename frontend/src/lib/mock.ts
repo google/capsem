@@ -47,7 +47,7 @@ let mockSettings: ResolvedSetting[] = [
     id: 'ai.anthropic.api_key', category: 'AI Providers', name: 'Anthropic API Key', setting_type: 'apikey',
     description: 'API key for Anthropic. Injected as ANTHROPIC_API_KEY env var.',
     default_value: '', effective_value: '', enabled_by: 'ai.anthropic.allow', enabled: false,
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://console.anthropic.com/settings/keys' },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://console.anthropic.com/settings/keys', prefix: 'sk-ant-' },
   }),
   ms({
     id: 'ai.anthropic.domains', category: 'AI Providers', name: 'Anthropic Domains', setting_type: 'text',
@@ -61,6 +61,7 @@ let mockSettings: ResolvedSetting[] = [
     default_value: { path: '/root/.claude/settings.json', content: '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}' },
     effective_value: { path: '/root/.claude/settings.json', content: '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}' },
     enabled_by: 'ai.anthropic.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'json' },
   }),
   ms({
     id: 'ai.anthropic.claude.state_json', category: 'AI Providers', name: 'Claude Code state (.claude.json)', setting_type: 'file',
@@ -68,6 +69,7 @@ let mockSettings: ResolvedSetting[] = [
     default_value: { path: '/root/.claude.json', content: '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true}' },
     effective_value: { path: '/root/.claude.json', content: '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true}' },
     enabled_by: 'ai.anthropic.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'json' },
   }),
   ms({
     id: 'ai.openai.allow', category: 'AI Providers', name: 'Allow OpenAI', setting_type: 'bool',
@@ -79,7 +81,7 @@ let mockSettings: ResolvedSetting[] = [
     id: 'ai.openai.api_key', category: 'AI Providers', name: 'OpenAI API Key', setting_type: 'apikey',
     description: 'API key for OpenAI. Injected as OPENAI_API_KEY env var.',
     default_value: '', effective_value: '', enabled_by: 'ai.openai.allow', enabled: false,
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://platform.openai.com/api-keys' },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://platform.openai.com/api-keys', prefix: 'sk-' },
   }),
   ms({
     id: 'ai.openai.domains', category: 'AI Providers', name: 'OpenAI Domains', setting_type: 'text',
@@ -96,7 +98,7 @@ let mockSettings: ResolvedSetting[] = [
     id: 'ai.google.api_key', category: 'AI Providers', name: 'Google AI API Key', setting_type: 'apikey',
     description: 'API key for Google AI. Injected as GEMINI_API_KEY env var.',
     default_value: '', effective_value: '', enabled_by: 'ai.google.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://aistudio.google.com/apikey' },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://aistudio.google.com/apikey', prefix: 'AIza' },
   }),
   ms({
     id: 'ai.google.domains', category: 'AI Providers', name: 'Google AI Domains', setting_type: 'text',
@@ -110,6 +112,7 @@ let mockSettings: ResolvedSetting[] = [
     default_value: { path: '/root/.gemini/settings.json', content: '{"approvalMode":"yolo","general":{"enableAutoUpdate":false}}' },
     effective_value: { path: '/root/.gemini/settings.json', content: '{"approvalMode":"yolo","general":{"enableAutoUpdate":false}}' },
     enabled_by: 'ai.google.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'json' },
   }),
   ms({
     id: 'ai.google.gemini.projects_json', category: 'AI Providers', name: 'Gemini projects.json', setting_type: 'file',
@@ -117,6 +120,7 @@ let mockSettings: ResolvedSetting[] = [
     default_value: { path: '/root/.gemini/projects.json', content: '{"projects":{"/root":"root"}}' },
     effective_value: { path: '/root/.gemini/projects.json', content: '{"projects":{"/root":"root"}}' },
     enabled_by: 'ai.google.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'json' },
   }),
   ms({
     id: 'ai.google.gemini.trusted_folders_json', category: 'AI Providers', name: 'Gemini trustedFolders.json', setting_type: 'file',
@@ -124,6 +128,7 @@ let mockSettings: ResolvedSetting[] = [
     default_value: { path: '/root/.gemini/trustedFolders.json', content: '{"/root":"TRUST_FOLDER"}' },
     effective_value: { path: '/root/.gemini/trustedFolders.json', content: '{"/root":"TRUST_FOLDER"}' },
     enabled_by: 'ai.google.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'json' },
   }),
   ms({
     id: 'ai.google.gemini.installation_id', category: 'AI Providers', name: 'Gemini installation_id', setting_type: 'file',
@@ -163,7 +168,7 @@ let mockSettings: ResolvedSetting[] = [
     description: 'Personal access token for git push over HTTPS. Injected into .git-credentials.',
     default_value: '', effective_value: '',
     enabled_by: 'repository.providers.github.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://github.com/settings/tokens' },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://github.com/settings/tokens', prefix: 'ghp_' },
   }),
   ms({
     id: 'repository.providers.gitlab.allow', category: 'Repositories', name: 'Allow GitLab', setting_type: 'bool',
@@ -184,7 +189,7 @@ let mockSettings: ResolvedSetting[] = [
     description: 'Personal access token for git push over HTTPS. Injected into .git-credentials.',
     default_value: '', effective_value: '',
     enabled_by: 'repository.providers.gitlab.allow', enabled: false,
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://gitlab.com/-/user_settings/personal_access_tokens' },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://gitlab.com/-/user_settings/personal_access_tokens', prefix: 'glpat-' },
   }),
   // -- Package Registries --
   ms({
@@ -342,6 +347,20 @@ let mockSettings: ResolvedSetting[] = [
     id: 'vm.environment.shell.lang', category: 'VM', name: 'LANG', setting_type: 'text',
     description: 'Locale for the guest shell.',
     default_value: 'C', effective_value: 'C',
+  }),
+  ms({
+    id: 'vm.environment.shell.bashrc', category: 'VM', name: 'Bash configuration', setting_type: 'file',
+    description: 'User shell config sourced at login. Customize prompt, aliases, and functions.',
+    default_value: { path: '/root/.bashrc', content: '# Prompt: green bold "capsem" with blue directory\nPS1=\'\\[\\033[1;32m\\]capsem\\[\\033[0m\\]:\\[\\033[1;34m\\]\\w\\[\\033[0m\\]\\$ \'\n\n# Aliases\nalias pip=\'uv pip\'\nalias pip3=\'uv pip\'\nalias python=\'uv run python\'\nalias python3=\'uv run python3\'\nalias gemini=\'gemini --yolo\'\nalias ls=\'ls --color=auto\'\nalias ll=\'ls -la --color=auto\'\nalias grep=\'grep --color=auto\'\n' },
+    effective_value: { path: '/root/.bashrc', content: '# Prompt: green bold "capsem" with blue directory\nPS1=\'\\[\\033[1;32m\\]capsem\\[\\033[0m\\]:\\[\\033[1;34m\\]\\w\\[\\033[0m\\]\\$ \'\n\n# Aliases\nalias pip=\'uv pip\'\nalias pip3=\'uv pip\'\nalias python=\'uv run python\'\nalias python3=\'uv run python3\'\nalias gemini=\'gemini --yolo\'\nalias ls=\'ls --color=auto\'\nalias ll=\'ls -la --color=auto\'\nalias grep=\'grep --color=auto\'\n' },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'bash' },
+  }),
+  ms({
+    id: 'vm.environment.shell.tmux_conf', category: 'VM', name: 'tmux configuration', setting_type: 'file',
+    description: 'tmux terminal multiplexer config. Customize appearance, keybindings, and behavior.',
+    default_value: { path: '/root/.tmux.conf', content: 'set -g default-terminal "tmux-256color"\nset -ag terminal-features ",xterm-256color:RGB"\nset -g mouse on\nset -g escape-time 0\nset -g history-limit 50000\nset -g status-style "bg=default,fg=colour8"\nset -g status-left ""\nset -g status-right ""\nset -g pane-border-style "fg=colour8"\nset -g pane-active-border-style "fg=colour4"\nset -g message-style "bg=default,fg=colour4"\n' },
+    effective_value: { path: '/root/.tmux.conf', content: 'set -g default-terminal "tmux-256color"\nset -ag terminal-features ",xterm-256color:RGB"\nset -g mouse on\nset -g escape-time 0\nset -g history-limit 50000\nset -g status-style "bg=default,fg=colour8"\nset -g status-left ""\nset -g status-right ""\nset -g pane-border-style "fg=colour8"\nset -g pane-active-border-style "fg=colour4"\nset -g message-style "bg=default,fg=colour4"\n' },
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'conf' },
   }),
   ms({
     id: 'vm.environment.tls.ca_bundle', category: 'VM', name: 'CA bundle path', setting_type: 'text',
@@ -614,6 +633,8 @@ function buildMockTree(): SettingsNode[] {
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.home')!),
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.path')!),
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.lang')!),
+              leaf(mockSettings.find(s => s.id === 'vm.environment.shell.bashrc')!),
+              leaf(mockSettings.find(s => s.id === 'vm.environment.shell.tmux_conf')!),
             ],
           },
           {

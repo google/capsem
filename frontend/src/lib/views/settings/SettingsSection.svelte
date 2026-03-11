@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { SettingsGroup, SettingsLeaf, SettingsNode, SettingValue } from '../../types';
+  import type { ConfigIssue, SettingsGroup, SettingsLeaf, SettingsNode, SettingValue } from '../../types';
   import { settingsStore } from '../../stores/settings.svelte';
   import { themeStore } from '../../stores/theme.svelte';
+  import { openUrl } from '../../api';
   import Self from './SettingsSection.svelte';
 
   let { group, depth = 0 }: { group: SettingsGroup; depth?: number } = $props();
@@ -15,8 +16,6 @@
 
   // Track collapsed state for sub-groups with enabled_by toggle.
   let expandedGroups = $state<Set<string>>(new Set());
-  // Track collapsed state for "advanced" (collapsed) settings within a group.
-  let showAdvanced = $state<Set<string>>(new Set());
   // Track API key reveal state.
   let revealedKeys = $state<Set<string>>(new Set());
   // Track which file settings are in edit mode.
@@ -27,19 +26,51 @@
   let pathDrafts = $state<Map<string, string>>(new Map());
   // Track "copied" feedback state.
   let copiedId = $state<string | null>(null);
+  // Track domain list chip input drafts.
+  let chipInputs = $state<Map<string, string>>(new Map());
+
+  /** Parse comma-separated domain string into trimmed array. */
+  function parseDomains(text: string): string[] {
+    return text.split(',').map(d => d.trim()).filter(d => d.length > 0);
+  }
+
+  /** Join domain array back to comma-separated string. */
+  function joinDomains(domains: string[]): string {
+    return domains.join(', ');
+  }
+
+  function removeDomain(id: string, current: string, domain: string) {
+    const domains = parseDomains(current).filter(d => d !== domain);
+    handleUpdate(id, joinDomains(domains));
+  }
+
+  function addDomain(id: string, current: string) {
+    const input = (chipInputs.get(id) ?? '').trim();
+    if (!input) return;
+    const domains = parseDomains(current);
+    // Split on comma in case user pasted multiple
+    const newDomains = input.split(',').map(d => d.trim()).filter(d => d.length > 0);
+    for (const d of newDomains) {
+      if (!domains.includes(d)) domains.push(d);
+    }
+    const next = new Map(chipInputs);
+    next.set(id, '');
+    chipInputs = next;
+    handleUpdate(id, joinDomains(domains));
+  }
+
+  function handleChipKeydown(e: KeyboardEvent, id: string, current: string) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addDomain(id, current);
+    }
+  }
 
   function toggleGroup(key: string) {
     const next = new Set(expandedGroups);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     expandedGroups = next;
-  }
-
-  function toggleAdvanced(key: string) {
-    const next = new Set(showAdvanced);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    showAdvanced = next;
   }
 
   function toggleReveal(id: string) {
@@ -49,12 +80,12 @@
     revealedKeys = next;
   }
 
-  function startEditing(id: string, fv: { path: string; content: string }) {
+  function startEditing(id: string, fv: { path: string; content: string }, filetype: string) {
     const next = new Set(editingFiles);
     next.add(id);
     editingFiles = next;
     const drafts = new Map(fileDrafts);
-    drafts.set(id, formatJson(fv.content));
+    drafts.set(id, formatContent(fv.content, filetype));
     fileDrafts = drafts;
     const paths = new Map(pathDrafts);
     paths.set(id, fv.path);
@@ -81,7 +112,7 @@
     } catch { /* clipboard may not be available */ }
   }
 
-  async function saveFile(id: string) {
+  async function saveFile(id: string, filetype: string) {
     const draft = fileDrafts.get(id) ?? '';
     const path = pathDrafts.get(id) ?? '';
     const next = new Set(editingFiles);
@@ -93,11 +124,7 @@
     const paths = new Map(pathDrafts);
     paths.delete(id);
     pathDrafts = paths;
-    // Compact the JSON for storage (remove pretty-print whitespace).
-    let compacted = draft.trim();
-    try {
-      compacted = JSON.stringify(JSON.parse(compacted));
-    } catch { /* save as-is if not valid JSON */ }
+    const compacted = compactContent(draft, filetype);
     await handleUpdate(id, { path, content: compacted });
   }
 
@@ -117,18 +144,17 @@
     return toggle.effective_value === true;
   }
 
-  // Separate children into core (non-collapsed) and advanced (collapsed).
-  function partitionChildren(children: SettingsNode[]): { core: SettingsNode[]; advanced: SettingsNode[] } {
-    const core: SettingsNode[] = [];
-    const advanced: SettingsNode[] = [];
+  /** Collect all lint issues for all leaves inside a group (recursive). */
+  function groupIssues(children: SettingsNode[]): ConfigIssue[] {
+    const issues: ConfigIssue[] = [];
     for (const child of children) {
-      if (child.kind === 'leaf' && child.collapsed) {
-        advanced.push(child);
+      if (child.kind === 'leaf') {
+        issues.push(...settingsStore.issuesFor(child.id));
       } else {
-        core.push(child);
+        issues.push(...groupIssues(child.children));
       }
     }
-    return { core, advanced };
+    return issues;
   }
 
   async function handleUpdate(id: string, value: unknown) {
@@ -139,40 +165,117 @@
     await settingsStore.update(id, value as any);
   }
 
-  function formatJson(text: string): string {
-    try {
-      return JSON.stringify(JSON.parse(text), null, 2);
-    } catch {
-      return text;
-    }
+  /** Detect filetype from metadata or path extension. */
+  function detectFiletype(s: SettingsLeaf): string {
+    if (s.metadata.filetype) return s.metadata.filetype;
+    const fv = fileValue(s.effective_value);
+    const ext = fv.path.split('.').pop()?.toLowerCase() ?? '';
+    if (ext === 'json') return 'json';
+    if (ext === 'sh' || ext === 'bashrc' || fv.path.endsWith('.bashrc')) return 'bash';
+    if (ext === 'conf') return 'conf';
+    return 'text';
   }
 
-  /** Simple JSON syntax highlighter -- returns HTML with colored spans. */
-  function highlightJson(text: string): string {
-    const formatted = formatJson(text);
-    // Escape HTML first
-    const escaped = formatted
+  /** Format content for display (pretty-print JSON, pass-through others). */
+  function formatContent(text: string, filetype: string): string {
+    if (filetype === 'json') {
+      try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        return text;
+      }
+    }
+    return text;
+  }
+
+  /** Compact content for storage (minify JSON, pass-through others). */
+  function compactContent(text: string, filetype: string): string {
+    if (filetype === 'json') {
+      try {
+        return JSON.stringify(JSON.parse(text));
+      } catch {
+        return text.trim();
+      }
+    }
+    return text.trim();
+  }
+
+  /** Escape HTML entities. */
+  function escapeHtml(text: string): string {
+    return text
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
-    // Apply token coloring
+  }
+
+  /** JSON syntax highlighter. */
+  function highlightJson(text: string): string {
+    const formatted = formatContent(text, 'json');
+    const escaped = escapeHtml(formatted);
     return escaped
-      // Strings (keys and values)
       .replace(
         /("(?:[^"\\]|\\.)*")(\s*:)?/g,
         (match, str, colon) => {
           if (colon) {
-            // It's a key
             return `<span class="json-key">${str}</span>${colon}`;
           }
-          // It's a string value
           return `<span class="json-string">${str}</span>`;
         },
       )
-      // Booleans and null
       .replace(/\b(true|false|null)\b/g, '<span class="json-bool">$1</span>')
-      // Numbers
       .replace(/\b(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g, '<span class="json-number">$1</span>');
+  }
+
+  /** Bash/shell syntax highlighter (single-pass to avoid HTML tag interference). */
+  function highlightBash(text: string): string {
+    const escaped = escapeHtml(text);
+    return escaped.split('\n').map(line => {
+      if (/^\s*#/.test(line)) {
+        return `<span class="sh-comment">${line}</span>`;
+      }
+      // Single-pass: all token types in one regex so matches cannot overlap
+      return line.replace(
+        /('(?:[^'\\]|\\.)*')|("(?:[^"\\]|\\.)*")|(\\033\[[0-9;]*m|\\e\[[0-9;]*m)|(\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*)|\b(alias|export|if|then|else|elif|fi|for|do|done|case|esac|function|while|until|in|local|return|source)\b|(#.*$)/g,
+        (match, single, double, escape, variable, keyword, comment) => {
+          if (single || double) return `<span class="json-string">${match}</span>`;
+          if (escape) return `<span class="sh-escape">${match}</span>`;
+          if (variable) return `<span class="sh-variable">${match}</span>`;
+          if (keyword) return `<span class="sh-keyword">${match}</span>`;
+          if (comment) return `<span class="sh-comment">${match}</span>`;
+          return match;
+        },
+      );
+    }).join('\n');
+  }
+
+  /** Config file (tmux/generic) syntax highlighter (single-pass). */
+  function highlightConf(text: string): string {
+    const escaped = escapeHtml(text);
+    return escaped.split('\n').map(line => {
+      if (/^\s*#/.test(line)) {
+        return `<span class="sh-comment">${line}</span>`;
+      }
+      // Single-pass: strings, flags, keywords, comments
+      return line.replace(
+        /("(?:[^"\\]|\\.)*")|('(?:[^'\\]|\\.)*')|\b(set|bind|unbind|source|run|if|set-option|set-window-option|bind-key|unbind-key)\b|(#.*$)/g,
+        (match, dbl, sgl, keyword, comment) => {
+          if (dbl || sgl) return `<span class="json-string">${match}</span>`;
+          if (keyword) return `<span class="sh-keyword">${match}</span>`;
+          if (comment) return `<span class="sh-comment">${match}</span>`;
+          return match;
+        },
+      );
+    }).join('\n');
+  }
+
+  /** Dispatch syntax highlighting by filetype. */
+  function highlightContent(text: string, filetype: string): string {
+    switch (filetype) {
+      case 'json': return highlightJson(text);
+      case 'bash': return highlightBash(text);
+      case 'conf': return highlightConf(text);
+      default: return escapeHtml(text);
+    }
   }
 </script>
 
@@ -181,6 +284,7 @@
   {@const disabled = s.corp_locked || !s.enabled}
   {@const isEditing = editingFiles.has(s.id)}
   {@const fv = fileValue(s.effective_value)}
+  {@const filetype = detectFiletype(s)}
   <div class="card card-bordered card-compact bg-base-200/30 overflow-hidden">
     <!-- File header bar -->
     <div class="flex items-center gap-2 px-3 py-1.5 border-b border-base-300/50 bg-base-200/50">
@@ -228,12 +332,12 @@
           >Cancel</button>
           <button
             class="btn bg-interactive text-white btn-xs"
-            onclick={() => saveFile(s.id)}
+            onclick={() => saveFile(s.id, filetype)}
           >Save</button>
         {:else}
           <button
             class="btn btn-ghost btn-xs text-base-content/50"
-            onclick={() => startEditing(s.id, fv)}
+            onclick={() => startEditing(s.id, fv, filetype)}
           >Edit</button>
         {/if}
       {/if}
@@ -242,8 +346,8 @@
     {#if isEditing}
       <textarea
         class="w-full bg-transparent font-mono text-xs leading-relaxed p-3 focus:outline-none resize-y min-h-20"
-        rows={Math.min(Math.max(formatJson(fv.content).split('\n').length + 1, 4), 20)}
-        value={fileDrafts.get(s.id) ?? formatJson(fv.content)}
+        rows={Math.min(Math.max(formatContent(fv.content, filetype).split('\n').length + 1, 4), 20)}
+        value={fileDrafts.get(s.id) ?? formatContent(fv.content, filetype)}
         oninput={(e) => {
           const drafts = new Map(fileDrafts);
           drafts.set(s.id, e.currentTarget.value);
@@ -251,11 +355,70 @@
         }}
       ></textarea>
     {:else}
-      <pre class="font-mono text-xs leading-relaxed p-3 overflow-x-auto whitespace-pre-wrap">{@html highlightJson(fv.content)}</pre>
+      <pre class="font-mono text-xs leading-relaxed p-3 overflow-x-auto whitespace-pre-wrap">{@html highlightContent(fv.content, filetype)}</pre>
     {/if}
     <!-- Lint issues -->
     {#if issues.length > 0}
       <div class="px-3 pb-2 flex flex-col gap-0.5">
+        {#each issues as issue}
+          <span class="text-xs {issue.severity === 'error' ? 'text-denied' : 'text-caution'}">
+            {issue.message}
+          </span>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet domainListControl(s: SettingsLeaf)}
+  {@const issues = settingsStore.issuesFor(s.id)}
+  {@const disabled = s.corp_locked || !s.enabled}
+  {@const domains = parseDomains(String(s.effective_value))}
+  <div class="form-control">
+    <div class="flex items-center gap-2 mb-0.5">
+      <span class="text-sm font-medium">{s.name}</span>
+      {#if s.corp_locked}
+        <span class="badge badge-xs bg-denied/15 text-denied">corp</span>
+      {/if}
+      {#if s.source === 'user'}
+        <span class="badge badge-xs badge-outline text-file-modified">modified</span>
+      {/if}
+    </div>
+    {#if s.description}
+      <p class="text-xs text-base-content/50 mb-1.5">{s.description}</p>
+    {/if}
+    <div class="flex flex-wrap gap-1.5 items-center">
+      {#each domains as domain}
+        <span class="badge badge-sm bg-base-200 gap-1 font-mono text-xs">
+          {domain}
+          {#if !disabled}
+            <button
+              class="text-base-content/40 hover:text-base-content/70"
+              onclick={() => removeDomain(s.id, String(s.effective_value), domain)}
+              title="Remove {domain}"
+            >
+              <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          {/if}
+        </span>
+      {/each}
+      {#if !disabled}
+        <input
+          type="text"
+          class="input input-xs input-bordered w-40 font-mono text-xs"
+          placeholder="add domain..."
+          value={chipInputs.get(s.id) ?? ''}
+          oninput={(e) => {
+            const next = new Map(chipInputs);
+            next.set(s.id, e.currentTarget.value);
+            chipInputs = next;
+          }}
+          onkeydown={(e) => handleChipKeydown(e, s.id, String(s.effective_value))}
+        />
+      {/if}
+    </div>
+    {#if issues.length > 0}
+      <div class="mt-1 flex flex-col gap-0.5">
         {#each issues as issue}
           <span class="text-xs {issue.severity === 'error' ? 'text-denied' : 'text-caution'}">
             {issue.message}
@@ -271,6 +434,8 @@
   {@const disabled = s.corp_locked || !s.enabled}
   {#if s.setting_type === 'file'}
     {@render fileControl(s)}
+  {:else if s.setting_type === 'text' && s.metadata.format === 'domain_list'}
+    {@render domainListControl(s)}
   {:else}
   <div class="form-control">
     <div class="flex items-start gap-3">
@@ -298,26 +463,31 @@
             onchange={(e) => handleUpdate(s.id, e.currentTarget.checked)}
           />
         {:else if s.setting_type === 'apikey' || s.setting_type === 'password'}
-          <div class="flex items-center gap-1">
-            <input
-              type={revealedKeys.has(s.id) ? 'text' : 'password'}
-              class="input input-sm input-bordered w-64 font-mono text-xs"
-              value={String(s.effective_value)}
-              {disabled}
-              placeholder={s.setting_type === 'apikey' ? 'sk-...' : ''}
-              onchange={(e) => handleUpdate(s.id, e.currentTarget.value)}
-            />
-            <button
-              class="btn btn-ghost btn-xs"
-              onclick={() => toggleReveal(s.id)}
-              title={revealedKeys.has(s.id) ? 'Hide' : 'Show'}
-            >
-              {#if revealedKeys.has(s.id)}
-                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
-              {:else}
-                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
-              {/if}
-            </button>
+          <div class="flex flex-col items-end gap-0.5">
+            <div class="flex items-center gap-1">
+              <input
+                type={revealedKeys.has(s.id) ? 'text' : 'password'}
+                class="input input-sm input-bordered w-64 font-mono text-xs"
+                value={String(s.effective_value)}
+                {disabled}
+                placeholder={s.metadata.prefix ? `${s.metadata.prefix}...` : ''}
+                onchange={(e) => handleUpdate(s.id, e.currentTarget.value)}
+              />
+              <button
+                class="btn btn-ghost btn-xs"
+                onclick={() => toggleReveal(s.id)}
+                title={revealedKeys.has(s.id) ? 'Hide' : 'Show'}
+              >
+                {#if revealedKeys.has(s.id)}
+                  <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                {:else}
+                  <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                {/if}
+              </button>
+            </div>
+            {#if s.metadata.prefix && String(s.effective_value) && !String(s.effective_value).startsWith(s.metadata.prefix)}
+              <span class="text-xs text-caution">Token should start with {s.metadata.prefix}</span>
+            {/if}
           </div>
         {:else if s.setting_type === 'number'}
           <div class="flex flex-col items-end gap-0.5">
@@ -375,7 +545,7 @@
 <!-- Top-level group header -->
 {#if depth === 0}
   <div class="mb-4">
-    <h2 class="text-lg font-semibold">{group.name}</h2>
+    <h1 class="text-2xl font-bold">{group.name}</h1>
     {#if group.description}
       <p class="text-sm text-base-content/50">{group.description}</p>
     {/if}
@@ -392,35 +562,35 @@
     {@const hasToggle = !!child.enabled_by}
     {@const toggle = findToggle(child.children, child.enabled_by)}
     {@const isOn = isToggleOn(child.children, child.enabled_by)}
-    {@const { core, advanced } = partitionChildren(child.children.filter(c => !(c.kind === 'leaf' && c.id === child.enabled_by)))}
+    {@const contentChildren = child.children.filter(c => !(c.kind === 'leaf' && c.id === child.enabled_by))}
     {@const isExpanded = expandedGroups.has(child.key) || !hasToggle}
-    {@const showAdv = showAdvanced.has(child.key)}
 
-    <div class="card card-bordered mb-3 overflow-hidden">
-      <!-- Group header -->
-      <div class="flex items-center gap-3 px-4 py-2.5 bg-base-200/40">
-        {#if hasToggle && toggle}
-          <input
-            type="checkbox"
-            class="toggle toggle-sm"
-            checked={toggle.effective_value === true}
-            disabled={toggle.corp_locked}
-            onchange={(e) => handleUpdate(toggle.id, e.currentTarget.checked)}
-          />
-        {/if}
-        <button
-          class="flex-1 text-left"
-          onclick={() => { if (hasToggle) toggleGroup(child.key); }}
-        >
-          <span class="text-sm font-medium">{child.name}</span>
-          {#if toggle?.corp_locked}
-            <span class="badge badge-xs bg-denied/15 text-denied ml-1">corp</span>
+    {#if hasToggle}
+      {@const headerIssues = groupIssues(child.children)}
+      <!-- Toggle-gated group: card with toggle header -->
+      <div id="settings-group-{child.name}" data-subgroup={child.name} class="card card-bordered mb-3 overflow-hidden">
+        <div class="flex items-center gap-3 px-4 py-2.5 bg-base-200/40">
+          {#if toggle}
+            <input
+              type="checkbox"
+              class="toggle toggle-sm"
+              checked={toggle.effective_value === true}
+              disabled={toggle.corp_locked}
+              onchange={(e) => handleUpdate(toggle.id, e.currentTarget.checked)}
+            />
           {/if}
-          {#if child.description}
-            <span class="text-xs text-base-content/40 ml-2">{child.description}</span>
-          {/if}
-        </button>
-        {#if hasToggle}
+          <button
+            class="flex-1 text-left"
+            onclick={() => toggleGroup(child.key)}
+          >
+            <span class="text-sm font-medium">{child.name}</span>
+            {#if toggle?.corp_locked}
+              <span class="badge badge-xs bg-denied/15 text-denied ml-1">corp</span>
+            {/if}
+            {#if child.description}
+              <span class="text-xs text-base-content/40 ml-2">{child.description}</span>
+            {/if}
+          </button>
           <button
             class="btn btn-ghost btn-xs"
             aria-label={isExpanded ? 'Collapse' : 'Expand'}
@@ -428,49 +598,46 @@
           >
             <svg class="size-3 transition-transform {isExpanded ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9" /></svg>
           </button>
+        </div>
+        {#if headerIssues.length > 0 && !isExpanded}
+          <div class="flex flex-col gap-0.5 px-4 py-1.5 border-t border-base-200/50">
+            {#each headerIssues as issue}
+              <span class="text-xs text-caution">
+                {issue.message}
+                {#if issue.docs_url}
+                  <button onclick={() => openUrl(issue.docs_url!)} class="underline ml-1">Get one</button>
+                {/if}
+              </span>
+            {/each}
+          </div>
         {/if}
-      </div>
-
-      <!-- Group content -->
-      {#if isExpanded}
-        <div class="px-4 py-2 space-y-1 {hasToggle && !isOn ? 'opacity-40 pointer-events-none' : ''}">
-          {#each core as item}
-            {#if item.kind === 'leaf'}
-              <div class="py-1.5 border-b border-base-200/50 last:border-b-0">
-                {@render leafControl(item)}
-              </div>
-            {:else if item.kind === 'group'}
-              <div class="mt-2 mb-1 ml-1">
-                <Self group={item} depth={depth + 1} />
-              </div>
-            {/if}
-          {/each}
-
-          <!-- Advanced (collapsed) settings -->
-          {#if advanced.length > 0}
-            <div class="pt-1">
-              <button
-                class="btn btn-ghost btn-xs text-base-content/40"
-                onclick={() => toggleAdvanced(child.key)}
-              >
-                {showAdv ? 'Hide' : 'Show'} {advanced.length} advanced {advanced.length === 1 ? 'setting' : 'settings'}
-                <svg class="size-3 ml-0.5 transition-transform {showAdv ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9" /></svg>
-              </button>
-              {#if showAdv}
-                <div class="mt-1 space-y-1 border-t border-base-200/50 pt-1">
-                  {#each advanced as adv}
-                    {#if adv.kind === 'leaf'}
-                      <div class="py-1.5 border-b border-base-200/50 last:border-b-0">
-                        {@render leafControl(adv)}
-                      </div>
-                    {/if}
-                  {/each}
+        {#if isExpanded}
+          <div class="px-4 py-2 space-y-1 {!isOn ? 'opacity-40 pointer-events-none' : ''}">
+            {#each contentChildren as item}
+              {#if item.kind === 'leaf'}
+                <div class="py-1.5 border-b border-base-200/50 last:border-b-0">
+                  {@render leafControl(item)}
+                </div>
+              {:else if item.kind === 'group'}
+                <div class="mt-2 mb-1 ml-1">
+                  <Self group={item} depth={depth + 1} />
                 </div>
               {/if}
-            </div>
-          {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <!-- Non-toggle subgroup; only depth-0 children get data-subgroup for scroll tracking -->
+      <div id="settings-group-{child.name}" data-subgroup={depth === 0 ? child.name : null} class="mt-6 first:mt-0 mb-2 scroll-mt-4">
+        <h2 class="text-lg font-semibold text-interactive mb-0.5">{child.name}</h2>
+        {#if child.description}
+          <p class="text-xs text-base-content/50 mb-2">{child.description}</p>
+        {/if}
+        <div class="space-y-1">
+          <Self group={child} depth={depth + 1} />
         </div>
-      {/if}
-    </div>
+      </div>
+    {/if}
   {/if}
 {/each}

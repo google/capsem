@@ -335,3 +335,36 @@ def test_no_kallsyms():
     assert result.returncode == 0
     count = int(result.stdout.strip())
     assert count == 0, f"/proc/kallsyms has {count} symbols (should be empty or absent)"
+
+
+# -- Kernel cmdline hardening --
+
+def test_init_on_alloc():
+    """Kernel cmdline must include init_on_alloc=1 for heap zeroing."""
+    result = run("cat /proc/cmdline")
+    assert result.returncode == 0
+    assert "init_on_alloc=1" in result.stdout, \
+        f"init_on_alloc=1 not in cmdline: {result.stdout}"
+
+
+def test_slab_nomerge():
+    """Kernel cmdline must include slab_nomerge for heap isolation."""
+    result = run("cat /proc/cmdline")
+    assert result.returncode == 0
+    assert "slab_nomerge" in result.stdout, \
+        f"slab_nomerge not in cmdline: {result.stdout}"
+
+
+def test_page_alloc_shuffle():
+    """Kernel cmdline must include page_alloc.shuffle=1 for page randomization."""
+    result = run("cat /proc/cmdline")
+    assert result.returncode == 0
+    assert "page_alloc.shuffle=1" in result.stdout, \
+        f"page_alloc.shuffle=1 not in cmdline: {result.stdout}"
+
+
+def test_seccomp_available():
+    """Seccomp must be available (CONFIG_SECCOMP=y)."""
+    result = run("grep '^Seccomp:' /proc/self/status")
+    assert result.returncode == 0, \
+        "Seccomp line not found in /proc/self/status"

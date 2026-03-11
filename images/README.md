@@ -99,4 +99,4 @@ The login experience is composed of three files:
 | `capsem-doctor` | In-VM diagnostic runner | `just build-assets` |
 | `diagnostics/` | pytest-based VM test suite | `just build-assets` |
 | `build.py` | Build orchestrator (kernel, rootfs, initrd) | -- |
-| `defconfig` | Kernel .config | `just build-assets` |
+| `defconfig.arm64` | Kernel .config (ARM64) | `just build-assets` |

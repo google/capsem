@@ -45,6 +45,12 @@
   --color-json-bool: oklch(0.7 0.16 300);
   --color-json-number: oklch(0.75 0.14 60);
 
+  /* Shell/conf syntax */
+  --color-sh-comment: oklch(0.55 0.02 250);
+  --color-sh-keyword: oklch(0.75 0.15 250);
+  --color-sh-variable: oklch(0.72 0.14 185);
+  --color-sh-escape: oklch(0.55 0.08 60);
+
   /* Span types (trace viewer) */
   --color-span-thinking: oklch(0.7 0.15 250);   /* blue */
   --color-span-tool: oklch(0.72 0.14 145);       /* green */
@@ -75,6 +81,13 @@
 .json-string { color: var(--color-json-string); }
 .json-bool   { color: var(--color-json-bool); }
 .json-number { color: var(--color-json-number); }
+
+/* --- Shell/conf syntax highlight classes --- */
+
+.sh-comment  { color: var(--color-sh-comment); font-style: italic; }
+.sh-keyword  { color: var(--color-sh-keyword); font-weight: 600; }
+.sh-variable { color: var(--color-sh-variable); }
+.sh-escape   { color: var(--color-sh-escape); }
 
 :root {
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,

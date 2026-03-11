@@ -154,6 +154,12 @@ pub struct SettingMetadata {
     /// Documentation URL for getting an API key / token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs_url: Option<String>,
+    /// Expected token/key prefix hint for the UI (e.g. "ghp_", "sk-ant-").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    /// File type hint for syntax highlighting (e.g. "json", "bash", "conf").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filetype: Option<String>,
 }
 
 /// Schema definition for a setting (loaded from defaults.toml at compile time).
@@ -285,6 +291,10 @@ struct SettingMetaToml {
     format: Option<String>,
     #[serde(default)]
     docs_url: Option<String>,
+    #[serde(default)]
+    prefix: Option<String>,
+    #[serde(default)]
+    filetype: Option<String>,
 }
 
 /// Category/group metadata from TOML grouping nodes.
@@ -338,6 +348,8 @@ fn collect_settings(
                 collapsed: def.collapsed,
                 format: def.meta.format,
                 docs_url: def.meta.docs_url,
+                prefix: def.meta.prefix,
+                filetype: def.meta.filetype,
             },
         });
         return;
@@ -3356,6 +3368,72 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     }
 
     // -----------------------------------------------------------------------
+    // Shell config boot files (bashrc + tmux.conf)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bashrc_boot_file_injected() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let bashrc = files.iter().find(|f| f.path == "/root/.bashrc");
+        assert!(bashrc.is_some(), "bashrc boot file should be injected");
+        assert!(bashrc.unwrap().content.contains("PS1="), "bashrc should contain PS1 prompt");
+    }
+
+    #[test]
+    fn tmux_conf_boot_file_injected() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let tmux = files.iter().find(|f| f.path == "/root/.tmux.conf");
+        assert!(tmux.is_some(), "tmux.conf boot file should be injected");
+        assert!(tmux.unwrap().content.contains("default-terminal"), "tmux.conf should contain terminal setting");
+    }
+
+    #[test]
+    fn bashrc_user_override() {
+        let custom = "PS1='custom> '\nalias foo='bar'\n";
+        let user = file_with(vec![
+            ("vm.environment.shell.bashrc", SettingValue::File {
+                path: "/root/.bashrc".into(),
+                content: custom.into(),
+            }),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let bashrc = files.iter().find(|f| f.path == "/root/.bashrc").unwrap();
+        assert!(bashrc.content.contains("custom>"), "user override should replace default bashrc content");
+    }
+
+    #[test]
+    fn shell_boot_files_have_correct_mode() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        for path in &["/root/.bashrc", "/root/.tmux.conf"] {
+            let f = files.iter().find(|f| f.path == *path).unwrap();
+            assert_eq!(f.mode, 0o600, "boot file {} should have mode 0600", path);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Filetype metadata
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn filetype_metadata_propagated() {
+        let defs = setting_definitions();
+        let bashrc = defs.iter().find(|d| d.id == "vm.environment.shell.bashrc").unwrap();
+        assert_eq!(bashrc.metadata.filetype.as_deref(), Some("bash"));
+        let tmux = defs.iter().find(|d| d.id == "vm.environment.shell.tmux_conf").unwrap();
+        assert_eq!(tmux.metadata.filetype.as_deref(), Some("conf"));
+        let claude = defs.iter().find(|d| d.id == "ai.anthropic.claude.settings_json").unwrap();
+        assert_eq!(claude.metadata.filetype.as_deref(), Some("json"));
+    }
+
+    // -----------------------------------------------------------------------
     // N: File setting type
     // -----------------------------------------------------------------------
 
@@ -4788,5 +4866,61 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         ] {
             assert!(ids.contains(&constant), "constant '{constant}' not found in setting_definitions()");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // GH_TOKEN / GITLAB_TOKEN env var injection tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gh_token_injected_when_github_enabled() {
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
+            (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let env = gc.env.unwrap();
+        assert_eq!(env.get("GH_TOKEN").unwrap(), "ghp_test123");
+        assert_eq!(env.get("GITHUB_TOKEN").unwrap(), "ghp_test123");
+    }
+
+    #[test]
+    fn gitlab_token_injected_when_gitlab_enabled() {
+        let user = file_with(vec![
+            (SETTING_GITLAB_ALLOW, SettingValue::Bool(true)),
+            (SETTING_GITLAB_TOKEN, SettingValue::Text("glpat-test456".into())),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let env = gc.env.unwrap();
+        assert_eq!(env.get("GITLAB_TOKEN").unwrap(), "glpat-test456");
+    }
+
+    #[test]
+    fn gh_token_not_injected_when_token_empty() {
+        let user = file_with(vec![
+            (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let env = gc.env.unwrap_or_default();
+        assert!(!env.contains_key("GH_TOKEN"), "GH_TOKEN should not be set when token is empty");
+        assert!(!env.contains_key("GITHUB_TOKEN"), "GITHUB_TOKEN should not be set when token is empty");
+    }
+
+    // -----------------------------------------------------------------------
+    // Prefix metadata tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn token_settings_have_prefix_metadata() {
+        let defs = setting_definitions();
+        let gh = defs.iter().find(|d| d.id == SETTING_GITHUB_TOKEN).unwrap();
+        assert_eq!(gh.metadata.prefix.as_deref(), Some("ghp_"));
+        let gl = defs.iter().find(|d| d.id == SETTING_GITLAB_TOKEN).unwrap();
+        assert_eq!(gl.metadata.prefix.as_deref(), Some("glpat-"));
+        let anthropic = defs.iter().find(|d| d.id == SETTING_ANTHROPIC_API_KEY).unwrap();
+        assert_eq!(anthropic.metadata.prefix.as_deref(), Some("sk-ant-"));
     }
 }

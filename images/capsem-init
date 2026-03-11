@@ -117,6 +117,10 @@ else
     echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
 fi
 
+# Create writable bin dir for pip install --user / uvx entry points.
+# Must happen after /root is mounted (scratch disk or tmpfs).
+mkdir -p /newroot/root/.local/bin
+
 # Remove legacy HTTP sources.list if present (belt-and-suspenders).
 # The rootfs already has HTTPS-only debian.sources from the Docker build.
 rm -f /newroot/etc/apt/sources.list

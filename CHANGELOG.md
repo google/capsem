@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Auto-detect latest stable kernel version from kernel.org during `just build-assets`
+- User-editable bashrc and tmux.conf as file settings in Settings > VM > Shell
+- Filetype-aware syntax highlighting for file settings (bash, conf, json)
 
 ### Security
 - Kernel hardening: heap zeroing (`INIT_ON_ALLOC`), SLUB freelist hardening, page allocator randomization, KPTI (`UNMAP_KERNEL_AT_EL0`), ARM64 BTI + PAC, `HARDENED_USERCOPY`, seccomp filter, cmdline hardening (`init_on_alloc=1 slab_nomerge page_alloc.shuffle=1`)
 
 ### Fixed
+- Claude Code no longer warns about missing `/root/.local/bin` directory (created at boot after scratch disk mount)
+- tmux now has a clean minimal config: mouse support, no escape delay, proper 256-color/truecolor, high scrollback
 - tmux sessions can now find `gemini` and other npm-global binaries (PATH was lost when tmux started a login shell that reset it via `/etc/profile`)
 - `gh auth status` injection test no longer fails with fake test tokens (test now verifies token detection, not authentication)
 

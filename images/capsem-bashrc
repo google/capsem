@@ -10,9 +10,6 @@ export HISTFILE=/root/.bash_history
 export HOME=/root
 cd /root
 
-# Prompt: green bold "capsem" with blue directory
-PS1='\[\033[1;32m\]capsem\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
-
 # Activate Python virtualenv (packages install here since rootfs is read-only).
 # Created by capsem-init at boot using uv.
 if [ -f /root/.venv/bin/activate ]; then
@@ -25,20 +22,9 @@ fi
 #   ~/.venv/bin        -- added by venv activate above
 export PATH="/root/.npm-global/bin:/root/.local/bin:$PATH"
 
-# Alias pip to uv pip (faster, no root warning, auto-detects active venv).
-alias pip='uv pip'
-alias pip3='uv pip'
-alias python='uv run python'
-alias python3='uv run python3'
-
-# AI CLIs: auto-approve tool calls (VM is already sandboxed).
-# Without --yolo, non-interactive mode (-p) hides write/execute tools.
-alias gemini='gemini --yolo'
-
-# Color aliases
-alias ls='ls --color=auto'
-alias ll='ls -la --color=auto'
-alias grep='grep --color=auto'
+# Source user-editable bashrc (prompt, aliases, functions).
+# This file is injected as a boot file from the settings registry.
+source /root/.bashrc 2>/dev/null || true
 
 # Colors: blue for positive/ready, purple for negative/disabled, dim for neutral.
 _BLUE='\033[0;34m'

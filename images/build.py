@@ -6,10 +6,14 @@ Extracts vmlinuz + initrd from Debian ARM64, builds a squashfs rootfs
 Output goes to ../assets/.
 """
 
+import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -25,14 +29,61 @@ RUNTIME = "podman" if shutil.which("podman") else "docker"
 # In GitHub Actions with docker, use buildx + GHA cache for faster rebuilds.
 CI = bool(os.environ.get("GITHUB_ACTIONS"))
 
+FALLBACK_KERNEL_VERSION = "6.6.127"
+
+
+def resolve_kernel_version(branch: str = "6.6") -> str:
+    """Fetch the latest stable kernel version for a given LTS branch.
+
+    Queries https://www.kernel.org/releases.json and returns the latest
+    version string matching the branch (e.g. "6.6.129"). Falls back to
+    FALLBACK_KERNEL_VERSION on network failure.
+    """
+    try:
+        req = urllib.request.Request(
+            "https://www.kernel.org/releases.json",
+            headers={"User-Agent": "capsem-build/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"  Warning: failed to fetch kernel.org releases: {e}")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+
+    prefix = branch + "."
+    candidates = []
+    for release in data.get("releases", []):
+        version = release.get("version", "")
+        moniker = release.get("moniker", "")
+        iseol = release.get("iseol", False)
+        if moniker == "longterm" and version.startswith(prefix) and not iseol:
+            # Validate format: X.Y.Z
+            if re.fullmatch(r"\d+\.\d+\.\d+", version):
+                candidates.append(version)
+
+    if not candidates:
+        print(f"  Warning: no {branch}.x LTS versions found in releases.json")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+
+    # Sort by patch version numerically and return the latest
+    candidates.sort(key=lambda v: int(v.split(".")[-1]))
+    return candidates[-1]
+
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     print(f"  -> {' '.join(cmd)}")
     return subprocess.run(cmd, check=True, **kwargs)
 
 
-def _docker_build(tag: str, dockerfile: str, context: str):
+def _docker_build(tag: str, dockerfile: str, context: str,
+                  build_args: dict[str, str] | None = None):
     """Build a container image, using BuildKit GHA cache in CI."""
+    args_flags = []
+    for k, v in (build_args or {}).items():
+        args_flags.extend(["--build-arg", f"{k}={v}"])
+
     if CI and RUNTIME == "docker":
         run([
             "docker", "buildx", "build",
@@ -40,6 +91,7 @@ def _docker_build(tag: str, dockerfile: str, context: str):
             "--cache-from", "type=gha,scope=" + tag,
             "--cache-to", "type=gha,mode=max,scope=" + tag,
             "--load",
+            *args_flags,
             "-t", tag,
             "-f", dockerfile,
             context,
@@ -48,16 +100,22 @@ def _docker_build(tag: str, dockerfile: str, context: str):
         run([
             RUNTIME, "build",
             "--platform", "linux/arm64",
+            *args_flags,
             "-t", tag,
             "-f", dockerfile,
             context,
         ])
 
 
-def build_kernel_image():
+def build_kernel_image(kernel_version: str):
     """Build the container image that extracts kernel + initrd."""
     print(f"Building kernel extraction image with {RUNTIME}...")
-    _docker_build(IMAGE_TAG, str(SCRIPT_DIR / "Dockerfile.kernel"), str(SCRIPT_DIR))
+    _docker_build(
+        IMAGE_TAG,
+        str(SCRIPT_DIR / "Dockerfile.kernel"),
+        str(SCRIPT_DIR),
+        build_args={"KERNEL_VERSION": kernel_version},
+    )
 
 
 def extract_assets():
@@ -154,8 +212,12 @@ def create_rootfs():
         "mksquashfs /rootfs /assets/rootfs.squashfs -comp zstd -Xcompression-level 15 -b 64K -noappend",
     ])
 
-    # 4. Cleanup tar
+    # 4. Cleanup tar + legacy rootfs format
     tar_path.unlink()
+    legacy_img = ASSETS_DIR / "rootfs.img"
+    if legacy_img.exists():
+        legacy_img.unlink()
+        print("  Removed legacy rootfs.img")
 
     img_path = ASSETS_DIR / "rootfs.squashfs"
     print(f"  rootfs.squashfs: {img_path} ({img_path.stat().st_size // (1024*1024)} MB)")
@@ -178,10 +240,36 @@ def generate_checksums():
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Build Capsem VM boot assets (kernel, initrd, rootfs).",
+    )
+    parser.add_argument(
+        "--kernel-branch", default="6.6",
+        help="Target LTS branch (default: 6.6)",
+    )
+    parser.add_argument(
+        "--kernel-version", default=None,
+        help="Explicit kernel version (skips auto-detection)",
+    )
+    parser.add_argument(
+        "--arch", default="arm64", choices=["arm64"],
+        help="Target architecture (default: arm64)",
+    )
+    args = parser.parse_args()
+
     print(f"Using container runtime: {RUNTIME}")
     if CI:
         print("  CI mode: Docker BuildKit GHA cache enabled")
-    build_kernel_image()
+
+    # Resolve kernel version
+    if args.kernel_version:
+        kernel_version = args.kernel_version
+        print(f"Kernel: {kernel_version} (explicit override)")
+    else:
+        kernel_version = resolve_kernel_version(args.kernel_branch)
+        print(f"Kernel: {kernel_version} (auto-detected from kernel.org {args.kernel_branch}.x LTS)")
+
+    build_kernel_image(kernel_version)
     extract_assets()
     build_agent()
     create_rootfs()

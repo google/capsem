@@ -64,6 +64,10 @@ export interface SettingMetadata {
   min: number | null;
   max: number | null;
   rules: Record<string, HttpMethodPermissions>;
+  format?: string;
+  docs_url?: string | null;
+  prefix?: string | null;
+  filetype?: string | null;
 }
 
 /** A fully resolved setting for UI consumption. */
@@ -190,6 +194,53 @@ export interface DetailSelection {
   data: Record<string, unknown>;
 }
 
+// ---------------------------------------------------------------------------
+// MCP gateway types
+// ---------------------------------------------------------------------------
+
+/** MCP tool annotations (per MCP spec 2024-11-05). */
+export interface ToolAnnotations {
+  title?: string | null;
+  read_only_hint: boolean;
+  destructive_hint: boolean;
+  idempotent_hint: boolean;
+  open_world_hint: boolean;
+}
+
+/** Info about a configured MCP server. */
+export interface McpServerInfo {
+  name: string;
+  command: string;
+  args: string[];
+  source: string;
+  enabled: boolean;
+  running: boolean;
+  tool_count: number;
+}
+
+/** Info about a discovered MCP tool. */
+export interface McpToolInfo {
+  namespaced_name: string;
+  original_name: string;
+  description: string | null;
+  server_name: string;
+  annotations: ToolAnnotations | null;
+  pin_hash: string | null;
+  approved: boolean;
+  pin_changed: boolean;
+}
+
+/** Per-tool permission decision. */
+export type ToolPermission = 'allow' | 'warn' | 'block';
+
+/** Info about the MCP policy. */
+export interface McpPolicyInfo {
+  global_policy: string | null;
+  default_tool_permission: string;
+  blocked_servers: string[];
+  tool_permissions: Record<string, string>;
+}
+
 /** Settings sub-section identifier (dynamic, derived from TOML tree). */
 export type SettingsSection = string;
 
@@ -198,6 +249,7 @@ export interface ConfigIssue {
   id: string;
   severity: 'error' | 'warning';
   message: string;
+  docs_url?: string | null;
 }
 
 /** A settings tree group node. */
@@ -227,7 +279,6 @@ export interface SettingsLeaf {
   enabled_by: string | null;
   enabled: boolean;
   metadata: SettingMetadata;
-  collapsed?: boolean;
 }
 
 /** A settings tree node: either a group or a leaf. */

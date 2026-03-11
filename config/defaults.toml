@@ -44,6 +44,7 @@ default = ""
 [settings.ai.anthropic.api_key.meta]
 env_vars = ["ANTHROPIC_API_KEY"]
 docs_url = "https://console.anthropic.com/settings/keys"
+prefix = "sk-ant-"
 
 [settings.ai.anthropic.domains]
 name = "Anthropic Domains"
@@ -64,6 +65,9 @@ type = "file"
 path = "/root/.claude/settings.json"
 content = '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}'
 
+[settings.ai.anthropic.claude.settings_json.meta]
+filetype = "json"
+
 [settings.ai.anthropic.claude.state_json]
 name = "Claude Code state (.claude.json)"
 description = "Content for ~/.claude.json. Skips onboarding, trust dialogs, and keybinding prompts."
@@ -72,6 +76,9 @@ type = "file"
 [settings.ai.anthropic.claude.state_json.default]
 path = "/root/.claude.json"
 content = '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark","numStartups":1,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"projects":{"/root":{"allowedTools":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}}}'
+
+[settings.ai.anthropic.claude.state_json.meta]
+filetype = "json"
 
 # -- OpenAI ------------------------------------------------------------------
 
@@ -100,6 +107,7 @@ default = ""
 [settings.ai.openai.api_key.meta]
 env_vars = ["OPENAI_API_KEY"]
 docs_url = "https://platform.openai.com/api-keys"
+prefix = "sk-"
 
 [settings.ai.openai.domains]
 name = "OpenAI Domains"
@@ -134,6 +142,7 @@ default = ""
 [settings.ai.google.api_key.meta]
 env_vars = ["GEMINI_API_KEY"]
 docs_url = "https://aistudio.google.com/apikey"
+prefix = "AIza"
 
 [settings.ai.google.domains]
 name = "Google AI Domains"
@@ -154,6 +163,9 @@ type = "file"
 path = "/root/.gemini/settings.json"
 content = '{"homeDirectoryWarningDismissed":true,"general":{"disableAutoUpdate":true,"disableUpdateNag":true},"ui":{"hideTips":true,"hideBanner":false},"privacy":{"usageStatisticsEnabled":false,"sessionRetention":"none"},"telemetry":{"enabled":false},"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust.enabled":false},"ide":{"hasSeenNudge":true},"tools":{"sandbox":false}}'
 
+[settings.ai.google.gemini.settings_json.meta]
+filetype = "json"
+
 [settings.ai.google.gemini.projects_json]
 name = "Gemini projects.json"
 description = "Content for ~/.gemini/projects.json. Project directory mappings."
@@ -163,6 +175,9 @@ type = "file"
 path = "/root/.gemini/projects.json"
 content = '{"projects":{"/root":"root"}}'
 
+[settings.ai.google.gemini.projects_json.meta]
+filetype = "json"
+
 [settings.ai.google.gemini.trusted_folders_json]
 name = "Gemini trustedFolders.json"
 description = "Content for ~/.gemini/trustedFolders.json. Pre-trusted workspace dirs."
@@ -171,6 +186,9 @@ type = "file"
 [settings.ai.google.gemini.trusted_folders_json.default]
 path = "/root/.gemini/trustedFolders.json"
 content = '{"/root":"TRUST_FOLDER"}'
+
+[settings.ai.google.gemini.trusted_folders_json.meta]
+filetype = "json"
 
 [settings.ai.google.gemini.installation_id]
 name = "Gemini installation_id"
@@ -257,7 +275,9 @@ type = "apikey"
 default = ""
 
 [settings.repository.providers.github.token.meta]
+env_vars = ["GH_TOKEN", "GITHUB_TOKEN"]
 docs_url = "https://github.com/settings/tokens"
+prefix = "ghp_"
 
 # -- GitLab --------------------------------------------------------------------
 
@@ -295,7 +315,9 @@ type = "apikey"
 default = ""
 
 [settings.repository.providers.gitlab.token.meta]
+env_vars = ["GITLAB_TOKEN"]
 docs_url = "https://gitlab.com/-/user_settings/personal_access_tokens"
+prefix = "glpat-"
 
 # -- Package Registries ------------------------------------------------------
 
@@ -583,6 +605,55 @@ default = "C"
 
 [settings.vm.environment.shell.lang.meta]
 env_vars = ["LANG"]
+
+[settings.vm.environment.shell.bashrc]
+name = "Bash configuration"
+description = "User shell config sourced at login. Customize prompt, aliases, and functions."
+type = "file"
+
+[settings.vm.environment.shell.bashrc.default]
+path = "/root/.bashrc"
+content = '''
+# Prompt: green bold "capsem" with blue directory
+PS1='\[\033[1;32m\]capsem\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
+
+# Aliases
+alias pip='uv pip'
+alias pip3='uv pip'
+alias python='uv run python'
+alias python3='uv run python3'
+alias gemini='gemini --yolo'
+alias ls='ls --color=auto'
+alias ll='ls -la --color=auto'
+alias grep='grep --color=auto'
+'''
+
+[settings.vm.environment.shell.bashrc.meta]
+filetype = "bash"
+
+[settings.vm.environment.shell.tmux_conf]
+name = "tmux configuration"
+description = "tmux terminal multiplexer config. Customize appearance, keybindings, and behavior."
+type = "file"
+
+[settings.vm.environment.shell.tmux_conf.default]
+path = "/root/.tmux.conf"
+content = '''
+set -g default-terminal "tmux-256color"
+set -ag terminal-features ",xterm-256color:RGB"
+set -g mouse on
+set -g escape-time 0
+set -g history-limit 50000
+set -g status-style "bg=default,fg=colour8"
+set -g status-left ""
+set -g status-right ""
+set -g pane-border-style "fg=colour8"
+set -g pane-active-border-style "fg=colour4"
+set -g message-style "bg=default,fg=colour4"
+'''
+
+[settings.vm.environment.shell.tmux_conf.meta]
+filetype = "conf"
 
 [settings.vm.environment.tls]
 name = "TLS"

@@ -7,7 +7,8 @@
 # - Disables IP networking (CONFIG_INET=n)
 # - Enables KASLR, stack protector, FORTIFY_SOURCE
 #
-# Override kernel version: --build-arg KERNEL_VERSION=6.6.128
+# Version auto-detected by build.py from kernel.org 6.6.x LTS releases.
+# Override: --build-arg KERNEL_VERSION=6.6.128
 
 FROM --platform=linux/arm64 debian:bookworm-slim AS build
 
@@ -31,7 +32,7 @@ RUN MAJOR=$(echo ${KERNEL_VERSION} | cut -d. -f1) && \
 WORKDIR /usr/src/linux
 
 # Apply capsem hardened defconfig (allnoconfig base + our overrides)
-COPY defconfig .config
+COPY defconfig.arm64 .config
 RUN make olddefconfig
 
 # Compile kernel -- Image is the uncompressed ARM64 kernel binary
