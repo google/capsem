@@ -1666,6 +1666,8 @@ fn sample_mcp_call(server: &str, decision: &str) -> McpCall {
         duration_ms: 250,
         error_message: None,
         process_name: Some("claude".to_string()),
+        bytes_sent: 0,
+        bytes_received: 0,
     }
 }
 
@@ -1808,6 +1810,83 @@ async fn mcp_schema_migration_idempotent() {
     let reader = DbReader::open(&path).unwrap();
     let calls = reader.recent_mcp_calls(10).unwrap();
     assert_eq!(calls.len(), 2);
+}
+
+#[tokio::test]
+async fn mcp_call_bytes_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bytes.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    let mut call = sample_mcp_call("github", "allowed");
+    call.bytes_sent = 1024;
+    call.bytes_received = 4096;
+    writer.write(WriteOp::McpCall(call)).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_mcp_calls(10).unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].bytes_sent, 1024);
+    assert_eq!(calls[0].bytes_received, 4096);
+}
+
+#[tokio::test]
+async fn mcp_call_full_preview_not_truncated() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preview.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    // 10KB preview -- must NOT be truncated (old bug truncated at 200 chars)
+    let preview = "x".repeat(10_000);
+    let mut call = sample_mcp_call("github", "allowed");
+    call.request_preview = Some(preview.clone());
+    call.response_preview = Some(preview.clone());
+    writer.write(WriteOp::McpCall(call)).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_mcp_calls(10).unwrap();
+    assert_eq!(calls[0].request_preview.as_ref().unwrap().len(), 10_000);
+    assert_eq!(calls[0].response_preview.as_ref().unwrap().len(), 10_000);
+}
+
+#[tokio::test]
+async fn mcp_call_huge_payload_truncated_at_256kb() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("huge.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    // 1MB preview -- must be truncated to <= 256KB by cap_field
+    let preview = "a".repeat(1_000_000);
+    let mut call = sample_mcp_call("github", "allowed");
+    call.request_preview = Some(preview);
+    writer.write(WriteOp::McpCall(call)).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_mcp_calls(10).unwrap();
+    let stored = calls[0].request_preview.as_ref().unwrap();
+    assert!(stored.len() <= 256 * 1024);
+}
+
+#[tokio::test]
+async fn mcp_call_200_char_payload_not_truncated() {
+    // Regression: old bug truncated at 200 chars. Verify exact 200 chars preserved.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("200.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+
+    let preview = "b".repeat(200);
+    let mut call = sample_mcp_call("github", "allowed");
+    call.request_preview = Some(preview.clone());
+    writer.write(WriteOp::McpCall(call)).await;
+    drop(writer);
+
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_mcp_calls(10).unwrap();
+    assert_eq!(calls[0].request_preview.as_ref().unwrap().len(), 200);
+    assert_eq!(calls[0].request_preview.as_ref().unwrap(), &preview);
 }
 
 // ── File event tests ──────────────────────────────────────────────────

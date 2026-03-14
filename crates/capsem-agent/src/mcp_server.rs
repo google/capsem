@@ -12,6 +12,9 @@
 #[path = "vsock_io.rs"]
 mod vsock_io;
 
+#[path = "procfs.rs"]
+mod procfs;
+
 use std::io::{self, BufRead, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process;
@@ -25,10 +28,7 @@ const VSOCK_PORT_MCP: u32 = 5003;
 /// Get the parent process name (the AI agent that spawned us).
 fn get_parent_process_name() -> String {
     let ppid = nix::unistd::getppid();
-    let comm_path = format!("/proc/{}/comm", ppid);
-    std::fs::read_to_string(comm_path)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string())
+    procfs::process_name_for_pid(ppid.as_raw() as u32)
 }
 
 fn main() {

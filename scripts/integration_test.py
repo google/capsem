@@ -394,6 +394,46 @@ def verify_session(session_id: str) -> bool:
         "no MCP responses mention blocking (capsem-doctor blocked tests may have failed)",
     )
 
+    # Bug 2: MCP data completeness -- request_preview must not be truncated
+    for row in conn.execute(
+        "SELECT id, request_preview FROM mcp_calls WHERE method='tools/call'"
+    ).fetchall():
+        r.check(
+            row["request_preview"] and len(row["request_preview"]) > 10,
+            f"mcp_call {row['id']} has meaningful request_preview",
+            f"mcp_call {row['id']} has empty/tiny request_preview",
+        )
+
+    # Bug 2: bytes tracking
+    mcp_with_bytes = conn.execute(
+        "SELECT COUNT(*) FROM mcp_calls WHERE method='tools/call' AND bytes_sent > 0"
+    ).fetchone()[0]
+    r.check(
+        mcp_with_bytes > 0,
+        f"{mcp_with_bytes} mcp tools/call have bytes_sent > 0",
+        "no mcp tools/call with bytes_sent -- byte tracking broken",
+    )
+
+    # Bug 3: builtin HTTP in net_events
+    mcp_net = conn.execute(
+        "SELECT COUNT(*) FROM net_events WHERE conn_type = 'mcp_builtin'"
+    ).fetchone()[0]
+    r.check(
+        mcp_net > 0,
+        f"{mcp_net} net_events from MCP builtin tools",
+        "no net_events with conn_type=mcp_builtin -- builtin HTTP not logged",
+    )
+
+    # Bug 4: process_name
+    bad_proc = conn.execute(
+        "SELECT COUNT(*) FROM mcp_calls WHERE process_name = 'MainThread'"
+    ).fetchone()[0]
+    r.check(
+        bad_proc == 0,
+        "no mcp_calls with process_name='MainThread'",
+        f"{bad_proc} mcp_calls have process_name='MainThread'",
+    )
+
     # ── model_calls ──────────────────────────────────────────────────
     print(f"\n{BOLD}model_calls{RESET}")
     model_count = conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0]
@@ -445,6 +485,17 @@ def verify_session(session_id: str) -> bool:
     print(f"\n{BOLD}tool_calls / tool_responses{RESET}")
     tc_count = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
     tr_count = conn.execute("SELECT COUNT(*) FROM tool_responses").fetchone()[0]
+
+    # Bug 1: No duplicate tool_responses
+    if tr_count > 0:
+        unique_tr = conn.execute(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT call_id, content_preview FROM tool_responses)"
+        ).fetchone()[0]
+        r.check(
+            tr_count == unique_tr,
+            f"no duplicate tool_responses ({tr_count} total, {unique_tr} unique)",
+            f"DUPLICATE tool_responses: {tr_count} total but only {unique_tr} unique",
+        )
 
     if tc_count > 0:
         r.ok(f"{tc_count} tool_calls recorded (Gemini used tools)")

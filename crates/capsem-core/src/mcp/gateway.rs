@@ -17,6 +17,8 @@ use tracing::{debug, info, warn};
 
 use capsem_logger::{DbWriter, McpCall, WriteOp};
 
+use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
+
 use crate::net::domain_policy::DomainPolicy;
 
 use super::builtin_tools;
@@ -184,11 +186,15 @@ async fn handle_json_rpc(
                 .iter()
                 .chain(mgr.tool_catalog().iter())
                 .map(|t| {
-                    serde_json::json!({
+                    let mut tool = serde_json::json!({
                         "name": t.namespaced_name,
                         "description": t.description,
                         "inputSchema": t.input_schema,
-                    })
+                    });
+                    if let Some(ref ann) = t.annotations {
+                        tool["annotations"] = ann.to_mcp_json();
+                    }
+                    tool
                 })
                 .collect();
             Some(JsonRpcResponse::ok(req.id.clone(), serde_json::json!({"tools": tools})))
@@ -234,6 +240,7 @@ async fn handle_json_rpc(
                     &config.http_client,
                     &dp,
                     req.id.clone(),
+                    &config.db,
                 ).await);
             }
 
@@ -256,13 +263,34 @@ async fn handle_json_rpc(
                 ToolDecision::Allow => {}
             }
 
-            let mut mgr = config.server_manager.lock().await;
-            match mgr.call_tool(tool_name, arguments).await {
-                Ok(resp) => Some(resp),
+            // Clone peer and drop lock before the (potentially slow) RPC call.
+            let (peer, original_name) = {
+                let mgr = config.server_manager.lock().await;
+                match mgr.lookup_tool_peer(tool_name) {
+                    Ok(p) => p,
+                    Err(e) => return Some(JsonRpcResponse::err(
+                        req.id.clone(), -32603, format!("tool call failed: {e}"),
+                    )),
+                }
+            };
+
+            let args: Option<serde_json::Map<String, serde_json::Value>> = match arguments {
+                serde_json::Value::Object(map) if !map.is_empty() => Some(map),
+                _ => None,
+            };
+            let mut params = CallToolRequestParams::new(original_name.clone());
+            if let Some(args) = args {
+                params = params.with_arguments(args);
+            }
+
+            match peer.call_tool(params).await {
+                Ok(result) => {
+                    let result_json = serde_json::to_value(&result)
+                        .unwrap_or(serde_json::json!({}));
+                    Some(JsonRpcResponse::ok(req.id.clone(), result_json))
+                }
                 Err(e) => Some(JsonRpcResponse::err(
-                    req.id.clone(),
-                    -32603,
-                    format!("tool call failed: {e}"),
+                    req.id.clone(), -32603, format!("tool call failed: {e}"),
                 )),
             }
         }
@@ -296,13 +324,25 @@ async fn handle_json_rpc(
                 return Some(JsonRpcResponse::err(req.id.clone(), -32602, "missing resource URI"));
             }
 
-            let mut mgr = config.server_manager.lock().await;
-            Some(match mgr.read_resource(uri).await {
-                Ok(resp) => resp,
+            let (peer, original_uri) = {
+                let mgr = config.server_manager.lock().await;
+                match mgr.lookup_resource_peer(uri) {
+                    Ok(p) => p,
+                    Err(e) => return Some(JsonRpcResponse::err(
+                        req.id.clone(), -32603, format!("resource read failed: {e}"),
+                    )),
+                }
+            };
+
+            let params = ReadResourceRequestParams::new(original_uri.clone());
+            Some(match peer.read_resource(params).await {
+                Ok(result) => {
+                    let result_json = serde_json::to_value(&result)
+                        .unwrap_or(serde_json::json!({}));
+                    JsonRpcResponse::ok(req.id.clone(), result_json)
+                }
                 Err(e) => JsonRpcResponse::err(
-                    req.id.clone(),
-                    -32603,
-                    format!("resource read failed: {e}"),
+                    req.id.clone(), -32603, format!("resource read failed: {e}"),
                 ),
             })
         }
@@ -339,13 +379,31 @@ async fn handle_json_rpc(
                 .cloned()
                 .unwrap_or(serde_json::json!({}));
 
-            let mut mgr = config.server_manager.lock().await;
-            Some(match mgr.get_prompt(prompt_name, arguments).await {
-                Ok(resp) => resp,
+            let (peer, original_name) = {
+                let mgr = config.server_manager.lock().await;
+                match mgr.lookup_prompt_peer(prompt_name) {
+                    Ok(p) => p,
+                    Err(e) => return Some(JsonRpcResponse::err(
+                        req.id.clone(), -32603, format!("prompt get failed: {e}"),
+                    )),
+                }
+            };
+
+            let mut params = GetPromptRequestParams::new(original_name.clone());
+            if let serde_json::Value::Object(map) = arguments {
+                if !map.is_empty() {
+                    params = params.with_arguments(map);
+                }
+            }
+
+            Some(match peer.get_prompt(params).await {
+                Ok(result) => {
+                    let result_json = serde_json::to_value(&result)
+                        .unwrap_or(serde_json::json!({}));
+                    JsonRpcResponse::ok(req.id.clone(), result_json)
+                }
                 Err(e) => JsonRpcResponse::err(
-                    req.id.clone(),
-                    -32603,
-                    format!("prompt get failed: {e}"),
+                    req.id.clone(), -32603, format!("prompt get failed: {e}"),
                 ),
             })
         }
@@ -390,17 +448,30 @@ async fn log_mcp_call(
 
     let error_message = resp.error.as_ref().map(|e| e.message.clone());
 
+    // Full preview -- the writer's cap_field() at 256KB is the safety net.
     let req_preview = req
         .params
         .as_ref()
-        .and_then(|p| serde_json::to_string(p).ok())
-        .map(|s| if s.len() > 200 { s[..200].to_string() } else { s });
+        .and_then(|p| serde_json::to_string(p).ok());
 
     let resp_preview = resp
         .result
         .as_ref()
-        .and_then(|r| serde_json::to_string(r).ok())
-        .map(|s| if s.len() > 200 { s[..200].to_string() } else { s });
+        .and_then(|r| serde_json::to_string(r).ok());
+
+    let bytes_sent = req
+        .params
+        .as_ref()
+        .and_then(|p| serde_json::to_vec(p).ok())
+        .map(|v| v.len() as u64)
+        .unwrap_or(0);
+
+    let bytes_received = resp
+        .result
+        .as_ref()
+        .and_then(|r| serde_json::to_vec(r).ok())
+        .map(|v| v.len() as u64)
+        .unwrap_or(0);
 
     let call = McpCall {
         timestamp: SystemTime::now(),
@@ -414,6 +485,8 @@ async fn log_mcp_call(
         duration_ms,
         error_message,
         process_name: Some(process_name.to_string()),
+        bytes_sent,
+        bytes_received,
     };
 
     config.db.write(WriteOp::McpCall(call)).await;
@@ -431,7 +504,7 @@ mod tests {
             Arc::new(DbWriter::open(&path, 64).unwrap())
         });
         McpGatewayConfig {
-            server_manager: Mutex::new(McpServerManager::new(vec![])),
+            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
             db,
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
@@ -583,6 +656,61 @@ mod tests {
     }
 
     #[test]
+    fn handle_tools_list_includes_annotations() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/list".into(),
+            params: None,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        // All 3 builtins must have annotations with camelCase keys
+        for tool in &tools {
+            let ann = tool.get("annotations").unwrap_or_else(|| {
+                panic!("tool '{}' missing annotations", tool["name"]);
+            });
+            let obj = ann.as_object().unwrap();
+            assert!(obj.contains_key("readOnlyHint"), "missing readOnlyHint in {}", tool["name"]);
+            assert!(obj.contains_key("destructiveHint"), "missing destructiveHint in {}", tool["name"]);
+            assert!(obj.contains_key("idempotentHint"), "missing idempotentHint in {}", tool["name"]);
+            assert!(obj.contains_key("openWorldHint"), "missing openWorldHint in {}", tool["name"]);
+            // Must NOT have snake_case keys (wire format violation)
+            assert!(!obj.contains_key("read_only_hint"), "snake_case key in wire format: {}", tool["name"]);
+        }
+    }
+
+    #[test]
+    fn handle_tools_list_builtin_annotations_correct() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/list".into(),
+            params: None,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        // All 3 builtins are read-only, non-destructive, idempotent, open-world
+        for tool in &tools {
+            let ann = tool.get("annotations").unwrap();
+            assert_eq!(ann["readOnlyHint"], true, "{} should be read-only", tool["name"]);
+            assert_eq!(ann["destructiveHint"], false, "{} should not be destructive", tool["name"]);
+            assert_eq!(ann["idempotentHint"], true, "{} should be idempotent", tool["name"]);
+            assert_eq!(ann["openWorldHint"], true, "{} should be open-world", tool["name"]);
+        }
+    }
+
+    #[test]
     fn parse_meta_line_missing_prefix() {
         let meta = "not a meta line\n";
         let name = meta
@@ -591,5 +719,237 @@ mod tests {
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         assert_eq!(name, "unknown");
+    }
+
+    #[test]
+    fn handle_tools_call_empty_tool_name() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({"name": "", "arguments": {}})),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.as_ref().unwrap().message.contains("missing tool name"));
+    }
+
+    #[test]
+    fn handle_tools_call_missing_name_field() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({"arguments": {}})),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.as_ref().unwrap().message.contains("missing tool name"));
+    }
+
+    #[test]
+    fn handle_tools_call_no_params() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: None,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.as_ref().unwrap().message.contains("missing tool name"));
+    }
+
+    #[test]
+    fn handle_tools_call_nonexistent_external_server() {
+        // Tool name with namespace prefix for a server that doesn't exist.
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "nonexistent__some_tool",
+                "arguments": {}
+            })),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        // Should fail because no server named "nonexistent" is registered.
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn handle_tools_call_namespaced_fetch_http_not_builtin() {
+        // "fake__fetch_http" should NOT route to builtin -- the namespace means
+        // it targets a server called "fake", not the built-in fetch_http.
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "fake__fetch_http",
+                "arguments": {"url": "https://example.com"}
+            })),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        // Should fail -- "fake" server doesn't exist, so it's an error,
+        // NOT routed to the builtin handler.
+        assert!(resp.error.is_some(), "fake__fetch_http must not route to builtin");
+    }
+
+    #[test]
+    fn handle_builtin_tool_blocked_by_per_tool_policy() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "fetch_http",
+                "arguments": {"url": "https://example.com"}
+            })),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let mut tool_decisions = std::collections::HashMap::new();
+        tool_decisions.insert("fetch_http".to_string(), ToolDecision::Block);
+        let policy = McpPolicy {
+            tool_decisions,
+            ..McpPolicy::new()
+        };
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.as_ref().unwrap().message.contains("blocked by policy"));
+    }
+
+    #[test]
+    fn handle_builtin_tool_blocked_by_server_policy() {
+        // Blocking "builtin" server should block all built-in tools.
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "grep_http",
+                "arguments": {"url": "https://example.com", "pattern": "test"}
+            })),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy {
+            blocked_servers: vec!["builtin".to_string()],
+            ..McpPolicy::new()
+        };
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.as_ref().unwrap().message.contains("blocked by policy"));
+    }
+
+    #[test]
+    fn handle_resources_list_empty() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "resources/list".into(),
+            params: None,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_none());
+        let resources = resp.result.unwrap()["resources"].as_array().unwrap().clone();
+        assert!(resources.is_empty());
+    }
+
+    #[test]
+    fn handle_resources_read_missing_uri() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "resources/read".into(),
+            params: Some(serde_json::json!({})),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.as_ref().unwrap().message.contains("missing resource URI"));
+    }
+
+    #[test]
+    fn truncate_preview_utf8_safe() {
+        // Build a string where byte 200 falls inside a 4-byte emoji.
+        // Each emoji is 4 bytes, 50 emojis = 200 bytes exactly, but
+        // put 49 emojis (196 bytes) + "abcd" (4 bytes) = 200, then add
+        // an emoji right at byte 200 boundary to test floor_char_boundary.
+        let mut s = String::new();
+        for _ in 0..49 {
+            s.push('\u{1F600}'); // 4 bytes each = 196 bytes
+        }
+        s.push_str("abc"); // 199 bytes total
+        s.push('\u{1F600}'); // bytes 199..203 -- spans the 200 boundary
+
+        assert!(s.len() > 200);
+        // This must NOT panic (the old s[..200] would panic here).
+        let truncated = if s.len() > 200 {
+            s[..s.floor_char_boundary(200)].to_string()
+        } else {
+            s.clone()
+        };
+        // floor_char_boundary(200) should be 199 (before the emoji at 199..203)
+        assert_eq!(truncated.len(), 199);
+        assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
+    fn handle_prompts_list_empty() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "prompts/list".into(),
+            params: None,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_none());
+        let prompts = resp.result.unwrap()["prompts"].as_array().unwrap().clone();
+        assert!(prompts.is_empty());
     }
 }

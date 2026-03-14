@@ -5,12 +5,17 @@
 //! - `grep_http`: fetch a URL and search for a regex pattern
 //! - `http_headers`: return HTTP headers for a URL
 
+use std::sync::Arc;
+use std::time::{Instant, SystemTime};
+
 use reqwest::Client;
 use serde_json::Value;
 
+use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
+
 use crate::net::domain_policy::{Action, DomainPolicy};
 
-use super::types::{JsonRpcResponse, McpToolDef};
+use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];
@@ -60,6 +65,13 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                 "required": ["url"]
             }),
             server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("Fetch HTTP".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: true,
+            }),
         },
         McpToolDef {
             namespaced_name: "grep_http".into(),
@@ -108,6 +120,13 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                 "required": ["url", "pattern"]
             }),
             server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("Grep HTTP".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: true,
+            }),
         },
         McpToolDef {
             namespaced_name: "http_headers".into(),
@@ -144,6 +163,13 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                 "required": ["url"]
             }),
             server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("HTTP Headers".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: true,
+            }),
         },
     ]
 }
@@ -155,17 +181,54 @@ pub async fn call_builtin_tool(
     client: &Client,
     domain_policy: &DomainPolicy,
     request_id: Option<Value>,
+    db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     match local_name {
-        "fetch_http" => handle_fetch_http(arguments, client, domain_policy, request_id).await,
-        "grep_http" => handle_grep_http(arguments, client, domain_policy, request_id).await,
-        "http_headers" => handle_http_headers(arguments, client, domain_policy, request_id).await,
+        "fetch_http" => handle_fetch_http(arguments, client, domain_policy, request_id, db).await,
+        "grep_http" => handle_grep_http(arguments, client, domain_policy, request_id, db).await,
+        "http_headers" => handle_http_headers(arguments, client, domain_policy, request_id, db).await,
         _ => JsonRpcResponse::err(
             request_id,
             -32602,
             format!("unknown builtin tool: {local_name}"),
         ),
     }
+}
+
+/// Emit a NetEvent for a builtin tool HTTP request.
+async fn emit_net_event(
+    db: &Arc<DbWriter>,
+    domain: &str,
+    method: &str,
+    path: &str,
+    decision: Decision,
+    status_code: Option<u16>,
+    bytes_sent: u64,
+    bytes_received: u64,
+    duration_ms: u64,
+) {
+    db.write(WriteOp::NetEvent(NetEvent {
+        timestamp: SystemTime::now(),
+        domain: domain.to_string(),
+        port: 443,
+        decision,
+        process_name: Some("mcp_builtin".to_string()),
+        pid: None,
+        method: Some(method.to_string()),
+        path: Some(path.to_string()),
+        query: None,
+        status_code,
+        bytes_sent,
+        bytes_received,
+        duration_ms,
+        matched_rule: None,
+        request_headers: None,
+        response_headers: None,
+        request_body_preview: None,
+        response_body_preview: None,
+        conn_type: Some("mcp_builtin".to_string()),
+    }))
+    .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +240,7 @@ async fn handle_fetch_http(
     client: &Client,
     policy: &DomainPolicy,
     id: Option<Value>,
+    db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     let url = match args.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -185,7 +249,11 @@ async fn handle_fetch_http(
 
     let domain = match check_domain_policy(url, policy) {
         Ok(d) => d,
-        Err(e) => return tool_error(id, &e),
+        Err(e) => {
+            let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+            emit_net_event(db, &extract_domain(url), "GET", &path, Decision::Denied, None, 0, 0, 0).await;
+            return tool_error(id, &e);
+        }
     };
 
     let format = args
@@ -201,10 +269,13 @@ async fn handle_fetch_http(
         .and_then(|v| v.as_u64())
         .unwrap_or(50000) as usize;
 
+    let start = Instant::now();
     let resp = match client.get(url).send().await {
         Ok(r) => r,
         Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
     };
+
+    let status_code = resp.status().as_u16();
 
     // Reject binary content unless the user explicitly wants raw bytes
     let ct = get_content_type(&resp);
@@ -222,6 +293,10 @@ async fn handle_fetch_http(
         Ok(t) => t,
         Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let bytes_received = body.len() as u64;
+    let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+    emit_net_event(db, &domain, "GET", &path, Decision::Allowed, Some(status_code), 0, bytes_received, duration_ms).await;
 
     let text = if format == "raw" {
         body
@@ -259,6 +334,7 @@ async fn handle_grep_http(
     client: &Client,
     policy: &DomainPolicy,
     id: Option<Value>,
+    db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     let url = match args.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -270,6 +346,8 @@ async fn handle_grep_http(
     };
 
     if let Err(e) = check_domain_policy(url, policy) {
+        let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+        emit_net_event(db, &extract_domain(url), "GET", &path, Decision::Denied, None, 0, 0, 0).await;
         return tool_error(id, &e);
     }
 
@@ -303,10 +381,13 @@ async fn handle_grep_http(
         Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
     };
 
+    let start = Instant::now();
     let resp = match client.get(url).send().await {
         Ok(r) => r,
         Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
     };
+
+    let status_code = resp.status().as_u16();
 
     // Reject binary content unless the user explicitly wants raw search
     let ct = get_content_type(&resp);
@@ -324,6 +405,10 @@ async fn handle_grep_http(
         Ok(t) => t,
         Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let bytes_received = body.len() as u64;
+    let url_path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+    emit_net_event(db, &extract_domain(url), "GET", &url_path, Decision::Allowed, Some(status_code), 0, bytes_received, duration_ms).await;
 
     let text = if raw {
         body
@@ -387,6 +472,7 @@ async fn handle_http_headers(
     client: &Client,
     policy: &DomainPolicy,
     id: Option<Value>,
+    db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     let url = match args.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -394,6 +480,8 @@ async fn handle_http_headers(
     };
 
     if let Err(e) = check_domain_policy(url, policy) {
+        let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+        emit_net_event(db, &extract_domain(url), "HEAD", &path, Decision::Denied, None, 0, 0, 0).await;
         return tool_error(id, &e);
     }
 
@@ -410,6 +498,7 @@ async fn handle_http_headers(
         .and_then(|v| v.as_u64())
         .unwrap_or(50000) as usize;
 
+    let start = Instant::now();
     let resp = match method {
         "GET" => client.get(url).send().await,
         _ => client.head(url).send().await,
@@ -419,6 +508,8 @@ async fn handle_http_headers(
         Ok(r) => r,
         Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
     };
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let status_code = resp.status().as_u16();
 
     let mut output = format!("URL: {url}\nStatus: {}\n\nHeaders:\n", resp.status());
     for (name, value) in resp.headers() {
@@ -428,6 +519,8 @@ async fn handle_http_headers(
             value.to_str().unwrap_or("<binary>")
         ));
     }
+    let url_path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+    emit_net_event(db, &extract_domain(url), method, &url_path, Decision::Allowed, Some(status_code), 0, output.len() as u64, duration_ms).await;
 
     let (chunk, _total, _has_more) = paginate(&output, start_index, max_length);
     tool_ok(id, &chunk)
@@ -477,6 +570,14 @@ fn get_content_type(resp: &reqwest::Response) -> String {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Extract domain from a URL string, returning "unknown" on failure.
+fn extract_domain(url: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_else(|| "unknown".to_string())
+}
 
 /// Check if the URL's domain is allowed by policy. Returns domain on success.
 fn check_domain_policy(url: &str, policy: &DomainPolicy) -> Result<String, String> {
@@ -625,6 +726,10 @@ fn tool_error(id: Option<Value>, msg: &str) -> JsonRpcResponse {
 mod tests {
     use super::*;
 
+    fn test_db() -> Arc<DbWriter> {
+        Arc::new(DbWriter::open_in_memory(64).unwrap())
+    }
+
     #[test]
     fn builtin_tool_defs_returns_three_tools() {
         let defs = builtin_tool_defs();
@@ -636,6 +741,51 @@ mod tests {
         assert!(names.contains(&"http_headers"));
         // Names must NOT have the builtin__ prefix
         assert!(!names.iter().any(|n| n.starts_with("builtin__")));
+    }
+
+    #[test]
+    fn builtin_tool_annotations_all_present() {
+        let defs = builtin_tool_defs();
+        for def in &defs {
+            assert!(
+                def.annotations.is_some(),
+                "tool '{}' missing annotations",
+                def.namespaced_name
+            );
+        }
+    }
+
+    #[test]
+    fn fetch_http_annotations_correct() {
+        let defs = builtin_tool_defs();
+        let fetch = defs.iter().find(|d| d.namespaced_name == "fetch_http").unwrap();
+        let ann = fetch.annotations.as_ref().unwrap();
+        assert!(ann.read_only_hint, "fetch_http should be read-only");
+        assert!(!ann.destructive_hint, "fetch_http should not be destructive");
+        assert!(ann.idempotent_hint, "fetch_http should be idempotent");
+        assert!(ann.open_world_hint, "fetch_http should be open-world");
+    }
+
+    #[test]
+    fn grep_http_annotations_correct() {
+        let defs = builtin_tool_defs();
+        let grep = defs.iter().find(|d| d.namespaced_name == "grep_http").unwrap();
+        let ann = grep.annotations.as_ref().unwrap();
+        assert!(ann.read_only_hint, "grep_http should be read-only");
+        assert!(!ann.destructive_hint, "grep_http should not be destructive");
+        assert!(ann.idempotent_hint, "grep_http should be idempotent");
+        assert!(ann.open_world_hint, "grep_http should be open-world");
+    }
+
+    #[test]
+    fn http_headers_annotations_correct() {
+        let defs = builtin_tool_defs();
+        let headers = defs.iter().find(|d| d.namespaced_name == "http_headers").unwrap();
+        let ann = headers.annotations.as_ref().unwrap();
+        assert!(ann.read_only_hint, "http_headers should be read-only");
+        assert!(!ann.destructive_hint, "http_headers should not be destructive");
+        assert!(ann.idempotent_hint, "http_headers should be idempotent");
+        assert!(ann.open_world_hint, "http_headers should be open-world");
     }
 
     #[test]
@@ -760,6 +910,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(resp.error.is_some());
@@ -778,6 +929,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(resp.error.is_none()); // tool errors use isError in result, not JSON-RPC error
@@ -799,6 +951,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         let result = resp.result.unwrap();
@@ -819,6 +972,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         let result = resp.result.unwrap();
@@ -839,6 +993,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         let result = resp.result.unwrap();
@@ -1067,6 +1222,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1084,6 +1240,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1101,6 +1258,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1116,6 +1274,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1133,6 +1292,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1154,6 +1314,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         // Should succeed (negative start_index is silently treated as 0)
@@ -1176,6 +1337,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1193,6 +1355,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1210,6 +1373,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1227,6 +1391,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1249,6 +1414,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         // Should complete without hanging (pass or no matches, either is fine)
@@ -1269,6 +1435,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1286,6 +1453,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp));
@@ -1304,6 +1472,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         // Should succeed with HEAD fallback
@@ -1323,6 +1492,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");
@@ -1465,6 +1635,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(!is_tool_error(&resp), "fetch should succeed");
@@ -1490,6 +1661,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(!is_tool_error(&resp), "grep should succeed");
@@ -1518,6 +1690,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp), "blocked domain must return isError");
@@ -1538,6 +1711,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(!is_tool_error(&resp), "http_headers should succeed");
@@ -1562,6 +1736,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp), "blocked domain must return isError");
@@ -1582,6 +1757,7 @@ mod tests {
             &client,
             &policy,
             Some(serde_json::json!(1)),
+            &test_db(),
         )
         .await;
         assert!(is_tool_error(&resp), "blocked domain must return isError");

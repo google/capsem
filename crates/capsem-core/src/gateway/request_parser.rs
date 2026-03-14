@@ -145,11 +145,13 @@ fn parse_anthropic(body: &[u8]) -> RequestMeta {
     let messages = req.messages.as_deref().unwrap_or(&[]);
     let messages_count = messages.len();
 
-    // Extract tool results from tool_result content blocks
+    // Extract tool results from only the TRAILING user message (the new one the
+    // agent just appended). Multi-turn conversations re-send the full history,
+    // so iterating all messages would re-log previous tool results.
     let mut tool_results = Vec::new();
-    for msg in messages {
+    for msg in messages.iter().rev() {
         if msg.role.as_deref() != Some("user") {
-            continue;
+            break;
         }
         if let Some(anthropic_wire::MessageContent::Blocks(blocks)) = &msg.content {
             for block in blocks {
@@ -258,11 +260,13 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
         })
         .map(|s| s.to_string());
 
-    // Extract tool results (role=tool messages)
+    // Extract tool results from only the TRAILING tool messages (the new ones
+    // the agent just appended). Multi-turn conversations re-send the full
+    // history, so iterating all messages would re-log previous tool results.
     let mut tool_results = Vec::new();
-    for msg in messages {
+    for msg in messages.iter().rev() {
         if msg.role.as_deref() != Some("tool") {
-            continue;
+            break;
         }
         if let Some(call_id) = &msg.tool_call_id {
             let content_text = match &msg.content {
@@ -358,9 +362,15 @@ fn parse_google(body: &[u8]) -> RequestMeta {
     let contents = req.contents.as_deref().unwrap_or(&[]);
     let messages_count = contents.len();
 
-    // Extract function responses (tool results)
+    // Extract function responses from only the TRAILING function messages (the
+    // new ones the agent just appended). Multi-turn conversations re-send the
+    // full history, so iterating all messages would re-log previous tool results.
     let mut tool_results = Vec::new();
-    for content in contents {
+    let mut counter = 0usize;
+    for content in contents.iter().rev() {
+        if content.role.as_deref() != Some("function") {
+            break;
+        }
         if let Some(parts) = &content.parts {
             for part in parts {
                 if let Some(fr) = &part.function_response {
@@ -370,11 +380,12 @@ fn parse_google(body: &[u8]) -> RequestMeta {
                         .map(|v| v.to_string())
                         .unwrap_or_default();
                     tool_results.push(ToolResultMeta {
-                        // Gemini doesn't have call_id -- use function name as key
-                        call_id: name,
+                        // Gemini doesn't have call_id -- generate unique IDs
+                        call_id: format!("gemini_{}_{}", name, counter),
                         content_preview: content_text,
                         is_error: false,
                     });
+                    counter += 1;
                 }
             }
         }
@@ -596,7 +607,7 @@ mod tests {
 
         let meta = parse_request(ProviderKind::Google, body);
         assert_eq!(meta.tool_results.len(), 1);
-        assert_eq!(meta.tool_results[0].call_id, "get_weather");
+        assert!(meta.tool_results[0].call_id.starts_with("gemini_get_weather_"));
         assert!(meta.tool_results[0].content_preview.contains("72F"));
     }
 
@@ -654,5 +665,120 @@ mod tests {
         // The regex extracts "te\u{FFFD}t" via lossy conversion -- that's fine,
         // it won't match any real model for pricing. The key invariant is no panic.
         assert!(meta.model.is_some());
+    }
+
+    // ── Multi-turn dedup tests (Bug 1) ──────────────────────────────
+
+    #[test]
+    fn google_multi_turn_only_extracts_latest_tool_results() {
+        // 3-turn conversation: turn 1 has a functionResponse, turn 3 re-sends
+        // turn 1's history AND adds a new functionResponse. Only turn 3's
+        // new result should be extracted.
+        let body = br#"{
+            "contents": [
+                {"parts": [{"text": "weather?"}], "role": "user"},
+                {"parts": [{"functionCall": {"name": "get_weather", "args": {"city": "NYC"}}}], "role": "model"},
+                {"parts": [{"functionResponse": {"name": "get_weather", "response": {"temp": "72F"}}}], "role": "function"},
+                {"parts": [{"text": "Looking up..."}], "role": "model"},
+                {"parts": [{"text": "also check Paris"}], "role": "user"},
+                {"parts": [{"functionCall": {"name": "get_weather", "args": {"city": "Paris"}}}], "role": "model"},
+                {"parts": [{"functionResponse": {"name": "get_weather", "response": {"temp": "18C"}}}], "role": "function"}
+            ]
+        }"#;
+
+        let meta = parse_request(ProviderKind::Google, body);
+        // Only the trailing function message (Paris) should be extracted.
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(meta.tool_results[0].content_preview.contains("18C"));
+    }
+
+    #[test]
+    fn google_duplicate_function_name_unique_call_ids() {
+        // Two calls to same function in trailing position.
+        let body = br#"{
+            "contents": [
+                {"parts": [{"text": "weather?"}], "role": "user"},
+                {"parts": [{"functionCall": {"name": "get_weather", "args": {}}}], "role": "model"},
+                {"parts": [
+                    {"functionResponse": {"name": "get_weather", "response": {"temp": "72F"}}},
+                    {"functionResponse": {"name": "get_weather", "response": {"temp": "18C"}}}
+                ], "role": "function"}
+            ]
+        }"#;
+
+        let meta = parse_request(ProviderKind::Google, body);
+        assert_eq!(meta.tool_results.len(), 2);
+        // call_ids must be distinct
+        assert_ne!(meta.tool_results[0].call_id, meta.tool_results[1].call_id);
+        assert!(meta.tool_results[0].call_id.starts_with("gemini_get_weather_"));
+        assert!(meta.tool_results[1].call_id.starts_with("gemini_get_weather_"));
+    }
+
+    #[test]
+    fn google_single_turn_tool_result_still_works() {
+        // Regression: single-turn with one function response still extracts it.
+        let body = br#"{
+            "contents": [
+                {"parts": [{"text": "weather?"}], "role": "user"},
+                {"parts": [{"functionCall": {"name": "get_weather", "args": {}}}], "role": "model"},
+                {"parts": [{"functionResponse": {"name": "get_weather", "response": {"temp": "72F"}}}], "role": "function"}
+            ]
+        }"#;
+
+        let meta = parse_request(ProviderKind::Google, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(meta.tool_results[0].content_preview.contains("72F"));
+    }
+
+    #[test]
+    fn anthropic_multi_turn_only_extracts_latest_tool_results() {
+        // Multi-turn: turn 1 has tool_result, turn 3 re-sends it AND adds new one.
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": "weather?"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": {"city": "NYC"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_01", "content": "72F sunny"}
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "toolu_02", "name": "get_weather", "input": {"city": "Paris"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_02", "content": "18C cloudy"}
+                ]}
+            ]
+        }"#;
+
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        // Only the trailing user message (toolu_02) should be extracted.
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].call_id, "toolu_02");
+        assert_eq!(meta.tool_results[0].content_preview, "18C cloudy");
+    }
+
+    #[test]
+    fn openai_multi_turn_only_extracts_latest_tool_results() {
+        // Multi-turn: tool results from turn 1 re-sent, new tool result in turn 3.
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "weather?"},
+                {"role": "assistant", "content": null},
+                {"role": "tool", "tool_call_id": "call_01", "content": "72F sunny"},
+                {"role": "assistant", "content": "Got NYC weather."},
+                {"role": "user", "content": "also Paris?"},
+                {"role": "assistant", "content": null},
+                {"role": "tool", "tool_call_id": "call_02", "content": "18C cloudy"}
+            ]
+        }"#;
+
+        let meta = parse_request(ProviderKind::OpenAi, body);
+        // Only the trailing tool message (call_02) should be extracted.
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].call_id, "call_02");
+        assert_eq!(meta.tool_results[0].content_preview, "18C cloudy");
     }
 }

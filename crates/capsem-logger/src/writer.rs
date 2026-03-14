@@ -450,9 +450,10 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
         "INSERT INTO mcp_calls (
             timestamp, server_name, method, tool_name, request_id,
             request_preview, response_preview, decision,
-            duration_ms, error_message, process_name
+            duration_ms, error_message, process_name,
+            bytes_sent, bytes_received
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             timestamp,
             call.server_name,
@@ -465,6 +466,8 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
             call.duration_ms as i64,
             call.error_message,
             call.process_name,
+            call.bytes_sent as i64,
+            call.bytes_received as i64,
         ],
     )?;
     Ok(())

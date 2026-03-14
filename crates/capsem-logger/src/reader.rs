@@ -1066,7 +1066,8 @@ impl DbReader {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp, server_name, method, tool_name, request_id,
                     request_preview, response_preview, decision,
-                    duration_ms, error_message, process_name
+                    duration_ms, error_message, process_name,
+                    bytes_sent, bytes_received
              FROM mcp_calls
              ORDER BY id DESC
              LIMIT ?1",
@@ -1081,7 +1082,8 @@ impl DbReader {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp, server_name, method, tool_name, request_id,
                     request_preview, response_preview, decision,
-                    duration_ms, error_message, process_name
+                    duration_ms, error_message, process_name,
+                    bytes_sent, bytes_received
              FROM mcp_calls
              WHERE server_name LIKE ?1
                 OR method LIKE ?1
@@ -1173,6 +1175,8 @@ fn read_mcp_call_row(row: &Row<'_>) -> rusqlite::Result<McpCall> {
         duration_ms: row.get::<_, i64>(8)? as u64,
         error_message: row.get(9)?,
         process_name: row.get(10)?,
+        bytes_sent: row.get::<_, i64>(11)? as u64,
+        bytes_received: row.get::<_, i64>(12)? as u64,
     })
 }
 

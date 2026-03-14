@@ -152,6 +152,8 @@ pub struct McpCall {
     pub duration_ms: u64,
     pub error_message: Option<String>,
     pub process_name: Option<String>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
 }
 
 /// A denormalized AI model API call (one row per request+response cycle),

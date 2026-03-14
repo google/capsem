@@ -11,6 +11,9 @@
 #[path = "vsock_io.rs"]
 mod vsock_io;
 
+#[path = "procfs.rs"]
+mod procfs;
+
 use std::io;
 use std::os::unix::io::{BorrowedFd, FromRawFd, RawFd};
 use std::pin::Pin;
@@ -181,10 +184,8 @@ async fn get_process_name(client_port: u16) -> Option<String> {
                                 for fd_entry in fds.flatten() {
                                     if let Ok(link) = std::fs::read_link(fd_entry.path()) {
                                         if link.to_string_lossy() == target {
-                                            let comm_path = entry.path().join("comm");
-                                            if let Ok(comm) = std::fs::read_to_string(comm_path) {
-                                                return Some(comm.trim().to_string());
-                                            }
+                                            let pid: u32 = pid_str.parse().unwrap_or(0);
+                                            return Some(procfs::process_name_for_pid(pid));
                                         }
                                     }
                                 }

@@ -97,13 +97,19 @@ pub const CREATE_SCHEMA: &str = "
         decision TEXT NOT NULL,
         duration_ms INTEGER DEFAULT 0,
         error_message TEXT,
-        process_name TEXT
+        process_name TEXT,
+        bytes_sent INTEGER DEFAULT 0,
+        bytes_received INTEGER DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_mcp_calls_server
         ON mcp_calls(server_name);
     CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp
         ON mcp_calls(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_call_id
+        ON tool_calls(call_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_responses_call_id
+        ON tool_responses(call_id);
 
     CREATE TABLE IF NOT EXISTS fs_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,6 +175,24 @@ pub fn migrate(conn: &Connection) {
     );
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN mcp_call_id INTEGER",
+        [],
+    );
+    // Add bytes_sent/bytes_received to mcp_calls (for DBs created before this feature).
+    let _ = conn.execute(
+        "ALTER TABLE mcp_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE mcp_calls ADD COLUMN bytes_received INTEGER DEFAULT 0",
+        [],
+    );
+    // Add indexes for tool_calls/tool_responses call_id lookups.
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_calls_call_id ON tool_calls(call_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_responses_call_id ON tool_responses(call_id)",
         [],
     );
     // Add fs_events table if not present (for DBs created before this feature).
@@ -352,5 +376,29 @@ mod tests {
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(&path, flags).unwrap();
         apply_reader_pragmas(&conn).unwrap();
+    }
+
+    #[test]
+    fn migrate_mcp_calls_bytes_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        migrate(&conn);
+        // Verify bytes_sent/bytes_received columns exist.
+        conn.execute(
+            "INSERT INTO mcp_calls (timestamp, server_name, method, decision, bytes_sent, bytes_received)
+             VALUES ('2026-01-01T00:00:00Z', 'test', 'tools/call', 'allowed', 1024, 2048)",
+            [],
+        )
+        .unwrap();
+        let (sent, recv): (i64, i64) = conn
+            .query_row(
+                "SELECT bytes_sent, bytes_received FROM mcp_calls WHERE server_name = 'test'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(sent, 1024);
+        assert_eq!(recv, 2048);
     }
 }
