@@ -44,9 +44,10 @@ serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
 regex = { workspace = true }
-tl = "0.7"
+scraper = "0.25"
 
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+ego-tree = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

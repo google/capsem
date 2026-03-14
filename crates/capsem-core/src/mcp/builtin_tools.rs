@@ -32,10 +32,11 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
             namespaced_name: "fetch_http".into(),
             original_name: "fetch_http".into(),
             description: Some(concat!(
-                "Fetch a URL and return its text content. ",
-                "In 'content' mode (default), HTML is cleaned: scripts, styles, and hidden elements are stripped, ",
-                "and block-level elements (div, p, h1-h6, li, etc.) are converted to newlines. ",
-                "Output starts with metadata lines (URL, Domain, Content length) followed by the page text. ",
+                "Fetch a URL and return its content. ",
+                "In 'markdown' mode (default), HTML is converted to clean markdown preserving headings, links, lists, bold/italic, and code blocks. ",
+                "In 'content' mode, HTML is stripped to plain text with newlines at block boundaries. ",
+                "In 'raw' mode, the response body is returned unchanged. ",
+                "Output starts with metadata lines (URL, Domain, Content length) followed by the page content. ",
                 "Use start_index and max_length for pagination -- if the response is truncated, ",
                 "a 'Remaining' line shows the next start_index value to continue. ",
                 "The URL's domain must be allowed by network policy; blocked or unknown domains return an error. ",
@@ -50,8 +51,8 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                     },
                     "format": {
                         "type": "string",
-                        "enum": ["raw", "content"],
-                        "description": "Output format: 'content' (default) extracts visible text from HTML, stripping scripts/styles and converting block elements to newlines. 'raw' returns the response body unchanged."
+                        "enum": ["markdown", "content", "raw"],
+                        "description": "Output format: 'markdown' (default) converts HTML to markdown preserving structure (headings, links, lists, code). 'content' strips to plain text. 'raw' returns the response body unchanged."
                     },
                     "start_index": {
                         "type": "integer",
@@ -259,7 +260,7 @@ async fn handle_fetch_http(
     let format = args
         .get("format")
         .and_then(|v| v.as_str())
-        .unwrap_or("content");
+        .unwrap_or("markdown");
     let start_index = args
         .get("start_index")
         .and_then(|v| v.as_u64())
@@ -298,10 +299,10 @@ async fn handle_fetch_http(
     let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
     emit_net_event(db, &domain, "GET", &path, Decision::Allowed, Some(status_code), 0, bytes_received, duration_ms).await;
 
-    let text = if format == "raw" {
-        body
-    } else {
-        extract_text_from_html(&body)
+    let text = match format {
+        "raw" => body,
+        "content" => extract_text_from_html(&body),
+        _ => extract_markdown_from_html(&body), // "markdown" or default
     };
 
     let (chunk, total, has_more) = paginate(&text, start_index, max_length);
@@ -601,19 +602,43 @@ fn check_domain_policy(url: &str, policy: &DomainPolicy) -> Result<String, Strin
     Ok(domain)
 }
 
-/// Extract visible text from HTML using tl DOM parser.
+/// Extract visible text from HTML using scraper (html5ever).
 /// Skips script, style, noscript, svg, and template elements.
 /// Inserts newlines around block elements.
 pub fn extract_text_from_html(html: &str) -> String {
-    let dom = match tl::parse(html, tl::ParserOptions::default()) {
-        Ok(d) => d,
-        Err(_) => return html.to_string(),
-    };
-    let parser = dom.parser();
+    use scraper::{Html, Node};
+
+    let doc = Html::parse_document(html);
     let mut output = String::new();
-    for child in dom.children() {
-        extract_text_recursive(child, parser, &mut output);
-    }
+    let root = doc.root_element();
+
+    // Prefer <body> if present, otherwise use the root
+    let start = scraper::Selector::parse("body")
+        .ok()
+        .and_then(|sel| doc.select(&sel).next())
+        .map(|el| el.id())
+        .unwrap_or_else(|| root.id());
+
+    extract_text_recursive_scraper(&doc, start, &mut output);
+    collapse_whitespace(&output)
+}
+
+/// Convert HTML to markdown, preserving headings, links, lists, bold/italic,
+/// code blocks, and blockquotes.
+pub fn extract_markdown_from_html(html: &str) -> String {
+    use scraper::{Html, Node};
+
+    let doc = Html::parse_document(html);
+    let mut output = String::new();
+    let root = doc.root_element();
+
+    let start = scraper::Selector::parse("body")
+        .ok()
+        .and_then(|sel| doc.select(&sel).next())
+        .map(|el| el.id())
+        .unwrap_or_else(|| root.id());
+
+    extract_md_recursive(&doc, start, &mut output);
     collapse_whitespace(&output)
 }
 
@@ -624,43 +649,155 @@ const BLOCK_TAGS: &[&str] = &[
     "dt", "dd", "figcaption", "figure", "details", "summary",
 ];
 
-fn extract_text_recursive(
-    node_handle: &tl::NodeHandle,
-    parser: &tl::Parser,
+fn extract_text_recursive_scraper(
+    doc: &scraper::Html,
+    node_id: ego_tree::NodeId,
     output: &mut String,
 ) {
-    let node = match node_handle.get(parser) {
+    let node_ref = match doc.tree.get(node_id) {
         Some(n) => n,
         None => return,
     };
 
-    match node {
-        tl::Node::Raw(text) => {
-            let s = text.as_utf8_str();
-            output.push_str(&s);
+    match node_ref.value() {
+        scraper::Node::Text(text) => {
+            output.push_str(text);
         }
-        tl::Node::Tag(tag) => {
-            let tag_name = tag.name().as_utf8_str().to_lowercase();
+        scraper::Node::Element(el) => {
+            let tag = el.name.local.as_ref();
+            if SKIP_TAGS.contains(&tag) {
+                return;
+            }
+            let is_block = BLOCK_TAGS.contains(&tag);
+            if is_block {
+                output.push('\n');
+            }
+            for child in node_ref.children() {
+                extract_text_recursive_scraper(doc, child.id(), output);
+            }
+            if is_block {
+                output.push('\n');
+            }
+        }
+        scraper::Node::Document => {
+            for child in node_ref.children() {
+                extract_text_recursive_scraper(doc, child.id(), output);
+            }
+        }
+        _ => {}
+    }
+}
 
-            if SKIP_TAGS.contains(&tag_name.as_str()) {
+fn extract_md_recursive(
+    doc: &scraper::Html,
+    node_id: ego_tree::NodeId,
+    output: &mut String,
+) {
+    let node_ref = match doc.tree.get(node_id) {
+        Some(n) => n,
+        None => return,
+    };
+
+    match node_ref.value() {
+        scraper::Node::Text(text) => {
+            output.push_str(text);
+        }
+        scraper::Node::Element(el) => {
+            let tag = el.name.local.as_ref();
+            if SKIP_TAGS.contains(&tag) {
                 return;
             }
 
-            let is_block = BLOCK_TAGS.contains(&tag_name.as_str());
-            if is_block {
-                output.push('\n');
-            }
-
-            let children = tag.children();
-            for child in children.top().iter() {
-                extract_text_recursive(child, parser, output);
-            }
-
-            if is_block {
-                output.push('\n');
+            match tag {
+                "h1" => { output.push_str("\n# "); md_children(doc, node_ref, output); output.push('\n'); }
+                "h2" => { output.push_str("\n## "); md_children(doc, node_ref, output); output.push('\n'); }
+                "h3" => { output.push_str("\n### "); md_children(doc, node_ref, output); output.push('\n'); }
+                "h4" => { output.push_str("\n#### "); md_children(doc, node_ref, output); output.push('\n'); }
+                "h5" => { output.push_str("\n##### "); md_children(doc, node_ref, output); output.push('\n'); }
+                "h6" => { output.push_str("\n###### "); md_children(doc, node_ref, output); output.push('\n'); }
+                "a" => {
+                    let href = el.attr("href").unwrap_or("");
+                    output.push('[');
+                    md_children(doc, node_ref, output);
+                    output.push_str("](");
+                    output.push_str(href);
+                    output.push(')');
+                }
+                "strong" | "b" => {
+                    output.push_str("**");
+                    md_children(doc, node_ref, output);
+                    output.push_str("**");
+                }
+                "em" | "i" => {
+                    output.push('_');
+                    md_children(doc, node_ref, output);
+                    output.push('_');
+                }
+                "code" => {
+                    output.push('`');
+                    md_children(doc, node_ref, output);
+                    output.push('`');
+                }
+                "pre" => {
+                    output.push_str("\n```\n");
+                    md_children(doc, node_ref, output);
+                    output.push_str("\n```\n");
+                }
+                "blockquote" => {
+                    output.push_str("\n> ");
+                    md_children(doc, node_ref, output);
+                    output.push('\n');
+                }
+                "li" => {
+                    // Check parent to decide bullet vs number
+                    if let Some(parent) = node_ref.parent() {
+                        if let scraper::Node::Element(pel) = parent.value() {
+                            if pel.name.local.as_ref() == "ol" {
+                                // Find our index among siblings
+                                let idx = parent.children()
+                                    .filter(|c| matches!(c.value(), scraper::Node::Element(e) if e.name.local.as_ref() == "li"))
+                                    .position(|c| c.id() == node_id)
+                                    .unwrap_or(0);
+                                output.push_str(&format!("\n{}. ", idx + 1));
+                            } else {
+                                output.push_str("\n- ");
+                            }
+                        } else {
+                            output.push_str("\n- ");
+                        }
+                    } else {
+                        output.push_str("\n- ");
+                    }
+                    md_children(doc, node_ref, output);
+                }
+                "br" => { output.push('\n'); }
+                "hr" => { output.push_str("\n---\n"); }
+                "img" => {
+                    let alt = el.attr("alt").unwrap_or("");
+                    if !alt.is_empty() {
+                        output.push_str(&format!("[image: {alt}]"));
+                    }
+                }
+                _ => {
+                    let is_block = BLOCK_TAGS.contains(&tag);
+                    if is_block { output.push('\n'); }
+                    md_children(doc, node_ref, output);
+                    if is_block { output.push('\n'); }
+                }
             }
         }
-        tl::Node::Comment(_) => {}
+        scraper::Node::Document => {
+            for child in node_ref.children() {
+                extract_md_recursive(doc, child.id(), output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn md_children(doc: &scraper::Html, node_ref: ego_tree::NodeRef<scraper::Node>, output: &mut String) {
+    for child in node_ref.children() {
+        extract_md_recursive(doc, child.id(), output);
     }
 }
 
@@ -693,14 +830,16 @@ pub fn collapse_whitespace(input: &str) -> String {
 }
 
 /// Paginate text: return (chunk, total_length, has_more).
+/// Uses `floor_char_boundary` to avoid panicking on multi-byte UTF-8.
 pub fn paginate(text: &str, start: usize, max: usize) -> (String, usize, bool) {
     let total = text.len();
-    if start >= total {
+    let safe_start = text.floor_char_boundary(start.min(total));
+    if safe_start >= total {
         return (String::new(), total, false);
     }
-    let end = (start + max).min(total);
-    let chunk = &text[start..end];
-    (chunk.to_string(), total, end < total)
+    let safe_end = text.floor_char_boundary((safe_start + max).min(total));
+    let chunk = &text[safe_start..safe_end];
+    (chunk.to_string(), total, safe_end < total)
 }
 
 fn tool_ok(id: Option<Value>, text: &str) -> JsonRpcResponse {
@@ -728,6 +867,16 @@ mod tests {
 
     fn test_db() -> Arc<DbWriter> {
         Arc::new(DbWriter::open_in_memory(64).unwrap())
+    }
+
+    /// Create a reqwest Client with proper User-Agent (matches production config).
+    /// Sites like Wikipedia return 403 without one.
+    fn test_client() -> Client {
+        Client::builder()
+            .user_agent("capsem-mcp/0.8")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("reqwest client")
     }
 
     #[test]
@@ -902,7 +1051,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_unknown_builtin_returns_error() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "nonexistent",
@@ -921,7 +1070,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_http_missing_url_returns_error() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -943,7 +1092,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_http_blocked_domain() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -964,7 +1113,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_http_missing_pattern_returns_error() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -985,7 +1134,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_http_invalid_regex() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1214,7 +1363,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_http_rejects_ftp_scheme() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1232,7 +1381,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_http_rejects_file_scheme() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1250,7 +1399,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_http_rejects_data_uri() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1266,7 +1415,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_http_url_is_number_not_string() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1284,7 +1433,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_http_url_is_null() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1303,7 +1452,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_start_index_negative_defaults_to_zero() {
         // as_u64() returns None for -1, so it should default to 0
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1329,7 +1478,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_http_empty_pattern_rejected() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1347,7 +1496,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_http_missing_url_returns_error() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1365,7 +1514,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_http_url_is_number() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1383,7 +1532,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_http_rejects_ftp_scheme() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1403,7 +1552,7 @@ mod tests {
     async fn grep_http_regex_catastrophic_backtracking_safe() {
         // Rust regex crate uses finite automaton, no catastrophic backtracking.
         // This test ensures (a+)+$ doesn't hang on an allowed domain.
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1427,7 +1576,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_headers_missing_url() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "http_headers",
@@ -1445,7 +1594,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_headers_rejects_ftp_scheme() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "http_headers",
@@ -1464,7 +1613,7 @@ mod tests {
     #[tokio::test]
     async fn http_headers_invalid_method_falls_back_to_head() {
         // Any method other than "GET" falls through to HEAD
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "http_headers",
@@ -1484,7 +1633,7 @@ mod tests {
     #[tokio::test]
     async fn http_headers_method_case_sensitive() {
         // "get" (lowercase) is not "GET", so falls through to HEAD
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "http_headers",
@@ -1627,7 +1776,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_fetch_http_elie_net() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1653,7 +1802,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_grep_http_elie_net_finds_matches() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1679,7 +1828,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_grep_http_blocked_domain() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "grep_http",
@@ -1703,7 +1852,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_http_headers_elie_net() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "http_headers",
@@ -1728,7 +1877,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_fetch_http_blocked_domain() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
@@ -1749,7 +1898,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_http_headers_blocked_domain() {
-        let client = Client::new();
+        let client = test_client();
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "http_headers",
@@ -1766,5 +1915,524 @@ mod tests {
             text.to_lowercase().contains("blocked"),
             "error must mention 'blocked': {text}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixture-based HTML extraction tests
+    // -----------------------------------------------------------------------
+
+    fn load_fixture(name: &str) -> String {
+        let path = format!(
+            "{}/data/fixtures/html/{name}",
+            env!("CARGO_MANIFEST_DIR").replace("/crates/capsem-core", "")
+        );
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to load fixture {path}: {e}"))
+    }
+
+    #[test]
+    fn extract_elie_about_has_real_content() {
+        let html = load_fixture("elie_about.html");
+        let text = extract_text_from_html(&html);
+        assert!(text.contains("Bursztein"), "must contain 'Bursztein': {}", &text[..200.min(text.len())]);
+        assert!(text.contains("Google"), "must contain 'Google'");
+        assert!(text.to_lowercase().contains("security"), "must contain 'security'");
+        assert!(text.contains("Stanford"), "must contain 'Stanford'");
+        assert!(text.len() > 3000, "extracted text too short: {} chars", text.len());
+        assert!(!text.contains("<script"), "must not contain script tags");
+        assert!(!text.contains("<style"), "must not contain style tags");
+        assert!(!text.contains("function()"), "must not contain JS code");
+    }
+
+    #[test]
+    fn extract_wiki_turing_has_real_content() {
+        let html = load_fixture("wiki_turing_excerpt.html");
+        let text = extract_text_from_html(&html);
+        assert!(text.contains("Turing"), "must contain 'Turing': {}", &text[..200.min(text.len())]);
+        assert!(!text.contains("<script"), "no script leakage");
+        assert!(!text.contains("<style"), "no style leakage");
+    }
+
+    #[test]
+    fn extract_wiki_rust_has_real_content() {
+        let html = load_fixture("wiki_rust_excerpt.html");
+        let text = extract_text_from_html(&html);
+        assert!(text.contains("Rust"), "must contain 'Rust': {}", &text[..200.min(text.len())]);
+        assert!(!text.contains("<script"), "no script leakage");
+    }
+
+    #[test]
+    fn extract_wiki_unicode_preserves_multibyte() {
+        let html = load_fixture("wiki_unicode_excerpt.html");
+        let text = extract_text_from_html(&html);
+        // Fixture is from the middle of the article, may or may not have "Unicode"
+        // but must have valid UTF-8 with multi-byte chars
+        assert!(text.is_char_boundary(0), "valid UTF-8 start");
+        assert!(text.is_char_boundary(text.len()), "valid UTF-8 end");
+        let multibyte_count = text.chars().filter(|c| c.len_utf8() > 1).count();
+        assert!(multibyte_count > 0, "must contain multi-byte chars, got 0");
+        assert!(!text.contains("<script"), "no script leakage");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixture-based paginate tests (UTF-8 edge cases)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn paginate_multibyte_emoji_boundary() {
+        // Emoji are 4-byte UTF-8
+        let text = "Hello \u{1F600} World"; // "Hello [grinning face] World"
+        // emoji starts at byte 6 ("Hello " = 6 bytes)
+        // Set max to land mid-emoji (byte 7 or 8)
+        let (chunk, _total, has_more) = paginate(text, 0, 7);
+        assert!(has_more, "should have more content");
+        // chunk must end at a valid char boundary
+        assert!(chunk.is_char_boundary(chunk.len()), "chunk must end at char boundary");
+        // Should include "Hello " but not the emoji (can't fit 4 bytes after byte 6)
+        assert_eq!(chunk, "Hello ", "should stop before emoji: {chunk:?}");
+    }
+
+    #[test]
+    fn paginate_multibyte_cyrillic() {
+        // Cyrillic chars are 2-byte UTF-8
+        let text = "\u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442}"; // "Privet" in Cyrillic
+        assert_eq!(text.len(), 12); // 6 chars * 2 bytes each
+        // Start at byte 1 (mid-char) -- should align to byte 0
+        let (chunk, _total, _) = paginate(text, 1, 100);
+        assert!(!chunk.is_empty(), "should produce content");
+        // Start at byte 3 (mid-char) -- should align to byte 2
+        let (chunk, _, _) = paginate(text, 3, 4);
+        assert!(chunk.is_char_boundary(0), "chunk start must be char boundary");
+        assert!(chunk.is_char_boundary(chunk.len()), "chunk end must be char boundary");
+    }
+
+    #[test]
+    fn paginate_start_index_mid_char() {
+        // 3-byte UTF-8 char: euro sign
+        let text = "A\u{20AC}B"; // "A[euro]B" = 1 + 3 + 1 = 5 bytes
+        // start_index=2 is mid-euro-sign
+        let (chunk, _, _) = paginate(text, 2, 100);
+        // Should align to byte 1 (start of euro) or byte 4 (after euro)
+        // floor_char_boundary(2) on "A\u{20AC}B" -> byte 1 (start of euro sign)
+        assert!(chunk.contains('\u{20AC}') || chunk.contains('B'),
+            "mid-char start should align to valid boundary: {chunk:?}");
+    }
+
+    #[test]
+    fn paginate_real_wiki_unicode_content() {
+        let html = load_fixture("wiki_unicode_excerpt.html");
+        let text = extract_text_from_html(&html);
+        // Paginate in small chunks to guarantee multi-byte boundary hits
+        let mut collected = String::new();
+        let mut offset = 0;
+        let chunk_size = 100;
+        loop {
+            let (chunk, _total, has_more) = paginate(&text, offset, chunk_size);
+            collected.push_str(&chunk);
+            if !has_more {
+                break;
+            }
+            offset += chunk.len();
+        }
+        assert_eq!(collected, text, "round-trip pagination must reconstruct original text");
+    }
+
+    #[test]
+    fn paginate_continuation_round_trip() {
+        // Mixed ASCII + multi-byte text
+        let text = "Hello \u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442} World \u{1F600} end";
+        let mut collected = String::new();
+        let mut offset = 0;
+        let chunk_size = 5; // very small to hit many boundaries
+        loop {
+            let (chunk, _total, has_more) = paginate(text, offset, chunk_size);
+            collected.push_str(&chunk);
+            if !has_more {
+                break;
+            }
+            offset += chunk.len();
+        }
+        assert_eq!(collected, text, "round-trip must match: {collected:?} vs {text:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixture-based grep tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn grep_elie_about_finds_bursztein() {
+        let html = load_fixture("elie_about.html");
+        let text = extract_text_from_html(&html);
+        let count = text.matches("Bursztein").count();
+        assert!(count > 0, "must find 'Bursztein' in extracted text");
+        // Cross-check with regex (same as grep_http uses)
+        let re = regex::Regex::new("(?i)Bursztein").unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let line_matches = lines.iter().filter(|l| re.is_match(l)).count();
+        assert!(line_matches > 0, "regex must find matches too");
+    }
+
+    #[test]
+    fn grep_wiki_turing_finds_turing() {
+        let html = load_fixture("wiki_turing_excerpt.html");
+        let text = extract_text_from_html(&html);
+        let count = text.matches("Turing").count();
+        assert!(count > 0, "must find 'Turing' in extracted text, got 0");
+    }
+
+    #[test]
+    fn grep_wiki_unicode_finds_pattern() {
+        let html = load_fixture("wiki_unicode_excerpt.html");
+        let text = extract_text_from_html(&html);
+        // The fixture is from the middle, so look for any content
+        assert!(!text.is_empty(), "extracted text must not be empty");
+        // Test regex mode on the extracted text
+        let re = regex::Regex::new(r"\w+").unwrap();
+        let match_count = text.lines().filter(|l| re.is_match(l)).count();
+        assert!(match_count > 0, "must find word-char matches");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixture-based raw mode tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn raw_vs_content_mode_differ() {
+        let html = load_fixture("elie_about.html");
+        let content_mode = extract_text_from_html(&html);
+        let raw_mode = &html; // raw returns the HTML as-is
+        // Raw is longer (has all HTML tags)
+        assert!(raw_mode.len() > content_mode.len(),
+            "raw ({}) should be longer than content ({})", raw_mode.len(), content_mode.len());
+        // Content mode has no HTML tags
+        assert!(!content_mode.contains("<script"), "content mode must strip scripts");
+        assert!(!content_mode.contains("<div"), "content mode must strip div tags");
+        // Raw mode has HTML tags
+        assert!(raw_mode.contains("<script") || raw_mode.contains("<div"),
+            "raw mode should preserve HTML tags");
+    }
+
+    #[test]
+    fn raw_mode_paginate_works_on_html() {
+        let html = load_fixture("elie_about.html");
+        let (chunk, total, has_more) = paginate(&html, 0, 5000);
+        assert!(has_more, "190KB HTML should need pagination at 5KB");
+        assert_eq!(total, html.len());
+        assert!(chunk.len() <= 5000, "chunk must respect max_length");
+        // Round-trip
+        let mut collected = String::new();
+        let mut offset = 0;
+        loop {
+            let (c, _, more) = paginate(&html, offset, 10000);
+            collected.push_str(&c);
+            if !more { break; }
+            offset += c.len();
+        }
+        assert_eq!(collected, html, "raw HTML pagination round-trip must match");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixture-based markdown extraction tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn markdown_elie_about_has_structure() {
+        let html = load_fixture("elie_about.html");
+        let md = extract_markdown_from_html(&html);
+        // Must contain key content
+        assert!(md.contains("Bursztein"), "must contain 'Bursztein'");
+        assert!(md.contains("Google"), "must contain 'Google'");
+        // Must have markdown headings
+        assert!(md.contains("# ") || md.contains("## "), "must have markdown headings");
+        // Must have markdown links
+        assert!(md.contains("]("), "must have markdown links [text](url)");
+        // Must NOT contain script/style content
+        assert!(!md.contains("<script"), "must not contain script tags");
+        assert!(!md.contains("<style"), "must not contain style tags");
+    }
+
+    #[test]
+    fn markdown_preserves_headings() {
+        let html = "<h1>Title</h1><h2>Subtitle</h2><p>Body text</p>";
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("# Title"), "h1 -> '# Title', got: {md:?}");
+        assert!(md.contains("## Subtitle"), "h2 -> '## Subtitle', got: {md:?}");
+        assert!(md.contains("Body text"), "body preserved");
+    }
+
+    #[test]
+    fn markdown_preserves_links() {
+        let html = r#"<a href="https://example.com">Example</a>"#;
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("[Example](https://example.com)"), "link preserved: {md:?}");
+    }
+
+    #[test]
+    fn markdown_preserves_bold_italic() {
+        let html = "<strong>Bold</strong> and <em>Italic</em>";
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("**Bold**"), "bold preserved: {md:?}");
+        assert!(md.contains("_Italic_"), "italic preserved: {md:?}");
+    }
+
+    #[test]
+    fn markdown_preserves_lists() {
+        let html = "<ul><li>One</li><li>Two</li></ul>";
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("- One"), "unordered list: {md:?}");
+        assert!(md.contains("- Two"), "unordered list: {md:?}");
+    }
+
+    #[test]
+    fn markdown_preserves_ordered_lists() {
+        let html = "<ol><li>First</li><li>Second</li></ol>";
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("1. First"), "ordered list: {md:?}");
+        assert!(md.contains("2. Second"), "ordered list: {md:?}");
+    }
+
+    #[test]
+    fn markdown_preserves_code() {
+        let html = "<code>let x = 1;</code>";
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("`let x = 1;`"), "inline code: {md:?}");
+    }
+
+    #[test]
+    fn markdown_preserves_code_blocks() {
+        let html = "<pre><code>fn main() {}</code></pre>";
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("```"), "code block fencing: {md:?}");
+        assert!(md.contains("fn main()"), "code block content: {md:?}");
+    }
+
+    #[test]
+    fn markdown_preserves_blockquotes() {
+        let html = "<blockquote>A wise quote</blockquote>";
+        let md = extract_markdown_from_html(html);
+        assert!(md.contains("> A wise quote"), "blockquote: {md:?}");
+    }
+
+    #[test]
+    fn markdown_vs_content_mode() {
+        let html = r#"<h1>Title</h1><p>Text with <a href="/link">link</a> and <strong>bold</strong>.</p>"#;
+        let md = extract_markdown_from_html(html);
+        let text = extract_text_from_html(html);
+        // Markdown has structure markers
+        assert!(md.contains("# Title"), "markdown has heading marker");
+        assert!(md.contains("](/link)"), "markdown has link");
+        assert!(md.contains("**bold**"), "markdown has bold");
+        // Plain text has no markers
+        assert!(!text.contains("# "), "text has no heading markers");
+        assert!(!text.contains("]("), "text has no link markers");
+        assert!(!text.contains("**"), "text has no bold markers");
+        // Both have the actual content
+        assert!(text.contains("Title"), "text has title");
+        assert!(text.contains("bold"), "text has bold word");
+    }
+
+    #[test]
+    fn markdown_wiki_turing_has_structure() {
+        let html = load_fixture("wiki_turing_excerpt.html");
+        let md = extract_markdown_from_html(&html);
+        assert!(md.contains("Turing"), "must contain 'Turing'");
+        assert!(!md.contains("<script"), "no script leakage");
+        // Wikipedia articles have links
+        assert!(md.contains("]("), "must have markdown links");
+    }
+
+    // -----------------------------------------------------------------------
+    // Integration tests -- elie.net/about (network)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn integration_fetch_http_elie_net_about() {
+        // Default format is markdown
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": "https://elie.net/about"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "fetch should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("Bursztein"), "must contain 'Bursztein': {}", &text[..300.min(text.len())]);
+        assert!(text.contains("Google"), "must contain 'Google'");
+        // Default is markdown -- should have structure markers
+        assert!(text.contains("](") || text.contains("# "), "default mode should return markdown with links or headings");
+        // Verify substantial content (not just 93 bytes)
+        let content_line = text.lines().find(|l| l.starts_with("Content length:"));
+        if let Some(cl) = content_line {
+            let len: usize = cl.trim_start_matches("Content length: ").parse().unwrap_or(0);
+            assert!(len > 3000, "content length must be substantial, got {len}");
+        }
+    }
+
+    #[tokio::test]
+    async fn integration_fetch_http_elie_net_about_content_mode() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": "https://elie.net/about", "format": "content"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "fetch content should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("Bursztein"), "must contain 'Bursztein'");
+        // Content mode: no markdown markers
+        assert!(!text.contains("]("), "content mode must not have markdown links");
+        assert!(!text.contains("**"), "content mode must not have bold markers");
+    }
+
+    #[tokio::test]
+    async fn integration_fetch_http_elie_net_about_raw() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": "https://elie.net/about", "format": "raw"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "fetch raw should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("<div") || text.contains("<p"), "raw mode must preserve HTML tags");
+        assert!(text.contains("Bursztein"), "must contain 'Bursztein'");
+    }
+
+    #[tokio::test]
+    async fn integration_grep_http_elie_net_about() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "grep_http",
+            &serde_json::json!({"url": "https://elie.net/about", "pattern": "Bursztein"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "grep should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(!text.contains("Matches found: 0"), "must find matches: {text}");
+        assert!(text.contains("Match 1"), "must have at least one match block");
+    }
+
+    #[tokio::test]
+    async fn integration_fetch_http_elie_net_about_pagination() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({"url": "https://elie.net/about", "max_length": 500}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "fetch should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("start_index="), "must have pagination hint for large page");
+    }
+
+    #[tokio::test]
+    async fn integration_http_headers_elie_net_about() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "http_headers",
+            &serde_json::json!({"url": "https://elie.net/about"}),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "http_headers should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("Status: 200"), "must return 200: {text}");
+        assert!(text.to_lowercase().contains("content-type"), "must include content-type");
+    }
+
+    // -----------------------------------------------------------------------
+    // Integration tests -- Wikipedia (network)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn integration_fetch_http_wiki_turing() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({
+                "url": "https://en.wikipedia.org/wiki/Alan_Turing",
+                "max_length": 5000
+            }),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "fetch should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("Turing"), "must contain 'Turing'");
+    }
+
+    #[tokio::test]
+    async fn integration_grep_http_wiki_rust_finds_mozilla() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "grep_http",
+            &serde_json::json!({
+                "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+                "pattern": "Mozilla"
+            }),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "grep should succeed");
+        let text = extract_tool_text(&resp);
+        assert!(!text.contains("Matches found: 0"), "must find Mozilla matches");
+    }
+
+    #[tokio::test]
+    async fn integration_fetch_http_wiki_unicode_multibyte() {
+        let client = test_client();
+        let policy = DomainPolicy::default_dev();
+        let resp = call_builtin_tool(
+            "fetch_http",
+            &serde_json::json!({
+                "url": "https://en.wikipedia.org/wiki/Unicode",
+                "max_length": 5000
+            }),
+            &client,
+            &policy,
+            Some(serde_json::json!(1)),
+            &test_db(),
+        )
+        .await;
+        assert!(!is_tool_error(&resp), "fetch should succeed (no panic from multi-byte)");
+        let text = extract_tool_text(&resp);
+        assert!(text.contains("Unicode"), "must contain 'Unicode'");
     }
 }

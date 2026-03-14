@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stdio bridge for MCP servers (`stdio_bridge.rs`) -- replaced by HTTP client
 
 ### Added
+- `fetch_http` now supports `format=markdown` (new default) -- converts HTML to clean markdown preserving headings, links, lists, bold/italic, and code blocks
+- Wikipedia (`en.wikipedia.org`, `*.wikipedia.org`) added to default allow list for MCP HTTP tools
 - Auto-detect latest stable kernel version from kernel.org during `just build-assets`
 - User-editable bashrc and tmux.conf as file settings in Settings > VM > Shell
 - Filetype-aware syntax highlighting for file settings (bash, conf, json)
@@ -28,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - MCP tool_responses no longer double-counted in multi-turn conversations (request parsers now extract only trailing tool results instead of full history)
 - MCP call previews no longer truncated at 200 chars (removed hard truncation; 256KB cap_field safety net remains)
+- `fetch_http` paginate now UTF-8 safe -- uses `floor_char_boundary` to avoid panics on multi-byte content (emoji, Cyrillic, CJK, etc.)
+- `fetch_http` on subpaths (e.g. `elie.net/about`) now returns full page content -- replaced `tl` HTML parser with `scraper` (html5ever) which correctly handles minified/complex HTML
+- `fetch_http` format default changed from `content` to `markdown` for better AI agent consumption
 - MCP byte tracking: `bytes_sent`/`bytes_received` columns added to mcp_calls for full I/O auditability
 - Builtin MCP tool HTTP requests now emit net_events with `conn_type=mcp_builtin` for network audit visibility
 - Guest process_name resolution uses `/proc/{pid}/cmdline` (real binary name) instead of `/proc/{pid}/comm` (thread name), fixing "MainThread" attribution

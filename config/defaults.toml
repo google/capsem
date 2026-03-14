@@ -457,7 +457,7 @@ default = false
 name = "Allowed domains"
 description = "Comma-separated domain patterns to allow. Wildcards supported (*.example.com)."
 type = "text"
-default = "elie.net, *.elie.net, ash-speed.hetzner.com"
+default = "elie.net, *.elie.net, ash-speed.hetzner.com, en.wikipedia.org, *.wikipedia.org"
 
 [settings.web.custom_allow.meta]
 format = "domain_list"

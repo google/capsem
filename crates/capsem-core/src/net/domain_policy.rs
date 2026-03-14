@@ -167,6 +167,8 @@ pub fn default_allow_list() -> &'static [&'static str] {
         "elie.net",
         "*.elie.net",
         "*.googleapis.com",
+        "en.wikipedia.org",
+        "*.wikipedia.org",
     ]
 }
 
@@ -259,6 +261,20 @@ mod tests {
     fn allow_google_ai_api() {
         let policy = dev_policy();
         let (action, _) = policy.evaluate("generativelanguage.googleapis.com");
+        assert_eq!(action, Action::Allow);
+    }
+
+    #[test]
+    fn allow_wikipedia() {
+        let policy = dev_policy();
+        let (action, _) = policy.evaluate("en.wikipedia.org");
+        assert_eq!(action, Action::Allow);
+    }
+
+    #[test]
+    fn allow_wikipedia_wildcard_subdomain() {
+        let policy = dev_policy();
+        let (action, _) = policy.evaluate("fr.wikipedia.org");
         assert_eq!(action, Action::Allow);
     }
 
