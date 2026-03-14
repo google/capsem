@@ -120,14 +120,6 @@ impl MitmCertResolver {
         }
     }
 
-    /// Create a resolver with policy awareness (still mints certs for all domains).
-    pub fn with_policy(ca: Arc<CertAuthority>, _policy: Arc<super::policy::NetworkPolicy>) -> Self {
-        Self {
-            ca,
-            resolved_domain: std::sync::Mutex::new(None),
-        }
-    }
-
     /// Get the domain captured during the last TLS handshake.
     pub fn domain(&self) -> Option<String> {
         self.resolved_domain.lock().unwrap().clone()

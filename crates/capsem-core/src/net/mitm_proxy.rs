@@ -44,7 +44,9 @@ const MAX_HELLO_SIZE: usize = 16384;
 pub struct MitmProxyConfig {
     pub ca: Arc<CertAuthority>,
     /// Live policy, swappable via RwLock so settings changes take effect
-    /// without restarting the VM. Each connection snapshots the Arc.
+    /// without restarting the VM. Each HTTP request snapshots the Arc so
+    /// that disabling a provider blocks the next request even on an
+    /// existing keep-alive connection.
     pub policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
     pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
@@ -194,13 +196,9 @@ async fn handle_inner(
         }
     }
 
-    // Snapshot the live policy for this connection (cheap Arc clone).
-    let policy: Arc<NetworkPolicy> = config.policy.read().unwrap().clone();
-
     // 2. TLS handshake -- MitmCertResolver captures the domain from SNI.
-    let resolver = Arc::new(MitmCertResolver::with_policy(
+    let resolver = Arc::new(MitmCertResolver::new(
         Arc::clone(&config.ca),
-        Arc::clone(&policy),
     ));
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut tls_config = ServerConfig::builder_with_provider(provider)
@@ -233,8 +231,6 @@ async fn handle_inner(
     let domain_for_svc = domain.clone();
     let db = Arc::clone(&config.db);
     let config_arc = Arc::clone(config);
-    let log_bodies = policy.log_bodies;
-    let max_body = policy.max_body_capture;
     let process_name = Arc::new(process_name);
 
     // Per-connection upstream sender cache: each MITM connection serves one
@@ -244,7 +240,6 @@ async fn handle_inner(
         Arc::new(tokio::sync::Mutex::new(None));
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
-        let policy = Arc::clone(&policy);
         let upstream_tls = Arc::clone(&upstream_tls);
         let domain = domain_for_svc.clone();
         let db = Arc::clone(&db);
@@ -253,7 +248,7 @@ async fn handle_inner(
         let cached_upstream = Arc::clone(&cached_upstream);
 
         async move {
-            handle_request(req, &domain, &policy, &upstream_tls, &db, &config_arc, &process_name, ai_provider, log_bodies, max_body, &cached_upstream).await
+            handle_request(req, &domain, &upstream_tls, &db, &config_arc, &process_name, ai_provider, &cached_upstream).await
         }
     });
 
@@ -274,22 +269,27 @@ async fn handle_inner(
 
 /// Handle a single HTTP request within the MITM TLS connection.
 ///
-/// Builds a per-request `TelemetryEmitter` and wraps the response body in
-/// `TelemetryBody` so telemetry is emitted when the response completes.
+/// Reads the live policy from `config.policy` RwLock per-request so that
+/// settings changes (e.g. disabling a provider) take effect immediately,
+/// even for in-flight keep-alive connections.
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
     domain: &str,
-    policy: &NetworkPolicy,
     upstream_tls: &Arc<rustls::ClientConfig>,
     db: &Arc<DbWriter>,
     config: &Arc<MitmProxyConfig>,
     process_name: &Option<String>,
     ai_provider: Option<ProviderKind>,
-    log_bodies: bool,
-    max_body: usize,
     cached_upstream: &tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>,
 ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error> {
     use http_body_util::BodyExt;
+
+    // Snapshot the live policy for this request (not per-connection) so that
+    // hot-reloaded settings take effect for subsequent requests on the same
+    // keep-alive connection.
+    let policy: Arc<NetworkPolicy> = config.policy.read().unwrap().clone();
+    let log_bodies = policy.log_bodies;
+    let max_body = policy.max_body_capture;
 
     let start_time = Instant::now();
     let (parts, req_body) = req.into_parts();
@@ -2604,5 +2604,193 @@ mod tests {
         // /v1/messages_extra should match -- starts_with is fine since the real
         // path is /v1/messages with optional query params after it.
         assert!(is_llm_api_path(ProviderKind::Anthropic, "/v1/messages_extra"));
+    }
+
+    // ---------------------------------------------------------------
+    // Per-request policy reload tests (keep-alive hot-reload)
+    // ---------------------------------------------------------------
+
+    /// Helper: open a TLS + HTTP/1.1 keep-alive connection through the proxy.
+    /// Returns the hyper sender and the proxy task handle.
+    async fn open_proxy_conn(
+        config: &Arc<MitmProxyConfig>,
+        domain: &str,
+    ) -> (
+        hyper::client::conn::http1::SendRequest<http_body_util::combinators::BoxBody<Bytes, anyhow::Error>>,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<Result<(), hyper::Error>>,
+    ) {
+        let (s1, s2) = UnixStream::pair().unwrap();
+        let proxy_fd = s2.into_raw_fd();
+        let proxy_config = Arc::clone(config);
+        let proxy_task = tokio::spawn(async move {
+            handle_connection(proxy_fd, proxy_config).await;
+        });
+
+        let client_config = make_mitm_client_config();
+        let connector = tokio_rustls::TlsConnector::from(client_config);
+        s1.set_nonblocking(true).unwrap();
+        let stream = tokio::net::UnixStream::from_std(s1).unwrap();
+        let sni = rustls::pki_types::ServerName::try_from(domain.to_owned()).unwrap();
+        let tls_stream = connector.connect(sni, stream).await.unwrap();
+
+        let io = TokioIo::new(tls_stream);
+        let (sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+        let conn_task = tokio::spawn(conn);
+
+        (sender, proxy_task, conn_task)
+    }
+
+    /// Helper: send a GET request on an existing keep-alive sender.
+    async fn send_get(
+        sender: &mut hyper::client::conn::http1::SendRequest<http_body_util::combinators::BoxBody<Bytes, anyhow::Error>>,
+        domain: &str,
+        path: &str,
+    ) -> u16 {
+        use http_body_util::BodyExt;
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri(path)
+            .header("host", domain)
+            .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
+            .unwrap();
+        let resp = sender.send_request(req).await.unwrap();
+        let status = resp.status().as_u16();
+        // Consume body so telemetry fires and connection stays alive.
+        let _ = resp.into_body().collect().await;
+        status
+    }
+
+    /// Disabling a provider mid-connection blocks subsequent requests on the
+    /// same keep-alive connection. This is the core regression test for the
+    /// per-request policy reload fix.
+    #[tokio::test]
+    async fn policy_hot_reload_blocks_on_same_connection() {
+        use crate::net::policy::{DomainMatcher, PolicyRule};
+
+        // Start with a policy that allows example.com (read+write).
+        let allow_policy = NetworkPolicy::new(
+            vec![PolicyRule {
+                matcher: DomainMatcher::parse("example.com"),
+                allow_read: true,
+                allow_write: true,
+            }],
+            false,
+            false,
+        );
+        let config = make_config_with_policy(allow_policy);
+        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, "example.com").await;
+
+        // First request: allowed. Returns 502 because there's no real upstream,
+        // but 502 proves the policy allowed the request past the policy check
+        // (denied would be 403).
+        let status1 = send_get(&mut sender, "example.com", "/before-disable").await;
+        assert_eq!(status1, 502, "allowed request should reach upstream (502 = no upstream, not 403)");
+
+        // Hot-reload: swap to deny-all policy (simulates user disabling provider).
+        let deny_policy = Arc::new(NetworkPolicy::new(vec![], false, false));
+        *config.policy.write().unwrap() = deny_policy;
+
+        // Second request on the SAME keep-alive connection: must be denied.
+        let status2 = send_get(&mut sender, "example.com", "/after-disable").await;
+        assert_eq!(status2, 403, "request after policy swap must be denied on same connection");
+
+        drop(sender);
+        let _ = proxy_task.await;
+
+        // Verify telemetry recorded both events with correct decisions.
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+        let reader = config.db.reader().unwrap();
+        let mut events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 2, "should have 2 events (one allowed, one denied)");
+        events.reverse(); // chronological
+        // First event: allowed (502 upstream error, but decision is Error not Denied).
+        assert!(
+            events[0].decision != Decision::Denied,
+            "first request should not be denied, got {:?}", events[0].decision
+        );
+        assert_eq!(events[0].path, Some("/before-disable".to_string()));
+        // Second event: denied (403).
+        assert_eq!(events[1].decision, Decision::Denied);
+        assert_eq!(events[1].path, Some("/after-disable".to_string()));
+        assert_eq!(events[1].status_code, Some(403));
+    }
+
+    /// Re-enabling a provider mid-connection allows subsequent requests on
+    /// the same keep-alive connection (reverse direction of the above test).
+    #[tokio::test]
+    async fn policy_hot_reload_allows_on_same_connection() {
+        use crate::net::policy::{DomainMatcher, PolicyRule};
+
+        // Start with deny-all.
+        let config = make_config_deny_all();
+        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, "example.com").await;
+
+        // First request: denied.
+        let status1 = send_get(&mut sender, "example.com", "/while-denied").await;
+        assert_eq!(status1, 403);
+
+        // Hot-reload: swap to allow policy.
+        let allow_policy = Arc::new(NetworkPolicy::new(
+            vec![PolicyRule {
+                matcher: DomainMatcher::parse("example.com"),
+                allow_read: true,
+                allow_write: true,
+            }],
+            false,
+            false,
+        ));
+        *config.policy.write().unwrap() = allow_policy;
+
+        // Second request: allowed (502 = no upstream, proves policy let it through).
+        let status2 = send_get(&mut sender, "example.com", "/after-enable").await;
+        assert_eq!(status2, 502, "request after re-enable should be allowed (502 = no upstream)");
+
+        drop(sender);
+        let _ = proxy_task.await;
+    }
+
+    /// Multiple policy swaps on the same connection: deny -> allow -> deny.
+    /// Verifies each request sees the current policy, not any cached version.
+    #[tokio::test]
+    async fn policy_hot_reload_multiple_swaps() {
+        use crate::net::policy::{DomainMatcher, PolicyRule};
+
+        let config = make_config_deny_all();
+        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, "example.com").await;
+
+        // Request 1: denied.
+        assert_eq!(send_get(&mut sender, "example.com", "/r1").await, 403);
+
+        // Swap to allow.
+        let allow = Arc::new(NetworkPolicy::new(
+            vec![PolicyRule {
+                matcher: DomainMatcher::parse("example.com"),
+                allow_read: true,
+                allow_write: true,
+            }],
+            false,
+            false,
+        ));
+        *config.policy.write().unwrap() = allow;
+
+        // Request 2: allowed (502).
+        assert_eq!(send_get(&mut sender, "example.com", "/r2").await, 502);
+
+        // Swap back to deny.
+        let deny = Arc::new(NetworkPolicy::new(vec![], false, false));
+        *config.policy.write().unwrap() = deny;
+
+        // Request 3: denied again.
+        assert_eq!(send_get(&mut sender, "example.com", "/r3").await, 403);
+
+        drop(sender);
+        let _ = proxy_task.await;
+
+        // Verify all 3 events recorded.
+        tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+        let reader = config.db.reader().unwrap();
+        let events = reader.recent_net_events(10).unwrap();
+        assert_eq!(events.len(), 3, "all 3 requests should produce telemetry events");
     }
 }
