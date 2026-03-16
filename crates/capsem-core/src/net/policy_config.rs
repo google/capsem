@@ -947,20 +947,24 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
                     continue;
                 }
 
-                // Inject capsem MCP server into Claude/Gemini settings.json.
+                // Inject capsem MCP server into AI CLI config files:
+                // - settings.json: Claude Code + Gemini CLI (JSON mcpServers)
+                // - .claude.json: Claude Code state file (JSON mcpServers + API key approval)
+                // - config.toml: Codex CLI (TOML mcp_servers)
+                //
                 // Pattern-match on the guest path (not the setting ID) since
                 // the path is the source of truth for what the file represents.
-                //
-                // For Claude state (.claude.json), inject API key approval
-                // and project trust so Claude starts without onboarding prompts.
                 let content = if file_path.ends_with("/settings.json") {
                     inject_capsem_mcp_server(file_content)
                 } else if file_path == "/root/.claude.json" {
+                    let with_mcp = inject_capsem_mcp_server(file_content);
                     if let Some(api_key) = env.get("ANTHROPIC_API_KEY") {
-                        inject_api_key_approval(file_content, api_key)
+                        inject_api_key_approval(&with_mcp, api_key)
                     } else {
-                        file_content.clone()
+                        with_mcp
                     }
+                } else if file_path.ends_with("/config.toml") {
+                    inject_capsem_mcp_server_toml(file_content)
                 } else {
                     file_content.clone()
                 };
@@ -1080,6 +1084,34 @@ fn inject_capsem_mcp_server(json_str: &str) -> String {
     }
 
     serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
+}
+
+/// Inject the capsem MCP server entry into a TOML config string (Codex CLI).
+///
+/// Parses the TOML, inserts `[mcp_servers.capsem] command = "/run/capsem-mcp-server"`,
+/// preserving any user-provided entries. Returns the original string unchanged
+/// if parsing fails.
+fn inject_capsem_mcp_server_toml(toml_str: &str) -> String {
+    let mut doc: toml::Value = match toml::from_str(toml_str) {
+        Ok(v) => v,
+        Err(_) => return toml_str.to_string(),
+    };
+    let table = match doc.as_table_mut() {
+        Some(t) => t,
+        None => return toml_str.to_string(),
+    };
+    let mcp = table
+        .entry("mcp_servers")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    if let Some(servers) = mcp.as_table_mut() {
+        let mut capsem = toml::map::Map::new();
+        capsem.insert(
+            "command".into(),
+            toml::Value::String("/run/capsem-mcp-server".into()),
+        );
+        servers.insert("capsem".into(), toml::Value::Table(capsem));
+    }
+    toml::to_string(&doc).unwrap_or_else(|_| toml_str.to_string())
 }
 
 /// Inject `customApiKeyResponses` into Claude state JSON.
@@ -4028,6 +4060,76 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let files = gc.files.unwrap();
         let projects = files.iter().find(|f| f.path == "/root/.gemini/projects.json").unwrap();
         assert!(!projects.content.contains("capsem"), "projects.json should not have capsem injected");
+    }
+
+    #[test]
+    fn claude_state_json_has_capsem_mcp_server() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let claude = files
+            .iter()
+            .find(|f| f.path == "/root/.claude.json")
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["capsem"]["command"],
+            "/run/capsem-mcp-server",
+            "capsem MCP server should be injected into .claude.json"
+        );
+    }
+
+    #[test]
+    fn codex_default_config_has_capsem_mcp_server() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let files = gc.files.unwrap();
+        let codex = files
+            .iter()
+            .find(|f| f.path == "/root/.codex/config.toml")
+            .unwrap();
+        assert!(
+            codex.content.contains("capsem"),
+            "codex config.toml should contain capsem MCP server"
+        );
+        assert!(
+            codex.content.contains("/run/capsem-mcp-server"),
+            "codex config.toml should reference /run/capsem-mcp-server"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // TOML MCP server injection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn inject_capsem_mcp_server_toml_empty() {
+        let result = inject_capsem_mcp_server_toml("");
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        let cmd = parsed["mcp_servers"]["capsem"]["command"].as_str().unwrap();
+        assert_eq!(cmd, "/run/capsem-mcp-server");
+    }
+
+    #[test]
+    fn inject_capsem_mcp_server_toml_preserves_existing() {
+        let input = "[mcp_servers.github]\ncommand = \"npx\"\nargs = [\"-y\", \"@github/mcp\"]\n";
+        let result = inject_capsem_mcp_server_toml(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed["mcp_servers"]["github"]["command"].as_str().unwrap(),
+            "npx"
+        );
+        assert_eq!(
+            parsed["mcp_servers"]["capsem"]["command"].as_str().unwrap(),
+            "/run/capsem-mcp-server"
+        );
+    }
+
+    #[test]
+    fn inject_capsem_mcp_server_toml_invalid_passthrough() {
+        let input = "not valid toml [[[";
+        let result = inject_capsem_mcp_server_toml(input);
+        assert_eq!(result, input);
     }
 
     // -----------------------------------------------------------------------

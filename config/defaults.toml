@@ -115,6 +115,22 @@ description = "Comma-separated domain patterns. Wildcards (*.example.com) match 
 type = "text"
 default = "*.openai.com"
 
+[settings.ai.openai.codex]
+name = "Codex CLI"
+description = "Codex CLI configuration files"
+
+[settings.ai.openai.codex.config_toml]
+name = "Codex config.toml"
+description = "Content for ~/.codex/config.toml. MCP servers, auth, etc."
+type = "file"
+
+[settings.ai.openai.codex.config_toml.default]
+path = "/root/.codex/config.toml"
+content = "[mcp_servers.capsem]\ncommand = \"/run/capsem-mcp-server\""
+
+[settings.ai.openai.codex.config_toml.meta]
+filetype = "toml"
+
 # -- Google AI ---------------------------------------------------------------
 
 [settings.ai.google]

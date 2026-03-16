@@ -272,13 +272,19 @@ def test_mcp_http_headers_allowed_domain():
     assert "content-type" in text.lower(), f"missing content-type header: {text[:500]}"
 
 
-def test_claude_mcp_settings_has_capsem():
-    """Claude settings.json has capsem MCP server configured."""
-    r = run("cat /root/.claude/settings.json")
-    assert r.returncode == 0, "~/.claude/settings.json missing"
-    import json
+def test_claude_mcp_list_shows_capsem():
+    """claude mcp list must show the capsem server."""
+    r = run("claude mcp list 2>&1", timeout=15)
+    assert r.returncode == 0, f"claude mcp list failed: {r.stderr}"
+    assert "capsem" in r.stdout, f"capsem not in claude mcp list output: {r.stdout}"
+
+
+def test_claude_state_json_has_capsem_mcp():
+    """Claude state file (.claude.json) has capsem MCP server configured."""
+    r = run("cat /root/.claude.json")
+    assert r.returncode == 0, "~/.claude.json missing"
     settings = json.loads(r.stdout)
-    assert "mcpServers" in settings, "mcpServers key missing from Claude settings"
+    assert "mcpServers" in settings, "mcpServers key missing from .claude.json"
     assert "capsem" in settings["mcpServers"], (
         f"capsem not in mcpServers: {list(settings['mcpServers'].keys())}"
     )
@@ -287,14 +293,28 @@ def test_claude_mcp_settings_has_capsem():
     )
 
 
-def test_claude_settings_capsem_mcp_command_exists():
-    """The capsem MCP server binary referenced in Claude settings is executable."""
-    r = run("cat /root/.claude/settings.json")
-    assert r.returncode == 0
+def test_gemini_settings_has_capsem_mcp():
+    """Gemini settings.json has capsem MCP server configured."""
+    r = run("cat /root/.gemini/settings.json")
+    assert r.returncode == 0, "~/.gemini/settings.json missing"
     settings = json.loads(r.stdout)
-    cmd = settings["mcpServers"]["capsem"]["command"]
-    r2 = run(f"test -x {cmd} && echo ok")
-    assert "ok" in r2.stdout, f"MCP server binary {cmd} not executable"
+    assert "mcpServers" in settings, "mcpServers key missing from Gemini settings"
+    assert "capsem" in settings["mcpServers"], (
+        f"capsem not in mcpServers: {list(settings['mcpServers'].keys())}"
+    )
+    assert settings["mcpServers"]["capsem"]["command"] == "/run/capsem-mcp-server", (
+        f"wrong command: {settings['mcpServers']['capsem']}"
+    )
+
+
+def test_codex_config_has_capsem_mcp():
+    """Codex config.toml has capsem MCP server configured."""
+    r = run("cat /root/.codex/config.toml")
+    assert r.returncode == 0, f"~/.codex/config.toml missing: {r.stderr}"
+    assert "capsem" in r.stdout, f"capsem not in codex config: {r.stdout}"
+    assert "/run/capsem-mcp-server" in r.stdout, (
+        f"capsem-mcp-server path missing from codex config: {r.stdout}"
+    )
 
 
 def test_mcp_tools_list_has_descriptions():
