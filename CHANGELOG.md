@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Tool calls no longer double-counted in stats -- MCP-proxied tool_calls (origin=mcp_proxy) filtered from native counts across all 6 tool queries
+- Native tool response preview now displayed in unified tool list (was hardcoded NULL, now joined from tool_responses via call_id)
+- Non-text content blocks (tool_reference, image) in Anthropic tool results now produce meaningful preview instead of empty string
+- OpenAI multipart tool result content now extracted correctly
+- `check_session.py` tool response matching fixed -- joins on call_id only (tool responses arrive in next model call with different model_call_id)
+
+### Added
+- Security presets ("Medium" and "High") -- one-click security profiles selectable from Settings > Security
+- Automatic migration of old setting IDs (`web.*`, `registry.*`) to new `security.*` namespace -- existing user.toml and corp.toml files work without manual changes
+
 ### Changed
+- Settings restructured: "Web" and "Package Registries" merged under new "Security" top-level section with "Web", "Services > Search Engines", and "Services > Package Registries" sub-groups
 - MCP gateway rewritten to use rmcp (official Rust MCP SDK) -- replaces hand-rolled JSON-RPC/SSE client with proper Streamable HTTP transport, automatic pagination, and typed tool/resource/prompt routing
 - Upgraded reqwest from 0.12 to 0.13
 - MCP server UI redesigned: collapsible server cards with URL/auth config, "verified"/"definition changed" status labels

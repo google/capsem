@@ -13,7 +13,9 @@ export const MODEL_STATS_SQL = `
 `;
 
 export const TOOL_COUNT_SQL = `
-  SELECT COUNT(*) as cnt FROM tool_calls
+  SELECT
+    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native')
+  + (SELECT COUNT(*) FROM mcp_calls WHERE tool_name IS NOT NULL) as cnt
 `;
 
 // -- Models tab (trace viewer) --------------------------------------------
@@ -75,8 +77,8 @@ export const TRACE_TOOL_RESPONSES_SQL = `
 
 export const TOOLS_STATS_SQL = `
   SELECT
-    (SELECT COUNT(*) FROM tool_calls) + (SELECT COUNT(*) FROM mcp_calls) as total,
-    (SELECT COUNT(*) FROM tool_calls) as native,
+    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls) as total,
+    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') as native,
     (SELECT COUNT(*) FROM mcp_calls) as mcp,
     (SELECT COUNT(*) FROM mcp_calls WHERE decision = 'allowed') as allowed,
     (SELECT COUNT(*) FROM mcp_calls WHERE decision != 'allowed') as denied
@@ -86,6 +88,7 @@ export const TOOLS_TOP_TOOLS_SQL = `
   SELECT tool_name, cnt, source FROM (
     SELECT tc.tool_name, COUNT(*) as cnt, 'native' as source
     FROM tool_calls tc
+    WHERE tc.origin = 'native'
     GROUP BY tc.tool_name
     UNION ALL
     SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
@@ -110,6 +113,7 @@ export const TOOLS_OVER_TIME_SQL = `
     SELECT mc.timestamp, 'native' as source
     FROM tool_calls tc
     JOIN model_calls mc ON tc.model_call_id = mc.id
+    WHERE tc.origin = 'native'
     UNION ALL
     SELECT timestamp, 'mcp' as source
     FROM mcp_calls
@@ -138,10 +142,12 @@ export const TOOLS_UNIFIED_SQL = `
            tc.tool_name, NULL as method, 'allowed' as decision,
            mc.duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) as bytes,
-           tc.arguments, NULL as response_preview,
+           tc.arguments, tr.content_preview as response_preview,
            NULL as error_message, 'native' as source
     FROM tool_calls tc
     JOIN model_calls mc ON tc.model_call_id = mc.id
+    LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
+    WHERE tc.origin = 'native'
     UNION ALL
     SELECT timestamp, process_name, server_name, tool_name, method,
            decision, duration_ms,
@@ -162,10 +168,12 @@ export const TOOLS_UNIFIED_SEARCH_SQL = `
            tc.tool_name, NULL as method, 'allowed' as decision,
            mc.duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) as bytes,
-           tc.arguments, NULL as response_preview,
+           tc.arguments, tr.content_preview as response_preview,
            NULL as error_message, 'native' as source
     FROM tool_calls tc
     JOIN model_calls mc ON tc.model_call_id = mc.id
+    LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
+    WHERE tc.origin = 'native'
     UNION ALL
     SELECT timestamp, process_name, server_name, tool_name, method,
            decision, duration_ms,

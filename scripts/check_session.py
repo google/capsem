@@ -166,8 +166,7 @@ def check_session(db_path: Path, preview_rows: int = 5):
         orphans = conn.execute(
             "SELECT COUNT(*) FROM tool_calls tc"
             " LEFT JOIN tool_responses tr"
-            "   ON tc.model_call_id = tr.model_call_id"
-            "   AND tc.call_id = tr.call_id"
+            "   ON tc.call_id = tr.call_id"
             " WHERE tr.id IS NULL"
         ).fetchone()[0]
         total_tc = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]

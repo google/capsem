@@ -111,7 +111,10 @@ mod anthropic_wire {
 
     #[derive(Deserialize)]
     pub struct ToolResultBlock {
+        #[serde(rename = "type")]
+        pub block_type: Option<String>,
         pub text: Option<String>,
+        pub tool_name: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -160,10 +163,26 @@ fn parse_anthropic(body: &[u8]) -> RequestMeta {
                         let content_text = match &block.content {
                             Some(anthropic_wire::ToolResultContent::Text(t)) => t.clone(),
                             Some(anthropic_wire::ToolResultContent::Blocks(bs)) => {
-                                bs.iter()
+                                // Prefer text blocks; fall back to block type summaries
+                                let texts: Vec<&str> = bs.iter()
                                     .filter_map(|b| b.text.as_deref())
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
+                                    .collect();
+                                if !texts.is_empty() {
+                                    texts.join("\n")
+                                } else {
+                                    // No text blocks -- summarize non-text blocks
+                                    bs.iter()
+                                        .filter_map(|b| {
+                                            let bt = b.block_type.as_deref()?;
+                                            if let Some(name) = &b.tool_name {
+                                                Some(format!("[{bt}: {name}]"))
+                                            } else {
+                                                Some(format!("[{bt}]"))
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                }
                             }
                             None => String::new(),
                         };
@@ -271,7 +290,13 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
         if let Some(call_id) = &msg.tool_call_id {
             let content_text = match &msg.content {
                 Some(openai_wire::MessageContent::Text(t)) => t.clone(),
-                _ => String::new(),
+                Some(openai_wire::MessageContent::Parts(parts)) => {
+                    parts.iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+                None => String::new(),
             };
             tool_results.push(ToolResultMeta {
                 call_id: call_id.clone(),
@@ -780,5 +805,309 @@ mod tests {
         assert_eq!(meta.tool_results.len(), 1);
         assert_eq!(meta.tool_results[0].call_id, "call_02");
         assert_eq!(meta.tool_results[0].content_preview, "18C cloudy");
+    }
+
+    // ── Anthropic non-text content blocks (Phase 1) ─────────────────
+
+    #[test]
+    fn anthropic_tool_result_with_tool_reference_blocks() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_ref", "content": [
+                        {"type": "tool_reference", "tool_name": "fetch_http"},
+                        {"type": "tool_reference", "tool_name": "http_headers"}
+                    ]}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(
+            !meta.tool_results[0].content_preview.is_empty(),
+            "content_preview should not be empty for tool_reference blocks"
+        );
+        assert!(
+            meta.tool_results[0].content_preview.contains("fetch_http"),
+            "content_preview should mention fetch_http, got: {}",
+            meta.tool_results[0].content_preview
+        );
+    }
+
+    #[test]
+    fn anthropic_tool_result_mixed_text_and_non_text_blocks() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_mix", "content": [
+                        {"type": "text", "text": "Loaded 2 tools"},
+                        {"type": "tool_reference", "tool_name": "fetch_http"}
+                    ]}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(
+            meta.tool_results[0].content_preview.contains("Loaded 2 tools"),
+            "text blocks take priority, got: {}",
+            meta.tool_results[0].content_preview
+        );
+    }
+
+    #[test]
+    fn anthropic_tool_result_empty_content_array() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_empty", "content": []}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].content_preview, "");
+    }
+
+    #[test]
+    fn anthropic_tool_result_null_content() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_null"}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].content_preview, "");
+    }
+
+    #[test]
+    fn anthropic_tool_result_image_block_only() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_img", "content": [
+                        {"type": "image", "source": {"type": "base64", "data": "aWdub3Jl"}}
+                    ]}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(
+            !meta.tool_results[0].content_preview.is_empty(),
+            "image block should produce a fallback like [image]"
+        );
+    }
+
+    #[test]
+    fn anthropic_tool_result_blocks_with_text_none() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_notext", "content": [
+                        {"type": "text"}
+                    ]}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        // Should not crash
+    }
+
+    #[test]
+    fn anthropic_multiple_tool_results_in_single_message() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_a", "content": "result a"},
+                    {"type": "tool_result", "tool_use_id": "toolu_b", "content": "result b"},
+                    {"type": "tool_result", "tool_use_id": "toolu_c", "content": "result c"}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 3);
+        assert_eq!(meta.tool_results[0].call_id, "toolu_a");
+        assert_eq!(meta.tool_results[1].call_id, "toolu_b");
+        assert_eq!(meta.tool_results[2].call_id, "toolu_c");
+    }
+
+    #[test]
+    fn anthropic_tool_result_large_content() {
+        let big = "x".repeat(100_000);
+        let body = format!(
+            r#"{{"model":"claude-sonnet-4-20250514","messages":[
+                {{"role":"user","content":[
+                    {{"type":"tool_result","tool_use_id":"toolu_big","content":"{big}"}}
+                ]}}
+            ]}}"#
+        );
+        let meta = parse_request(ProviderKind::Anthropic, body.as_bytes());
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(!meta.tool_results[0].content_preview.is_empty());
+    }
+
+    #[test]
+    fn anthropic_tool_result_content_as_blocks_with_text() {
+        let body = br#"{
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_multi", "content": [
+                        {"type": "text", "text": "line1"},
+                        {"type": "text", "text": "line2"}
+                    ]}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Anthropic, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].content_preview, "line1\nline2");
+    }
+
+    // ── OpenAI edge cases (Phase 1) ─────────────────────────────────
+
+    #[test]
+    fn openai_tool_result_empty_content() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "tool", "tool_call_id": "call_empty", "content": ""}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::OpenAi, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].content_preview, "");
+    }
+
+    #[test]
+    fn openai_tool_result_null_content() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "tool", "tool_call_id": "call_null", "content": null}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::OpenAi, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].content_preview, "");
+    }
+
+    #[test]
+    fn openai_tool_result_multipart_content() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "tool", "tool_call_id": "call_parts", "content": [
+                    {"type": "text", "text": "result here"}
+                ]}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::OpenAi, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(
+            meta.tool_results[0].content_preview.contains("result here"),
+            "multipart content should extract text, got: {}",
+            meta.tool_results[0].content_preview
+        );
+    }
+
+    #[test]
+    fn openai_multiple_tool_results_trailing() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "assistant", "content": null},
+                {"role": "tool", "tool_call_id": "call_1", "content": "r1"},
+                {"role": "tool", "tool_call_id": "call_2", "content": "r2"},
+                {"role": "tool", "tool_call_id": "call_3", "content": "r3"}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::OpenAi, body);
+        assert_eq!(meta.tool_results.len(), 3);
+    }
+
+    #[test]
+    fn openai_tool_result_large_content() {
+        let big = "x".repeat(100_000);
+        let body = format!(
+            r#"{{"model":"gpt-4o","messages":[
+                {{"role":"tool","tool_call_id":"call_big","content":"{big}"}}
+            ]}}"#
+        );
+        let meta = parse_request(ProviderKind::OpenAi, body.as_bytes());
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(!meta.tool_results[0].content_preview.is_empty());
+    }
+
+    // ── Google/Gemini edge cases (Phase 1) ──────────────────────────
+
+    #[test]
+    fn google_function_response_null_response() {
+        let body = br#"{
+            "contents": [
+                {"parts": [{"functionResponse": {"name": "get_weather", "response": null}}], "role": "function"}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Google, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].content_preview, "");
+    }
+
+    #[test]
+    fn google_function_response_empty_object() {
+        let body = br#"{
+            "contents": [
+                {"parts": [{"functionResponse": {"name": "get_weather", "response": {}}}], "role": "function"}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Google, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(meta.tool_results[0].content_preview, "{}");
+    }
+
+    #[test]
+    fn google_function_response_nested_response() {
+        let body = br#"{
+            "contents": [
+                {"parts": [{"functionResponse": {"name": "list_items", "response": {"data": {"items": [1,2,3]}}}}], "role": "function"}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Google, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert!(
+            meta.tool_results[0].content_preview.contains("items"),
+            "nested response should contain 'items', got: {}",
+            meta.tool_results[0].content_preview
+        );
+    }
+
+    #[test]
+    fn google_multiple_function_responses_in_single_part() {
+        let body = br#"{
+            "contents": [
+                {"parts": [
+                    {"functionResponse": {"name": "fn_a", "response": {"a": 1}}},
+                    {"functionResponse": {"name": "fn_b", "response": {"b": 2}}},
+                    {"functionResponse": {"name": "fn_c", "response": {"c": 3}}}
+                ], "role": "function"}
+            ]
+        }"#;
+        let meta = parse_request(ProviderKind::Google, body);
+        assert_eq!(meta.tool_results.len(), 3);
+        // All should have unique call_ids
+        let ids: std::collections::HashSet<_> = meta.tool_results.iter().map(|r| &r.call_id).collect();
+        assert_eq!(ids.len(), 3, "all 3 function responses should have unique call_ids");
     }
 }
