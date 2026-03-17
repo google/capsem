@@ -10,6 +10,19 @@
 #   - Setting leaf:   has `name` and `type`    -- actual setting
 #   - Meta:           sub-table under a leaf   -- extra metadata (env_vars, etc.)
 
+# -- App ---------------------------------------------------------------------
+
+[settings.app]
+name = "App"
+description = "Application settings"
+collapsed = false
+
+[settings.app.auto_update]
+name = "Auto-check for updates"
+description = "Check for new Capsem versions on launch"
+type = "bool"
+default = true
+
 # -- AI Providers ------------------------------------------------------------
 
 [settings.ai]
@@ -335,238 +348,247 @@ env_vars = ["GITLAB_TOKEN"]
 docs_url = "https://gitlab.com/-/user_settings/personal_access_tokens"
 prefix = "glpat-"
 
-# -- Package Registries ------------------------------------------------------
+# -- Security ----------------------------------------------------------------
 
-[settings.registry]
-name = "Package Registries"
-description = "Package manager registries"
+[settings.security]
+name = "Security"
+description = "Network access control, web services, and security presets"
 collapsed = false
 
-[settings.registry.debian]
-name = "Debian"
-description = "Debian package repositories"
-enabled_by = "registry.debian.allow"
+# -- Security > Web ----------------------------------------------------------
 
-[settings.registry.debian.allow]
-name = "Allow Debian"
-description = "Enable access to deb.debian.org and security.debian.org for apt package installs."
-type = "bool"
-default = true
-
-[settings.registry.debian.allow.meta]
-domains = ["deb.debian.org", "security.debian.org"]
-
-[settings.registry.debian.allow.meta.rules.default]
-get = true
-
-[settings.registry.debian.domains]
-name = "Debian Domains"
-description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
-type = "text"
-default = "deb.debian.org, security.debian.org"
-
-[settings.registry.debian.domains.meta]
-format = "domain_list"
-
-[settings.registry.npm]
-name = "npm"
-description = "npm package registry"
-enabled_by = "registry.npm.allow"
-
-[settings.registry.npm.allow]
-name = "Allow npm"
-description = "Enable access to the npm package registry."
-type = "bool"
-default = true
-
-[settings.registry.npm.allow.meta]
-domains = ["registry.npmjs.org", "*.npmjs.org"]
-
-[settings.registry.npm.allow.meta.rules.default]
-get = true
-
-[settings.registry.npm.domains]
-name = "npm Domains"
-description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
-type = "text"
-default = "registry.npmjs.org, *.npmjs.org"
-
-[settings.registry.npm.domains.meta]
-format = "domain_list"
-
-[settings.registry.pypi]
-name = "PyPI"
-description = "Python Package Index"
-enabled_by = "registry.pypi.allow"
-
-[settings.registry.pypi.allow]
-name = "Allow PyPI"
-description = "Enable access to the Python Package Index."
-type = "bool"
-default = true
-
-[settings.registry.pypi.allow.meta]
-domains = ["pypi.org", "files.pythonhosted.org"]
-
-[settings.registry.pypi.allow.meta.rules.default]
-get = true
-
-[settings.registry.pypi.domains]
-name = "PyPI Domains"
-description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
-type = "text"
-default = "pypi.org, files.pythonhosted.org"
-
-[settings.registry.pypi.domains.meta]
-format = "domain_list"
-
-[settings.registry.crates]
-name = "crates.io"
-description = "Rust crate registry"
-enabled_by = "registry.crates.allow"
-
-[settings.registry.crates.allow]
-name = "Allow crates.io"
-description = "Enable access to the Rust crate registry."
-type = "bool"
-default = true
-
-[settings.registry.crates.allow.meta]
-domains = ["crates.io", "static.crates.io"]
-
-[settings.registry.crates.allow.meta.rules.default]
-get = true
-
-[settings.registry.crates.domains]
-name = "crates.io Domains"
-description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
-type = "text"
-default = "crates.io, static.crates.io"
-
-[settings.registry.crates.domains.meta]
-format = "domain_list"
-
-# -- Web ---------------------------------------------------------------------
-
-[settings.web]
+[settings.security.web]
 name = "Web"
-description = "Network access control and web services"
-collapsed = false
-
-[settings.web.defaults]
-name = "Defaults"
 description = "Default actions for unknown domains"
 
-[settings.web.defaults.allow_read]
+[settings.security.web.allow_read]
 name = "Allow read requests"
 description = "Allow GET/HEAD/OPTIONS for domains not in any allow/block list."
 type = "bool"
 default = false
 
-[settings.web.defaults.allow_write]
+[settings.security.web.allow_write]
 name = "Allow write requests"
 description = "Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list."
 type = "bool"
 default = false
 
-[settings.web.custom_allow]
+[settings.security.web.custom_allow]
 name = "Allowed domains"
 description = "Comma-separated domain patterns to allow. Wildcards supported (*.example.com)."
 type = "text"
 default = "elie.net, *.elie.net, ash-speed.hetzner.com, en.wikipedia.org, *.wikipedia.org"
 
-[settings.web.custom_allow.meta]
+[settings.security.web.custom_allow.meta]
 format = "domain_list"
 
-[settings.web.custom_block]
+[settings.security.web.custom_block]
 name = "Blocked domains"
 description = "Comma-separated domain patterns to block. Takes priority over custom allow list."
 type = "text"
 default = ""
 
-[settings.web.custom_block.meta]
+[settings.security.web.custom_block.meta]
 format = "domain_list"
 
-[settings.web.search]
+# -- Security > Services -----------------------------------------------------
+
+[settings.security.services]
+name = "Services"
+description = "Search engines and package registries"
+
+# -- Security > Services > Search Engines ------------------------------------
+
+[settings.security.services.search]
 name = "Search Engines"
 description = "Web search engine access"
 
-[settings.web.search.google]
+[settings.security.services.search.google]
 name = "Google"
 description = "Google web search"
-enabled_by = "web.search.google.allow"
+enabled_by = "security.services.search.google.allow"
 
-[settings.web.search.google.allow]
+[settings.security.services.search.google.allow]
 name = "Allow Google"
 description = "Enable access to Google web search."
 type = "bool"
 default = true
 
-[settings.web.search.google.allow.meta]
+[settings.security.services.search.google.allow.meta]
 domains = ["www.google.com", "google.com"]
 
-[settings.web.search.google.allow.meta.rules.default]
+[settings.security.services.search.google.allow.meta.rules.default]
 get = true
 
-[settings.web.search.google.domains]
+[settings.security.services.search.google.domains]
 name = "Google Domains"
 description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
 type = "text"
 default = "www.google.com, google.com"
 
-[settings.web.search.google.domains.meta]
+[settings.security.services.search.google.domains.meta]
 format = "domain_list"
 
-[settings.web.search.bing]
+[settings.security.services.search.bing]
 name = "Bing"
 description = "Microsoft Bing web search"
-enabled_by = "web.search.bing.allow"
+enabled_by = "security.services.search.bing.allow"
 
-[settings.web.search.bing.allow]
+[settings.security.services.search.bing.allow]
 name = "Allow Bing"
 description = "Enable access to Bing web search."
 type = "bool"
 default = false
 
-[settings.web.search.bing.allow.meta]
+[settings.security.services.search.bing.allow.meta]
 domains = ["www.bing.com", "bing.com"]
 
-[settings.web.search.bing.allow.meta.rules.default]
+[settings.security.services.search.bing.allow.meta.rules.default]
 get = true
 
-[settings.web.search.bing.domains]
+[settings.security.services.search.bing.domains]
 name = "Bing Domains"
 description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
 type = "text"
 default = "www.bing.com, bing.com"
 
-[settings.web.search.bing.domains.meta]
+[settings.security.services.search.bing.domains.meta]
 format = "domain_list"
 
-[settings.web.search.duckduckgo]
+[settings.security.services.search.duckduckgo]
 name = "DuckDuckGo"
 description = "DuckDuckGo web search"
-enabled_by = "web.search.duckduckgo.allow"
+enabled_by = "security.services.search.duckduckgo.allow"
 
-[settings.web.search.duckduckgo.allow]
+[settings.security.services.search.duckduckgo.allow]
 name = "Allow DuckDuckGo"
 description = "Enable access to DuckDuckGo web search."
 type = "bool"
 default = false
 
-[settings.web.search.duckduckgo.allow.meta]
+[settings.security.services.search.duckduckgo.allow.meta]
 domains = ["duckduckgo.com", "*.duckduckgo.com"]
 
-[settings.web.search.duckduckgo.allow.meta.rules.default]
+[settings.security.services.search.duckduckgo.allow.meta.rules.default]
 get = true
 
-[settings.web.search.duckduckgo.domains]
+[settings.security.services.search.duckduckgo.domains]
 name = "DuckDuckGo Domains"
 description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
 type = "text"
 default = "duckduckgo.com, *.duckduckgo.com"
 
-[settings.web.search.duckduckgo.domains.meta]
+[settings.security.services.search.duckduckgo.domains.meta]
+format = "domain_list"
+
+# -- Security > Services > Package Registries --------------------------------
+
+[settings.security.services.registry]
+name = "Package Registries"
+description = "Package manager registries"
+
+[settings.security.services.registry.debian]
+name = "Debian"
+description = "Debian package repositories"
+enabled_by = "security.services.registry.debian.allow"
+
+[settings.security.services.registry.debian.allow]
+name = "Allow Debian"
+description = "Enable access to deb.debian.org and security.debian.org for apt package installs."
+type = "bool"
+default = true
+
+[settings.security.services.registry.debian.allow.meta]
+domains = ["deb.debian.org", "security.debian.org"]
+
+[settings.security.services.registry.debian.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.debian.domains]
+name = "Debian Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "deb.debian.org, security.debian.org"
+
+[settings.security.services.registry.debian.domains.meta]
+format = "domain_list"
+
+[settings.security.services.registry.npm]
+name = "npm"
+description = "npm package registry"
+enabled_by = "security.services.registry.npm.allow"
+
+[settings.security.services.registry.npm.allow]
+name = "Allow npm"
+description = "Enable access to the npm package registry."
+type = "bool"
+default = true
+
+[settings.security.services.registry.npm.allow.meta]
+domains = ["registry.npmjs.org", "*.npmjs.org"]
+
+[settings.security.services.registry.npm.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.npm.domains]
+name = "npm Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "registry.npmjs.org, *.npmjs.org"
+
+[settings.security.services.registry.npm.domains.meta]
+format = "domain_list"
+
+[settings.security.services.registry.pypi]
+name = "PyPI"
+description = "Python Package Index"
+enabled_by = "security.services.registry.pypi.allow"
+
+[settings.security.services.registry.pypi.allow]
+name = "Allow PyPI"
+description = "Enable access to the Python Package Index."
+type = "bool"
+default = true
+
+[settings.security.services.registry.pypi.allow.meta]
+domains = ["pypi.org", "files.pythonhosted.org"]
+
+[settings.security.services.registry.pypi.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.pypi.domains]
+name = "PyPI Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "pypi.org, files.pythonhosted.org"
+
+[settings.security.services.registry.pypi.domains.meta]
+format = "domain_list"
+
+[settings.security.services.registry.crates]
+name = "crates.io"
+description = "Rust crate registry"
+enabled_by = "security.services.registry.crates.allow"
+
+[settings.security.services.registry.crates.allow]
+name = "Allow crates.io"
+description = "Enable access to the Rust crate registry."
+type = "bool"
+default = true
+
+[settings.security.services.registry.crates.allow.meta]
+domains = ["crates.io", "static.crates.io"]
+
+[settings.security.services.registry.crates.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.crates.domains]
+name = "crates.io Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "crates.io, static.crates.io"
+
+[settings.security.services.registry.crates.domains.meta]
 format = "domain_list"
 
 # -- VM ----------------------------------------------------------------------
@@ -670,6 +692,16 @@ set -g message-style "bg=default,fg=colour4"
 
 [settings.vm.environment.shell.tmux_conf.meta]
 filetype = "conf"
+
+[settings.vm.environment.ssh]
+name = "SSH"
+description = "SSH key configuration"
+
+[settings.vm.environment.ssh.public_key]
+name = "SSH public key"
+description = "Public key injected as /root/.ssh/authorized_keys in the guest VM."
+type = "text"
+default = ""
 
 [settings.vm.environment.tls]
 name = "TLS"

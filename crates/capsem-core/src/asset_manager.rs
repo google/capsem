@@ -1,17 +1,161 @@
 //! Asset manager for downloading and verifying VM assets.
 //!
 //! VM assets (rootfs) are too large to bundle in the DMG. The asset manager
-//! downloads them on first launch and verifies integrity via blake3 hashes
-//! embedded in the app bundle (B3SUMS file).
+//! downloads them on first launch and verifies integrity via blake3 hashes.
 //!
-//! Asset storage: `~/.capsem/assets/`
-//! Hash source: B3SUMS file in app bundle (compile-time embedded hashes)
+//! Asset storage: `~/.capsem/assets/v{version}/` (versioned subdirectories)
+//! Hash source: manifest.json in app bundle (multi-version rolling manifest),
+//!              with backward compatibility for legacy B3SUMS files.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
+
+// ---------------------------------------------------------------------------
+// Manifest types (multi-version rolling manifest)
+// ---------------------------------------------------------------------------
+
+/// A single asset entry in a release.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManifestAsset {
+    pub filename: String,
+    pub hash: String,
+    pub size: u64,
+}
+
+/// Assets for a single release version.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseEntry {
+    pub assets: Vec<ManifestAsset>,
+}
+
+/// Multi-version rolling manifest listing all released asset versions.
+///
+/// Bundled in the DMG as a build-time snapshot. Remote copy accumulates
+/// entries across releases.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Manifest {
+    pub latest: String,
+    pub releases: HashMap<String, ReleaseEntry>,
+}
+
+/// Validate a version string (no path traversal).
+fn validate_version(version: &str) -> Result<()> {
+    if version.is_empty() {
+        bail!("version string is empty");
+    }
+    if version.contains("..") || version.contains('/') || version.contains('\\') {
+        bail!("version contains path traversal: {version}");
+    }
+    Ok(())
+}
+
+/// Validate a filename (no path separators or traversal).
+fn validate_filename(filename: &str) -> Result<()> {
+    if filename.is_empty() {
+        bail!("filename is empty");
+    }
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        bail!("filename contains path traversal: {filename}");
+    }
+    Ok(())
+}
+
+impl Manifest {
+    /// Parse a manifest from JSON.
+    pub fn from_json(content: &str) -> Result<Self> {
+        let manifest: Manifest =
+            serde_json::from_str(content).context("invalid manifest JSON")?;
+        // Validate all versions and filenames.
+        validate_version(&manifest.latest)?;
+        for (version, entry) in &manifest.releases {
+            validate_version(version)?;
+            if entry.assets.is_empty() {
+                bail!("release {version} has no assets");
+            }
+            for asset in &entry.assets {
+                validate_filename(&asset.filename)?;
+                if asset.hash.len() != 64 || !asset.hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                    bail!(
+                        "invalid blake3 hash for {}/{}: {}",
+                        version,
+                        asset.filename,
+                        asset.hash
+                    );
+                }
+            }
+        }
+        if manifest.releases.is_empty() {
+            bail!("manifest has no releases");
+        }
+        Ok(manifest)
+    }
+
+    /// Create a Manifest from a legacy B3SUMS file content.
+    ///
+    /// Wraps a single B3SUMS into the multi-version format with one release entry.
+    pub fn from_b3sums(content: &str, version: &str) -> Result<Self> {
+        validate_version(version)?;
+        let entries = parse_b3sums(content)?;
+        if entries.is_empty() {
+            bail!("B3SUMS manifest is empty");
+        }
+        let assets = entries
+            .into_iter()
+            .map(|e| ManifestAsset {
+                filename: e.filename,
+                hash: e.hash,
+                size: 0, // unknown from B3SUMS
+            })
+            .collect();
+        let mut releases = HashMap::new();
+        releases.insert(version.to_string(), ReleaseEntry { assets });
+        Ok(Manifest {
+            latest: version.to_string(),
+            releases,
+        })
+    }
+
+    /// Look up a release entry by version.
+    pub fn release_for(&self, version: &str) -> Option<&ReleaseEntry> {
+        self.releases.get(version)
+    }
+
+    /// Merge another manifest into this one. Newer `latest` wins.
+    pub fn merge(&mut self, other: &Manifest) {
+        for (version, entry) in &other.releases {
+            self.releases
+                .entry(version.clone())
+                .or_insert_with(|| entry.clone());
+        }
+        // Simple semver-ish comparison: the other's latest wins if it is
+        // lexicographically greater, which works for well-formed versions.
+        if other.latest > self.latest {
+            self.latest = other.latest.clone();
+        }
+    }
+
+    /// Convert the release entry for a given version into legacy ManifestEntry list.
+    fn entries_for(&self, version: &str) -> Option<Vec<ManifestEntry>> {
+        self.release_for(version).map(|r| {
+            r.assets
+                .iter()
+                .map(|a| ManifestEntry {
+                    hash: a.hash.clone(),
+                    filename: a.filename.clone(),
+                })
+                .collect()
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Asset status and download types
+// ---------------------------------------------------------------------------
 
 /// Status of a single asset after checking local storage against expected hash.
 #[derive(Debug, Clone)]
@@ -44,16 +188,17 @@ pub struct ManifestEntry {
 
 /// The asset manager checks, downloads, and verifies VM assets.
 pub struct AssetManager {
-    /// Directory where downloaded assets are stored (~/.capsem/assets/).
+    /// Directory where downloaded assets are stored (version-scoped).
+    /// For versioned layout: `~/.capsem/assets/v{version}/`
     assets_dir: PathBuf,
     /// Base URL for downloading assets (GitHub Releases).
     base_url: String,
-    /// Parsed manifest entries from B3SUMS.
+    /// Parsed manifest entries for the target version.
     manifest: Vec<ManifestEntry>,
 }
 
 impl AssetManager {
-    /// Create a new asset manager.
+    /// Create a new asset manager from a B3SUMS file (legacy API).
     ///
     /// `assets_dir` is where downloaded assets live (~/.capsem/assets/).
     /// `base_url` is the GitHub Releases download base, e.g.
@@ -68,6 +213,32 @@ impl AssetManager {
             assets_dir,
             base_url,
             manifest,
+        })
+    }
+
+    /// Create a new asset manager from a multi-version Manifest.
+    ///
+    /// `manifest` is the parsed rolling manifest.
+    /// `version` is the target release version (e.g. "0.9.0").
+    /// `assets_base_dir` is `~/.capsem/assets/` -- the version subdirectory is appended.
+    pub fn from_manifest(
+        manifest: &Manifest,
+        version: &str,
+        assets_base_dir: PathBuf,
+    ) -> Result<Self> {
+        validate_version(version)?;
+        let entries = manifest
+            .entries_for(version)
+            .with_context(|| format!("version {version} not found in manifest"))?;
+        if entries.is_empty() {
+            bail!("no assets for version {version}");
+        }
+        let assets_dir = assets_base_dir.join(format!("v{version}"));
+        let base_url = release_url(version);
+        Ok(Self {
+            assets_dir,
+            base_url,
+            manifest: entries,
         })
     }
 
@@ -122,6 +293,11 @@ impl AssetManager {
 
     /// Download an asset, verify its hash, and atomically move it into place.
     ///
+    /// Supports resuming partial downloads: if a `.tmp` file exists from a
+    /// previous attempt, sends an HTTP Range header to continue where it left
+    /// off. Falls back to a fresh download if the server doesn't support Range
+    /// or returns an unexpected status.
+    ///
     /// Calls `progress_cb` with download progress updates.
     /// Returns the final path on success.
     pub async fn download_asset<F>(
@@ -148,36 +324,66 @@ impl AssetManager {
             .await
             .context("failed to create assets directory")?;
 
-        info!(url = %url, dest = %dest.display(), "downloading asset");
+        // Check for a resumable partial download.
+        let existing_bytes = match tokio::fs::metadata(&tmp).await {
+            Ok(m) if m.len() > 0 => m.len(),
+            _ => 0,
+        };
+
+        info!(url = %url, dest = %dest.display(), resume_from = existing_bytes, "downloading asset");
 
         progress_cb(DownloadProgress {
             asset: filename.to_string(),
-            bytes_downloaded: 0,
+            bytes_downloaded: existing_bytes,
             total_bytes: 0,
             phase: "connecting".to_string(),
         });
 
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .context("download request failed")?;
-
-        if !response.status().is_success() {
-            bail!(
-                "download failed: HTTP {} for {}",
-                response.status(),
-                url
-            );
+        // Try a Range request if we have partial data.
+        let mut request = client.get(&url);
+        if existing_bytes > 0 {
+            request = request.header("Range", format!("bytes={existing_bytes}-"));
         }
 
-        let total_bytes = response.content_length().unwrap_or(0);
-        let mut bytes_downloaded: u64 = 0;
+        let response = request.send().await.context("download request failed")?;
+        let status = response.status();
 
-        // Stream to temp file.
-        let mut file = tokio::fs::File::create(&tmp)
+        // Determine whether we're resuming or starting fresh.
+        let (mut bytes_downloaded, append) = if existing_bytes > 0
+            && status == reqwest::StatusCode::PARTIAL_CONTENT
+        {
+            info!(resume_from = existing_bytes, "resuming partial download");
+            (existing_bytes, true)
+        } else if status.is_success() {
+            // Server returned 200 (no Range support) or we had no partial file.
+            if existing_bytes > 0 {
+                info!("server does not support Range, restarting download");
+            }
+            (0u64, false)
+        } else if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            // Partial file may be corrupt or larger than remote. Start fresh.
+            info!("range not satisfiable, restarting download");
+            (0u64, false)
+        } else {
+            bail!("download failed: HTTP {} for {}", status, url);
+        };
+
+        let total_bytes = if append {
+            // Content-Range response: total size is existing + remaining.
+            existing_bytes + response.content_length().unwrap_or(0)
+        } else {
+            response.content_length().unwrap_or(0)
+        };
+
+        // Open temp file: append if resuming, create/truncate if starting fresh.
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(append)
+            .truncate(!append)
+            .open(&tmp)
             .await
-            .context("failed to create temp file")?;
+            .context("failed to open temp file")?;
 
         let mut stream = response.bytes_stream();
         use futures::StreamExt;
@@ -236,6 +442,10 @@ impl AssetManager {
     }
 
     /// Clean up files in assets_dir that are NOT referenced by the manifest.
+    ///
+    /// Keeps `.tmp` files for manifest assets (partial downloads eligible for
+    /// resume). Removes `.tmp` files for non-manifest assets and all other
+    /// unrecognized files.
     pub fn cleanup_unrecognized(&self) -> Result<Vec<PathBuf>> {
         let mut removed = Vec::new();
         if !self.assets_dir.exists() {
@@ -248,8 +458,13 @@ impl AssetManager {
             let entry = entry?;
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            // Skip temp files (will be cleaned up on next download).
             if name_str.ends_with(".tmp") {
+                // Keep .tmp files whose base name is in the manifest (resumable).
+                let base = name_str.trim_end_matches(".tmp");
+                if known.contains(base) {
+                    debug!(file = %name_str, "keeping resumable partial download");
+                    continue;
+                }
                 let _ = std::fs::remove_file(entry.path());
                 removed.push(entry.path());
                 continue;
@@ -363,6 +578,92 @@ pub fn release_url(version: &str) -> String {
     format!(
         "https://github.com/google/capsem/releases/download/v{version}"
     )
+}
+
+/// Clean up old versioned asset directories, keeping current + pinned versions.
+///
+/// Scans `base_dir/v*/` directories. Keeps `current_version` and any versions
+/// listed in `base_dir/pinned.json` (a JSON array of version strings).
+/// Returns paths that were removed.
+pub fn cleanup_old_versions(base_dir: &Path, current_version: &str) -> Result<Vec<PathBuf>> {
+    let mut removed = Vec::new();
+    if !base_dir.exists() {
+        return Ok(removed);
+    }
+
+    // Read pinned versions.
+    let pinned_path = base_dir.join("pinned.json");
+    let pinned: std::collections::HashSet<String> = if pinned_path.exists() {
+        let content = std::fs::read_to_string(&pinned_path)
+            .context("failed to read pinned.json")?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let current_dir_name = format!("v{current_version}");
+
+    for entry in std::fs::read_dir(base_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        // Only consider versioned directories (v*).
+        if !name_str.starts_with('v') || !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        // Keep current version.
+        if name_str == current_dir_name {
+            continue;
+        }
+
+        // Keep pinned versions.
+        let version = &name_str[1..]; // strip "v" prefix
+        if pinned.contains(version) {
+            continue;
+        }
+
+        // Remove this old version directory.
+        info!(version = %name_str, "removing old asset version");
+        let path = entry.path();
+        let _ = std::fs::remove_dir_all(&path);
+        removed.push(path);
+    }
+
+    Ok(removed)
+}
+
+/// Migrate flat asset layout to versioned layout.
+///
+/// If `base_dir/rootfs.squashfs` exists (old flat layout), move it to
+/// `base_dir/v{version}/rootfs.squashfs`. Idempotent.
+pub fn migrate_flat_layout(base_dir: &Path, version: &str) -> Result<bool> {
+    validate_version(version)?;
+    let flat_rootfs = base_dir.join("rootfs.squashfs");
+    if !flat_rootfs.exists() {
+        return Ok(false);
+    }
+
+    let versioned_dir = base_dir.join(format!("v{version}"));
+    std::fs::create_dir_all(&versioned_dir)
+        .context("failed to create versioned assets directory")?;
+
+    let dest = versioned_dir.join("rootfs.squashfs");
+    if dest.exists() {
+        // Already migrated; just remove the flat file.
+        let _ = std::fs::remove_file(&flat_rootfs);
+        return Ok(true);
+    }
+
+    std::fs::rename(&flat_rootfs, &dest)
+        .context("failed to move rootfs to versioned directory")?;
+    info!(
+        from = %flat_rootfs.display(),
+        to = %dest.display(),
+        "migrated flat asset layout to versioned"
+    );
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -577,15 +878,18 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
     // ---- cleanup_unrecognized tests ----
 
     #[test]
-    fn cleanup_removes_unknown_files() {
+    fn cleanup_removes_unknown_files_keeps_resumable() {
         let dir = tempfile::tempdir().unwrap();
         let assets = dir.path().join("assets");
         std::fs::create_dir_all(&assets).unwrap();
 
-        // Create recognized and unrecognized files.
+        // Create recognized, unrecognized, and partial download files.
         std::fs::write(assets.join("vmlinuz"), b"kernel").unwrap();
         std::fs::write(assets.join("stale.ext4"), b"old rootfs").unwrap();
+        // .tmp for a manifest asset -- should be kept (resumable).
         std::fs::write(assets.join("rootfs.squashfs.tmp"), b"partial download").unwrap();
+        // .tmp for a non-manifest asset -- should be removed.
+        std::fs::write(assets.join("unknown.tmp"), b"orphan").unwrap();
 
         let mgr = AssetManager::new(
             assets.clone(),
@@ -595,10 +899,11 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
         .unwrap();
 
         let removed = mgr.cleanup_unrecognized().unwrap();
-        assert_eq!(removed.len(), 2);
+        assert_eq!(removed.len(), 2); // stale.ext4 + unknown.tmp
         assert!(assets.join("vmlinuz").exists());
         assert!(!assets.join("stale.ext4").exists());
-        assert!(!assets.join("rootfs.squashfs.tmp").exists());
+        assert!(assets.join("rootfs.squashfs.tmp").exists()); // kept for resume
+        assert!(!assets.join("unknown.tmp").exists());
     }
 
     #[test]
@@ -668,5 +973,223 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
             Some("a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c")
         );
         assert_eq!(mgr.expected_hash("nonexistent"), None);
+    }
+
+    // ---- Manifest tests ----
+
+    const SAMPLE_MANIFEST_JSON: &str = r#"{
+        "latest": "0.9.0",
+        "releases": {
+            "0.9.0": {
+                "assets": [
+                    {"filename": "rootfs.squashfs", "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 314572800}
+                ]
+            },
+            "0.8.8": {
+                "assets": [
+                    {"filename": "rootfs.squashfs", "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 310000000}
+                ]
+            }
+        }
+    }"#;
+
+    #[test]
+    fn manifest_from_json_roundtrip() {
+        let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        assert_eq!(manifest.latest, "0.9.0");
+        assert_eq!(manifest.releases.len(), 2);
+        let r = manifest.release_for("0.9.0").unwrap();
+        assert_eq!(r.assets.len(), 1);
+        assert_eq!(r.assets[0].filename, "rootfs.squashfs");
+        assert_eq!(r.assets[0].size, 314572800);
+    }
+
+    #[test]
+    fn manifest_from_json_rejects_empty_releases() {
+        let json = r#"{"latest": "0.9.0", "releases": {}}"#;
+        assert!(Manifest::from_json(json).is_err());
+    }
+
+    #[test]
+    fn manifest_from_json_rejects_bad_hash() {
+        let json = r#"{"latest": "0.9.0", "releases": {"0.9.0": {"assets": [{"filename": "rootfs.squashfs", "hash": "short", "size": 100}]}}}"#;
+        assert!(Manifest::from_json(json).is_err());
+    }
+
+    #[test]
+    fn manifest_from_json_rejects_empty_assets() {
+        let json = r#"{"latest": "0.9.0", "releases": {"0.9.0": {"assets": []}}}"#;
+        assert!(Manifest::from_json(json).is_err());
+    }
+
+    #[test]
+    fn manifest_from_json_rejects_invalid_json() {
+        assert!(Manifest::from_json("not json").is_err());
+    }
+
+    #[test]
+    fn manifest_release_lookup() {
+        let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        assert!(manifest.release_for("0.9.0").is_some());
+        assert!(manifest.release_for("0.8.8").is_some());
+        assert!(manifest.release_for("0.7.0").is_none());
+    }
+
+    #[test]
+    fn manifest_merge() {
+        let mut m1 = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        let m2_json = r#"{
+            "latest": "0.9.1",
+            "releases": {
+                "0.9.1": {
+                    "assets": [
+                        {"filename": "rootfs.squashfs", "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 320000000}
+                    ]
+                },
+                "0.8.8": {
+                    "assets": [
+                        {"filename": "rootfs.squashfs", "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 1}
+                    ]
+                }
+            }
+        }"#;
+        let m2 = Manifest::from_json(m2_json).unwrap();
+        m1.merge(&m2);
+
+        // Latest should be updated to newer.
+        assert_eq!(m1.latest, "0.9.1");
+        // Should have 3 releases: 0.8.8, 0.9.0, 0.9.1.
+        assert_eq!(m1.releases.len(), 3);
+        // 0.8.8 should retain original (merge doesn't overwrite existing).
+        assert_eq!(
+            m1.release_for("0.8.8").unwrap().assets[0].hash,
+            "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"
+        );
+        // 0.9.1 added.
+        assert!(m1.release_for("0.9.1").is_some());
+    }
+
+    #[test]
+    fn manifest_from_b3sums_compat() {
+        let manifest = Manifest::from_b3sums(SAMPLE_B3SUMS, "0.8.8").unwrap();
+        assert_eq!(manifest.latest, "0.8.8");
+        assert_eq!(manifest.releases.len(), 1);
+        let r = manifest.release_for("0.8.8").unwrap();
+        assert_eq!(r.assets.len(), 3);
+        assert_eq!(r.assets[0].filename, "vmlinuz");
+        assert_eq!(r.assets[0].size, 0); // unknown from B3SUMS
+    }
+
+    #[test]
+    fn manifest_from_b3sums_empty() {
+        assert!(Manifest::from_b3sums("", "0.8.8").is_err());
+    }
+
+    #[test]
+    fn version_scoped_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        let mgr = AssetManager::from_manifest(&manifest, "0.9.0", dir.path().to_path_buf()).unwrap();
+        assert!(mgr.assets_dir().ends_with("v0.9.0"));
+    }
+
+    #[test]
+    fn from_manifest_missing_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        assert!(AssetManager::from_manifest(&manifest, "99.99.99", dir.path().to_path_buf()).is_err());
+    }
+
+    #[test]
+    fn version_traversal_rejected() {
+        assert!(validate_version("../etc").is_err());
+        assert!(validate_version("foo/bar").is_err());
+        assert!(validate_version("").is_err());
+        assert!(validate_version("0.9.0").is_ok());
+    }
+
+    #[test]
+    fn filename_traversal_rejected() {
+        assert!(validate_filename("../../x").is_err());
+        assert!(validate_filename("path/to/file").is_err());
+        assert!(validate_filename("").is_err());
+        assert!(validate_filename("rootfs.squashfs").is_ok());
+    }
+
+    // ---- cleanup_old_versions tests ----
+
+    #[test]
+    fn cleanup_old_versions_keeps_current_and_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::create_dir_all(base.join("v0.8.7")).unwrap();
+        std::fs::create_dir_all(base.join("v0.8.8")).unwrap();
+        std::fs::create_dir_all(base.join("v0.9.0")).unwrap();
+        std::fs::write(base.join("v0.8.7/rootfs.squashfs"), b"old").unwrap();
+        std::fs::write(base.join("v0.8.8/rootfs.squashfs"), b"pinned").unwrap();
+        std::fs::write(base.join("v0.9.0/rootfs.squashfs"), b"current").unwrap();
+
+        // Pin 0.8.8.
+        std::fs::write(base.join("pinned.json"), r#"["0.8.8"]"#).unwrap();
+
+        let removed = cleanup_old_versions(base, "0.9.0").unwrap();
+        assert_eq!(removed.len(), 1);
+        assert!(!base.join("v0.8.7").exists());
+        assert!(base.join("v0.8.8").exists());
+        assert!(base.join("v0.9.0").exists());
+    }
+
+    #[test]
+    fn cleanup_old_versions_respects_pinned_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::create_dir_all(base.join("v0.8.7")).unwrap();
+        std::fs::create_dir_all(base.join("v0.9.0")).unwrap();
+
+        // Pin 0.8.7.
+        std::fs::write(base.join("pinned.json"), r#"["0.8.7"]"#).unwrap();
+
+        let removed = cleanup_old_versions(base, "0.9.0").unwrap();
+        assert!(removed.is_empty());
+        assert!(base.join("v0.8.7").exists());
+    }
+
+    #[test]
+    fn cleanup_old_versions_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let removed = cleanup_old_versions(dir.path(), "0.9.0").unwrap();
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn cleanup_old_versions_nonexistent_dir() {
+        let removed = cleanup_old_versions(Path::new("/nonexistent/dir"), "0.9.0").unwrap();
+        assert!(removed.is_empty());
+    }
+
+    // ---- migration tests ----
+
+    #[test]
+    fn migration_flat_to_versioned() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::write(base.join("rootfs.squashfs"), b"rootfs data").unwrap();
+
+        let migrated = migrate_flat_layout(base, "0.9.0").unwrap();
+        assert!(migrated);
+        assert!(!base.join("rootfs.squashfs").exists());
+        assert!(base.join("v0.9.0/rootfs.squashfs").exists());
+
+        // Idempotent: second call should still succeed.
+        // (flat file gone, but versioned exists -- no-op)
+        let migrated2 = migrate_flat_layout(base, "0.9.0").unwrap();
+        assert!(!migrated2);
+    }
+
+    #[test]
+    fn migration_no_flat_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let migrated = migrate_flat_layout(dir.path(), "0.9.0").unwrap();
+        assert!(!migrated);
     }
 }

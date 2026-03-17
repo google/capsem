@@ -1,22 +1,28 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Sidebar from './Sidebar.svelte';
-  import DownloadProgress from './DownloadProgress.svelte';
   import TerminalView from '../views/TerminalView.svelte';
   import StatsView from '../views/StatsView.svelte';
   import SettingsView from '../views/SettingsView.svelte';
   import WizardView from '../views/WizardView.svelte';
   import { sidebarStore } from '../stores/sidebar.svelte';
+  import { mcpStore } from '../stores/mcp.svelte';
   import { settingsStore } from '../stores/settings.svelte';
   import { themeStore } from '../stores/theme.svelte';
   import { vmStore } from '../stores/vm.svelte';
+  import { wizardStore } from '../stores/wizard.svelte';
 
   let checkedFirstRun = $state(false);
+
+  const showWizard = $derived(
+    !wizardStore.completed && ((checkedFirstRun && settingsStore.needsSetup) || wizardStore.forceRerun)
+  );
 
   onMount(() => {
     themeStore.init();
     vmStore.init();
     settingsStore.load();
+    mcpStore.load();
   });
 
   $effect(() => {
@@ -26,12 +32,17 @@
   });
 </script>
 
-<div class="flex h-screen w-screen overflow-hidden bg-base-100 text-base-content">
-  <Sidebar />
-  <div class="flex flex-1 flex-col min-w-0">
-    {#if vmStore.isDownloading}
-      <DownloadProgress />
-    {:else}
+{#if showWizard}
+  <!-- Full-width wizard (no sidebar) -->
+  <div class="flex h-screen w-screen overflow-hidden bg-base-100 text-base-content">
+    <div class="flex flex-1 flex-col min-w-0">
+      <WizardView />
+    </div>
+  </div>
+{:else}
+  <div class="flex h-screen w-screen overflow-hidden bg-base-100 text-base-content">
+    <Sidebar />
+    <div class="flex flex-1 flex-col min-w-0">
       <!-- Content area: terminal is always mounted, hidden with visibility to avoid refit flash -->
       <div class="flex-1 min-h-0 relative">
         <div
@@ -44,10 +55,8 @@
           <StatsView />
         {:else if sidebarStore.activeView === 'settings'}
           <SettingsView />
-        {:else if sidebarStore.activeView === 'wizard'}
-          <WizardView />
         {/if}
       </div>
-    {/if}
+    </div>
   </div>
-</div>
+{/if}

@@ -1,5 +1,6 @@
 pub mod asset_manager;
 pub mod gateway;
+pub mod host_config;
 pub mod host_state;
 pub mod mcp;
 pub mod net;

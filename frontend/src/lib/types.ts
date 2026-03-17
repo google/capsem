@@ -122,6 +122,12 @@ export interface DownloadProgress {
   phase: string;
 }
 
+/** Info about an available app update. */
+export interface UpdateInfo {
+  version: string;
+  current_version: string;
+}
+
 /** Sidebar view names. */
 export type ViewName = 'terminal' | 'stats' | 'settings' | 'wizard';
 
@@ -164,6 +170,10 @@ export interface TraceModelCall {
   duration_ms: number;
   estimated_cost_usd: number;
   stop_reason: string | null;
+  request_body_preview: string | null;
+  system_prompt_preview: string | null;
+  messages_count: number;
+  tools_count: number;
 }
 
 /** A tool call entry (joined from tool_calls table). */
@@ -186,7 +196,7 @@ export interface ToolResponseEntry {
 }
 
 /** A span within the trace viewer (thinking, text, or tool call). */
-export type SpanType = 'thinking' | 'text' | 'tool' | 'net_event' | 'mcp_call' | 'file_event';
+export type SpanType = 'thinking' | 'text' | 'tool' | 'model_input' | 'net_event' | 'mcp_call' | 'file_event';
 
 /** Detail panel selection. */
 export interface DetailSelection {
@@ -210,12 +220,14 @@ export interface ToolAnnotations {
 /** Info about a configured MCP server. */
 export interface McpServerInfo {
   name: string;
-  command: string;
-  args: string[];
+  url: string;
+  has_bearer_token: boolean;
+  custom_header_count: number;
   source: string;
   enabled: boolean;
   running: boolean;
   tool_count: number;
+  unsupported_stdio: boolean;
 }
 
 /** Info about a discovered MCP tool. */
@@ -283,3 +295,23 @@ export interface SettingsLeaf {
 
 /** A settings tree node: either a group or a leaf. */
 export type SettingsNode = SettingsGroup | SettingsLeaf;
+
+/** Host configuration detected from the macOS host. */
+export interface HostConfig {
+  git_name: string | null;
+  git_email: string | null;
+  ssh_public_key: string | null;
+  anthropic_api_key: string | null;
+  google_api_key: string | null;
+  openai_api_key: string | null;
+  github_token: string | null;
+}
+
+/** A security preset definition. */
+export interface SecurityPreset {
+  id: string;
+  name: string;
+  description: string;
+  settings: Record<string, SettingValue>;
+  mcp: { default_tool_permission?: string } | null;
+}

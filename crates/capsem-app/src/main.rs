@@ -19,7 +19,6 @@ use capsem_core::{
 };
 use capsem_core::asset_manager::{self, AssetManager, AssetStatus, DownloadProgress};
 use capsem_core::mcp::gateway::{self, McpGatewayConfig};
-use capsem_core::mcp::policy::McpPolicy;
 use capsem_core::mcp::server_manager::McpServerManager;
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
@@ -95,13 +94,21 @@ fn resolve_assets_dir() -> Result<PathBuf> {
     ))
 }
 
-/// Resolve rootfs path, checking bundled assets first, then ~/.capsem/assets/.
+/// Resolve rootfs path, checking bundled assets first, then versioned download dir,
+/// then legacy flat download dir.
 fn resolve_rootfs(bundled_assets: &Path) -> Option<PathBuf> {
     let bundled = bundled_assets.join("rootfs.squashfs");
     if bundled.exists() {
         return Some(bundled);
     }
     if let Some(download_dir) = asset_manager::default_assets_dir() {
+        // Check versioned directory first.
+        let version = env!("CARGO_PKG_VERSION");
+        let versioned = download_dir.join(format!("v{version}")).join("rootfs.squashfs");
+        if versioned.exists() {
+            return Some(versioned);
+        }
+        // Fallback to legacy flat layout.
         let downloaded = download_dir.join("rootfs.squashfs");
         if downloaded.exists() {
             return Some(downloaded);
@@ -110,14 +117,33 @@ fn resolve_rootfs(bundled_assets: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Load B3SUMS manifest from bundled assets and create an AssetManager.
+/// Load manifest from bundled assets and create an AssetManager.
+///
+/// Tries manifest.json first (multi-version), falls back to B3SUMS (legacy).
+/// Uses version-scoped directories: `~/.capsem/assets/v{version}/`.
 fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager> {
-    let b3sums_path = bundled_assets.join("B3SUMS");
-    let b3sums_content = std::fs::read_to_string(&b3sums_path)
-        .context("B3SUMS not found in app bundle")?;
     let version = env!("CARGO_PKG_VERSION");
     let download_dir = asset_manager::default_assets_dir()
         .context("cannot determine home directory")?;
+
+    // Try manifest.json first (new multi-version format).
+    let manifest_path = bundled_assets.join("manifest.json");
+    if manifest_path.exists() {
+        let content = std::fs::read_to_string(&manifest_path)
+            .context("failed to read manifest.json")?;
+        let manifest = asset_manager::Manifest::from_json(&content)
+            .context("invalid manifest.json")?;
+
+        // Migrate flat layout if present.
+        let _ = asset_manager::migrate_flat_layout(&download_dir, version);
+
+        return AssetManager::from_manifest(&manifest, version, download_dir);
+    }
+
+    // Fall back to legacy B3SUMS.
+    let b3sums_path = bundled_assets.join("B3SUMS");
+    let b3sums_content = std::fs::read_to_string(&b3sums_path)
+        .context("neither manifest.json nor B3SUMS found in app bundle")?;
     let base_url = asset_manager::release_url(version);
     AssetManager::new(download_dir, base_url, &b3sums_content)
 }
@@ -242,19 +268,19 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
     // Age-based culling (terminate, not delete).
     let settings = policy_config::load_merged_settings();
     let retention_days = settings.iter()
-        .find(|s| s.id == "vm.retention_days")
+        .find(|s| s.id == "vm.resources.retention_days")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(30) as u32;
     let max_sessions = settings.iter()
-        .find(|s| s.id == "vm.max_sessions")
+        .find(|s| s.id == "vm.resources.max_sessions")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(100) as usize;
     let max_disk_gb = settings.iter()
-        .find(|s| s.id == "vm.max_disk_gb")
+        .find(|s| s.id == "vm.resources.max_disk_gb")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(100) as u64;
     let terminated_retention_days = settings.iter()
-        .find(|s| s.id == "vm.terminated_retention_days")
+        .find(|s| s.id == "vm.resources.terminated_retention_days")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(365) as u32;
 
@@ -1176,6 +1202,10 @@ fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) -> R
     let guest_config = policy_config::load_merged_guest_config();
     let mut env_count: usize = 0;
 
+    // Track what we actually send for the injection test manifest.
+    let mut sent_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut sent_files: Vec<serde_json::Value> = Vec::new();
+
     if let Some(env) = guest_config.env {
         for (key, value) in env {
             if env_count >= MAX_BOOT_ENV_VARS {
@@ -1190,6 +1220,7 @@ fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) -> R
                 warn!("skipping boot env var {key}: {e}");
                 continue;
             }
+            sent_env.insert(key.clone(), value.clone());
             write_control_msg(file, &HostToGuest::SetEnv { key, value })?;
             env_count += 1;
         }
@@ -1209,6 +1240,7 @@ fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) -> R
             warn!("skipping CLI --env {key}: {e}");
             continue;
         }
+        sent_env.insert(key.clone(), value.clone());
         write_control_msg(
             file,
             &HostToGuest::SetEnv {
@@ -1242,6 +1274,10 @@ fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) -> R
         }
         total_file_bytes += data.len();
         file_count += 1;
+        sent_files.push(serde_json::json!({
+            "path": &f.path,
+            "mode": f.mode,
+        }));
         write_control_msg(
             file,
             &HostToGuest::FileWrite {
@@ -1252,7 +1288,25 @@ fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) -> R
         )?;
     }
 
-    // 5. Signal done.
+    // 5. Send injection manifest (for in-VM injection tests).
+    // The manifest records what we actually sent so the guest can verify
+    // every env var and file arrived correctly.
+    let manifest = serde_json::json!({
+        "env": &sent_env,
+        "files": &sent_files,
+    });
+    write_control_msg(
+        file,
+        &HostToGuest::FileWrite {
+            path: "/tmp/capsem-injection-manifest.json".to_string(),
+            data: serde_json::to_string_pretty(&manifest)
+                .unwrap_or_else(|_| "{}".to_string())
+                .into_bytes(),
+            mode: 0o644,
+        },
+    )?;
+
+    // 6. Signal done.
     write_control_msg(file, &HostToGuest::BootConfigDone)?;
 
     Ok(())
@@ -1365,7 +1419,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     eprintln!("[capsem] session: {cli_session_id}");
 
     // Create session directory and scratch disk for CLI mode.
-    let vm_settings = policy_config::load_merged_vm_settings();
+    let policies = policy_config::MergedPolicies::from_disk();
+    let vm_settings = policies.vm;
     let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(16);
     let cpu_count = vm_settings.cpu_count.unwrap_or(4);
     let ram_gb = vm_settings.ram_gb.unwrap_or(4);
@@ -1411,7 +1466,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     let (vm, mut rx, _serial_input_fd, _sm) = boot_vm(
         &assets,
         rootfs_path.as_deref(),
-        "console=hvc0 ro loglevel=1",
+        "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
         scratch_path.as_deref(),
         cpu_count,
         ram_bytes,
@@ -1437,22 +1492,57 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         })
     });
 
-    // Create MCP gateway config for vsock:5003.
+    // Create MCP gateway config for vsock:5003 using pre-built policies.
+    let (user_sf, corp_sf) = policy_config::load_settings_files();
+    let user_mcp = user_sf.mcp.clone().unwrap_or_default();
+    let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
+    let mcp_servers = capsem_core::mcp::build_server_list(&user_mcp, &corp_mcp);
     let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
-        let domain_policy = policy_config::load_merged_domain_policy();
+        let http_client = reqwest::Client::builder()
+            .user_agent("capsem-mcp/0.8")
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .expect("reqwest client");
         Arc::new(McpGatewayConfig {
-            server_manager: tokio::sync::Mutex::new(McpServerManager::new(vec![])),
+            server_manager: tokio::sync::Mutex::new(McpServerManager::new(mcp_servers.clone(), http_client.clone())),
             db: Arc::clone(&ns.db),
-            policy: tokio::sync::RwLock::new(Arc::new(McpPolicy::new())),
-            domain_policy: std::sync::RwLock::new(Arc::new(domain_policy)),
-            http_client: reqwest::Client::builder()
-                .user_agent("capsem-mcp/0.8")
-                .timeout(std::time::Duration::from_secs(30))
-                .redirect(reqwest::redirect::Policy::limited(10))
-                .build()
-                .expect("reqwest client"),
+            policy: tokio::sync::RwLock::new(Arc::new(policies.mcp)),
+            domain_policy: std::sync::RwLock::new(Arc::new(policies.domain)),
+            http_client,
         })
     });
+
+    // Initialize MCP servers and run tool pinning (blocking in CLI mode).
+    if let Some(ref config) = mcp_config {
+        let config = Arc::clone(config);
+        rt.block_on(async {
+            let mut mgr = config.server_manager.lock().await;
+            if let Err(e) = mgr.initialize_all().await {
+                warn!("MCP server initialization failed: {e:#}");
+            }
+            // Tool cache pinning (detect rug pulls).
+            let cache = capsem_core::mcp::load_tool_cache();
+            let changes = capsem_core::mcp::detect_pin_changes(mgr.tool_catalog(), &cache);
+            for change in &changes {
+                match change {
+                    capsem_core::mcp::PinChange::Changed { namespaced_name, .. } => {
+                        warn!(tool = %namespaced_name, "MCP tool definition changed (possible rug pull)");
+                    }
+                    capsem_core::mcp::PinChange::New { namespaced_name } => {
+                        info!(tool = %namespaced_name, "new MCP tool discovered");
+                    }
+                    capsem_core::mcp::PinChange::Removed { namespaced_name } => {
+                        info!(tool = %namespaced_name, "MCP tool removed");
+                    }
+                }
+            }
+            let new_cache = capsem_core::mcp::build_cache_entries(mgr.tool_catalog(), &cache);
+            if let Err(e) = capsem_core::mcp::save_tool_cache(&new_cache) {
+                warn!("failed to save MCP tool cache: {e}");
+            }
+        });
+    }
 
     // Print serial boot logs to stderr in a background thread.
     std::thread::spawn(move || {
@@ -1824,7 +1914,7 @@ fn gui_boot_vm(
     cpu_count: u32,
     ram_bytes: u64,
 ) {
-    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1", scratch_path.as_deref(), cpu_count, ram_bytes) {
+    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), cpu_count, ram_bytes) {
         Ok((vm, rx, input_fd, sm)) => {
             info!("VM booted successfully");
 
@@ -1852,22 +1942,61 @@ fn gui_boot_vm(
                 }
             };
 
-            // Create MCP gateway config for vsock:5003.
+            // Create MCP gateway config for vsock:5003 using MergedPolicies.
+            let gui_policies = policy_config::MergedPolicies::from_disk();
+            let (gui_user_sf, gui_corp_sf) = policy_config::load_settings_files();
+            let gui_user_mcp = gui_user_sf.mcp.clone().unwrap_or_default();
+            let gui_corp_mcp = gui_corp_sf.mcp.clone().unwrap_or_default();
+            let mcp_servers = capsem_core::mcp::build_server_list(&gui_user_mcp, &gui_corp_mcp);
             let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
-                let domain_policy = policy_config::load_merged_domain_policy();
+                let http_client = reqwest::Client::builder()
+                    .user_agent("capsem-mcp/0.8")
+                    .timeout(std::time::Duration::from_secs(30))
+                    .redirect(reqwest::redirect::Policy::limited(10))
+                    .build()
+                    .expect("reqwest client");
                 Arc::new(McpGatewayConfig {
-                    server_manager: tokio::sync::Mutex::new(McpServerManager::new(vec![])),
+                    server_manager: tokio::sync::Mutex::new(McpServerManager::new(mcp_servers.clone(), http_client.clone())),
                     db: Arc::clone(&ns.db),
-                    policy: tokio::sync::RwLock::new(Arc::new(McpPolicy::new())),
-                    domain_policy: std::sync::RwLock::new(Arc::new(domain_policy)),
-                    http_client: reqwest::Client::builder()
-                        .user_agent("capsem-mcp/0.8")
-                        .timeout(std::time::Duration::from_secs(30))
-                        .redirect(reqwest::redirect::Policy::limited(10))
-                        .build()
-                        .expect("reqwest client"),
+                    policy: tokio::sync::RwLock::new(Arc::new(gui_policies.mcp)),
+                    domain_policy: std::sync::RwLock::new(Arc::new(gui_policies.domain)),
+                    http_client,
                 })
             });
+
+            // Initialize MCP servers in background (non-blocking in GUI mode).
+            if let Some(ref config) = mcp_config {
+                let config = Arc::clone(config);
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut mgr = config.server_manager.lock().await;
+                    if let Err(e) = mgr.initialize_all().await {
+                        tracing::error!("MCP server initialization failed: {e:#}");
+                        let _ = h.emit("mcp-init-failed", format!("{e:#}"));
+                        return;
+                    }
+                    // Tool cache pinning (detect rug pulls).
+                    let cache = capsem_core::mcp::load_tool_cache();
+                    let changes = capsem_core::mcp::detect_pin_changes(mgr.tool_catalog(), &cache);
+                    for change in &changes {
+                        match change {
+                            capsem_core::mcp::PinChange::Changed { namespaced_name, .. } => {
+                                tracing::warn!(tool = %namespaced_name, "MCP tool definition changed (possible rug pull)");
+                            }
+                            capsem_core::mcp::PinChange::New { namespaced_name } => {
+                                tracing::info!(tool = %namespaced_name, "new MCP tool discovered");
+                            }
+                            capsem_core::mcp::PinChange::Removed { namespaced_name } => {
+                                tracing::info!(tool = %namespaced_name, "MCP tool removed");
+                            }
+                        }
+                    }
+                    let new_cache = capsem_core::mcp::build_cache_entries(mgr.tool_catalog(), &cache);
+                    if let Err(e) = capsem_core::mcp::save_tool_cache(&new_cache) {
+                        tracing::warn!("failed to save MCP tool cache: {e}");
+                    }
+                });
+            }
 
             // Store VM state.
             {
@@ -1982,6 +2111,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState::new(session_index))
         .setup(|app| {
             info!("tauri setup hook running");
@@ -1989,10 +2119,20 @@ fn main() {
             // Check for updates before booting the VM (the webview gets
             // replaced with VZVirtualMachineView after boot, so we use a
             // native dialog for the update prompt).
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                check_for_update(handle).await;
-            });
+            // Only check if the app.auto_update setting is enabled.
+            let auto_update = {
+                let settings = policy_config::load_merged_settings();
+                settings.iter()
+                    .find(|s| s.id == "app.auto_update")
+                    .and_then(|s| s.effective_value.as_bool())
+                    .unwrap_or(true)
+            };
+            if auto_update {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    check_for_update(handle).await;
+                });
+            }
 
             let assets = match resolve_assets_dir() {
                 Ok(a) => a,
@@ -2119,6 +2259,13 @@ fn main() {
                     }).await {
                         Ok(rootfs) => {
                             info!("rootfs downloaded to {}", rootfs.display());
+                            // Clean up old version directories.
+                            if let Some(base) = asset_manager::default_assets_dir() {
+                                let version = env!("CARGO_PKG_VERSION");
+                                if let Err(e) = asset_manager::cleanup_old_versions(&base, version) {
+                                    warn!("cleanup old versions failed: {e:#}");
+                                }
+                            }
                             gui_boot_vm(
                                 &handle, &assets_clone, Some(&rootfs),
                                 &session_id, scratch, cpu_count, ram_bytes,
@@ -2150,9 +2297,25 @@ fn main() {
             commands::get_settings,
             commands::get_settings_tree,
             commands::lint_config,
+            commands::list_presets,
+            commands::apply_preset,
             commands::update_setting,
             commands::get_session_info,
             commands::query_db,
+            commands::get_mcp_servers,
+            commands::get_mcp_tools,
+            commands::get_mcp_policy,
+            commands::set_mcp_server_enabled,
+            commands::add_mcp_server,
+            commands::remove_mcp_server,
+            commands::set_mcp_global_policy,
+            commands::set_mcp_default_permission,
+            commands::set_mcp_tool_permission,
+            commands::approve_mcp_tool,
+            commands::refresh_mcp_tools,
+            commands::open_url,
+            commands::detect_host_config,
+            commands::check_for_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

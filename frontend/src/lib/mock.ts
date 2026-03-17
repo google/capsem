@@ -2,6 +2,7 @@
 // Active when window.__TAURI_INTERNALS__ is absent.
 import type {
   ConfigIssue,
+  HostConfig,
   McpPolicyInfo,
   McpServerInfo,
   McpToolInfo,
@@ -15,6 +16,9 @@ import type {
 } from './types';
 
 export const isMock = typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__;
+
+// Callback stored from onVmStateChanged for download-complete transition.
+let mockVmStateCallback: ((state: string) => void) | null = null;
 
 // ---------------------------------------------------------------------------
 // Static mock data
@@ -191,127 +195,128 @@ let mockSettings: ResolvedSetting[] = [
     enabled_by: 'repository.providers.gitlab.allow', enabled: false,
     metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://gitlab.com/-/user_settings/personal_access_tokens', prefix: 'glpat-' },
   }),
-  // -- Package Registries --
+  // -- Security > Web --
   ms({
-    id: 'registry.debian.allow', category: 'Package Registries', name: 'Allow Debian', setting_type: 'bool',
-    description: 'Enable access to Debian package repositories.',
-    default_value: true, effective_value: true,
-    metadata: { domains: ['deb.debian.org', 'security.debian.org'], choices: [], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'registry.debian.domains', category: 'Package Registries', name: 'Debian Domains', setting_type: 'text',
-    description: 'Comma-separated domain patterns.',
-    default_value: 'deb.debian.org, security.debian.org',
-    effective_value: 'deb.debian.org, security.debian.org',
-    enabled_by: 'registry.debian.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
-  }),
-  ms({
-    id: 'registry.npm.allow', category: 'Package Registries', name: 'Allow npm', setting_type: 'bool',
-    description: 'Enable access to the npm package registry.',
-    default_value: true, effective_value: true,
-    metadata: { domains: ['registry.npmjs.org', '*.npmjs.org'], choices: [], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'registry.npm.domains', category: 'Package Registries', name: 'npm Domains', setting_type: 'text',
-    description: 'Comma-separated domain patterns.',
-    default_value: 'registry.npmjs.org, *.npmjs.org',
-    effective_value: 'registry.npmjs.org, *.npmjs.org',
-    enabled_by: 'registry.npm.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
-  }),
-  ms({
-    id: 'registry.pypi.allow', category: 'Package Registries', name: 'Allow PyPI', setting_type: 'bool',
-    description: 'Enable access to the Python Package Index.',
-    default_value: true, effective_value: true,
-    metadata: { domains: ['pypi.org', 'files.pythonhosted.org'], choices: [], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'registry.pypi.domains', category: 'Package Registries', name: 'PyPI Domains', setting_type: 'text',
-    description: 'Comma-separated domain patterns.',
-    default_value: 'pypi.org, files.pythonhosted.org',
-    effective_value: 'pypi.org, files.pythonhosted.org',
-    enabled_by: 'registry.pypi.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
-  }),
-  ms({
-    id: 'registry.crates.allow', category: 'Package Registries', name: 'Allow crates.io', setting_type: 'bool',
-    description: 'Enable access to the Rust crate registry.',
-    default_value: true, effective_value: true,
-    metadata: { domains: ['crates.io', 'static.crates.io'], choices: [], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'registry.crates.domains', category: 'Package Registries', name: 'crates.io Domains', setting_type: 'text',
-    description: 'Comma-separated domain patterns.',
-    default_value: 'crates.io, static.crates.io',
-    effective_value: 'crates.io, static.crates.io',
-    enabled_by: 'registry.crates.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
-  }),
-  // -- Web --
-  ms({
-    id: 'web.defaults.allow_read', category: 'Web', name: 'Allow read requests', setting_type: 'bool',
+    id: 'security.web.allow_read', category: 'Security', name: 'Allow read requests', setting_type: 'bool',
     description: 'Allow GET/HEAD/OPTIONS for domains not in any allow/block list.',
     default_value: false, effective_value: false,
   }),
   ms({
-    id: 'web.defaults.allow_write', category: 'Web', name: 'Allow write requests', setting_type: 'bool',
+    id: 'security.web.allow_write', category: 'Security', name: 'Allow write requests', setting_type: 'bool',
     description: 'Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list.',
     default_value: false, effective_value: false,
   }),
   ms({
-    id: 'web.search.google.allow', category: 'Web', name: 'Allow Google', setting_type: 'bool',
-    description: 'Enable access to Google web search.',
-    default_value: true, effective_value: true,
-    metadata: { domains: ['www.google.com', 'google.com'], choices: [], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'web.search.google.domains', category: 'Web', name: 'Google Domains', setting_type: 'text',
-    description: 'Comma-separated domain patterns.',
-    default_value: 'www.google.com, google.com',
-    effective_value: 'www.google.com, google.com',
-    enabled_by: 'web.search.google.allow',
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
-  }),
-  ms({
-    id: 'web.search.bing.allow', category: 'Web', name: 'Allow Bing', setting_type: 'bool',
-    description: 'Enable access to Bing web search.',
-    default_value: false, effective_value: false,
-    metadata: { domains: ['www.bing.com', 'bing.com'], choices: [], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'web.search.bing.domains', category: 'Web', name: 'Bing Domains', setting_type: 'text',
-    description: 'Comma-separated domain patterns.',
-    default_value: 'www.bing.com, bing.com',
-    effective_value: 'www.bing.com, bing.com',
-    enabled_by: 'web.search.bing.allow', enabled: false,
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
-  }),
-  ms({
-    id: 'web.search.duckduckgo.allow', category: 'Web', name: 'Allow DuckDuckGo', setting_type: 'bool',
-    description: 'Enable access to DuckDuckGo web search.',
-    default_value: false, effective_value: false,
-    metadata: { domains: ['duckduckgo.com', '*.duckduckgo.com'], choices: [], min: null, max: null, rules: {} },
-  }),
-  ms({
-    id: 'web.search.duckduckgo.domains', category: 'Web', name: 'DuckDuckGo Domains', setting_type: 'text',
-    description: 'Comma-separated domain patterns.',
-    default_value: 'duckduckgo.com, *.duckduckgo.com',
-    effective_value: 'duckduckgo.com, *.duckduckgo.com',
-    enabled_by: 'web.search.duckduckgo.allow', enabled: false,
-    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
-  }),
-  ms({
-    id: 'web.custom_allow', category: 'Web', name: 'Allowed domains', setting_type: 'text',
+    id: 'security.web.custom_allow', category: 'Security', name: 'Allowed domains', setting_type: 'text',
     description: 'Comma-separated domain patterns to allow. Wildcards supported (*.example.com).',
     default_value: 'elie.net, *.elie.net, ash-speed.hetzner.com',
     effective_value: 'elie.net, *.elie.net, ash-speed.hetzner.com',
     metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
   }),
   ms({
-    id: 'web.custom_block', category: 'Web', name: 'Blocked domains', setting_type: 'text',
+    id: 'security.web.custom_block', category: 'Security', name: 'Blocked domains', setting_type: 'text',
     description: 'Comma-separated domain patterns to block. Takes priority over custom allow list.',
     default_value: '', effective_value: '',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  // -- Security > Services > Search Engines --
+  ms({
+    id: 'security.services.search.google.allow', category: 'Security', name: 'Allow Google', setting_type: 'bool',
+    description: 'Enable access to Google web search.',
+    default_value: true, effective_value: true,
+    metadata: { domains: ['www.google.com', 'google.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'security.services.search.google.domains', category: 'Security', name: 'Google Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'www.google.com, google.com',
+    effective_value: 'www.google.com, google.com',
+    enabled_by: 'security.services.search.google.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'security.services.search.bing.allow', category: 'Security', name: 'Allow Bing', setting_type: 'bool',
+    description: 'Enable access to Bing web search.',
+    default_value: false, effective_value: false,
+    metadata: { domains: ['www.bing.com', 'bing.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'security.services.search.bing.domains', category: 'Security', name: 'Bing Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'www.bing.com, bing.com',
+    effective_value: 'www.bing.com, bing.com',
+    enabled_by: 'security.services.search.bing.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'security.services.search.duckduckgo.allow', category: 'Security', name: 'Allow DuckDuckGo', setting_type: 'bool',
+    description: 'Enable access to DuckDuckGo web search.',
+    default_value: false, effective_value: false,
+    metadata: { domains: ['duckduckgo.com', '*.duckduckgo.com'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'security.services.search.duckduckgo.domains', category: 'Security', name: 'DuckDuckGo Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'duckduckgo.com, *.duckduckgo.com',
+    effective_value: 'duckduckgo.com, *.duckduckgo.com',
+    enabled_by: 'security.services.search.duckduckgo.allow', enabled: false,
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  // -- Security > Services > Package Registries --
+  ms({
+    id: 'security.services.registry.debian.allow', category: 'Security', name: 'Allow Debian', setting_type: 'bool',
+    description: 'Enable access to Debian package repositories.',
+    default_value: true, effective_value: true,
+    metadata: { domains: ['deb.debian.org', 'security.debian.org'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'security.services.registry.debian.domains', category: 'Security', name: 'Debian Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'deb.debian.org, security.debian.org',
+    effective_value: 'deb.debian.org, security.debian.org',
+    enabled_by: 'security.services.registry.debian.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'security.services.registry.npm.allow', category: 'Security', name: 'Allow npm', setting_type: 'bool',
+    description: 'Enable access to the npm package registry.',
+    default_value: true, effective_value: true,
+    metadata: { domains: ['registry.npmjs.org', '*.npmjs.org'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'security.services.registry.npm.domains', category: 'Security', name: 'npm Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'registry.npmjs.org, *.npmjs.org',
+    effective_value: 'registry.npmjs.org, *.npmjs.org',
+    enabled_by: 'security.services.registry.npm.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'security.services.registry.pypi.allow', category: 'Security', name: 'Allow PyPI', setting_type: 'bool',
+    description: 'Enable access to the Python Package Index.',
+    default_value: true, effective_value: true,
+    metadata: { domains: ['pypi.org', 'files.pythonhosted.org'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'security.services.registry.pypi.domains', category: 'Security', name: 'PyPI Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'pypi.org, files.pythonhosted.org',
+    effective_value: 'pypi.org, files.pythonhosted.org',
+    enabled_by: 'security.services.registry.pypi.allow',
+    metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
+  }),
+  ms({
+    id: 'security.services.registry.crates.allow', category: 'Security', name: 'Allow crates.io', setting_type: 'bool',
+    description: 'Enable access to the Rust crate registry.',
+    default_value: true, effective_value: true,
+    metadata: { domains: ['crates.io', 'static.crates.io'], choices: [], min: null, max: null, rules: {} },
+  }),
+  ms({
+    id: 'security.services.registry.crates.domains', category: 'Security', name: 'crates.io Domains', setting_type: 'text',
+    description: 'Comma-separated domain patterns.',
+    default_value: 'crates.io, static.crates.io',
+    effective_value: 'crates.io, static.crates.io',
+    enabled_by: 'security.services.registry.crates.allow',
     metadata: { domains: [], choices: [], min: null, max: null, rules: {}, format: 'domain_list' },
   }),
   // -- Appearance --
@@ -361,6 +366,11 @@ let mockSettings: ResolvedSetting[] = [
     default_value: { path: '/root/.tmux.conf', content: 'set -g default-terminal "tmux-256color"\nset -ag terminal-features ",xterm-256color:RGB"\nset -g mouse on\nset -g escape-time 0\nset -g history-limit 50000\nset -g status-style "bg=default,fg=colour8"\nset -g status-left ""\nset -g status-right ""\nset -g pane-border-style "fg=colour8"\nset -g pane-active-border-style "fg=colour4"\nset -g message-style "bg=default,fg=colour4"\n' },
     effective_value: { path: '/root/.tmux.conf', content: 'set -g default-terminal "tmux-256color"\nset -ag terminal-features ",xterm-256color:RGB"\nset -g mouse on\nset -g escape-time 0\nset -g history-limit 50000\nset -g status-style "bg=default,fg=colour8"\nset -g status-left ""\nset -g status-right ""\nset -g pane-border-style "fg=colour8"\nset -g pane-active-border-style "fg=colour4"\nset -g message-style "bg=default,fg=colour4"\n' },
     metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'conf' },
+  }),
+  ms({
+    id: 'vm.environment.ssh.public_key', category: 'VM', name: 'SSH public key', setting_type: 'text',
+    description: 'Public key injected as /root/.ssh/authorized_keys in the guest VM.',
+    default_value: '', effective_value: '',
   }),
   ms({
     id: 'vm.environment.tls.ca_bundle', category: 'VM', name: 'CA bundle path', setting_type: 'text',
@@ -541,72 +551,77 @@ function buildMockTree(): SettingsNode[] {
     ],
   },
   {
-    kind: 'group', key: 'registry', name: 'Package Registries', description: 'Package manager registries',
+    kind: 'group', key: 'security', name: 'Security', description: 'Network access control and security presets',
     collapsed: false, children: [
       {
-        kind: 'group', key: 'registry.debian', name: 'Debian', description: 'Debian package repositories',
-        enabled_by: 'registry.debian.allow', collapsed: false, children: [
-          leaf(mockSettings.find(s => s.id === 'registry.debian.allow')!),
-          leaf(mockSettings.find(s => s.id === 'registry.debian.domains')!),
-        ],
-      },
-      {
-        kind: 'group', key: 'registry.npm', name: 'npm', description: 'npm package registry',
-        enabled_by: 'registry.npm.allow', collapsed: false, children: [
-          leaf(mockSettings.find(s => s.id === 'registry.npm.allow')!),
-          leaf(mockSettings.find(s => s.id === 'registry.npm.domains')!),
-        ],
-      },
-      {
-        kind: 'group', key: 'registry.pypi', name: 'PyPI', description: 'Python Package Index',
-        enabled_by: 'registry.pypi.allow', collapsed: false, children: [
-          leaf(mockSettings.find(s => s.id === 'registry.pypi.allow')!),
-          leaf(mockSettings.find(s => s.id === 'registry.pypi.domains')!),
-        ],
-      },
-      {
-        kind: 'group', key: 'registry.crates', name: 'crates.io', description: 'Rust crate registry',
-        enabled_by: 'registry.crates.allow', collapsed: false, children: [
-          leaf(mockSettings.find(s => s.id === 'registry.crates.allow')!),
-          leaf(mockSettings.find(s => s.id === 'registry.crates.domains')!),
+        kind: 'group', key: 'security.web', name: 'Web', description: 'Default actions for unknown domains',
+        collapsed: false, children: [
+          leaf(mockSettings.find(s => s.id === 'security.web.allow_read')!),
+          leaf(mockSettings.find(s => s.id === 'security.web.allow_write')!),
+          leaf(mockSettings.find(s => s.id === 'security.web.custom_allow')!),
+          leaf(mockSettings.find(s => s.id === 'security.web.custom_block')!),
         ],
       },
     ],
   },
   {
-    kind: 'group', key: 'web', name: 'Web', description: 'Network access control and web services',
+    kind: 'group', key: 'services', name: 'Services', description: 'Search engines and package registries',
     collapsed: false, children: [
       {
-        kind: 'group', key: 'web.defaults', name: 'Defaults', description: 'Default actions for unknown domains',
+        kind: 'group', key: 'services.search', name: 'Search Engines', description: 'Web search engine access',
         collapsed: false, children: [
-          leaf(mockSettings.find(s => s.id === 'web.defaults.allow_read')!),
-          leaf(mockSettings.find(s => s.id === 'web.defaults.allow_write')!),
+          {
+            kind: 'group', key: 'security.services.search.google', name: 'Google', description: 'Google web search',
+            enabled_by: 'security.services.search.google.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'security.services.search.google.allow')!),
+              leaf(mockSettings.find(s => s.id === 'security.services.search.google.domains')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'security.services.search.bing', name: 'Bing', description: 'Microsoft Bing web search',
+            enabled_by: 'security.services.search.bing.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'security.services.search.bing.allow')!),
+              leaf(mockSettings.find(s => s.id === 'security.services.search.bing.domains')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'security.services.search.duckduckgo', name: 'DuckDuckGo', description: 'DuckDuckGo web search',
+            enabled_by: 'security.services.search.duckduckgo.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'security.services.search.duckduckgo.allow')!),
+              leaf(mockSettings.find(s => s.id === 'security.services.search.duckduckgo.domains')!),
+            ],
+          },
         ],
       },
-      leaf(mockSettings.find(s => s.id === 'web.custom_allow')!),
-      leaf(mockSettings.find(s => s.id === 'web.custom_block')!),
       {
-        kind: 'group', key: 'web.search', name: 'Search Engines', description: 'Web search engine access',
+        kind: 'group', key: 'services.registry', name: 'Package Registries', description: 'Package manager registries',
         collapsed: false, children: [
           {
-            kind: 'group', key: 'web.search.google', name: 'Google', description: 'Google web search',
-            enabled_by: 'web.search.google.allow', collapsed: false, children: [
-              leaf(mockSettings.find(s => s.id === 'web.search.google.allow')!),
-              leaf(mockSettings.find(s => s.id === 'web.search.google.domains')!),
+            kind: 'group', key: 'security.services.registry.debian', name: 'Debian', description: 'Debian package repositories',
+            enabled_by: 'security.services.registry.debian.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.debian.allow')!),
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.debian.domains')!),
             ],
           },
           {
-            kind: 'group', key: 'web.search.bing', name: 'Bing', description: 'Microsoft Bing web search',
-            enabled_by: 'web.search.bing.allow', collapsed: false, children: [
-              leaf(mockSettings.find(s => s.id === 'web.search.bing.allow')!),
-              leaf(mockSettings.find(s => s.id === 'web.search.bing.domains')!),
+            kind: 'group', key: 'security.services.registry.npm', name: 'npm', description: 'npm package registry',
+            enabled_by: 'security.services.registry.npm.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.npm.allow')!),
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.npm.domains')!),
             ],
           },
           {
-            kind: 'group', key: 'web.search.duckduckgo', name: 'DuckDuckGo', description: 'DuckDuckGo web search',
-            enabled_by: 'web.search.duckduckgo.allow', collapsed: false, children: [
-              leaf(mockSettings.find(s => s.id === 'web.search.duckduckgo.allow')!),
-              leaf(mockSettings.find(s => s.id === 'web.search.duckduckgo.domains')!),
+            kind: 'group', key: 'security.services.registry.pypi', name: 'PyPI', description: 'Python Package Index',
+            enabled_by: 'security.services.registry.pypi.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.pypi.allow')!),
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.pypi.domains')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'security.services.registry.crates', name: 'crates.io', description: 'Rust crate registry',
+            enabled_by: 'security.services.registry.crates.allow', collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.crates.allow')!),
+              leaf(mockSettings.find(s => s.id === 'security.services.registry.crates.domains')!),
             ],
           },
         ],
@@ -635,6 +650,12 @@ function buildMockTree(): SettingsNode[] {
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.lang')!),
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.bashrc')!),
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.tmux_conf')!),
+            ],
+          },
+          {
+            kind: 'group', key: 'vm.environment.ssh', name: 'SSH', description: 'SSH key configuration',
+            collapsed: false, children: [
+              leaf(mockSettings.find(s => s.id === 'vm.environment.ssh.public_key')!),
             ],
           },
           {
@@ -667,37 +688,54 @@ function buildMockTree(): SettingsNode[] {
 // MCP mock data
 // ---------------------------------------------------------------------------
 
-const MOCK_MCP_SERVERS: McpServerInfo[] = [
+let MOCK_MCP_SERVERS: McpServerInfo[] = [
   {
     name: 'github',
-    command: 'npx',
-    args: ['-y', '@github/mcp-server'],
-    source: 'claude',
+    url: 'https://mcp.github.com/v1',
+    has_bearer_token: true,
+    custom_header_count: 0,
+    source: 'manual',
     enabled: true,
     running: true,
     tool_count: 4,
+    unsupported_stdio: false,
   },
   {
     name: 'slack',
-    command: 'npx',
-    args: ['-y', '@slack/mcp-server'],
-    source: 'gemini',
+    url: 'https://mcp.slack.com/v1',
+    has_bearer_token: true,
+    custom_header_count: 1,
+    source: 'manual',
     enabled: true,
     running: true,
     tool_count: 3,
+    unsupported_stdio: false,
   },
   {
     name: 'internal-tools',
-    command: '/usr/local/bin/corp-mcp',
-    args: ['--config', '/etc/corp/mcp.json'],
+    url: 'https://corp.internal/mcp',
+    has_bearer_token: false,
+    custom_header_count: 0,
     source: 'manual',
     enabled: false,
     running: false,
     tool_count: 0,
+    unsupported_stdio: false,
+  },
+  {
+    name: 'filesystem',
+    url: 'npx -y @modelcontextprotocol/server-filesystem',
+    has_bearer_token: false,
+    custom_header_count: 0,
+    source: 'claude',
+    enabled: true,
+    running: false,
+    tool_count: 0,
+    unsupported_stdio: true,
   },
 ];
 
-const MOCK_MCP_TOOLS: McpToolInfo[] = [
+let MOCK_MCP_TOOLS: McpToolInfo[] = [
   {
     namespaced_name: 'github__search_repos',
     original_name: 'search_repos',
@@ -778,9 +816,40 @@ const MOCK_MCP_TOOLS: McpToolInfo[] = [
     approved: false,
     pin_changed: true,
   },
+  // Built-in tools
+  {
+    namespaced_name: 'fetch_http',
+    original_name: 'fetch_http',
+    description: 'Fetch a URL and return its text content',
+    server_name: 'builtin',
+    annotations: { title: 'Fetch HTTP', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'grep_http',
+    original_name: 'grep_http',
+    description: 'Fetch a URL and search its content for a regex pattern',
+    server_name: 'builtin',
+    annotations: { title: 'Grep HTTP', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'http_headers',
+    original_name: 'http_headers',
+    description: 'Return HTTP headers for a URL',
+    server_name: 'builtin',
+    annotations: { title: 'HTTP Headers', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
 ];
 
-const MOCK_MCP_POLICY: McpPolicyInfo = {
+let MOCK_MCP_POLICY: McpPolicyInfo = {
   global_policy: 'allow',
   default_tool_permission: 'allow',
   blocked_servers: [],
@@ -805,7 +874,7 @@ const MOCK_VM_STATE: VmStateResponse = {
 // ---------------------------------------------------------------------------
 
 export const mockApi = {
-  vmStatus: async () => 'running',
+  vmStatus: async () => 'downloading',
   serialInput: async (_input: string) => {},
   terminalResize: async (_cols: number, _rows: number) => {},
   getGuestConfig: async (): Promise<GuestConfigResponse> => ({ env: { TERM: 'xterm-256color', HOME: '/root' } }),
@@ -835,6 +904,64 @@ export const mockApi = {
   getSettings: async () => mockSettings.map(s => ({ ...s })),
   getSettingsTree: async () => buildMockTree(),
   lintConfig: async () => computeMockLint(),
+  listPresets: async () => [
+    {
+      id: 'medium',
+      name: 'Medium Security',
+      description: 'Allows read-only web access (GET/HEAD) and all search engines. Blocks write requests. MCP tools run without confirmation.',
+      settings: {
+        'security.web.allow_read': true,
+        'security.web.allow_write': false,
+        'security.services.search.google.allow': true,
+        'security.services.search.bing.allow': true,
+        'security.services.search.duckduckgo.allow': true,
+      },
+      mcp: { default_tool_permission: 'allow' },
+    },
+    {
+      id: 'high',
+      name: 'High Security',
+      description: 'Blocks all web access by default. Only Google search is allowed. MCP tools require confirmation before running.',
+      settings: {
+        'security.web.allow_read': false,
+        'security.web.allow_write': false,
+        'security.services.search.google.allow': true,
+        'security.services.search.bing.allow': false,
+        'security.services.search.duckduckgo.allow': false,
+      },
+      mcp: { default_tool_permission: 'warn' },
+    },
+  ],
+  applyPreset: async (id: string) => {
+    const presets: Record<string, Record<string, any>> = {
+      medium: {
+        'security.web.allow_read': true,
+        'security.web.allow_write': false,
+        'security.services.search.google.allow': true,
+        'security.services.search.bing.allow': true,
+        'security.services.search.duckduckgo.allow': true,
+      },
+      high: {
+        'security.web.allow_read': false,
+        'security.web.allow_write': false,
+        'security.services.search.google.allow': true,
+        'security.services.search.bing.allow': false,
+        'security.services.search.duckduckgo.allow': false,
+      },
+    };
+    const settings = presets[id];
+    if (!settings) return [];
+    for (const [key, value] of Object.entries(settings)) {
+      const s = mockSettings.find(s => s.id === key);
+      if (s && !s.corp_locked) {
+        s.effective_value = value;
+        s.source = 'user';
+        s.modified = new Date().toISOString();
+      }
+    }
+    recomputeEnabled();
+    return [];
+  },
   updateSetting: async (id: string, value: any) => {
     const s = mockSettings.find(s => s.id === id);
     if (!s || s.corp_locked) return;
@@ -847,13 +974,30 @@ export const mockApi = {
   getMcpServers: async (): Promise<McpServerInfo[]> => MOCK_MCP_SERVERS.map(s => ({ ...s })),
   getMcpTools: async (): Promise<McpToolInfo[]> => MOCK_MCP_TOOLS.map(t => ({ ...t })),
   getMcpPolicy: async (): Promise<McpPolicyInfo> => ({ ...MOCK_MCP_POLICY, tool_permissions: { ...MOCK_MCP_POLICY.tool_permissions } }),
-  setMcpServerEnabled: async (_name: string, _enabled: boolean) => {},
-  addMcpServer: async (_name: string, _command: string, _args: string[], _env: Record<string, string>) => {},
-  removeMcpServer: async (_name: string) => {},
-  setMcpGlobalPolicy: async (_policy: string) => {},
-  setMcpDefaultPermission: async (_permission: string) => {},
-  setMcpToolPermission: async (_tool: string, _permission: string) => {},
-  approveMcpTool: async (_tool: string) => {},
+  setMcpServerEnabled: async (name: string, enabled: boolean) => {
+    const s = MOCK_MCP_SERVERS.find(s => s.name === name);
+    if (s) { s.enabled = enabled; s.running = enabled; }
+  },
+  addMcpServer: async (name: string, url: string, _headers: Record<string, string>, bearerToken: string | null) => {
+    MOCK_MCP_SERVERS = [...MOCK_MCP_SERVERS, { name, url, has_bearer_token: !!bearerToken, custom_header_count: Object.keys(_headers).length, source: 'manual', enabled: true, running: true, tool_count: 0, unsupported_stdio: false }];
+  },
+  removeMcpServer: async (name: string) => {
+    MOCK_MCP_SERVERS = MOCK_MCP_SERVERS.filter(s => s.name !== name);
+    MOCK_MCP_TOOLS = MOCK_MCP_TOOLS.filter(t => t.server_name !== name);
+  },
+  setMcpGlobalPolicy: async (policy: string) => {
+    MOCK_MCP_POLICY = { ...MOCK_MCP_POLICY, global_policy: policy };
+  },
+  setMcpDefaultPermission: async (permission: string) => {
+    MOCK_MCP_POLICY = { ...MOCK_MCP_POLICY, default_tool_permission: permission };
+  },
+  setMcpToolPermission: async (tool: string, permission: string) => {
+    MOCK_MCP_POLICY = { ...MOCK_MCP_POLICY, tool_permissions: { ...MOCK_MCP_POLICY.tool_permissions, [tool]: permission } };
+  },
+  approveMcpTool: async (tool: string) => {
+    const t = MOCK_MCP_TOOLS.find(t => t.namespaced_name === tool);
+    if (t) { t.approved = true; t.pin_changed = false; }
+  },
   refreshMcpTools: async (_server?: string) => {},
   getSessionInfo: async (): Promise<SessionInfo> => ({
     session_id: '20260225-143052-a7f3',
@@ -875,9 +1019,22 @@ export const mockApi = {
     total_estimated_cost_usd: 0.42,
   }),
 
+  detectHostConfig: async (): Promise<HostConfig> => ({
+    git_name: 'Alice Example',
+    git_email: 'alice@example.com',
+    ssh_public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample alice@macbook',
+    anthropic_api_key: 'sk-ant-api03-detected...',
+    google_api_key: null,
+    openai_api_key: null,
+    github_token: 'ghp_detected1234567890',
+  }),
+
   // Event listeners return no-op unsubscribers in mock mode
   onSerialOutput: async (_cb: (data: number[]) => void) => () => {},
-  onVmStateChanged: async (_cb: (state: string) => void) => () => {},
+  onVmStateChanged: async (cb: (state: string) => void) => {
+    mockVmStateCallback = cb;
+    return () => { mockVmStateCallback = null; };
+  },
   onTerminalSourceChanged: async (_cb: (source: string) => void) => () => {},
   onDownloadProgress: async (cb: (progress: any) => void) => {
     // Simulate download progress for UI preview
@@ -888,10 +1045,17 @@ export const mockApi = {
     const iv = setInterval(() => {
       bytes = Math.min(bytes + step, total);
       cb({ asset: 'rootfs.squashfs', bytes_downloaded: bytes, total_bytes: total, phase: bytes >= total ? 'verifying' : 'downloading' });
-      if (bytes >= total) clearInterval(iv);
+      if (bytes >= total) {
+        clearInterval(iv);
+        // Fire vm state change to 'running' after download completes
+        if (mockVmStateCallback) {
+          setTimeout(() => mockVmStateCallback?.('running'), 1000);
+        }
+      }
     }, 400);
     return () => clearInterval(iv);
   },
+  checkForAppUpdate: async () => null,
 };
 
 // ---------------------------------------------------------------------------

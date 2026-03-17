@@ -6,11 +6,17 @@ import type {
   ConfigIssue,
   DownloadProgress,
   GuestConfigResponse,
+  HostConfig,
+  McpPolicyInfo,
+  McpServerInfo,
+  McpToolInfo,
   NetworkPolicyResponse,
   ResolvedSetting,
+  SecurityPreset,
   SessionInfo,
   SettingsNode,
   SettingValue,
+  UpdateInfo,
   VmStateResponse,
 } from './types';
 
@@ -86,9 +92,24 @@ export function lintConfig(): Promise<ConfigIssue[]> {
   return tauriInvoke<ConfigIssue[]>('lint_config');
 }
 
+export function listPresets(): Promise<SecurityPreset[]> {
+  if (isMock) return mockApi.listPresets();
+  return tauriInvoke<SecurityPreset[]>('list_presets');
+}
+
+export function applyPreset(id: string): Promise<string[]> {
+  if (isMock) return mockApi.applyPreset(id);
+  return tauriInvoke<string[]>('apply_preset', { id });
+}
+
 export function updateSetting(id: string, value: SettingValue): Promise<void> {
   if (isMock) return mockApi.updateSetting(id, value);
   return tauriInvoke('update_setting', { id, value });
+}
+
+export function detectHostConfig(): Promise<HostConfig> {
+  if (isMock) return mockApi.detectHostConfig();
+  return tauriInvoke<HostConfig>('detect_host_config');
 }
 
 export function getVmState(): Promise<VmStateResponse> {
@@ -99,6 +120,79 @@ export function getVmState(): Promise<VmStateResponse> {
 export function getSessionInfo(): Promise<SessionInfo> {
   if (isMock) return mockApi.getSessionInfo();
   return tauriInvoke<SessionInfo>('get_session_info');
+}
+
+// ---------------------------------------------------------------------------
+// MCP gateway commands
+// ---------------------------------------------------------------------------
+
+export function getMcpServers(): Promise<McpServerInfo[]> {
+  if (isMock) return mockApi.getMcpServers();
+  return tauriInvoke<McpServerInfo[]>('get_mcp_servers');
+}
+
+export function getMcpTools(): Promise<McpToolInfo[]> {
+  if (isMock) return mockApi.getMcpTools();
+  return tauriInvoke<McpToolInfo[]>('get_mcp_tools');
+}
+
+export function getMcpPolicy(): Promise<McpPolicyInfo> {
+  if (isMock) return mockApi.getMcpPolicy();
+  return tauriInvoke<McpPolicyInfo>('get_mcp_policy');
+}
+
+export function setMcpServerEnabled(name: string, enabled: boolean): Promise<void> {
+  if (isMock) return mockApi.setMcpServerEnabled(name, enabled);
+  return tauriInvoke('set_mcp_server_enabled', { name, enabled });
+}
+
+export function addMcpServer(
+  name: string,
+  url: string,
+  headers: Record<string, string>,
+  bearerToken: string | null,
+): Promise<void> {
+  if (isMock) return mockApi.addMcpServer(name, url, headers, bearerToken);
+  return tauriInvoke('add_mcp_server', { name, url, headers, bearerToken });
+}
+
+export function removeMcpServer(name: string): Promise<void> {
+  if (isMock) return mockApi.removeMcpServer(name);
+  return tauriInvoke('remove_mcp_server', { name });
+}
+
+export function setMcpGlobalPolicy(policy: string): Promise<void> {
+  if (isMock) return mockApi.setMcpGlobalPolicy(policy);
+  return tauriInvoke('set_mcp_global_policy', { policy });
+}
+
+export function setMcpDefaultPermission(permission: string): Promise<void> {
+  if (isMock) return mockApi.setMcpDefaultPermission(permission);
+  return tauriInvoke('set_mcp_default_permission', { permission });
+}
+
+export function setMcpToolPermission(tool: string, permission: string): Promise<void> {
+  if (isMock) return mockApi.setMcpToolPermission(tool, permission);
+  return tauriInvoke('set_mcp_tool_permission', { tool, permission });
+}
+
+export function approveMcpTool(tool: string): Promise<void> {
+  if (isMock) return mockApi.approveMcpTool(tool);
+  return tauriInvoke('approve_mcp_tool', { tool });
+}
+
+export function refreshMcpTools(server?: string): Promise<void> {
+  if (isMock) return mockApi.refreshMcpTools(server);
+  return tauriInvoke('refresh_mcp_tools', { server: server ?? null });
+}
+
+// ---------------------------------------------------------------------------
+// App update
+// ---------------------------------------------------------------------------
+
+export function checkForAppUpdate(): Promise<UpdateInfo | null> {
+  if (isMock) return mockApi.checkForAppUpdate();
+  return tauriInvoke<UpdateInfo | null>('check_for_app_update');
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +226,14 @@ export function onTerminalSourceChanged(
 ): Promise<UnlistenFn> {
   if (isMock) return mockApi.onTerminalSourceChanged(callback);
   return tauriListen<string>('terminal-source-changed', callback);
+}
+
+export function openUrl(url: string): Promise<void> {
+  if (isMock) {
+    window.open(url, '_blank');
+    return Promise.resolve();
+  }
+  return tauriInvoke('open_url', { url });
 }
 
 export function onDownloadProgress(

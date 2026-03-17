@@ -1,11 +1,30 @@
 <script lang="ts">
-  import type { ConfigIssue, SettingsGroup, SettingsLeaf, SettingsNode, SettingValue } from '../../types';
+  import type { ConfigIssue, SettingsGroup, SettingsLeaf, SettingsNode, SettingValue, UpdateInfo } from '../../types';
   import { settingsStore } from '../../stores/settings.svelte';
   import { themeStore } from '../../stores/theme.svelte';
-  import { openUrl } from '../../api';
+  import { openUrl, checkForAppUpdate } from '../../api';
   import Self from './SettingsSection.svelte';
+  import PresetSection from './PresetSection.svelte';
+  import { wizardStore } from '../../stores/wizard.svelte';
 
   let { group, depth = 0 }: { group: SettingsGroup; depth?: number } = $props();
+
+  // Update check state (only used for App group).
+  let updateChecking = $state(false);
+  let updateResult = $state<UpdateInfo | null | 'none' | 'error'>(null);
+
+  async function handleCheckUpdate() {
+    updateChecking = true;
+    updateResult = null;
+    try {
+      const info = await checkForAppUpdate();
+      updateResult = info ?? 'none';
+    } catch {
+      updateResult = 'error';
+    } finally {
+      updateChecking = false;
+    }
+  }
 
   /** Extract path + content from a File setting value. */
   function fileValue(v: SettingValue): { path: string; content: string } {
@@ -309,9 +328,6 @@
       {#if s.corp_locked}
         <span class="badge badge-xs bg-denied/15 text-denied">corp</span>
       {/if}
-      {#if s.source === 'user'}
-        <span class="badge badge-xs badge-outline text-file-modified">modified</span>
-      {/if}
       <!-- Copy button -->
       <button
         class="btn btn-ghost btn-xs text-base-content/40"
@@ -380,9 +396,6 @@
       {#if s.corp_locked}
         <span class="badge badge-xs bg-denied/15 text-denied">corp</span>
       {/if}
-      {#if s.source === 'user'}
-        <span class="badge badge-xs badge-outline text-file-modified">modified</span>
-      {/if}
     </div>
     {#if s.description}
       <p class="text-xs text-base-content/50 mb-1.5">{s.description}</p>
@@ -444,9 +457,6 @@
           <span class="text-sm font-medium">{s.name}</span>
           {#if s.corp_locked}
             <span class="badge badge-xs bg-denied/15 text-denied">corp</span>
-          {/if}
-          {#if s.source === 'user'}
-            <span class="badge badge-xs badge-outline text-file-modified">modified</span>
           {/if}
         </div>
         {#if s.description}
@@ -550,6 +560,48 @@
       <p class="text-sm text-base-content/50">{group.description}</p>
     {/if}
   </div>
+  {#if group.name === 'Security'}
+    <div id="settings-group-Preset" data-subgroup="Preset" class="mt-6 first:mt-0 mb-2 scroll-mt-4">
+      <h2 class="text-lg font-semibold text-interactive mb-0.5">Preset</h2>
+      <p class="text-xs text-base-content/50 mb-2">Predefined security configurations</p>
+      <PresetSection />
+    </div>
+  {/if}
+  {#if group.name === 'App'}
+    <div class="py-2 border-b border-base-200">
+      <div class="form-control">
+        <div class="flex items-start gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-0.5">
+              <span class="text-sm font-medium">Check for updates</span>
+            </div>
+            <p class="text-xs text-base-content/50 mb-1.5">Manually check if a new version is available</p>
+            {#if updateResult === 'none'}
+              <p class="text-xs text-allowed">You are on the latest version.</p>
+            {:else if updateResult === 'error'}
+              <p class="text-xs text-denied">Update check failed.</p>
+            {:else if updateResult && typeof updateResult === 'object'}
+              <p class="text-xs text-interactive">Version {updateResult.version} is available (current: {updateResult.current_version}).</p>
+            {/if}
+          </div>
+          <div class="flex-shrink-0">
+            <button
+              class="btn btn-sm btn-outline"
+              disabled={updateChecking}
+              onclick={handleCheckUpdate}
+            >
+              {#if updateChecking}
+                <span class="loading loading-spinner loading-xs"></span>
+                Checking...
+              {:else}
+                Check now
+              {/if}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 {/if}
 
 <!-- Render children -->
@@ -641,3 +693,21 @@
     {/if}
   {/if}
 {/each}
+
+<!-- Re-run Setup Wizard (VM section only) -->
+{#if depth === 0 && group.name === 'VM'}
+  <div class="mt-8 pt-4 border-t border-base-200">
+    <div class="flex items-center justify-between">
+      <div>
+        <span class="text-sm font-medium">Setup Wizard</span>
+        <p class="text-xs text-base-content/50">Re-run the first-time setup wizard to reconfigure providers, repositories, and security.</p>
+      </div>
+      <button
+        class="btn btn-ghost btn-sm"
+        onclick={() => wizardStore.rerun()}
+      >
+        Re-run Wizard
+      </button>
+    </div>
+  </div>
+{/if}

@@ -30,6 +30,7 @@ pub const SETTING_GITHUB_ALLOW: &str = "repository.providers.github.allow";
 pub const SETTING_GITHUB_TOKEN: &str = "repository.providers.github.token";
 pub const SETTING_GITLAB_ALLOW: &str = "repository.providers.gitlab.allow";
 pub const SETTING_GITLAB_TOKEN: &str = "repository.providers.gitlab.token";
+pub const SETTING_SSH_PUBLIC_KEY: &str = "vm.environment.ssh.public_key";
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -438,13 +439,177 @@ fn dirs_path(env_var: &str) -> Option<std::path::PathBuf> {
 }
 
 /// Load a settings file from disk. Returns empty SettingsFile if file missing.
+/// Applies automatic migration of old setting IDs to new ones.
 pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
     match std::fs::read_to_string(path) {
-        Ok(content) => toml::from_str(&content)
-            .map_err(|e| format!("failed to parse {}: {}", path.display(), e)),
+        Ok(content) => {
+            let mut file: SettingsFile = toml::from_str(&content)
+                .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+            migrate_setting_ids(&mut file);
+            Ok(file)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SettingsFile::default()),
         Err(e) => Err(format!("failed to read {}: {}", path.display(), e)),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Setting ID migration (old -> new)
+// ---------------------------------------------------------------------------
+
+/// Migration map: old setting IDs -> new setting IDs.
+const SETTING_ID_MIGRATIONS: &[(&str, &str)] = &[
+    ("web.defaults.allow_read", "security.web.allow_read"),
+    ("web.defaults.allow_write", "security.web.allow_write"),
+    ("web.custom_allow", "security.web.custom_allow"),
+    ("web.custom_block", "security.web.custom_block"),
+    ("web.search.google.allow", "security.services.search.google.allow"),
+    ("web.search.google.domains", "security.services.search.google.domains"),
+    ("web.search.bing.allow", "security.services.search.bing.allow"),
+    ("web.search.bing.domains", "security.services.search.bing.domains"),
+    ("web.search.duckduckgo.allow", "security.services.search.duckduckgo.allow"),
+    ("web.search.duckduckgo.domains", "security.services.search.duckduckgo.domains"),
+    ("registry.debian.allow", "security.services.registry.debian.allow"),
+    ("registry.debian.domains", "security.services.registry.debian.domains"),
+    ("registry.npm.allow", "security.services.registry.npm.allow"),
+    ("registry.npm.domains", "security.services.registry.npm.domains"),
+    ("registry.pypi.allow", "security.services.registry.pypi.allow"),
+    ("registry.pypi.domains", "security.services.registry.pypi.domains"),
+    ("registry.crates.allow", "security.services.registry.crates.allow"),
+    ("registry.crates.domains", "security.services.registry.crates.domains"),
+];
+
+/// Rename old setting IDs to new ones in a loaded settings file.
+pub fn migrate_setting_ids(file: &mut SettingsFile) {
+    for &(old, new) in SETTING_ID_MIGRATIONS {
+        if let Some(entry) = file.settings.remove(old) {
+            // Only migrate if the new key doesn't already exist (don't clobber).
+            file.settings.entry(new.to_string()).or_insert(entry);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Security presets
+// ---------------------------------------------------------------------------
+
+const MEDIUM_PRESET_TOML: &str = include_str!("../../../../config/presets/medium.toml");
+const HIGH_PRESET_TOML: &str = include_str!("../../../../config/presets/high.toml");
+
+/// Parsed preset TOML file format.
+#[derive(Deserialize, Debug)]
+struct PresetToml {
+    name: String,
+    description: String,
+    #[serde(default)]
+    settings: HashMap<String, toml::Value>,
+    #[serde(default)]
+    mcp: Option<PresetMcpConfig>,
+}
+
+/// MCP configuration within a preset.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PresetMcpConfig {
+    pub default_tool_permission: Option<crate::mcp::policy::ToolDecision>,
+}
+
+/// A security preset with its settings and MCP config.
+#[derive(Serialize, Debug, Clone)]
+pub struct SecurityPreset {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub settings: HashMap<String, SettingValue>,
+    pub mcp: Option<PresetMcpConfig>,
+}
+
+fn parse_preset(id: &str, toml_str: &str) -> SecurityPreset {
+    let parsed: PresetToml =
+        toml::from_str(toml_str).unwrap_or_else(|e| panic!("bad preset '{id}': {e}"));
+    let mut settings = HashMap::new();
+    for (key, val) in parsed.settings {
+        let sv = match val {
+            toml::Value::Boolean(b) => SettingValue::Bool(b),
+            toml::Value::Integer(n) => SettingValue::Number(n),
+            toml::Value::String(s) => SettingValue::Text(s),
+            _ => continue,
+        };
+        settings.insert(key, sv);
+    }
+    SecurityPreset {
+        id: id.to_string(),
+        name: parsed.name,
+        description: parsed.description,
+        settings,
+        mcp: parsed.mcp,
+    }
+}
+
+/// Returns all available security presets (compile-time embedded).
+pub fn security_presets() -> Vec<SecurityPreset> {
+    vec![
+        parse_preset("medium", MEDIUM_PRESET_TOML),
+        parse_preset("high", HIGH_PRESET_TOML),
+    ]
+}
+
+/// Apply a security preset by ID. Batch-writes settings to user.toml,
+/// skipping any corp-locked keys. Returns the list of skipped setting IDs.
+/// Also sets `mcp.default_tool_permission` if the preset specifies one.
+pub fn apply_preset(preset_id: &str) -> Result<Vec<String>, String> {
+    let user_path = user_config_path().ok_or("HOME not set")?;
+    let corp_path = corp_config_path();
+    apply_preset_to(preset_id, &user_path, &corp_path)
+}
+
+/// Internal: apply a preset with explicit file paths (testable without env vars).
+pub fn apply_preset_to(
+    preset_id: &str,
+    user_path: &Path,
+    corp_path: &Path,
+) -> Result<Vec<String>, String> {
+    let presets = security_presets();
+    let preset = presets
+        .iter()
+        .find(|p| p.id == preset_id)
+        .ok_or_else(|| format!("unknown preset: {preset_id}"))?;
+
+    let mut file = load_settings_file(user_path)?;
+    let corp = load_settings_file(corp_path)?;
+
+    let mut skipped = Vec::new();
+    let now = crate::session::now_iso();
+
+    for (key, value) in &preset.settings {
+        if corp.settings.contains_key(key) {
+            skipped.push(key.clone());
+            continue;
+        }
+        file.settings.insert(
+            key.clone(),
+            SettingEntry {
+                value: value.clone(),
+                modified: now.clone(),
+            },
+        );
+    }
+
+    // Apply MCP default_tool_permission if specified and not corp-locked.
+    if let Some(ref mcp_config) = preset.mcp {
+        if let Some(perm) = mcp_config.default_tool_permission {
+            let corp_mcp = corp.mcp.unwrap_or_default();
+            if corp_mcp.default_tool_permission.is_some() {
+                skipped.push("mcp.default_tool_permission".to_string());
+            } else {
+                let mut user_mcp = file.mcp.clone().unwrap_or_default();
+                user_mcp.default_tool_permission = Some(perm);
+                file.mcp = Some(user_mcp);
+            }
+        }
+    }
+
+    write_settings_file(user_path, &file)?;
+    Ok(skipped)
 }
 
 /// Write a settings file to disk as TOML. Creates parent dirs if needed.
@@ -684,7 +849,7 @@ fn corp_blocked_matches(candidate: &str, corp_blocked: &[String]) -> bool {
 /// - Bool toggles with domain metadata (registries) -> allow/block those domains
 /// - `.domains` Text settings -> allow/block parsed domain patterns
 /// - Corp-locked-off services use UNION of default + effective domains for blocking
-/// - Default action from web.defaults.allow_read / web.defaults.allow_write
+/// - Default action from security.web.allow_read / security.web.allow_write
 pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
     let mut allow_list: Vec<String> = Vec::new();
     let mut block_list: Vec<String> = Vec::new();
@@ -765,16 +930,16 @@ pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
         }
     }
 
-    // Custom allow/block lists from web.custom_allow / web.custom_block.
+    // Custom allow/block lists from security.web.custom_allow / security.web.custom_block.
     // Block takes priority over allow for overlapping domains.
     let custom_allow = resolved
         .iter()
-        .find(|s| s.id == "web.custom_allow")
+        .find(|s| s.id == "security.web.custom_allow")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_block = resolved
         .iter()
-        .find(|s| s.id == "web.custom_block")
+        .find(|s| s.id == "security.web.custom_block")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_allow_domains = parse_domain_list(custom_allow);
@@ -792,12 +957,12 @@ pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
 
     let allow_read = resolved
         .iter()
-        .find(|s| s.id == "web.defaults.allow_read")
+        .find(|s| s.id == "security.web.allow_read")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(false);
     let allow_write = resolved
         .iter()
-        .find(|s| s.id == "web.defaults.allow_write")
+        .find(|s| s.id == "security.web.allow_write")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(false);
     // Domain policy only has a single default action: allow if either read or write is allowed.
@@ -1050,6 +1215,20 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         });
     }
 
+    // SSH public key: write to /root/.ssh/authorized_keys if set.
+    let ssh_key = resolved
+        .iter()
+        .find(|s| s.id == SETTING_SSH_PUBLIC_KEY)
+        .and_then(|s| s.effective_value.as_text())
+        .unwrap_or("");
+    if !ssh_key.is_empty() {
+        files.push(GuestFile {
+            path: "/root/.ssh/authorized_keys".to_string(),
+            content: ssh_key.to_string() + "\n",
+            mode: 0o600,
+        });
+    }
+
     GuestConfig {
         env: if env.is_empty() { None } else { Some(env) },
         files: if files.is_empty() { None } else { Some(files) },
@@ -1185,39 +1364,60 @@ pub fn settings_to_vm_settings(resolved: &[ResolvedSetting]) -> VmSettings {
 // High-level entry points
 // ---------------------------------------------------------------------------
 
-/// Load and merge settings, then build an HttpPolicy.
-pub fn load_merged_policy() -> HttpPolicy {
-    let (user, corp) = load_settings_files();
-    let resolved = resolve_settings(&user, &corp);
-    settings_to_http_policy(&resolved)
-}
+// ---------------------------------------------------------------------------
+// MergedPolicies: single struct owning all merged policies
+// ---------------------------------------------------------------------------
 
-/// Build a `DomainPolicy` from merged settings.
+/// All merged policies from user + corp settings.
 ///
-/// Convenience wrapper matching the `load_merged_network_policy()` pattern.
-/// Used by the MCP gateway to check built-in HTTP tool domains.
-pub fn load_merged_domain_policy() -> DomainPolicy {
-    let (user, corp) = load_settings_files();
-    let resolved = resolve_settings(&user, &corp);
-    settings_to_domain_policy(&resolved)
+/// Built via `from_files()` (pure, hermetic) or `from_disk()` (loads from
+/// standard paths). Every policy type is derived from a single
+/// `resolve_settings()` call, ensuring consistency.
+pub struct MergedPolicies {
+    pub network: super::policy::NetworkPolicy,
+    pub domain: DomainPolicy,
+    pub http: HttpPolicy,
+    pub mcp: crate::mcp::policy::McpPolicy,
+    pub guest: GuestConfig,
+    pub vm: VmSettings,
 }
 
-/// Build a `NetworkPolicy` (new policy engine) from merged settings.
+impl MergedPolicies {
+    /// Pure merge function. No I/O, fully testable.
+    pub fn from_files(user: &SettingsFile, corp: &SettingsFile) -> Self {
+        let resolved = resolve_settings(user, corp);
+        let mcp_user = user.mcp.clone().unwrap_or_default();
+        let mcp_corp = corp.mcp.clone().unwrap_or_default();
+        Self {
+            network: build_network_policy(&resolved),
+            domain: settings_to_domain_policy(&resolved),
+            http: settings_to_http_policy(&resolved),
+            mcp: mcp_user.to_policy(&mcp_corp),
+            guest: settings_to_guest_config(&resolved),
+            vm: settings_to_vm_settings(&resolved),
+        }
+    }
+
+    /// Load from disk then merge. Falls back to defaults on any I/O error.
+    pub fn from_disk() -> Self {
+        let (user, corp) = load_settings_files();
+        Self::from_files(&user, &corp)
+    }
+}
+
+/// Build a `NetworkPolicy` from resolved settings (pure, no I/O).
 ///
 /// Bridges settings into per-domain read/write rules:
 /// - Disabled toggles with domains get read=false, write=false
 /// - Enabled toggles with domains get read=true, write=true
 /// - Default action maps to default_allow_read and default_allow_write
-pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
+pub fn build_network_policy(resolved: &[ResolvedSetting]) -> super::policy::NetworkPolicy {
     use super::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
-
-    let (user, corp) = load_settings_files();
-    let resolved = resolve_settings(&user, &corp);
 
     let mut rules = Vec::new();
 
     // Build rules from settings with domain metadata (registries)
-    for s in &resolved {
+    for s in resolved {
         if s.metadata.domains.is_empty() || s.setting_type != SettingType::Bool {
             continue;
         }
@@ -1234,7 +1434,7 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
     // Build rules from .domains text settings (AI providers)
     // Corp block enforcement: same two-pass approach as settings_to_domain_policy
     let mut corp_blocked: Vec<String> = Vec::new();
-    for s in &resolved {
+    for s in resolved {
         if !s.id.ends_with(".domains") || s.setting_type != SettingType::Text {
             continue;
         }
@@ -1263,7 +1463,7 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
             corp_blocked.extend(all);
         }
     }
-    for s in &resolved {
+    for s in resolved {
         if !s.id.ends_with(".domains") || s.setting_type != SettingType::Text {
             continue;
         }
@@ -1294,12 +1494,12 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
     // Custom allow/block lists: same pattern as settings_to_domain_policy
     let custom_allow_text = resolved
         .iter()
-        .find(|s| s.id == "web.custom_allow")
+        .find(|s| s.id == "security.web.custom_allow")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_block_text = resolved
         .iter()
-        .find(|s| s.id == "web.custom_block")
+        .find(|s| s.id == "security.web.custom_block")
         .and_then(|s| s.effective_value.as_text())
         .unwrap_or("");
     let custom_allow_domains = parse_domain_list(custom_allow_text);
@@ -1324,12 +1524,12 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
 
     let default_allow_read = resolved
         .iter()
-        .find(|s| s.id == "web.defaults.allow_read")
+        .find(|s| s.id == "security.web.allow_read")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(false);
     let default_allow_write = resolved
         .iter()
-        .find(|s| s.id == "web.defaults.allow_write")
+        .find(|s| s.id == "security.web.allow_write")
         .and_then(|s| s.effective_value.as_bool())
         .unwrap_or(false);
 
@@ -1351,18 +1551,36 @@ pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
     policy
 }
 
+// ---------------------------------------------------------------------------
+// High-level entry points (thin wrappers over MergedPolicies)
+// ---------------------------------------------------------------------------
+
+/// Load and merge settings, then build an HttpPolicy.
+pub fn load_merged_policy() -> HttpPolicy {
+    MergedPolicies::from_disk().http
+}
+
+/// Build a `DomainPolicy` from merged settings.
+///
+/// Convenience wrapper matching the `load_merged_network_policy()` pattern.
+/// Used by the MCP gateway to check built-in HTTP tool domains.
+pub fn load_merged_domain_policy() -> DomainPolicy {
+    MergedPolicies::from_disk().domain
+}
+
+/// Build a `NetworkPolicy` (new policy engine) from merged settings.
+pub fn load_merged_network_policy() -> super::policy::NetworkPolicy {
+    MergedPolicies::from_disk().network
+}
+
 /// Load and merge guest config from standard locations.
 pub fn load_merged_guest_config() -> GuestConfig {
-    let (user, corp) = load_settings_files();
-    let resolved = resolve_settings(&user, &corp);
-    settings_to_guest_config(&resolved)
+    MergedPolicies::from_disk().guest
 }
 
 /// Load and merge VM settings from standard locations.
 pub fn load_merged_vm_settings() -> VmSettings {
-    let (user, corp) = load_settings_files();
-    let resolved = resolve_settings(&user, &corp);
-    settings_to_vm_settings(&resolved)
+    MergedPolicies::from_disk().vm
 }
 
 /// Load all resolved settings (for UI).
@@ -1819,10 +2037,10 @@ mod tests {
 
     #[test]
     fn corp_override_bool_web_defaults() {
-        let user = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(true))]);
-        let corp = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(false))]);
+        let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "web.defaults.allow_read").unwrap();
+        let s = resolved.iter().find(|s| s.id == "security.web.allow_read").unwrap();
         assert_eq!(s.effective_value, SettingValue::Bool(false));
         assert_eq!(s.source, PolicySource::Corp);
     }
@@ -1889,14 +2107,14 @@ mod tests {
         let corp = file_with(vec![
             (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
             (SETTING_GITLAB_ALLOW, SettingValue::Bool(false)),
-            ("registry.npm.allow", SettingValue::Bool(false)),
-            ("registry.pypi.allow", SettingValue::Bool(false)),
-            ("registry.crates.allow", SettingValue::Bool(false)),
-            ("registry.debian.allow", SettingValue::Bool(false)),
+            ("security.services.registry.npm.allow", SettingValue::Bool(false)),
+            ("security.services.registry.pypi.allow", SettingValue::Bool(false)),
+            ("security.services.registry.crates.allow", SettingValue::Bool(false)),
+            ("security.services.registry.debian.allow", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&empty_file(), &corp);
         for s in &resolved {
-            let is_registry_toggle = s.id.starts_with("registry.") && s.id.ends_with(".allow");
+            let is_registry_toggle = s.id.starts_with("security.services.registry.") && s.id.ends_with(".allow");
             let is_repo_toggle = s.id == SETTING_GITHUB_ALLOW || s.id == SETTING_GITLAB_ALLOW;
             if is_registry_toggle || is_repo_toggle {
                 assert_eq!(s.effective_value, SettingValue::Bool(false), "failed for {}", s.id);
@@ -1922,10 +2140,10 @@ mod tests {
 
     #[test]
     fn user_cannot_change_corp_web_defaults() {
-        let user = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(true))]);
-        let corp = file_with(vec![("web.defaults.allow_read", SettingValue::Bool(false))]);
+        let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &corp);
-        let s = resolved.iter().find(|s| s.id == "web.defaults.allow_read").unwrap();
+        let s = resolved.iter().find(|s| s.id == "security.web.allow_read").unwrap();
         assert_eq!(s.effective_value, SettingValue::Bool(false));
         assert!(s.corp_locked);
     }
@@ -2045,9 +2263,9 @@ mod tests {
         let resolved = resolve_settings(&empty_file(), &empty_file());
         for id in &[
             SETTING_GITHUB_ALLOW,
-            "registry.npm.allow",
-            "registry.pypi.allow",
-            "registry.crates.allow",
+            "security.services.registry.npm.allow",
+            "security.services.registry.pypi.allow",
+            "security.services.registry.crates.allow",
         ] {
             let s = resolved.iter().find(|s| s.id == *id).unwrap();
             assert_eq!(s.effective_value, SettingValue::Bool(true), "expected {id} to be true");
@@ -2058,10 +2276,10 @@ mod tests {
     fn default_web_session_appearance() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
 
-        let ar = resolved.iter().find(|s| s.id == "web.defaults.allow_read").unwrap();
+        let ar = resolved.iter().find(|s| s.id == "security.web.allow_read").unwrap();
         assert_eq!(ar.effective_value, SettingValue::Bool(false));
 
-        let aw = resolved.iter().find(|s| s.id == "web.defaults.allow_write").unwrap();
+        let aw = resolved.iter().find(|s| s.id == "security.web.allow_write").unwrap();
         assert_eq!(aw.effective_value, SettingValue::Bool(false));
 
         let lb = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
@@ -2106,7 +2324,7 @@ mod tests {
     fn registry_toggles_have_domain_metadata() {
         let defs = setting_definitions();
         for def in &defs {
-            if def.id.starts_with("registry.") && def.id.ends_with(".allow") {
+            if def.id.starts_with("security.services.registry.") && def.id.ends_with(".allow") {
                 assert!(
                     !def.metadata.domains.is_empty(),
                     "toggle {} has no domain metadata",
@@ -2132,9 +2350,9 @@ mod tests {
     #[test]
     fn web_defaults_are_bool_settings() {
         let defs = setting_definitions();
-        let ar = defs.iter().find(|d| d.id == "web.defaults.allow_read").unwrap();
+        let ar = defs.iter().find(|d| d.id == "security.web.allow_read").unwrap();
         assert_eq!(ar.setting_type, SettingType::Bool);
-        let aw = defs.iter().find(|d| d.id == "web.defaults.allow_write").unwrap();
+        let aw = defs.iter().find(|d| d.id == "security.web.allow_write").unwrap();
         assert_eq!(aw.setting_type, SettingType::Bool);
     }
 
@@ -2410,13 +2628,13 @@ mod tests {
 [settings]
 "vm.resources.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "vm.resources.max_body_capture" = { value = 8192, modified = "2026-01-01T00:00:00Z" }
-"web.defaults.allow_read" = { value = false, modified = "2026-01-01T00:00:00Z" }
+"security.web.allow_read" = { value = false, modified = "2026-01-01T00:00:00Z" }
 "appearance.font_size" = { value = 16, modified = "2026-01-01T00:00:00Z" }
 "#;
         let file: SettingsFile = toml::from_str(toml_str).expect("should parse mixed types");
         assert_eq!(file.settings["vm.resources.log_bodies"].value, SettingValue::Bool(true));
         assert_eq!(file.settings["vm.resources.max_body_capture"].value, SettingValue::Number(8192));
-        assert_eq!(file.settings["web.defaults.allow_read"].value, SettingValue::Bool(false));
+        assert_eq!(file.settings["security.web.allow_read"].value, SettingValue::Bool(false));
         assert_eq!(file.settings["appearance.font_size"].value, SettingValue::Number(16));
     }
 
@@ -2838,8 +3056,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn stress_disabled_provider_always_blocked_regardless_of_default() {
         // Provider off + default allow_read/write => domains must still be blocked.
         let user = file_with(vec![
-            ("web.defaults.allow_read", SettingValue::Bool(true)),
-            ("web.defaults.allow_write", SettingValue::Bool(true)),
+            ("security.web.allow_read", SettingValue::Bool(true)),
+            ("security.web.allow_write", SettingValue::Bool(true)),
             // anthropic defaults to off
         ]);
         let resolved = resolve_settings(&user, &empty_file());
@@ -2877,8 +3095,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
         let user = file_with(vec![
             ("ai.anthropic.allow", SettingValue::Bool(true)),
-            ("web.defaults.allow_read", SettingValue::Bool(true)),
-            ("web.defaults.allow_write", SettingValue::Bool(true)),
+            ("security.web.allow_read", SettingValue::Bool(true)),
+            ("security.web.allow_write", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &corp);
         let dp = settings_to_domain_policy(&resolved);
@@ -2945,8 +3163,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         // that provider's domains must be explicitly blocked.
         let user = file_with(vec![
             ("ai.openai.allow", SettingValue::Bool(false)),
-            ("web.defaults.allow_read", SettingValue::Bool(true)),
-            ("web.defaults.allow_write", SettingValue::Bool(true)),
+            ("security.web.allow_read", SettingValue::Bool(true)),
+            ("security.web.allow_write", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -2976,9 +3194,9 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             ("ai.openai.allow", SettingValue::Bool(false)),
             ("ai.google.allow", SettingValue::Bool(false)),
             (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
-            ("registry.pypi.allow", SettingValue::Bool(false)),
-            ("registry.npm.allow", SettingValue::Bool(false)),
-            ("registry.crates.allow", SettingValue::Bool(false)),
+            ("security.services.registry.pypi.allow", SettingValue::Bool(false)),
+            ("security.services.registry.npm.allow", SettingValue::Bool(false)),
+            ("security.services.registry.crates.allow", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3028,7 +3246,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn stress_unknown_domain_follows_default_allow() {
         let user = file_with(vec![
-            ("web.defaults.allow_read", SettingValue::Bool(true)),
+            ("security.web.allow_read", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3049,8 +3267,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             ("ai.anthropic.allow", SettingValue::Bool(true)),
             ("ai.openai.allow", SettingValue::Bool(true)),
             ("ai.google.allow", SettingValue::Bool(true)),
-            ("web.defaults.allow_read", SettingValue::Bool(true)),
-            ("web.defaults.allow_write", SettingValue::Bool(true)),
+            ("security.web.allow_read", SettingValue::Bool(true)),
+            ("security.web.allow_write", SettingValue::Bool(true)),
         ]);
         let resolved = resolve_settings(&user, &corp);
         let dp = settings_to_domain_policy(&resolved);
@@ -3843,7 +4061,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn web_search_google_allowed_by_default() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        let s = resolved.iter().find(|s| s.id == "web.search.google.allow").unwrap();
+        let s = resolved.iter().find(|s| s.id == "security.services.search.google.allow").unwrap();
         assert_eq!(s.effective_value, SettingValue::Bool(true));
         assert_eq!(s.category, "Google");
     }
@@ -3851,7 +4069,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn web_search_bing_duckduckgo_blocked_by_default() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        for id in &["web.search.bing.allow", "web.search.duckduckgo.allow"] {
+        for id in &["security.services.search.bing.allow", "security.services.search.duckduckgo.allow"] {
             let s = resolved.iter().find(|s| s.id == *id).unwrap();
             assert_eq!(s.effective_value, SettingValue::Bool(false), "expected {id} to be false");
         }
@@ -3889,7 +4107,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_block_blocks_domains() {
         let user = file_with(vec![
-            ("web.custom_block", SettingValue::Text("evil.com".into())),
+            ("security.web.custom_block", SettingValue::Text("evil.com".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3900,8 +4118,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_block_beats_custom_allow_on_overlap() {
         let user = file_with(vec![
-            ("web.custom_allow", SettingValue::Text("overlap.com".into())),
-            ("web.custom_block", SettingValue::Text("overlap.com".into())),
+            ("security.web.custom_allow", SettingValue::Text("overlap.com".into())),
+            ("security.web.custom_block", SettingValue::Text("overlap.com".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3912,7 +4130,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_allow_empty_entries_tolerated() {
         let user = file_with(vec![
-            ("web.custom_allow", SettingValue::Text(",, , foo.com , ,".into())),
+            ("security.web.custom_allow", SettingValue::Text(",, , foo.com , ,".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3923,7 +4141,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn custom_block_empty_is_noop() {
         let user = file_with(vec![
-            ("web.custom_block", SettingValue::Text("".into())),
+            ("security.web.custom_block", SettingValue::Text("".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3936,7 +4154,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn custom_allow_corp_override() {
         // Corp sets custom_allow to empty -> user's default elie.net is gone
         let corp = file_with(vec![
-            ("web.custom_allow", SettingValue::Text("".into())),
+            ("security.web.custom_allow", SettingValue::Text("".into())),
         ]);
         let resolved = resolve_settings(&empty_file(), &corp);
         let dp = settings_to_domain_policy(&resolved);
@@ -4207,8 +4425,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let github = defs.iter().find(|d| d.id == SETTING_GITHUB_ALLOW).unwrap();
         assert!(!github.metadata.domains.is_empty(), "github toggle should have domain metadata");
 
-        // web.defaults.allow_read should be a bool
-        let ar = defs.iter().find(|d| d.id == "web.defaults.allow_read").unwrap();
+        // security.web.allow_read should be a bool
+        let ar = defs.iter().find(|d| d.id == "security.web.allow_read").unwrap();
         assert_eq!(ar.setting_type, SettingType::Bool, "allow_read should be bool");
 
         // API key settings should have env_vars
@@ -4631,7 +4849,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         }
 
         let names = collect_group_names(&tree);
-        for expected in &["AI Providers", "Package Registries", "Web", "Defaults", "Search Engines", "Appearance", "VM", "Environment", "Resources"] {
+        for expected in &["AI Providers", "Security", "Web", "Services", "Search Engines", "Package Registries", "Appearance", "VM", "Environment", "Resources"] {
             assert!(
                 names.contains(&expected.to_string()),
                 "tree missing group: {expected}",
@@ -5024,5 +5242,768 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         assert_eq!(gl.metadata.prefix.as_deref(), Some("glpat-"));
         let anthropic = defs.iter().find(|d| d.id == SETTING_ANTHROPIC_API_KEY).unwrap();
         assert_eq!(anthropic.metadata.prefix.as_deref(), Some("sk-ant-"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Security presets
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn preset_definitions_load_correctly() {
+        let presets = security_presets();
+        assert_eq!(presets.len(), 2);
+        for p in &presets {
+            assert!(!p.id.is_empty());
+            assert!(!p.name.is_empty());
+            assert!(!p.description.is_empty());
+        }
+    }
+
+    #[test]
+    fn preset_medium_has_correct_settings() {
+        let presets = security_presets();
+        let medium = presets.iter().find(|p| p.id == "medium").unwrap();
+        assert_eq!(medium.settings["security.web.allow_read"], SettingValue::Bool(true));
+        assert_eq!(medium.settings["security.web.allow_write"], SettingValue::Bool(false));
+        assert_eq!(medium.settings["security.services.search.google.allow"], SettingValue::Bool(true));
+        assert_eq!(medium.settings["security.services.search.bing.allow"], SettingValue::Bool(true));
+        assert_eq!(medium.settings["security.services.search.duckduckgo.allow"], SettingValue::Bool(true));
+    }
+
+    #[test]
+    fn preset_high_has_correct_settings() {
+        let presets = security_presets();
+        let high = presets.iter().find(|p| p.id == "high").unwrap();
+        assert_eq!(high.settings["security.web.allow_read"], SettingValue::Bool(false));
+        assert_eq!(high.settings["security.web.allow_write"], SettingValue::Bool(false));
+        assert_eq!(high.settings["security.services.search.google.allow"], SettingValue::Bool(true));
+        assert_eq!(high.settings["security.services.search.bing.allow"], SettingValue::Bool(false));
+        assert_eq!(high.settings["security.services.search.duckduckgo.allow"], SettingValue::Bool(false));
+    }
+
+    #[test]
+    fn preset_settings_are_valid_registry_ids() {
+        let defs = setting_definitions();
+        let def_ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
+        for preset in security_presets() {
+            for key in preset.settings.keys() {
+                assert!(def_ids.contains(&key.as_str()), "preset '{}' has unknown setting: {}", preset.id, key);
+            }
+        }
+    }
+
+    #[test]
+    fn apply_preset_medium_writes_user_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+
+        let skipped = apply_preset_to("medium", &user_path, &corp_path).unwrap();
+        assert!(skipped.is_empty());
+
+        let loaded = load_settings_file(&user_path).unwrap();
+        assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(true));
+        assert_eq!(loaded.settings["security.web.allow_write"].value, SettingValue::Bool(false));
+    }
+
+    #[test]
+    fn apply_preset_high_writes_user_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+
+        let skipped = apply_preset_to("high", &user_path, &corp_path).unwrap();
+        assert!(skipped.is_empty());
+
+        let loaded = load_settings_file(&user_path).unwrap();
+        assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(false));
+        assert_eq!(loaded.settings["security.services.search.bing.allow"].value, SettingValue::Bool(false));
+    }
+
+    #[test]
+    fn apply_preset_skips_corp_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
+        write_settings_file(&corp_path, &corp).unwrap();
+
+        let skipped = apply_preset_to("medium", &user_path, &corp_path).unwrap();
+        assert!(skipped.contains(&"security.web.allow_read".to_string()));
+
+        let loaded = load_settings_file(&user_path).unwrap();
+        assert!(!loaded.settings.contains_key("security.web.allow_read"));
+    }
+
+    #[test]
+    fn apply_preset_does_not_clobber_unrelated_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        let mut initial = SettingsFile::default();
+        initial.settings.insert("ai.google.api_key".to_string(), SettingEntry {
+            value: SettingValue::Text("AIzaTest".into()),
+            modified: now_str(),
+        });
+        write_settings_file(&user_path, &initial).unwrap();
+
+        apply_preset_to("medium", &user_path, &corp_path).unwrap();
+
+        let loaded = load_settings_file(&user_path).unwrap();
+        assert_eq!(loaded.settings["ai.google.api_key"].value, SettingValue::Text("AIzaTest".into()));
+        assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(true));
+    }
+
+    #[test]
+    fn apply_preset_mcp_permission_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+
+        apply_preset_to("medium", &user_path, &corp_path).unwrap();
+        let loaded = load_settings_file(&user_path).unwrap();
+        assert_eq!(
+            loaded.mcp.as_ref().unwrap().default_tool_permission,
+            Some(crate::mcp::policy::ToolDecision::Allow),
+        );
+
+        apply_preset_to("high", &user_path, &corp_path).unwrap();
+        let loaded = load_settings_file(&user_path).unwrap();
+        assert_eq!(
+            loaded.mcp.as_ref().unwrap().default_tool_permission,
+            Some(crate::mcp::policy::ToolDecision::Warn),
+        );
+    }
+
+    #[test]
+    fn apply_preset_mcp_skips_when_corp_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        let mut corp = SettingsFile::default();
+        let mut corp_mcp = crate::mcp::policy::McpUserConfig::default();
+        corp_mcp.default_tool_permission = Some(crate::mcp::policy::ToolDecision::Block);
+        corp.mcp = Some(corp_mcp);
+        write_settings_file(&corp_path, &corp).unwrap();
+
+        let skipped = apply_preset_to("medium", &user_path, &corp_path).unwrap();
+        assert!(skipped.contains(&"mcp.default_tool_permission".to_string()));
+    }
+
+    #[test]
+    fn apply_preset_unknown_id_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+
+        let result = apply_preset_to("nonexistent", &user_path, &corp_path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown preset"));
+    }
+
+    #[test]
+    fn apply_preset_overwrites_previous_user_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        let initial = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
+        write_settings_file(&user_path, &initial).unwrap();
+
+        apply_preset_to("high", &user_path, &corp_path).unwrap();
+        let loaded = load_settings_file(&user_path).unwrap();
+        assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(false));
+    }
+
+    // -----------------------------------------------------------------------
+    // Setting ID migration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn migrate_old_setting_ids() {
+        let mut file = file_with(vec![
+            ("web.defaults.allow_read", SettingValue::Bool(true)),
+            ("web.custom_allow", SettingValue::Text("example.com".into())),
+            ("registry.npm.allow", SettingValue::Bool(false)),
+            ("web.search.google.allow", SettingValue::Bool(true)),
+        ]);
+        migrate_setting_ids(&mut file);
+
+        // Old keys removed
+        assert!(!file.settings.contains_key("web.defaults.allow_read"));
+        assert!(!file.settings.contains_key("web.custom_allow"));
+        assert!(!file.settings.contains_key("registry.npm.allow"));
+        assert!(!file.settings.contains_key("web.search.google.allow"));
+
+        // New keys present with same values
+        assert_eq!(file.settings["security.web.allow_read"].value, SettingValue::Bool(true));
+        assert_eq!(file.settings["security.web.custom_allow"].value, SettingValue::Text("example.com".into()));
+        assert_eq!(file.settings["security.services.registry.npm.allow"].value, SettingValue::Bool(false));
+        assert_eq!(file.settings["security.services.search.google.allow"].value, SettingValue::Bool(true));
+    }
+
+    #[test]
+    fn migrate_does_not_clobber_existing_new_keys() {
+        let mut file = SettingsFile::default();
+        file.settings.insert("web.defaults.allow_read".to_string(), SettingEntry {
+            value: SettingValue::Bool(true),
+            modified: now_str(),
+        });
+        file.settings.insert("security.web.allow_read".to_string(), SettingEntry {
+            value: SettingValue::Bool(false),
+            modified: now_str(),
+        });
+        migrate_setting_ids(&mut file);
+
+        // New key keeps its value, old key is dropped
+        assert_eq!(file.settings["security.web.allow_read"].value, SettingValue::Bool(false));
+        assert!(!file.settings.contains_key("web.defaults.allow_read"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Q: MergedPolicies basic construction (6)
+    // -----------------------------------------------------------------------
+
+    fn file_with_mcp(
+        entries: Vec<(&str, SettingValue)>,
+        mcp: crate::mcp::policy::McpUserConfig,
+    ) -> SettingsFile {
+        let mut f = file_with(entries);
+        f.mcp = Some(mcp);
+        f
+    }
+
+    #[test]
+    fn merged_defaults_only() {
+        let m = MergedPolicies::from_files(&empty_file(), &empty_file());
+        // Default: no allow rules, network blocks everything
+        assert!(!m.network.default_allow_read);
+        assert!(!m.network.default_allow_write);
+        // MCP default is allow
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+        // Domain policy denies unknown domains by default
+        let (action, _) = m.domain.evaluate("unknown.example.com");
+        assert_eq!(action, Action::Deny);
+    }
+
+    #[test]
+    fn merged_user_enables_provider() {
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // Network should have rules for anthropic domains
+        assert!(!m.network.rules.is_empty());
+        // Domain policy should have anthropic domains in allow
+        let has_anthropic = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("api.anthropic.com")
+        });
+        assert!(has_anthropic, "expected anthropic domains in allow rules");
+    }
+
+    #[test]
+    fn merged_user_enables_search() {
+        let user = file_with(vec![
+            ("security.services.search.google.allow", SettingValue::Bool(true)),
+        ]);
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        let has_google_search = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("www.google.com")
+        });
+        assert!(has_google_search, "expected google search domains in allow rules");
+    }
+
+    #[test]
+    fn merged_mcp_default_is_allow() {
+        let m = MergedPolicies::from_files(&empty_file(), &empty_file());
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    }
+
+    #[test]
+    fn merged_user_sets_mcp_warn() {
+        use crate::mcp::policy::{McpUserConfig, ToolDecision};
+        let user = file_with_mcp(vec![], McpUserConfig {
+            default_tool_permission: Some(ToolDecision::Warn),
+            ..Default::default()
+        });
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        assert_eq!(m.mcp.default_tool_decision, ToolDecision::Warn);
+    }
+
+    #[test]
+    fn merged_all_policies_populated() {
+        let user = file_with(vec![
+            ("ai.anthropic.allow", SettingValue::Bool(true)),
+            ("security.web.allow_read", SettingValue::Bool(true)),
+        ]);
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // All 6 fields should be populated (non-default for network at least)
+        assert!(!m.network.rules.is_empty());
+        assert!(m.network.default_allow_read);
+        // Guest config has env vars (provider toggle injects CAPSEM_ANTHROPIC_ALLOWED)
+        assert!(m.guest.env.is_some());
+        // VM settings have defaults
+        assert!(m.vm.cpu_count.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // R: Preset -> MergedPolicies pipeline (6)
+    // -----------------------------------------------------------------------
+
+    fn apply_and_merge(preset_id: &str) -> MergedPolicies {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        // Write empty files
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        write_settings_file(&corp_path, &SettingsFile::default()).unwrap();
+        // Apply preset
+        apply_preset_to(preset_id, &user_path, &corp_path).unwrap();
+        // Load and merge
+        let user = load_settings_file(&user_path).unwrap();
+        let corp = load_settings_file(&corp_path).unwrap();
+        MergedPolicies::from_files(&user, &corp)
+    }
+
+    #[test]
+    fn preset_high_merged_mcp_warn() {
+        let m = apply_and_merge("high");
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Warn);
+    }
+
+    #[test]
+    fn preset_medium_merged_mcp_allow() {
+        let m = apply_and_merge("medium");
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    }
+
+    #[test]
+    fn preset_high_merged_network_blocks_web() {
+        let m = apply_and_merge("high");
+        assert!(!m.network.default_allow_read);
+        assert!(!m.network.default_allow_write);
+    }
+
+    #[test]
+    fn preset_medium_merged_network_allows_read() {
+        let m = apply_and_merge("medium");
+        assert!(m.network.default_allow_read);
+        assert!(!m.network.default_allow_write);
+    }
+
+    #[test]
+    fn preset_switch_medium_to_high() {
+        use crate::mcp::policy::ToolDecision;
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        write_settings_file(&corp_path, &SettingsFile::default()).unwrap();
+
+        apply_preset_to("medium", &user_path, &corp_path).unwrap();
+        let user = load_settings_file(&user_path).unwrap();
+        let corp = load_settings_file(&corp_path).unwrap();
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert_eq!(m.mcp.default_tool_decision, ToolDecision::Allow);
+        assert!(m.network.default_allow_read);
+
+        apply_preset_to("high", &user_path, &corp_path).unwrap();
+        let user = load_settings_file(&user_path).unwrap();
+        let corp = load_settings_file(&corp_path).unwrap();
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert_eq!(m.mcp.default_tool_decision, ToolDecision::Warn);
+        assert!(!m.network.default_allow_read);
+    }
+
+    #[test]
+    fn preset_switch_high_to_medium() {
+        use crate::mcp::policy::ToolDecision;
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        write_settings_file(&corp_path, &SettingsFile::default()).unwrap();
+
+        apply_preset_to("high", &user_path, &corp_path).unwrap();
+        let user = load_settings_file(&user_path).unwrap();
+        let corp = load_settings_file(&corp_path).unwrap();
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert_eq!(m.mcp.default_tool_decision, ToolDecision::Warn);
+
+        apply_preset_to("medium", &user_path, &corp_path).unwrap();
+        let user = load_settings_file(&user_path).unwrap();
+        let corp = load_settings_file(&corp_path).unwrap();
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert_eq!(m.mcp.default_tool_decision, ToolDecision::Allow);
+        assert!(m.network.default_allow_read);
+    }
+
+    // -----------------------------------------------------------------------
+    // S: Corp override persistence (11)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn corp_forces_provider_on() {
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
+        let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
+        let m = MergedPolicies::from_files(&user, &corp);
+        let has_anthropic_allowed = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("api.anthropic.com")
+        });
+        assert!(has_anthropic_allowed);
+    }
+
+    #[test]
+    fn corp_forces_provider_off() {
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
+        let m = MergedPolicies::from_files(&user, &corp);
+        // The toggle is off due to corp override, so anthropic should be blocked
+        let anthropic_allowed = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("api.anthropic.com")
+        });
+        assert!(!anthropic_allowed);
+    }
+
+    #[test]
+    fn corp_sets_api_key() {
+        let user = file_with(vec![("ai.openai.api_key", SettingValue::Text("user-key".into()))]);
+        let corp = file_with(vec![("ai.openai.api_key", SettingValue::Text("corp-key".into()))]);
+        let m = MergedPolicies::from_files(&user, &corp);
+        let env = m.guest.env.unwrap();
+        assert_eq!(env.get("OPENAI_API_KEY").map(|s| s.as_str()), Some("corp-key"));
+    }
+
+    #[test]
+    fn corp_sets_custom_allow_list() {
+        let user = empty_file();
+        let corp = file_with(vec![("security.web.custom_allow", SettingValue::Text("internal.corp.com".into()))]);
+        let m = MergedPolicies::from_files(&user, &corp);
+        let has_corp_domain = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("internal.corp.com")
+        });
+        assert!(has_corp_domain);
+    }
+
+    #[test]
+    fn corp_sets_custom_block_list() {
+        let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
+        let corp = file_with(vec![("security.web.custom_block", SettingValue::Text("evil.com".into()))]);
+        let m = MergedPolicies::from_files(&user, &corp);
+        let evil_blocked = m.network.rules.iter().any(|r| {
+            !r.allow_read && r.matcher.matches("evil.com")
+        });
+        assert!(evil_blocked);
+    }
+
+    #[test]
+    fn corp_mcp_overrides_preset() {
+        use crate::mcp::policy::{McpUserConfig, ToolDecision};
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        let corp = SettingsFile {
+            settings: HashMap::new(),
+            mcp: Some(McpUserConfig {
+                default_tool_permission: Some(ToolDecision::Block),
+                ..Default::default()
+            }),
+        };
+        write_settings_file(&corp_path, &corp).unwrap();
+
+        let skipped = apply_preset_to("high", &user_path, &corp_path).unwrap();
+        assert!(skipped.contains(&"mcp.default_tool_permission".to_string()));
+
+        let user = load_settings_file(&user_path).unwrap();
+        let corp = load_settings_file(&corp_path).unwrap();
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert_eq!(m.mcp.default_tool_decision, ToolDecision::Block);
+    }
+
+    #[test]
+    fn corp_mcp_survives_both_presets() {
+        use crate::mcp::policy::{McpUserConfig, ToolDecision};
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        let corp = SettingsFile {
+            settings: HashMap::new(),
+            mcp: Some(McpUserConfig {
+                default_tool_permission: Some(ToolDecision::Block),
+                ..Default::default()
+            }),
+        };
+        write_settings_file(&corp_path, &corp).unwrap();
+
+        apply_preset_to("medium", &user_path, &corp_path).unwrap();
+        let u = load_settings_file(&user_path).unwrap();
+        let c = load_settings_file(&corp_path).unwrap();
+        assert_eq!(MergedPolicies::from_files(&u, &c).mcp.default_tool_decision, ToolDecision::Block);
+
+        apply_preset_to("high", &user_path, &corp_path).unwrap();
+        let u = load_settings_file(&user_path).unwrap();
+        let c = load_settings_file(&corp_path).unwrap();
+        assert_eq!(MergedPolicies::from_files(&u, &c).mcp.default_tool_decision, ToolDecision::Block);
+    }
+
+    #[test]
+    fn corp_setting_persists_after_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
+        write_settings_file(&corp_path, &corp).unwrap();
+
+        // High preset wants allow_read=false, but corp locks it to true
+        let skipped = apply_preset_to("high", &user_path, &corp_path).unwrap();
+        assert!(skipped.contains(&"security.web.allow_read".to_string()));
+
+        let user = load_settings_file(&user_path).unwrap();
+        let corp = load_settings_file(&corp_path).unwrap();
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert!(m.network.default_allow_read);
+    }
+
+    #[test]
+    fn corp_locks_multiple_all_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        // Corp locks 3 of the 5 settings in the high preset
+        let corp = file_with(vec![
+            ("security.web.allow_read", SettingValue::Bool(true)),
+            ("security.web.allow_write", SettingValue::Bool(true)),
+            ("security.services.search.google.allow", SettingValue::Bool(false)),
+        ]);
+        write_settings_file(&corp_path, &corp).unwrap();
+
+        let skipped = apply_preset_to("high", &user_path, &corp_path).unwrap();
+        assert_eq!(skipped.len(), 3);
+        assert!(skipped.contains(&"security.web.allow_read".to_string()));
+        assert!(skipped.contains(&"security.web.allow_write".to_string()));
+        assert!(skipped.contains(&"security.services.search.google.allow".to_string()));
+    }
+
+    #[test]
+    fn corp_mcp_not_written_to_user_toml() {
+        use crate::mcp::policy::{McpUserConfig, ToolDecision};
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+        let corp = SettingsFile {
+            settings: HashMap::new(),
+            mcp: Some(McpUserConfig {
+                default_tool_permission: Some(ToolDecision::Block),
+                ..Default::default()
+            }),
+        };
+        write_settings_file(&corp_path, &corp).unwrap();
+
+        apply_preset_to("high", &user_path, &corp_path).unwrap();
+        let user = load_settings_file(&user_path).unwrap();
+        // User TOML should NOT have MCP permission set (corp blocked it)
+        let user_perm = user.mcp.as_ref().and_then(|m| m.default_tool_permission);
+        assert!(user_perm.is_none(), "user.toml should not have default_tool_permission when corp locks it");
+    }
+
+    #[test]
+    fn preset_preserves_user_mcp_servers() {
+        use crate::mcp::policy::{McpManualServer, McpUserConfig, ToolDecision};
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        let user = SettingsFile {
+            settings: HashMap::new(),
+            mcp: Some(McpUserConfig {
+                servers: vec![McpManualServer {
+                    name: "myserver".into(),
+                    url: "http://localhost:8080".into(),
+                    headers: HashMap::new(),
+                    bearer_token: None,
+                    enabled: true,
+                }],
+                tool_permissions: {
+                    let mut m = HashMap::new();
+                    m.insert("myserver__danger".into(), ToolDecision::Block);
+                    m
+                },
+                ..Default::default()
+            }),
+        };
+        write_settings_file(&user_path, &user).unwrap();
+        write_settings_file(&corp_path, &SettingsFile::default()).unwrap();
+
+        apply_preset_to("high", &user_path, &corp_path).unwrap();
+        let user = load_settings_file(&user_path).unwrap();
+        let mcp = user.mcp.unwrap();
+        assert_eq!(mcp.servers.len(), 1);
+        assert_eq!(mcp.servers[0].name, "myserver");
+        assert_eq!(mcp.tool_permissions.get("myserver__danger"), Some(&ToolDecision::Block));
+        assert_eq!(mcp.default_tool_permission, Some(ToolDecision::Warn));
+    }
+
+    // -----------------------------------------------------------------------
+    // T: Invalid / missing / corrupt inputs (13)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn merged_from_missing_user_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let nonexistent = dir.path().join("missing_user.toml");
+        let user = load_settings_file(&nonexistent).unwrap_or_default();
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // Should produce valid defaults without panicking
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    }
+
+    #[test]
+    fn merged_from_missing_corp_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let nonexistent = dir.path().join("missing_corp.toml");
+        let corp = load_settings_file(&nonexistent).unwrap_or_default();
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert!(!m.network.rules.is_empty());
+    }
+
+    #[test]
+    fn merged_from_both_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let u = load_settings_file(&dir.path().join("u.toml")).unwrap_or_default();
+        let c = load_settings_file(&dir.path().join("c.toml")).unwrap_or_default();
+        let m = MergedPolicies::from_files(&u, &c);
+        assert!(!m.network.default_allow_read);
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    }
+
+    #[test]
+    fn merged_from_invalid_user_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "not valid {{{{ toml").unwrap();
+        let result = load_settings_file(&path);
+        assert!(result.is_err());
+        // Fallback to default still works
+        let user = result.unwrap_or_default();
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    }
+
+    #[test]
+    fn merged_from_invalid_corp_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad_corp.toml");
+        std::fs::write(&path, "garbage!!!!").unwrap();
+        let result = load_settings_file(&path);
+        assert!(result.is_err());
+        let corp = result.unwrap_or_default();
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
+        let m = MergedPolicies::from_files(&user, &corp);
+        assert!(!m.network.rules.is_empty());
+    }
+
+    #[test]
+    fn merged_ignores_unknown_setting_ids() {
+        let user = file_with(vec![
+            ("nonexistent.setting.foo", SettingValue::Bool(true)),
+            ("ai.anthropic.allow", SettingValue::Bool(true)),
+        ]);
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // Should not crash, anthropic should still work
+        let has_anthropic = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("api.anthropic.com")
+        });
+        assert!(has_anthropic);
+    }
+
+    #[test]
+    fn merged_wrong_type_for_bool_setting() {
+        // SettingValue::Text for a Bool-type setting -- resolve will use default
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Text("yes".into()))]);
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // The bool check should fail gracefully (as_bool returns None -> default false)
+        let anthropic_allowed = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("api.anthropic.com")
+        });
+        // With wrong type, the effective value is the user's Text("yes"), but
+        // as_bool() returns None so toggle evaluates to false
+        assert!(!anthropic_allowed);
+    }
+
+    #[test]
+    fn merged_wrong_type_for_number_setting() {
+        let user = file_with(vec![("vm.resources.cpu_count", SettingValue::Text("four".into()))]);
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // as_number() returns None -> falls back to default (4)
+        assert_eq!(m.vm.cpu_count, Some(4));
+    }
+
+    #[test]
+    fn merged_empty_domain_list() {
+        let user = file_with(vec![("security.web.custom_allow", SettingValue::Text("".into()))]);
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // Should not crash, empty string -> no domains added
+        assert!(!m.network.default_allow_read);
+    }
+
+    #[test]
+    fn merged_empty_mcp_section() {
+        use crate::mcp::policy::McpUserConfig;
+        let user = file_with_mcp(vec![], McpUserConfig::default());
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    }
+
+    #[test]
+    fn merged_mcp_invalid_permission_string() {
+        // ToolDecision serde will reject "yolo" during TOML parsing.
+        // If we construct it manually via the struct, the default path handles it.
+        // Test that from_files handles a default McpUserConfig gracefully.
+        let user = file_with_mcp(vec![], crate::mcp::policy::McpUserConfig {
+            default_tool_permission: None, // "yolo" can't be constructed as ToolDecision
+            ..Default::default()
+        });
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    }
+
+    #[test]
+    fn merged_partial_settings_file() {
+        // TOML with only [mcp] section, no [settings]
+        use crate::mcp::policy::{McpUserConfig, ToolDecision};
+        let user = SettingsFile {
+            settings: HashMap::new(),
+            mcp: Some(McpUserConfig {
+                default_tool_permission: Some(ToolDecision::Block),
+                ..Default::default()
+            }),
+        };
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        assert_eq!(m.mcp.default_tool_decision, ToolDecision::Block);
+        // No settings -> defaults for everything else
+        assert!(!m.network.default_allow_read);
+    }
+
+    #[test]
+    fn merged_partial_settings_only() {
+        // Settings but no MCP section
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
+        assert!(user.mcp.is_none());
+        let m = MergedPolicies::from_files(&user, &empty_file());
+        // MCP defaults
+        assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+        // Settings applied
+        let has_anthropic = m.network.rules.iter().any(|r| {
+            r.allow_read && r.matcher.matches("api.anthropic.com")
+        });
+        assert!(has_anthropic);
     }
 }
