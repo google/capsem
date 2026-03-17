@@ -27,12 +27,12 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "resources": {
       "../../assets/vmlinuz": "vmlinuz",
       "../../assets/initrd.img": "initrd.img",
       "../../assets/rootfs.squashfs": "rootfs.squashfs",
-      "../../assets/B3SUMS": "B3SUMS"
+      "../../assets/manifest.json": "manifest.json"
     },
     "macOS": {
       "entitlements": "../../entitlements.plist",

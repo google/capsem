@@ -184,8 +184,34 @@ jobs:
           mkdir -p "$RUNNER_TEMP/private_keys"
           echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
 
+      # Accumulate manifest.json: merge new version's entry with previous releases.
+      - name: Build accumulated manifest
+        run: |
+          # Download previous manifest from latest release (may not exist for first release).
+          gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
+          if [ -f /tmp/prev-manifest/manifest.json ]; then
+            # Merge: add all previous releases to new manifest, preserving new entries.
+            python3 -c "
+          import json, sys
+          with open('assets/manifest.json') as f:
+              new = json.load(f)
+          with open('/tmp/prev-manifest/manifest.json') as f:
+              prev = json.load(f)
+          for ver, entry in prev.get('releases', {}).items():
+              if ver not in new['releases']:
+                  new['releases'][ver] = entry
+          with open('assets/manifest.json', 'w') as f:
+              json.dump(new, f, indent=2)
+          print(f'Merged manifest: {len(new[\"releases\"])} releases')
+          "
+          else
+            echo "No previous manifest found, using fresh manifest"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # Build thin DMG: exclude rootfs from bundle (downloaded on first launch).
-      # The TAURI_CONFIG override ensures only vmlinuz, initrd.img, and B3SUMS
+      # The TAURI_CONFIG override ensures only vmlinuz, initrd.img, and manifest.json
       # are bundled, keeping the DMG under ~25 MB.
       - uses: tauri-apps/tauri-action@v0.6
         env:
@@ -203,14 +229,16 @@ jobs:
           releaseDraft: true
           prerelease: false
           projectPath: crates/capsem-app
-          args: --skip-stapling
+          args: --skip-stapling --config '{"bundle":{"resources":{"../../assets/vmlinuz":"vmlinuz","../../assets/initrd.img":"initrd.img","../../assets/manifest.json":"manifest.json"}}}'
 
-      # Upload rootfs as a separate release asset (not in the DMG).
-      # The asset manager downloads it on first launch via the B3SUMS manifest.
-      - name: Upload rootfs to release
+      # Upload rootfs and manifest as separate release assets (not in the DMG).
+      # The asset manager downloads rootfs on first launch via the manifest.
+      - name: Upload rootfs and manifest to release
         uses: softprops/action-gh-release@v2
         with:
-          files: assets/rootfs.squashfs
+          files: |
+            assets/rootfs.squashfs
+            assets/manifest.json
           tag_name: ${{ github.ref_name }}
 
       - name: Attest build provenance

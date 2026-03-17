@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- App auto-update: `createUpdaterArtifacts` enabled so CI produces `.tar.gz` + `.sig` updater files and `latest.json` -- the built-in updater now works
+- `app.auto_update` setting (default: true) to gate the startup update check, with "Check for Updates" button in Settings > App
+- Multi-version asset manifest (`manifest.json`) replaces single-version `B3SUMS` -- supports multiple release versions, merge across releases, and future checkpoint restore
+- Version-scoped asset directories (`~/.capsem/assets/v{version}/`) with automatic migration from flat layout and cleanup of old versions
+- `pinned.json` support for keeping specific asset versions during cleanup (for future checkpointing)
+- `scripts/gen_manifest.py` for manifest generation in justfile and build.py
+
+### Changed
+- CI release workflow now accumulates manifest.json across releases and uploads it alongside rootfs
+- `_pack-initrd` regenerates manifest.json on every `just run` via `scripts/gen_manifest.py`
+- `build.rs` reads hashes from manifest.json (preferred) with B3SUMS fallback
+
 ### Fixed
 - Tool calls no longer double-counted in stats -- MCP-proxied tool_calls (origin=mcp_proxy) filtered from native counts across all 6 tool queries
 - Native tool response preview now displayed in unified tool list (was hardcoded NULL, now joined from tool_responses via call_id)

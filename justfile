@@ -327,6 +327,8 @@ _pack-initrd:
     rm -rf "$WORKDIR"
     cd "$ROOT"
     (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.squashfs > B3SUMS)
-    # Force cargo to re-run build.rs so it picks up the new B3SUMS hashes
+    # Generate manifest.json from B3SUMS + file sizes
+    python3 "$ROOT/scripts/gen_manifest.py" "$ROOT/{{assets_dir}}" "$ROOT/Cargo.toml"
+    # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
     echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch + doctor)"

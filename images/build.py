@@ -223,6 +223,17 @@ def create_rootfs():
     print(f"  rootfs.squashfs: {img_path} ({img_path.stat().st_size // (1024*1024)} MB)")
 
 
+def get_cargo_version() -> str:
+    """Read workspace version from root Cargo.toml."""
+    cargo_toml = REPO_ROOT / "Cargo.toml"
+    for line in cargo_toml.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("version") and "=" in line:
+            # version = "0.8.8"
+            return line.split("=", 1)[1].strip().strip('"')
+    raise RuntimeError("Could not find version in Cargo.toml")
+
+
 def generate_checksums():
     print("Generating BLAKE3 checksums...")
     files = [f for f in ["vmlinuz", "initrd.img", "rootfs.squashfs"]
@@ -237,6 +248,28 @@ def generate_checksums():
     for line in result.stdout.strip().split("\n"):
         print(f"  {line}")
     print(f"  B3SUMS: {ASSETS_DIR / 'B3SUMS'}")
+
+    # Generate manifest.json (multi-version rolling manifest).
+    version = get_cargo_version()
+    assets = []
+    for line in result.stdout.strip().split("\n"):
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            b3hash, filename = parts[0], parts[1].strip()
+            filepath = ASSETS_DIR / filename
+            size = filepath.stat().st_size if filepath.exists() else 0
+            assets.append({"filename": filename, "hash": b3hash, "size": size})
+
+    manifest = {
+        "latest": version,
+        "releases": {
+            version: {"assets": assets},
+        },
+    }
+    manifest_path = ASSETS_DIR / "manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"  manifest.json: {manifest_path} (version {version}, {len(assets)} assets)")
 
 
 def main():

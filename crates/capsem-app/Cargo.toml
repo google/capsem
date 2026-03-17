@@ -10,6 +10,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -26,3 +27,4 @@ reqwest = { workspace = true }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = { workspace = true }
