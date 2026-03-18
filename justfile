@@ -19,7 +19,7 @@
 #
 # Daily dev:          just run     (fast ~10s, auto-repacks initrd)
 # Before release:     just install (doctor + full-test -- all validation gates)
-# Releases:           CI only -- push a vX.Y.Z tag to trigger .github/workflows/release.yaml
+# Releases:           just release (push tag first, waits for CI, publishes GitHub release)
 
 binary := "target/debug/capsem"
 assets_dir := "assets"
@@ -80,6 +80,60 @@ bench: _check-assets _sign
 install: doctor full-test
     @echo ""
     @echo "All gates passed. Use 'just run' to boot the VM."
+
+# Cut a release: wait for CI, download artifacts, create GitHub release.
+# Usage: just release          (uses latest vX.Y.Z tag)
+#        just release v0.9.2   (explicit tag)
+release tag="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Resolve tag: explicit arg, or latest v* tag on HEAD
+    if [ -n "{{tag}}" ]; then
+        TAG="{{tag}}"
+    else
+        TAG=$(git tag --points-at HEAD 'v*' | sort -V | tail -1)
+        if [ -z "$TAG" ]; then
+            echo "Error: HEAD has no v* tag. Pass one explicitly: just release v0.9.2"
+            exit 1
+        fi
+    fi
+    echo "=== Release $TAG ==="
+    # Find the CI run for this tag
+    RUN_ID=$(gh run list --workflow=release.yaml --json databaseId,headBranch,status \
+        --jq ".[] | select(.headBranch==\"$TAG\") | .databaseId" | head -1)
+    if [ -z "$RUN_ID" ]; then
+        echo "Error: no release workflow run found for tag $TAG"
+        echo "Push the tag first: git push origin $TAG"
+        exit 1
+    fi
+    echo "CI run: $RUN_ID"
+    # Wait for CI if still running
+    STATUS=$(gh run view "$RUN_ID" --json status --jq .status)
+    if [ "$STATUS" != "completed" ]; then
+        echo "Waiting for CI to complete..."
+        gh run watch "$RUN_ID"
+    fi
+    # Check conclusion
+    CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)
+    if [ "$CONCLUSION" != "success" ]; then
+        echo "Error: CI run $RUN_ID failed ($CONCLUSION)"
+        echo "Check: gh run view $RUN_ID --log-failed"
+        exit 1
+    fi
+    # Download artifacts
+    TMPDIR=$(mktemp -d)
+    echo "Downloading artifacts to $TMPDIR..."
+    gh run download "$RUN_ID" -n release-artifacts -D "$TMPDIR"
+    echo "Artifacts:"
+    ls -lh "$TMPDIR"
+    # Create the GitHub release
+    echo "Creating release $TAG..."
+    gh release create "$TAG" "$TMPDIR"/* \
+        --title "Capsem $TAG" \
+        --notes "See [CHANGELOG.md](https://github.com/google/capsem/blob/main/CHANGELOG.md) for details."
+    echo "=== Release $TAG published ==="
+    echo "https://github.com/google/capsem/releases/tag/$TAG"
+    rm -rf "$TMPDIR"
 
 # Check that all required dev tools and dependencies are installed
 doctor:

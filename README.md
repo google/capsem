@@ -75,7 +75,7 @@ All build workflows use `just`. Run `just --list` to see all targets.
 | `just test` | Unit tests + cross-compile check + frontend type-check (no VM) |
 | `just full-test` | test + capsem-doctor + integration test + bench (boots VM) |
 | `just bench` | In-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP) |
-| `just release` | full-test + release `.app` + codesign + DMG |
+| `just release` | wait for CI + download artifacts + create GitHub release |
 | `just install` | full-test + release `.app` + install to /Applications + launch |
 | `just clean` | Remove all build artifacts |
 | `just inspect-session` | Inspect session DB integrity and event summary |
@@ -99,19 +99,11 @@ just run        # cross-compile + repack + build + sign + boot VM (~10s)
 
 ### Release
 
-Releases are CI-built. Push a tag to trigger the pipeline, then create the release locally:
+Releases are CI-built. Push a tag, then `just release` waits for CI and publishes:
 
 ```sh
-# 1. Bump version, update CHANGELOG, commit, tag, push
 git tag vX.Y.Z && git push origin main --tags
-
-# 2. Wait for CI (preflight -> build-assets -> test -> build-app)
-gh run list --workflow=release.yaml -L 1
-gh run watch <run-id>
-
-# 3. Download artifacts and create release (CI can't -- org restricts GITHUB_TOKEN)
-gh run download <run-id> -n release-artifacts -D /tmp/release-artifacts
-gh release create vX.Y.Z /tmp/release-artifacts/* --title "Capsem vX.Y.Z"
+just release        # waits for CI, downloads artifacts, creates GitHub release
 ```
 
 ### Testing

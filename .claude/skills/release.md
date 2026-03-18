@@ -28,19 +28,10 @@ Releases are CI-only -- no local `just release`. Push a tag to trigger the pipel
 7. **Commit**: `git commit -m "release: vX.Y.Z"`
 8. **Tag**: `git tag vX.Y.Z`
 9. **Push**: `git push origin main --tags`
-10. **Wait for CI** to complete (preflight -> build-assets -> test -> build-app)
-11. **Create release locally** (CI can't -- org restricts GITHUB_TOKEN to read-only):
-```bash
-# Download CI artifacts
-gh run download <run-id> -n release-artifacts -D /tmp/release-artifacts
-
-# Create the release and upload all assets
-gh release create vX.Y.Z /tmp/release-artifacts/* \
-  --title "Capsem vX.Y.Z" \
-  --notes "See CHANGELOG.md for details."
-```
+10. **Publish**: `just release` -- waits for CI, downloads artifacts, creates GitHub release
 
 CI pipeline: preflight -> build-assets -> test -> build-app (sign + notarize + artifact upload).
+`just release` then downloads the artifacts and creates the GitHub release locally (CI can't -- org restricts GITHUB_TOKEN to read-only).
 
 ## CI Pipeline (release.yaml)
 
