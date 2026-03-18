@@ -129,3 +129,63 @@ To add a new check: add a `check_*` function to `scripts/preflight.sh`.
 - Check VM assets are present in `assets/` (downloaded from build-assets job)
 - Check `pnpm install --frozen-lockfile` passes (lockfile in sync)
 - Check frontend builds: `cd frontend && pnpm run build`
+
+## Post-Release Verification
+
+After pushing a tag and CI completes, verify the release using `gh` CLI:
+
+### Monitor the CI pipeline
+```bash
+gh run list --branch main -L 1          # Find the run triggered by the tag
+gh run watch <run-id>                    # Live tail the CI run
+gh run view <run-id> --log-failed       # Debug failures
+```
+
+If any job fails: fix locally, create a NEW commit (never amend), delete the tag, re-tag, re-push.
+
+### After CI completes successfully
+
+**1. Check release assets:**
+```bash
+gh release view vX.Y.Z
+```
+Verify: DMG, `.tar.gz` + `.sig` (updater), `rootfs.squashfs`, `manifest.json`, `latest.json`.
+
+**2. Publish the draft release** (tauri-action creates it as draft):
+```bash
+gh release edit vX.Y.Z --draft=false
+```
+
+**3. Verify manifest.json:**
+```bash
+gh release download vX.Y.Z --pattern manifest.json -D /tmp/verify-release
+cat /tmp/verify-release/manifest.json | python3 -m json.tool
+```
+Check: `latest` field matches version, release entry has 3 assets with blake3 hashes, previous versions preserved.
+
+**4. Verify rootfs download + hash:**
+```bash
+curl -fSL -o /tmp/verify-release/rootfs.squashfs \
+  "https://github.com/google/capsem/releases/download/vX.Y.Z/rootfs.squashfs"
+b3sum /tmp/verify-release/rootfs.squashfs
+# Compare hash to manifest entry
+```
+
+**5. Verify `/releases/latest` redirect:**
+```bash
+curl -fsSL -o /dev/null -w "%{url_effective}" \
+  "https://github.com/google/capsem/releases/latest"
+```
+
+**6. Verify DMG download + mount:**
+```bash
+gh release download vX.Y.Z --pattern '*.dmg' -D /tmp/verify-release
+hdiutil attach /tmp/verify-release/Capsem*.dmg -nobrowse -readonly
+ls /Volumes/Capsem*/
+hdiutil detach /Volumes/Capsem*
+```
+
+**7. Verify latest tag via API:**
+```bash
+curl -fsSL "https://api.github.com/repos/google/capsem/releases/latest" | grep tag_name
+```

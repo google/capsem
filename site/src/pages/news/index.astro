@@ -1,0 +1,57 @@
+---
+import Base from "../../layouts/Base.astro";
+import Nav from "../../components/Nav.svelte";
+import Footer from "../../components/Footer.svelte";
+import "../../styles/global.css";
+
+const releases = [
+  {
+    version: "0.9.0",
+    date: "2026-03-18",
+    summary: "MCP gateway rewrite, security presets, setup wizard, auto-update, kernel hardening.",
+  },
+  {
+    version: "0.8.8",
+    date: "2026-03-07",
+    summary: "Proxy throughput benchmarks, notarization preflight, boot invariant enforcement.",
+  },
+  {
+    version: "0.8.4",
+    date: "2026-03-06",
+    summary: "apt-get support in VM, Claude binary install, ephemeral model enforcement, release preflight checks.",
+  },
+  {
+    version: "0.8.3",
+    date: "2026-03-05",
+    summary: "Settings tree UI, config linting, file settings, SQL gateway, analytics overhaul.",
+  },
+  {
+    version: "0.8.1",
+    date: "2026-03-02",
+    summary: "MCP gateway, built-in HTTP tools, filesystem watcher, OpenAI Responses API support.",
+  },
+  {
+    version: "0.8.0",
+    date: "2026-02-28",
+    summary: "Unified audit database, inline SSE parsing, cost tracking, benchmarks, squashfs rootfs.",
+  },
+];
+---
+<Base title="News -- Capsem">
+  <Nav client:load />
+  <main class="max-w-3xl mx-auto px-6 py-24">
+    <h1 class="text-3xl font-semibold text-heading-dark mb-12">Releases</h1>
+    <div class="space-y-6">
+      {releases.map((r) => (
+        <a href={`/news/${r.version}`} class="block group border border-border-dark rounded-lg p-6 hover:border-accent/50 transition-colors">
+          <div class="flex items-baseline justify-between mb-2">
+            <h2 class="text-lg font-semibold text-white group-hover:text-accent transition-colors">v{r.version}</h2>
+            <time class="text-sm text-muted-dark">{r.date}</time>
+          </div>
+          <p class="text-sm text-body-dark">{r.summary}</p>
+        </a>
+      ))}
+    </div>
+  </main>
+  <Footer />
+</Base>

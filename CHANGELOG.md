@@ -7,8 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- MCP server bearer token auth sent double "Bearer" prefix (`Bearer Bearer <token>`), causing 401 from authenticated servers like deps.dev
+## [0.9.0] - 2026-03-18
 
 ### Added
 - Persistent logging system: three-layer tracing (stdout, per-launch JSONL file, Tauri UI layer) with per-VM log files in session directories (CLI + GUI)
@@ -19,28 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error messages now included in `vm-state-changed` events for all error states
 - Boot timeline state transitions emitted as structured tracing events
 - Integration test verifies log file creation, JSONL validity, level filtering, boot timeline events, and timestamp format
-
-### Added
 - App auto-update: `createUpdaterArtifacts` enabled so CI produces `.tar.gz` + `.sig` updater files and `latest.json` -- the built-in updater now works
 - `app.auto_update` setting (default: true) to gate the startup update check, with "Check for Updates" button in Settings > App
 - Multi-version asset manifest (`manifest.json`) replaces single-version `B3SUMS` -- supports multiple release versions, merge across releases, and future checkpoint restore
 - Version-scoped asset directories (`~/.capsem/assets/v{version}/`) with automatic migration from flat layout and cleanup of old versions
 - `pinned.json` support for keeping specific asset versions during cleanup (for future checkpointing)
 - `scripts/gen_manifest.py` for manifest generation in justfile and build.py
-
-### Changed
-- CI release workflow now accumulates manifest.json across releases and uploads it alongside rootfs
-- `_pack-initrd` regenerates manifest.json on every `just run` via `scripts/gen_manifest.py`
-- `build.rs` reads hashes from manifest.json (preferred) with B3SUMS fallback
-
-### Fixed
-- Tool calls no longer double-counted in stats -- MCP-proxied tool_calls (origin=mcp_proxy) filtered from native counts across all 6 tool queries
-- Native tool response preview now displayed in unified tool list (was hardcoded NULL, now joined from tool_responses via call_id)
-- Non-text content blocks (tool_reference, image) in Anthropic tool results now produce meaningful preview instead of empty string
-- OpenAI multipart tool result content now extracted correctly
-- `check_session.py` tool response matching fixed -- joins on call_id only (tool responses arrive in next model call with different model_call_id)
-
-### Added
 - First-run setup wizard -- 6-step guided configuration (Welcome, Security, AI Providers, Repositories, MCP Servers, All Set) that runs while the VM image downloads in the background
 - Host config auto-detection -- wizard scans ~/.gitconfig, ~/.ssh/*.pub, environment variables, and `gh auth token` to pre-populate settings with detected values
 - SSH public key setting (`vm.environment.ssh.public_key`) -- injected as /root/.ssh/authorized_keys in the guest VM at boot
@@ -48,29 +31,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resumable asset downloads -- partial .tmp files are preserved across app restarts and continued via HTTP Range headers instead of re-downloading from scratch
 - Security presets ("Medium" and "High") -- one-click security profiles selectable from Settings > Security
 - Automatic migration of old setting IDs (`web.*`, `registry.*`) to new `security.*` namespace -- existing user.toml and corp.toml files work without manual changes
+- `fetch_http` now supports `format=markdown` (new default) -- converts HTML to clean markdown preserving headings, links, lists, bold/italic, and code blocks
+- Wikipedia (`en.wikipedia.org`, `*.wikipedia.org`) added to default allow list for MCP HTTP tools
+- Auto-detect latest stable kernel version from kernel.org during `just build-assets`
+- User-editable bashrc and tmux.conf as file settings in Settings > VM > Shell
+- Filetype-aware syntax highlighting for file settings (bash, conf, json)
+- Documentation URLs for API key settings (links to provider console/settings pages)
+- Repositories section in settings with git identity (author name/email) for VM commits
+- Personal access token settings for GitHub and GitLab (enables git push over HTTPS via .git-credentials)
+- GitLab as a repository provider with domain allow/block and token support
+- Added `tmux` and `gh` to the default rootfs for terminal multiplexing and GitHub CLI support
+- Token prefix hints in settings UI -- apikey inputs show expected format (e.g., `ghp_...`, `sk-ant-...`) with a warning if the entered value doesn't match
+- `GH_TOKEN` / `GITHUB_TOKEN` env vars injected in VM when GitHub token is configured, enabling `gh` CLI without `gh auth login`
+- `GITLAB_TOKEN` env var injected in VM when GitLab token is configured
 
 ### Changed
+- CI release workflow now accumulates manifest.json across releases and uploads it alongside rootfs
+- `_pack-initrd` regenerates manifest.json on every `just run` via `scripts/gen_manifest.py`
+- `build.rs` reads hashes from manifest.json (preferred) with B3SUMS fallback
 - Settings restructured: "Web" and "Package Registries" merged under new "Security" top-level section with "Web", "Services > Search Engines", and "Services > Package Registries" sub-groups
 - MCP gateway rewritten to use rmcp (official Rust MCP SDK) -- replaces hand-rolled JSON-RPC/SSE client with proper Streamable HTTP transport, automatic pagination, and typed tool/resource/prompt routing
 - Upgraded reqwest from 0.12 to 0.13
 - MCP server UI redesigned: collapsible server cards with URL/auth config, "verified"/"definition changed" status labels
 - Tool origin telemetry expanded from 2 values (native/mcp) to 3 values (native/mcp_proxy/local)
 - Auto-detected stdio MCP servers from Claude/Gemini settings shown with unsupported warning instead of silently dropped
+- `just install` now runs validation gates only (doctor + full-test); `.app` bundling is CI-only
+- Missing API key warnings now appear in the group header when collapsed, with a "Get key" link
+- GitHub moved from "Package Registries" to "Repositories" section
+- `registry.github.*` setting IDs renamed to `repository.github.*`
+- Package Registries description updated to "Package manager registries"
 
 ### Removed
 - Stdio bridge for MCP servers (`stdio_bridge.rs`) -- replaced by HTTP client
 
-### Added
-- `fetch_http` now supports `format=markdown` (new default) -- converts HTML to clean markdown preserving headings, links, lists, bold/italic, and code blocks
-- Wikipedia (`en.wikipedia.org`, `*.wikipedia.org`) added to default allow list for MCP HTTP tools
-- Auto-detect latest stable kernel version from kernel.org during `just build-assets`
-- User-editable bashrc and tmux.conf as file settings in Settings > VM > Shell
-- Filetype-aware syntax highlighting for file settings (bash, conf, json)
-
-### Security
-- Kernel hardening: heap zeroing (`INIT_ON_ALLOC`), SLUB freelist hardening, page allocator randomization, KPTI (`UNMAP_KERNEL_AT_EL0`), ARM64 BTI + PAC, `HARDENED_USERCOPY`, seccomp filter, cmdline hardening (`init_on_alloc=1 slab_nomerge page_alloc.shuffle=1`)
-
 ### Fixed
+- MCP server bearer token auth sent double "Bearer" prefix (`Bearer Bearer <token>`), causing 401 from authenticated servers like deps.dev
+- Tool calls no longer double-counted in stats -- MCP-proxied tool_calls (origin=mcp_proxy) filtered from native counts across all 6 tool queries
+- Native tool response preview now displayed in unified tool list (was hardcoded NULL, now joined from tool_responses via call_id)
+- Non-text content blocks (tool_reference, image) in Anthropic tool results now produce meaningful preview instead of empty string
+- OpenAI multipart tool result content now extracted correctly
+- `check_session.py` tool response matching fixed -- joins on call_id only (tool responses arrive in next model call with different model_call_id)
 - MCP server now visible in `claude mcp list` -- was injected into wrong file (`settings.json` instead of `.claude.json`)
 - Codex CLI MCP server config added (`~/.codex/config.toml`) -- was missing entirely
 - Disabling an AI provider now takes effect immediately on existing keep-alive connections (policy was previously snapshot per-connection, not per-request, so in-flight HTTP/1.1 connections continued to allow requests after the provider was toggled off)
@@ -87,31 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - tmux now has a clean minimal config: mouse support, no escape delay, proper 256-color/truecolor, high scrollback
 - tmux sessions can now find `gemini` and other npm-global binaries (PATH was lost when tmux started a login shell that reset it via `/etc/profile`)
 - `gh auth status` injection test no longer fails with fake test tokens (test now verifies token detection, not authentication)
-
-### Changed
-- `just install` now runs validation gates only (doctor + full-test); `.app` bundling is CI-only
-
-### Added
-- Documentation URLs for API key settings (links to provider console/settings pages)
-- Repositories section in settings with git identity (author name/email) for VM commits
-- Personal access token settings for GitHub and GitLab (enables git push over HTTPS via .git-credentials)
-- GitLab as a repository provider with domain allow/block and token support
-- Added `tmux` and `gh` to the default rootfs for terminal multiplexing and GitHub CLI support
-- Token prefix hints in settings UI -- apikey inputs show expected format (e.g., `ghp_...`, `sk-ant-...`) with a warning if the entered value doesn't match
-- `GH_TOKEN` / `GITHUB_TOKEN` env vars injected in VM when GitHub token is configured, enabling `gh` CLI without `gh auth login`
-- `GITLAB_TOKEN` env var injected in VM when GitLab token is configured
-
-### Changed
-- Missing API key warnings now appear in the group header when collapsed, with a "Get key" link
-- GitHub moved from "Package Registries" to "Repositories" section
-- `registry.github.*` setting IDs renamed to `repository.github.*`
-- Package Registries description updated to "Package manager registries"
-
-### Fixed
 - Git authentication in VM: switched from `.netrc` to `.git-credentials` + `credential.helper=store` so `git push` works out of the box
 - "Get one" links in settings now open in host browser via `tauri-plugin-opener` (previously broken in Tauri webview)
 
 ### Security
+- Kernel hardening: heap zeroing (`INIT_ON_ALLOC`), SLUB freelist hardening, page allocator randomization, KPTI (`UNMAP_KERNEL_AT_EL0`), ARM64 BTI + PAC, `HARDENED_USERCOPY`, seccomp filter, cmdline hardening (`init_on_alloc=1 slab_nomerge page_alloc.shuffle=1`)
 - Git credential tokens now reject `@` and `:` characters (in addition to newlines) to prevent URL injection in `.git-credentials`
 
 ## [0.8.8] - 2026-03-07
