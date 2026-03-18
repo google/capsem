@@ -156,47 +156,35 @@ If any job fails: fix locally, create a NEW commit, bump the version (e.g. 0.9.0
 
 ### After CI completes successfully
 
-**1. Check release assets:**
+**1. Download CI artifacts and create the release:**
 ```bash
+# Find the run ID
+gh run list --workflow=release.yaml -L 1
+
+# Download built artifacts
+gh run download <run-id> -n release-artifacts -D /tmp/release-artifacts
+
+# Create the GitHub release with all assets
+gh release create vX.Y.Z /tmp/release-artifacts/* \
+  --title "Capsem vX.Y.Z" \
+  --notes "See CHANGELOG.md for details."
+```
+
+**2. Verify the release:**
+```bash
+# Check assets are listed
 gh release view vX.Y.Z
-```
-Verify: DMG, `.tar.gz` + `.sig` (updater), `rootfs.squashfs`, `manifest.json`, `latest.json`.
 
-**2. Publish the draft release** (tauri-action creates it as draft):
-```bash
-gh release edit vX.Y.Z --draft=false
-```
-
-**3. Verify manifest.json:**
-```bash
+# Verify manifest.json
 gh release download vX.Y.Z --pattern manifest.json -D /tmp/verify-release
 cat /tmp/verify-release/manifest.json | python3 -m json.tool
-```
-Check: `latest` field matches version, release entry has 3 assets with blake3 hashes, previous versions preserved.
 
-**4. Verify rootfs download + hash:**
-```bash
-curl -fSL -o /tmp/verify-release/rootfs.squashfs \
-  "https://github.com/google/capsem/releases/download/vX.Y.Z/rootfs.squashfs"
-b3sum /tmp/verify-release/rootfs.squashfs
-# Compare hash to manifest entry
-```
-
-**5. Verify `/releases/latest` redirect:**
-```bash
-curl -fsSL -o /dev/null -w "%{url_effective}" \
-  "https://github.com/google/capsem/releases/latest"
-```
-
-**6. Verify DMG download + mount:**
-```bash
+# Verify DMG mounts
 gh release download vX.Y.Z --pattern '*.dmg' -D /tmp/verify-release
 hdiutil attach /tmp/verify-release/Capsem*.dmg -nobrowse -readonly
 ls /Volumes/Capsem*/
 hdiutil detach /Volumes/Capsem*
-```
 
-**7. Verify latest tag via API:**
-```bash
+# Verify /releases/latest points to new version
 curl -fsSL "https://api.github.com/repos/google/capsem/releases/latest" | grep tag_name
 ```

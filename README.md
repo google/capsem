@@ -99,9 +99,19 @@ just run        # cross-compile + repack + build + sign + boot VM (~10s)
 
 ### Release
 
+Releases are CI-built. Push a tag to trigger the pipeline, then create the release locally:
+
 ```sh
-just release    # full-test + build + sign + DMG (target/release/Capsem.dmg)
-just install    # full-test + build + sign + install to /Applications + launch
+# 1. Bump version, update CHANGELOG, commit, tag, push
+git tag vX.Y.Z && git push origin main --tags
+
+# 2. Wait for CI (preflight -> build-assets -> test -> build-app)
+gh run list --workflow=release.yaml -L 1
+gh run watch <run-id>
+
+# 3. Download artifacts and create release (CI can't -- org restricts GITHUB_TOKEN)
+gh run download <run-id> -n release-artifacts -D /tmp/release-artifacts
+gh release create vX.Y.Z /tmp/release-artifacts/* --title "Capsem vX.Y.Z"
 ```
 
 ### Testing

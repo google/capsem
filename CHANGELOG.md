@@ -7,11 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.1] - 2026-03-18
+## [0.9.2] - 2026-03-18
 
 ### Fixed
 - CI codesign hang: keychain now set as default, explicitly unlocked with 1-hour timeout, and existing keychain search list preserved
 - CI Node.js upgraded from 22 to 24
+- CI release creation split from build: artifacts uploaded as CI artifacts, release created locally with `gh` CLI (org restricts GITHUB_TOKEN to read-only)
+
+### Changed
+- GitHub Actions upgraded to Node 24 (checkout v5, setup-node v5, upload/download-artifact v5, setup-buildx v4)
+- CI workflow scoped to PRs only; site deploy scoped to main + site/ changes only
 
 ## [0.9.0] - 2026-03-18
 
