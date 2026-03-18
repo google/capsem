@@ -124,15 +124,15 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile
 
+      - name: Frontend type-check and build
+        run: cd frontend && pnpm run check && pnpm run build
+
       - name: Unit tests (full workspace)
         run: cargo test --workspace
 
       # Check-only -- actual cross-compile already ran in build-assets on Linux
       - name: Cross-compile check (guest binaries)
         run: cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
-
-      - name: Frontend type-check and build
-        run: cd frontend && pnpm run check && pnpm run build
 
   build-app:
     needs: test  # All tests must pass before we package a release
