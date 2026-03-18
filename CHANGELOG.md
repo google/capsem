@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-03-18
+
+### Fixed
+- CI codesign hang: keychain now set as default, explicitly unlocked with 1-hour timeout, and existing keychain search list preserved
+- CI Node.js upgraded from 22 to 24
+
 ## [0.9.0] - 2026-03-18
 
 ### Added
