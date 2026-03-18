@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Persistent logging system: three-layer tracing (stdout, per-launch JSONL file, Tauri UI layer) with per-VM log files in session directories (CLI + GUI)
+- Logs view in sidebar with live event stream, boot timeline visualization, session history browser, level filtering, and auto-scroll
+- Per-launch log files (`~/.capsem/logs/<timestamp>.jsonl`) with automatic 7-day cleanup
+- Per-VM session logs (`~/.capsem/sessions/<id>/capsem.log`) with structured JSONL events for both CLI and GUI modes
+- `load_session_log` and `list_log_sessions` Tauri commands for historical log access
+- Error messages now included in `vm-state-changed` events for all error states
+- Boot timeline state transitions emitted as structured tracing events
+- Integration test verifies log file creation, JSONL validity, level filtering, boot timeline events, and timestamp format
+
+### Added
 - App auto-update: `createUpdaterArtifacts` enabled so CI produces `.tar.gz` + `.sig` updater files and `latest.json` -- the built-in updater now works
 - `app.auto_update` setting (default: true) to gate the startup update check, with "Check for Updates" button in Settings > App
 - Multi-version asset manifest (`manifest.json`) replaces single-version `B3SUMS` -- supports multiple release versions, merge across releases, and future checkpoint restore

@@ -30,7 +30,10 @@ use tauri::{Emitter, Manager};
 use tokio::sync::broadcast;
 use tracing::{debug_span, error, info, info_span, warn};
 use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+
+use capsem_core::log_layer::TauriLogLayer;
 
 /// Clone a raw fd into an independently-owned File.
 /// The original fd remains open and unaffected.
@@ -157,13 +160,85 @@ fn rootfs_manifest_name(mgr: &AssetManager) -> Result<String> {
         .context("no rootfs entry in B3SUMS manifest")
 }
 
+/// Delete `.jsonl` log files in `dir` older than `max_days`.
+/// Parses the ISO 8601 timestamp from filenames (e.g. `2026-03-17T10-05-32.jsonl`).
+fn cleanup_old_logs(dir: &Path, max_days: u64) {
+    let cutoff = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_sub(max_days * 86400);
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let ext = path.extension().and_then(|e| e.to_str());
+        if ext != Some("jsonl") {
+            continue;
+        }
+
+        // Parse "2026-03-17T10-05-32" -> epoch seconds
+        if let Some(epoch) = parse_log_filename_epoch(&name) {
+            if epoch < cutoff {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
+/// Parse a log filename like "2026-03-17T10-05-32" to epoch seconds.
+fn parse_log_filename_epoch(name: &str) -> Option<u64> {
+    // Expected format: YYYY-MM-DDThh-mm-ss
+    if name.len() < 19 {
+        return None;
+    }
+    let y: i64 = name[0..4].parse().ok()?;
+    let m: u64 = name[5..7].parse().ok()?;
+    let d: u64 = name[8..10].parse().ok()?;
+    let h: u64 = name[11..13].parse().ok()?;
+    let min: u64 = name[14..16].parse().ok()?;
+    let s: u64 = name[17..19].parse().ok()?;
+
+    // Convert civil date to days since epoch (inverse of Hinnant algorithm)
+    let y_adj = if m <= 2 { y - 1 } else { y };
+    let m_adj = if m <= 2 { m + 9 } else { m - 3 };
+    let era = if y_adj >= 0 { y_adj } else { y_adj - 399 } / 400;
+    let yoe = (y_adj - era * 400) as u64;
+    let doy = (153 * m_adj + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = (era * 146097 + doe as i64 - 719468) as u64;
+
+    Some(days * 86400 + h * 3600 + min * 60 + s)
+}
+
 /// Write boot performance data from the state machine to ~/.capsem/perf/<timestamp>.log
+/// and emit structured tracing events for each state transition.
 fn write_perf_log(sm: &HostStateMachine) {
+    // Emit structured tracing events for each transition.
+    for t in sm.history() {
+        info!(
+            category = "boot_timeline",
+            from = %t.from, to = %t.to,
+            trigger = %t.trigger,
+            duration_ms = t.duration_in_from.as_millis() as u64,
+            "state transition"
+        );
+    }
+
     let log = sm.format_perf_log();
     if log.is_empty() {
         return;
     }
     eprint!("{log}");
+    // Keep writing to ~/.capsem/perf/ for backward compat
     let home = match std::env::var("HOME") {
         Ok(h) => PathBuf::from(h),
         Err(_) => return,
@@ -1380,7 +1455,7 @@ fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<String>) {
 /// - Cannot use `tokio::main` or `async` on the main thread because tokio's reactor
 ///   does not pump `CFRunLoop`.
 /// - Requires manual polling loops for control messages.
-fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionIndex) -> Result<()> {
+fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionIndex, log_handle: Option<&capsem_core::log_layer::LogHandle>) -> Result<()> {
     // Tokio runtime for async MITM proxy handlers.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -1437,6 +1512,15 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         Some(path)
     });
 
+    // Open per-VM log file for structured event capture.
+    if let Some(ref dir) = cli_session_dir {
+        if let Some(lh) = log_handle {
+            if let Ok(f) = std::fs::File::create(dir.join("capsem.log")) {
+                lh.set_vm_writer(f);
+            }
+        }
+    }
+
     // Record session in main.db.
     let record = SessionRecord {
         id: cli_session_id.clone(),
@@ -1463,7 +1547,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         warn!("failed to record session: {e}");
     }
 
-    let (vm, mut rx, _serial_input_fd, _sm) = boot_vm(
+    let (vm, mut rx, _serial_input_fd, mut sm) = boot_vm(
         &assets,
         rootfs_path.as_deref(),
         "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
@@ -1667,6 +1751,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         match ctrl_msg_rx.try_recv() {
             Ok(GuestToHost::Ready { version }) => {
                 eprintln!("[capsem] guest agent ready (v{version})");
+                let _ = sm.transition(HostState::VsockConnected, "vsock_ports_connected");
+                let _ = sm.transition(HostState::Handshaking, "ready_received");
                 break;
             }
             Ok(other) => {
@@ -1700,6 +1786,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         match ctrl_msg_rx.try_recv() {
             Ok(GuestToHost::BootReady) => {
                 eprintln!("[capsem] guest boot ready");
+                let _ = sm.transition(HostState::Running, "boot_ready_received");
+                write_perf_log(&sm);
                 break;
             }
             Ok(other) => {
@@ -1832,6 +1920,11 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     drop(_conns);
     // Wait for terminal reader to drain remaining output.
     let _ = terminal_reader.join();
+
+    // Flush and close the per-VM log writer.
+    if let Some(lh) = log_handle {
+        lh.clear_vm_writer();
+    }
 
     // Clean up session: delete scratch.img, snapshot counts, update status.
     if let Some(ref dir) = cli_session_dir {
@@ -2049,6 +2142,7 @@ fn gui_boot_vm(
             let _ = handle.emit("vm-state-changed", serde_json::json!({
                 "state": "Error",
                 "trigger": "boot_failed",
+                "message": format!("{e:#}"),
             }));
         }
     }
@@ -2057,16 +2151,74 @@ fn gui_boot_vm(
 fn main() {
     let cli_args: Vec<String> = std::env::args().skip(1).collect();
 
-    let filter = match std::env::var("RUST_LOG") {
+    // Global filter: always at least info so file/UI layers capture boot events.
+    // Stdout layer has its own per-layer filter for CLI (warn) vs GUI (debug).
+    let is_cli = !cli_args.is_empty();
+    let global_level = if is_cli { "info" } else { "debug" };
+    let filter = EnvFilter::new(format!("capsem={global_level},capsem_core={global_level}"));
+    let stdout_filter = match std::env::var("RUST_LOG") {
         Ok(_) => EnvFilter::from_default_env(),
         Err(_) => {
-            let level = if cli_args.is_empty() { "debug" } else { "warn" };
+            let level = if is_cli { "warn" } else { "debug" };
             EnvFilter::new(format!("capsem={level},capsem_core={level}"))
         }
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
+
+    // Per-launch log file: ~/.capsem/logs/<timestamp>.jsonl
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let log_dir = PathBuf::from(&home).join(".capsem").join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    cleanup_old_logs(&log_dir, 7);
+
+    let launch_ts = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let secs = now.as_secs();
+        let t = secs % 86400;
+        let days = secs / 86400;
+        // Simplified date from days since epoch
+        let z = days as i64 + 719468;
+        let era = if z >= 0 { z } else { z - 146096 } / 146097;
+        let doe = (z - era * 146097) as u64;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe as i64 + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        format!("{y:04}-{m:02}-{d:02}T{:02}-{:02}-{:02}", t / 3600, (t % 3600) / 60, t % 60)
+    };
+
+    let log_file = std::fs::File::create(log_dir.join(format!("{launch_ts}.jsonl")));
+    let (_non_blocking_guard, file_layer) = match log_file {
+        Ok(f) => {
+            let (non_blocking, guard) = tracing_appender::non_blocking(f);
+            let layer = Some(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_writer(non_blocking)
+                    .with_span_events(FmtSpan::CLOSE),
+            );
+            (Some(guard), layer)
+        }
+        Err(_) => (None, None),
+    };
+
+    // Layer 1: stdout (CLI uses warn to avoid noise, GUI uses debug)
+    let stdout_layer = tracing_subscriber::fmt::layer()
         .with_span_events(FmtSpan::CLOSE)
+        .with_filter(stdout_filter);
+
+    // Layer 3: Tauri event emitter + per-VM file (deferred)
+    let (tauri_layer, log_handle) = TauriLogLayer::new();
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer)
+        .with(file_layer)
+        .with(tauri_layer)
         .init();
 
     // Open session index early (shared by CLI and GUI paths).
@@ -2095,7 +2247,7 @@ fn main() {
             std::process::exit(1);
         }
         let command = remaining_args.join(" ");
-        if let Err(e) = run_cli(&command, &cli_env, &session_index) {
+        if let Err(e) = run_cli(&command, &cli_env, &session_index, Some(&log_handle)) {
             eprintln!("capsem: {e:#}");
             std::process::exit(1);
         }
@@ -2112,9 +2264,20 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new(session_index))
+        .manage(AppState::new(session_index, Some(log_handle)))
         .setup(|app| {
             info!("tauri setup hook running");
+
+            // Inject Tauri event emitter into the log layer.
+            {
+                let app_state = app.state::<AppState>();
+                if let Some(ref lh) = app_state.log_handle {
+                    let handle = app.handle().clone();
+                    lh.set_emitter(move |event| {
+                        let _ = handle.emit("log-event", &event);
+                    });
+                }
+            }
 
             // Check for updates before booting the VM (the webview gets
             // replaced with VZVirtualMachineView after boot, so we use a
@@ -2142,6 +2305,7 @@ fn main() {
                     let _ = app.handle().emit("vm-state-changed", serde_json::json!({
                         "state": "Error",
                         "trigger": "assets_not_found",
+                        "message": format!("{e:#}"),
                     }));
                     return Ok(());
                 }
@@ -2170,6 +2334,16 @@ fn main() {
                 info!(size_gb = scratch_size, "created scratch disk");
                 Some(path)
             });
+
+            // Open per-VM log file for structured event capture.
+            if let Some(ref dir) = gui_session_dir {
+                let app_state = app.state::<AppState>();
+                if let Some(ref lh) = app_state.log_handle {
+                    if let Ok(f) = std::fs::File::create(dir.join("capsem.log")) {
+                        lh.set_vm_writer(f);
+                    }
+                }
+            }
 
             // Record session in main.db.
             {
@@ -2232,6 +2406,7 @@ fn main() {
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
                                 "trigger": "asset_init_failed",
+                                "message": format!("{e:#}"),
                             }));
                             return;
                         }
@@ -2244,6 +2419,7 @@ fn main() {
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
                                 "trigger": "manifest_error",
+                                "message": format!("{e:#}"),
                             }));
                             return;
                         }
@@ -2276,6 +2452,7 @@ fn main() {
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
                                 "trigger": "download_failed",
+                                "message": format!("{e:#}"),
                             }));
                         }
                     }
@@ -2316,7 +2493,69 @@ fn main() {
             commands::open_url,
             commands::detect_host_config,
             commands::check_for_app_update,
+            commands::load_session_log,
+            commands::list_log_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_log_filename_epoch_valid() {
+        let epoch = parse_log_filename_epoch("2026-03-17T10-05-32").unwrap();
+        // Verify roundtrip: 2026-03-17T10:05:32 UTC
+        assert_eq!(epoch, 1773741932);
+    }
+
+    #[test]
+    fn parse_log_filename_epoch_start() {
+        let epoch = parse_log_filename_epoch("1970-01-01T00-00-00").unwrap();
+        assert_eq!(epoch, 0);
+    }
+
+    #[test]
+    fn parse_log_filename_epoch_too_short() {
+        assert!(parse_log_filename_epoch("2026").is_none());
+    }
+
+    #[test]
+    fn parse_log_filename_epoch_invalid_chars() {
+        assert!(parse_log_filename_epoch("XXXX-XX-XXTXX-XX-XX").is_none());
+    }
+
+    #[test]
+    fn cleanup_old_logs_deletes_old_files() {
+        let dir = std::env::temp_dir().join("capsem-test-cleanup-logs");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Create an "old" file (2020) and a "recent" file (2026)
+        std::fs::write(dir.join("2020-01-01T00-00-00.jsonl"), "old").unwrap();
+        std::fs::write(dir.join("2026-03-17T10-05-32.jsonl"), "new").unwrap();
+        // Non-jsonl file should be ignored
+        std::fs::write(dir.join("2020-01-01T00-00-00.txt"), "keep").unwrap();
+
+        cleanup_old_logs(&dir, 7);
+
+        assert!(!dir.join("2020-01-01T00-00-00.jsonl").exists(), "old file should be deleted");
+        assert!(dir.join("2026-03-17T10-05-32.jsonl").exists(), "recent file should be kept");
+        assert!(dir.join("2020-01-01T00-00-00.txt").exists(), "non-jsonl should be kept");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_old_logs_handles_empty_dir() {
+        let dir = std::env::temp_dir().join("capsem-test-cleanup-empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        cleanup_old_logs(&dir, 7); // should not panic
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

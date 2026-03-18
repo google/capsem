@@ -3,6 +3,8 @@
 import type {
   ConfigIssue,
   HostConfig,
+  LogEntry,
+  LogSessionInfo,
   McpPolicyInfo,
   McpServerInfo,
   McpToolInfo,
@@ -1056,6 +1058,43 @@ export const mockApi = {
     return () => clearInterval(iv);
   },
   checkForAppUpdate: async () => null,
+
+  onLogEvent: async (cb: (entry: LogEntry) => void) => {
+    const mockEntries: LogEntry[] = [
+      { timestamp: '2026-03-17T10:05:30.100Z', level: 'INFO', target: 'capsem::vm::boot', message: 'resolving assets' },
+      { timestamp: '2026-03-17T10:05:30.200Z', level: 'INFO', target: 'capsem::vm::boot', message: 'creating VM' },
+      { timestamp: '2026-03-17T10:05:31.400Z', level: 'INFO', target: 'capsem::vm::boot', message: 'kernel loaded' },
+      { timestamp: '2026-03-17T10:05:32.700Z', level: 'INFO', target: 'capsem::vm::vsock', message: 'connected port 5001' },
+      { timestamp: '2026-03-17T10:05:32.800Z', level: 'WARN', target: 'capsem::mcp::init', message: 'MCP server timeout, retrying' },
+      { timestamp: '2026-03-17T10:05:33.100Z', level: 'INFO', target: 'capsem::mcp::init', message: 'MCP gateway initialized' },
+      { timestamp: '2026-03-17T10:05:33.200Z', level: 'INFO', target: 'capsem::vm::boot', message: 'VM running' },
+    ];
+    let i = 0;
+    const iv = setInterval(() => {
+      if (i < mockEntries.length) {
+        cb(mockEntries[i]);
+        i++;
+      } else {
+        clearInterval(iv);
+      }
+    }, 500);
+    return () => clearInterval(iv);
+  },
+
+  loadSessionLog: async (_sessionId: string): Promise<LogEntry[]> => [
+    { timestamp: '2026-03-16T14:20:01.000Z', level: 'INFO', target: 'capsem::vm::boot', message: 'resolving assets' },
+    { timestamp: '2026-03-16T14:20:01.500Z', level: 'INFO', target: 'capsem::vm::boot', message: 'creating VM' },
+    { timestamp: '2026-03-16T14:20:03.000Z', level: 'INFO', target: 'capsem::vm::boot', message: 'kernel loaded' },
+    { timestamp: '2026-03-16T14:20:04.200Z', level: 'INFO', target: 'capsem::vm::vsock', message: 'connected port 5001' },
+    { timestamp: '2026-03-16T14:20:04.500Z', level: 'INFO', target: 'capsem::vm::boot', message: 'VM running' },
+    { timestamp: '2026-03-16T14:35:00.000Z', level: 'ERROR', target: 'capsem::net::mitm', message: 'codesign verification failed: signature invalid' },
+  ],
+
+  listLogSessions: async (): Promise<LogSessionInfo[]> => [
+    { session_id: '20260317-100530-a1b2', entry_count: 7 },
+    { session_id: '20260316-142001-c3d4', entry_count: 6 },
+    { session_id: '20260315-091500-e5f6', entry_count: 12 },
+  ],
 };
 
 // ---------------------------------------------------------------------------

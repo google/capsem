@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import re
 import sqlite3
@@ -584,6 +585,128 @@ def verify_session(session_id: str) -> bool:
         mconn.close()
     else:
         r.fail(f"main.db not found at {MAIN_DB}")
+
+    # ── log files ─────────────────────────────────────────────────────
+    print(f"\n{BOLD}log files{RESET}")
+
+    # Per-VM session log: ~/.capsem/sessions/<id>/capsem.log
+    vm_log_path = SESSIONS_DIR / session_id / "capsem.log"
+    r.check(
+        vm_log_path.exists(),
+        f"capsem.log exists at {vm_log_path}",
+        f"capsem.log NOT found at {vm_log_path}",
+    )
+
+    if vm_log_path.exists():
+        vm_log_content = vm_log_path.read_text()
+        vm_log_lines = [l for l in vm_log_content.splitlines() if l.strip()]
+        r.check(
+            len(vm_log_lines) >= 3,
+            f"{len(vm_log_lines)} entries in capsem.log",
+            f"only {len(vm_log_lines)} entries in capsem.log (expected >= 3)",
+        )
+
+        # Verify all lines are valid JSON with expected fields.
+        valid_json = 0
+        invalid_lines = []
+        for i, line in enumerate(vm_log_lines):
+            try:
+                entry = json.loads(line)
+                has_fields = all(
+                    k in entry for k in ("timestamp", "level", "target", "message")
+                )
+                if has_fields:
+                    valid_json += 1
+                else:
+                    invalid_lines.append((i + 1, "missing fields"))
+            except json.JSONDecodeError:
+                invalid_lines.append((i + 1, "invalid JSON"))
+
+        r.check(
+            valid_json == len(vm_log_lines),
+            f"all {valid_json} capsem.log entries are valid JSONL",
+            f"{len(invalid_lines)} invalid lines in capsem.log: {invalid_lines[:5]}",
+        )
+
+        # Check that log entries contain expected levels (INFO and above only).
+        levels = set()
+        for line in vm_log_lines:
+            try:
+                entry = json.loads(line)
+                levels.add(entry.get("level", ""))
+            except json.JSONDecodeError:
+                pass
+        r.check(
+            "INFO" in levels,
+            f"capsem.log contains INFO entries (levels: {levels})",
+            f"capsem.log missing INFO entries (levels: {levels})",
+        )
+        r.check(
+            "DEBUG" not in levels and "TRACE" not in levels,
+            "capsem.log filtered to INFO+ (no DEBUG/TRACE)",
+            f"capsem.log contains debug/trace entries (levels: {levels})",
+        )
+
+        # Check for boot_timeline state transition events.
+        timeline_entries = []
+        for line in vm_log_lines:
+            try:
+                entry = json.loads(line)
+                if "state transition" in entry.get("message", ""):
+                    timeline_entries.append(entry)
+            except json.JSONDecodeError:
+                pass
+        r.check(
+            len(timeline_entries) >= 2,
+            f"{len(timeline_entries)} boot_timeline state transitions in capsem.log",
+            f"only {len(timeline_entries)} state transitions (expected >= 2 boot phases)",
+        )
+
+        # Verify timestamps are valid ISO 8601.
+        valid_ts = 0
+        for line in vm_log_lines[:5]:
+            try:
+                entry = json.loads(line)
+                ts = entry.get("timestamp", "")
+                if re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", ts):
+                    valid_ts += 1
+            except json.JSONDecodeError:
+                pass
+        r.check(
+            valid_ts >= 3,
+            f"{valid_ts}/5 sampled timestamps are valid ISO 8601",
+            f"only {valid_ts}/5 timestamps match ISO 8601 format",
+        )
+
+    # Per-launch log file: ~/.capsem/logs/*.jsonl
+    launch_log_dir = Path.home() / ".capsem" / "logs"
+    if launch_log_dir.exists():
+        jsonl_files = sorted(launch_log_dir.glob("*.jsonl"), key=lambda p: p.name, reverse=True)
+        r.check(
+            len(jsonl_files) >= 1,
+            f"{len(jsonl_files)} launch log files in {launch_log_dir}",
+            f"no .jsonl files in {launch_log_dir}",
+        )
+
+        if jsonl_files:
+            # Verify the most recent launch log has entries.
+            latest = jsonl_files[0]
+            latest_lines = [l for l in latest.read_text().splitlines() if l.strip()]
+            r.check(
+                len(latest_lines) >= 5,
+                f"latest launch log {latest.name} has {len(latest_lines)} entries",
+                f"latest launch log {latest.name} has only {len(latest_lines)} entries (expected >= 5)",
+            )
+
+            # Verify launch log filename is valid timestamp format.
+            fname_match = re.match(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}", latest.stem)
+            r.check(
+                fname_match is not None,
+                f"launch log filename {latest.name} has valid timestamp format",
+                f"launch log filename {latest.name} does not match expected format",
+            )
+    else:
+        r.fail(f"launch log directory {launch_log_dir} not found")
 
     # ── summary ──────────────────────────────────────────────────────
     print(f"\n{BOLD}{'=' * 60}{RESET}")

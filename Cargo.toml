@@ -15,7 +15,8 @@ anyhow = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rmp-serde = "1"

@@ -5,7 +5,9 @@
   import StatsView from '../views/StatsView.svelte';
   import SettingsView from '../views/SettingsView.svelte';
   import WizardView from '../views/WizardView.svelte';
+  import LogsView from '../views/LogsView.svelte';
   import { sidebarStore } from '../stores/sidebar.svelte';
+  import { logsStore } from '../stores/logs.svelte';
   import { mcpStore } from '../stores/mcp.svelte';
   import { settingsStore } from '../stores/settings.svelte';
   import { themeStore } from '../stores/theme.svelte';
@@ -23,6 +25,7 @@
     vmStore.init();
     settingsStore.load();
     mcpStore.load();
+    logsStore.init();
   });
 
   $effect(() => {
@@ -55,6 +58,8 @@
           <StatsView />
         {:else if sidebarStore.activeView === 'settings'}
           <SettingsView />
+        {:else if sidebarStore.activeView === 'logs'}
+          <LogsView />
         {/if}
       </div>
     </div>

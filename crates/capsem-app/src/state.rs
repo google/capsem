@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use capsem_core::VirtualMachine;
 use capsem_core::HostStateMachine;
+use capsem_core::log_layer::LogHandle;
 use capsem_core::mcp::gateway::McpGatewayConfig;
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::policy::NetworkPolicy;
@@ -124,10 +125,11 @@ pub struct AppState {
     pub active_session_id: Mutex<Option<String>>,
     pub terminal_output: Arc<TerminalOutputQueue>,
     pub terminal_input_tx: std::sync::mpsc::Sender<(RawFd, String)>,
+    pub log_handle: Option<LogHandle>,
 }
 
 impl AppState {
-    pub fn new(session_index: SessionIndex) -> Self {
+    pub fn new(session_index: SessionIndex, log_handle: Option<LogHandle>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<(RawFd, String)>();
         
         // Spawn a dedicated global thread for batching terminal input writes.
@@ -180,6 +182,7 @@ impl AppState {
             active_session_id: Mutex::new(None),
             terminal_output: Arc::new(TerminalOutputQueue::new()),
             terminal_input_tx: tx,
+            log_handle,
         }
     }
 }
@@ -191,7 +194,7 @@ mod tests {
     #[test]
     fn new_state_has_no_vms() {
         let idx = SessionIndex::open_in_memory().unwrap();
-        let state = AppState::new(idx);
+        let state = AppState::new(idx, None);
         let vms = state.vms.lock().unwrap();
         assert!(vms.is_empty());
     }
@@ -199,7 +202,7 @@ mod tests {
     #[test]
     fn mutex_is_not_poisoned_on_creation() {
         let idx = SessionIndex::open_in_memory().unwrap();
-        let state = AppState::new(idx);
+        let state = AppState::new(idx, None);
         assert!(!state.vms.is_poisoned());
         assert!(!state.session_index.is_poisoned());
         assert!(!state.active_session_id.is_poisoned());
@@ -208,7 +211,7 @@ mod tests {
     #[test]
     fn active_session_starts_none() {
         let idx = SessionIndex::open_in_memory().unwrap();
-        let state = AppState::new(idx);
+        let state = AppState::new(idx, None);
         assert!(state.active_session_id.lock().unwrap().is_none());
     }
 
@@ -323,7 +326,7 @@ mod tests {
         use std::os::unix::io::{FromRawFd, IntoRawFd};
 
         let idx = SessionIndex::open_in_memory().unwrap();
-        let state = AppState::new(idx);
+        let state = AppState::new(idx, None);
 
         // Create a pipe: write end goes to the batching thread, read end we check.
         let (read_end, write_end) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -368,7 +371,7 @@ mod tests {
     #[test]
     fn app_state_has_terminal_output_queue() {
         let idx = SessionIndex::open_in_memory().unwrap();
-        let state = AppState::new(idx);
+        let state = AppState::new(idx, None);
         // Queue should be open and empty.
         let queue = state.terminal_output.data.lock().unwrap();
         assert!(queue.is_empty());

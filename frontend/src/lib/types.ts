@@ -129,7 +129,7 @@ export interface UpdateInfo {
 }
 
 /** Sidebar view names. */
-export type ViewName = 'terminal' | 'stats' | 'settings' | 'wizard';
+export type ViewName = 'terminal' | 'stats' | 'settings' | 'wizard' | 'logs';
 
 /** Stats panel tab names. */
 export type StatsTab = 'ai' | 'tools' | 'network' | 'files';
@@ -295,6 +295,23 @@ export interface SettingsLeaf {
 
 /** A settings tree node: either a group or a leaf. */
 export type SettingsNode = SettingsGroup | SettingsLeaf;
+
+/** A structured log event from the Rust backend. */
+export interface LogEntry {
+  timestamp: string;
+  level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG';
+  target: string;
+  message: string;
+}
+
+/** Log level filter values. */
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+
+/** Info about a session that has a capsem.log file. */
+export interface LogSessionInfo {
+  session_id: string;
+  entry_count: number;
+}
 
 /** Host configuration detected from the macOS host. */
 export interface HostConfig {

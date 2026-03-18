@@ -7,6 +7,8 @@ import type {
   DownloadProgress,
   GuestConfigResponse,
   HostConfig,
+  LogEntry,
+  LogSessionInfo,
   McpPolicyInfo,
   McpServerInfo,
   McpToolInfo,
@@ -241,4 +243,21 @@ export function onDownloadProgress(
 ): Promise<UnlistenFn> {
   if (isMock) return mockApi.onDownloadProgress(callback);
   return tauriListen<DownloadProgress>('download-progress', callback);
+}
+
+export function onLogEvent(
+  callback: (entry: LogEntry) => void,
+): Promise<UnlistenFn> {
+  if (isMock) return mockApi.onLogEvent(callback);
+  return tauriListen<LogEntry>('log-event', callback);
+}
+
+export function loadSessionLog(sessionId: string): Promise<LogEntry[]> {
+  if (isMock) return mockApi.loadSessionLog(sessionId);
+  return tauriInvoke<LogEntry[]>('load_session_log', { sessionId });
+}
+
+export function listLogSessions(): Promise<LogSessionInfo[]> {
+  if (isMock) return mockApi.listLogSessions();
+  return tauriInvoke<LogSessionInfo[]>('list_log_sessions');
 }
