@@ -53,6 +53,8 @@ frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5
   src/lib/api.ts          Typed Tauri invoke/listen wrappers
   src/components/         Web components (capsem-terminal xterm.js)
   src/pages/index.astro   Thin shell rendering <App client:only="svelte" />
+site/                     Product website (Astro + Svelte + Tailwind)
+  src/pages/documentation/  User-facing documentation (markdown pages)
 images/                   VM image tooling (Dockerfiles, build.py, capsem-init)
 assets/                   Built VM assets (gitignored)
 ```
@@ -92,6 +94,13 @@ The overall project plan and milestone roadmap is in `docs/overall_plan.md`.
 - Baked into rootfs via `update-ca-certificates` + certifi patch
 - Guest trusts it via system store + env vars (`REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`)
 - No security from the CA itself -- the guest is already fully sandboxed
+
+## Code Style
+
+- **Reuse over reinvention.** Before writing new code, check if `capsem-core` already has a module, struct, or function that does what you need. Extend existing abstractions instead of creating parallel ones. If a utility exists in one crate, move it to `capsem-core` rather than duplicating it.
+- **Minimize code.** Less code is better. Delete dead code, collapse trivial wrappers, inline single-use helpers. Every line must earn its place. If a function is only called once and isn't clarifying, inline it.
+- **`capsem-core` is the shared library.** All reusable logic (config parsing, policy evaluation, network, telemetry, VM management) belongs in `capsem-core`. The app crate (`capsem-app`) is a thin Tauri shell that wires commands to core. The agent crate (`capsem-agent`) is a thin guest binary. Neither should contain business logic that could live in core.
+- **One way to do things.** Don't introduce a second pattern when an existing one works. One config format, one error handling style, one serialization approach. Match what's already in the codebase.
 
 ## Key Files
 
@@ -148,7 +157,7 @@ cargo test --workspace
 3. **Integration tests**: Features that cross crate boundaries or touch VM lifecycle get integration tests in `crates/capsem-core/tests/vm_integration.rs`.
 4. **Run the full suite**: Before considering any work complete, run `cargo test --workspace` and `just test` (which includes cross-compile + frontend build). All tests must pass.
 4b. **After any telemetry/logging change**: Run a real session and verify with `just inspect-session` that all tables (model_calls, tool_calls, tool_responses, mcp_calls, net_events, fs_events) are populated correctly with model names, token counts, and tool origins.
-5. **Testable design**: Extract logic into standalone, testable functions/structs in `capsem-core` rather than embedding it in the app layer where it's coupled to Tauri. If you can't test it, refactor until you can.
+5. **Testable design**: Extract logic into `capsem-core` -- never embed business logic in the app layer where it's coupled to Tauri. If you can't test it without booting a VM or launching the GUI, it belongs in core. Reuse existing core modules before creating new ones.
 
 ## In-VM Diagnostics (capsem-doctor)
 
@@ -366,6 +375,20 @@ Charts use [LayerChart](https://layerchart.com) v2 -- a composable Svelte charti
 - Tailwind v4 + `client:only` Svelte: Tailwind's Vite plugin cannot see `client:only` components in the SSR module graph. The `@source` directives in `global.css` explicitly include `.svelte` and `.ts` files.
 - `vm-state-changed` payload is `{ state, trigger }` (object), not a plain string.
 - Dynamic Svelte components: use `<svelte:component this={item.icon} />`, not `<item.icon />`.
+
+## Documentation
+
+User-facing documentation lives in `site/src/pages/documentation/` as markdown files rendered by the Astro site. The `docs/` directory contains older internal notes and is being deprecated -- new documentation goes in `site/` only.
+
+**Writing style:** tight and to the point, like a manual. One topic per page. No filler, no marketing language. Tables over prose when listing configs or test cases. Code examples only when they clarify usage.
+
+**Frontmatter:** every doc page must include `title`, `description`, `lastUpdated` (ISO date), and optionally `tags` (string array). Update `lastUpdated` when modifying a page.
+
+**Structure:** `site/src/pages/documentation/<category>/<topic>.md`. Each file uses `layout: ../../../layouts/Doc.astro` frontmatter. Current categories:
+- `security/` -- kernel hardening, network isolation, sandbox model
+- `testing/` -- capsem-doctor, test suites, benchmarks
+
+**News / release posts:** `site/src/pages/news/<version>.md` (e.g., `0.8.8.md`). Each release gets a post summarizing what changed, using the Doc layout with `layout: ../../layouts/Doc.astro`. The index page at `site/src/pages/news/index.astro` lists all releases -- add a new entry to the `releases` array when creating a post. When cutting a release, create the news post as part of the release commit.
 
 ## Logging
 

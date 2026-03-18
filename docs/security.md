@@ -397,7 +397,7 @@ An AI agent inside the VM can detect it is sandboxed through several vectors:
 
 ### Hardened custom kernel
 
-The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) built from source with a hardened defconfig (`images/defconfig`). The kernel is compiled with `CONFIG_MODULES=n` -- there is no module loading infrastructure at all.
+The VM runs a custom-compiled Linux 6.6 LTS kernel (~7MB vs ~30MB stock Debian) built from source with a hardened defconfig (`images/defconfig.arm64`). The kernel is compiled with `CONFIG_MODULES=n` -- there is no module loading infrastructure at all.
 
 **Only the following drivers are compiled in (built-in, not modules):**
 
@@ -475,6 +475,36 @@ Updates are signed with minisign. The public key is embedded in the binary at co
 - SLSA Build Provenance (Level 2) attestation per release.
 - SPDX SBOM generated and attested alongside each release.
 - `cargo auditable build` embeds dependency manifest for post-hoc vulnerability scanning.
+
+### MCP server management
+
+The MCP gateway runs on the host, proxying tool calls from the guest VM via vsock:5003. Multiple security controls protect against malicious or compromised MCP servers:
+
+**Credential isolation**: MCP server credentials (API keys, OAuth tokens) are stored in `user.toml` on the host. They are passed as environment variables to host-side MCP server processes. They never enter the VM. The vsock:5003 relay carries only JSON-RPC tool call payloads.
+
+**Tool pinning**: Every tool definition is hashed (SHA-256 of name + description + inputSchema + annotations) on first discovery and stored in `~/.capsem/mcp_tool_cache.json`. On re-list, hash mismatches trigger automatic blocking and require user re-approval. This defends against rug pull attacks where a server silently changes tool behavior.
+
+**Annotations are untrusted**: Tool annotations (`readOnlyHint`, `destructiveHint`, etc.) are displayed in the UI as informational hints but never used as sole basis for auto-allowing tools. Per the MCP spec: "Clients MUST NOT rely solely on these for security decisions."
+
+**Multi-layer policy**: Policy evaluation order (most restrictive wins):
+1. Corp global MCP policy (allow/block)
+2. Corp per-server overrides
+3. User global MCP policy
+4. Per-server enabled/disabled
+5. Per-tool permission (allow/confirm/block)
+6. Default tool permission
+
+**Cross-server collision detection**: If two servers expose tools with the same name, the user is warned (potential shadowing attack vector).
+
+**In-VM MCP servers (known limitation)**: Users can run MCP servers directly inside the VM. These bypass host-side tool policy -- only HTTP-level network policy applies via the MITM proxy. Tool calls to in-VM servers are not logged in `mcp_calls`. For security-sensitive servers, configure them as host-side servers where credentials are isolated and tool calls are subject to per-tool policy.
+
+| Attack | Mitigation |
+|--------|------------|
+| Rug pull (silent tool redefinition) | Tool pinning with SHA-256 hashes, auto-block on change |
+| Tool poisoning (malicious description) | Full description displayed to user, never hidden |
+| Cross-server shadowing | Name collision detection + warning |
+| Credential theft via MCP | Credentials on host only, never in VM |
+| Annotation manipulation | Annotations treated as untrusted hints |
 
 ---
 

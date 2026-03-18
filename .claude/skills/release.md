@@ -21,11 +21,13 @@ Releases are CI-only -- no local `just release`. Push a tag to trigger the pipel
    - `workspace.package.version` in root `Cargo.toml`
    - `version` in `crates/capsem-app/tauri.conf.json`
 2. **Update CHANGELOG.md**: move `[Unreleased]` items into `[X.Y.Z] - YYYY-MM-DD`
-3. **Run preflight**: `scripts/preflight.sh` (validates Apple certs for CI)
-4. **Run tests**: `just full-test`
-5. **Commit**: `git commit -m "release: vX.Y.Z"`
-6. **Tag**: `git tag vX.Y.Z`
-7. **Push**: `git push origin main --tags`
+3. **Create news post**: `site/src/pages/news/<version>.md` (e.g. `0.9.0.md`) summarizing what changed, using `layout: ../../layouts/Doc.astro`. Add a matching entry to the `releases` array in `site/src/pages/news/index.astro`.
+4. **Update benchmarks** (if performance-relevant changes): run `just bench` and update the numbers in `site/src/pages/documentation/testing/benchmarks.md`. Always update `lastUpdated` in its frontmatter when numbers change.
+5. **Run preflight**: `scripts/preflight.sh` (validates Apple certs for CI)
+6. **Run tests**: `just full-test`
+7. **Commit**: `git commit -m "release: vX.Y.Z"`
+8. **Tag**: `git tag vX.Y.Z`
+9. **Push**: `git push origin main --tags`
 
 CI pipeline: preflight -> build-assets -> test -> build-app (sign + notarize + DMG + GitHub Release).
 

@@ -8,6 +8,14 @@
 - **DaisyUI v5** -- Tailwind component library (themes, badges, tables)
 - **Chart.js** -- charting (bar, doughnut, line)
 
+## Code Reuse
+
+Before creating new components, stores, or helpers, check what already exists:
+- **Stores** (`frontend/src/lib/stores/`): reuse existing rune stores. Don't create a new store when an existing one can be extended.
+- **Components** (`frontend/src/lib/components/`): reuse existing UI patterns. If a component does 80% of what you need, extend it rather than building a parallel one.
+- **Helpers** (`api.ts`, `mock.ts`, `types.ts`): use existing query helpers, formatters, and type definitions. Don't duplicate formatting logic across views.
+- **CSS patterns**: use the established card/stat/section patterns below. Don't invent new spacing or layout conventions.
+
 ## Svelte 5 Rune Patterns
 
 - `$state<T>(initial)` -- reactive state declaration

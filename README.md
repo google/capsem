@@ -153,7 +153,7 @@ The binary must be signed with `com.apple.security.virtualization` or Virtualiza
 Capsem assumes the AI agent inside the VM is adversarial. The sandbox is hardened at every layer:
 
 - **Hardware VM isolation** -- Apple Silicon Stage 2 page tables, no shared memory
-- **Custom hardened kernel** -- compiled from source with `CONFIG_MODULES=n` (no rootkits), `CONFIG_INET=n` (no IP stack), KASLR, stack protector, FORTIFY_SOURCE. 7MB vs 30MB stock Debian. See `images/defconfig` for the full config.
+- **Custom hardened kernel** -- compiled from source with `CONFIG_MODULES=n` (no rootkits), `CONFIG_INET=n` (no IP stack), KASLR, stack protector, FORTIFY_SOURCE. 7MB vs 30MB stock Debian. See `images/defconfig.arm64` for the full config.
 - **No network interface** -- no NIC exists in the VM. DNS, HTTP, and all IP traffic are physically impossible.
 - **Read-only rootfs** -- system binaries are immutable. Only `/root`, `/tmp`, and `/run` are writable (tmpfs, wiped on reboot).
 - **Boot asset integrity** -- BLAKE3 hashes of kernel, initrd, and rootfs are compiled into the binary. Tampered assets are rejected before the VM boots.
