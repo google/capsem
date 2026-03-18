@@ -69,7 +69,7 @@ impl Default for VmConfigBuilder {
             initrd_path: None,
             disk_path: None,
             scratch_disk_path: None,
-            kernel_cmdline: "console=hvc0 root=/dev/vda ro".to_string(),
+            kernel_cmdline: "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1".to_string(),
             expected_kernel_hash: None,
             expected_initrd_hash: None,
             expected_disk_hash: None,
@@ -236,7 +236,7 @@ mod tests {
             .unwrap();
         assert_eq!(config.cpu_count, 4); // default
         assert_eq!(config.ram_bytes, 4 * 1024 * 1024 * 1024); // default 4GB
-        assert_eq!(config.kernel_cmdline, "console=hvc0 root=/dev/vda ro");
+        assert_eq!(config.kernel_cmdline, "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1");
         assert!(config.initrd_path.is_none());
         assert!(config.disk_path.is_none());
     }
@@ -503,7 +503,7 @@ mod tests {
         assert!(b.initrd_path.is_none());
         assert!(b.disk_path.is_none());
         assert!(b.scratch_disk_path.is_none());
-        assert_eq!(b.kernel_cmdline, "console=hvc0 root=/dev/vda ro");
+        assert_eq!(b.kernel_cmdline, "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1");
     }
 
     #[test]
