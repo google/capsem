@@ -172,6 +172,17 @@
 
   function selectThinking(call: TraceModelCall) { detail = { type: 'thinking', data: { thinking_content: call.thinking_content } }; }
   function selectText(call: TraceModelCall) { detail = { type: 'text', data: { text_content: call.text_content } }; }
+  function selectInput(call: TraceModelCall) {
+    detail = {
+      type: 'model_input',
+      data: {
+        request_body_preview: call.request_body_preview,
+        system_prompt_preview: call.system_prompt_preview,
+        messages_count: call.messages_count,
+        tools_count: call.tools_count,
+      },
+    };
+  }
   function selectTool(tc: ToolCallEntry, traceId: string) {
     const resp = (traceToolResponses.get(traceId) ?? []).find(r => r.call_id === tc.call_id);
     detail = { type: 'tool', data: { tool_name: tc.tool_name, arguments: tc.arguments, origin: tc.origin, content_preview: resp?.content_preview ?? undefined, is_error: resp?.is_error ?? 0 } };
@@ -311,6 +322,13 @@
             {#if isExpanded}
               {#each calls as call}
                 {@const toolCalls = callToolCalls(trace.trace_id, call.id)}
+                {#if call.request_body_preview}
+                  <tr class="bg-base-200/20 hover:bg-base-300/30 cursor-pointer transition-colors" onclick={() => selectInput(call)}>
+                    <td></td>
+                    <td class="py-1 pr-2"><span class="badge badge-xs w-10 text-center bg-info/15 text-info border-0">input</span></td>
+                    <td class="py-1 text-base-content/50 whitespace-nowrap" colspan="6">{call.messages_count || '?'} messages, {call.tools_count || 0} tools</td>
+                  </tr>
+                {/if}
                 {#if call.thinking_content}
                   <tr class="bg-base-200/20 hover:bg-base-300/30 cursor-pointer transition-colors" onclick={() => selectThinking(call)}>
                     <td></td>
@@ -333,7 +351,7 @@
                     <td class="py-1 text-base-content/50 truncate max-w-0" colspan="6">{truncate(call.text_content, 100)}</td>
                   </tr>
                 {/if}
-                {#if !call.thinking_content && !call.text_content && callToolCalls(trace.trace_id, call.id).length === 0}
+                {#if !call.request_body_preview && !call.thinking_content && !call.text_content && callToolCalls(trace.trace_id, call.id).length === 0}
                   <tr class="bg-base-200/20"><td></td><td class="py-1 pr-2"></td><td class="py-1 text-base-content/30 italic" colspan="6">no content captured</td></tr>
                 {/if}
               {/each}

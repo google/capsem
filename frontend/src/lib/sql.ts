@@ -52,7 +52,8 @@ export const TRACES_SQL = `
 
 export const TRACE_DETAIL_SQL = `
   SELECT id, timestamp, provider, model, thinking_content, text_content,
-         input_tokens, output_tokens, duration_ms, estimated_cost_usd, stop_reason
+         input_tokens, output_tokens, duration_ms, estimated_cost_usd, stop_reason,
+         request_body_preview, system_prompt_preview, messages_count, tools_count
   FROM model_calls
   WHERE trace_id = ?
   ORDER BY id ASC

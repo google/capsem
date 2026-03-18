@@ -66,6 +66,24 @@
         <pre class="font-mono text-xs whitespace-pre-wrap break-words leading-relaxed bg-base-200/30 rounded p-2 max-h-[80vh] overflow-auto">{d.text_content ?? '(empty)'}</pre>
       </div>
 
+    {:else if selection.type === 'model_input'}
+      <div class="space-y-1 mb-2">
+        <div><span class="text-base-content/40">Messages:</span> <span class="font-mono">{d.messages_count ?? '?'}</span></div>
+        <div><span class="text-base-content/40">Tools:</span> <span class="font-mono">{d.tools_count ?? 0}</span></div>
+      </div>
+      {#if d.system_prompt_preview}
+        <div>
+          <div class="text-[10px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">System Prompt</div>
+          <pre class="font-mono text-xs whitespace-pre-wrap break-words leading-relaxed bg-base-200/30 rounded p-2 overflow-auto max-h-64">{d.system_prompt_preview}</pre>
+        </div>
+      {/if}
+      {#if d.request_body_preview}
+        <div>
+          <div class="text-[10px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">Request Body</div>
+          <pre class="font-mono text-xs whitespace-pre-wrap break-words leading-relaxed bg-base-200/30 rounded p-2 overflow-auto max-h-[60vh]">{@html tryHighlight(d.request_body_preview as string)}</pre>
+        </div>
+      {/if}
+
     {:else if selection.type === 'tool'}
       <div>
         <div class="text-[10px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">
