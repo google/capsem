@@ -9,13 +9,78 @@ pub const NS_SEP: &str = "__";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerDef {
     pub name: String,
-    pub command: String,
-    pub args: Vec<String>,
-    /// Host-only credentials, never sent to the VM.
-    pub env: HashMap<String, String>,
+    /// HTTP endpoint URL for the MCP server.
+    pub url: String,
+    /// Custom HTTP headers to send with every request.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Bearer token for Authorization header (extracted from env for convenience).
+    #[serde(default)]
+    pub bearer_token: Option<String>,
     pub enabled: bool,
     /// Where this definition came from: "claude", "gemini", "manual".
     pub source: String,
+    /// True if this was auto-detected as a stdio/command server (display-only, not connectable).
+    #[serde(default)]
+    pub unsupported_stdio: bool,
+}
+
+/// MCP tool annotations (per MCP spec 2024-11-05).
+///
+/// Displayed as informational hints in the UI. Per MCP spec:
+/// "Clients MUST NOT rely solely on these for security decisions."
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolAnnotations {
+    /// Human-readable title for the tool.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Whether the tool only reads data (no side effects).
+    #[serde(default, alias = "readOnlyHint")]
+    pub read_only_hint: bool,
+    /// Whether the tool may perform destructive operations.
+    #[serde(default = "default_true", alias = "destructiveHint")]
+    pub destructive_hint: bool,
+    /// Whether calling the tool multiple times with same args has same effect.
+    #[serde(default, alias = "idempotentHint")]
+    pub idempotent_hint: bool,
+    /// Whether the tool may interact with external entities.
+    #[serde(default = "default_true", alias = "openWorldHint")]
+    pub open_world_hint: bool,
+}
+
+impl ToolAnnotations {
+    /// Serialize to MCP wire format (camelCase keys per MCP spec 2024-11-05).
+    ///
+    /// The struct uses snake_case for Tauri IPC (frontend), but the JSON-RPC
+    /// wire protocol requires camelCase. This method produces the correct
+    /// wire representation.
+    pub fn to_mcp_json(&self) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        if let Some(ref title) = self.title {
+            obj.insert("title".into(), serde_json::Value::String(title.clone()));
+        }
+        obj.insert("readOnlyHint".into(), self.read_only_hint.into());
+        obj.insert("destructiveHint".into(), self.destructive_hint.into());
+        obj.insert("idempotentHint".into(), self.idempotent_hint.into());
+        obj.insert("openWorldHint".into(), self.open_world_hint.into());
+        serde_json::Value::Object(obj)
+    }
+}
+
+impl Default for ToolAnnotations {
+    fn default() -> Self {
+        Self {
+            title: None,
+            read_only_hint: false,
+            destructive_hint: true,
+            idempotent_hint: false,
+            open_world_hint: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A tool discovered from a server's tools/list response, with namespaced name.
@@ -28,6 +93,9 @@ pub struct McpToolDef {
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
     pub server_name: String,
+    /// MCP tool annotations (untrusted hints from the server).
+    #[serde(default)]
+    pub annotations: Option<ToolAnnotations>,
 }
 
 /// A resource discovered from a server's resources/list response.
@@ -257,5 +325,146 @@ mod tests {
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(!json.contains("\"id\""));
+    }
+
+    // ── ToolAnnotations tests ────────────────────────────────────────
+
+    // ── to_mcp_json tests ─────────────────────────────────────────────
+
+    #[test]
+    fn to_mcp_json_uses_camel_case_keys() {
+        let ann = ToolAnnotations {
+            title: Some("Test Tool".into()),
+            read_only_hint: true,
+            destructive_hint: false,
+            idempotent_hint: true,
+            open_world_hint: false,
+        };
+        let json = ann.to_mcp_json();
+        let obj = json.as_object().unwrap();
+        // Must have camelCase keys
+        assert!(obj.contains_key("readOnlyHint"));
+        assert!(obj.contains_key("destructiveHint"));
+        assert!(obj.contains_key("idempotentHint"));
+        assert!(obj.contains_key("openWorldHint"));
+        assert!(obj.contains_key("title"));
+        // Must NOT have snake_case keys
+        assert!(!obj.contains_key("read_only_hint"));
+        assert!(!obj.contains_key("destructive_hint"));
+        assert!(!obj.contains_key("idempotent_hint"));
+        assert!(!obj.contains_key("open_world_hint"));
+        // Values correct
+        assert_eq!(obj["readOnlyHint"], true);
+        assert_eq!(obj["destructiveHint"], false);
+        assert_eq!(obj["idempotentHint"], true);
+        assert_eq!(obj["openWorldHint"], false);
+        assert_eq!(obj["title"], "Test Tool");
+    }
+
+    #[test]
+    fn to_mcp_json_omits_title_when_none() {
+        let ann = ToolAnnotations::default();
+        let json = ann.to_mcp_json();
+        let obj = json.as_object().unwrap();
+        assert!(!obj.contains_key("title"));
+        assert_eq!(obj.len(), 4); // only the 4 bool hints
+    }
+
+    #[test]
+    fn to_mcp_json_default_annotations_correct() {
+        let ann = ToolAnnotations::default();
+        let json = ann.to_mcp_json();
+        let obj = json.as_object().unwrap();
+        assert_eq!(obj["readOnlyHint"], false);
+        assert_eq!(obj["destructiveHint"], true);
+        assert_eq!(obj["idempotentHint"], false);
+        assert_eq!(obj["openWorldHint"], true);
+    }
+
+    #[test]
+    fn tool_annotations_defaults() {
+        let ann = ToolAnnotations::default();
+        assert!(!ann.read_only_hint);
+        assert!(ann.destructive_hint); // default true
+        assert!(!ann.idempotent_hint);
+        assert!(ann.open_world_hint); // default true
+        assert!(ann.title.is_none());
+    }
+
+    #[test]
+    fn tool_annotations_from_json() {
+        let json = serde_json::json!({
+            "title": "Read file",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false
+        });
+        let ann: ToolAnnotations = serde_json::from_value(json).unwrap();
+        assert_eq!(ann.title.as_deref(), Some("Read file"));
+        assert!(ann.read_only_hint);
+        assert!(!ann.destructive_hint);
+        assert!(ann.idempotent_hint);
+        assert!(!ann.open_world_hint);
+    }
+
+    #[test]
+    fn tool_annotations_snake_case_also_works() {
+        let json = serde_json::json!({
+            "read_only_hint": true,
+            "destructive_hint": false
+        });
+        let ann: ToolAnnotations = serde_json::from_value(json).unwrap();
+        assert!(ann.read_only_hint);
+        assert!(!ann.destructive_hint);
+    }
+
+    #[test]
+    fn tool_annotations_missing_field_uses_defaults() {
+        let json = serde_json::json!({});
+        let ann: ToolAnnotations = serde_json::from_value(json).unwrap();
+        assert!(!ann.read_only_hint);
+        assert!(ann.destructive_hint);
+    }
+
+    #[test]
+    fn tool_annotations_extra_fields_ignored() {
+        let json = serde_json::json!({
+            "readOnlyHint": true,
+            "unknownField": "whatever",
+            "customAnnotation": 42
+        });
+        // Should not fail on unknown fields
+        let ann: ToolAnnotations = serde_json::from_value(json).unwrap();
+        assert!(ann.read_only_hint);
+    }
+
+    #[test]
+    fn tool_def_with_annotations() {
+        let def = McpToolDef {
+            namespaced_name: "github__search".into(),
+            original_name: "search".into(),
+            description: Some("Search repos".into()),
+            input_schema: serde_json::json!({}),
+            server_name: "github".into(),
+            annotations: Some(ToolAnnotations {
+                read_only_hint: true,
+                ..Default::default()
+            }),
+        };
+        assert!(def.annotations.unwrap().read_only_hint);
+    }
+
+    #[test]
+    fn tool_def_without_annotations() {
+        let def = McpToolDef {
+            namespaced_name: "test__tool".into(),
+            original_name: "tool".into(),
+            description: None,
+            input_schema: serde_json::json!({}),
+            server_name: "test".into(),
+            annotations: None,
+        };
+        assert!(def.annotations.is_none());
     }
 }

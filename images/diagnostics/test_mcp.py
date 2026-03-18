@@ -465,7 +465,7 @@ def test_mcp_fetch_http_raw_mode():
     """fetch_http with format=raw returns HTML tags."""
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net/about", "format": "raw", "max_length": 2000},
+        {"url": "https://elie.net/about", "format": "raw", "max_length": 10000},
     )
     assert result.get("isError") is not True, f"fetch raw failed: {result}"
     text = result["content"][0]["text"]

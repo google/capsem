@@ -20,6 +20,18 @@ use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];
 
+/// Default max characters returned by HTTP tools. Keep small to avoid
+/// blowing up the AI agent's context window; callers can paginate for more.
+const DEFAULT_MAX_LENGTH: u64 = 5000;
+const DEFAULT_CONTEXT_LINES: u64 = 3;
+const DEFAULT_MAX_MATCHES: u64 = 50;
+const BUILTIN_PROCESS_NAME: &str = "mcp_builtin";
+
+/// Build a JSON schema property for an integer parameter.
+fn schema_int(description: &str) -> Value {
+    serde_json::json!({"type": "integer", "description": description})
+}
+
 /// Returns true if the given tool name is a built-in tool.
 pub fn is_builtin_tool(name: &str) -> bool {
     BUILTIN_TOOL_NAMES.contains(&name)
@@ -58,10 +70,9 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                         "type": "integer",
                         "description": "Character offset to start reading from (default: 0). Use the value from the 'Remaining' line in a previous response to continue paginating."
                     },
-                    "max_length": {
-                        "type": "integer",
-                        "description": "Maximum characters to return (default: 50000). If the content exceeds this, a 'Remaining' line indicates how to fetch the rest."
-                    }
+                    "max_length": schema_int(&format!(
+                        "Maximum characters to return (default: {DEFAULT_MAX_LENGTH}). If the content exceeds this, a 'Remaining' line indicates how to fetch the rest."
+                    ))
                 },
                 "required": ["url"]
             }),
@@ -97,14 +108,12 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                         "type": "string",
                         "description": "Regex pattern to search for (case-insensitive). Uses Rust regex syntax (similar to PCRE without lookaround)."
                     },
-                    "context_lines": {
-                        "type": "integer",
-                        "description": "Number of lines to show before and after each matching line (default: 3)"
-                    },
-                    "max_matches": {
-                        "type": "integer",
-                        "description": "Maximum number of matches to return (default: 50). If more matches exist, output notes the truncation."
-                    },
+                    "context_lines": schema_int(&format!(
+                        "Number of lines to show before and after each matching line (default: {DEFAULT_CONTEXT_LINES})"
+                    )),
+                    "max_matches": schema_int(&format!(
+                        "Maximum number of matches to return (default: {DEFAULT_MAX_MATCHES}). If more matches exist, output notes the truncation."
+                    )),
                     "raw": {
                         "type": "boolean",
                         "description": "If true, search the raw HTML source instead of extracted text (default: false)"
@@ -113,10 +122,9 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                         "type": "integer",
                         "description": "Character offset to start reading output from (default: 0). Use for paginating large result sets."
                     },
-                    "max_length": {
-                        "type": "integer",
-                        "description": "Maximum characters to return (default: 50000). If truncated, use the indicated start_index to continue."
-                    }
+                    "max_length": schema_int(&format!(
+                        "Maximum characters to return (default: {DEFAULT_MAX_LENGTH}). If truncated, use the indicated start_index to continue."
+                    ))
                 },
                 "required": ["url", "pattern"]
             }),
@@ -156,10 +164,9 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                         "type": "integer",
                         "description": "Character offset to start reading from (default: 0). Rarely needed since header output is typically small."
                     },
-                    "max_length": {
-                        "type": "integer",
-                        "description": "Maximum characters to return (default: 50000). Rarely needed since header output is typically small."
-                    }
+                    "max_length": schema_int(&format!(
+                        "Maximum characters to return (default: {DEFAULT_MAX_LENGTH}). Rarely needed since header output is typically small."
+                    ))
                 },
                 "required": ["url"]
             }),
@@ -213,7 +220,7 @@ async fn emit_net_event(
         domain: domain.to_string(),
         port: 443,
         decision,
-        process_name: Some("mcp_builtin".to_string()),
+        process_name: Some(BUILTIN_PROCESS_NAME.to_string()),
         pid: None,
         method: Some(method.to_string()),
         path: Some(path.to_string()),
@@ -227,7 +234,7 @@ async fn emit_net_event(
         response_headers: None,
         request_body_preview: None,
         response_body_preview: None,
-        conn_type: Some("mcp_builtin".to_string()),
+        conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
     }))
     .await;
 }
@@ -268,7 +275,7 @@ async fn handle_fetch_http(
     let max_length = args
         .get("max_length")
         .and_then(|v| v.as_u64())
-        .unwrap_or(50000) as usize;
+        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
 
     let start = Instant::now();
     let resp = match client.get(url).send().await {
@@ -355,11 +362,11 @@ async fn handle_grep_http(
     let context_lines = args
         .get("context_lines")
         .and_then(|v| v.as_u64())
-        .unwrap_or(3) as usize;
+        .unwrap_or(DEFAULT_CONTEXT_LINES) as usize;
     let max_matches = args
         .get("max_matches")
         .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+        .unwrap_or(DEFAULT_MAX_MATCHES) as usize;
     let raw = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
     let start_index = args
         .get("start_index")
@@ -368,7 +375,7 @@ async fn handle_grep_http(
     let max_length = args
         .get("max_length")
         .and_then(|v| v.as_u64())
-        .unwrap_or(50000) as usize;
+        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
 
     if pattern_str.is_empty() {
         return tool_error(id, "pattern must not be empty");
@@ -497,7 +504,7 @@ async fn handle_http_headers(
     let max_length = args
         .get("max_length")
         .and_then(|v| v.as_u64())
-        .unwrap_or(50000) as usize;
+        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
 
     let start = Instant::now();
     let resp = match method {
@@ -2300,7 +2307,7 @@ mod tests {
         let policy = DomainPolicy::default_dev();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about", "format": "raw"}),
+            &serde_json::json!({"url": "https://elie.net/about", "format": "raw", "max_length": 50000}),
             &client,
             &policy,
             Some(serde_json::json!(1)),

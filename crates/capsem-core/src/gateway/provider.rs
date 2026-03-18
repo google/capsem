@@ -94,12 +94,14 @@ pub fn extract_model_from_path(path: &str) -> Option<String> {
 
 /// Determine the origin of a tool call based on its name.
 ///
-/// - Built-in MCP tools (fetch_http, grep_http, http_headers): "mcp"
-/// - External MCP tools with server__tool namespacing: "mcp"
+/// - Built-in MCP tools (fetch_http, grep_http, http_headers): "local"
+/// - External MCP tools with server__tool namespacing: "mcp_proxy"
 /// - Native model tools (write_file, bash, run_shell_command, etc.): "native"
 pub fn tool_origin(name: &str) -> &'static str {
-    if crate::mcp::builtin_tools::is_builtin_tool(name) || name.contains("__") {
-        "mcp"
+    if crate::mcp::builtin_tools::is_builtin_tool(name) {
+        "local"
+    } else if name.contains("__") {
+        "mcp_proxy"
     } else {
         "native"
     }
@@ -200,16 +202,16 @@ mod tests {
     }
 
     #[test]
-    fn tool_origin_builtin_mcp_tools() {
-        assert_eq!(tool_origin("fetch_http"), "mcp");
-        assert_eq!(tool_origin("grep_http"), "mcp");
-        assert_eq!(tool_origin("http_headers"), "mcp");
+    fn tool_origin_local_builtin_tools() {
+        assert_eq!(tool_origin("fetch_http"), "local");
+        assert_eq!(tool_origin("grep_http"), "local");
+        assert_eq!(tool_origin("http_headers"), "local");
     }
 
     #[test]
-    fn tool_origin_external_mcp_tools() {
-        assert_eq!(tool_origin("github__list_issues"), "mcp");
-        assert_eq!(tool_origin("jira__create_ticket"), "mcp");
-        assert_eq!(tool_origin("custom_server__my_tool"), "mcp");
+    fn tool_origin_mcp_proxy_tools() {
+        assert_eq!(tool_origin("github__list_issues"), "mcp_proxy");
+        assert_eq!(tool_origin("jira__create_ticket"), "mcp_proxy");
+        assert_eq!(tool_origin("custom_server__my_tool"), "mcp_proxy");
     }
 }
