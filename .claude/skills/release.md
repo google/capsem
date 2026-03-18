@@ -28,8 +28,19 @@ Releases are CI-only -- no local `just release`. Push a tag to trigger the pipel
 7. **Commit**: `git commit -m "release: vX.Y.Z"`
 8. **Tag**: `git tag vX.Y.Z`
 9. **Push**: `git push origin main --tags`
+10. **Wait for CI** to complete (preflight -> build-assets -> test -> build-app)
+11. **Create release locally** (CI can't -- org restricts GITHUB_TOKEN to read-only):
+```bash
+# Download CI artifacts
+gh run download <run-id> -n release-artifacts -D /tmp/release-artifacts
 
-CI pipeline: preflight -> build-assets -> test -> build-app (sign + notarize + DMG + GitHub Release).
+# Create the release and upload all assets
+gh release create vX.Y.Z /tmp/release-artifacts/* \
+  --title "Capsem vX.Y.Z" \
+  --notes "See CHANGELOG.md for details."
+```
+
+CI pipeline: preflight -> build-assets -> test -> build-app (sign + notarize + artifact upload).
 
 ## CI Pipeline (release.yaml)
 
@@ -38,7 +49,7 @@ CI pipeline: preflight -> build-assets -> test -> build-app (sign + notarize + D
 | `preflight` | macos-14 | Fail-fast: verify Apple cert imports, Tauri key exists |
 | `build-assets` | ubuntu-24.04-arm | Build VM assets (kernel, initrd, rootfs) via Docker |
 | `test` | macos-14 | Unit tests, cross-compile check, frontend build |
-| `build-app` | macos-14 | Tauri build, codesign, notarize, DMG, GitHub Release |
+| `build-app` | macos-14 | Tauri build, codesign, notarize, DMG, upload CI artifacts |
 
 ## Apple Code Signing
 
@@ -141,7 +152,7 @@ gh run watch <run-id>                    # Live tail the CI run
 gh run view <run-id> --log-failed       # Debug failures
 ```
 
-If any job fails: fix locally, create a NEW commit (never amend), delete the tag, re-tag, re-push.
+If any job fails: fix locally, create a NEW commit, bump the version (e.g. 0.9.0 -> 0.9.1), tag the new version, and push. **Never delete or move a tag** -- tags are immutable references. Always tag forward.
 
 ### After CI completes successfully
 

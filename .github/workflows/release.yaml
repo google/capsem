@@ -213,47 +213,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build thin DMG: exclude rootfs from bundle (downloaded on first launch).
-      # The TAURI_CONFIG override ensures only vmlinuz, initrd.img, and manifest.json
-      # are bundled, keeping the DMG under ~25 MB.
-      - uses: tauri-apps/tauri-action@v0.6
+      # Build + codesign + notarize the app (no GitHub release -- org restricts GITHUB_TOKEN to read-only).
+      # Artifacts are uploaded as CI artifacts; release is created locally with `gh release create`.
+      - name: Build and sign app
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
-        with:
-          tagName: v__VERSION__
-          releaseName: 'Capsem v__VERSION__'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
-          prerelease: false
-          projectPath: crates/capsem-app
-          args: --skip-stapling --config '{"bundle":{"resources":{"../../assets/vmlinuz":"vmlinuz","../../assets/initrd.img":"initrd.img","../../assets/manifest.json":"manifest.json"}}}'
+        run: |
+          cd crates/capsem-app
+          cargo tauri build --skip-stapling --config '{"bundle":{"resources":{"../../assets/vmlinuz":"vmlinuz","../../assets/initrd.img":"initrd.img","../../assets/manifest.json":"manifest.json"}}}'
 
-      # Upload rootfs and manifest as separate release assets (not in the DMG).
-      # The asset manager downloads rootfs on first launch via the manifest.
-      - name: Upload rootfs and manifest to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            assets/rootfs.squashfs
-            assets/manifest.json
-          tag_name: ${{ github.ref_name }}
+      # Collect all release artifacts into one directory for upload.
+      - name: Collect release artifacts
+        run: |
+          mkdir -p release-artifacts
+          cp target/release/bundle/dmg/*.dmg release-artifacts/
+          cp target/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
+          cp assets/rootfs.squashfs release-artifacts/
+          cp assets/manifest.json release-artifacts/
+          ls -lh release-artifacts/
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v5
         with:
-          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
-
-      - name: Generate SBOM
-        run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
-
-      - name: Attest SBOM
-        uses: actions/attest-sbom@v2
-        with:
-          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
-          sbom-path: capsem-sbom.spdx.json
+          name: release-artifacts
+          path: release-artifacts/
