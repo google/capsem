@@ -162,8 +162,8 @@ jobs:
       - name: Build frontend
         run: cd frontend && pnpm build
 
-      - name: Install cargo-auditable and cargo-sbom
-        run: cargo install cargo-auditable cargo-sbom --locked
+      - name: Install cargo tools
+        run: cargo install tauri-cli cargo-auditable cargo-sbom --locked
 
       - name: Import Apple certificate
         if: env.APPLE_CERTIFICATE != ''
