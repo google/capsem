@@ -22,7 +22,7 @@
     "@astrojs/check": "^0.9.6",
     "@tailwindcss/vite": "^4",
     "@types/sql.js": "^1.4.9",
-    "astro": "^5",
+    "astro": "^6",
     "daisyui": "^5",
     "svelte": "^5",
     "svelte-check": "^4",
