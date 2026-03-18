@@ -13,7 +13,7 @@ jobs:
   preflight:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Import Apple certificate (preflight)
         env:
@@ -71,8 +71,8 @@ jobs:
     needs: preflight
     runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -90,7 +90,7 @@ jobs:
       - name: Build VM assets
         run: python3 images/build.py
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: vm-assets
           path: assets/
@@ -99,8 +99,8 @@ jobs:
     needs: build-assets  # Needs assets for full workspace compile (Tauri resource bundling)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with:
           name: vm-assets
           path: assets/
@@ -117,7 +117,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 9
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -138,8 +138,8 @@ jobs:
     needs: test  # All tests must pass before we package a release
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with:
           name: vm-assets
           path: assets/
@@ -152,7 +152,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 9
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
