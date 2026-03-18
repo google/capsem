@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- MCP server bearer token auth sent double "Bearer" prefix (`Bearer Bearer <token>`), causing 401 from authenticated servers like deps.dev
+
 ### Added
 - Persistent logging system: three-layer tracing (stdout, per-launch JSONL file, Tauri UI layer) with per-VM log files in session directories (CLI + GUI)
 - Logs view in sidebar with live event stream, boot timeline visualization, session history browser, level filtering, and auto-scroll

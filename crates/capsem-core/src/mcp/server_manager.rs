@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use rmcp::model::{
     CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams,
 };
-use rmcp::service::RunningService;
+use rmcp::service::{Peer, RunningService};
 use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
 };
@@ -28,6 +28,7 @@ struct RunningServer {
 pub struct McpServerManager {
     definitions: Vec<McpServerDef>,
     running: HashMap<String, RunningServer>,
+    http_client: reqwest::Client,
     // Unified, namespaced catalogs
     tool_catalog: Vec<McpToolDef>,
     resource_catalog: Vec<McpResourceDef>,
@@ -39,10 +40,11 @@ pub struct McpServerManager {
 }
 
 impl McpServerManager {
-    pub fn new(defs: Vec<McpServerDef>) -> Self {
+    pub fn new(defs: Vec<McpServerDef>, http_client: reqwest::Client) -> Self {
         Self {
             definitions: defs,
             running: HashMap::new(),
+            http_client,
             tool_catalog: Vec::new(),
             resource_catalog: Vec::new(),
             prompt_catalog: Vec::new(),
@@ -90,7 +92,8 @@ impl McpServerManager {
         // Build transport config
         let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
         if let Some(ref token) = def.bearer_token {
-            config = config.auth_header(format!("Bearer {token}"));
+            // rmcp's reqwest impl calls bearer_auth() which prepends "Bearer " automatically
+            config = config.auth_header(token.clone());
         }
         if !def.headers.is_empty() {
             let mut headers = HashMap::new();
@@ -105,7 +108,7 @@ impl McpServerManager {
         }
 
         let transport = StreamableHttpClientTransport::with_client(
-            reqwest::Client::new(),
+            self.http_client.clone(),
             config,
         );
 
@@ -239,32 +242,60 @@ impl McpServerManager {
         self.running.contains_key(name)
     }
 
-    /// Route a tools/call: parse namespace, strip prefix, forward to server.
-    pub async fn call_tool(
-        &mut self,
-        namespaced_name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<JsonRpcResponse> {
+    /// Look up a tool's peer and original name. Clone the peer so the caller
+    /// can drop the manager lock before making the (potentially slow) RPC call.
+    pub fn lookup_tool_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
         let (server_name, original_name) = parse_namespaced(namespaced_name)
             .ok_or_else(|| anyhow::anyhow!("invalid namespaced tool name: {namespaced_name}"))?;
-
         let server = self
             .running
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        Ok((server.client.peer().clone(), original_name.to_string()))
+    }
+
+    /// Look up a resource's peer and original URI.
+    pub fn lookup_resource_peer(&self, namespaced_uri: &str) -> Result<(Peer<RoleClient>, String)> {
+        let (server_name, original_uri) = parse_resource_uri(namespaced_uri)
+            .ok_or_else(|| anyhow::anyhow!("invalid namespaced resource URI: {namespaced_uri}"))?;
+        let server = self
+            .running
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        Ok((server.client.peer().clone(), original_uri.to_string()))
+    }
+
+    /// Look up a prompt's peer and original name.
+    pub fn lookup_prompt_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
+        let (server_name, original_name) = parse_namespaced(namespaced_name)
+            .ok_or_else(|| anyhow::anyhow!("invalid namespaced prompt name: {namespaced_name}"))?;
+        let server = self
+            .running
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        Ok((server.client.peer().clone(), original_name.to_string()))
+    }
+
+    /// Route a tools/call: parse namespace, strip prefix, forward to server.
+    pub async fn call_tool(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<JsonRpcResponse> {
+        let (peer, original_name) = self.lookup_tool_peer(namespaced_name)?;
 
         let args: Option<serde_json::Map<String, serde_json::Value>> = match arguments {
             serde_json::Value::Object(map) if !map.is_empty() => Some(map),
             _ => None,
         };
 
-        let mut params = CallToolRequestParams::new(original_name.to_string());
+        let mut params = CallToolRequestParams::new(original_name.clone());
         if let Some(args) = args {
             params = params.with_arguments(args);
         }
 
-        let result = server.client.call_tool(params).await
-            .with_context(|| format!("tool call '{}' on server '{}' failed", original_name, server_name))?;
+        let result = peer.call_tool(params).await
+            .with_context(|| format!("tool call '{}' failed", original_name))?;
 
         let result_json = serde_json::to_value(&result)
             .context("failed to serialize tool result")?;
@@ -272,18 +303,12 @@ impl McpServerManager {
     }
 
     /// Route a resources/read: parse namespaced URI, forward to server.
-    pub async fn read_resource(&mut self, namespaced_uri: &str) -> Result<JsonRpcResponse> {
-        let (server_name, original_uri) = parse_resource_uri(namespaced_uri)
-            .ok_or_else(|| anyhow::anyhow!("invalid namespaced resource URI: {namespaced_uri}"))?;
+    pub async fn read_resource(&self, namespaced_uri: &str) -> Result<JsonRpcResponse> {
+        let (peer, original_uri) = self.lookup_resource_peer(namespaced_uri)?;
 
-        let server = self
-            .running
-            .get(server_name)
-            .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
-
-        let params = ReadResourceRequestParams::new(original_uri);
-        let result = server.client.read_resource(params).await
-            .with_context(|| format!("resource read '{}' on server '{}' failed", original_uri, server_name))?;
+        let params = ReadResourceRequestParams::new(original_uri.clone());
+        let result = peer.read_resource(params).await
+            .with_context(|| format!("resource read '{}' failed", original_uri))?;
 
         let result_json = serde_json::to_value(&result)
             .context("failed to serialize resource result")?;
@@ -292,27 +317,21 @@ impl McpServerManager {
 
     /// Route a prompts/get: parse namespace, forward to server.
     pub async fn get_prompt(
-        &mut self,
+        &self,
         namespaced_name: &str,
         arguments: serde_json::Value,
     ) -> Result<JsonRpcResponse> {
-        let (server_name, original_name) = parse_namespaced(namespaced_name)
-            .ok_or_else(|| anyhow::anyhow!("invalid namespaced prompt name: {namespaced_name}"))?;
+        let (peer, original_name) = self.lookup_prompt_peer(namespaced_name)?;
 
-        let server = self
-            .running
-            .get(server_name)
-            .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
-
-        let mut params = GetPromptRequestParams::new(original_name.to_string());
+        let mut params = GetPromptRequestParams::new(original_name.clone());
         if let serde_json::Value::Object(map) = arguments {
             if !map.is_empty() {
                 params = params.with_arguments(map);
             }
         }
 
-        let result = server.client.get_prompt(params).await
-            .with_context(|| format!("prompt get '{}' on server '{}' failed", original_name, server_name))?;
+        let result = peer.get_prompt(params).await
+            .with_context(|| format!("prompt get '{}' failed", original_name))?;
 
         let result_json = serde_json::to_value(&result)
             .context("failed to serialize prompt result")?;
@@ -348,7 +367,7 @@ mod tests {
 
     #[test]
     fn new_manager_has_empty_catalogs() {
-        let mgr = McpServerManager::new(vec![test_server_def()]);
+        let mgr = McpServerManager::new(vec![test_server_def()], reqwest::Client::new());
         assert!(mgr.tool_catalog().is_empty());
         assert!(mgr.resource_catalog().is_empty());
         assert!(mgr.prompt_catalog().is_empty());
@@ -359,7 +378,7 @@ mod tests {
     fn disabled_server_definition_stored() {
         let mut def = test_server_def();
         def.enabled = false;
-        let mgr = McpServerManager::new(vec![def]);
+        let mgr = McpServerManager::new(vec![def], reqwest::Client::new());
         assert_eq!(mgr.definitions().len(), 1);
         assert!(!mgr.definitions()[0].enabled);
     }
@@ -368,26 +387,26 @@ mod tests {
     fn unsupported_stdio_server_stored() {
         let mut def = test_server_def();
         def.unsupported_stdio = true;
-        let mgr = McpServerManager::new(vec![def]);
+        let mgr = McpServerManager::new(vec![def], reqwest::Client::new());
         assert_eq!(mgr.definitions().len(), 1);
         assert!(mgr.definitions()[0].unsupported_stdio);
     }
 
     #[test]
     fn tool_count_for_server_empty() {
-        let mgr = McpServerManager::new(vec![test_server_def()]);
+        let mgr = McpServerManager::new(vec![test_server_def()], reqwest::Client::new());
         assert_eq!(mgr.tool_count_for_server("test"), 0);
     }
 
     #[test]
     fn tool_count_for_server_nonexistent() {
-        let mgr = McpServerManager::new(vec![]);
+        let mgr = McpServerManager::new(vec![], reqwest::Client::new());
         assert_eq!(mgr.tool_count_for_server("nonexistent"), 0);
     }
 
     #[tokio::test]
     async fn call_tool_unknown_server_errors() {
-        let mut mgr = McpServerManager::new(vec![]);
+        let mgr = McpServerManager::new(vec![], reqwest::Client::new());
         let result = mgr.call_tool("unknown__tool", serde_json::json!({})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not running"));
@@ -395,7 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_no_separator_errors() {
-        let mut mgr = McpServerManager::new(vec![]);
+        let mgr = McpServerManager::new(vec![], reqwest::Client::new());
         let result = mgr.call_tool("noseparator", serde_json::json!({})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("invalid namespaced"));
@@ -403,9 +422,25 @@ mod tests {
 
     #[tokio::test]
     async fn read_resource_invalid_uri_errors() {
-        let mut mgr = McpServerManager::new(vec![]);
+        let mgr = McpServerManager::new(vec![], reqwest::Client::new());
         let result = mgr.read_resource("http://invalid").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn lookup_tool_peer_unknown_server_errors() {
+        let mgr = McpServerManager::new(vec![], reqwest::Client::new());
+        let result = mgr.lookup_tool_peer("unknown__tool");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not running"));
+    }
+
+    #[test]
+    fn lookup_tool_peer_no_separator_errors() {
+        let mgr = McpServerManager::new(vec![], reqwest::Client::new());
+        let result = mgr.lookup_tool_peer("noseparator");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid namespaced"));
     }
 
     /// Live integration test against DeepWiki's public MCP server (no auth).
@@ -422,7 +457,7 @@ mod tests {
             source: "test".to_string(),
             unsupported_stdio: false,
         };
-        let mut mgr = McpServerManager::new(vec![def.clone()]);
+        let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
         // Call connect_and_initialize directly -- errors surface immediately
         // instead of being silently logged by initialize_all.
         mgr.connect_and_initialize(&def)
@@ -435,5 +470,62 @@ mod tests {
             "DeepWiki should expose at least one tool, got catalog: {:?}",
             mgr.tool_catalog()
         );
+    }
+
+    /// Live integration test that connects to all HTTP MCP servers from the
+    /// developer's config (user.toml manual servers + auto-detected from
+    /// ~/.claude/settings.json and ~/.gemini/settings.json). Skips if none found.
+    /// Covers bearer_token auth, custom headers, and multi-server catalog building.
+    #[tokio::test]
+    async fn integration_live_configured_mcp_servers() {
+        use crate::net::policy_config::{load_settings_file, user_config_path};
+        use crate::mcp::build_server_list;
+        use crate::mcp::policy::McpUserConfig;
+
+        let user_mcp = user_config_path()
+            .and_then(|p| load_settings_file(&p).ok())
+            .and_then(|f| f.mcp)
+            .unwrap_or_default();
+        let corp_mcp = McpUserConfig::default();
+
+        let servers = build_server_list(&user_mcp, &corp_mcp);
+        let http_servers: Vec<_> = servers
+            .iter()
+            .filter(|s| s.enabled && !s.unsupported_stdio)
+            .collect();
+
+        if http_servers.is_empty() {
+            eprintln!("no HTTP MCP servers configured, skipping");
+            return;
+        }
+
+        let mut mgr = McpServerManager::new(
+            http_servers.iter().map(|s| (*s).clone()).collect(),
+            reqwest::Client::new(),
+        );
+
+        for def in &http_servers {
+            match mgr.connect_and_initialize(def).await {
+                Ok(()) => {
+                    assert!(
+                        mgr.is_running(&def.name),
+                        "server '{}' should be running after init",
+                        def.name,
+                    );
+                    assert!(
+                        mgr.tool_count_for_server(&def.name) > 0,
+                        "server '{}' should expose at least one tool, got catalog: {:?}",
+                        def.name,
+                        mgr.tool_catalog(),
+                    );
+                }
+                Err(e) => {
+                    panic!(
+                        "failed to connect to configured MCP server '{}' (url={}): {e:#}",
+                        def.name, def.url,
+                    );
+                }
+            }
+        }
     }
 }
