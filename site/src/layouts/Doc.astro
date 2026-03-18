@@ -1,0 +1,50 @@
+---
+import Base from "./Base.astro";
+import Nav from "../components/Nav.svelte";
+import Footer from "../components/Footer.svelte";
+import "../styles/global.css";
+
+interface Props {
+  frontmatter: {
+    title: string;
+    description: string;
+    lastUpdated: string;
+    tags?: string[];
+  };
+}
+
+const { frontmatter } = Astro.props;
+---
+<Base title={`${frontmatter.title} -- Capsem Docs`} description={frontmatter.description}>
+  <Nav client:load />
+  <main class="max-w-3xl mx-auto px-6 py-24">
+    <article class="prose prose-neutral prose-invert max-w-none
+      prose-headings:font-semibold
+      prose-h1:text-3xl prose-h1:mb-8
+      prose-h2:text-xl prose-h2:mt-10 prose-h2:mb-4
+      prose-h3:text-lg prose-h3:mt-8 prose-h3:mb-3
+      prose-p:leading-relaxed prose-p:text-neutral-300
+      prose-li:text-neutral-300
+      prose-strong:text-white
+      prose-code:text-blue-400 prose-code:bg-neutral-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded
+      prose-pre:bg-neutral-900 prose-pre:border prose-pre:border-neutral-800
+      prose-table:text-sm
+      prose-th:text-left prose-th:text-neutral-400 prose-th:font-medium prose-th:pb-2 prose-th:border-b prose-th:border-neutral-800
+      prose-td:py-2 prose-td:pr-4 prose-td:text-neutral-300 prose-td:border-b prose-td:border-neutral-900
+      prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
+      <h1>{frontmatter.title}</h1>
+      {frontmatter.lastUpdated && (
+        <p class="text-neutral-500 text-sm not-prose -mt-6 mb-4">Last updated: {frontmatter.lastUpdated}</p>
+      )}
+      {frontmatter.tags && frontmatter.tags.length > 0 && (
+        <div class="not-prose flex flex-wrap gap-2 mb-8">
+          {frontmatter.tags.map((tag: string) => (
+            <span class="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700">{tag}</span>
+          ))}
+        </div>
+      )}
+      <slot />
+    </article>
+  </main>
+  <Footer />
+</Base>

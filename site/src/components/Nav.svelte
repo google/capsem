@@ -23,9 +23,10 @@
     </a>
 
     <div class="hidden md:flex items-center gap-8">
-      <a href="#features" class="text-sm text-body hover:text-heading transition-colors">Features</a>
-      <a href="#how-it-works" class="text-sm text-body hover:text-heading transition-colors">How It Works</a>
-      <a href="#faq" class="text-sm text-body hover:text-heading transition-colors">FAQ</a>
+      <a href="/#features" class="text-sm text-body hover:text-heading transition-colors">Features</a>
+      <a href="/#how-it-works" class="text-sm text-body hover:text-heading transition-colors">How It Works</a>
+      <a href="/news" class="text-sm text-body hover:text-heading transition-colors">News</a>
+      <a href="/documentation/security/kernel" class="text-sm text-body hover:text-heading transition-colors">Docs</a>
     </div>
 
     <div class="flex items-center gap-3">
