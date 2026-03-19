@@ -6,7 +6,7 @@ on:
         description: 'Tag to publish (e.g. v0.9.3)'
         required: true
       run_id:
-        description: 'CI run ID with artifacts'
+        description: 'Release CI run ID with artifacts'
         required: true
 
 permissions:
@@ -16,20 +16,20 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Debug permissions
+      - name: Download release artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Token permissions:"
-          gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }} --jq '.permissions'
-          echo ""
-          echo "Attempting to list releases..."
-          gh release list -L 3 || echo "FAILED to list releases"
-          echo ""
-          echo "Attempting to create a draft release..."
-          gh release create ${{ inputs.tag }} --title "Capsem ${{ inputs.tag }}" --notes "Test" --draft || echo "FAILED to create release"
-          echo ""
-          echo "Cleaning up draft..."
-          gh release delete ${{ inputs.tag }} --yes 2>/dev/null || true
+          gh run download ${{ inputs.run_id }} -n release-artifacts -D artifacts -R ${{ github.repository }}
+          echo "Downloaded artifacts:"
+          ls -lh artifacts/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ inputs.tag }} artifacts/* \
+            --repo ${{ github.repository }} \
+            --title "Capsem ${{ inputs.tag }}" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          echo "Published: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag }}"

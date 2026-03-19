@@ -81,9 +81,9 @@ install: doctor full-test
     @echo ""
     @echo "All gates passed. Use 'just run' to boot the VM."
 
-# Cut a release: wait for CI, download artifacts, create GitHub release.
+# Cut a release: wait for CI build, then trigger publish workflow.
 # Usage: just release          (uses latest vX.Y.Z tag)
-#        just release v0.9.2   (explicit tag)
+#        just release v0.9.3   (explicit tag)
 release tag="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -93,12 +93,12 @@ release tag="":
     else
         TAG=$(git tag --points-at HEAD 'v*' | sort -V | tail -1)
         if [ -z "$TAG" ]; then
-            echo "Error: HEAD has no v* tag. Pass one explicitly: just release v0.9.2"
+            echo "Error: HEAD has no v* tag. Pass one explicitly: just release v0.9.3"
             exit 1
         fi
     fi
     echo "=== Release $TAG ==="
-    # Find the CI run for this tag
+    # Find the CI build run for this tag
     RUN_ID=$(gh run list --workflow=release.yaml --json databaseId,headBranch,status \
         --jq ".[] | select(.headBranch==\"$TAG\") | .databaseId" | head -1)
     if [ -z "$RUN_ID" ]; then
@@ -106,7 +106,7 @@ release tag="":
         echo "Push the tag first: git push origin $TAG"
         exit 1
     fi
-    echo "CI run: $RUN_ID"
+    echo "CI build run: $RUN_ID"
     # Wait for CI if still running
     STATUS=$(gh run view "$RUN_ID" --json status --jq .status)
     if [ "$STATUS" != "completed" ]; then
@@ -120,20 +120,23 @@ release tag="":
         echo "Check: gh run view $RUN_ID --log-failed"
         exit 1
     fi
-    # Download artifacts
-    TMPDIR=$(mktemp -d)
-    echo "Downloading artifacts to $TMPDIR..."
-    gh run download "$RUN_ID" -n release-artifacts -D "$TMPDIR"
-    echo "Artifacts:"
-    ls -lh "$TMPDIR"
-    # Create the GitHub release
-    echo "Creating release $TAG..."
-    gh release create "$TAG" "$TMPDIR"/* \
-        --title "Capsem $TAG" \
-        --notes "See [CHANGELOG.md](https://github.com/google/capsem/blob/main/CHANGELOG.md) for details."
+    # Trigger the publish workflow (uses workflow_dispatch which gets write permissions)
+    echo "Triggering publish workflow..."
+    gh workflow run publish-release.yaml -f tag="$TAG" -f run_id="$RUN_ID"
+    # Wait for publish run to appear
+    sleep 5
+    PUBLISH_RUN=$(gh run list --workflow=publish-release.yaml -L 1 --json databaseId --jq '.[0].databaseId')
+    echo "Publish run: $PUBLISH_RUN"
+    gh run watch "$PUBLISH_RUN"
+    # Check publish result
+    PUB_CONCLUSION=$(gh run view "$PUBLISH_RUN" --json conclusion --jq .conclusion)
+    if [ "$PUB_CONCLUSION" != "success" ]; then
+        echo "Error: publish run failed ($PUB_CONCLUSION)"
+        echo "Check: gh run view $PUBLISH_RUN --log-failed"
+        exit 1
+    fi
     echo "=== Release $TAG published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
-    rm -rf "$TMPDIR"
 
 # Check that all required dev tools and dependencies are installed
 doctor:
