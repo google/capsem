@@ -100,7 +100,7 @@ jobs:
       - name: Build VM assets
         run: python3 images/build.py
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: vm-assets
           path: assets/
@@ -111,7 +111,7 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: vm-assets
           path: assets/
@@ -125,7 +125,7 @@ jobs:
         with:
           key: test
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
       - uses: actions/setup-node@v5
@@ -135,8 +135,8 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile
 
-      - name: Frontend type-check and build
-        run: cd frontend && pnpm run check && pnpm run build
+      - name: Frontend type-check, test, and build
+        run: cd frontend && pnpm run check && pnpm run test && pnpm run build
 
       - name: Unit tests (full workspace)
         run: cargo test --workspace
@@ -151,7 +151,7 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: vm-assets
           path: assets/
@@ -161,7 +161,7 @@ jobs:
         with:
           key: build-app
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
       - uses: actions/setup-node@v5
@@ -248,12 +248,12 @@ jobs:
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
 
       - name: Attest SBOM
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@v4
         with:
           subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
           sbom-path: capsem-sbom.spdx.json
@@ -271,7 +271,7 @@ jobs:
           ls -lh release-artifacts/
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: release-artifacts
           path: release-artifacts/
