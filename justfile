@@ -122,10 +122,10 @@ release tag="": check-release
     fi
     # Trigger the publish workflow (uses workflow_dispatch which gets write permissions)
     echo "Triggering publish workflow..."
-    gh workflow run publish-release.yaml -f tag="$TAG" -f run_id="$RUN_ID"
+    gh workflow run release.yaml -f tag="$TAG" -f run_id="$RUN_ID"
     # Wait for publish run to appear
     sleep 5
-    PUBLISH_RUN=$(gh run list --workflow=publish-release.yaml -L 1 --json databaseId --jq '.[0].databaseId')
+    PUBLISH_RUN=$(gh run list --workflow=release.yaml --event=workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId')
     echo "Publish run: $PUBLISH_RUN"
     gh run watch "$PUBLISH_RUN"
     # Check publish result

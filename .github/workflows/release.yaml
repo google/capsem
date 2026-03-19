@@ -3,6 +3,13 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.9.10)'
+        required: false
+      run_id:
+        description: 'Build run ID with artifacts (for publish mode)'
+        required: false
 
 permissions:
   contents: write
@@ -10,7 +17,9 @@ permissions:
   id-token: write
 
 jobs:
+  # ── Build pipeline (tag push) ─────────────────────────────────────────
   preflight:
+    if: github.event_name == 'push'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -68,6 +77,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/private_keys"
 
   build-assets:
+    if: github.event_name == 'push'
     needs: preflight
     runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
     steps:
@@ -96,7 +106,8 @@ jobs:
           path: assets/
 
   test:
-    needs: build-assets  # Needs assets for full workspace compile (Tauri resource bundling)
+    if: github.event_name == 'push'
+    needs: build-assets
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -135,7 +146,8 @@ jobs:
         run: cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
 
   build-app:
-    needs: test  # All tests must pass before we package a release
+    if: github.event_name == 'push'
+    needs: test
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -190,10 +202,8 @@ jobs:
       # Accumulate manifest.json: merge new version's entry with previous releases.
       - name: Build accumulated manifest
         run: |
-          # Download previous manifest from latest release (may not exist for first release).
           gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
           if [ -f /tmp/prev-manifest/manifest.json ]; then
-            # Merge: add all previous releases to new manifest, preserving new entries.
             python3 -c "
           import json, sys
           with open('assets/manifest.json') as f:
@@ -213,8 +223,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build + codesign + notarize the app (no GitHub release -- org restricts GITHUB_TOKEN to read-only).
-      # Artifacts are uploaded as CI artifacts; release is created locally with `gh release create`.
       - name: Build and sign app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -227,7 +235,6 @@ jobs:
           cd crates/capsem-app
           cargo tauri build --skip-stapling
 
-      # Sign manifest.json with a dedicated minisign key (MINISIGN_SECRET_KEY secret, no password).
       - name: Sign manifest
         run: |
           brew install minisign
@@ -237,11 +244,9 @@ jobs:
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
-      # Generate SBOM for supply chain transparency.
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 
-      # Attest build provenance and SBOM.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v3
         with:
@@ -253,7 +258,6 @@ jobs:
           subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
           sbom-path: capsem-sbom.spdx.json
 
-      # Collect all release artifacts into one directory for upload.
       - name: Collect release artifacts
         run: |
           mkdir -p release-artifacts
@@ -271,3 +275,28 @@ jobs:
         with:
           name: release-artifacts
           path: release-artifacts/
+
+  # ── Publish (workflow_dispatch) ────────────────────────────────────────
+  # Separate trigger because tag-push GITHUB_TOKEN is read-only (org policy).
+  # workflow_dispatch gets write permissions. Triggered by `just release`.
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download ${{ inputs.run_id }} -n release-artifacts -D artifacts -R ${{ github.repository }}
+          echo "Downloaded artifacts:"
+          ls -lh artifacts/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ inputs.tag }} artifacts/* \
+            --repo ${{ github.repository }} \
+            --title "Capsem ${{ inputs.tag }}" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          echo "Published: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag }}"
