@@ -908,6 +908,14 @@ pub async fn detect_host_config() -> Result<capsem_core::host_config::HostConfig
         .map_err(|e| format!("spawn_blocking failed: {e}"))
 }
 
+#[tauri::command]
+pub async fn validate_api_key(
+    provider: String,
+    key: String,
+) -> Result<capsem_core::host_config::KeyValidation, String> {
+    capsem_core::host_config::validate_api_key(&provider, &key).await
+}
+
 /// Info about an available app update.
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateInfo {

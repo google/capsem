@@ -7,6 +7,7 @@ import type {
   DownloadProgress,
   GuestConfigResponse,
   HostConfig,
+  KeyValidation,
   LogEntry,
   LogSessionInfo,
   McpPolicyInfo,
@@ -112,6 +113,11 @@ export function updateSetting(id: string, value: SettingValue): Promise<void> {
 export function detectHostConfig(): Promise<HostConfig> {
   if (isMock) return mockApi.detectHostConfig();
   return tauriInvoke<HostConfig>('detect_host_config');
+}
+
+export function validateApiKey(provider: string, key: string): Promise<KeyValidation> {
+  if (isMock) return mockApi.validateApiKey(provider, key);
+  return tauriInvoke<KeyValidation>('validate_api_key', { provider, key });
 }
 
 export function getVmState(): Promise<VmStateResponse> {

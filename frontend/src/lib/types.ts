@@ -313,6 +313,12 @@ export interface LogSessionInfo {
   entry_count: number;
 }
 
+/** Result of validating an API key against a provider endpoint. */
+export interface KeyValidation {
+  valid: boolean;
+  message: string;
+}
+
 /** Host configuration detected from the macOS host. */
 export interface HostConfig {
   git_name: string | null;

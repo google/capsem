@@ -2492,6 +2492,7 @@ fn main() {
             commands::refresh_mcp_tools,
             commands::open_url,
             commands::detect_host_config,
+            commands::validate_api_key,
             commands::check_for_app_update,
             commands::load_session_log,
             commands::list_log_sessions,

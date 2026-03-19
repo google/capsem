@@ -2,6 +2,7 @@
   import { wizardStore } from '../../stores/wizard.svelte';
   import { settingsStore } from '../../stores/settings.svelte';
   import { openUrl } from '../../api';
+  import KeyValidationBadge from '../../components/KeyValidationBadge.svelte';
 
   function getLeaf(id: string) {
     return settingsStore.findLeaf(id);
@@ -130,6 +131,9 @@
           {#if detected && currentToken}
             <span class="text-xs text-allowed">Detected via gh CLI</span>
             <button class="text-xs text-base-content/40 hover:underline" onclick={() => clearDetected(prov.tokenId)}>Clear</button>
+          {/if}
+          {#if prov.key === 'github' && currentToken}
+            <KeyValidationBadge provider="github" apiKey={currentToken} />
           {/if}
           {#if tokenLeaf?.metadata?.docs_url}
             <button

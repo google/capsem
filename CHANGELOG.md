@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.12] - 2026-03-19
+
+### Added
+- Wizard validates API keys in real-time against provider endpoints (spinner, check/X inline)
+- API key detection now checks `~/.config/openai/api_key` and `~/.anthropic/api_key`
+- Build verification documentation (SBOM, attestation, manifest signatures)
+
+### Fixed
+- `svelte-check` failing on `dist/` build artifacts (excluded from tsconfig)
+
 ## [0.9.11] - 2026-03-19
 
 ### Fixed

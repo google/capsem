@@ -2,6 +2,7 @@
   import { wizardStore } from '../../stores/wizard.svelte';
   import { settingsStore } from '../../stores/settings.svelte';
   import { openUrl } from '../../api';
+  import KeyValidationBadge from '../../components/KeyValidationBadge.svelte';
 
   const providers = [
     { key: 'anthropic', name: 'Anthropic', allowId: 'ai.anthropic.allow', keyId: 'ai.anthropic.api_key' },
@@ -91,6 +92,9 @@
               >
                 Clear
               </button>
+            {/if}
+            {#if currentKey}
+              <KeyValidationBadge provider={prov.key} apiKey={currentKey} />
             {/if}
             {#if keyLeaf?.metadata?.docs_url}
               <button

@@ -3,6 +3,7 @@
 import type {
   ConfigIssue,
   HostConfig,
+  KeyValidation,
   LogEntry,
   LogSessionInfo,
   McpPolicyInfo,
@@ -1030,6 +1031,22 @@ export const mockApi = {
     openai_api_key: null,
     github_token: 'ghp_detected1234567890',
   }),
+
+  validateApiKey: async (provider: string, key: string): Promise<KeyValidation> => {
+    await new Promise((r) => setTimeout(r, 800));
+    const prefixes: Record<string, string> = {
+      anthropic: 'sk-ant-',
+      openai: 'sk-',
+      google: 'AIza',
+      github: 'ghp_',
+    };
+    const prefix = prefixes[provider];
+    const valid = !!prefix && key.startsWith(prefix) && key.length > prefix.length + 4;
+    return {
+      valid,
+      message: valid ? 'Valid' : 'Invalid API key',
+    };
+  },
 
   // Event listeners return no-op unsubscribers in mock mode
   onSerialOutput: async (_cb: (data: number[]) => void) => () => {},
