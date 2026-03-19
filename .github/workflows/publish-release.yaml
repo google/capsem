@@ -1,0 +1,35 @@
+name: Publish Release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.9.3)'
+        required: true
+      run_id:
+        description: 'Release CI run ID with artifacts'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download ${{ inputs.run_id }} -n release-artifacts -D artifacts -R ${{ github.repository }}
+          echo "Downloaded artifacts:"
+          ls -lh artifacts/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ inputs.tag }} artifacts/* \
+            --repo ${{ github.repository }} \
+            --title "Capsem ${{ inputs.tag }}" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          echo "Published: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag }}"
