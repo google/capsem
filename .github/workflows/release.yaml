@@ -233,9 +233,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          cargo install rsign2 --locked
+          brew install minisign
           echo "$TAURI_SIGNING_PRIVATE_KEY" > /tmp/minisign.key
-          echo "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | rsign sign -s /tmp/minisign.key assets/manifest.json
+          echo "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | minisign -S -s /tmp/minisign.key -m assets/manifest.json
           rm /tmp/minisign.key
           echo "Signed manifest.json -> manifest.json.minisig"
 
