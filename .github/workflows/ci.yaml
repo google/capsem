@@ -28,6 +28,12 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile
 
+      - name: Dependency audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+          cd frontend && pnpm audit
+
       # capsem-app requires VM assets to compile (Tauri resource bundling),
       # so we test the library crates only. Full workspace test runs in release.
       - name: Unit tests (library crates)

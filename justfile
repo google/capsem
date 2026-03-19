@@ -5,13 +5,15 @@
 #   doctor          read-only check of all required tools (user-facing)
 #   _install-tools  auto-installs rust targets, components, cargo tools (internal)
 #   _check-assets   verifies VM assets exist, tells you to run build-assets if not
+#   audit           checks for known vulnerabilities in Rust + npm deps (gates all paths)
 #
-#   run             -> _check-assets -> _pack-initrd -> _sign -> _compile -> _frontend
-#   test            -> _install-tools
-#   build-assets    -> doctor + _install-tools
+#   run             -> audit + _check-assets + _pack-initrd + _sign + _compile + _frontend
+#   test            -> audit + _install-tools
+#   build-assets    -> doctor + _install-tools + audit
 #   test-injection  -> _check-assets + _pack-initrd + _sign
 #   full-test       -> test + _check-assets + _pack-initrd + _sign
 #   install         -> doctor + full-test
+#   check-release   -> audit + scripts/check-release-workflow.sh
 #
 # First-time setup:
 #   just doctor       (shows what's missing)
@@ -20,6 +22,7 @@
 # Daily dev:          just run     (fast ~10s, auto-repacks initrd)
 # Before release:     just install (doctor + full-test -- all validation gates)
 # Releases:           just release (push tag first, waits for CI, publishes GitHub release)
+# Dep maintenance:    just update-deps (cargo update + pnpm update)
 
 binary := "target/debug/capsem"
 assets_dir := "assets"
@@ -37,21 +40,45 @@ ui:
     cd frontend && pnpm run dev
 
 # Pack + boot VM (interactive or with command, ~10s)
-run *CMD: _check-assets _pack-initrd _sign
+run *CMD: audit _check-assets _pack-initrd _sign
     #!/bin/bash
     set -euo pipefail
     pkill -x capsem 2>/dev/null || true
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
 
 # Full VM asset rebuild (kernel, initrd, rootfs) via Docker/Podman
-build-assets: doctor _install-tools
+build-assets: doctor _install-tools audit
     cd images && python3 build.py
 
+# Dependency audit: check for known vulnerabilities in Rust and npm deps
+audit: _install-tools
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Cargo audit ==="
+    cargo audit
+    echo ""
+    echo "=== Frontend audit ==="
+    cd frontend && pnpm audit
+    echo ""
+    echo "All dependencies clean. If vulnerabilities found, run: just update-deps"
+
+# Update all dependencies (Rust + npm) to latest compatible versions
+update-deps:
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Cargo update ==="
+    cargo update
+    echo ""
+    echo "=== Frontend update ==="
+    cd frontend && pnpm update
+    echo ""
+    echo "Done. Run 'just audit' to verify, then 'just test' to confirm nothing broke."
+
 # Unit tests + cross-compile check + frontend type-check (no VM)
-test: _install-tools _clean-stale
+test: _install-tools _clean-stale audit
     cargo llvm-cov --workspace --no-cfg-coverage
     cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
-    cd frontend && pnpm run check && pnpm run build
+    cd frontend && pnpm run check && pnpm run test && pnpm run build
 
 # Full validation: test + capsem-doctor + injection test + integration test + bench (boots VM)
 full-test: test _check-assets _pack-initrd _sign
@@ -184,7 +211,7 @@ doctor:
 
     echo ""
     echo "== Cargo Tools =="
-    for tool in cargo-llvm-cov b3sum cargo-tauri; do
+    for tool in cargo-llvm-cov cargo-audit b3sum cargo-tauri; do
         if command -v "$tool" &>/dev/null; then
             pass "$tool"
         else
@@ -220,7 +247,7 @@ doctor:
     echo "All good!"
 
 # Verify release workflow steps locally before pushing a tag
-check-release:
+check-release: audit
     scripts/check-release-workflow.sh
 
 # Clean build artifacts
@@ -323,6 +350,11 @@ _install-tools:
     if ! command -v b3sum &>/dev/null; then
         echo "Installing b3sum..."
         cargo install b3sum --locked
+    fi
+    # cargo-audit for vulnerability scanning
+    if ! command -v cargo-audit &>/dev/null; then
+        echo "Installing cargo-audit..."
+        cargo install cargo-audit
     fi
     # Tauri CLI
     if ! cargo tauri --version &>/dev/null; then

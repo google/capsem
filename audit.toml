@@ -1,0 +1,30 @@
+# cargo-audit configuration
+# Ignore advisories for Tauri transitive dependencies we cannot control.
+# These are all GTK3/glib bindings used by Tauri on Linux -- not compiled on
+# macOS (our only target). Review periodically when upgrading Tauri.
+
+[advisories]
+ignore = [
+    # GTK3 bindings (unmaintained) -- Tauri's Linux backend, not compiled on macOS
+    "RUSTSEC-2024-0411", # gdkwayland-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0414", # gdkx11-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0417", # gdkx11
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0429", # glib VariantStrIter unsoundness (Linux-only)
+
+    # Unmaintained crates pulled in by Tauri transitive deps
+    "RUSTSEC-2024-0370", # proc-macro-error (via tao -> gtk3-macros)
+    "RUSTSEC-2025-0057", # fxhash (via wry -> selectors -> kuchikiki)
+    "RUSTSEC-2025-0075", # unic-char-range (via tauri-utils -> urlpattern)
+    "RUSTSEC-2025-0080", # unic-common (via tauri-utils -> urlpattern)
+    "RUSTSEC-2025-0081", # unic-char-property (via tauri-utils -> urlpattern)
+    "RUSTSEC-2025-0098", # unic-ucd-version (via tauri-utils -> urlpattern)
+    "RUSTSEC-2025-0100", # unic-ucd-ident (via tauri-utils -> urlpattern)
+    "RUSTSEC-2025-0134", # rustls-pemfile (via reqwest, transitional)
+]
