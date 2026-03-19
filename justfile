@@ -193,12 +193,19 @@ doctor:
     done
 
     echo ""
-    echo "== Optional (CI/Release) =="
-    for tool in gh openssl; do
+    echo "== Release Tools =="
+    for tool in gh openssl minisign; do
         if command -v "$tool" &>/dev/null; then
             pass "$tool"
         else
             echo "  [SKIP] $tool -- brew install $tool (only needed for releases)"
+        fi
+    done
+    for tool in cargo-sbom; do
+        if command -v "$tool" &>/dev/null; then
+            pass "$tool"
+        else
+            echo "  [SKIP] $tool -- cargo install $tool (only needed for releases)"
         fi
     done
 
@@ -211,6 +218,10 @@ doctor:
         exit 1
     fi
     echo "All good!"
+
+# Verify release workflow steps locally before pushing a tag
+check-release:
+    scripts/check-release-workflow.sh
 
 # Clean build artifacts
 clean:
