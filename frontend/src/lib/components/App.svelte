@@ -6,6 +6,7 @@
   import SettingsView from '../views/SettingsView.svelte';
   import WizardView from '../views/WizardView.svelte';
   import LogsView from '../views/LogsView.svelte';
+  import DownloadProgress from './DownloadProgress.svelte';
   import { sidebarStore } from '../stores/sidebar.svelte';
   import { logsStore } from '../stores/logs.svelte';
   import { mcpStore } from '../stores/mcp.svelte';
@@ -48,12 +49,16 @@
     <div class="flex flex-1 flex-col min-w-0">
       <!-- Content area: terminal is always mounted, hidden with visibility to avoid refit flash -->
       <div class="flex-1 min-h-0 relative">
-        <div
-          class="absolute inset-0"
-          style:visibility={sidebarStore.activeView === 'terminal' ? 'visible' : 'hidden'}
-        >
-          <TerminalView />
-        </div>
+        {#if vmStore.isDownloading}
+          <DownloadProgress />
+        {:else}
+          <div
+            class="absolute inset-0"
+            style:visibility={sidebarStore.activeView === 'terminal' ? 'visible' : 'hidden'}
+          >
+            <TerminalView />
+          </div>
+        {/if}
         {#if sidebarStore.activeView === 'stats'}
           <StatsView />
         {:else if sidebarStore.activeView === 'settings'}

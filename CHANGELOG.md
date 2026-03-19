@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.11] - 2026-03-19
+
+### Fixed
+- Download progress now shown in main app view when setup wizard is skipped (returning users with existing config but missing rootfs saw a blank terminal)
+
+### Added
+- Frontend test infrastructure (vitest + @testing-library/svelte) with store and component tests
+
 ## [0.9.10] - 2026-03-19
 
 ### Fixed
