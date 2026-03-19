@@ -1,4 +1,5 @@
 # npm packages pre-installed globally in the capsem VM.
 # Installed to /opt/ai-clis (staging), copied to writable scratch disk at boot.
+@anthropic-ai/claude-code
 @google/gemini-cli
 @openai/codex

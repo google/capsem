@@ -29,15 +29,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 
     install -m 555 /root/.local/bin/uv /usr/local/bin/uv && \
     install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
 
-# Claude Code -- download binary directly using the URL from the official install script.
-# Extracts the GCS bucket and latest version from install.sh so we don't depend on
-# the installer's HOME layout. Binary goes straight to /usr/local/bin/claude.
-RUN GCS_BUCKET=$(curl -fsSL https://claude.ai/install.sh | grep 'GCS_BUCKET=' | head -1 | cut -d'"' -f2) && \
-    VERSION=$(curl -fsSL "$GCS_BUCKET/latest") && \
-    curl -fsSL "$GCS_BUCKET/$VERSION/linux-arm64/claude" -o /usr/local/bin/claude && \
-    chmod 755 /usr/local/bin/claude
-
-# Other AI coding CLIs -- installed to /opt/ai-clis (staging area).
+# AI coding CLIs -- installed to /opt/ai-clis (staging area).
 # Copied to writable scratch disk at boot by capsem-init so that
 # auto-update works (CLIs self-update and need writable node_modules).
 COPY npm-globals.txt /tmp/npm-globals.txt
