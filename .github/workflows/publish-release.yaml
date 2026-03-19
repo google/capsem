@@ -1,0 +1,35 @@
+name: Publish Release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.9.3)'
+        required: true
+      run_id:
+        description: 'CI run ID with artifacts'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Debug permissions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Token permissions:"
+          gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }} --jq '.permissions'
+          echo ""
+          echo "Attempting to list releases..."
+          gh release list -L 3 || echo "FAILED to list releases"
+          echo ""
+          echo "Attempting to create a draft release..."
+          gh release create ${{ inputs.tag }} --title "Capsem ${{ inputs.tag }}" --notes "Test" --draft || echo "FAILED to create release"
+          echo ""
+          echo "Cleaning up draft..."
+          gh release delete ${{ inputs.tag }} --yes 2>/dev/null || true
