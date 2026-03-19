@@ -81,10 +81,10 @@ install: doctor full-test
     @echo ""
     @echo "All gates passed. Use 'just run' to boot the VM."
 
-# Cut a release: wait for CI build, then trigger publish workflow.
+# Cut a release: preflight check, wait for CI build, then trigger publish workflow.
 # Usage: just release          (uses latest vX.Y.Z tag)
 #        just release v0.9.3   (explicit tag)
-release tag="":
+release tag="": check-release
     #!/usr/bin/env bash
     set -euo pipefail
     # Resolve tag: explicit arg, or latest v* tag on HEAD
