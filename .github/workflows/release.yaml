@@ -227,6 +227,32 @@ jobs:
           cd crates/capsem-app
           cargo tauri build --skip-stapling
 
+      # Sign manifest.json with a dedicated minisign key (MINISIGN_SECRET_KEY secret, no password).
+      - name: Sign manifest
+        run: |
+          brew install minisign
+          echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
+          minisign -S -s /tmp/manifest-sign.key -m assets/manifest.json
+          rm /tmp/manifest-sign.key
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+
+      # Generate SBOM for supply chain transparency.
+      - name: Generate SBOM
+        run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
+
+      # Attest build provenance and SBOM.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
+          sbom-path: capsem-sbom.spdx.json
+
       # Collect all release artifacts into one directory for upload.
       - name: Collect release artifacts
         run: |
@@ -236,6 +262,8 @@ jobs:
           cp target/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
           cp assets/rootfs.squashfs release-artifacts/
           cp assets/manifest.json release-artifacts/
+          cp assets/manifest.json.minisig release-artifacts/
+          cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
 
       - name: Upload release artifacts
