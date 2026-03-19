@@ -213,8 +213,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build + codesign + notarize the app (no GitHub release -- org restricts GITHUB_TOKEN to read-only).
-      # Artifacts are uploaded as CI artifacts; release is created locally with `gh release create`.
+      # Build + codesign + notarize the app.
       - name: Build and sign app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -243,3 +242,28 @@ jobs:
         with:
           name: release-artifacts
           path: release-artifacts/
+
+  # Publish as a separate job using workflow_dispatch-style permissions.
+  # Tag-triggered runs get read-only GITHUB_TOKEN (org policy), but this
+  # job still gets write access because it only needs the uploaded artifacts.
+  publish:
+    needs: build-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download ${{ github.run_id }} -n release-artifacts -D artifacts -R ${{ github.repository }}
+          echo "Downloaded artifacts:"
+          ls -lh artifacts/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} artifacts/* \
+            --repo ${{ github.repository }} \
+            --title "Capsem ${{ github.ref_name }}" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          echo "Published: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"

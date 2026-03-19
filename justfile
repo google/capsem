@@ -81,7 +81,7 @@ install: doctor full-test
     @echo ""
     @echo "All gates passed. Use 'just run' to boot the VM."
 
-# Cut a release: wait for CI build, then trigger publish workflow.
+# Cut a release: wait for CI to build, test, sign, and publish.
 # Usage: just release          (uses latest vX.Y.Z tag)
 #        just release v0.9.3   (explicit tag)
 release tag="":
@@ -98,7 +98,7 @@ release tag="":
         fi
     fi
     echo "=== Release $TAG ==="
-    # Find the CI build run for this tag
+    # Find the CI run for this tag
     RUN_ID=$(gh run list --workflow=release.yaml --json databaseId,headBranch,status \
         --jq ".[] | select(.headBranch==\"$TAG\") | .databaseId" | head -1)
     if [ -z "$RUN_ID" ]; then
@@ -106,7 +106,7 @@ release tag="":
         echo "Push the tag first: git push origin $TAG"
         exit 1
     fi
-    echo "CI build run: $RUN_ID"
+    echo "CI run: $RUN_ID"
     # Wait for CI if still running
     STATUS=$(gh run view "$RUN_ID" --json status --jq .status)
     if [ "$STATUS" != "completed" ]; then
@@ -118,21 +118,6 @@ release tag="":
     if [ "$CONCLUSION" != "success" ]; then
         echo "Error: CI run $RUN_ID failed ($CONCLUSION)"
         echo "Check: gh run view $RUN_ID --log-failed"
-        exit 1
-    fi
-    # Trigger the publish workflow (uses workflow_dispatch which gets write permissions)
-    echo "Triggering publish workflow..."
-    gh workflow run publish-release.yaml -f tag="$TAG" -f run_id="$RUN_ID"
-    # Wait for publish run to appear
-    sleep 5
-    PUBLISH_RUN=$(gh run list --workflow=publish-release.yaml -L 1 --json databaseId --jq '.[0].databaseId')
-    echo "Publish run: $PUBLISH_RUN"
-    gh run watch "$PUBLISH_RUN"
-    # Check publish result
-    PUB_CONCLUSION=$(gh run view "$PUBLISH_RUN" --json conclusion --jq .conclusion)
-    if [ "$PUB_CONCLUSION" != "success" ]; then
-        echo "Error: publish run failed ($PUB_CONCLUSION)"
-        echo "Check: gh run view $PUBLISH_RUN --log-failed"
         exit 1
     fi
     echo "=== Release $TAG published ==="
