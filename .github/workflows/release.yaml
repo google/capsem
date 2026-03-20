@@ -257,6 +257,7 @@ jobs:
           cp target/release/bundle/dmg/*.dmg release-artifacts/
           cp target/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/macos/latest.json release-artifacts/ 2>/dev/null || true
           cp assets/rootfs.squashfs release-artifacts/
           cp assets/manifest.json release-artifacts/
           cp assets/manifest.json.minisig release-artifacts/

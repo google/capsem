@@ -126,6 +126,10 @@ pub struct AppState {
     pub terminal_output: Arc<TerminalOutputQueue>,
     pub terminal_input_tx: std::sync::mpsc::Sender<(RawFd, String)>,
     pub log_handle: Option<LogHandle>,
+    /// App-level lifecycle status, independent of any VM instance.
+    /// Tracks states like "downloading" that exist before a VM is created.
+    /// Valid values: "not created", "downloading", "booting", "running", "error".
+    pub app_status: Mutex<String>,
 }
 
 impl AppState {
@@ -183,6 +187,7 @@ impl AppState {
             terminal_output: Arc::new(TerminalOutputQueue::new()),
             terminal_input_tx: tx,
             log_handle,
+            app_status: Mutex::new("not created".to_string()),
         }
     }
 }
@@ -366,6 +371,29 @@ mod tests {
 
         // Clean up fd (take ownership back to drop it).
         drop(unsafe { std::fs::File::from_raw_fd(fd) });
+    }
+
+    #[test]
+    fn app_status_defaults_to_not_created() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let state = AppState::new(idx, None);
+        assert_eq!(*state.app_status.lock().unwrap(), "not created");
+    }
+
+    #[test]
+    fn app_status_can_be_set_to_downloading() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let state = AppState::new(idx, None);
+        *state.app_status.lock().unwrap() = "downloading".to_string();
+        assert_eq!(*state.app_status.lock().unwrap(), "downloading");
+    }
+
+    #[test]
+    fn app_status_can_be_set_to_booting() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let state = AppState::new(idx, None);
+        *state.app_status.lock().unwrap() = "booting".to_string();
+        assert_eq!(*state.app_status.lock().unwrap(), "booting");
     }
 
     #[test]

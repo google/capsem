@@ -2319,6 +2319,10 @@ fn main() {
                 Err(e) => {
                     error!("asset resolution failed: {e:#}");
                     info!("continuing without VM (frontend-only mode)");
+                    {
+                        let app_state = app.state::<AppState>();
+                        *app_state.app_status.lock().unwrap() = "error".to_string();
+                    }
                     let _ = app.handle().emit("vm-state-changed", serde_json::json!({
                         "state": "Error",
                         "trigger": "assets_not_found",
@@ -2400,6 +2404,10 @@ fn main() {
             if rootfs_path.is_some() {
                 // Rootfs available -- boot immediately on main thread.
                 info!("rootfs available, booting VM on main thread");
+                {
+                    let app_state = app.state::<AppState>();
+                    *app_state.app_status.lock().unwrap() = "booting".to_string();
+                }
                 gui_boot_vm(
                     app.handle(), &assets, rootfs_path.as_deref(),
                     &gui_session_id, gui_scratch_path, cpu_count, ram_bytes,
@@ -2407,6 +2415,10 @@ fn main() {
             } else {
                 // Rootfs not found -- download it first.
                 info!("rootfs not found, initiating download");
+                {
+                    let app_state = app.state::<AppState>();
+                    *app_state.app_status.lock().unwrap() = "downloading".to_string();
+                }
                 let _ = app.handle().emit("vm-state-changed", serde_json::json!({
                     "state": "Downloading",
                     "trigger": "rootfs_missing",
@@ -2421,6 +2433,10 @@ fn main() {
                         Ok(m) => m,
                         Err(e) => {
                             error!("asset manager init failed: {e:#}");
+                            {
+                                let state = handle.state::<AppState>();
+                                *state.app_status.lock().unwrap() = "error".to_string();
+                            }
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
                                 "trigger": "asset_init_failed",
@@ -2434,6 +2450,10 @@ fn main() {
                         Ok(n) => n,
                         Err(e) => {
                             error!("rootfs not in manifest: {e:#}");
+                            {
+                                let state = handle.state::<AppState>();
+                                *state.app_status.lock().unwrap() = "error".to_string();
+                            }
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
                                 "trigger": "manifest_error",
@@ -2464,6 +2484,10 @@ fn main() {
                             // VZVirtualMachine requires the main dispatch queue.
                             // We're on a tokio worker here, so dispatch back.
                             info!("dispatching VM boot to main thread");
+                            {
+                                let state = handle.state::<AppState>();
+                                *state.app_status.lock().unwrap() = "booting".to_string();
+                            }
                             let h = handle.clone();
                             let a = assets_clone.clone();
                             let s = session_id.clone();
@@ -2479,6 +2503,10 @@ fn main() {
                         }
                         Err(e) => {
                             error!("rootfs download failed: {e:#}");
+                            {
+                                let state = handle.state::<AppState>();
+                                *state.app_status.lock().unwrap() = "error".to_string();
+                            }
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
                                 "trigger": "download_failed",
