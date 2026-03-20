@@ -146,7 +146,8 @@ release tag="":
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
 # Bump patch version, commit, tag, push, and wait for CI to publish.
-cut-release:
+# Runs `just test` first (unit tests + audit + frontend check) to avoid burning tags.
+cut-release: test
     #!/usr/bin/env bash
     set -euo pipefail
     # Read current version from Cargo.toml
