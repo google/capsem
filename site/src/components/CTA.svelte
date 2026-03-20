@@ -12,9 +12,9 @@
     <!-- Install one-liner (dark theme) -->
     <div class="mt-10 mx-auto max-w-lg flex items-center gap-3 rounded-xl border border-border-dark bg-surface-dark-alt/60 px-5 py-3.5 font-mono text-sm text-heading-dark select-all">
       <span class="text-muted-dark select-none">$</span>
-      <span>curl -fsSL https://capsem.dev/install.sh | sh</span>
+      <span>curl -fsSL https://capsem.org/install.sh | sh</span>
       <button
-        onclick={() => navigator.clipboard.writeText('curl -fsSL https://capsem.dev/install.sh | sh')}
+        onclick={() => navigator.clipboard.writeText('curl -fsSL https://capsem.org/install.sh | sh')}
         class="ml-auto shrink-0 rounded-md p-1.5 text-muted-dark hover:text-heading-dark hover:bg-surface-dark transition-colors"
         aria-label="Copy to clipboard"
       >

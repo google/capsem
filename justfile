@@ -13,7 +13,6 @@
 #   test-injection  -> _check-assets + _pack-initrd + _sign
 #   full-test       -> test + _check-assets + _pack-initrd + _sign
 #   install         -> doctor + full-test
-#   check-release   -> audit + scripts/check-release-workflow.sh
 #
 # First-time setup:
 #   just doctor       (shows what's missing)
@@ -21,7 +20,7 @@
 #
 # Daily dev:          just run     (fast ~10s, auto-repacks initrd)
 # Before release:     just install (doctor + full-test -- all validation gates)
-# Releases:           just release (push tag first, waits for CI, publishes GitHub release)
+# Releases:           just cut-release (bump, tag, push, CI builds + publishes)
 # Dep maintenance:    just update-deps (cargo update + pnpm update)
 
 binary := "target/debug/capsem"
@@ -108,24 +107,22 @@ install: doctor full-test
     @echo ""
     @echo "All gates passed. Use 'just run' to boot the VM."
 
-# Cut a release: preflight check, wait for CI build, then trigger publish workflow.
-# Usage: just release          (uses latest vX.Y.Z tag)
-#        just release v0.9.3   (explicit tag)
-release tag="": check-release
+# Wait for CI to build and publish a tag.
+# Usage: just release          (uses latest vX.Y.Z tag on HEAD)
+#        just release v0.9.13  (explicit tag)
+release tag="":
     #!/usr/bin/env bash
     set -euo pipefail
-    # Resolve tag: explicit arg, or latest v* tag on HEAD
     if [ -n "{{tag}}" ]; then
         TAG="{{tag}}"
     else
         TAG=$(git tag --points-at HEAD 'v*' | sort -V | tail -1)
         if [ -z "$TAG" ]; then
-            echo "Error: HEAD has no v* tag. Pass one explicitly: just release v0.9.3"
+            echo "Error: HEAD has no v* tag. Pass one explicitly: just release v0.9.13"
             exit 1
         fi
     fi
     echo "=== Release $TAG ==="
-    # Find the CI build run for this tag
     RUN_ID=$(gh run list --workflow=release.yaml --json databaseId,headBranch,status \
         --jq ".[] | select(.headBranch==\"$TAG\") | .databaseId" | head -1)
     if [ -z "$RUN_ID" ]; then
@@ -133,37 +130,49 @@ release tag="": check-release
         echo "Push the tag first: git push origin $TAG"
         exit 1
     fi
-    echo "CI build run: $RUN_ID"
-    # Wait for CI if still running
+    echo "CI run: $RUN_ID"
     STATUS=$(gh run view "$RUN_ID" --json status --jq .status)
     if [ "$STATUS" != "completed" ]; then
-        echo "Waiting for CI to complete..."
+        echo "Waiting for CI..."
         gh run watch "$RUN_ID"
     fi
-    # Check conclusion
     CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)
     if [ "$CONCLUSION" != "success" ]; then
         echo "Error: CI run $RUN_ID failed ($CONCLUSION)"
         echo "Check: gh run view $RUN_ID --log-failed"
         exit 1
     fi
-    # Trigger the publish workflow (uses workflow_dispatch which gets write permissions)
-    echo "Triggering publish workflow..."
-    gh workflow run release.yaml -f tag="$TAG" -f run_id="$RUN_ID"
-    # Wait for publish run to appear
-    sleep 5
-    PUBLISH_RUN=$(gh run list --workflow=release.yaml --event=workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId')
-    echo "Publish run: $PUBLISH_RUN"
-    gh run watch "$PUBLISH_RUN"
-    # Check publish result
-    PUB_CONCLUSION=$(gh run view "$PUBLISH_RUN" --json conclusion --jq .conclusion)
-    if [ "$PUB_CONCLUSION" != "success" ]; then
-        echo "Error: publish run failed ($PUB_CONCLUSION)"
-        echo "Check: gh run view $PUBLISH_RUN --log-failed"
-        exit 1
-    fi
     echo "=== Release $TAG published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
+
+# Bump patch version, commit, tag, push, and wait for CI to publish.
+cut-release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Read current version from Cargo.toml
+    CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    # Increment patch segment
+    MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+    MINOR=$(echo "$CURRENT" | cut -d. -f2)
+    PATCH=$(echo "$CURRENT" | cut -d. -f3)
+    NEW_PATCH=$((PATCH + 1))
+    NEW="${MAJOR}.${MINOR}.${NEW_PATCH}"
+    TAG="v${NEW}"
+    TODAY=$(date +%Y-%m-%d)
+    echo "=== Cutting release $TAG (${CURRENT} -> ${NEW}) ==="
+    # Bump Cargo.toml
+    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
+    # Bump tauri.conf.json
+    sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
+    # Stamp changelog: [Unreleased] -> [NEW] - TODAY
+    sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
+    # Commit, tag, push
+    git add Cargo.toml crates/capsem-app/tauri.conf.json CHANGELOG.md
+    git commit -m "release: v${NEW}"
+    git tag "$TAG"
+    git push origin main "$TAG"
+    echo "Tag $TAG pushed. Waiting for CI..."
+    just release "$TAG"
 
 # Check that all required dev tools and dependencies are installed
 doctor:
@@ -245,10 +254,6 @@ doctor:
         exit 1
     fi
     echo "All good!"
-
-# Verify release workflow steps locally before pushing a tag
-check-release: audit
-    scripts/check-release-workflow.sh
 
 # Clean build artifacts
 clean:

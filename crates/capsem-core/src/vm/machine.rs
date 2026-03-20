@@ -24,6 +24,17 @@ use super::boot::create_boot_loader;
 use super::config::VmConfig;
 use super::serial;
 
+/// Returns true if the current thread is the main thread.
+/// VZVirtualMachine operations must be called from the main dispatch queue.
+pub fn is_main_thread() -> bool {
+    // pthread_main_np() returns 1 on the main thread, 0 otherwise.
+    // Available on macOS since 10.0.
+    extern "C" {
+        fn pthread_main_np() -> libc::c_int;
+    }
+    unsafe { pthread_main_np() == 1 }
+}
+
 /// High-level wrapper around VZVirtualMachine.
 pub struct VirtualMachine {
     inner: Retained<ObjcVZVirtualMachine>,
@@ -156,6 +167,11 @@ impl VirtualMachine {
     pub fn start(&mut self) -> Result<()> {
         let _span = debug_span!("vm_start").entered();
 
+        anyhow::ensure!(
+            is_main_thread(),
+            "VZVirtualMachine.start() must be called on the main thread"
+        );
+
         // Start the serial reader before the VM
         if let Some(console) = self.serial_console.take() {
             console.spawn_reader();
@@ -184,6 +200,11 @@ impl VirtualMachine {
 
     /// Request the VM to stop. Must be called on the main thread.
     pub fn stop(&self) -> Result<()> {
+        anyhow::ensure!(
+            is_main_thread(),
+            "VZVirtualMachine.stop() must be called on the main thread"
+        );
+
         let (tx, rx) = std::sync::mpsc::channel();
 
         let completion = RcBlock::new(move |error: *mut objc2_foundation::NSError| {
@@ -287,5 +308,32 @@ fn spin_runloop_until(rx: &std::sync::mpsc::Receiver<Result<()>>) -> Result<()> 
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_main_thread_returns_false_on_worker() {
+        // Cargo test harness runs tests on worker threads, not the main thread.
+        // Spawning another thread should also return false.
+        let result = std::thread::spawn(|| is_main_thread()).join().unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn is_main_thread_returns_false_in_test_harness() {
+        // The test harness itself uses worker threads.
+        // This verifies the guard would catch a VZ call from a test thread.
+        assert!(!is_main_thread());
+    }
+
+    #[tokio::test]
+    async fn is_main_thread_returns_false_in_tokio() {
+        // tokio::test uses a worker thread -- the exact scenario that caused
+        // the crash when gui_boot_vm was called after rootfs download.
+        assert!(!is_main_thread());
     }
 }

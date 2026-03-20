@@ -28,7 +28,7 @@ use capsem_core::session::{self, SessionIndex, SessionRecord};
 use state::{AppState, VmInstance, VmNetworkState};
 use tauri::{Emitter, Manager};
 use tokio::sync::broadcast;
-use tracing::{debug_span, error, info, info_span, warn};
+use tracing::{debug, debug_span, error, info, info_span, warn};
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -102,21 +102,30 @@ fn resolve_assets_dir() -> Result<PathBuf> {
 fn resolve_rootfs(bundled_assets: &Path) -> Option<PathBuf> {
     let bundled = bundled_assets.join("rootfs.squashfs");
     if bundled.exists() {
+        info!(path = %bundled.display(), "rootfs found in app bundle");
         return Some(bundled);
     }
+    debug!(path = %bundled.display(), "rootfs not in app bundle");
     if let Some(download_dir) = asset_manager::default_assets_dir() {
         // Check versioned directory first.
         let version = env!("CARGO_PKG_VERSION");
         let versioned = download_dir.join(format!("v{version}")).join("rootfs.squashfs");
         if versioned.exists() {
+            info!(path = %versioned.display(), "rootfs found (versioned download)");
             return Some(versioned);
         }
+        debug!(path = %versioned.display(), "rootfs not in versioned dir");
         // Fallback to legacy flat layout.
         let downloaded = download_dir.join("rootfs.squashfs");
         if downloaded.exists() {
+            info!(path = %downloaded.display(), "rootfs found (legacy flat layout)");
             return Some(downloaded);
         }
+        debug!(path = %downloaded.display(), "rootfs not in flat layout");
+    } else {
+        warn!("cannot determine assets download dir (HOME not set?)");
     }
+    info!("rootfs not found locally, download required");
     None
 }
 
@@ -128,14 +137,21 @@ fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager> {
     let version = env!("CARGO_PKG_VERSION");
     let download_dir = asset_manager::default_assets_dir()
         .context("cannot determine home directory")?;
+    info!(version, download_dir = %download_dir.display(), "initializing asset manager");
 
     // Try manifest.json first (new multi-version format).
     let manifest_path = bundled_assets.join("manifest.json");
     if manifest_path.exists() {
+        info!(path = %manifest_path.display(), "loading manifest.json");
         let content = std::fs::read_to_string(&manifest_path)
             .context("failed to read manifest.json")?;
         let manifest = asset_manager::Manifest::from_json(&content)
             .context("invalid manifest.json")?;
+        info!(
+            releases = manifest.releases.len(),
+            latest = %manifest.latest,
+            "manifest parsed"
+        );
 
         // Migrate flat layout if present.
         let _ = asset_manager::migrate_flat_layout(&download_dir, version);
@@ -145,6 +161,7 @@ fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager> {
 
     // Fall back to legacy B3SUMS.
     let b3sums_path = bundled_assets.join("B3SUMS");
+    info!(path = %b3sums_path.display(), "manifest.json not found, trying legacy B3SUMS");
     let b3sums_content = std::fs::read_to_string(&b3sums_path)
         .context("neither manifest.json nor B3SUMS found in app bundle")?;
     let base_url = asset_manager::release_url(version);
@@ -2381,7 +2398,8 @@ fn main() {
             let rootfs_path = resolve_rootfs(&assets);
 
             if rootfs_path.is_some() {
-                // Rootfs available (dev mode or already downloaded) -- boot immediately.
+                // Rootfs available -- boot immediately on main thread.
+                info!("rootfs available, booting VM on main thread");
                 gui_boot_vm(
                     app.handle(), &assets, rootfs_path.as_deref(),
                     &gui_session_id, gui_scratch_path, cpu_count, ram_bytes,
@@ -2424,6 +2442,7 @@ fn main() {
                             return;
                         }
                     };
+                    info!(asset = %name, "starting rootfs download");
 
                     // Clean up stale assets from previous versions.
                     let _ = mgr.cleanup_unrecognized();
@@ -2434,7 +2453,7 @@ fn main() {
                         let _ = h2.emit("download-progress", &progress);
                     }).await {
                         Ok(rootfs) => {
-                            info!("rootfs downloaded to {}", rootfs.display());
+                            info!(path = %rootfs.display(), "rootfs download complete");
                             // Clean up old version directories.
                             if let Some(base) = asset_manager::default_assets_dir() {
                                 let version = env!("CARGO_PKG_VERSION");
@@ -2442,10 +2461,21 @@ fn main() {
                                     warn!("cleanup old versions failed: {e:#}");
                                 }
                             }
-                            gui_boot_vm(
-                                &handle, &assets_clone, Some(&rootfs),
-                                &session_id, scratch, cpu_count, ram_bytes,
-                            );
+                            // VZVirtualMachine requires the main dispatch queue.
+                            // We're on a tokio worker here, so dispatch back.
+                            info!("dispatching VM boot to main thread");
+                            let h = handle.clone();
+                            let a = assets_clone.clone();
+                            let s = session_id.clone();
+                            let r = rootfs.clone();
+                            if let Err(e) = handle.run_on_main_thread(move || {
+                                gui_boot_vm(
+                                    &h, &a, Some(&r),
+                                    &s, scratch, cpu_count, ram_bytes,
+                                );
+                            }) {
+                                error!("failed to dispatch boot to main thread: {e}");
+                            }
                         }
                         Err(e) => {
                             error!("rootfs download failed: {e:#}");

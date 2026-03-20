@@ -36,7 +36,7 @@ install        -> doctor + full-test + _frontend
 ```
 
 First-time setup: `just doctor` then `just build-assets`.
-Daily dev: `just run` (fast, ~10s). Before release: `just release`.
+Daily dev: `just run` (fast, ~10s). Release: `just cut-release`.
 
 ## Project Layout
 
@@ -388,7 +388,7 @@ User-facing documentation lives in `site/src/pages/documentation/` as markdown f
 - `security/` -- kernel hardening, network isolation, sandbox model
 - `testing/` -- capsem-doctor, test suites, benchmarks
 
-**News / release posts:** `site/src/pages/news/<version>.md` (e.g., `0.8.8.md`). Each release gets a post summarizing what changed, using the Doc layout with `layout: ../../layouts/Doc.astro`. The index page at `site/src/pages/news/index.astro` lists all releases -- add a new entry to the `releases` array when creating a post. When cutting a release, create the news post as part of the release commit.
+**News / release posts:** One page per minor version: `site/src/pages/news/<major>.<minor>.md` (e.g., `0.9.md`). Each page consolidates all patch releases for that minor. Uses `layout: ../../layouts/Doc.astro`. The index page at `site/src/pages/news/index.astro` lists minors -- update the existing entry when cutting a patch release. When bumping to a new minor, create a new page and add an entry to the `releases` array.
 
 ## Logging
 

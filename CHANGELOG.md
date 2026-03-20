@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.13] - 2026-03-20
+
+### Fixed
+- First-launch crash: `gui_boot_vm` called from tokio worker thread after rootfs download caused `EXC_BREAKPOINT` (`dispatch_assert_queue_fail`). VM start/stop now guarded by `is_main_thread()` check, post-download boot dispatched to main thread via `run_on_main_thread`
+- Site domain references updated from `capsem.dev` (dead) to `capsem.org`
+
+### Added
+- Boot path logging: `resolve_rootfs` and `create_asset_manager` now log each location checked, version, manifest path, release count, and download status
+- `cut-release` recipe: one-command version bump, changelog stamp, commit, tag, push, and CI wait
+
+### Changed
+- Release pipeline merged from two steps (build on tag push + publish via `workflow_dispatch`) into a single pipeline that builds and publishes on tag push
+- `release` recipe simplified: waits for CI build (which now includes publish), no longer triggers a separate workflow
+- Consolidated seven 0.9.x news posts into a single page covering 0.9.0 through 0.9.13
+
 ## [0.9.12] - 2026-03-19
 
 ### Added

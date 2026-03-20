@@ -21,9 +21,9 @@
       <div class="mt-10 flex flex-col gap-4 max-w-lg">
         <div class="group relative flex items-center gap-3 rounded-xl border border-border bg-surface-alt/60 px-5 py-3.5 font-mono text-sm text-heading select-all">
           <span class="text-muted select-none">$</span>
-          <span>curl -fsSL https://capsem.dev/install.sh | sh</span>
+          <span>curl -fsSL https://capsem.org/install.sh | sh</span>
           <button
-            onclick={() => navigator.clipboard.writeText('curl -fsSL https://capsem.dev/install.sh | sh')}
+            onclick={() => navigator.clipboard.writeText('curl -fsSL https://capsem.org/install.sh | sh')}
             class="ml-auto shrink-0 rounded-md p-1.5 text-muted hover:text-heading hover:bg-surface transition-colors"
             aria-label="Copy to clipboard"
           >

@@ -4,7 +4,7 @@ Use this skill when preparing, debugging, or executing a Capsem release.
 
 ## Pre-Release Checklist
 
-Run locally before pushing a release tag:
+Run locally before cutting a release:
 
 ```bash
 just doctor                    # Checks all tools are installed
@@ -15,33 +15,41 @@ just full-test                 # Unit tests + capsem-doctor + integration + benc
 
 ## Cutting a Release
 
-Releases are CI-only -- no local `just release`. Push a tag to trigger the pipeline.
+### Automated (preferred)
+
+```bash
+just cut-release
+```
+
+This bumps the patch version, stamps the changelog, commits, tags, pushes, and waits for CI to build and publish the GitHub release.
+
+### Manual steps (if needed)
 
 1. **Bump version** in both places:
    - `workspace.package.version` in root `Cargo.toml`
    - `version` in `crates/capsem-app/tauri.conf.json`
 2. **Update CHANGELOG.md**: move `[Unreleased]` items into `[X.Y.Z] - YYYY-MM-DD`
-3. **Create news post**: `site/src/pages/news/<version>.md` (e.g. `0.9.0.md`) summarizing what changed, using `layout: ../../layouts/Doc.astro`. Add a matching entry to the `releases` array in `site/src/pages/news/index.astro`.
-4. **Update benchmarks** (if performance-relevant changes): run `just bench` and update the numbers in `site/src/pages/documentation/testing/benchmarks.md`. Always update `lastUpdated` in its frontmatter when numbers change.
-5. **Run preflight**: `scripts/preflight.sh` (validates Apple certs for CI)
-6. **Check release workflow**: `just check-release` (verifies tools, key format, manifest signing, version sync)
-7. **Run tests**: `just full-test`
-8. **Commit**: `git commit -m "release: vX.Y.Z"`
-9. **Tag**: `git tag vX.Y.Z`
-10. **Push**: `git push origin main --tags`
-11. **Publish**: `just release` -- runs check-release, waits for CI, triggers publish workflow
+3. **Update news page**: edit `site/src/pages/news/<major>.<minor>.md` (e.g., `0.9.md`) to include the new patch changes. Update the date and summary in `site/src/pages/news/index.astro`. For a new minor version, create a new page and add an index entry.
+4. **Update benchmarks** (if performance-relevant changes): run `just bench` and update numbers in `site/src/pages/documentation/testing/benchmarks.md`
+5. **Run preflight**: `scripts/preflight.sh`
+6. **Run tests**: `just full-test`
+7. **Commit**: `git commit -m "release: vX.Y.Z"`
+8. **Tag**: `git tag vX.Y.Z`
+9. **Push**: `git push origin main vX.Y.Z`
+10. **Wait for CI**: `just release` -- waits for CI to build, sign, and publish the GitHub release
 
-CI pipeline: preflight -> build-assets -> test -> build-app (sign + notarize + artifact upload).
-`just release` then downloads the artifacts and creates the GitHub release locally (CI can't -- org restricts GITHUB_TOKEN to read-only).
+CI pipeline: preflight -> build-assets -> test -> build-app (sign + notarize + artifact upload + create GitHub release).
 
 ## CI Pipeline (release.yaml)
+
+Single pipeline triggered by tag push. All jobs run sequentially:
 
 | Job | Runner | Purpose |
 |-----|--------|---------|
 | `preflight` | macos-14 | Fail-fast: verify Apple cert imports, Tauri key exists |
 | `build-assets` | ubuntu-24.04-arm | Build VM assets (kernel, initrd, rootfs) via Docker |
 | `test` | macos-14 | Unit tests, cross-compile check, frontend build |
-| `build-app` | macos-14 | Tauri build, codesign, notarize, DMG, upload CI artifacts |
+| `build-app` | macos-14 | Tauri build, codesign, notarize, DMG, upload artifacts, create GitHub release |
 
 ## Apple Code Signing
 
@@ -135,36 +143,10 @@ To add a new check: add a `check_*` function to `scripts/preflight.sh`.
 
 ## Post-Release Verification
 
-After pushing a tag and CI completes, verify the release using `gh` CLI:
+After pushing a tag and CI completes:
 
-### Monitor the CI pipeline
 ```bash
-gh run list --branch main -L 1          # Find the run triggered by the tag
-gh run watch <run-id>                    # Live tail the CI run
-gh run view <run-id> --log-failed       # Debug failures
-```
-
-If any job fails: fix locally, create a NEW commit, bump the version (e.g. 0.9.0 -> 0.9.1), tag the new version, and push. **Never delete or move a tag** -- tags are immutable references. Always tag forward.
-
-### After CI completes successfully
-
-**1. Download CI artifacts and create the release:**
-```bash
-# Find the run ID
-gh run list --workflow=release.yaml -L 1
-
-# Download built artifacts
-gh run download <run-id> -n release-artifacts -D /tmp/release-artifacts
-
-# Create the GitHub release with all assets
-gh release create vX.Y.Z /tmp/release-artifacts/* \
-  --title "Capsem vX.Y.Z" \
-  --notes "See CHANGELOG.md for details."
-```
-
-**2. Verify the release:**
-```bash
-# Check assets are listed
+# Check release exists with all assets
 gh release view vX.Y.Z
 
 # Verify manifest.json

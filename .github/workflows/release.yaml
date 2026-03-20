@@ -2,14 +2,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to publish (e.g. v0.9.10)'
-        required: false
-      run_id:
-        description: 'Build run ID with artifacts (for publish mode)'
-        required: false
 
 permissions:
   contents: write
@@ -17,9 +9,7 @@ permissions:
   id-token: write
 
 jobs:
-  # ── Build pipeline (tag push) ─────────────────────────────────────────
   preflight:
-    if: github.event_name == 'push'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -77,7 +67,6 @@ jobs:
           rm -rf "$RUNNER_TEMP/private_keys"
 
   build-assets:
-    if: github.event_name == 'push'
     needs: preflight
     runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
     steps:
@@ -106,7 +95,6 @@ jobs:
           path: assets/
 
   test:
-    if: github.event_name == 'push'
     needs: build-assets
     runs-on: macos-14
     steps:
@@ -152,7 +140,6 @@ jobs:
         run: cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
 
   build-app:
-    if: github.event_name == 'push'
     needs: test
     runs-on: macos-14
     steps:
@@ -282,27 +269,10 @@ jobs:
           name: release-artifacts
           path: release-artifacts/
 
-  # ── Publish (workflow_dispatch) ────────────────────────────────────────
-  # Separate trigger because tag-push GITHUB_TOKEN is read-only (org policy).
-  # workflow_dispatch gets write permissions. Triggered by `just release`.
-  publish:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download release artifacts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh run download ${{ inputs.run_id }} -n release-artifacts -D artifacts -R ${{ github.repository }}
-          echo "Downloaded artifacts:"
-          ls -lh artifacts/
-
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create ${{ inputs.tag }} artifacts/* \
-            --repo ${{ github.repository }} \
-            --title "Capsem ${{ inputs.tag }}" \
+          gh release create ${{ github.ref_name }} release-artifacts/* \
+            --title "Capsem ${{ github.ref_name }}" \
             --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
-          echo "Published: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag }}"

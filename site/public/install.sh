@@ -1,6 +1,6 @@
 #!/bin/sh
 # Capsem installer -- downloads the latest release DMG and installs to /Applications.
-# Usage: curl -fsSL https://capsem.dev/install.sh | sh
+# Usage: curl -fsSL https://capsem.org/install.sh | sh
 set -eu
 
 REPO="google/capsem"
