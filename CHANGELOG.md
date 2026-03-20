@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.14] - 2026-03-20
+
 ### Fixed
 - Download progress screen not shown on first launch: `vmStatus()` poll now returns "downloading" via app-level state, fixing the race where the event fired before the frontend subscribed
 - `latest.json` missing from release artifacts, causing auto-updater `update check failed` on every boot
