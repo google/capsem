@@ -245,6 +245,35 @@ def create_rootfs():
     print(f"  rootfs.squashfs: {img_path} ({img_path.stat().st_size // (1024*1024)} MB)")
 
 
+def extract_tool_versions():
+    """Extract tool versions from the rootfs container image into assets/tool-versions.txt."""
+    print("Extracting tool versions from rootfs image...")
+    version_script = (
+        "echo \"python=$(python3 --version 2>&1 | awk '{print $2}')\";"
+        "echo \"node=$(node --version 2>&1 | tr -d v)\";"
+        "echo \"npm=$(npm --version 2>&1)\";"
+        "echo \"uv=$(uv --version 2>&1 | awk '{print $2}')\";"
+        "echo \"pip=$(pip3 --version 2>&1 | awk '{print $2}')\";"
+        "echo \"git=$(git --version 2>&1 | awk '{print $3}')\";"
+        # AI CLIs are in /opt/ai-clis staging area
+        "for cli in claude gemini codex; do "
+        "  ver=$(/opt/ai-clis/bin/$cli --version 2>/dev/null | head -1 || echo 'N/A'); "
+        "  echo \"$cli=$ver\"; "
+        "done;"
+        # Kernel version from vmlinuz is not in the rootfs, skip it
+    )
+    result = run(
+        [RUNTIME, "run", "--rm", "--platform", "linux/arm64",
+         ROOTFS_IMAGE_TAG, "bash", "-c", version_script],
+        capture_output=True, text=True,
+    )
+    versions_path = ASSETS_DIR / "tool-versions.txt"
+    with open(versions_path, "w") as f:
+        f.write(result.stdout)
+    for line in result.stdout.strip().split("\n"):
+        print(f"  {line}")
+
+
 def get_cargo_version() -> str:
     """Read workspace version from root Cargo.toml."""
     cargo_toml = REPO_ROOT / "Cargo.toml"
@@ -328,6 +357,7 @@ def main():
     extract_assets()
     build_agent()
     create_rootfs()
+    extract_tool_versions()
     generate_checksums()
     print(f"\nDone! Assets are in {ASSETS_DIR}/")
 

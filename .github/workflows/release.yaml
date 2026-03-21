@@ -276,10 +276,12 @@ jobs:
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 
-      - name: Attest build provenance
+      - name: Attest build provenance (DMG + rootfs)
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
+          subject-path: |
+            ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
+            ${{ github.workspace }}/assets/rootfs.squashfs
 
       - name: Attest SBOM
         uses: actions/attest-sbom@v4
@@ -341,6 +343,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Build release notes with tool versions
+          NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          NOTES="${NOTES}
+
+          ### VM Environment
+
+          "
+          if [ -f assets/tool-versions.txt ]; then
+            NOTES="${NOTES}| Tool | Version |
+          |------|---------|
+          "
+            while IFS='=' read -r tool version; do
+              [ -n "$tool" ] && NOTES="${NOTES}| ${tool} | ${version} |
+          "
+            done < assets/tool-versions.txt
+          fi
+
           gh release create ${{ github.ref_name }} release-artifacts/* \
             --title "Capsem ${{ github.ref_name }}" \
-            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+            --notes "$NOTES"
