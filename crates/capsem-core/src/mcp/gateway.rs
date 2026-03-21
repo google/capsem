@@ -552,6 +552,8 @@ mod tests {
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
             http_client: reqwest::Client::new(),
+            auto_snapshots: None,
+            workspace_dir: None,
         }
     }
 

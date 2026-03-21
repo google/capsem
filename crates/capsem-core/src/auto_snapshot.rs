@@ -25,7 +25,7 @@ pub struct SlotMetadata {
 pub struct SnapshotSlot {
     pub slot: usize,
     pub timestamp: SystemTime,
-    pub upper_path: PathBuf,
+    pub workspace_path: PathBuf,
 }
 
 /// Rolling ring buffer of APFS clonefile snapshots.
@@ -58,11 +58,15 @@ impl AutoSnapshotScheduler {
         self.snapshots_dir().join(slot.to_string())
     }
 
-    fn upper_dir(&self) -> PathBuf {
-        self.session_dir.join("upper")
+    fn workspace_dir(&self) -> PathBuf {
+        self.session_dir.join("workspace")
     }
 
-    /// Take a snapshot of `upper/` into the next ring buffer slot.
+    fn system_dir(&self) -> PathBuf {
+        self.session_dir.join("system")
+    }
+
+    /// Take a snapshot of `workspace/` and `system/` into the next ring buffer slot.
     /// Returns the slot info on success.
     pub fn take_snapshot(&mut self) -> anyhow::Result<SnapshotSlot> {
         let slot = self.next_slot;
@@ -74,10 +78,17 @@ impl AutoSnapshotScheduler {
         }
         std::fs::create_dir_all(&slot_dir)?;
 
-        let src = self.upper_dir();
-        let dst = slot_dir.join("upper");
+        // Clone workspace (AI files -- host-visible, used by MCP tools).
+        let ws_src = self.workspace_dir();
+        let ws_dst = slot_dir.join("workspace");
+        clone_directory(&ws_src, &ws_dst)?;
 
-        clone_directory(&src, &dst)?;
+        // Clone system image (ext4 loopback -- package installs, config).
+        let sys_src = self.system_dir();
+        let sys_dst = slot_dir.join("system");
+        if sys_src.exists() {
+            clone_directory(&sys_src, &sys_dst)?;
+        }
 
         let now = SystemTime::now();
         let since_epoch = now
@@ -103,7 +114,7 @@ impl AutoSnapshotScheduler {
         Ok(SnapshotSlot {
             slot,
             timestamp: now,
-            upper_path: dst,
+            workspace_path: ws_dst,
         })
     }
 
@@ -119,7 +130,7 @@ impl AutoSnapshotScheduler {
                     slots_with_millis.push((meta.epoch_millis, SnapshotSlot {
                         slot: i,
                         timestamp: ts,
-                        upper_path: self.slot_dir(i).join("upper"),
+                        workspace_path: self.slot_dir(i).join("workspace"),
                     }));
                 }
             }
@@ -141,7 +152,7 @@ impl AutoSnapshotScheduler {
         Some(SnapshotSlot {
             slot,
             timestamp: ts,
-            upper_path: self.slot_dir(slot).join("upper"),
+            workspace_path: self.slot_dir(slot).join("workspace"),
         })
     }
 
@@ -198,7 +209,8 @@ mod tests {
     fn setup_session_dir() -> (tempfile::TempDir, PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let session = tmp.path().to_path_buf();
-        std::fs::create_dir_all(session.join("upper/root")).unwrap();
+        std::fs::create_dir_all(session.join("workspace")).unwrap();
+        std::fs::create_dir_all(session.join("system")).unwrap();
         std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
         (tmp, session)
     }
@@ -208,14 +220,14 @@ mod tests {
         let (_tmp, session) = setup_session_dir();
 
         // Write a file to upper/root.
-        std::fs::write(session.join("upper/root/hello.txt"), "world").unwrap();
+        std::fs::write(session.join("workspace/hello.txt"), "world").unwrap();
 
         let mut sched = AutoSnapshotScheduler::new(session.clone(), 3, Duration::from_secs(300));
         let slot = sched.take_snapshot().unwrap();
 
         assert_eq!(slot.slot, 0);
-        assert!(slot.upper_path.join("root/hello.txt").exists());
-        let content = std::fs::read_to_string(slot.upper_path.join("root/hello.txt")).unwrap();
+        assert!(slot.workspace_path.join("hello.txt").exists());
+        let content = std::fs::read_to_string(slot.workspace_path.join("hello.txt")).unwrap();
         assert_eq!(content, "world");
 
         // Metadata exists.
@@ -228,25 +240,25 @@ mod tests {
         let (_tmp, session) = setup_session_dir();
         let mut sched = AutoSnapshotScheduler::new(session.clone(), 2, Duration::from_secs(300));
 
-        std::fs::write(session.join("upper/root/a.txt"), "first").unwrap();
+        std::fs::write(session.join("workspace/a.txt"), "first").unwrap();
         sched.take_snapshot().unwrap(); // slot 0
 
-        std::fs::write(session.join("upper/root/a.txt"), "second").unwrap();
+        std::fs::write(session.join("workspace/a.txt"), "second").unwrap();
         sched.take_snapshot().unwrap(); // slot 1
 
-        std::fs::write(session.join("upper/root/a.txt"), "third").unwrap();
+        std::fs::write(session.join("workspace/a.txt"), "third").unwrap();
         sched.take_snapshot().unwrap(); // slot 0 again (overwrites)
 
         // Slot 0 should have "third", not "first".
         let content = std::fs::read_to_string(
-            session.join("auto_snapshots/0/upper/root/a.txt"),
+            session.join("auto_snapshots/0/workspace/a.txt"),
         )
         .unwrap();
         assert_eq!(content, "third");
 
         // Slot 1 should still have "second".
         let content = std::fs::read_to_string(
-            session.join("auto_snapshots/1/upper/root/a.txt"),
+            session.join("auto_snapshots/1/workspace/a.txt"),
         )
         .unwrap();
         assert_eq!(content, "second");

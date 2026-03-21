@@ -177,7 +177,7 @@ pub fn handle_list_changed_files(
     // Walk snapshots newest-first. For each, diff against current.
     // Only report each path once (from the most recent checkpoint that shows the change).
     for snap in &snapshots {
-        let snap_root = snap.upper_path.join("root");
+        let snap_root = snap.workspace_path.clone();
         let snap_files = collect_files(&snap_root);
         let cp_id = format!("cp-{}", snap.slot);
         let age = age_string(snap.timestamp);
@@ -272,7 +272,7 @@ pub fn handle_revert_file(
         }
     };
 
-    let snap_file = snap.upper_path.join("root").join(path_str);
+    let snap_file = snap.workspace_path.clone().join(path_str);
     let current_file = workspace_root.join(path_str);
 
     // Check for symlink escape: canonicalize both paths to handle macOS /var -> /private/var.
@@ -339,7 +339,8 @@ mod tests {
     fn setup() -> (tempfile::TempDir, PathBuf, AutoSnapshotScheduler) {
         let tmp = tempfile::tempdir().unwrap();
         let session = tmp.path().to_path_buf();
-        std::fs::create_dir_all(session.join("upper/root")).unwrap();
+        std::fs::create_dir_all(session.join("workspace")).unwrap();
+        std::fs::create_dir_all(session.join("system")).unwrap();
         std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
         let sched = AutoSnapshotScheduler::new(session.clone(), 12, Duration::from_secs(300));
         (tmp, session, sched)
@@ -394,9 +395,9 @@ mod tests {
         sched.take_snapshot().unwrap();
 
         // Create a file after the snapshot.
-        std::fs::write(session.join("upper/root/new.txt"), "hello").unwrap();
+        std::fs::write(session.join("workspace/new.txt"), "hello").unwrap();
 
-        let workspace = session.join("upper/root");
+        let workspace = session.join("workspace");
         let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
@@ -410,13 +411,13 @@ mod tests {
     fn list_changed_files_detects_modified() {
         let (_tmp, session, mut sched) = setup();
 
-        std::fs::write(session.join("upper/root/file.txt"), "original").unwrap();
+        std::fs::write(session.join("workspace/file.txt"), "original").unwrap();
         sched.take_snapshot().unwrap();
 
         // Modify the file.
-        std::fs::write(session.join("upper/root/file.txt"), "modified content that is longer").unwrap();
+        std::fs::write(session.join("workspace/file.txt"), "modified content that is longer").unwrap();
 
-        let workspace = session.join("upper/root");
+        let workspace = session.join("workspace");
         let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
@@ -430,13 +431,13 @@ mod tests {
     fn list_changed_files_detects_deleted() {
         let (_tmp, session, mut sched) = setup();
 
-        std::fs::write(session.join("upper/root/gone.txt"), "bye").unwrap();
+        std::fs::write(session.join("workspace/gone.txt"), "bye").unwrap();
         sched.take_snapshot().unwrap();
 
         // Delete the file.
-        std::fs::remove_file(session.join("upper/root/gone.txt")).unwrap();
+        std::fs::remove_file(session.join("workspace/gone.txt")).unwrap();
 
-        let workspace = session.join("upper/root");
+        let workspace = session.join("workspace");
         let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
@@ -454,25 +455,25 @@ mod tests {
 
         // Write a file with known content.
         let content = "The quick brown fox jumps over the lazy dog.\nLine 2.\n";
-        std::fs::write(session.join("upper/root/important.txt"), content).unwrap();
+        std::fs::write(session.join("workspace/important.txt"), content).unwrap();
 
         // Take a snapshot.
         sched.take_snapshot().unwrap();
 
         // Copy the file (proving we can read it).
-        let copied = std::fs::read_to_string(session.join("upper/root/important.txt")).unwrap();
+        let copied = std::fs::read_to_string(session.join("workspace/important.txt")).unwrap();
         assert_eq!(copied, content);
 
         // Delete the original.
-        std::fs::remove_file(session.join("upper/root/important.txt")).unwrap();
-        assert!(!session.join("upper/root/important.txt").exists());
+        std::fs::remove_file(session.join("workspace/important.txt")).unwrap();
+        assert!(!session.join("workspace/important.txt").exists());
 
         // Revert via revert_file.
         let args = serde_json::json!({"path": "important.txt", "checkpoint": "cp-0"});
         let resp = handle_revert_file(
             &args,
             &sched,
-            &session.join("upper/root"),
+            &session.join("workspace"),
             Some(serde_json::json!(1)),
         );
 
@@ -482,7 +483,7 @@ mod tests {
         assert!(result_text.contains("\"reverted\":true") || result_text.contains("\"reverted\": true"));
 
         // Verify the file is back with exact same content.
-        let recovered = std::fs::read_to_string(session.join("upper/root/important.txt")).unwrap();
+        let recovered = std::fs::read_to_string(session.join("workspace/important.txt")).unwrap();
         assert_eq!(recovered, content, "recovered content must match original exactly");
     }
 
@@ -494,19 +495,19 @@ mod tests {
         sched.take_snapshot().unwrap();
 
         // Create a new file.
-        std::fs::write(session.join("upper/root/new.txt"), "should be deleted").unwrap();
+        std::fs::write(session.join("workspace/new.txt"), "should be deleted").unwrap();
 
         // Revert -- file didn't exist in snapshot, so it should be deleted.
         let args = serde_json::json!({"path": "new.txt", "checkpoint": "cp-0"});
         let resp = handle_revert_file(
             &args,
             &sched,
-            &session.join("upper/root"),
+            &session.join("workspace"),
             Some(serde_json::json!(1)),
         );
 
         assert!(resp.error.is_none());
-        assert!(!session.join("upper/root/new.txt").exists());
+        assert!(!session.join("workspace/new.txt").exists());
     }
 
     #[test]
@@ -518,7 +519,7 @@ mod tests {
         let resp = handle_revert_file(
             &args,
             &sched,
-            &session.join("upper/root"),
+            &session.join("workspace"),
             Some(serde_json::json!(1)),
         );
         assert!(resp.error.is_some());
@@ -533,7 +534,7 @@ mod tests {
         let resp = handle_revert_file(
             &args,
             &sched,
-            &session.join("upper/root"),
+            &session.join("workspace"),
             Some(serde_json::json!(1)),
         );
         assert!(resp.error.is_some());
@@ -547,9 +548,118 @@ mod tests {
         let resp = handle_revert_file(
             &args,
             &sched,
-            &session.join("upper/root"),
+            &session.join("workspace"),
             Some(serde_json::json!(1)),
         );
         assert!(resp.error.is_some());
+    }
+
+    /// File changed 3 times, snapshot after each change, revert all 3 to their
+    /// respective checkpoint, verify each recovered content matches exactly.
+    #[test]
+    fn revert_three_versions_of_same_file() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+        let file = ws.join("evolving.txt");
+
+        // Version 1
+        std::fs::write(&file, "version ONE").unwrap();
+        sched.take_snapshot().unwrap(); // cp-0
+
+        // Version 2
+        std::fs::write(&file, "version TWO -- longer content here").unwrap();
+        sched.take_snapshot().unwrap(); // cp-1
+
+        // Version 3
+        std::fs::write(&file, "version THREE!!!").unwrap();
+        sched.take_snapshot().unwrap(); // cp-2
+
+        // Overwrite with garbage
+        std::fs::write(&file, "CORRUPTED").unwrap();
+
+        // Revert to version 1 (cp-0)
+        let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-0"});
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        assert!(resp.error.is_none(), "revert to cp-0 failed: {:?}", resp.error);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "version ONE");
+
+        // Revert to version 2 (cp-1)
+        let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-1"});
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        assert!(resp.error.is_none(), "revert to cp-1 failed: {:?}", resp.error);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "version TWO -- longer content here");
+
+        // Revert to version 3 (cp-2)
+        let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-2"});
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        assert!(resp.error.is_none(), "revert to cp-2 failed: {:?}", resp.error);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "version THREE!!!");
+    }
+
+    /// File deleted after snapshot, then recovered via revert, content matches.
+    #[test]
+    fn delete_then_recover_via_revert() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+        let file = ws.join("precious.txt");
+
+        let content = "This file is very important.\nDo not delete.\n";
+        std::fs::write(&file, content).unwrap();
+        sched.take_snapshot().unwrap(); // cp-0
+
+        // Copy it (proving we can read it).
+        let copied = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(copied, content);
+
+        // Delete
+        std::fs::remove_file(&file).unwrap();
+        assert!(!file.exists());
+
+        // Recover
+        let args = serde_json::json!({"path": "precious.txt", "checkpoint": "cp-0"});
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        assert!(resp.error.is_none());
+
+        // Verify exact content
+        let recovered = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(recovered, content, "recovered content must match original exactly");
+    }
+
+    /// list_changed_files shows all 3 file operations across snapshots.
+    #[test]
+    fn list_changed_files_shows_create_modify_delete() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        // Create 3 files, snapshot.
+        std::fs::write(ws.join("keep.txt"), "original").unwrap();
+        std::fs::write(ws.join("modify_me.txt"), "before").unwrap();
+        std::fs::write(ws.join("delete_me.txt"), "goodbye").unwrap();
+        sched.take_snapshot().unwrap(); // cp-0
+
+        // Modify one, delete one, create a new one.
+        std::fs::write(ws.join("modify_me.txt"), "after -- different length").unwrap();
+        std::fs::remove_file(ws.join("delete_me.txt")).unwrap();
+        std::fs::write(ws.join("brand_new.txt"), "hello").unwrap();
+
+        let resp = handle_list_changed_files(&sched, &ws, Some(serde_json::json!(1)));
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
+
+        // Should see: brand_new.txt (created), modify_me.txt (modified), delete_me.txt (deleted)
+        // keep.txt should NOT appear (unchanged).
+        let paths: Vec<&str> = changes.iter().map(|c| c["path"].as_str().unwrap()).collect();
+        assert!(paths.contains(&"brand_new.txt"), "missing created file: {paths:?}");
+        assert!(paths.contains(&"modify_me.txt"), "missing modified file: {paths:?}");
+        assert!(paths.contains(&"delete_me.txt"), "missing deleted file: {paths:?}");
+        assert!(!paths.contains(&"keep.txt"), "unchanged file should not appear: {paths:?}");
+
+        // Verify ops
+        let get_op = |name: &str| -> &str {
+            changes.iter().find(|c| c["path"] == name).unwrap()["op"].as_str().unwrap()
+        };
+        assert_eq!(get_op("brand_new.txt"), "created");
+        assert_eq!(get_op("modify_me.txt"), "modified");
+        assert_eq!(get_op("delete_me.txt"), "deleted");
     }
 }

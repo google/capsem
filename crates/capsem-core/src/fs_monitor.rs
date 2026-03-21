@@ -91,7 +91,13 @@ impl FsMonitor {
         watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
         info!(dir = %watch_dir.display(), "host fs-monitor started");
 
-        tokio::spawn(Self::event_loop(event_rx, shutdown_rx, strip_prefix, db));
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("fs_monitor runtime");
+            rt.block_on(Self::event_loop(event_rx, shutdown_rx, strip_prefix, db));
+        });
 
         Ok(Self {
             _watcher: watcher,

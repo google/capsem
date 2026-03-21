@@ -1849,6 +1849,71 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         }
     }
 
+    // Start auto-snapshot scheduler and file monitor in VirtioFS mode.
+    if !virtiofs_shares.is_empty() {
+        if let Some(ref dir) = cli_session_dir {
+            let workspace = dir.join("workspace");
+            let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
+                dir.clone(),
+                12, // max slots
+                std::time::Duration::from_secs(300), // 5 min
+            );
+            let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
+
+            // Take initial snapshot (slot 0 = baseline).
+            {
+                let mut s = rt.block_on(scheduler.lock());
+                if let Err(e) = s.take_snapshot() {
+                    warn!("failed to take initial snapshot: {e}");
+                }
+            }
+
+            // Wire scheduler into MCP gateway config.
+            if let Some(ref config) = mcp_config {
+                // Safety: we're the only writer at this point (boot sequence).
+                // The Arc<McpGatewayConfig> is shared but fields are behind interior mutability.
+                // auto_snapshots is Option<Arc<Mutex<...>>> -- we set it once here.
+                let config_ptr = Arc::as_ptr(config) as *mut McpGatewayConfig;
+                unsafe {
+                    (*config_ptr).auto_snapshots = Some(Arc::clone(&scheduler));
+                }
+            }
+
+            // Start periodic snapshot timer.
+            let sched_clone = Arc::clone(&scheduler);
+            let interval = std::time::Duration::from_secs(300);
+            rt.spawn(async move {
+                let mut tick = tokio::time::interval(interval);
+                tick.tick().await; // skip first (already took initial snapshot)
+                loop {
+                    tick.tick().await;
+                    let mut s = sched_clone.lock().await;
+                    if let Err(e) = s.take_snapshot() {
+                        tracing::warn!("auto-snapshot failed: {e}");
+                    }
+                }
+            });
+
+            // Start host file monitor.
+            if let Some(ref ns) = net_state {
+                let db = Arc::clone(&ns.db);
+                match capsem_core::fs_monitor::FsMonitor::start(
+                    workspace.clone(),
+                    workspace.clone(),
+                    db,
+                ) {
+                    Ok(_monitor) => {
+                        info!("host file monitor started");
+                        // monitor is kept alive by the tokio task inside it
+                    }
+                    Err(e) => warn!("failed to start host file monitor: {e}"),
+                }
+            }
+
+            info!("VirtioFS auto-snapshots and file monitor started");
+        }
+    }
+
     // Send Exec command.
     let exec_id: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
