@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Code coverage reporting via Codecov on PR and release CI pipelines
+
 ## [0.9.18] - 2026-03-21
 
 ### Fixed

@@ -132,8 +132,18 @@ jobs:
       - name: Frontend type-check, test, and build
         run: cd frontend && pnpm run check && pnpm run test && pnpm run build
 
-      - name: Unit tests (full workspace)
-        run: cargo test --workspace
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Unit tests with coverage
+        run: cargo llvm-cov --workspace --no-cfg-coverage --codecov --output-path codecov.json
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov.json
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       # Check-only -- actual cross-compile already ran in build-assets on Linux
       - name: Cross-compile check (guest binaries)

@@ -273,6 +273,7 @@ All secrets are set on the repo and used by `release.yaml`:
 | `APPLE_API_KEY_PATH` | Contents of the `.p8` private key file (for notarization) |
 | `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater signing private key (minisign) |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password protecting the Tauri signing key |
+| `CODECOV_TOKEN` | Codecov upload token for coverage reporting |
 
 Local backups of all credentials are in `private/` (gitignored):
 - `private/apple-certificate/` -- `.p12`, `.p8`, base64, passwords, team ID

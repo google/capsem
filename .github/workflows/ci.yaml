@@ -34,10 +34,20 @@ jobs:
           cargo audit
           cd frontend && pnpm audit
 
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
       # capsem-app requires VM assets to compile (Tauri resource bundling),
       # so we test the library crates only. Full workspace test runs in release.
-      - name: Unit tests (library crates)
-        run: cargo test -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto
+      - name: Unit tests with coverage (library crates)
+        run: cargo llvm-cov --no-cfg-coverage --codecov --output-path codecov.json -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov.json
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       # Check-only (no link) -- actual cross-compile runs on Linux in release workflow
       - name: Cross-compile check (guest binaries)
