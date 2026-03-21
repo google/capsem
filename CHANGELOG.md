@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **VirtioFS storage mode** -- replaces tmpfs overlay + scratch disk with a single VirtioFS shared directory per session. Enables host-side file monitoring, auto-snapshots, and MCP file tools. System packages use an ext4 loopback image; workspace files in `/root` are directly visible on the host.
+- **Host-side file monitoring** -- macOS FSEvents watches the VirtioFS workspace directory, replacing the in-guest `capsem-fs-watch` inotify daemon. More secure (no guest cooperation needed).
+- **Rolling auto-snapshots** -- 12 APFS clone snapshots at 5-minute intervals (configurable). AI agents can list changed files and revert individual files to any checkpoint via MCP tools.
+- **MCP file tools** -- `list_changed_files` (diff workspace against any auto-snapshot checkpoint) and `revert_file` (restore a file from any checkpoint, reflected immediately in guest via VirtioFS). Wired into the MCP gateway as built-in tools.
+- **VirtioFS capsem-doctor tests** -- 9 new in-VM tests verifying VirtioFS root mount, ext4 loopback upper, loop device, workspace read/write, pip install, file delete+recreate
+- Kernel support for VirtioFS (`CONFIG_FUSE_FS`, `CONFIG_VIRTIO_FS`) and loop devices (`CONFIG_BLK_DEV_LOOP`)
+- Session schema v4: `storage_mode`, `rootfs_hash`, `rootfs_version` columns for rootfs lineage tracking
 - Code coverage reporting via Codecov on PR and release CI pipelines
 - OAuth credential forwarding for Claude Code and Gemini CLI -- auto-detects `~/.claude/.credentials.json` (subscription auth) and `~/.config/gcloud/application_default_credentials.json` (Google Cloud ADC), injects into guest VM at boot so agents work without API keys
 - ECDSA SSH key detection (`id_ecdsa.pub`) in addition to ed25519 and RSA
@@ -15,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Anthropic and OpenAI providers now enabled by default (was disabled) -- all three AI providers are allowed out of the box; corporate lockdown via `corp.toml` still overrides
+- Default storage mode is now VirtioFS (block mode preserved for backward compatibility)
+- Guest `capsem-fs-watch` daemon no longer launched in VirtioFS mode (host monitors instead)
 
 ### Fixed
 - Setup wizard re-run now re-detects host configuration (SSH keys, API keys, OAuth credentials, GitHub tokens) instead of keeping stale values from first run

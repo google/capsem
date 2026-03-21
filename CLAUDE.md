@@ -73,6 +73,33 @@ The overall project plan and milestone roadmap is in `docs/overall_plan.md`.
 - **Terminal I/O**: Frontend xterm.js `onData` -> Tauri `serial_input` command -> vsock fd (or serial fallback) -> guest PTY. Reverse: guest PTY -> vsock -> `CoalesceBuffer` (8ms/64KB) -> Tauri event -> xterm.js `write`
 - **Serial**: Stays active for kernel boot logs. Terminal I/O switches to vsock once the guest agent sends `Ready`
 
+### Storage Modes
+
+Capsem supports two storage modes, selected by kernel cmdline parameter `capsem.storage=virtiofs` (default in VirtioFS mode) or absence (block mode).
+
+**VirtioFS mode** (default): Single VirtioFS shared directory per session. Enables host-side file monitoring, auto-snapshots, and MCP file tools (list_changed_files, revert_file).
+
+```
+~/.capsem/sessions/{id}/
+  system/rootfs.img    # ext4 loopback image (2GB sparse) -- overlayfs upper
+                       # Captures: pip/apt installs, /etc config, /run binaries
+  workspace/           # Direct VirtioFS files for /root (host-visible)
+  auto_snapshots/      # Rolling ring buffer (12 APFS clones, 5min interval)
+    0/workspace/       # Snapshot of workspace at slot 0
+    0/system/          # Snapshot of system at slot 0
+```
+
+Guest boot sequence (VirtioFS):
+1. Mount squashfs `/dev/vda` -> `/mnt/a` (read-only base)
+2. Mount VirtioFS `capsem` -> `/mnt/shared`
+3. Loopback mount `system/rootfs.img` -> `/mnt/system` (ext4, formatted on first boot)
+4. Overlayfs: squashfs lower + ext4 loopback upper -> `/newroot`
+5. Bind-mount `workspace/` -> `/newroot/root`
+
+Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creation), so overlayfs can't use VirtioFS directly as upper. The ext4 loopback provides full POSIX compliance.
+
+**Block mode** (legacy): tmpfs overlay + scratch disk. No host file visibility, no snapshots. Used as fallback.
+
 ### Vsock Ports
 | Port | Purpose |
 |------|---------|
@@ -80,7 +107,7 @@ The overall project plan and milestone roadmap is in `docs/overall_plan.md`.
 | 5001 | Terminal data (PTY I/O) |
 | 5002 | MITM proxy (HTTPS connections) |
 | 5003 | MCP gateway (tool routing, NDJSON passthrough) |
-| 5005 | Filesystem events (inotify watcher telemetry) |
+| 5005 | Filesystem events (block mode only -- guest inotify watcher) |
 
 ### Network Policy
 - User config: `~/.capsem/user.toml` -- editable domain allow/block lists + HTTP rules
@@ -119,7 +146,11 @@ The overall project plan and milestone roadmap is in `docs/overall_plan.md`.
 - `crates/capsem-app/src/state.rs` -- per-VM state (serial + vsock fds)
 - `crates/capsem-core/src/vm/serial.rs` -- serial console pipe setup (boot logs)
 - `crates/capsem-core/src/vm/vsock.rs` -- vsock manager, control messages, coalescing buffer
-- `crates/capsem-core/src/vm/machine.rs` -- VZVirtualMachine wrapper (serial + vsock devices)
+- `crates/capsem-core/src/vm/machine.rs` -- VZVirtualMachine wrapper (serial + vsock + VirtioFS devices)
+- `crates/capsem-core/src/vm/config.rs` -- VmConfig builder (VirtioFsShare, block devices, validation)
+- `crates/capsem-core/src/fs_monitor.rs` -- host-side FSEvents file monitor (replaces guest fs-watch in VirtioFS mode)
+- `crates/capsem-core/src/auto_snapshot.rs` -- rolling auto-snapshot scheduler (APFS clonefile ring buffer)
+- `crates/capsem-core/src/mcp/file_tools.rs` -- MCP built-in tools: list_changed_files, revert_file
 - `frontend/src/components/capsem-terminal.ts` -- xterm.js web component (resize events)
 - `frontend/src/pages/index.astro` -- main UI page
 
@@ -178,6 +209,7 @@ The `capsem-doctor` suite runs inside the guest VM to verify sandbox integrity, 
 | `test_utilities.py` | Tool availability | ~36 unix utilities (coreutils, text processing, network, system inspection) |
 | `test_workflows.py` | File I/O patterns | Text write/read, JSON roundtrip (Python + Node), shell pipes, large file (10MB) |
 | `test_ai_cli.py` | AI CLI sandboxing | claude/gemini/codex installed and executable without crashing |
+| `test_virtiofs.py` | VirtioFS storage mode | VirtioFS root mount, ext4 loopback upper, loop device active, workspace write/read/large file/subdirectory, system overlay writable, pip install, file delete+recreate (skipped in block mode) |
 
 **Adding new in-VM tests:**
 1. Add test functions to the appropriate `images/diagnostics/test_*.py` file, or create a new `test_<category>.py`
@@ -188,12 +220,17 @@ The `capsem-doctor` suite runs inside the guest VM to verify sandbox integrity, 
 
 ## Ephemeral VM Model -- Invariants (do not break)
 
-Every VM session is fully stateless. Two invariants in `images/capsem-init` must never be violated:
+Session ephemerality depends on the storage mode:
 
-1. **`mke2fs` runs unconditionally** at boot -- the scratch disk is always formatted fresh. No ext4 detection, no skip.
-2. **Overlay `upperdir` is always tmpfs** (`mount -t tmpfs tmpfs /mnt/b`). It must never be the scratch disk.
+**Block mode** (legacy): Every VM session is fully stateless. Two invariants:
+1. **`mke2fs` runs unconditionally** at boot -- the scratch disk is always formatted fresh.
+2. **Overlay `upperdir` is always tmpfs** -- never the scratch disk.
 
-Breaking either invariant allows rootfs writes to survive across sessions, violating the sandbox model. `scripts/preflight.sh` (`check_ephemeral_model`) enforces both statically. `scripts/integration_test.py` (`check_persistence`) verifies ephemerality end-to-end by booting two consecutive VMs and confirming a file written in the first is absent in the second.
+**VirtioFS mode** (default): Sessions are ephemeral by default. The host creates fresh `workspace/` and `system/rootfs.img` for each session. However, the VirtioFS directories can be APFS-cloned for snapshots, enabling future checkpoint/fork support.
+1. **Fresh session**: host creates empty workspace + sparse rootfs.img (guest formats on first boot).
+2. **Forked session** (future): host APFS-clones from snapshot -- data persists by design.
+
+`scripts/preflight.sh` validates both storage mode paths. `scripts/integration_test.py` verifies ephemerality end-to-end.
 
 **To add packages to the VM:** edit `images/Dockerfile.rootfs` and run `just build-assets`. Never try to make the overlay upper layer persistent.
 
