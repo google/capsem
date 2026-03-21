@@ -1,4 +1,5 @@
 pub mod builtin_tools;
+pub mod file_tools;
 pub mod gateway;
 pub mod policy;
 pub mod server_manager;

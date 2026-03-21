@@ -245,6 +245,7 @@ def create_rootfs():
     print(f"  rootfs.squashfs: {img_path} ({img_path.stat().st_size // (1024*1024)} MB)")
 
 
+
 def extract_tool_versions():
     """Extract tool versions from the rootfs container image into assets/tool-versions.txt."""
     print("Extracting tool versions from rootfs image...")

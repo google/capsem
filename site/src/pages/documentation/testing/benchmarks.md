@@ -2,7 +2,7 @@
 layout: ../../../layouts/Doc.astro
 title: Benchmarks
 description: VM performance benchmarks -- disk I/O, proxy throughput, CLI startup.
-lastUpdated: "2026-03-11"
+lastUpdated: "2026-03-21"
 tags: ["testing", "performance", "benchmarks"]
 ---
 
@@ -25,17 +25,28 @@ just run "capsem-bench throughput" # proxy throughput only
 
 | Mode | What it measures |
 |------|-----------------|
-| `disk` | Scratch disk sequential + random read/write (256 MB, ext4 on virtio-blk) |
+| `disk` | Workspace disk sequential + random read/write (256 MB) |
 | `rootfs` | Rootfs sequential + random read (squashfs via virtio-blk, read-only) |
 | `startup` | CLI cold-start latency (drop_caches between runs, 3 runs each) |
 | `http` | HTTP request latency (50 requests, 5 concurrent, through MITM proxy) |
 | `throughput` | 100 MB download through the full MITM proxy pipeline |
 
-## Current benchmarks (M4 Pro, 2026-03-11)
+## Current benchmarks (M4 Pro, 2026-03-21)
 
-### Scratch disk I/O
+### Workspace I/O -- VirtioFS mode (default)
 
-Fresh ext4 volume on virtio-blk, formatted at every boot.
+VirtioFS shared directory with bind-mounted `/root`. System overlay uses ext4 loopback on VirtioFS. This is the default storage mode that enables checkpointing, host-side monitoring, and MCP file tools.
+
+| Test | Throughput | IOPS | Duration |
+|------|-----------|------|----------|
+| Seq write (1MB blocks) | 1,215 MB/s | -- | 211 ms |
+| Seq read (1MB blocks) | 3,306 MB/s | -- | 77 ms |
+| Rand write (4K blocks) | 29 MB/s | 7,382 | 1,355 ms |
+| Rand read (4K blocks) | 177 MB/s | 45,364 | 220 ms |
+
+### Workspace I/O -- block mode (legacy)
+
+Direct ext4 volume on virtio-blk, formatted at every boot. Higher raw throughput but no checkpointing or host-side file visibility.
 
 | Test | Throughput | IOPS | Duration |
 |------|-----------|------|----------|
@@ -43,6 +54,8 @@ Fresh ext4 volume on virtio-blk, formatted at every boot.
 | Seq read (1MB blocks) | 5,369 MB/s | -- | 48 ms |
 | Rand write (4K blocks) | 72 MB/s | 18,398 | 544 ms |
 | Rand read (4K blocks) | 7,415 MB/s | 1,898,329 | 5 ms |
+
+VirtioFS sequential write is comparable. Sequential read is ~1.6x slower. Random I/O is 2-3x slower. For AI coding workloads (mostly small file reads/writes), VirtioFS performance is more than sufficient.
 
 ### Rootfs read I/O
 

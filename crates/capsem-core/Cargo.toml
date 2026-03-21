@@ -49,6 +49,8 @@ scraper = "0.25"
 
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 ego-tree = "0.10"
+notify = { version = "7", default-features = false, features = ["macos_fsevent"] }
+walkdir = "2"
 
 [dev-dependencies]
 tempfile = "3"

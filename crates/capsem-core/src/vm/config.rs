@@ -24,6 +24,23 @@ pub enum ConfigError {
     HashMismatch(String, String, String),
     #[error("failed to read file for hashing: {0}")]
     Io(#[from] std::io::Error),
+    #[error("VirtioFS share directory does not exist: {0}")]
+    MissingVirtioFsDir(PathBuf),
+    #[error("VirtioFS tag is invalid (must be 1-36 ASCII bytes): {0:?}")]
+    InvalidVirtioFsTag(String),
+    #[error("duplicate VirtioFS tag: {0:?}")]
+    DuplicateVirtioFsTag(String),
+}
+
+/// A VirtioFS shared directory to expose to the guest via virtio-fs.
+#[derive(Debug, Clone)]
+pub struct VirtioFsShare {
+    /// Mount tag visible in guest (e.g., "capsem"). Max 36 ASCII bytes.
+    pub tag: String,
+    /// Host directory to share.
+    pub host_path: PathBuf,
+    /// If true, guest cannot write to this share.
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +51,7 @@ pub struct VmConfig {
     pub initrd_path: Option<PathBuf>,
     pub disk_path: Option<PathBuf>,
     pub scratch_disk_path: Option<PathBuf>,
+    pub virtio_fs_shares: Vec<VirtioFsShare>,
     pub kernel_cmdline: String,
     pub expected_kernel_hash: Option<String>,
     pub expected_initrd_hash: Option<String>,
@@ -54,6 +72,7 @@ pub struct VmConfigBuilder {
     initrd_path: Option<PathBuf>,
     disk_path: Option<PathBuf>,
     scratch_disk_path: Option<PathBuf>,
+    virtio_fs_shares: Vec<VirtioFsShare>,
     kernel_cmdline: String,
     expected_kernel_hash: Option<String>,
     expected_initrd_hash: Option<String>,
@@ -69,6 +88,7 @@ impl Default for VmConfigBuilder {
             initrd_path: None,
             disk_path: None,
             scratch_disk_path: None,
+            virtio_fs_shares: Vec::new(),
             kernel_cmdline: "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1".to_string(),
             expected_kernel_hash: None,
             expected_initrd_hash: None,
@@ -105,6 +125,20 @@ impl VmConfigBuilder {
 
     pub fn scratch_disk_path(mut self, path: impl AsRef<Path>) -> Self {
         self.scratch_disk_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn virtio_fs_share(
+        mut self,
+        tag: impl Into<String>,
+        path: impl AsRef<Path>,
+        read_only: bool,
+    ) -> Self {
+        self.virtio_fs_shares.push(VirtioFsShare {
+            tag: tag.into(),
+            host_path: path.as_ref().to_path_buf(),
+            read_only,
+        });
         self
     }
 
@@ -196,6 +230,23 @@ impl VmConfigBuilder {
             }
         }
 
+        // Validate VirtioFS shares
+        let mut seen_tags = std::collections::HashSet::new();
+        for share in &self.virtio_fs_shares {
+            if share.tag.is_empty()
+                || share.tag.len() > 36
+                || !share.tag.is_ascii()
+            {
+                return Err(ConfigError::InvalidVirtioFsTag(share.tag.clone()));
+            }
+            if !seen_tags.insert(&share.tag) {
+                return Err(ConfigError::DuplicateVirtioFsTag(share.tag.clone()));
+            }
+            if !share.host_path.is_dir() {
+                return Err(ConfigError::MissingVirtioFsDir(share.host_path.clone()));
+            }
+        }
+
         Ok(VmConfig {
             cpu_count: self.cpu_count,
             ram_bytes: self.ram_bytes,
@@ -203,6 +254,7 @@ impl VmConfigBuilder {
             initrd_path: self.initrd_path,
             disk_path: self.disk_path,
             scratch_disk_path: self.scratch_disk_path,
+            virtio_fs_shares: self.virtio_fs_shares,
             kernel_cmdline: self.kernel_cmdline,
             expected_kernel_hash: self.expected_kernel_hash,
             expected_initrd_hash: self.expected_initrd_hash,
@@ -559,5 +611,120 @@ mod tests {
             .build()
             .unwrap_err();
         assert!(matches!(err, ConfigError::RamOutOfRange(0)));
+    }
+
+    // --- VirtioFS share tests ---
+
+    #[test]
+    fn accepts_valid_virtiofs_share() {
+        let kernel = temp_file("vmlinuz-vfs-ok");
+        let share_dir = std::env::temp_dir().join("capsem-test-vfs-ok");
+        std::fs::create_dir_all(&share_dir).unwrap();
+        let config = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share("capsem", &share_dir, false)
+            .build()
+            .unwrap();
+        assert_eq!(config.virtio_fs_shares.len(), 1);
+        assert_eq!(config.virtio_fs_shares[0].tag, "capsem");
+        assert!(!config.virtio_fs_shares[0].read_only);
+    }
+
+    #[test]
+    fn accepts_multiple_virtiofs_shares() {
+        let kernel = temp_file("vmlinuz-vfs-multi");
+        let dir1 = std::env::temp_dir().join("capsem-test-vfs-m1");
+        let dir2 = std::env::temp_dir().join("capsem-test-vfs-m2");
+        std::fs::create_dir_all(&dir1).unwrap();
+        std::fs::create_dir_all(&dir2).unwrap();
+        let config = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share("overlay", &dir1, false)
+            .virtio_fs_share("cache", &dir2, true)
+            .build()
+            .unwrap();
+        assert_eq!(config.virtio_fs_shares.len(), 2);
+    }
+
+    #[test]
+    fn rejects_virtiofs_missing_dir() {
+        let kernel = temp_file("vmlinuz-vfs-nodir");
+        let err = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share("capsem", "/nonexistent/virtiofs/dir", false)
+            .build();
+        assert!(matches!(err, Err(ConfigError::MissingVirtioFsDir(_))));
+    }
+
+    #[test]
+    fn rejects_virtiofs_empty_tag() {
+        let kernel = temp_file("vmlinuz-vfs-empty-tag");
+        let dir = std::env::temp_dir().join("capsem-test-vfs-et");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share("", &dir, false)
+            .build();
+        assert!(matches!(err, Err(ConfigError::InvalidVirtioFsTag(_))));
+    }
+
+    #[test]
+    fn rejects_virtiofs_tag_too_long() {
+        let kernel = temp_file("vmlinuz-vfs-long-tag");
+        let dir = std::env::temp_dir().join("capsem-test-vfs-lt");
+        std::fs::create_dir_all(&dir).unwrap();
+        let long_tag = "a".repeat(37);
+        let err = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share(long_tag, &dir, false)
+            .build();
+        assert!(matches!(err, Err(ConfigError::InvalidVirtioFsTag(_))));
+    }
+
+    #[test]
+    fn accepts_virtiofs_tag_at_max_length() {
+        let kernel = temp_file("vmlinuz-vfs-max-tag");
+        let dir = std::env::temp_dir().join("capsem-test-vfs-mt");
+        std::fs::create_dir_all(&dir).unwrap();
+        let max_tag = "a".repeat(36);
+        let config = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share(max_tag, &dir, false)
+            .build()
+            .unwrap();
+        assert_eq!(config.virtio_fs_shares[0].tag.len(), 36);
+    }
+
+    #[test]
+    fn rejects_virtiofs_duplicate_tags() {
+        let kernel = temp_file("vmlinuz-vfs-dup");
+        let dir1 = std::env::temp_dir().join("capsem-test-vfs-d1");
+        let dir2 = std::env::temp_dir().join("capsem-test-vfs-d2");
+        std::fs::create_dir_all(&dir1).unwrap();
+        std::fs::create_dir_all(&dir2).unwrap();
+        let err = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share("capsem", &dir1, false)
+            .virtio_fs_share("capsem", &dir2, true)
+            .build();
+        assert!(matches!(err, Err(ConfigError::DuplicateVirtioFsTag(_))));
+    }
+
+    #[test]
+    fn rejects_virtiofs_non_ascii_tag() {
+        let kernel = temp_file("vmlinuz-vfs-unicode");
+        let dir = std::env::temp_dir().join("capsem-test-vfs-uni");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = VmConfig::builder()
+            .kernel_path(&kernel)
+            .virtio_fs_share("caps\u{00e9}m", &dir, false)
+            .build();
+        assert!(matches!(err, Err(ConfigError::InvalidVirtioFsTag(_))));
+    }
+
+    #[test]
+    fn no_virtiofs_shares_by_default() {
+        let b = VmConfigBuilder::default();
+        assert!(b.virtio_fs_shares.is_empty());
     }
 }

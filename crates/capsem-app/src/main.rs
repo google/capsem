@@ -12,10 +12,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capsem_core::{
-    CoalesceBuffer, GuestToHost, HostState, HostStateMachine, HostToGuest, VirtualMachine,
-    VmConfig, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY,
-    VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
-    create_scratch_disk, decode_guest_msg, encode_host_msg, validate_guest_msg, MAX_FRAME_SIZE,
+    CoalesceBuffer, GuestToHost, HostState, HostStateMachine, HostToGuest, VirtioFsShare,
+    VirtualMachine, VmConfig, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_FS_WATCH,
+    VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+    create_scratch_disk, create_virtiofs_session, decode_guest_msg, encode_host_msg,
+    validate_guest_msg, MAX_FRAME_SIZE,
 };
 use capsem_core::asset_manager::{self, AssetManager, AssetStatus, DownloadProgress};
 use capsem_core::mcp::gateway::{self, McpGatewayConfig};
@@ -618,16 +619,26 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
 ///
 /// If `scratch_disk_path` is provided, the scratch disk is attached as a second
 /// block device (read-write) for the guest `/root` workspace.
+/// If `virtiofs_shares` is non-empty, VirtioFS directory sharing devices are
+/// attached and `capsem.storage=virtiofs` is appended to the kernel cmdline.
 fn boot_vm(
     assets: &Path,
     rootfs_override: Option<&Path>,
     cmdline: &str,
     scratch_disk_path: Option<&Path>,
+    virtiofs_shares: &[VirtioFsShare],
     cpu_count: u32,
     ram_bytes: u64,
 ) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd, HostStateMachine)> {
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
+
+    // In VirtioFS mode, append storage flag to kernel cmdline.
+    let effective_cmdline = if virtiofs_shares.is_empty() {
+        cmdline.to_string()
+    } else {
+        format!("{cmdline} capsem.storage=virtiofs")
+    };
 
     let config = {
         let _span = debug_span!("config_build").entered();
@@ -635,7 +646,7 @@ fn boot_vm(
             .cpu_count(cpu_count)
             .ram_bytes(ram_bytes)
             .kernel_path(assets.join("vmlinuz"))
-            .kernel_cmdline(cmdline);
+            .kernel_cmdline(&effective_cmdline);
 
         if let Some(hash) = option_env!("VMLINUZ_HASH") {
             builder = builder.expected_kernel_hash(hash);
@@ -666,6 +677,14 @@ fn boot_vm(
 
         if let Some(scratch) = scratch_disk_path {
             builder = builder.scratch_disk_path(scratch);
+        }
+
+        for share in virtiofs_shares {
+            builder = builder.virtio_fs_share(
+                &share.tag,
+                &share.host_path,
+                share.read_only,
+            );
         }
 
         builder.build().context("failed to build VmConfig")?
@@ -1510,24 +1529,31 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     let cli_session_id = session::generate_session_id();
     eprintln!("[capsem] session: {cli_session_id}");
 
-    // Create session directory and scratch disk for CLI mode.
+    // Create session directory with VirtioFS overlay.
     let policies = policy_config::MergedPolicies::from_disk();
     let vm_settings = policies.vm;
-    let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(16);
     let cpu_count = vm_settings.cpu_count.unwrap_or(4);
     let ram_gb = vm_settings.ram_gb.unwrap_or(4);
     let ram_bytes: u64 = ram_gb as u64 * 1024 * 1024 * 1024;
     let cli_session_dir = session_dir_for(&cli_session_id);
-    let scratch_path = cli_session_dir.as_ref().and_then(|d| {
-        std::fs::create_dir_all(d).ok();
-        let path = d.join("scratch.img");
-        if let Err(e) = create_scratch_disk(&path, scratch_size) {
-            warn!("failed to create scratch disk: {e}");
-            return None;
-        }
-        info!(size_gb = scratch_size, "created scratch disk");
-        Some(path)
-    });
+
+    // Set up VirtioFS session directory (overlay upper + work + auto_snapshots).
+    let virtiofs_shares: Vec<VirtioFsShare> = cli_session_dir
+        .as_ref()
+        .and_then(|d| {
+            std::fs::create_dir_all(d).ok();
+            if let Err(e) = create_virtiofs_session(d, 2) {
+                warn!("failed to create VirtioFS session dir: {e}");
+                return None;
+            }
+            info!("created VirtioFS session dir");
+            Some(vec![VirtioFsShare {
+                tag: "capsem".to_string(),
+                host_path: d.clone(),
+                read_only: false,
+            }])
+        })
+        .unwrap_or_default();
 
     // Open per-VM log file for structured event capture.
     if let Some(ref dir) = cli_session_dir {
@@ -1546,7 +1572,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         status: "running".to_string(),
         created_at: session::now_iso(),
         stopped_at: None,
-        scratch_disk_size_gb: scratch_size,
+        scratch_disk_size_gb: 0,
         ram_bytes,
         total_requests: 0,
         allowed_requests: 0,
@@ -1559,6 +1585,9 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         total_file_events: 0,
         compressed_size_bytes: None,
         vacuumed_at: None,
+        storage_mode: if virtiofs_shares.is_empty() { "block" } else { "virtiofs" }.to_string(),
+        rootfs_hash: None,
+        rootfs_version: None,
     };
     if let Err(e) = session_index.create_session(&record) {
         warn!("failed to record session: {e}");
@@ -1568,7 +1597,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         &assets,
         rootfs_path.as_deref(),
         "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
-        scratch_path.as_deref(),
+        None, // no scratch disk in VirtioFS mode
+        &virtiofs_shares,
         cpu_count,
         ram_bytes,
     )?;
@@ -1943,10 +1973,10 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         lh.clear_vm_writer();
     }
 
-    // Clean up session: delete scratch.img, snapshot counts, update status.
+    // Clean up session: delete VirtioFS dirs (or scratch.img for legacy), update status.
     if let Some(ref dir) = cli_session_dir {
         let db_ref = net_state.as_ref().map(|ns| ns.db.as_ref());
-        cleanup_session(dir, scratch_path.as_deref(), &cli_session_id, session_index, db_ref);
+        cleanup_session(dir, None, &cli_session_id, session_index, db_ref);
     }
 
     // Drop network state to close DbWriter (flushes WAL via checkpoint on drop).
@@ -2021,10 +2051,11 @@ fn gui_boot_vm(
     rootfs: Option<&Path>,
     session_id: &str,
     scratch_path: Option<PathBuf>,
+    virtiofs_shares: Vec<VirtioFsShare>,
     cpu_count: u32,
     ram_bytes: u64,
 ) {
-    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), cpu_count, ram_bytes) {
+    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), &virtiofs_shares, cpu_count, ram_bytes) {
         Ok((vm, rx, input_fd, sm)) => {
             info!("VM booted successfully");
 
@@ -2338,23 +2369,28 @@ fn main() {
             let gui_session_id = session::generate_session_id();
             info!(session_id = %gui_session_id, "starting new session");
 
-            // Create session directory and scratch disk for GUI mode.
+            // Create session directory with VirtioFS overlay for GUI mode.
             let vm_settings = policy_config::load_merged_vm_settings();
-            let scratch_size = vm_settings.scratch_disk_size_gb.unwrap_or(16);
             let cpu_count = vm_settings.cpu_count.unwrap_or(4);
             let ram_gb = vm_settings.ram_gb.unwrap_or(4);
             let ram_bytes: u64 = ram_gb as u64 * 1024 * 1024 * 1024;
             let gui_session_dir = session_dir_for(&gui_session_id);
-            let gui_scratch_path = gui_session_dir.as_ref().and_then(|d| {
-                std::fs::create_dir_all(d).ok();
-                let path = d.join("scratch.img");
-                if let Err(e) = create_scratch_disk(&path, scratch_size) {
-                    warn!("failed to create scratch disk: {e}");
-                    return None;
-                }
-                info!(size_gb = scratch_size, "created scratch disk");
-                Some(path)
-            });
+            let gui_virtiofs_shares: Vec<VirtioFsShare> = gui_session_dir
+                .as_ref()
+                .and_then(|d| {
+                    std::fs::create_dir_all(d).ok();
+                    if let Err(e) = create_virtiofs_session(d, 2) {
+                        warn!("failed to create VirtioFS session dir: {e}");
+                        return None;
+                    }
+                    info!("created VirtioFS session dir");
+                    Some(vec![VirtioFsShare {
+                        tag: "capsem".to_string(),
+                        host_path: d.clone(),
+                        read_only: false,
+                    }])
+                })
+                .unwrap_or_default();
 
             // Open per-VM log file for structured event capture.
             if let Some(ref dir) = gui_session_dir {
@@ -2377,7 +2413,7 @@ fn main() {
                     status: "running".to_string(),
                     created_at: session::now_iso(),
                     stopped_at: None,
-                    scratch_disk_size_gb: scratch_size,
+                    scratch_disk_size_gb: 0,
                     ram_bytes,
                     total_requests: 0,
                     allowed_requests: 0,
@@ -2390,6 +2426,9 @@ fn main() {
                     total_file_events: 0,
                     compressed_size_bytes: None,
                     vacuumed_at: None,
+                    storage_mode: if gui_virtiofs_shares.is_empty() { "block" } else { "virtiofs" }.to_string(),
+                    rootfs_hash: None,
+                    rootfs_version: None,
                 };
                 if let Err(e) = idx.create_session(&record) {
                     warn!("failed to record session: {e}");
@@ -2410,7 +2449,7 @@ fn main() {
                 }
                 gui_boot_vm(
                     app.handle(), &assets, rootfs_path.as_deref(),
-                    &gui_session_id, gui_scratch_path, cpu_count, ram_bytes,
+                    &gui_session_id, None, gui_virtiofs_shares.clone(), cpu_count, ram_bytes,
                 );
             } else {
                 // Rootfs not found -- download it first.
@@ -2427,7 +2466,7 @@ fn main() {
                 let handle = app.handle().clone();
                 let assets_clone = assets.clone();
                 let session_id = gui_session_id.clone();
-                let scratch = gui_scratch_path;
+                let vfs_shares = gui_virtiofs_shares;
                 tauri::async_runtime::spawn(async move {
                     let mgr = match create_asset_manager(&assets_clone) {
                         Ok(m) => m,
@@ -2495,7 +2534,7 @@ fn main() {
                             if let Err(e) = handle.run_on_main_thread(move || {
                                 gui_boot_vm(
                                     &h, &a, Some(&r),
-                                    &s, scratch, cpu_count, ram_bytes,
+                                    &s, None, vfs_shares, cpu_count, ram_bytes,
                                 );
                             }) {
                                 error!("failed to dispatch boot to main thread: {e}");

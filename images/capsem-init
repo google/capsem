@@ -48,32 +48,107 @@ echo "[capsem-init] mount exit: $?"
 echo "[capsem-init] checking /mnt/a/bin/bash..."
 ls /mnt/a/bin/bash 2>&1
 
-# Create tmpfs for overlay upper + workdir.
-# INVARIANT: upperdir MUST be tmpfs -- never the initramfs or scratch disk.
-# A non-tmpfs upper layer would allow writes to persist across reboots.
-# If this mount fails, abort loudly rather than silently boot degraded.
-mkdir -p /mnt/b
-mount -t tmpfs tmpfs /mnt/b || {
-    echo "[capsem-init] FATAL: cannot mount tmpfs on /mnt/b -- aborting"
-    exit 1
-}
-mkdir -p /mnt/b/u /mnt/b/w
+# Detect storage mode from kernel cmdline.
+# VirtioFS mode: overlay upper + /root backed by host-side shared directory.
+# Block mode (legacy): tmpfs overlay + scratch disk.
+STORAGE_MODE="block"
+if grep -q 'capsem.storage=virtiofs' /proc/cmdline; then
+    STORAGE_MODE="virtiofs"
+fi
+echo "[capsem-init] storage mode: $STORAGE_MODE"
 
-# Stack overlayfs: squashfs (read-only lower) + tmpfs (ephemeral upper).
-# redirect_dir=on enables directory renames via xattr redirects (required for dpkg/apt).
-# metacopy=on defers data copies until writes occur (speeds up layer transitions).
-# Fall back to plain overlayfs if the kernel lacks redirect_dir support.
-# Either way, both attempts use /mnt/b/u (tmpfs) as upperdir -- never degrade further.
 mkdir -p /newroot
-mount -t overlay overlay \
-  -o lowerdir=/mnt/a,upperdir=/mnt/b/u,workdir=/mnt/b/w,redirect_dir=on,metacopy=on \
-  /newroot || \
-mount -t overlay overlay \
-  -o lowerdir=/mnt/a,upperdir=/mnt/b/u,workdir=/mnt/b/w \
-  /newroot || {
-    echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
-    exit 1
-}
+if [ "$STORAGE_MODE" = "virtiofs" ]; then
+    # === Single-Share Hybrid Architecture ===
+    # One VirtioFS share from the host contains:
+    #   system/rootfs.img  -- ext4 loopback image for overlayfs upper (packages, config)
+    #   workspace/         -- direct files for /root (AI workspace, host-visible)
+    #
+    # Apple VZ VirtioFS can't be overlayfs upper directly (no mknod for whiteouts).
+    # The ext4 loopback provides full POSIX compliance for overlayfs.
+    # The workspace/ dir is bind-mounted at /root so the host can read/write files
+    # natively for MCP tools, snapshots, and monitoring.
+
+    mkdir -p /mnt/shared
+    mount -t virtiofs capsem /mnt/shared || {
+        echo "[capsem-init] FATAL: cannot mount virtiofs 'capsem' -- aborting"
+        exit 1
+    }
+    echo "[capsem-init] VirtioFS share mounted"
+
+    # Mount the ext4 loopback image for overlayfs upper.
+    # Host creates the sparse file; guest formats on first boot.
+    SYSTEM_IMG=/mnt/shared/system/rootfs.img
+    if [ ! -f "$SYSTEM_IMG" ]; then
+        echo "[capsem-init] FATAL: system image not found at $SYSTEM_IMG"
+        ls -la /mnt/shared/system/ 2>&1
+        exit 1
+    fi
+
+    mkdir -p /mnt/system
+
+    # Set up loop device for the ext4 system image.
+    # Host creates a sparse file (0 bytes actual). Guest formats on first boot.
+    LOOP_DEV=$(losetup -f 2>/dev/null)
+    if [ -z "$LOOP_DEV" ]; then
+        mknod /dev/loop0 b 7 0 2>/dev/null || true
+        LOOP_DEV=/dev/loop0
+    fi
+    losetup "$LOOP_DEV" "$SYSTEM_IMG" || {
+        echo "[capsem-init] FATAL: losetup failed for $SYSTEM_IMG"
+        exit 1
+    }
+    echo "[capsem-init] loop device: $LOOP_DEV"
+
+    # Format if unformatted (first boot). Uses mke2fs from the squashfs rootfs
+    # since busybox doesn't include it. Bind-mount /dev so chroot can see loop devices.
+    if ! blkid "$LOOP_DEV" 2>/dev/null | grep -q ext4; then
+        echo "[capsem-init] formatting system image..."
+        mount --bind /dev /mnt/a/dev
+        chroot /mnt/a /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal \
+            -E lazy_itable_init=1 -L system -q "$LOOP_DEV" 2>&1
+        umount /mnt/a/dev
+        echo "[capsem-init] system image formatted"
+    fi
+
+    mount -t ext4 -o noatime,nodiratime "$LOOP_DEV" /mnt/system || {
+        echo "[capsem-init] FATAL: cannot mount system image -- aborting"
+        exit 1
+    }
+    mkdir -p /mnt/system/upper /mnt/system/work
+    mkdir -p /mnt/system/upper /mnt/system/work
+
+    # Stack overlayfs: squashfs (lower) + ext4 loopback (upper).
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,redirect_dir=on,metacopy=on \
+      /newroot || \
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work \
+      /newroot || {
+        echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
+        exit 1
+    }
+    echo "[capsem-init] overlayfs mounted (ext4 loopback upper)"
+else
+    # === Block mode (legacy) ===
+    # tmpfs overlay upper -- ephemeral, lost on reboot.
+    mkdir -p /mnt/b
+    mount -t tmpfs tmpfs /mnt/b || {
+        echo "[capsem-init] FATAL: cannot mount tmpfs on /mnt/b -- aborting"
+        exit 1
+    }
+    mkdir -p /mnt/b/upper /mnt/b/work
+
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/b/upper,workdir=/mnt/b/work,redirect_dir=on,metacopy=on \
+      /newroot || \
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/b/upper,workdir=/mnt/b/work \
+      /newroot || {
+        echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
+        exit 1
+    }
+fi
 
 # Mount virtual filesystems fresh in the new root.
 # /proc, /sys, /dev exist as empty dirs from docker export.
@@ -84,37 +159,50 @@ mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
 
-# Mount /root: prefer scratch disk (virtio block device), fall back to tmpfs.
-# The scratch disk provides ~8GB of workspace instead of RAM-limited tmpfs.
-# Must happen AFTER /newroot/dev is mounted so device nodes resolve in chroot.
-# Uses rootfs e2fsprogs (not busybox) for ext4 support.
-SCRATCH=""
-if [ -b /dev/vdb ]; then
-    SCRATCH=/dev/vdb
-fi
+# Mount /root workspace.
+# VirtioFS mode: bind-mount the workspace/ dir from the VirtioFS share.
+# Block mode: prefer scratch disk (virtio block device), fall back to tmpfs.
+if [ "$STORAGE_MODE" = "virtiofs" ]; then
+    # Bind-mount the host-visible workspace directory as /root.
+    # The host can read/write these files directly for MCP tools and snapshots.
+    mkdir -p /newroot/root
+    mount --bind /mnt/shared/workspace /newroot/root || {
+        echo "[capsem-init] FATAL: cannot bind-mount workspace to /root"
+        exit 1
+    }
+    echo "[capsem-init] /root bind-mounted from VirtioFS workspace"
+else
+    # Block mode: scratch disk provides ~8GB of workspace.
+    # Must happen AFTER /newroot/dev is mounted so device nodes resolve in chroot.
+    # Uses rootfs e2fsprogs (not busybox) for ext4 support.
+    SCRATCH=""
+    if [ -b /dev/vdb ]; then
+        SCRATCH=/dev/vdb
+    fi
 
-if [ -n "$SCRATCH" ]; then
-    echo "[capsem-init] formatting scratch disk ($SCRATCH)..."
-    if chroot /newroot /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1; then
-        if mount -t ext4 -o rw,noatime,nodiratime "$SCRATCH" /newroot/root; then
-            echo "[capsem-init] /root mounted from scratch disk"
-            # Create a 1GB swap file on the scratch disk.
-            dd if=/dev/zero of=/newroot/root/.swapfile bs=1M count=1024 2>/dev/null
-            chmod 600 /newroot/root/.swapfile
-            mkswap /newroot/root/.swapfile >/dev/null 2>&1
-            swapon /newroot/root/.swapfile
-            echo "[capsem-init] swap enabled (1GB)"
+    if [ -n "$SCRATCH" ]; then
+        echo "[capsem-init] formatting scratch disk ($SCRATCH)..."
+        if chroot /newroot /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1; then
+            if mount -t ext4 -o rw,noatime,nodiratime "$SCRATCH" /newroot/root; then
+                echo "[capsem-init] /root mounted from scratch disk"
+                # Create a 1GB swap file on the scratch disk.
+                dd if=/dev/zero of=/newroot/root/.swapfile bs=1M count=1024 2>/dev/null
+                chmod 600 /newroot/root/.swapfile
+                mkswap /newroot/root/.swapfile >/dev/null 2>&1
+                swapon /newroot/root/.swapfile
+                echo "[capsem-init] swap enabled (1GB)"
+            else
+                echo "[capsem-init] WARNING: scratch disk mount failed, falling back to tmpfs"
+                mount -t tmpfs tmpfs /newroot/root
+            fi
         else
-            echo "[capsem-init] WARNING: scratch disk mount failed, falling back to tmpfs"
+            echo "[capsem-init] WARNING: scratch disk format failed, falling back to tmpfs"
             mount -t tmpfs tmpfs /newroot/root
         fi
     else
-        echo "[capsem-init] WARNING: scratch disk format failed, falling back to tmpfs"
         mount -t tmpfs tmpfs /newroot/root
+        echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
     fi
-else
-    mount -t tmpfs tmpfs /newroot/root
-    echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
 fi
 
 # Create writable bin dir for pip install --user / uvx entry points.
@@ -187,25 +275,29 @@ elif [ -x /newroot/usr/local/bin/capsem-mcp-server ]; then
     echo "[capsem-init] mcp-server deployed (from rootfs)"
 fi
 
-# Raise inotify watch limit for filesystem watcher.
-echo 65536 > /proc/sys/fs/inotify/max_user_watches 2>/dev/null || true
+# Launch filesystem watcher (inotify->vsock bridge) in block mode only.
+# In VirtioFS mode, the host monitors the shared directory directly via FSEvents.
+if [ "$STORAGE_MODE" != "virtiofs" ]; then
+    # Raise inotify watch limit for filesystem watcher.
+    echo 65536 > /proc/sys/fs/inotify/max_user_watches 2>/dev/null || true
 
-# Launch filesystem watcher (inotify->vsock bridge) as background process.
-# Prefer initrd-bundled copy, fall back to rootfs.
-FS_WATCH_PATH=""
-if [ -x /capsem-fs-watch ]; then
-    cp /capsem-fs-watch /newroot/run/capsem-fs-watch
-    chmod 555 /newroot/run/capsem-fs-watch
-    FS_WATCH_PATH=/run/capsem-fs-watch
-elif [ -x /newroot/usr/local/bin/capsem-fs-watch ]; then
-    FS_WATCH_PATH=/usr/local/bin/capsem-fs-watch
-fi
-if [ -n "$FS_WATCH_PATH" ]; then
-    chroot /newroot "$FS_WATCH_PATH" &
-    sleep 0.1
-    echo "[capsem-init] fs-watch started"
+    FS_WATCH_PATH=""
+    if [ -x /capsem-fs-watch ]; then
+        cp /capsem-fs-watch /newroot/run/capsem-fs-watch
+        chmod 555 /newroot/run/capsem-fs-watch
+        FS_WATCH_PATH=/run/capsem-fs-watch
+    elif [ -x /newroot/usr/local/bin/capsem-fs-watch ]; then
+        FS_WATCH_PATH=/usr/local/bin/capsem-fs-watch
+    fi
+    if [ -n "$FS_WATCH_PATH" ]; then
+        chroot /newroot "$FS_WATCH_PATH" &
+        sleep 0.1
+        echo "[capsem-init] fs-watch started"
+    else
+        echo "[capsem-init] WARNING: capsem-fs-watch not found, no file telemetry"
+    fi
 else
-    echo "[capsem-init] WARNING: capsem-fs-watch not found, no file telemetry"
+    echo "[capsem-init] fs-watch skipped (host-side monitoring in VirtioFS mode)"
 fi
 
 # Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).

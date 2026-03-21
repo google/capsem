@@ -8,11 +8,14 @@ use objc2::rc::Retained;
 use objc2_foundation::{NSArray, NSObjectProtocol, NSString, NSURL};
 use objc2_virtualization::{
     VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
+    VZDirectorySharingDeviceConfiguration,
     VZEntropyDeviceConfiguration, VZGenericPlatformConfiguration,
-    VZSerialPortConfiguration, VZSocketDevice, VZSocketDeviceConfiguration,
+    VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare,
+    VZSocketDevice, VZSocketDeviceConfiguration,
     VZStorageDeviceConfiguration,
     VZVirtioBlockDeviceConfiguration,
     VZVirtioEntropyDeviceConfiguration,
+    VZVirtioFileSystemDeviceConfiguration,
     VZVirtioSocketDeviceConfiguration,
     VZVirtualMachine as ObjcVZVirtualMachine,
     VZVirtualMachineConfiguration, VZVirtualMachineState,
@@ -113,6 +116,19 @@ impl VirtualMachine {
                 if !storage_devices.is_empty() {
                     let storage_array = NSArray::from_retained_slice(&storage_devices);
                     vz_config.setStorageDevices(&storage_array);
+                }
+
+                // VirtioFS directory sharing devices
+                if !config.virtio_fs_shares.is_empty() {
+                    let mut dir_devices: Vec<Retained<VZDirectorySharingDeviceConfiguration>> =
+                        Vec::new();
+                    for share in &config.virtio_fs_shares {
+                        let device =
+                            attach_virtiofs_share(&share.tag, &share.host_path, share.read_only)?;
+                        dir_devices.push(device);
+                    }
+                    let dir_array = NSArray::from_retained_slice(&dir_devices);
+                    vz_config.setDirectorySharingDevices(&dir_array);
                 }
 
                 // Validate
@@ -281,6 +297,48 @@ fn attach_disk(
         }
 
         Ok(Retained::into_super(block_device))
+    }
+}
+
+/// Create a VirtioFS directory sharing device from a host directory.
+///
+/// `tag`: mount tag visible in guest (used with `mount -t virtiofs <tag> <mountpoint>`).
+/// `host_path`: host directory to share with the guest.
+/// `read_only`: if true, guest cannot write to the share.
+fn attach_virtiofs_share(
+    tag: &str,
+    host_path: &std::path::Path,
+    read_only: bool,
+) -> anyhow::Result<Retained<VZDirectorySharingDeviceConfiguration>> {
+    unsafe {
+        let path_str = host_path
+            .to_str()
+            .context("VirtioFS path not valid UTF-8")?;
+        let ns_path = NSString::from_str(path_str);
+        let url = NSURL::fileURLWithPath(&ns_path);
+
+        let shared_dir = VZSharedDirectory::initWithURL_readOnly(
+            VZSharedDirectory::alloc(),
+            &url,
+            read_only,
+        );
+
+        let single_share = VZSingleDirectoryShare::initWithDirectory(
+            VZSingleDirectoryShare::alloc(),
+            &shared_dir,
+        );
+
+        let ns_tag = NSString::from_str(tag);
+        let fs_config = VZVirtioFileSystemDeviceConfiguration::initWithTag(
+            VZVirtioFileSystemDeviceConfiguration::alloc(),
+            &ns_tag,
+        );
+
+        let share_super: Retained<objc2_virtualization::VZDirectoryShare> =
+            Retained::into_super(single_share);
+        fs_config.setShare(Some(&share_super));
+
+        Ok(Retained::into_super(fs_config))
     }
 }
 

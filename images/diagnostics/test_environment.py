@@ -129,3 +129,11 @@ def test_rootfs_is_overlay():
     result = run("mount | grep 'on / '")
     assert result.returncode == 0, "root mount not found"
     assert "overlay" in result.stdout, f"/ is not overlay: {result.stdout}"
+
+
+def test_virtiofs_kernel_support():
+    """Kernel must have virtiofs support (needed for VirtioFS storage mode)."""
+    result = run("cat /proc/filesystems")
+    assert result.returncode == 0, "/proc/filesystems not readable"
+    assert "virtiofs" in result.stdout, \
+        "virtiofs not in /proc/filesystems -- kernel missing CONFIG_VIRTIO_FS"

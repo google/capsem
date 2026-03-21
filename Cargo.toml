@@ -24,7 +24,13 @@ toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 humantime = "2"
 objc2 = "0.6"
-objc2-virtualization = "0.3"
+objc2-virtualization = { version = "0.3", features = [
+    "VZVirtioFileSystemDeviceConfiguration",
+    "VZSharedDirectory",
+    "VZSingleDirectoryShare",
+    "VZDirectoryShare",
+    "VZDirectorySharingDeviceConfiguration",
+] }
 objc2-foundation = "0.3"
 block2 = "0.6"
 dispatch2 = "0.2"

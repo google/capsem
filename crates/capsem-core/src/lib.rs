@@ -1,4 +1,6 @@
 pub mod asset_manager;
+pub mod auto_snapshot;
+pub mod fs_monitor;
 pub mod gateway;
 pub mod host_config;
 pub mod host_state;
@@ -18,12 +20,46 @@ pub use capsem_proto::{
 pub use host_state::{
     HostState, HostStateMachine, StateMachine, Transition, validate_guest_msg, validate_host_msg,
 };
-pub use vm::config::VmConfig;
+pub use vm::config::{VirtioFsShare, VmConfig};
 pub use vm::machine::VirtualMachine;
 pub use vm::vsock::{
     self, CoalesceBuffer, VsockConnection, VsockManager, VSOCK_PORT_CONTROL,
     VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
+
+/// Create VirtioFS session directories for the single-share hybrid architecture.
+///
+/// Layout (shared as one VirtioFS share with the guest):
+/// - `system/rootfs.img` -- sparse ext4 loopback image for overlayfs upper
+///                          (packages, config, /run binaries)
+/// - `workspace/`        -- direct host-visible files for /root (AI workspace)
+/// - `auto_snapshots/`   -- rolling ring buffer for host-side APFS clone snapshots
+///
+/// The host creates a sparse `rootfs.img` (0 bytes actual). The guest formats
+/// it as ext4 on first boot (~1s). Forked sessions already have a formatted
+/// image (APFS-cloned from snapshot).
+pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    std::fs::create_dir_all(session_dir.join("system"))?;
+    std::fs::create_dir_all(session_dir.join("workspace"))?;
+    std::fs::create_dir_all(session_dir.join("auto_snapshots"))?;
+
+    let img_path = session_dir.join("system").join("rootfs.img");
+    if !img_path.exists() {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&img_path)?;
+        file.set_len(system_img_size_gb as u64 * 1024 * 1024 * 1024)?;
+    }
+
+    std::fs::set_permissions(session_dir, std::fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
 
 /// Create a sparse scratch disk image file.
 ///
@@ -50,6 +86,7 @@ pub fn create_scratch_disk(path: &Path, size_gb: u32) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
+    use std::path::PathBuf;
 
     #[test]
     fn create_scratch_disk_sparse_file() {
@@ -101,5 +138,41 @@ mod tests {
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 2 * 1024 * 1024 * 1024);
 
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn create_virtiofs_session_creates_layout() {
+        let dir = std::env::temp_dir().join("capsem-test-virtiofs-session3");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        create_virtiofs_session(&dir, 2).unwrap();
+
+        assert!(dir.join("system").is_dir());
+        assert!(dir.join("workspace").is_dir());
+        assert!(dir.join("auto_snapshots").is_dir());
+
+        let img = dir.join("system/rootfs.img");
+        assert!(img.exists());
+        let meta = std::fs::metadata(&img).unwrap();
+        assert_eq!(meta.len(), 2 * 1024 * 1024 * 1024);
+        assert!(meta.blocks() < 1024, "rootfs.img should be sparse");
+
+        let dir_meta = std::fs::metadata(&dir).unwrap();
+        assert_eq!(dir_meta.mode() & 0o777, 0o700);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn create_virtiofs_session_idempotent() {
+        let dir = std::env::temp_dir().join("capsem-test-virtiofs-idem3");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        create_virtiofs_session(&dir, 1).unwrap();
+        create_virtiofs_session(&dir, 1).unwrap(); // should not fail or recreate
+
+        assert!(dir.join("system/rootfs.img").exists());
+        assert!(dir.join("workspace").is_dir());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -1,0 +1,555 @@
+//! Built-in MCP tools for workspace file tracking and revert.
+//!
+//! - `list_changed_files`: diff current workspace against auto-snapshot checkpoints
+//! - `revert_file`: restore a file from a checkpoint to the current workspace
+//!
+//! These tools operate entirely on the host filesystem (VirtioFS directories).
+//! The guest sees changes immediately via VirtioFS.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use serde_json::Value;
+use walkdir::WalkDir;
+
+use crate::auto_snapshot::AutoSnapshotScheduler;
+
+use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
+
+/// Tool names for file operations.
+pub const FILE_TOOL_NAMES: &[&str] = &["list_changed_files", "revert_file"];
+
+pub fn is_file_tool(name: &str) -> bool {
+    FILE_TOOL_NAMES.contains(&name)
+}
+
+/// Return tool definitions for file tools.
+pub fn file_tool_defs() -> Vec<McpToolDef> {
+    vec![
+        McpToolDef {
+            namespaced_name: "list_changed_files".into(),
+            original_name: "list_changed_files".into(),
+            description: Some(concat!(
+                "List files that have changed in the workspace compared to automatic checkpoints. ",
+                "Each entry includes the file path, operation (created/modified/deleted), size, ",
+                "and a checkpoint ID that can be passed to revert_file. ",
+                "Shows newest changes first.",
+            ).into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("List changed files".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: false,
+            }),
+        },
+        McpToolDef {
+            namespaced_name: "revert_file".into(),
+            original_name: "revert_file".into(),
+            description: Some(concat!(
+                "Revert a file to its state at a specific checkpoint. ",
+                "Use the checkpoint ID from list_changed_files output. ",
+                "If the file was created after the checkpoint, it is deleted. ",
+                "If the file was modified, it is restored to its checkpoint state. ",
+                "Changes are reflected immediately in the guest via VirtioFS.",
+            ).into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative file path from list_changed_files output (e.g., 'project/app.js')"
+                    },
+                    "checkpoint": {
+                        "type": "string",
+                        "description": "Checkpoint ID from list_changed_files output (e.g., 'cp-0')"
+                    }
+                },
+                "required": ["path", "checkpoint"]
+            }),
+            server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("Revert file".into()),
+                read_only_hint: false,
+                destructive_hint: true,
+                idempotent_hint: true,
+                open_world_hint: false,
+            }),
+        },
+    ]
+}
+
+/// Validate a relative path: no `..`, no absolute, no null bytes.
+fn validate_path(path: &str) -> Result<&str, String> {
+    if path.is_empty() {
+        return Err("path is empty".into());
+    }
+    if path.starts_with('/') {
+        return Err("absolute paths not allowed".into());
+    }
+    if path.contains("..") {
+        return Err("path traversal not allowed".into());
+    }
+    if path.contains('\0') {
+        return Err("null bytes not allowed in path".into());
+    }
+    Ok(path)
+}
+
+/// Parse checkpoint ID like "cp-3" into slot index 3.
+fn parse_checkpoint(cp: &str) -> Result<usize, String> {
+    cp.strip_prefix("cp-")
+        .and_then(|s| s.parse::<usize>().ok())
+        .ok_or_else(|| format!("invalid checkpoint ID: {cp:?}"))
+}
+
+/// Entry describing a changed file.
+#[derive(Debug, serde::Serialize)]
+struct ChangedFile {
+    path: String,
+    op: &'static str,
+    size: Option<u64>,
+    checkpoint: String,
+    checkpoint_age: String,
+}
+
+/// Collect file listing from a directory (relative paths + sizes).
+fn collect_files(root: &Path) -> HashMap<String, u64> {
+    let mut files = HashMap::new();
+    if !root.exists() {
+        return files;
+    }
+    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Ok(rel) = entry.path().strip_prefix(root) {
+            let rel_str = rel.to_string_lossy().to_string();
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            files.insert(rel_str, size);
+        }
+    }
+    files
+}
+
+fn age_string(ts: SystemTime) -> String {
+    let elapsed = ts.elapsed().unwrap_or_default();
+    let mins = elapsed.as_secs() / 60;
+    if mins == 0 {
+        "just now".to_string()
+    } else if mins == 1 {
+        "1 min ago".to_string()
+    } else if mins < 60 {
+        format!("{mins} min ago")
+    } else {
+        let hours = mins / 60;
+        format!("{hours} hr ago")
+    }
+}
+
+/// Handle `list_changed_files` tool call.
+pub fn handle_list_changed_files(
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let current_files = collect_files(workspace_root);
+    let snapshots = scheduler.list_snapshots();
+
+    if snapshots.is_empty() {
+        return JsonRpcResponse::ok(
+            request_id,
+            serde_json::json!({
+                "content": [{"type": "text", "text": "No checkpoints available yet."}]
+            }),
+        );
+    }
+
+    let mut changes: Vec<ChangedFile> = Vec::new();
+    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Walk snapshots newest-first. For each, diff against current.
+    // Only report each path once (from the most recent checkpoint that shows the change).
+    for snap in &snapshots {
+        let snap_root = snap.upper_path.join("root");
+        let snap_files = collect_files(&snap_root);
+        let cp_id = format!("cp-{}", snap.slot);
+        let age = age_string(snap.timestamp);
+
+        // Created: in current but not in snapshot.
+        for (path, size) in &current_files {
+            if !snap_files.contains_key(path) && seen_paths.insert(path.clone()) {
+                changes.push(ChangedFile {
+                    path: path.clone(),
+                    op: "created",
+                    size: Some(*size),
+                    checkpoint: cp_id.clone(),
+                    checkpoint_age: age.clone(),
+                });
+            }
+        }
+
+        // Deleted: in snapshot but not in current.
+        for path in snap_files.keys() {
+            if !current_files.contains_key(path) && seen_paths.insert(path.clone()) {
+                changes.push(ChangedFile {
+                    path: path.clone(),
+                    op: "deleted",
+                    size: None,
+                    checkpoint: cp_id.clone(),
+                    checkpoint_age: age.clone(),
+                });
+            }
+        }
+
+        // Modified: in both but different size.
+        for (path, current_size) in &current_files {
+            if let Some(snap_size) = snap_files.get(path) {
+                if current_size != snap_size && seen_paths.insert(path.clone()) {
+                    changes.push(ChangedFile {
+                        path: path.clone(),
+                        op: "modified",
+                        size: Some(*current_size),
+                        checkpoint: cp_id.clone(),
+                        checkpoint_age: age.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    let text = serde_json::to_string_pretty(&changes).unwrap_or_else(|_| "[]".into());
+    JsonRpcResponse::ok(
+        request_id,
+        serde_json::json!({
+            "content": [{"type": "text", "text": text}]
+        }),
+    )
+}
+
+/// Handle `revert_file` tool call.
+pub fn handle_revert_file(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let path_str = match arguments.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
+    };
+    let cp_str = match arguments.get("checkpoint").and_then(|v| v.as_str()) {
+        Some(c) => c,
+        None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoint' argument"),
+    };
+
+    // Validate path.
+    if let Err(e) = validate_path(path_str) {
+        return JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}"));
+    }
+
+    // Parse checkpoint.
+    let slot = match parse_checkpoint(cp_str) {
+        Ok(s) => s,
+        Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
+    };
+
+    // Get snapshot.
+    let snap = match scheduler.get_snapshot(slot) {
+        Some(s) => s,
+        None => {
+            return JsonRpcResponse::err(
+                request_id,
+                -32602,
+                format!("checkpoint {cp_str} not found"),
+            )
+        }
+    };
+
+    let snap_file = snap.upper_path.join("root").join(path_str);
+    let current_file = workspace_root.join(path_str);
+
+    // Check for symlink escape: canonicalize both paths to handle macOS /var -> /private/var.
+    if let (Ok(resolved_file), Ok(resolved_root)) =
+        (current_file.canonicalize(), workspace_root.canonicalize())
+    {
+        if !resolved_file.starts_with(&resolved_root) {
+            return JsonRpcResponse::err(
+                request_id,
+                -32602,
+                "path resolves outside workspace (symlink escape)",
+            );
+        }
+    }
+
+    if snap_file.exists() {
+        // File exists in snapshot -- restore it.
+        if let Some(parent) = current_file.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return JsonRpcResponse::err(
+                    request_id,
+                    -32603,
+                    format!("failed to create parent directory: {e}"),
+                );
+            }
+        }
+        if let Err(e) = std::fs::copy(&snap_file, &current_file) {
+            return JsonRpcResponse::err(
+                request_id,
+                -32603,
+                format!("failed to restore file: {e}"),
+            );
+        }
+    } else {
+        // File was created after checkpoint -- delete it.
+        if current_file.exists() {
+            if let Err(e) = std::fs::remove_file(&current_file) {
+                return JsonRpcResponse::err(
+                    request_id,
+                    -32603,
+                    format!("failed to delete file: {e}"),
+                );
+            }
+        }
+    }
+
+    JsonRpcResponse::ok(
+        request_id,
+        serde_json::json!({
+            "content": [{"type": "text", "text": serde_json::json!({
+                "reverted": true,
+                "path": path_str,
+            }).to_string()}]
+        }),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auto_snapshot::AutoSnapshotScheduler;
+    use std::time::Duration;
+
+    fn setup() -> (tempfile::TempDir, PathBuf, AutoSnapshotScheduler) {
+        let tmp = tempfile::tempdir().unwrap();
+        let session = tmp.path().to_path_buf();
+        std::fs::create_dir_all(session.join("upper/root")).unwrap();
+        std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
+        let sched = AutoSnapshotScheduler::new(session.clone(), 12, Duration::from_secs(300));
+        (tmp, session, sched)
+    }
+
+    #[test]
+    fn validate_path_rejects_traversal() {
+        assert!(validate_path("../etc/passwd").is_err());
+        assert!(validate_path("foo/../../bar").is_err());
+    }
+
+    #[test]
+    fn validate_path_rejects_absolute() {
+        assert!(validate_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn validate_path_rejects_empty() {
+        assert!(validate_path("").is_err());
+    }
+
+    #[test]
+    fn validate_path_rejects_null_bytes() {
+        assert!(validate_path("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn validate_path_accepts_normal() {
+        assert!(validate_path("project/app.js").is_ok());
+        assert!(validate_path("a.txt").is_ok());
+    }
+
+    #[test]
+    fn parse_checkpoint_valid() {
+        assert_eq!(parse_checkpoint("cp-0"), Ok(0));
+        assert_eq!(parse_checkpoint("cp-11"), Ok(11));
+    }
+
+    #[test]
+    fn parse_checkpoint_invalid() {
+        assert!(parse_checkpoint("0").is_err());
+        assert!(parse_checkpoint("cp-").is_err());
+        assert!(parse_checkpoint("cp-abc").is_err());
+        assert!(parse_checkpoint("").is_err());
+    }
+
+    #[test]
+    fn list_changed_files_detects_created() {
+        let (_tmp, session, mut sched) = setup();
+
+        // Take baseline snapshot (empty workspace).
+        sched.take_snapshot().unwrap();
+
+        // Create a file after the snapshot.
+        std::fs::write(session.join("upper/root/new.txt"), "hello").unwrap();
+
+        let workspace = session.join("upper/root");
+        let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["path"], "new.txt");
+        assert_eq!(changes[0]["op"], "created");
+    }
+
+    #[test]
+    fn list_changed_files_detects_modified() {
+        let (_tmp, session, mut sched) = setup();
+
+        std::fs::write(session.join("upper/root/file.txt"), "original").unwrap();
+        sched.take_snapshot().unwrap();
+
+        // Modify the file.
+        std::fs::write(session.join("upper/root/file.txt"), "modified content that is longer").unwrap();
+
+        let workspace = session.join("upper/root");
+        let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["path"], "file.txt");
+        assert_eq!(changes[0]["op"], "modified");
+    }
+
+    #[test]
+    fn list_changed_files_detects_deleted() {
+        let (_tmp, session, mut sched) = setup();
+
+        std::fs::write(session.join("upper/root/gone.txt"), "bye").unwrap();
+        sched.take_snapshot().unwrap();
+
+        // Delete the file.
+        std::fs::remove_file(session.join("upper/root/gone.txt")).unwrap();
+
+        let workspace = session.join("upper/root");
+        let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["path"], "gone.txt");
+        assert_eq!(changes[0]["op"], "deleted");
+    }
+
+    /// Roundtrip test: write a file, snapshot, copy it, delete original,
+    /// revert via revert_file, verify content matches exactly.
+    #[test]
+    fn revert_file_roundtrip_content_preserved() {
+        let (_tmp, session, mut sched) = setup();
+
+        // Write a file with known content.
+        let content = "The quick brown fox jumps over the lazy dog.\nLine 2.\n";
+        std::fs::write(session.join("upper/root/important.txt"), content).unwrap();
+
+        // Take a snapshot.
+        sched.take_snapshot().unwrap();
+
+        // Copy the file (proving we can read it).
+        let copied = std::fs::read_to_string(session.join("upper/root/important.txt")).unwrap();
+        assert_eq!(copied, content);
+
+        // Delete the original.
+        std::fs::remove_file(session.join("upper/root/important.txt")).unwrap();
+        assert!(!session.join("upper/root/important.txt").exists());
+
+        // Revert via revert_file.
+        let args = serde_json::json!({"path": "important.txt", "checkpoint": "cp-0"});
+        let resp = handle_revert_file(
+            &args,
+            &sched,
+            &session.join("upper/root"),
+            Some(serde_json::json!(1)),
+        );
+
+        // Verify success.
+        assert!(resp.error.is_none(), "revert_file failed: {:?}", resp.error);
+        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(result_text.contains("\"reverted\":true") || result_text.contains("\"reverted\": true"));
+
+        // Verify the file is back with exact same content.
+        let recovered = std::fs::read_to_string(session.join("upper/root/important.txt")).unwrap();
+        assert_eq!(recovered, content, "recovered content must match original exactly");
+    }
+
+    #[test]
+    fn revert_file_deletes_created_file() {
+        let (_tmp, session, mut sched) = setup();
+
+        // Snapshot with empty workspace.
+        sched.take_snapshot().unwrap();
+
+        // Create a new file.
+        std::fs::write(session.join("upper/root/new.txt"), "should be deleted").unwrap();
+
+        // Revert -- file didn't exist in snapshot, so it should be deleted.
+        let args = serde_json::json!({"path": "new.txt", "checkpoint": "cp-0"});
+        let resp = handle_revert_file(
+            &args,
+            &sched,
+            &session.join("upper/root"),
+            Some(serde_json::json!(1)),
+        );
+
+        assert!(resp.error.is_none());
+        assert!(!session.join("upper/root/new.txt").exists());
+    }
+
+    #[test]
+    fn revert_file_rejects_path_traversal() {
+        let (_tmp, session, mut sched) = setup();
+        sched.take_snapshot().unwrap();
+
+        let args = serde_json::json!({"path": "../../../etc/passwd", "checkpoint": "cp-0"});
+        let resp = handle_revert_file(
+            &args,
+            &sched,
+            &session.join("upper/root"),
+            Some(serde_json::json!(1)),
+        );
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn revert_file_rejects_invalid_checkpoint() {
+        let (_tmp, session, mut sched) = setup();
+        sched.take_snapshot().unwrap();
+
+        let args = serde_json::json!({"path": "file.txt", "checkpoint": "bad"});
+        let resp = handle_revert_file(
+            &args,
+            &sched,
+            &session.join("upper/root"),
+            Some(serde_json::json!(1)),
+        );
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn revert_file_rejects_nonexistent_checkpoint() {
+        let (_tmp, session, sched) = setup();
+        // No snapshots taken.
+        let args = serde_json::json!({"path": "file.txt", "checkpoint": "cp-0"});
+        let resp = handle_revert_file(
+            &args,
+            &sched,
+            &session.join("upper/root"),
+            Some(serde_json::json!(1)),
+        );
+        assert!(resp.error.is_some());
+    }
+}

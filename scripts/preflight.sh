@@ -246,6 +246,19 @@ check_ephemeral_model() {
     else
         fail "capsem-init: tmpfs mount failure does not abort boot -- VM may start with wrong upper layer"
     fi
+
+    # VirtioFS mode checks
+    if grep -q 'mount -t virtiofs capsem /mnt/b' "$init"; then
+        pass "capsem-init: VirtioFS overlay path present"
+    else
+        fail "capsem-init: VirtioFS overlay path missing"
+    fi
+
+    if grep -A3 'mount -t virtiofs capsem /mnt/b' "$init" | grep -q 'exit 1'; then
+        pass "capsem-init: VirtioFS mount failure aborts boot"
+    else
+        fail "capsem-init: VirtioFS mount failure does not abort boot"
+    fi
 }
 
 # --------------------------------------------------------------------------

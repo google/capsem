@@ -70,6 +70,12 @@ pub struct SessionRecord {
     pub total_file_events: u64,
     pub compressed_size_bytes: Option<u64>,
     pub vacuumed_at: Option<String>,
+    /// "block" (legacy) or "virtiofs" (VirtioFS overlay).
+    pub storage_mode: String,
+    /// BLAKE3 hash of the rootfs squashfs used by this session.
+    pub rootfs_hash: Option<String>,
+    /// Version string of the rootfs (e.g., "0.9.1").
+    pub rootfs_version: Option<String>,
 }
 
 /// Aggregated statistics across all sessions.
@@ -123,7 +129,7 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
@@ -145,7 +151,10 @@ const SESSION_SCHEMA: &str = "
         total_mcp_calls INTEGER NOT NULL DEFAULT 0,
         total_file_events INTEGER NOT NULL DEFAULT 0,
         compressed_size_bytes INTEGER,
-        vacuumed_at TEXT
+        vacuumed_at TEXT,
+        storage_mode TEXT NOT NULL DEFAULT 'block',
+        rootfs_hash TEXT,
+        rootfs_version TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_created
         ON sessions(created_at);
@@ -207,11 +216,22 @@ impl SessionIndex {
     /// Check user_version and migrate if needed.
     fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 2 {
-            // Additive migration v2->v3: add new nullable columns.
+        if version == 3 {
+            // Additive migration v3->v4: add VirtioFS storage columns.
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
+                 ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
+                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;"
+            )?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        } else if version == 2 {
+            // Additive migration v2->v3->v4: add vacuum + VirtioFS columns.
             conn.execute_batch(
                 "ALTER TABLE sessions ADD COLUMN compressed_size_bytes INTEGER;
-                 ALTER TABLE sessions ADD COLUMN vacuumed_at TEXT;"
+                 ALTER TABLE sessions ADD COLUMN vacuumed_at TEXT;
+                 ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
+                 ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
+                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;"
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version < 2 {
@@ -238,8 +258,9 @@ impl SessionIndex {
                 scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
                 total_input_tokens, total_output_tokens, total_estimated_cost,
                 total_tool_calls, total_mcp_calls, total_file_events,
-                compressed_size_bytes, vacuumed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                compressed_size_bytes, vacuumed_at,
+                storage_mode, rootfs_hash, rootfs_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 record.id,
                 record.mode,
@@ -260,6 +281,9 @@ impl SessionIndex {
                 record.total_file_events as i64,
                 record.compressed_size_bytes.map(|v| v as i64),
                 record.vacuumed_at,
+                record.storage_mode,
+                record.rootfs_hash,
+                record.rootfs_version,
             ],
         )?;
         Ok(())
@@ -310,7 +334,8 @@ impl SessionIndex {
          scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
          total_input_tokens, total_output_tokens, total_estimated_cost,
          total_tool_calls, total_mcp_calls, total_file_events,
-         compressed_size_bytes, vacuumed_at";
+         compressed_size_bytes, vacuumed_at,
+         storage_mode, rootfs_hash, rootfs_version";
 
     /// Parse a row into a SessionRecord. Column order must match SESSION_COLUMNS.
     fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
@@ -334,6 +359,9 @@ impl SessionIndex {
             total_file_events: row.get::<_, i64>(16)? as u64,
             compressed_size_bytes: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
             vacuumed_at: row.get(18)?,
+            storage_mode: row.get::<_, Option<String>>(19)?.unwrap_or_else(|| "block".to_string()),
+            rootfs_hash: row.get(20)?,
+            rootfs_version: row.get(21)?,
         })
     }
 
@@ -986,6 +1014,9 @@ mod tests {
             total_file_events: 0,
             compressed_size_bytes: None,
             vacuumed_at: None,
+            storage_mode: "block".to_string(),
+            rootfs_hash: None,
+            rootfs_version: None,
         }
     }
 
