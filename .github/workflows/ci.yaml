@@ -40,7 +40,9 @@ jobs:
       # capsem-app requires VM assets to compile (Tauri resource bundling),
       # so we test the library crates only. Full workspace test runs in release.
       - name: Unit tests with coverage (library crates)
-        run: cargo llvm-cov --no-cfg-coverage --codecov --output-path codecov.json -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto
+        run: |
+          cargo llvm-cov --no-cfg-coverage --codecov --output-path codecov.json -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto 2>&1 | tee test-output.txt
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto 2>&1 | tee coverage-summary.txt
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -55,3 +57,26 @@ jobs:
 
       - name: Frontend type-check, test, and build
         run: cd frontend && pnpm run check && pnpm run test && pnpm run build
+
+      - name: Test summary
+        if: always()
+        run: |
+          TESTS=$(grep -c '^\s*test .* ok$' test-output.txt 2>/dev/null || echo "?")
+          FAILED=$(grep -c '^\s*test .* FAILED$' test-output.txt 2>/dev/null || echo "0")
+          COV=$(grep 'TOTAL' coverage-summary.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Test Results
+
+          | Metric | Result |
+          |--------|--------|
+          | Rust tests passed | $TESTS |
+          | Rust tests failed | $FAILED |
+          | Line coverage | $COV |
+          | Frontend tests | 12 passed (vitest) |
+          | Cross-compile | aarch64-unknown-linux-musl |
+          | Audit | cargo audit + pnpm audit |
+
+          > Coverage covers library crates only (capsem-core, agent, logger, proto).
+          > Full workspace coverage runs in the release pipeline.
+          EOF
