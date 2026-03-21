@@ -284,10 +284,11 @@ jobs:
             ${{ github.workspace }}/assets/rootfs.squashfs
 
       - name: Attest SBOM
-        uses: actions/attest-sbom@v4
+        uses: actions/attest@v4
         with:
           subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
-          sbom-path: capsem-sbom.spdx.json
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: capsem-sbom.spdx.json
 
       - name: Collect release artifacts
         run: |
