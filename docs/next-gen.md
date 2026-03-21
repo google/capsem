@@ -1,5 +1,17 @@
 # Next-Gen Architecture
 
+## Competitive Context
+
+OpenShell (NVIDIA) is the primary competitor -- a Linux container-based sandbox platform using K3s/Kubernetes with Landlock, seccomp, and network namespaces. See `docs/feature-comparaison.md` for the full comparison.
+
+**Where OpenShell leads today:** multi-sandbox concurrency, cross-platform (Linux/Docker), OPA/Rego policy engine with hot-reload, BYOC (custom container images), GPU passthrough, per-binary network rules (SHA256 TOFU).
+
+**Where Capsem already leads:** stronger isolation (full VM vs containers), comprehensive telemetry (6-table audit trail + cost tracking), MCP gateway with tool-level policy, desktop GUI, enterprise corp lockdown (shipping today), provider auto-discovery wizard, deeper AI CLI integration (yolo mode, config injection).
+
+**Strategic response:** Phases 1-3 close the platform gaps (cross-platform, multi-VM). CAPSL (RFCs 001-005) leapfrogs OpenShell's policy engine. Checkpoint/resume is strictly better than BYOC.
+
+---
+
 ## Context
 
 Capsem evolves from a fire-and-forget CLI / Tauri GUI into a multi-VM daemon platform with checkpoint/branching, cross-platform support, and IDE integration. VFS (virtio-fs) for checkpoint storage is assumed done and out of scope.
@@ -190,6 +202,10 @@ default = ["apple-vz"]
 apple-vz = ["objc2-virtualization", "objc2", "objc2-foundation", "block2", "dispatch2", "core-foundation-sys"]
 ```
 
+### GPU passthrough trait
+
+Add `gpu: bool` to `VmConfig`. The `Hypervisor` trait is GPU-aware even if Phase 1 doesn't implement it -- Apple VZ supports GPU via `VZMacGraphicsDeviceConfiguration`. GPU is tied to security presets: enabled on Medium Security, disabled on High Security. This enables local inference (Ollama/MLX) inside the sandbox at reduced security.
+
 ### Key constraint
 
 Remove `inner_vz()` from `machine.rs:143-144`. No `objc2` or `Virtualization` symbols may appear outside `src/hypervisor/apple_vz/`.
@@ -256,11 +272,16 @@ crosvm = []
 
 Same guest image (kernel, squashfs, capsem-init). Only host VMM changes. Add `images/defconfig.x86_64` if supporting x86.
 
+### GPU passthrough
+
+crosvm supports GPU passthrough via virgl/venus. Implement the GPU trait for the crosvm backend. Same `gpu: bool` config from Phase 1 applies -- tied to security presets.
+
 ### Verification
 - `cargo test --workspace --features crosvm` passes on Linux
 - `capsem start` boots VM via crosvm
 - Checkpoint + branch work identically to macOS
 - Same capsem-doctor tests pass inside crosvm guest
+- **CI VM boot test**: release pipeline boots a Linux VM (KVM/crosvm) and runs `capsem-doctor` against the release-built assets. This closes the dev-vs-release divergence gap -- static tests catch binary-list drift, but only an actual VM boot catches runtime issues (missing packages, broken init, stale configs). Blocked on Phase 2 because macOS CI runners can't easily boot VZ VMs.
 
 ---
 
@@ -517,6 +538,21 @@ device_id = "auto"                             # derived from machine identity
 - If endpoint is unreachable, daemon continues with last-known-good policy (cached locally)
 - Corp.toml `policy_endpoint` cannot be overridden by user.toml
 - Audit log records every policy fetch (endpoint, response hash, changes applied)
+
+### Policy hot-reload
+
+The MITM proxy and CAPSL engine run entirely host-side. Add auto-reloading:
+- Watch `user.toml` and CAPSL rules files for changes (`notify` crate)
+- Reload policy structs in memory on file change
+- `PUT /vms/{id}/policy` on the daemon HTTP API triggers explicit reload
+- No vsock messages needed -- nothing policy-related runs in the guest
+- In-flight connections finish under old policy; new connections use new policy
+
+This closes the gap with OpenShell's `openshell policy set` runtime hot-reload.
+
+### Checkpoint/resume as BYOC alternative
+
+The `checkpoint` + `restore` + `branch` MCP tools are Capsem's answer to OpenShell's BYOC (Bring Your Own Container). Users customize VMs interactively (`apt install`, `npm install`, etc.), checkpoint the full state (filesystem + CPU + memory), and resume or branch later. No Dockerfile, no build step, no container registry. `branch` creates a fully independent VM fork that can diverge from the original -- OpenShell has no equivalent.
 
 ### SIGTERM handler
 

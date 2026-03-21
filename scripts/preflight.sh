@@ -249,6 +249,49 @@ check_ephemeral_model() {
 }
 
 # --------------------------------------------------------------------------
+# Check: every [[bin]] in capsem-agent is referenced in Dockerfile + justfile
+# Source of truth: crates/capsem-agent/Cargo.toml [[bin]] entries.
+# --------------------------------------------------------------------------
+check_guest_binaries() {
+    echo ""
+    echo "== Guest Binaries =="
+
+    local cargo_toml="$ROOT_DIR/crates/capsem-agent/Cargo.toml"
+    local dockerfile="$ROOT_DIR/images/Dockerfile.rootfs"
+    local justfile="$ROOT_DIR/justfile"
+
+    if [[ ! -f "$cargo_toml" ]]; then
+        fail "capsem-agent Cargo.toml not found at $cargo_toml"
+        return
+    fi
+
+    # Extract [[bin]] name values from Cargo.toml
+    local binaries
+    binaries=$(grep -A1 '^\[\[bin\]\]' "$cargo_toml" | grep '^name' | sed 's/.*= *"\(.*\)"/\1/')
+
+    if [[ -z "$binaries" ]]; then
+        fail "no [[bin]] entries found in $cargo_toml"
+        return
+    fi
+
+    for bin in $binaries; do
+        # Check Dockerfile.rootfs
+        if grep -q "COPY $bin " "$dockerfile"; then
+            pass "Dockerfile.rootfs: $bin"
+        else
+            fail "Dockerfile.rootfs missing COPY for $bin"
+        fi
+
+        # Check justfile _pack-initrd section
+        if grep -q "$bin" "$justfile"; then
+            pass "justfile _pack-initrd: $bin"
+        else
+            fail "justfile missing $bin in _pack-initrd"
+        fi
+    done
+}
+
+# --------------------------------------------------------------------------
 # Run all checks
 # --------------------------------------------------------------------------
 main() {
@@ -261,6 +304,7 @@ main() {
     check_b64_matches_p12
     check_notarization
     check_ephemeral_model
+    check_guest_binaries
 
     echo ""
     echo "================================"

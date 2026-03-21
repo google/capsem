@@ -16,6 +16,11 @@ import sys
 import urllib.request
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib  # type: ignore[no-redef]
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 ASSETS_DIR = REPO_ROOT / "assets"
@@ -152,10 +157,23 @@ def ensure_rust_target(target: str):
         run(["rustup", "target", "add", target])
 
 
+def get_guest_binaries() -> list[str]:
+    """Read [[bin]] names from crates/capsem-agent/Cargo.toml (source of truth)."""
+    cargo_toml = REPO_ROOT / "crates" / "capsem-agent" / "Cargo.toml"
+    with open(cargo_toml, "rb") as f:
+        data = tomllib.load(f)
+    bins = data.get("bin", [])
+    names = [b["name"] for b in bins if "name" in b]
+    if not names:
+        raise RuntimeError(f"No [[bin]] entries found in {cargo_toml}")
+    return names
+
+
 def build_agent():
-    """Cross-compile capsem-pty-agent and capsem-net-proxy for aarch64-unknown-linux-musl."""
+    """Cross-compile all guest binaries from capsem-agent for aarch64-unknown-linux-musl."""
     target = "aarch64-unknown-linux-musl"
-    print(f"Cross-compiling guest binaries for {target}...")
+    binaries = get_guest_binaries()
+    print(f"Cross-compiling {len(binaries)} guest binaries for {target}...")
     ensure_rust_target(target)
     run([
         "cargo", "build",
@@ -166,10 +184,14 @@ def build_agent():
 
     # Copy binaries to images/ so Dockerfile.rootfs can COPY them.
     release_dir = REPO_ROOT / "target" / "aarch64-unknown-linux-musl" / "release"
-    for binary_name in ["capsem-pty-agent", "capsem-net-proxy"]:
+    for binary_name in binaries:
         src = release_dir / binary_name
+        if not src.exists():
+            raise RuntimeError(f"Expected binary not found: {src}")
         dst = SCRIPT_DIR / binary_name
         shutil.copy2(str(src), str(dst))
+        if dst.stat().st_size == 0:
+            raise RuntimeError(f"Binary is empty: {dst}")
         print(f"  {binary_name}: {dst} ({dst.stat().st_size} bytes)")
 
 

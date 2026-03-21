@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.18] - 2026-03-21
+
 ### Fixed
+- MCP server and filesystem watcher missing from release VM assets -- Claude and Gemini reported MCP as "disconnected" because `capsem-mcp-server` and `capsem-fs-watch` were never included in the release rootfs
 - MCP Servers settings page showing "no VM running" permanently -- MCP data now reloads automatically when the VM finishes booting
+
+### Added
+- Build pipeline now auto-derives guest binary list from `capsem-agent/Cargo.toml` -- adding a new `[[bin]]` target is automatically picked up by `build.py`
+- Rust test and preflight check verify all guest binaries appear in `Dockerfile.rootfs` and `justfile` -- prevents future binary-list drift between dev and release
 
 ## [0.9.17] - 2026-03-20
 

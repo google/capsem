@@ -821,4 +821,85 @@ mod tests {
         let defs = parse_mcp_servers_from_file(&path, "test").unwrap();
         assert_eq!(defs.len(), 0);
     }
+
+    // ------------------------------------------------------------------
+    // Binary coverage: ensure every [[bin]] in capsem-agent/Cargo.toml
+    // appears in Dockerfile.rootfs and justfile _pack-initrd.
+    // ------------------------------------------------------------------
+
+    /// Parse [[bin]] name entries from a Cargo.toml file.
+    fn parse_cargo_bin_names(path: &std::path::Path) -> Vec<String> {
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let doc: toml::Value = toml::from_str(&text)
+            .unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+        doc.get("bin")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|entry| {
+                        entry.get("name").and_then(|n| n.as_str()).map(String::from)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn repo_root() -> std::path::PathBuf {
+        // CARGO_MANIFEST_DIR is crates/capsem-core
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
+    }
+
+    #[test]
+    fn all_guest_binaries_in_dockerfile_rootfs() {
+        let root = repo_root();
+        let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
+        assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
+
+        let dockerfile = std::fs::read_to_string(root.join("images/Dockerfile.rootfs"))
+            .expect("cannot read Dockerfile.rootfs");
+
+        for bin in &bins {
+            let pattern = format!("COPY {bin} ");
+            assert!(
+                dockerfile.contains(&pattern),
+                "Dockerfile.rootfs missing COPY for guest binary '{bin}'. \
+                 Add: COPY {bin} /usr/local/bin/{bin}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_guest_binaries_in_pack_initrd() {
+        let root = repo_root();
+        let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
+        assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
+
+        let justfile = std::fs::read_to_string(root.join("justfile"))
+            .expect("cannot read justfile");
+
+        // Extract the _pack-initrd recipe section (from "_pack-initrd:" to next recipe)
+        let start = justfile
+            .find("_pack-initrd:")
+            .expect("_pack-initrd recipe not found in justfile");
+        let section = &justfile[start..];
+        let end = section[1..]
+            .find("\n\n")
+            .map(|i| i + 1)
+            .unwrap_or(section.len());
+        let recipe = &section[..end];
+
+        for bin in &bins {
+            assert!(
+                recipe.contains(bin),
+                "justfile _pack-initrd missing guest binary '{bin}'. \
+                 Add cp + chmod lines for {bin}."
+            );
+        }
+    }
 }
