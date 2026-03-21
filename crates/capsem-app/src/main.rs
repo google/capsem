@@ -1641,6 +1641,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
             policy: tokio::sync::RwLock::new(Arc::new(policies.mcp)),
             domain_policy: std::sync::RwLock::new(Arc::new(policies.domain)),
             http_client,
+            auto_snapshots: None, // set after boot in VirtioFS mode
+            workspace_dir: cli_session_dir.as_ref().map(|d| d.join("workspace")),
         })
     });
 
@@ -2102,6 +2104,8 @@ fn gui_boot_vm(
                     policy: tokio::sync::RwLock::new(Arc::new(gui_policies.mcp)),
                     domain_policy: std::sync::RwLock::new(Arc::new(gui_policies.domain)),
                     http_client,
+                    auto_snapshots: None,
+                    workspace_dir: session_dir_for(session_id).map(|d| d.join("workspace")),
                 })
             });
 

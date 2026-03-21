@@ -40,6 +40,10 @@ pub struct McpGatewayConfig {
     pub domain_policy: std::sync::RwLock<Arc<DomainPolicy>>,
     /// HTTP client for built-in tools.
     pub http_client: reqwest::Client,
+    /// Auto-snapshot scheduler for file tools (VirtioFS mode only).
+    pub auto_snapshots: Option<Arc<tokio::sync::Mutex<crate::auto_snapshot::AutoSnapshotScheduler>>>,
+    /// Workspace directory for file tools (VirtioFS mode only).
+    pub workspace_dir: Option<std::path::PathBuf>,
 }
 
 /// Serve a single MCP session over a vsock connection.
@@ -179,8 +183,11 @@ async fn handle_json_rpc(
         "notifications/initialized" => None,
 
         "tools/list" => {
-            // Prepend built-in tools before external server tools.
-            let builtin = builtin_tools::builtin_tool_defs();
+            // Prepend built-in tools (HTTP + file) before external server tools.
+            let mut builtin = builtin_tools::builtin_tool_defs();
+            if config.workspace_dir.is_some() {
+                builtin.extend(super::file_tools::file_tool_defs());
+            }
             let mgr = config.server_manager.lock().await;
             let tools: Vec<serde_json::Value> = builtin
                 .iter()
@@ -216,7 +223,43 @@ async fn handle_json_rpc(
                 .cloned()
                 .unwrap_or(serde_json::json!({}));
 
-            // Route built-in tools first (no namespace prefix needed).
+            // Route file tools (VirtioFS mode only).
+            if super::file_tools::is_file_tool(tool_name) {
+                if let (Some(ref sched), Some(ref ws)) = (&config.auto_snapshots, &config.workspace_dir) {
+                    let decision = policy.evaluate("builtin", Some(tool_name));
+                    match decision {
+                        ToolDecision::Block => {
+                            return Some(JsonRpcResponse::err(
+                                req.id.clone(),
+                                -32600,
+                                format!("tool blocked by policy: {tool_name}"),
+                            ));
+                        }
+                        ToolDecision::Warn => {
+                            debug!(tool = tool_name, "MCP file tool warned by policy");
+                        }
+                        ToolDecision::Allow => {}
+                    }
+                    let sched = sched.lock().await;
+                    return Some(match tool_name {
+                        "list_changed_files" => {
+                            super::file_tools::handle_list_changed_files(&sched, ws, req.id.clone())
+                        }
+                        "revert_file" => {
+                            super::file_tools::handle_revert_file(&arguments, &sched, ws, req.id.clone())
+                        }
+                        _ => JsonRpcResponse::err(req.id.clone(), -32602, format!("unknown file tool: {tool_name}")),
+                    });
+                } else {
+                    return Some(JsonRpcResponse::err(
+                        req.id.clone(),
+                        -32603,
+                        "file tools unavailable (not in VirtioFS mode)",
+                    ));
+                }
+            }
+
+            // Route built-in HTTP tools (no namespace prefix needed).
             if builtin_tools::is_builtin_tool(tool_name) {
                 let decision = policy.evaluate("builtin", Some(tool_name));
                 match decision {
@@ -427,7 +470,7 @@ async fn log_mcp_call(
         .and_then(|n| n.as_str());
 
     let server_name = match tool_name {
-        Some(t) if builtin_tools::is_builtin_tool(t) => "builtin",
+        Some(t) if builtin_tools::is_builtin_tool(t) || super::file_tools::is_file_tool(t) => "builtin",
         Some(t) => parse_namespaced(t).map(|(s, _)| s).unwrap_or("gateway"),
         None => "gateway",
     };
