@@ -2243,19 +2243,12 @@ mod tests {
     }
 
     #[test]
-    fn default_ai_providers_blocked() {
+    fn default_ai_providers_all_enabled() {
         let resolved = resolve_settings(&empty_file(), &empty_file());
-        for id in &["ai.anthropic.allow", "ai.openai.allow"] {
+        for id in &["ai.anthropic.allow", "ai.openai.allow", "ai.google.allow"] {
             let s = resolved.iter().find(|s| s.id == *id).unwrap();
-            assert_eq!(s.effective_value, SettingValue::Bool(false), "expected {id} to be false");
+            assert_eq!(s.effective_value, SettingValue::Bool(true), "expected {id} to be true");
         }
-    }
-
-    #[test]
-    fn default_google_ai_allowed() {
-        let resolved = resolve_settings(&empty_file(), &empty_file());
-        let s = resolved.iter().find(|s| s.id == "ai.google.allow").unwrap();
-        assert_eq!(s.effective_value, SettingValue::Bool(true), "expected ai.google.allow to be true");
     }
 
     #[test]
@@ -2427,8 +2420,9 @@ mod tests {
 
     #[test]
     fn enabled_by_parent_off_child_disabled() {
-        // Default: ai.anthropic.allow is false
-        let resolved = resolve_settings(&empty_file(), &empty_file());
+        // User explicitly disables anthropic
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
+        let resolved = resolve_settings(&user, &empty_file());
         let child = resolved.iter().find(|s| s.id == "ai.anthropic.api_key").unwrap();
         assert!(!child.enabled);
     }
@@ -2444,14 +2438,9 @@ mod tests {
     #[test]
     fn enabled_by_chain_not_supported() {
         // Only one level of enabled_by is supported.
-        // A child with enabled_by pointing to a non-existent parent is disabled.
-        let mut user = empty_file();
-        // Simulate a setting with enabled_by pointing to a non-bool setting
-        // This should result in enabled=false since the parent can't be resolved to bool
+        // When the toggle is off, api_key is disabled.
+        let mut user = file_with(vec![("ai.openai.allow", SettingValue::Bool(false))]);
         let resolved = resolve_settings(&user, &empty_file());
-
-        // All api_key settings have enabled_by pointing to .allow toggles
-        // When the toggle is off (default for AI), api_key is disabled
         let key = resolved.iter().find(|s| s.id == "ai.openai.api_key").unwrap();
         assert!(!key.enabled);
 
@@ -2477,11 +2466,11 @@ mod tests {
         let (action, _) = dp.evaluate("pypi.org");
         assert_eq!(action, Action::Allow);
 
-        // Anthropic/OpenAI disabled by default -> domains blocked
+        // All AI providers enabled by default -> domains allowed
         let (action, _) = dp.evaluate("api.anthropic.com");
-        assert_eq!(action, Action::Deny);
+        assert_eq!(action, Action::Allow);
         let (action, _) = dp.evaluate("api.openai.com");
-        assert_eq!(action, Action::Deny);
+        assert_eq!(action, Action::Allow);
 
         // Google AI enabled by default -> domains allowed
         let (action, _) = dp.evaluate("generativelanguage.googleapis.com");
@@ -2962,8 +2951,9 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn domains_setting_drives_block_list() {
-        // ai.anthropic.allow defaults to false, so domains go to block list
-        let resolved = resolve_settings(&empty_file(), &empty_file());
+        // User disables anthropic, so domains go to block list
+        let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
+        let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
         let (action, _) = dp.evaluate("api.anthropic.com");
         assert_eq!(action, Action::Deny);
@@ -3054,11 +3044,11 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn stress_disabled_provider_always_blocked_regardless_of_default() {
-        // Provider off + default allow_read/write => domains must still be blocked.
+        // Provider explicitly off + default allow_read/write => domains must still be blocked.
         let user = file_with(vec![
             ("security.web.allow_read", SettingValue::Bool(true)),
             ("security.web.allow_write", SettingValue::Bool(true)),
-            // anthropic defaults to off
+            ("ai.anthropic.allow", SettingValue::Bool(false)),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
         let dp = settings_to_domain_policy(&resolved);
@@ -3326,7 +3316,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         // API keys are always injected so user can enable the provider at
         // runtime without rebooting the VM.
         let user = file_with(vec![
-            // ai.anthropic.allow defaults to false
+            ("ai.anthropic.allow", SettingValue::Bool(false)),
             ("ai.anthropic.api_key", SettingValue::Text("sk-test-123".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
@@ -3365,7 +3355,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn openai_api_key_injected_when_toggle_off() {
         let user = file_with(vec![
-            // ai.openai.allow defaults to false
+            ("ai.openai.allow", SettingValue::Bool(false)),
             ("ai.openai.api_key", SettingValue::Text("sk-oai-test".into())),
         ]);
         let resolved = resolve_settings(&user, &empty_file());
@@ -3463,13 +3453,13 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     }
 
     #[test]
-    fn provider_allowed_defaults_to_zero() {
-        // Default allow values: anthropic=false, openai=false, google=true.
+    fn provider_allowed_defaults_to_one() {
+        // Default allow values: all providers enabled.
         let resolved = resolve_settings(&empty_file(), &empty_file());
         let gc = settings_to_guest_config(&resolved);
         let env = gc.env.unwrap();
-        assert_eq!(env.get("CAPSEM_ANTHROPIC_ALLOWED").unwrap(), "0");
-        assert_eq!(env.get("CAPSEM_OPENAI_ALLOWED").unwrap(), "0");
+        assert_eq!(env.get("CAPSEM_ANTHROPIC_ALLOWED").unwrap(), "1");
+        assert_eq!(env.get("CAPSEM_OPENAI_ALLOWED").unwrap(), "1");
         assert_eq!(env.get("CAPSEM_GOOGLE_ALLOWED").unwrap(), "1");
     }
 

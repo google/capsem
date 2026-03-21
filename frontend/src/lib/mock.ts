@@ -1030,6 +1030,8 @@ export const mockApi = {
     google_api_key: null,
     openai_api_key: null,
     github_token: 'ghp_detected1234567890',
+    claude_oauth_credentials: '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-mock","refreshToken":"sk-ant-ort01-mock","expiresAt":9999999999}}',
+    google_adc: null,
   }),
 
   validateApiKey: async (provider: string, key: string): Promise<KeyValidation> => {

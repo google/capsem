@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
+import releaseNotes from './plugins/vite-plugin-release-notes';
 
 export default defineConfig({
-  plugins: [svelte({ hot: false })],
+  plugins: [svelte({ hot: false }), releaseNotes()],
   resolve: {
     alias: {
       '@tauri-apps/api/core': resolve(__dirname, 'src/lib/__mocks__/tauri.ts'),

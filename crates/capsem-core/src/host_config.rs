@@ -22,6 +22,8 @@ pub struct HostConfig {
     pub google_api_key: Option<String>,
     pub openai_api_key: Option<String>,
     pub github_token: Option<String>,
+    pub claude_oauth_credentials: Option<String>,
+    pub google_adc: Option<String>,
 }
 
 /// Result of validating an API key against a provider endpoint.
@@ -47,6 +49,8 @@ pub fn detect() -> HostConfig {
         google_api_key: detect_google_key(&home),
         openai_api_key: detect_openai_key(&home),
         github_token: detect_github_token(),
+        claude_oauth_credentials: detect_claude_oauth(&home),
+        google_adc: detect_google_adc(&home),
     }
 }
 
@@ -89,7 +93,7 @@ fn detect_git_identity(home: &Path) -> (Option<String>, Option<String>) {
 
 /// Read ~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub.
 fn detect_ssh_public_key(home: &Path) -> Option<String> {
-    let candidates = ["id_ed25519.pub", "id_rsa.pub"];
+    let candidates = ["id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"];
     for name in &candidates {
         let path = home.join(".ssh").join(name);
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -159,6 +163,34 @@ fn detect_github_token() -> Option<String> {
     }
     let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if token.is_empty() { None } else { Some(token) }
+}
+
+/// Detect Claude Code OAuth credentials from ~/.claude/.credentials.json.
+/// Returns the raw JSON content if the file contains a valid `claudeAiOauth` object.
+fn detect_claude_oauth(home: &Path) -> Option<String> {
+    let path = home.join(".claude").join(".credentials.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    // Validate it's real OAuth credentials (not an empty or unrelated file).
+    if content.contains("claudeAiOauth") && content.contains("refreshToken") {
+        Some(content.trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Detect Google Cloud Application Default Credentials.
+/// Returns the raw JSON content if ~/.config/gcloud/application_default_credentials.json exists.
+fn detect_google_adc(home: &Path) -> Option<String> {
+    let path = home
+        .join(".config")
+        .join("gcloud")
+        .join("application_default_credentials.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    if content.contains("refresh_token") {
+        Some(content.trim().to_string())
+    } else {
+        None
+    }
 }
 
 /// Read an env var, returning None if empty or unset.
@@ -382,11 +414,22 @@ mod tests {
     }
 
     #[test]
+    fn ssh_public_key_ecdsa() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let key = "ecdsa-sha2-nistp256 AAAAE2VjZHNhTest user@host";
+        std::fs::write(ssh_dir.join("id_ecdsa.pub"), key).unwrap();
+        assert_eq!(detect_ssh_public_key(&dir.path().to_path_buf()).as_deref(), Some(key));
+    }
+
+    #[test]
     fn ssh_public_key_prefers_ed25519() {
         let dir = tempfile::tempdir().unwrap();
         let ssh_dir = dir.path().join(".ssh");
         std::fs::create_dir_all(&ssh_dir).unwrap();
         std::fs::write(ssh_dir.join("id_ed25519.pub"), "ssh-ed25519 PREFERRED").unwrap();
+        std::fs::write(ssh_dir.join("id_ecdsa.pub"), "ecdsa-sha2-nistp256 SECOND").unwrap();
         std::fs::write(ssh_dir.join("id_rsa.pub"), "ssh-rsa FALLBACK").unwrap();
         assert_eq!(
             detect_ssh_public_key(&dir.path().to_path_buf()).as_deref(),
@@ -398,6 +441,60 @@ mod tests {
     fn ssh_public_key_missing() {
         let dir = tempfile::tempdir().unwrap();
         assert!(detect_ssh_public_key(&dir.path().to_path_buf()).is_none());
+    }
+
+    // -- Claude OAuth detection --
+
+    #[test]
+    fn detect_claude_oauth_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_dir = dir.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        let creds = r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-test","refreshToken":"sk-ant-ort01-test","expiresAt":9999999999}}"#;
+        std::fs::write(claude_dir.join(".credentials.json"), creds).unwrap();
+        assert_eq!(detect_claude_oauth(dir.path()).as_deref(), Some(creds));
+    }
+
+    #[test]
+    fn detect_claude_oauth_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(detect_claude_oauth(dir.path()).is_none());
+    }
+
+    #[test]
+    fn detect_claude_oauth_no_refresh_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_dir = dir.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join(".credentials.json"), r#"{"claudeAiOauth":{}}"#).unwrap();
+        assert!(detect_claude_oauth(dir.path()).is_none());
+    }
+
+    // -- Google ADC detection --
+
+    #[test]
+    fn detect_google_adc_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let gcloud_dir = dir.path().join(".config").join("gcloud");
+        std::fs::create_dir_all(&gcloud_dir).unwrap();
+        let adc = r#"{"type":"authorized_user","client_id":"x","client_secret":"y","refresh_token":"z"}"#;
+        std::fs::write(gcloud_dir.join("application_default_credentials.json"), adc).unwrap();
+        assert_eq!(detect_google_adc(dir.path()).as_deref(), Some(adc));
+    }
+
+    #[test]
+    fn detect_google_adc_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(detect_google_adc(dir.path()).is_none());
+    }
+
+    #[test]
+    fn detect_google_adc_no_refresh_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let gcloud_dir = dir.path().join(".config").join("gcloud");
+        std::fs::create_dir_all(&gcloud_dir).unwrap();
+        std::fs::write(gcloud_dir.join("application_default_credentials.json"), r#"{"type":"service_account"}"#).unwrap();
+        assert!(detect_google_adc(dir.path()).is_none());
     }
 
     // -- read_key_file tests --

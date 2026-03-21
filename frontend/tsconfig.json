@@ -3,5 +3,5 @@
   "compilerOptions": {
     "verbatimModuleSyntax": true
   },
-  "exclude": ["src/**/*.test.ts", "dist"]
+  "exclude": ["src/**/*.test.ts", "dist", "plugins"]
 }

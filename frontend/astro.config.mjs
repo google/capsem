@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import svelte from '@astrojs/svelte';
 import tailwindcss from '@tailwindcss/vite';
+import releaseNotes from './plugins/vite-plugin-release-notes';
 
 export default defineConfig({
   output: 'static',
@@ -8,6 +9,6 @@ export default defineConfig({
   integrations: [svelte()],
   vite: {
     envPrefix: ['VITE_', 'TAURI_'],
-    plugins: [tailwindcss()],
+    plugins: [tailwindcss(), releaseNotes()],
   },
 });

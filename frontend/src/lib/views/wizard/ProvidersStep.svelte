@@ -5,9 +5,9 @@
   import KeyValidationBadge from '../../components/KeyValidationBadge.svelte';
 
   const providers = [
-    { key: 'anthropic', name: 'Anthropic', allowId: 'ai.anthropic.allow', keyId: 'ai.anthropic.api_key' },
-    { key: 'google', name: 'Google AI', allowId: 'ai.google.allow', keyId: 'ai.google.api_key' },
-    { key: 'openai', name: 'OpenAI', allowId: 'ai.openai.allow', keyId: 'ai.openai.api_key' },
+    { key: 'anthropic', name: 'Anthropic', allowId: 'ai.anthropic.allow', keyId: 'ai.anthropic.api_key', oauthId: 'ai.anthropic.claude.credentials_json' as string | undefined },
+    { key: 'google', name: 'Google AI', allowId: 'ai.google.allow', keyId: 'ai.google.api_key', oauthId: 'ai.google.gemini.google_adc_json' as string | undefined },
+    { key: 'openai', name: 'OpenAI', allowId: 'ai.openai.allow', keyId: 'ai.openai.api_key', oauthId: undefined as string | undefined },
   ];
 
   let showKeys = $state<Record<string, boolean>>({});
@@ -46,6 +46,7 @@
       {@const currentKey = String(keyLeaf?.effective_value ?? '')}
       {@const corpLocked = allowLeaf?.corp_locked || false}
       {@const detected = wizardStore.wasAutoApplied(prov.keyId)}
+      {@const oauthDetected = prov.oauthId ? wizardStore.wasAutoApplied(prov.oauthId) : false}
 
       <div class="card border border-base-300 p-4 space-y-3">
         <div class="flex items-center justify-between">
@@ -95,6 +96,9 @@
             {/if}
             {#if currentKey}
               <KeyValidationBadge provider={prov.key} apiKey={currentKey} />
+            {/if}
+            {#if oauthDetected}
+              <span class="text-xs text-allowed">OAuth credentials detected</span>
             {/if}
             {#if keyLeaf?.metadata?.docs_url}
               <button

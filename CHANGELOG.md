@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Code coverage reporting via Codecov on PR and release CI pipelines
+- OAuth credential forwarding for Claude Code and Gemini CLI -- auto-detects `~/.claude/.credentials.json` (subscription auth) and `~/.config/gcloud/application_default_credentials.json` (Google Cloud ADC), injects into guest VM at boot so agents work without API keys
+- ECDSA SSH key detection (`id_ecdsa.pub`) in addition to ed25519 and RSA
+- Boot screen with embedded release notes, download/boot progress, and re-run wizard button -- replaces the bare download progress overlay
+
+### Changed
+- Anthropic and OpenAI providers now enabled by default (was disabled) -- all three AI providers are allowed out of the box; corporate lockdown via `corp.toml` still overrides
+
+### Fixed
+- Setup wizard re-run now re-detects host configuration (SSH keys, API keys, OAuth credentials, GitHub tokens) instead of keeping stale values from first run
 
 ## [0.9.18] - 2026-03-21
 

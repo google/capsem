@@ -42,7 +42,7 @@ collapsed = false
 name = "Allow Anthropic"
 description = "Enable API access to Anthropic (api.anthropic.com)."
 type = "bool"
-default = false
+default = true
 
 [settings.ai.anthropic.allow.meta.rules.default]
 get = true
@@ -93,6 +93,18 @@ content = '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrus
 [settings.ai.anthropic.claude.state_json.meta]
 filetype = "json"
 
+[settings.ai.anthropic.claude.credentials_json]
+name = "Claude Code OAuth credentials"
+description = "Content for ~/.claude/.credentials.json. OAuth tokens for subscription-based auth (Pro/Max). Injected from host when detected."
+type = "file"
+
+[settings.ai.anthropic.claude.credentials_json.default]
+path = "/root/.claude/.credentials.json"
+content = ""
+
+[settings.ai.anthropic.claude.credentials_json.meta]
+filetype = "json"
+
 # -- OpenAI ------------------------------------------------------------------
 
 [settings.ai.openai]
@@ -105,7 +117,7 @@ collapsed = false
 name = "Allow OpenAI"
 description = "Enable API access to OpenAI (api.openai.com)."
 type = "bool"
-default = false
+default = true
 
 [settings.ai.openai.allow.meta.rules.default]
 get = true
@@ -227,6 +239,18 @@ type = "file"
 [settings.ai.google.gemini.installation_id.default]
 path = "/root/.gemini/installation_id"
 content = "capsem-sandbox-00000000-0000-0000-0000-000000000000"
+
+[settings.ai.google.gemini.google_adc_json]
+name = "Google Cloud ADC"
+description = "Content for application_default_credentials.json. OAuth credentials for Google Cloud auth. Injected from host when detected."
+type = "file"
+
+[settings.ai.google.gemini.google_adc_json.default]
+path = "/root/.config/gcloud/application_default_credentials.json"
+content = ""
+
+[settings.ai.google.gemini.google_adc_json.meta]
+filetype = "json"
 
 # -- Repositories --------------------------------------------------------------
 

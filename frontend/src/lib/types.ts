@@ -328,6 +328,8 @@ export interface HostConfig {
   google_api_key: string | null;
   openai_api_key: string | null;
   github_token: string | null;
+  claude_oauth_credentials: string | null;
+  google_adc: string | null;
 }
 
 /** A security preset definition. */

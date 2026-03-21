@@ -8,14 +8,14 @@
 # Full setting registry: see `capsem --settings` or the Settings UI tab.
 
 [settings]
-# -- AI Providers (Google enabled by default) --
-# "ai.anthropic.allow" = { value = false, modified = "2026-02-25T00:00:00Z" }
+# -- AI Providers (all enabled by default) --
+# "ai.anthropic.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
 # "ai.anthropic.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
 # "ai.anthropic.domains" = { value = "*.anthropic.com, *.claude.com", modified = "2026-02-25T00:00:00Z" }
 # -- Claude Code boot files (written to ~/.claude/ in guest at boot) --
 # "ai.anthropic.claude.settings_json" -- bypassPermissions + disable telemetry/updates
 # "ai.anthropic.claude.state_json" -- skip onboarding/trust dialogs
-# "ai.openai.allow" = { value = false, modified = "2026-02-25T00:00:00Z" }
+# "ai.openai.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
 # "ai.openai.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
 # "ai.openai.domains" = { value = "*.openai.com", modified = "2026-02-25T00:00:00Z" }
 # "ai.google.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }

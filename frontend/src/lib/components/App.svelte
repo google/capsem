@@ -6,7 +6,7 @@
   import SettingsView from '../views/SettingsView.svelte';
   import WizardView from '../views/WizardView.svelte';
   import LogsView from '../views/LogsView.svelte';
-  import DownloadProgress from './DownloadProgress.svelte';
+  import BootScreen from './BootScreen.svelte';
   import { sidebarStore } from '../stores/sidebar.svelte';
   import { logsStore } from '../stores/logs.svelte';
   import { mcpStore } from '../stores/mcp.svelte';
@@ -58,7 +58,7 @@
       <!-- Content area: terminal is always mounted, hidden with visibility to avoid refit flash -->
       <div class="flex-1 min-h-0 relative">
         {#if vmStore.isDownloading}
-          <DownloadProgress />
+          <BootScreen />
         {:else}
           <div
             class="absolute inset-0"

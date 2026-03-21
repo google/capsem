@@ -40,13 +40,14 @@ class WizardStore {
   forceRerun = $state(false);
 
   /** Reset wizard state so it can be re-run from Settings.
-   *  Keeps hostConfig so loadHostConfig() is a no-op (avoids overwriting
-   *  existing settings with re-detected values). Clears autoApplied so
-   *  stale "Detected" badges don't appear. */
+   *  Clears hostConfig so loadHostConfig() re-detects SSH keys, API keys,
+   *  and GH tokens. Clears autoApplied so stale "Detected" badges
+   *  don't appear. */
   rerun() {
     this.currentStep = 0;
     this.completed = false;
     this.forceRerun = true;
+    this.hostConfig = null;
     this.autoApplied = new Set();
   }
 
@@ -66,6 +67,8 @@ class WizardStore {
         google_api_key: null,
         openai_api_key: null,
         github_token: null,
+        claude_oauth_credentials: null,
+        google_adc: null,
       };
     } finally {
       this.hostConfigLoading = false;
@@ -82,6 +85,8 @@ class WizardStore {
       { field: 'google_api_key', settingId: 'ai.google.api_key', toggleId: 'ai.google.allow' },
       { field: 'openai_api_key', settingId: 'ai.openai.api_key', toggleId: 'ai.openai.allow' },
       { field: 'github_token', settingId: 'repository.providers.github.token' },
+      { field: 'claude_oauth_credentials', settingId: 'ai.anthropic.claude.credentials_json', toggleId: 'ai.anthropic.allow' },
+      { field: 'google_adc', settingId: 'ai.google.gemini.google_adc_json', toggleId: 'ai.google.allow' },
     ];
 
     const applied = new Set<string>();
