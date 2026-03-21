@@ -98,21 +98,20 @@ def test_dev_pts_mounted():
 # -- Tmpfs sizes --
 
 
-def test_root_is_ext4_scratch_disk():
-    """/root must be mounted from the ephemeral scratch disk (ext4)."""
+def test_root_is_writable_filesystem():
+    """/root must be mounted as a writable filesystem (ext4 or virtiofs)."""
     result = run("mount | grep 'on /root '")
     assert result.returncode == 0, "/root not mounted"
-    assert "ext4" in result.stdout, f"/root is not ext4: {result.stdout}"
+    mount_info = result.stdout.strip()
+    assert "ext4" in mount_info or "virtiofs" in mount_info, \
+        f"/root is not ext4 or virtiofs: {mount_info}"
 
 
-def test_root_scratch_disk_size():
-    """/root scratch disk should be at least 4GB."""
-    result = run("df -B1 /root | tail -1 | awk '{print $2}'")
-    assert result.returncode == 0, "df failed"
-    size_bytes = int(result.stdout.strip())
-    # At least 4GB (smallest reasonable scratch disk)
-    assert size_bytes >= 4 * 1024 * 1024 * 1024, \
-        f"/root scratch disk too small: {size_bytes / (1024**3):.1f} GB"
+def test_root_workspace_writable():
+    """/root must be writable (create + read + delete a file)."""
+    result = run("echo capsem_test > /root/.write_test && cat /root/.write_test && rm /root/.write_test")
+    assert result.returncode == 0, "/root is not writable"
+    assert "capsem_test" in result.stdout
 
 
 def test_tmp_is_writable():

@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+import pytest
+
 from conftest import run
 
 
@@ -310,13 +312,14 @@ def test_kernel_cmdline_has_ro():
 
 
 def test_swap_active():
-    """Swap must be active on the scratch disk."""
+    """Swap must be active in block mode (scratch disk). VirtioFS mode has no swap."""
+    result = run("mount | grep 'on /root '")
+    if "virtiofs" in result.stdout:
+        pytest.skip("VirtioFS mode has no swap file")
     result = run("cat /proc/swaps")
     assert result.returncode == 0
     lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
-    # /proc/swaps has a header line; anything more means swap is active
     assert len(lines) >= 2, f"swap is not active:\n{result.stdout}"
-    # Verify the swap file is on the scratch disk
     assert "/root/.swapfile" in result.stdout, f"swap not on scratch disk:\n{result.stdout}"
 
 
