@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- MCP Servers settings page showing "no VM running" permanently -- MCP data now reloads automatically when the VM finishes booting
+
 ## [0.9.17] - 2026-03-20
 
 ## [0.9.16] - 2026-03-20

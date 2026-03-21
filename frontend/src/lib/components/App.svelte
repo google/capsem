@@ -34,6 +34,14 @@
       checkedFirstRun = true;
     }
   });
+
+  // Reload MCP data once the VM is running (initial load at mount fires
+  // before the VM exists, so it fails with "no VM running").
+  $effect(() => {
+    if (vmStore.isRunning) {
+      mcpStore.load();
+    }
+  });
 </script>
 
 {#if showWizard}
