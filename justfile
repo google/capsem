@@ -28,14 +28,14 @@ assets_dir := "assets"
 entitlements := "entitlements.plist"
 
 # Run the app in development mode with hot-reloading
-dev:
+dev: _pnpm-install
     @echo "Stopping running instances..."
     -@pkill -x capsem 2>/dev/null || true
     -@pkill -x Capsem 2>/dev/null || true
     CAPSEM_ASSETS_DIR={{assets_dir}} cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
-ui:
+ui: _pnpm-install
     cd frontend && pnpm run dev
 
 # Pack + boot VM (interactive or with command, ~10s)
@@ -50,7 +50,7 @@ build-assets: doctor _install-tools audit
     cd images && python3 build.py
 
 # Dependency audit: check for known vulnerabilities in Rust and npm deps
-audit: _install-tools
+audit: _install-tools _pnpm-install
     #!/bin/bash
     set -euo pipefail
     echo "=== Cargo audit ==="
@@ -62,7 +62,7 @@ audit: _install-tools
     echo "All dependencies clean. If vulnerabilities found, run: just update-deps"
 
 # Update all dependencies (Rust + npm) to latest compatible versions
-update-deps:
+update-deps: _pnpm-install
     #!/bin/bash
     set -euo pipefail
     echo "=== Cargo update ==="
@@ -74,7 +74,7 @@ update-deps:
     echo "Done. Run 'just audit' to verify, then 'just test' to confirm nothing broke."
 
 # Unit tests + cross-compile check + frontend type-check (no VM)
-test: _install-tools _clean-stale audit
+test: _install-tools _clean-stale audit _pnpm-install
     cargo llvm-cov --workspace --no-cfg-coverage
     cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
     cd frontend && pnpm run check && pnpm run test && pnpm run build
@@ -176,7 +176,7 @@ cut-release: test
     just release "$TAG"
 
 # Check that all required dev tools and dependencies are installed
-doctor:
+doctor: _pnpm-install
     #!/bin/bash
     set -euo pipefail
     PASS=0; FAIL=0
@@ -387,7 +387,10 @@ _check-assets:
         exit 1
     fi
 
-_frontend:
+_pnpm-install:
+    cd frontend && pnpm install --frozen-lockfile
+
+_frontend: _pnpm-install
     cd frontend && pnpm build
 
 _compile: _frontend _clean-stale

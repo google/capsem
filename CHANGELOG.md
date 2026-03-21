@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Guest `capsem-fs-watch` daemon no longer launched in VirtioFS mode (host monitors instead)
 
 ### Fixed
+- Frontend dependencies now auto-install on fresh clone -- `just dev`, `just ui`, `just run`, `just test`, `just doctor`, and all other recipes that need npm packages run `pnpm install --frozen-lockfile` automatically
 - Setup wizard re-run now re-detects host configuration (SSH keys, API keys, OAuth credentials, GitHub tokens) instead of keeping stale values from first run
 
 ## [0.9.18] - 2026-03-21
