@@ -35,7 +35,7 @@ Then `just build-assets`. Packages are installed system-wide; the boot-time venv
 @anthropic-ai/claude-code
 ```
 
-Then `just build-assets`. Packages are installed to `/opt/ai-clis/` during the Docker build and copied to the writable scratch disk at boot (`/root/.npm-global/`) so they can self-update at runtime.
+Then `just build-assets`. Packages are installed to `/opt/ai-clis/` during the Docker build and used directly at runtime (writable via overlayfs upper layer).
 
 #### Runtime installs (session-only, gone after shutdown)
 
@@ -44,7 +44,7 @@ Then `just build-assets`. Packages are installed to `/opt/ai-clis/` during the D
 | `pip install <pkg>` | `/root/.venv` (scratch disk) | No |
 | `uv pip install <pkg>` | `/root/.venv` (scratch disk) | No |
 | `npm install <pkg>` | `./node_modules/` | No |
-| `npm install -g <pkg>` | `/root/.npm-global/` (scratch disk) | No |
+| `npm install -g <pkg>` | `/opt/ai-clis/` (overlayfs upper) | No |
 | `apt-get install <pkg>` | overlayfs upper (tmpfs) | No |
 
 All runtime installs are ephemeral — the scratch disk and tmpfs upper layer are wiped on every boot.
@@ -55,7 +55,7 @@ A virtualenv is created at `/root/.venv` during boot (using `uv venv`, ~100ms) w
 
 ### npm Environment
 
-The npm global prefix is set to `/root/.npm-global/` at boot. AI CLIs (claude, gemini, codex) are pre-seeded there from the rootfs staging area (`/opt/ai-clis/`). This allows them to self-update at runtime since the scratch disk is writable. Runtime `npm install -g` also goes here.
+The npm global prefix is set to `/opt/ai-clis/` at boot. AI CLIs (claude, gemini, codex) are pre-installed there during the rootfs build. The overlayfs upper layer makes `/opt/ai-clis/` writable, so CLIs can self-update and `npm install -g` works.
 
 ### AI CLI Status
 

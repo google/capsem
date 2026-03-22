@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use capsem_proto::{
-    GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_host_msg, encode_guest_msg,
+    BootStage, GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_host_msg, encode_guest_msg,
     validate_env_key, validate_env_value, validate_file_path,
     MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
 };
@@ -340,6 +340,13 @@ fn main() {
             if let Err(e) = send_guest_msg(control_fd, &GuestToHost::BootReady) {
                 eprintln!("[capsem-agent] failed to send BootReady: {e}");
             }
+
+            // Send boot timing from capsem-init (JSONL written to /run).
+            let stages = parse_boot_timing(BOOT_TIMING_PATH);
+            if !stages.is_empty() {
+                let _ = send_guest_msg(control_fd, &GuestToHost::BootTiming { stages });
+            }
+
             drop(blog); // flush and close boot log before bridge loop
 
             // Enter bridge loop with already-connected fds.
@@ -350,6 +357,28 @@ fn main() {
             process::exit(1);
         }
     }
+}
+
+/// Path to the boot timing JSONL file written by capsem-init.
+const BOOT_TIMING_PATH: &str = "/run/capsem-boot-timing";
+
+/// Parse boot timing JSONL file. Each line: {"name":"...","duration_ms":...}
+/// Rejects entries with non-alphanumeric names (defense against injection).
+fn parse_boot_timing(path: &str) -> Vec<BootStage> {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter_map(|line| serde_json::from_str::<BootStage>(line).ok())
+        .filter(|s| {
+            s.name.len() <= 64
+                && !s.name.is_empty()
+                && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && s.duration_ms <= 600_000
+        })
+        .take(32)
+        .collect()
 }
 
 /// Sentinel prefix for exec completion detection.
@@ -1144,5 +1173,92 @@ mod tests {
 
         assert_eq!(master_out, test_data);
         assert_eq!(vsock_out, test_data);
+    }
+
+    // -----------------------------------------------------------------------
+    // Boot timing parser
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_boot_timing_valid_jsonl() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing");
+        std::fs::write(
+            &path,
+            "{\"name\":\"squashfs\",\"duration_ms\":50}\n{\"name\":\"network\",\"duration_ms\":120}\n",
+        ).unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "squashfs");
+        assert_eq!(result[0].duration_ms, 50);
+        assert_eq!(result[1].name, "network");
+        assert_eq!(result[1].duration_ms, 120);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn parse_boot_timing_missing_file() {
+        let result = parse_boot_timing("/nonexistent/capsem-boot-timing");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_boot_timing_skips_malformed_lines() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-bad");
+        std::fs::write(
+            &path,
+            "{\"name\":\"good\",\"duration_ms\":100}\nnot json\n{\"name\":\"also_good\",\"duration_ms\":200}\n",
+        ).unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "good");
+        assert_eq!(result[1].name, "also_good");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn parse_boot_timing_rejects_xss_names() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-xss");
+        std::fs::write(&path, concat!(
+            "{\"name\":\"<script>alert(1)</script>\",\"duration_ms\":10}\n",
+            "{\"name\":\"normal\",\"duration_ms\":20}\n",
+            "{\"name\":\"a]};fetch('http://evil')\",\"duration_ms\":30}\n",
+            "{\"name\":\"\",\"duration_ms\":40}\n",
+            "{\"name\":\"has spaces\",\"duration_ms\":50}\n",
+            "{\"name\":\"path/../traversal\",\"duration_ms\":60}\n",
+        )).unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 1, "only 'normal' should survive: {result:?}");
+        assert_eq!(result[0].name, "normal");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn parse_boot_timing_rejects_huge_duration() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-huge");
+        std::fs::write(&path, concat!(
+            "{\"name\":\"ok\",\"duration_ms\":1000}\n",
+            "{\"name\":\"huge\",\"duration_ms\":999999999}\n",
+        )).unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "ok");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn parse_boot_timing_caps_at_32_entries() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-cap");
+        let lines: String = (0..50)
+            .map(|i| format!("{{\"name\":\"stage{i}\",\"duration_ms\":{i}}}\n"))
+            .collect();
+        std::fs::write(&path, &lines).unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 32);
+        std::fs::remove_file(&path).ok();
     }
 }

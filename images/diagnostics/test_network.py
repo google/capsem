@@ -304,15 +304,19 @@ def test_post_to_random_domain_denied():
     ("api.openai.com", "CAPSEM_OPENAI_ALLOWED"),
 ])
 def test_ai_provider_domain_blocked(domain, env_var):
-    """AI provider domains must be blocked unless explicitly allowed by policy."""
-    if os.environ.get(env_var) == "1":
-        pytest.skip(f"{domain} allowed by policy ({env_var}=1)")
+    """AI provider domains: blocked unless allowed by policy, reachable if allowed."""
     result = run(
         f"curl -skI --connect-timeout 10 https://{domain} 2>&1",
         timeout=20,
     )
-    assert result.returncode != 0 or "403" in result.stdout, \
-        f"Connection to {domain} should be blocked: {result.stdout}"
+    if os.environ.get(env_var) == "1":
+        # Domain is allowed -- must be reachable (HTTP response, not 403).
+        assert "HTTP/" in result.stdout, \
+            f"{domain} is allowed ({env_var}=1) but not reachable: {result.stdout}"
+    else:
+        # Domain is blocked -- must get 403 or connection refused.
+        assert result.returncode != 0 or "403" in result.stdout, \
+            f"Connection to {domain} should be blocked: {result.stdout}"
 
 
 def test_http_port_80_not_proxied():

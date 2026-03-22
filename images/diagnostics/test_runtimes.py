@@ -39,13 +39,36 @@ def test_uv_pip_install_works():
     assert result.returncode == 0, f"import wheel failed: {result.stderr}"
 
 
+def test_uv_add_package_works():
+    """uv pip install a real package and verify it imports."""
+    result = run("uv pip install humanize 2>&1", timeout=30)
+    assert result.returncode == 0, f"uv pip install humanize failed: {result.stdout}"
+    result = run("python3 -c 'import humanize; print(humanize.naturalsize(1024))'")
+    assert result.returncode == 0, f"import humanize failed: {result.stderr}"
+
+
 def test_npm_install_global_works():
-    """npm install -g must work (prefix redirected to writable /root/.npm-global)."""
+    """npm install -g must work (prefix set to /opt/ai-clis, writable via overlayfs)."""
     result = run("npm install -g cowsay 2>&1", timeout=30)
     assert result.returncode == 0, f"npm install -g failed: {result.stdout}"
     result = run("cowsay hello 2>&1")
     assert result.returncode == 0, f"cowsay not found after npm install -g: {result.stderr}"
     assert "hello" in result.stdout
+
+
+def test_apt_install_works():
+    """apt-get install must work (overlayfs upper is writable)."""
+    result = run("apt-get update -qq 2>&1 && apt-get install -y -qq htop 2>&1", timeout=60)
+    assert result.returncode == 0, f"apt-get install htop failed: {result.stdout}"
+    result = run("htop --version")
+    assert result.returncode == 0, f"htop not found after apt install: {result.stderr}"
+
+
+def test_tmux_works():
+    """tmux must launch and list sessions."""
+    result = run("tmux new-session -d -s test-session 2>&1 && tmux list-sessions 2>&1 && tmux kill-session -t test-session 2>&1", timeout=10)
+    assert result.returncode == 0, f"tmux failed: {result.stdout} {result.stderr}"
+    assert "test-session" in result.stdout
 
 
 def test_npm_install_local_works(output_dir):

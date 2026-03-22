@@ -29,12 +29,12 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 
     install -m 555 /root/.local/bin/uv /usr/local/bin/uv && \
     install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
 
-# AI coding CLIs -- installed to /opt/ai-clis (staging area).
-# Copied to writable scratch disk at boot by capsem-init so that
-# auto-update works (CLIs self-update and need writable node_modules).
+# AI coding CLIs -- installed to /opt/ai-clis.
+# Writable at runtime via overlayfs upper layer so CLIs can self-update.
 COPY npm-globals.txt /tmp/npm-globals.txt
 RUN grep -v '^\s*#' /tmp/npm-globals.txt | grep -v '^\s*$' | \
     xargs npm install -g --prefix /opt/ai-clis && \
+    npm config set prefix /opt/ai-clis -g && \
     npm cache clean --force && \
     rm /tmp/npm-globals.txt
 

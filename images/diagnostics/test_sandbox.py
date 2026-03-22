@@ -312,15 +312,21 @@ def test_kernel_cmdline_has_ro():
 
 
 def test_swap_active():
-    """Swap must be active in block mode (scratch disk). VirtioFS mode has no swap."""
-    result = run("mount | grep 'on /root '")
-    if "virtiofs" in result.stdout:
-        pytest.skip("VirtioFS mode has no swap file")
+    """Swap: active on scratch disk in block mode, absent in VirtioFS mode."""
+    mount_result = run("mount | grep 'on /root '")
+    is_virtiofs = "virtiofs" in mount_result.stdout
     result = run("cat /proc/swaps")
     assert result.returncode == 0
-    lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
-    assert len(lines) >= 2, f"swap is not active:\n{result.stdout}"
-    assert "/root/.swapfile" in result.stdout, f"swap not on scratch disk:\n{result.stdout}"
+    swap_lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
+    if is_virtiofs:
+        # VirtioFS mode: no swap file expected.
+        assert len(swap_lines) <= 1, \
+            f"swap should not be active in VirtioFS mode:\n{result.stdout}"
+    else:
+        # Block mode: swap on scratch disk.
+        assert len(swap_lines) >= 2, f"swap is not active:\n{result.stdout}"
+        assert "/root/.swapfile" in result.stdout, \
+            f"swap not on scratch disk:\n{result.stdout}"
 
 
 def test_loopback_interface_up():

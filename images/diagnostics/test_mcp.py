@@ -504,3 +504,102 @@ def test_fastmcp_available():
     """fastmcp Python package is importable."""
     r = run("python3 -c 'import fastmcp; print(fastmcp.__version__)'")
     assert r.returncode == 0, f"fastmcp import failed: {r.stderr}"
+
+
+# ---------------------------------------------------------------
+# File tools (list_changed_files, revert_file) -- VirtioFS mode
+# ---------------------------------------------------------------
+
+
+def test_mcp_tools_list_has_file_tools():
+    """tools/list must include list_changed_files and revert_file."""
+    responses = _mcp_call([
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "capsem-doctor", "version": "1.0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ])
+    tools_resp = [r for r in responses if r.get("id") == 2]
+    assert len(tools_resp) == 1
+    tools = tools_resp[0]["result"]["tools"]
+    names = [t["name"] for t in tools]
+    assert "list_changed_files" in names, f"list_changed_files missing from tools: {names}"
+    assert "revert_file" in names, f"revert_file missing from tools: {names}"
+
+
+def test_mcp_list_changed_files():
+    """list_changed_files returns a valid response (may have files from prior tests)."""
+    result = _init_and_call("list_changed_files", {})
+    assert result.get("isError") is not True, f"list_changed_files failed: {result}"
+    text = result["content"][0]["text"]
+    # Response is either empty or a JSON list of file paths.
+    assert isinstance(text, str), f"expected string response: {result}"
+
+
+def test_mcp_list_changed_files_after_write():
+    """list_changed_files detects a newly created file."""
+    import time
+    # Create a test file in workspace.
+    r = run("echo test-mcp-file > /root/mcp_test_file.txt")
+    assert r.returncode == 0, f"failed to create test file: {r.stderr}"
+    # Wait for fs monitor to pick it up.
+    time.sleep(2)
+    result = _init_and_call("list_changed_files", {})
+    assert result.get("isError") is not True, f"list_changed_files failed: {result}"
+    text = result["content"][0]["text"]
+    assert "mcp_test_file.txt" in text, (
+        f"mcp_test_file.txt not in changed files: {text}"
+    )
+    # Cleanup.
+    run("rm -f /root/mcp_test_file.txt")
+
+
+def test_mcp_revert_file():
+    """revert_file restores a file using a checkpoint from list_changed_files."""
+    import json
+    import time
+
+    # Create a file, wait for fs monitor to pick it up.
+    r = run("echo revert-me > /root/revert_test.txt")
+    assert r.returncode == 0
+    time.sleep(2)
+
+    # Get checkpoint ID from list_changed_files.
+    list_result = _init_and_call("list_changed_files", {})
+    assert list_result.get("isError") is not True, f"list_changed_files failed: {list_result}"
+    text = list_result["content"][0]["text"]
+    try:
+        changes = json.loads(text)
+    except json.JSONDecodeError:
+        changes = []
+
+    # Find our file and its checkpoint.
+    entry = None
+    for c in changes:
+        if isinstance(c, dict) and "revert_test.txt" in c.get("path", ""):
+            entry = c
+            break
+    assert entry is not None, (
+        f"revert_test.txt not in list_changed_files: {text}"
+    )
+    checkpoint = entry.get("checkpoint")
+    assert checkpoint, f"no checkpoint for revert_test.txt: {entry}"
+
+    # Revert the file.
+    revert_result = _init_and_call(
+        "revert_file",
+        {"path": entry["path"], "checkpoint": checkpoint},
+    )
+    assert revert_result.get("isError") is not True, f"revert_file failed: {revert_result}"
+
+    # Verify file is gone (it was created after the checkpoint).
+    r = run("test -f /root/revert_test.txt")
+    assert r.returncode != 0, "revert_test.txt should have been deleted by revert_file"

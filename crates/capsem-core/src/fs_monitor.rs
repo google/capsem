@@ -23,7 +23,6 @@ const EXCLUDED_DIRS: &[&str] = &[
     ".cache",
     "target",
     ".venv",
-    ".npm-global",
     ".swapfile",
 ];
 

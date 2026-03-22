@@ -36,6 +36,16 @@ sleep 1
 # Send all output to console so we can see what happens
 exec 0</dev/console 1>/dev/console 2>/dev/console
 
+# Boot timing: record stage durations as JSONL for the PTY agent to send via vsock.
+TIMING_FILE=/tmp/capsem-boot-timing
+boot_ms() { awk '{printf "%d", $1 * 1000}' /proc/uptime; }
+_LAST_MARK=$(boot_ms)
+boot_mark() {
+    local now=$(boot_ms)
+    printf '{"name":"%s","duration_ms":%d}\n' "$1" "$(( now - _LAST_MARK ))" >> "$TIMING_FILE"
+    _LAST_MARK=$now
+}
+
 echo "[capsem-init] listing block devices..."
 ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 
@@ -47,6 +57,7 @@ echo "[capsem-init] mount exit: $?"
 
 echo "[capsem-init] checking /mnt/a/bin/bash..."
 ls /mnt/a/bin/bash 2>&1
+boot_mark "squashfs"
 
 # Detect storage mode from kernel cmdline.
 # VirtioFS mode: overlay upper + /root backed by host-side shared directory.
@@ -75,6 +86,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         exit 1
     }
     echo "[capsem-init] VirtioFS share mounted"
+    boot_mark "virtiofs"
 
     # Mount the ext4 loopback image for overlayfs upper.
     # Host creates the sparse file; guest formats on first boot.
@@ -129,6 +141,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         exit 1
     }
     echo "[capsem-init] overlayfs mounted (ext4 loopback upper)"
+    boot_mark "overlayfs"
 else
     # === Block mode (legacy) ===
     # tmpfs overlay upper -- ephemeral, lost on reboot.
@@ -148,6 +161,7 @@ else
         echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
         exit 1
     }
+    boot_mark "overlayfs"
 fi
 
 # Mount virtual filesystems fresh in the new root.
@@ -171,6 +185,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         exit 1
     }
     echo "[capsem-init] /root bind-mounted from VirtioFS workspace"
+    boot_mark "workspace"
 else
     # Block mode: scratch disk provides ~8GB of workspace.
     # Must happen AFTER /newroot/dev is mounted so device nodes resolve in chroot.
@@ -203,6 +218,7 @@ else
         mount -t tmpfs tmpfs /newroot/root
         echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
     fi
+    boot_mark "workspace"
 fi
 
 # Create writable bin dir for pip install --user / uvx entry points.
@@ -244,6 +260,7 @@ if [ -x /newroot/usr/sbin/iptables-legacy ]; then
 fi
 chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443
 echo "[capsem-init] network ready"
+boot_mark "network"
 
 # Launch net proxy (TCP->vsock bridge) as background process.
 # Prefer initrd-bundled copy, fall back to rootfs.
@@ -262,6 +279,7 @@ if [ -n "$NET_PROXY_PATH" ]; then
 else
     echo "[capsem-init] WARNING: capsem-net-proxy not found, no HTTPS proxy"
 fi
+boot_mark "net_proxy"
 
 # Deploy MCP server binary (stdio-to-vsock relay for AI agents).
 # Prefer initrd-bundled copy, fall back to rootfs.
@@ -316,19 +334,16 @@ if [ -d /diagnostics ]; then
     cp -a /diagnostics/* /newroot/usr/local/lib/capsem-tests/
     echo "[capsem-init] diagnostics deployed"
 fi
+boot_mark "deploy"
 
 # Increase open file descriptor limit to prevent EMFILE/Errno 24 crashes
 ulimit -n 65536
 
-# Set up environment (capsem-init defaults; the PTY agent overrides these
-# with values from the host's BootConfig message at vsock handshake time).
-export TERM=xterm-256color
-export COLORTERM=truecolor
+# Minimal PATH for chroot commands below (uv, npm, python3 are in /usr/local/bin).
+# The interactive shell PATH is set by the host via BootConfig SetEnv later.
+export PATH=/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
-export PATH=/root/.npm-global/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export LANG=C
-
-# Signal to AI CLIs that we are inside a sandbox (allows root + bypass permissions).
+export COLORTERM=truecolor
 export IS_SANDBOX=1
 
 # Optimize Node.js and Python for the sandboxed VM environment
@@ -347,27 +362,25 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 # uv venv is ~100ms; fall back to stdlib venv if uv is missing.
 chroot /newroot uv venv --system-site-packages /root/.venv 2>/dev/null || \
     chroot /newroot python3 -m venv --system-site-packages /root/.venv 2>/dev/null || true
+boot_mark "venv"
 
-# Copy AI CLIs from rootfs staging area to writable scratch disk.
-# They need to be mutable because they self-update at runtime.
-# Also serves as the npm global prefix so `npm install -g` works.
-if [ -d /newroot/opt/ai-clis ]; then
-    cp -a /newroot/opt/ai-clis /newroot/root/.npm-global
-    echo "[capsem-init] AI CLIs copied to scratch disk"
-else
-    mkdir -p /newroot/root/.npm-global
-fi
-chroot /newroot npm config set prefix /root/.npm-global 2>/dev/null || true
-
-# Ensure custom PATH and venv survive tmux login shells.
-# /etc/profile sources /etc/profile.d/*.sh, so this runs in every login shell
-# (including tmux panes) -- without re-running the capsem-bashrc banner.
+# Ensure PATH and venv survive login shells (tmux panes).
+# /etc/profile resets PATH, so we must restore the host-injected dirs here.
+# Source of truth for the base PATH is config/defaults.toml.
 cat > /newroot/etc/profile.d/capsem.sh << 'PROFILE'
-export PATH="/root/.npm-global/bin:/root/.local/bin:$PATH"
+# Prepend dirs that the host injects via BootConfig but /etc/profile drops.
+case ":$PATH:" in
+    *:/opt/ai-clis/bin:*) ;;
+    *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
+esac
 if [ -f /root/.venv/bin/activate ]; then
     . /root/.venv/bin/activate
 fi
 PROFILE
+
+# Copy boot timing data into chroot for the PTY agent to send via vsock.
+boot_mark "agent_start"
+cp "$TIMING_FILE" /newroot/run/capsem-boot-timing 2>/dev/null || true
 
 echo "[capsem-init] about to chroot..."
 

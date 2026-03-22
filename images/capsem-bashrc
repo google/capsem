@@ -16,11 +16,8 @@ if [ -f /root/.venv/bin/activate ]; then
     . /root/.venv/bin/activate
 fi
 
-# Writable bin dirs on PATH:
-#   ~/.npm-global/bin  -- npm install -g (AI CLIs + user packages)
-#   ~/.local/bin       -- pip install --user / uvx entry points
-#   ~/.venv/bin        -- added by venv activate above
-export PATH="/root/.npm-global/bin:/root/.local/bin:$PATH"
+# PATH is set by the host via BootConfig SetEnv (source of truth: config/defaults.toml).
+# Do NOT set PATH here -- it creates duplicates and hides bugs.
 
 # Source user-editable bashrc (prompt, aliases, functions).
 # This file is injected as a boot file from the settings registry.

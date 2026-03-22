@@ -25,50 +25,36 @@ def _load_manifest():
         return json.load(f)
 
 
-def _shell_overridden_vars():
-    """Find env var names that guest scripts set after boot config injection.
-    Scans capsem-init, .bashrc, and capsem-doctor for `export VAR=` lines.
-    These vars are legitimately modified, so exact-value comparison is wrong."""
-    scripts = [
-        "/root/.bashrc",
-        "/usr/local/bin/capsem-doctor",   # rootfs path
-        "/capsem-doctor",                 # initrd path
-    ]
-    names = set()
-    for path in scripts:
-        if not os.path.isfile(path):
-            continue
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("#") or not line:
-                    continue
-                if line.startswith("export "):
-                    token = line[len("export "):].split("=")[0].strip()
-                    if token.isidentifier():
-                        names.add(token)
-    return names
-
-
 # -- Env vars --
 
 
 class TestEnvVars:
     def test_all_env_vars_present(self):
-        """Every env var the host sent must be set in the guest environment.
-        Vars that .bashrc modifies are checked for presence only (not exact
-        value) since the shell legitimately overrides them after injection."""
+        """Every env var the host sent must be present in the user's shell.
+
+        Uses `bash -lc env` to capture the environment exactly as the user
+        would see it in an interactive login shell. Checks that every
+        host-injected value appears somewhere in the actual value (the shell
+        may legitimately prepend to PATH via venv activation)."""
         m = _load_manifest()
-        overridden = _shell_overridden_vars()
+        # Capture env from a login shell -- what the user actually sees.
+        r = run("bash -lc env")
+        assert r.returncode == 0, f"bash -lc env failed: {r.stderr}"
+        user_env = {}
+        for line in r.stdout.splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                user_env[k] = v
         missing = []
         for key, expected in m["env"].items():
-            actual = os.environ.get(key)
-            if key in overridden:
-                # .bashrc modifies this var -- just check it exists.
-                if actual is None:
-                    missing.append(f"{key}: not set (bashrc-modified, presence check)")
-            elif actual != expected:
-                missing.append(f"{key}: expected={expected!r}, got={actual!r}")
+            actual = user_env.get(key)
+            if actual is None:
+                missing.append(f"{key}: not set in login shell")
+            elif expected not in actual:
+                missing.append(
+                    f"{key}: host value {expected!r} not found in "
+                    f"shell value {actual!r}"
+                )
         assert not missing, "env var mismatches:\n" + "\n".join(missing)
 
     def test_no_empty_env_vars(self):

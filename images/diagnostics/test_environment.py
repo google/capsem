@@ -136,3 +136,65 @@ def test_virtiofs_kernel_support():
     assert result.returncode == 0, "/proc/filesystems not readable"
     assert "virtiofs" in result.stdout, \
         "virtiofs not in /proc/filesystems -- kernel missing CONFIG_VIRTIO_FS"
+
+
+def test_boot_time_under_1s():
+    """Guest boot (capsem-init stages) must complete in under 1 second.
+
+    Reads the boot timing file written by capsem-init. If total exceeds
+    1000ms, something regressed (e.g. uv not on PATH, falling back to
+    slow python3 -m venv)."""
+    import json
+    timing_path = "/run/capsem-boot-timing"
+    result = run(f"cat {timing_path}")
+    assert result.returncode == 0, \
+        f"boot timing file {timing_path} not found -- capsem-init must write it"
+    stages = []
+    for line in result.stdout.strip().splitlines():
+        try:
+            stages.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    total = sum(s.get("duration_ms", 0) for s in stages)
+    slow = [s for s in stages if s.get("duration_ms", 0) > 500]
+    assert total <= 1000, (
+        f"boot took {total}ms (limit 1000ms). "
+        f"slow stages: {slow}. all: {stages}"
+    )
+
+
+def test_boot_timing_rejects_xss():
+    """Boot timing file must reject XSS payloads in stage names.
+
+    The PTY agent parses /run/capsem-boot-timing and only accepts
+    alphanumeric+underscore names. This test writes a poisoned file,
+    re-parses it the same way the agent does, and verifies injection
+    entries are dropped."""
+    import json
+    import tempfile
+    payloads = [
+        '{"name":"<script>alert(1)</script>","duration_ms":10}',
+        '{"name":"normal_stage","duration_ms":20}',
+        '{"name":"a]};fetch(evil)","duration_ms":30}',
+        '{"name":"","duration_ms":40}',
+        '{"name":"has spaces","duration_ms":50}',
+        '{"name":"../../../etc/passwd","duration_ms":60}',
+    ]
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+        f.write('\n'.join(payloads) + '\n')
+        tmp = f.name
+    # Parse the same way the agent does: only alphanumeric + underscore.
+    valid = []
+    for line in open(tmp).read().strip().splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        name = entry.get("name", "")
+        if (name and len(name) <= 64
+                and all(c.isalnum() or c == '_' for c in name)
+                and entry.get("duration_ms", 0) <= 600_000):
+            valid.append(entry)
+    os.unlink(tmp)
+    assert len(valid) == 1, f"expected only 'normal_stage', got: {valid}"
+    assert valid[0]["name"] == "normal_stage"

@@ -654,7 +654,7 @@ env_vars = ["HOME"]
 name = "PATH"
 description = "Executable search path for the guest shell."
 type = "text"
-default = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+default = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 [settings.vm.environment.shell.path.meta]
 env_vars = ["PATH"]

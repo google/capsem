@@ -860,6 +860,29 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
             GuestToHost::ExecDone { id, exit_code } => {
                 info!("vsock: exec done (id={id}, exit_code={exit_code})");
             }
+            GuestToHost::BootTiming { ref stages } => {
+                // Validate: only allow alphanumeric + underscore names, cap count.
+                let clean: Vec<_> = stages.iter()
+                    .filter(|s| s.name.len() <= 64
+                        && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && s.duration_ms <= 600_000)
+                    .take(32)
+                    .collect();
+                if clean.len() != stages.len() {
+                    warn!("boot timing: dropped {} invalid entries", stages.len() - clean.len());
+                }
+                for s in &clean {
+                    info!(stage = %s.name, duration_ms = s.duration_ms, "boot timing");
+                }
+                let total: u64 = clean.iter().map(|s| s.duration_ms).sum();
+                info!(total_ms = total, "boot timing total");
+                let _ = app_handle.emit("boot-timing", serde_json::json!({
+                    "stages": clean.iter().map(|s| {
+                        serde_json::json!({"name": s.name, "duration_ms": s.duration_ms})
+                    }).collect::<Vec<_>>(),
+                    "total_ms": total,
+                }));
+            }
             other => {
                 info!("vsock: unhandled control message: {other:?}");
             }
@@ -1243,29 +1266,29 @@ async fn handle_fs_watch(fd: RawFd, db: Arc<DbWriter>) {
                 continue;
             }
         };
-        let event = match msg {
-            GuestToHost::FileCreated { path, size } => FileEvent {
-                timestamp: SystemTime::now(),
-                action: FileAction::Created,
-                path,
-                size: Some(size),
-            },
-            GuestToHost::FileModified { path, size } => FileEvent {
-                timestamp: SystemTime::now(),
-                action: FileAction::Modified,
-                path,
-                size: Some(size),
-            },
-            GuestToHost::FileDeleted { path } => FileEvent {
-                timestamp: SystemTime::now(),
-                action: FileAction::Deleted,
-                path,
-                size: None,
-            },
+        let (action, path, size) = match msg {
+            GuestToHost::FileCreated { path, size } => (FileAction::Created, path, Some(size)),
+            GuestToHost::FileModified { path, size } => (FileAction::Modified, path, Some(size)),
+            GuestToHost::FileDeleted { path } => (FileAction::Deleted, path, None),
             other => {
                 warn!("fs-watch: unexpected message type: {other:?}");
                 continue;
             }
+        };
+        // Sanitize guest-supplied paths: reject NUL bytes, path traversal,
+        // excessive length, and control characters that could cause XSS
+        // if rendered in the frontend.
+        if path.contains('\0') || path.contains("..") || path.len() > 4096
+            || path.chars().any(|c| c.is_control() && c != '\n')
+        {
+            warn!("fs-watch: rejected unsafe path from guest: {:?}", &path[..path.len().min(100)]);
+            continue;
+        }
+        let event = FileEvent {
+            timestamp: SystemTime::now(),
+            action,
+            path,
+            size,
         };
         db.write(WriteOp::FileEvent(event)).await;
     }
@@ -2020,6 +2043,15 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
                 break;
             }
             Ok(GuestToHost::Pong) => {
+                last_msg_time = Instant::now();
+                warned_exec = false;
+            }
+            Ok(GuestToHost::BootTiming { ref stages }) => {
+                for s in stages {
+                    eprintln!("[capsem] boot timing: {} {}ms", s.name, s.duration_ms);
+                }
+                let total: u64 = stages.iter().map(|s| s.duration_ms).sum();
+                eprintln!("[capsem] boot timing total: {}ms", total);
                 last_msg_time = Instant::now();
                 warned_exec = false;
             }

@@ -14,6 +14,40 @@ def test_ai_cli_installed(cli):
     assert result.returncode == 0, f"{cli} not found in PATH"
 
 
+def test_opt_ai_clis_bin_in_path():
+    """/opt/ai-clis/bin must be in PATH (npm global prefix)."""
+    result = run("echo $PATH")
+    assert "/opt/ai-clis/bin" in result.stdout, (
+        f"/opt/ai-clis/bin not in PATH: {result.stdout}"
+    )
+
+
+def test_no_npm_global_in_path():
+    """Old .npm-global path must NOT be in PATH."""
+    result = run("echo $PATH")
+    assert ".npm-global" not in result.stdout, (
+        f"stale .npm-global still in PATH: {result.stdout}"
+    )
+
+
+def test_npm_prefix_is_opt_ai_clis():
+    """npm global prefix must point to /opt/ai-clis."""
+    result = run("npm config get prefix")
+    assert result.returncode == 0, f"npm config get prefix failed: {result.stderr}"
+    assert "/opt/ai-clis" in result.stdout.strip(), (
+        f"npm prefix wrong: {result.stdout.strip()}"
+    )
+
+
+@pytest.mark.parametrize("cli", ["claude", "gemini", "codex"])
+def test_ai_cli_in_login_shell(cli):
+    """AI CLI must be findable from a login shell (what the user actually sees)."""
+    result = run(f"bash -lc 'which {cli}'", timeout=10)
+    assert result.returncode == 0, (
+        f"{cli} not found in login shell PATH: {result.stdout} {result.stderr}"
+    )
+
+
 @pytest.mark.parametrize("cli", ["gemini", "claude", "codex"])
 def test_ai_cli_help(cli):
     """AI CLI --help must execute without runtime errors."""

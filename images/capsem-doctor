@@ -7,7 +7,8 @@
 #   capsem-doctor -x           # stop on first failure
 
 set -o pipefail
-export PATH=/root/.npm-global/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+# Do NOT override PATH here -- capsem-doctor must run with the same PATH
+# that the interactive shell sees, otherwise it masks PATH bugs.
 
 TESTS_DIR="/usr/local/lib/capsem-tests"
 

@@ -99,6 +99,13 @@ pub enum HostToGuest {
     Shutdown,
 }
 
+/// A single boot timing measurement from the guest init script.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BootStage {
+    pub name: String,
+    pub duration_ms: u64,
+}
+
 /// Messages sent from guest to host over vsock:5000.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "t", content = "d", rename_all = "lowercase")]
@@ -108,6 +115,8 @@ pub enum GuestToHost {
     Ready { version: String },
     /// Boot config applied, terminal ready.
     BootReady,
+    /// Boot timing measurements from the guest init script.
+    BootTiming { stages: Vec<BootStage> },
     // -- Terminal --
     /// Command completed with exit code.
     ExecDone { id: u64, exit_code: i32 },
@@ -437,6 +446,46 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_boot_timing() {
+        let msg = GuestToHost::BootTiming {
+            stages: vec![
+                BootStage { name: "squashfs".into(), duration_ms: 50 },
+                BootStage { name: "network".into(), duration_ms: 120 },
+            ],
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::BootTiming { stages } => {
+                assert_eq!(stages.len(), 2);
+                assert_eq!(stages[0], BootStage { name: "squashfs".into(), duration_ms: 50 });
+                assert_eq!(stages[1], BootStage { name: "network".into(), duration_ms: 120 });
+            }
+            other => panic!("expected BootTiming, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_boot_timing_empty() {
+        let msg = GuestToHost::BootTiming { stages: vec![] };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::BootTiming { stages } => assert!(stages.is_empty()),
+            other => panic!("expected BootTiming, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn boot_timing_fails_as_host_msg() {
+        let msg = GuestToHost::BootTiming {
+            stages: vec![BootStage { name: "test".into(), duration_ms: 1 }],
+        };
+        let frame = encode_guest_msg(&msg).unwrap();
+        assert!(decode_host_msg(&frame[4..]).is_err());
+    }
+
+    #[test]
     fn roundtrip_exec_done() {
         let msg = GuestToHost::ExecDone {
             id: 99,
@@ -714,6 +763,12 @@ mod tests {
                 version: "99.99.99".into(),
             },
             GuestToHost::BootReady,
+            GuestToHost::BootTiming {
+                stages: vec![
+                    BootStage { name: "squashfs".into(), duration_ms: 50 },
+                    BootStage { name: "network".into(), duration_ms: 120 },
+                ],
+            },
             GuestToHost::ExecDone {
                 id: u64::MAX,
                 exit_code: i32::MIN,

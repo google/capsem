@@ -32,7 +32,6 @@ const EXCLUDED_DIRS: &[&str] = &[
     ".cache",
     "target",
     ".venv",
-    ".npm-global",
     ".swapfile",
 ];
 
@@ -477,11 +476,6 @@ mod tests {
     fn should_exclude_cache() {
         assert!(should_exclude_path("/root/.cache"));
         assert!(should_exclude_path("/root/project/.cache/huggingface"));
-    }
-
-    #[test]
-    fn should_exclude_npm_global() {
-        assert!(should_exclude_path("/root/.npm-global/lib/node_modules"));
     }
 
     #[test]

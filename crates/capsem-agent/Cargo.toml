@@ -23,6 +23,7 @@ path = "src/fs_watch.rs"
 nix = { version = "0.29", features = ["fs", "ioctl", "inotify", "poll", "term", "signal", "process"] }
 rmp-serde = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
 tokio = { workspace = true, features = ["full"] }
 signal-hook = "0.4.3"
