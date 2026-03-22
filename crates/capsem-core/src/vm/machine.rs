@@ -242,21 +242,21 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Get the current VM state as a string.
-    pub fn state(&self) -> &'static str {
+    /// Get the current VM state.
+    pub fn state(&self) -> super::VmState {
         let state = unsafe { self.inner.state() };
         match state {
-            VZVirtualMachineState::Stopped => "stopped",
-            VZVirtualMachineState::Running => "running",
-            VZVirtualMachineState::Paused => "paused",
-            VZVirtualMachineState::Error => "error",
-            VZVirtualMachineState::Starting => "starting",
-            VZVirtualMachineState::Stopping => "stopping",
-            VZVirtualMachineState::Pausing => "pausing",
-            VZVirtualMachineState::Resuming => "resuming",
-            VZVirtualMachineState::Saving => "saving",
-            VZVirtualMachineState::Restoring => "restoring",
-            _ => "unknown",
+            VZVirtualMachineState::Stopped => super::VmState::Stopped,
+            VZVirtualMachineState::Running => super::VmState::Running,
+            VZVirtualMachineState::Paused => super::VmState::Paused,
+            VZVirtualMachineState::Error => super::VmState::Error,
+            VZVirtualMachineState::Starting => super::VmState::Starting,
+            VZVirtualMachineState::Stopping => super::VmState::Stopping,
+            VZVirtualMachineState::Pausing => super::VmState::Pausing,
+            VZVirtualMachineState::Resuming => super::VmState::Resuming,
+            VZVirtualMachineState::Saving => super::VmState::Saving,
+            VZVirtualMachineState::Restoring => super::VmState::Restoring,
+            _ => super::VmState::Unknown,
         }
     }
 }

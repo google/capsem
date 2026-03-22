@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use capsem_core::{
     CoalesceBuffer, GuestToHost, HostState, HostStateMachine, HostToGuest, VirtioFsShare,
-    VirtualMachine, VmConfig, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_FS_WATCH,
+    VirtualMachine, VmConfig, VmState, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_FS_WATCH,
     VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
     create_scratch_disk, create_virtiofs_session, decode_guest_msg, encode_host_msg,
     validate_guest_msg, MAX_FRAME_SIZE,
@@ -354,6 +354,14 @@ fn cleanup_stale_sessions(index: &SessionIndex) {
     if let Ok(unvacuumed) = index.unvacuumed_sessions() {
         for rec in &unvacuumed {
             let session_dir = base.join(&rec.id);
+            let has_db = session_dir.join("session.db").exists();
+            let has_gz = session_dir.join("session.db.gz").exists();
+            if !has_db && !has_gz {
+                // Session never created a DB (crashed early). Mark vacuumed so we stop retrying.
+                debug!(id = %rec.id, "skipping vacuum for session with no DB");
+                let _ = index.mark_vacuumed(&rec.id, 0, &session::now_iso());
+                continue;
+            }
             vacuum_session(&rec.id, index, &session_dir);
         }
     }
@@ -508,7 +516,7 @@ fn cleanup_session(
         }
     }
 
-    let _ = index.update_status(session_id, "stopped", Some(&session::now_iso()));
+    let _ = index.update_status(session_id, VmState::Stopped.as_str(), Some(&session::now_iso()));
 }
 
 /// Flush per-session summary data from info.db into main.db.
@@ -1569,7 +1577,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         id: cli_session_id.clone(),
         mode: "cli".to_string(),
         command: Some(command.to_string()),
-        status: "running".to_string(),
+        status: VmState::Running.to_string(),
         created_at: session::now_iso(),
         stopped_at: None,
         scratch_disk_size_gb: 0,
@@ -2421,7 +2429,7 @@ fn main() {
                     info!("continuing without VM (frontend-only mode)");
                     {
                         let app_state = app.state::<AppState>();
-                        *app_state.app_status.lock().unwrap() = "error".to_string();
+                        *app_state.app_status.lock().unwrap() = VmState::Error.to_string();
                     }
                     let _ = app.handle().emit("vm-state-changed", serde_json::json!({
                         "state": "Error",
@@ -2479,7 +2487,7 @@ fn main() {
                     id: gui_session_id.clone(),
                     mode: "gui".to_string(),
                     command: None,
-                    status: "running".to_string(),
+                    status: VmState::Running.to_string(),
                     created_at: session::now_iso(),
                     stopped_at: None,
                     scratch_disk_size_gb: 0,
@@ -2514,7 +2522,7 @@ fn main() {
                 info!("rootfs available, booting VM on main thread");
                 {
                     let app_state = app.state::<AppState>();
-                    *app_state.app_status.lock().unwrap() = "booting".to_string();
+                    *app_state.app_status.lock().unwrap() = VmState::Booting.to_string();
                 }
                 gui_boot_vm(
                     app.handle(), &assets, rootfs_path.as_deref(),
@@ -2525,7 +2533,7 @@ fn main() {
                 info!("rootfs not found, initiating download");
                 {
                     let app_state = app.state::<AppState>();
-                    *app_state.app_status.lock().unwrap() = "downloading".to_string();
+                    *app_state.app_status.lock().unwrap() = VmState::Downloading.to_string();
                 }
                 let _ = app.handle().emit("vm-state-changed", serde_json::json!({
                     "state": "Downloading",
@@ -2543,7 +2551,7 @@ fn main() {
                             error!("asset manager init failed: {e:#}");
                             {
                                 let state = handle.state::<AppState>();
-                                *state.app_status.lock().unwrap() = "error".to_string();
+                                *state.app_status.lock().unwrap() = VmState::Error.to_string();
                             }
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
@@ -2560,7 +2568,7 @@ fn main() {
                             error!("rootfs not in manifest: {e:#}");
                             {
                                 let state = handle.state::<AppState>();
-                                *state.app_status.lock().unwrap() = "error".to_string();
+                                *state.app_status.lock().unwrap() = VmState::Error.to_string();
                             }
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",
@@ -2594,7 +2602,7 @@ fn main() {
                             info!("dispatching VM boot to main thread");
                             {
                                 let state = handle.state::<AppState>();
-                                *state.app_status.lock().unwrap() = "booting".to_string();
+                                *state.app_status.lock().unwrap() = VmState::Booting.to_string();
                             }
                             let h = handle.clone();
                             let a = assets_clone.clone();
@@ -2613,7 +2621,7 @@ fn main() {
                             error!("rootfs download failed: {e:#}");
                             {
                                 let state = handle.state::<AppState>();
-                                *state.app_status.lock().unwrap() = "error".to_string();
+                                *state.app_status.lock().unwrap() = VmState::Error.to_string();
                             }
                             let _ = handle.emit("vm-state-changed", serde_json::json!({
                                 "state": "Error",

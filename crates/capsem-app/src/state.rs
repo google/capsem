@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use capsem_core::VirtualMachine;
+use capsem_core::VmState;
 use capsem_core::HostStateMachine;
 use capsem_core::log_layer::LogHandle;
 use capsem_core::mcp::gateway::McpGatewayConfig;
@@ -187,7 +188,7 @@ impl AppState {
             terminal_output: Arc::new(TerminalOutputQueue::new()),
             terminal_input_tx: tx,
             log_handle,
-            app_status: Mutex::new("not created".to_string()),
+            app_status: Mutex::new(VmState::NotCreated.to_string()),
         }
     }
 }
@@ -377,23 +378,23 @@ mod tests {
     fn app_status_defaults_to_not_created() {
         let idx = SessionIndex::open_in_memory().unwrap();
         let state = AppState::new(idx, None);
-        assert_eq!(*state.app_status.lock().unwrap(), "not created");
+        assert_eq!(*state.app_status.lock().unwrap(), VmState::NotCreated.as_str());
     }
 
     #[test]
     fn app_status_can_be_set_to_downloading() {
         let idx = SessionIndex::open_in_memory().unwrap();
         let state = AppState::new(idx, None);
-        *state.app_status.lock().unwrap() = "downloading".to_string();
-        assert_eq!(*state.app_status.lock().unwrap(), "downloading");
+        *state.app_status.lock().unwrap() = VmState::Downloading.to_string();
+        assert_eq!(*state.app_status.lock().unwrap(), VmState::Downloading.as_str());
     }
 
     #[test]
     fn app_status_can_be_set_to_booting() {
         let idx = SessionIndex::open_in_memory().unwrap();
         let state = AppState::new(idx, None);
-        *state.app_status.lock().unwrap() = "booting".to_string();
-        assert_eq!(*state.app_status.lock().unwrap(), "booting");
+        *state.app_status.lock().unwrap() = VmState::Booting.to_string();
+        assert_eq!(*state.app_status.lock().unwrap(), VmState::Booting.as_str());
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use capsem_core::net::policy_config::{self, ConfigIssue, ResolvedSetting, SecurityPreset, SettingEntry, SettingsNode, SettingValue};
 use capsem_core::session;
-use capsem_core::{HostToGuest, encode_host_msg, validate_host_msg};
+use capsem_core::{HostToGuest, VmState, encode_host_msg, validate_host_msg};
 use capsem_logger::validate_select_only;
 use serde::Serialize;
 use tauri::State;
@@ -40,18 +40,18 @@ fn vm_status_inner(state: &AppState) -> String {
     // Check app-level status first. "downloading" happens before any VM
     // instance exists, so the per-VM lookup below would return "not created".
     let app_status = state.app_status.lock().unwrap().clone();
-    if app_status == "downloading" {
+    if app_status == VmState::Downloading.as_str() {
         return app_status;
     }
 
     let vm_id = match active_vm_id(state) {
         Ok(id) => id,
-        Err(_) => return "not created".to_string(),
+        Err(_) => return VmState::NotCreated.to_string(),
     };
     let vms = state.vms.lock().unwrap();
     match vms.get(&vm_id) {
         Some(instance) => format!("{}", instance.state_machine.state()),
-        None => "not created".to_string(),
+        None => VmState::NotCreated.to_string(),
     }
 }
 
@@ -1064,10 +1064,10 @@ mod tests {
     fn vm_status_returns_downloading_when_app_status_is_downloading() {
         let idx = SessionIndex::open_in_memory().unwrap();
         let state = AppState::new(idx, None);
-        *state.app_status.lock().unwrap() = "downloading".to_string();
+        *state.app_status.lock().unwrap() = VmState::Downloading.to_string();
         // No VM instances exist, but app_status should take precedence.
         let status = vm_status_inner(&state);
-        assert_eq!(status, "downloading");
+        assert_eq!(status, VmState::Downloading.as_str());
     }
 
     #[test]
@@ -1075,18 +1075,18 @@ mod tests {
         let idx = SessionIndex::open_in_memory().unwrap();
         let state = AppState::new(idx, None);
         let status = vm_status_inner(&state);
-        assert_eq!(status, "not created");
+        assert_eq!(status, VmState::NotCreated.as_str());
     }
 
     #[test]
     fn vm_status_falls_through_when_app_status_is_booting() {
         let idx = SessionIndex::open_in_memory().unwrap();
         let state = AppState::new(idx, None);
-        *state.app_status.lock().unwrap() = "booting".to_string();
+        *state.app_status.lock().unwrap() = VmState::Booting.to_string();
         // No VM exists, so falls through to "not created".
         // In production a VM would exist and return its actual state.
         let status = vm_status_inner(&state);
-        assert_eq!(status, "not created");
+        assert_eq!(status, VmState::NotCreated.as_str());
     }
 
     // ── MCP response type serde roundtrip tests ───────────────────────

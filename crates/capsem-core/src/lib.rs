@@ -22,6 +22,7 @@ pub use host_state::{
 };
 pub use vm::config::{VirtioFsShare, VmConfig};
 pub use vm::machine::VirtualMachine;
+pub use vm::VmState;
 pub use vm::vsock::{
     self, CoalesceBuffer, VsockConnection, VsockManager, VSOCK_PORT_CONTROL,
     VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
@@ -174,5 +175,66 @@ mod tests {
         assert!(dir.join("system/rootfs.img").exists());
         assert!(dir.join("workspace").is_dir());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Compile-time guard: every public re-export from lib.rs must be
+    /// reachable. If Phase 1 moves modules and forgets to update the
+    /// re-export, this test fails to compile.
+    #[test]
+    fn reexport_surface_compiles() {
+        fn assert_type<T>(_: &T) {}
+
+        // VmConfig + builder
+        let kernel = std::env::temp_dir().join("capsem-reexport-guard");
+        std::fs::create_dir_all(&kernel).unwrap();
+        let kpath = kernel.join("vmlinuz");
+        std::fs::write(&kpath, b"fake").unwrap();
+        let cfg = VmConfig::builder().kernel_path(&kpath).build().unwrap();
+        assert_type::<VmConfig>(&cfg);
+
+        // VirtioFsShare
+        let _share = VirtioFsShare {
+            tag: "test".into(),
+            host_path: PathBuf::from("/tmp"),
+            read_only: false,
+        };
+
+        // VmState
+        let st = VmState::Running;
+        assert_eq!(st.as_str(), "running");
+        assert_eq!(VmState::parse("running"), VmState::Running);
+
+        // CoalesceBuffer
+        let mut buf = CoalesceBuffer::new();
+        buf.push(b"x");
+        let _ = buf.take();
+
+        // VsockConnection (just verify the type exists)
+        let _ = std::mem::size_of::<VsockConnection>();
+
+        // Port constants
+        let _ports = [
+            VSOCK_PORT_CONTROL,
+            VSOCK_PORT_TERMINAL,
+            VSOCK_PORT_SNI_PROXY,
+            VSOCK_PORT_MCP_GATEWAY,
+            VSOCK_PORT_FS_WATCH,
+        ];
+
+        // Proto re-exports
+        let _ = MAX_FRAME_SIZE;
+        let _ = std::mem::size_of::<GuestToHost>();
+        let _ = std::mem::size_of::<HostToGuest>();
+
+        // Host state machine
+        let _ = std::mem::size_of::<HostState>();
+        let _ = std::mem::size_of::<HostStateMachine>();
+
+        // Codec functions (verify they exist as fn pointers)
+        let _: fn(&GuestToHost) -> anyhow::Result<Vec<u8>> = encode_guest_msg;
+        let _: fn(&HostToGuest) -> anyhow::Result<Vec<u8>> = encode_host_msg;
+
+        // Cleanup
+        std::fs::remove_dir_all(&kernel).unwrap();
     }
 }
