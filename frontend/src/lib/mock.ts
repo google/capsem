@@ -877,7 +877,7 @@ const MOCK_VM_STATE: VmStateResponse = {
 // ---------------------------------------------------------------------------
 
 export const mockApi = {
-  vmStatus: async () => 'downloading',
+  vmStatus: async () => 'running',
   serialInput: async (_input: string) => {},
   terminalResize: async (_cols: number, _rows: number) => {},
   getGuestConfig: async (): Promise<GuestConfigResponse> => ({ env: { TERM: 'xterm-256color', HOME: '/root' } }),
@@ -1057,24 +1057,8 @@ export const mockApi = {
     return () => { mockVmStateCallback = null; };
   },
   onTerminalSourceChanged: async (_cb: (source: string) => void) => () => {},
-  onDownloadProgress: async (cb: (progress: any) => void) => {
-    // Simulate download progress for UI preview
-    let bytes = 0;
-    const total = 437 * 1024 * 1024; // 437 MB
-    const step = total / 50;
-    cb({ asset: 'rootfs.squashfs', bytes_downloaded: 0, total_bytes: total, phase: 'connecting' });
-    const iv = setInterval(() => {
-      bytes = Math.min(bytes + step, total);
-      cb({ asset: 'rootfs.squashfs', bytes_downloaded: bytes, total_bytes: total, phase: bytes >= total ? 'verifying' : 'downloading' });
-      if (bytes >= total) {
-        clearInterval(iv);
-        // Fire vm state change to 'running' after download completes
-        if (mockVmStateCallback) {
-          setTimeout(() => mockVmStateCallback?.('running'), 1000);
-        }
-      }
-    }, 400);
-    return () => clearInterval(iv);
+  onDownloadProgress: async (_cb: (progress: any) => void) => {
+    return () => {};
   },
   checkForAppUpdate: async () => null,
 
