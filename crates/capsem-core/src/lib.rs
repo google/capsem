@@ -25,7 +25,7 @@ pub use vm::machine::VirtualMachine;
 pub use vm::VmState;
 pub use vm::vsock::{
     self, CoalesceBuffer, VsockConnection, VsockManager, VSOCK_PORT_CONTROL,
-    VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+    VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
 
 /// Create VirtioFS session directories for the single-share hybrid architecture.
@@ -218,7 +218,6 @@ mod tests {
             VSOCK_PORT_TERMINAL,
             VSOCK_PORT_SNI_PROXY,
             VSOCK_PORT_MCP_GATEWAY,
-            VSOCK_PORT_FS_WATCH,
         ];
 
         // Proto re-exports

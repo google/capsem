@@ -417,15 +417,13 @@ _pack-initrd:
     gzip -dc "$INITRD" | cpio -id 2>/dev/null
     cp "$ROOT/images/capsem-init" init
     chmod 755 init
-    rm -f capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-fs-watch
+    rm -f capsem-pty-agent capsem-net-proxy capsem-mcp-server
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
     chmod 555 capsem-pty-agent
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-net-proxy" capsem-net-proxy
     chmod 555 capsem-net-proxy
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-mcp-server" capsem-mcp-server
     chmod 555 capsem-mcp-server
-    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-fs-watch" capsem-fs-watch
-    chmod 555 capsem-fs-watch
     cp "$ROOT/images/capsem-doctor" capsem-doctor
     chmod 755 capsem-doctor
     cp "$ROOT/images/capsem-bench" capsem-bench
@@ -440,4 +438,4 @@ _pack-initrd:
     python3 "$ROOT/scripts/gen_manifest.py" "$ROOT/{{assets_dir}}" "$ROOT/Cargo.toml"
     # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
-    echo "initrd repacked (with agent + net-proxy + mcp-server + fs-watch + doctor)"
+    echo "initrd repacked (with agent + net-proxy + mcp-server + doctor)"

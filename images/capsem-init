@@ -293,31 +293,6 @@ elif [ -x /newroot/usr/local/bin/capsem-mcp-server ]; then
     echo "[capsem-init] mcp-server deployed (from rootfs)"
 fi
 
-# Launch filesystem watcher (inotify->vsock bridge) in block mode only.
-# In VirtioFS mode, the host monitors the shared directory directly via FSEvents.
-if [ "$STORAGE_MODE" != "virtiofs" ]; then
-    # Raise inotify watch limit for filesystem watcher.
-    echo 65536 > /proc/sys/fs/inotify/max_user_watches 2>/dev/null || true
-
-    FS_WATCH_PATH=""
-    if [ -x /capsem-fs-watch ]; then
-        cp /capsem-fs-watch /newroot/run/capsem-fs-watch
-        chmod 555 /newroot/run/capsem-fs-watch
-        FS_WATCH_PATH=/run/capsem-fs-watch
-    elif [ -x /newroot/usr/local/bin/capsem-fs-watch ]; then
-        FS_WATCH_PATH=/usr/local/bin/capsem-fs-watch
-    fi
-    if [ -n "$FS_WATCH_PATH" ]; then
-        chroot /newroot "$FS_WATCH_PATH" &
-        sleep 0.1
-        echo "[capsem-init] fs-watch started"
-    else
-        echo "[capsem-init] WARNING: capsem-fs-watch not found, no file telemetry"
-    fi
-else
-    echo "[capsem-init] fs-watch skipped (host-side monitoring in VirtioFS mode)"
-fi
-
 # Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).
 # Overwrites rootfs copies via the overlayfs upper layer.
 if [ -x /capsem-doctor ]; then

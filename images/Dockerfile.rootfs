@@ -63,10 +63,6 @@ RUN chmod 555 /usr/local/bin/capsem-net-proxy
 COPY capsem-mcp-server /usr/local/bin/capsem-mcp-server
 RUN chmod 555 /usr/local/bin/capsem-mcp-server
 
-# Filesystem watcher binary (inotify-to-vsock relay for file telemetry)
-COPY capsem-fs-watch /usr/local/bin/capsem-fs-watch
-RUN chmod 555 /usr/local/bin/capsem-fs-watch
-
 # Shell config (sourced by capsem-init via --rcfile)
 COPY capsem-bashrc /etc/capsem-bashrc
 COPY banner.txt /etc/capsem-banner.txt

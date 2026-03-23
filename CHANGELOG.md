@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Guest `capsem-fs-watch` inotify daemon and vsock port 5005 -- host-side FSEvents monitoring (`fs_monitor.rs`) fully replaces guest-side file watching; guest-cooperative monitoring was a security weakness
+
 ## [0.10.0] - 2026-03-21
 
 ### Added

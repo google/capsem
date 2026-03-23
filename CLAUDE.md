@@ -107,7 +107,6 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
 | 5001 | Terminal data (PTY I/O) |
 | 5002 | MITM proxy (HTTPS connections) |
 | 5003 | MCP gateway (tool routing, NDJSON passthrough) |
-| 5005 | Filesystem events (block mode only -- guest inotify watcher) |
 
 ### Network Policy
 - User config: `~/.capsem/user.toml` -- editable domain allow/block lists + HTTP rules
@@ -148,7 +147,7 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
 - `crates/capsem-core/src/vm/vsock.rs` -- vsock manager, control messages, coalescing buffer
 - `crates/capsem-core/src/vm/machine.rs` -- VZVirtualMachine wrapper (serial + vsock + VirtioFS devices)
 - `crates/capsem-core/src/vm/config.rs` -- VmConfig builder (VirtioFsShare, block devices, validation)
-- `crates/capsem-core/src/fs_monitor.rs` -- host-side FSEvents file monitor (replaces guest fs-watch in VirtioFS mode)
+- `crates/capsem-core/src/fs_monitor.rs` -- host-side FSEvents file monitor for workspace changes
 - `crates/capsem-core/src/auto_snapshot.rs` -- rolling auto-snapshot scheduler (APFS clonefile ring buffer)
 - `crates/capsem-core/src/mcp/file_tools.rs` -- MCP built-in tools: list_changed_files, revert_file
 - `frontend/src/components/capsem-terminal.ts` -- xterm.js web component (resize events)
@@ -249,7 +248,6 @@ Session ephemerality depends on the storage mode:
 - `capsem-pty-agent` -- PTY-over-vsock bridge agent
 - `capsem-net-proxy` -- TCP-to-vsock relay for air-gapped HTTPS proxying
 - `capsem-mcp-server` -- MCP stdio-to-vsock relay for AI agent tool access
-- `capsem-fs-watch` -- inotify file watcher daemon for filesystem telemetry
 - `capsem-doctor` -- VM self-diagnostic suite (bash script)
 - `diagnostics/` -- pytest test files for capsem-doctor
 

@@ -26,8 +26,6 @@ pub const VSOCK_PORT_TERMINAL: u32 = 5001;
 pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
 /// vsock port for MCP gateway (MCP tool calls from guest).
 pub const VSOCK_PORT_MCP_GATEWAY: u32 = 5003;
-/// vsock port for filesystem event watcher (inotify telemetry from guest).
-pub const VSOCK_PORT_FS_WATCH: u32 = 5005;
 
 // ---------------------------------------------------------------------------
 // Output coalescing buffer

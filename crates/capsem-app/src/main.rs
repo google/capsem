@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use capsem_core::{
     CoalesceBuffer, GuestToHost, HostState, HostStateMachine, HostToGuest, VirtioFsShare,
-    VirtualMachine, VmConfig, VmState, VsockManager, VSOCK_PORT_CONTROL, VSOCK_PORT_FS_WATCH,
+    VirtualMachine, VmConfig, VmState, VsockManager, VSOCK_PORT_CONTROL,
     VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
     create_scratch_disk, create_virtiofs_session, decode_guest_msg, encode_host_msg,
     validate_guest_msg, MAX_FRAME_SIZE,
@@ -913,7 +913,7 @@ async fn setup_vsock(
                 match conn.port {
                     VSOCK_PORT_TERMINAL => terminal_conn = Some(conn),
                     VSOCK_PORT_CONTROL => control_conn = Some(conn),
-                    VSOCK_PORT_SNI_PROXY | VSOCK_PORT_FS_WATCH | VSOCK_PORT_MCP_GATEWAY => {
+                    VSOCK_PORT_SNI_PROXY | VSOCK_PORT_MCP_GATEWAY => {
                         info!("vsock: port {} connection before terminal/control ready, deferring", conn.port);
                         deferred_conns.push(conn);
                     }
@@ -1127,16 +1127,6 @@ async fn setup_vsock(
                     });
                 }
             }
-            VSOCK_PORT_FS_WATCH => {
-                if let Some(ref config) = mitm_config {
-                    let db = Arc::clone(&config.db);
-                    let fd = conn.fd;
-                    tokio::spawn(async move {
-                        let _conn = conn;
-                        handle_fs_watch(fd, db).await;
-                    });
-                }
-            }
             VSOCK_PORT_MCP_GATEWAY => {
                 if let Some(ref mcp) = mcp_config {
                     let fd = conn.fd;
@@ -1151,8 +1141,8 @@ async fn setup_vsock(
         }
     }
 
-    // Accept MITM proxy + fs-watch + MCP gateway connections indefinitely.
-    info!("vsock: listening for proxy connections on ports 5002/5003/5005");
+    // Accept MITM proxy + MCP gateway connections indefinitely.
+    info!("vsock: listening for proxy connections on ports 5002/5003");
     loop {
         match vsock_manager.accept().await {
             Some(conn) if conn.port == VSOCK_PORT_SNI_PROXY => {
@@ -1165,19 +1155,6 @@ async fn setup_vsock(
                     });
                 } else {
                     warn!("vsock: SNI proxy connection rejected (no config)");
-                }
-            }
-            Some(conn) if conn.port == VSOCK_PORT_FS_WATCH => {
-                info!("vsock: fs-watch connected (fd={})", conn.fd);
-                if let Some(ref config) = mitm_config {
-                    let db = Arc::clone(&config.db);
-                    let fd = conn.fd;
-                    tokio::spawn(async move {
-                        let _conn = conn;
-                        handle_fs_watch(fd, db).await;
-                    });
-                } else {
-                    warn!("vsock: fs-watch connection rejected (no db config)");
                 }
             }
             Some(conn) if conn.port == VSOCK_PORT_MCP_GATEWAY => {
@@ -1204,96 +1181,6 @@ async fn setup_vsock(
 }
 
 const CLI_TIMEOUT: Duration = Duration::from_secs(120);
-
-/// Handle the fs-watch vsock connection: read framed GuestToHost messages
-/// and write FileEvents to the session DB.
-async fn handle_fs_watch(fd: RawFd, db: Arc<DbWriter>) {
-    use capsem_logger::{FileAction, FileEvent, WriteOp};
-    use std::os::unix::io::{FromRawFd, IntoRawFd};
-    use std::time::SystemTime;
-    use tokio::io::AsyncReadExt;
-
-    let std_file = match clone_fd(fd) {
-        Ok(f) => f,
-        Err(e) => {
-            warn!("fs-watch: failed to clone fd: {e}");
-            return;
-        }
-    };
-    
-    let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(std_file.into_raw_fd()) };
-    if let Err(e) = std_stream.set_nonblocking(true) {
-        warn!("fs-watch: failed to set nonblocking: {e}");
-        return;
-    }
-    
-    let mut stream = match tokio::net::UnixStream::from_std(std_stream) {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("fs-watch: failed to create async stream: {e}");
-            return;
-        }
-    };
-
-    info!("fs-watch: handler started");
-    loop {
-        let mut len_buf = [0u8; 4];
-        match stream.read_exact(&mut len_buf).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                info!("fs-watch: connection closed");
-                break;
-            }
-            Err(e) => {
-                warn!("fs-watch: read error: {e}");
-                break;
-            }
-        }
-        let len = u32::from_be_bytes(len_buf) as usize;
-        if len > MAX_FRAME_SIZE as usize {
-            warn!("fs-watch: frame too large ({len} bytes), skipping");
-            break;
-        }
-        let mut payload = vec![0u8; len];
-        if let Err(e) = stream.read_exact(&mut payload).await {
-            warn!("fs-watch: payload read error: {e}");
-            break;
-        }
-        let msg = match decode_guest_msg(&payload) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("fs-watch: decode error: {e}");
-                continue;
-            }
-        };
-        let (action, path, size) = match msg {
-            GuestToHost::FileCreated { path, size } => (FileAction::Created, path, Some(size)),
-            GuestToHost::FileModified { path, size } => (FileAction::Modified, path, Some(size)),
-            GuestToHost::FileDeleted { path } => (FileAction::Deleted, path, None),
-            other => {
-                warn!("fs-watch: unexpected message type: {other:?}");
-                continue;
-            }
-        };
-        // Sanitize guest-supplied paths: reject NUL bytes, path traversal,
-        // excessive length, and control characters that could cause XSS
-        // if rendered in the frontend.
-        if path.contains('\0') || path.contains("..") || path.len() > 4096
-            || path.chars().any(|c| c.is_control() && c != '\n')
-        {
-            warn!("fs-watch: rejected unsafe path from guest: {:?}", &path[..path.len().min(100)]);
-            continue;
-        }
-        let event = FileEvent {
-            timestamp: SystemTime::now(),
-            action,
-            path,
-            size,
-        };
-        db.write(WriteOp::FileEvent(event)).await;
-    }
-    info!("fs-watch: handler exiting");
-}
 
 /// Read one guest-to-host control message from an fd (blocking).
 fn read_control_msg(file: &mut std::fs::File) -> Result<GuestToHost> {
@@ -1638,7 +1525,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     let socket_devices = vm.socket_devices();
     let mut mgr = VsockManager::new(
         &socket_devices,
-        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY],
+        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_MCP_GATEWAY],
     ).context("failed to set up vsock")?;
 
     // Create per-VM network state for MITM proxy.
@@ -1764,17 +1651,6 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
                             mitm_proxy::handle_connection(fd, config).await;
                         });
                         continue; // conn moved, don't push to _conns
-                    }
-                }
-                VSOCK_PORT_FS_WATCH => {
-                    if let Some(ref net_state) = net_state {
-                        let db = Arc::clone(&net_state.db);
-                        let fd = conn.fd;
-                        rt.spawn(async move {
-                            let _conn = conn;
-                            handle_fs_watch(fd, db).await;
-                        });
-                        continue;
                     }
                 }
                 VSOCK_PORT_MCP_GATEWAY => {
@@ -2029,15 +1905,6 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
                         mitm_proxy::handle_connection(fd, config).await;
                     });
                 }
-            } else if conn.port == VSOCK_PORT_FS_WATCH {
-                if let Some(ref net_state) = net_state {
-                    let db = Arc::clone(&net_state.db);
-                    let fd = conn.fd;
-                    rt.spawn(async move {
-                        let _conn = conn;
-                        handle_fs_watch(fd, db).await;
-                    });
-                }
             } else if conn.port == VSOCK_PORT_MCP_GATEWAY {
                 if let Some(ref config) = mcp_config {
                     let fd = conn.fd;
@@ -2185,7 +2052,7 @@ fn gui_boot_vm(
                 let socket_devices = vm.socket_devices();
                 match VsockManager::new(
                     &socket_devices,
-                    &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_FS_WATCH, VSOCK_PORT_MCP_GATEWAY],
+                    &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_MCP_GATEWAY],
                 ) {
                     Ok(mgr) => Some(mgr),
                     Err(e) => {
@@ -2227,6 +2094,12 @@ fn gui_boot_vm(
                     workspace_dir: session_dir_for(session_id).map(|d| d.join("workspace")),
                 })
             });
+
+            // Store MCP config on AppState for Tauri commands (call_mcp_tool).
+            if let Some(ref config) = mcp_config {
+                let app_state = handle.state::<AppState>();
+                *app_state.mcp_config.lock().unwrap() = Some(Arc::clone(config));
+            }
 
             // Initialize MCP servers in background (non-blocking in GUI mode).
             if let Some(ref config) = mcp_config {
