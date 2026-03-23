@@ -283,6 +283,7 @@ Every commit that touches code should:
 2. Stage files explicitly (no `git add -A`)
 3. Use conventional-ish messages: `feat:`, `fix:`, `chore:`, `docs:`
 4. Author: Elie Bursztein <github@elie.net>
+5. No `Co-Authored-By` trailers
 
 ## Versioning
 
