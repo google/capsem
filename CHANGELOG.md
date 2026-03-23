@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Zombie session vacuum warnings on startup -- sessions that crashed before creating a DB are now marked as vacuumed (size 0) instead of warning on every boot.
 
+### Fixed
+- File monitoring and MCP gateway no longer silently disabled when MITM proxy fails -- session DB is now opened independently via `open_session_db`, decoupled from CA/policy loading
+- `create_net_state` errors are now logged instead of silently swallowed with `.ok()`
+- `cargo audit` no longer blocks `just run` on upstream Tauri/GTK unmaintained warnings
+
 ### Removed
 - Guest `capsem-fs-watch` inotify daemon and vsock port 5005 -- host-side FSEvents monitoring (`fs_monitor.rs`) fully replaces guest-side file watching; guest-cooperative monitoring was a security weakness
 

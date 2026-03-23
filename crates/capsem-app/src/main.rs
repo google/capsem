@@ -593,7 +593,24 @@ const CA_KEY_PEM: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT_PEM: &str = include_str!("../../../config/capsem-ca.crt");
 
 /// Create per-VM network state: load CA, network policy, and open session DB.
-fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
+/// Open the session database independently of MITM proxy state.
+///
+/// The session DB is needed by multiple subsystems (file monitor, MCP gateway,
+/// telemetry) and must not be coupled to CA/policy loading. If this fails,
+/// the session cannot proceed at all.
+fn open_session_db(vm_id: &str) -> Result<Arc<DbWriter>> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let session_dir = PathBuf::from(home)
+        .join(".capsem")
+        .join("sessions")
+        .join(vm_id);
+    let db_path = session_dir.join("session.db");
+    let db = DbWriter::open(&db_path, 4096).context("failed to open session db")?;
+    info!(path = %db_path.display(), "opened session db");
+    Ok(Arc::new(db))
+}
+
+fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<VmNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM)
         .context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
@@ -605,19 +622,9 @@ fn create_net_state(vm_id: &str) -> Result<VmNetworkState> {
         policy.rules.len()
     );
 
-    // Session directory: ~/.capsem/sessions/<vm_id>/
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let session_dir = PathBuf::from(home)
-        .join(".capsem")
-        .join("sessions")
-        .join(vm_id);
-    let db_path = session_dir.join("session.db");
-    let db = DbWriter::open(&db_path, 4096).context("failed to open session db")?;
-    info!(path = %db_path.display(), "opened session db");
-
     Ok(VmNetworkState {
         policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
-        db: Arc::new(db),
+        db,
         ca: Arc::new(ca),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
     })
@@ -1528,8 +1535,17 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
         &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_MCP_GATEWAY],
     ).context("failed to set up vsock")?;
 
+    // Open session DB (hard fail -- needed by file monitor, MCP, telemetry).
+    let session_db = open_session_db(&cli_session_id)?;
+
     // Create per-VM network state for MITM proxy.
-    let net_state = create_net_state(&cli_session_id).ok();
+    let net_state = match create_net_state(&cli_session_id, Arc::clone(&session_db)) {
+        Ok(ns) => Some(ns),
+        Err(e) => {
+            error!("MITM proxy disabled: {e:#}");
+            None
+        }
+    };
     let mitm_config: Option<Arc<MitmProxyConfig>> = net_state.as_ref().map(|ns| {
         Arc::new(MitmProxyConfig {
             ca: Arc::clone(&ns.ca),
@@ -1546,23 +1562,23 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     let user_mcp = user_sf.mcp.clone().unwrap_or_default();
     let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
     let mcp_servers = capsem_core::mcp::build_server_list(&user_mcp, &corp_mcp);
-    let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
+    let mcp_config: Option<Arc<McpGatewayConfig>> = {
         let http_client = reqwest::Client::builder()
             .user_agent("capsem-mcp/0.8")
             .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .expect("reqwest client");
-        Arc::new(McpGatewayConfig {
+        Some(Arc::new(McpGatewayConfig {
             server_manager: tokio::sync::Mutex::new(McpServerManager::new(mcp_servers.clone(), http_client.clone())),
-            db: Arc::clone(&ns.db),
+            db: Arc::clone(&session_db),
             policy: tokio::sync::RwLock::new(Arc::new(policies.mcp)),
             domain_policy: std::sync::RwLock::new(Arc::new(policies.domain)),
             http_client,
             auto_snapshots: None, // set after boot in VirtioFS mode
             workspace_dir: cli_session_dir.as_ref().map(|d| d.join("workspace")),
-        })
-    });
+        }))
+    };
 
     // Initialize MCP servers and run tool pinning (blocking in CLI mode).
     if let Some(ref config) = mcp_config {
@@ -1815,20 +1831,17 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
                 }
             });
 
-            // Start host file monitor.
-            if let Some(ref ns) = net_state {
-                let db = Arc::clone(&ns.db);
-                match capsem_core::fs_monitor::FsMonitor::start(
-                    workspace.clone(),
-                    workspace.clone(),
-                    db,
-                ) {
-                    Ok(_monitor) => {
-                        info!("host file monitor started");
-                        // monitor is kept alive by the tokio task inside it
-                    }
-                    Err(e) => warn!("failed to start host file monitor: {e}"),
+            // Start host file monitor (uses session_db directly, not gated on MITM proxy).
+            match capsem_core::fs_monitor::FsMonitor::start(
+                workspace.clone(),
+                workspace.clone(),
+                Arc::clone(&session_db),
+            ) {
+                Ok(_monitor) => {
+                    info!("host file monitor started");
+                    // monitor is kept alive by the tokio task inside it
                 }
+                Err(e) => warn!("failed to start host file monitor: {e}"),
             }
 
             info!("VirtioFS auto-snapshots and file monitor started");
@@ -1963,8 +1976,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
 
     // Clean up session: delete VirtioFS dirs (or scratch.img for legacy), update status.
     if let Some(ref dir) = cli_session_dir {
-        let db_ref = net_state.as_ref().map(|ns| ns.db.as_ref());
-        cleanup_session(dir, None, &cli_session_id, session_index, db_ref);
+        cleanup_session(dir, None, &cli_session_id, session_index, Some(session_db.as_ref()));
     }
 
     // Drop network state to close DbWriter (flushes WAL via checkpoint on drop).
@@ -2062,11 +2074,20 @@ fn gui_boot_vm(
                 }
             };
 
-            // Create per-VM network state (policy + info.db).
-            let net_state = match create_net_state(session_id) {
+            // Open session DB (independently of MITM proxy state).
+            let gui_session_db = match open_session_db(session_id) {
+                Ok(db) => db,
+                Err(e) => {
+                    error!("failed to open session db: {e:#}");
+                    return;
+                }
+            };
+
+            // Create per-VM network state (CA + policy for MITM proxy).
+            let net_state = match create_net_state(session_id, Arc::clone(&gui_session_db)) {
                 Ok(ns) => Some(ns),
                 Err(e) => {
-                    warn!("network state init failed: {e:#}, SNI proxy disabled");
+                    warn!("MITM proxy disabled: {e:#}");
                     None
                 }
             };
@@ -2077,23 +2098,23 @@ fn gui_boot_vm(
             let gui_user_mcp = gui_user_sf.mcp.clone().unwrap_or_default();
             let gui_corp_mcp = gui_corp_sf.mcp.clone().unwrap_or_default();
             let mcp_servers = capsem_core::mcp::build_server_list(&gui_user_mcp, &gui_corp_mcp);
-            let mcp_config: Option<Arc<McpGatewayConfig>> = net_state.as_ref().map(|ns| {
+            let mcp_config: Option<Arc<McpGatewayConfig>> = {
                 let http_client = reqwest::Client::builder()
                     .user_agent("capsem-mcp/0.8")
                     .timeout(std::time::Duration::from_secs(30))
                     .redirect(reqwest::redirect::Policy::limited(10))
                     .build()
                     .expect("reqwest client");
-                Arc::new(McpGatewayConfig {
+                Some(Arc::new(McpGatewayConfig {
                     server_manager: tokio::sync::Mutex::new(McpServerManager::new(mcp_servers.clone(), http_client.clone())),
-                    db: Arc::clone(&ns.db),
+                    db: Arc::clone(&gui_session_db),
                     policy: tokio::sync::RwLock::new(Arc::new(gui_policies.mcp)),
                     domain_policy: std::sync::RwLock::new(Arc::new(gui_policies.domain)),
                     http_client,
                     auto_snapshots: None,
                     workspace_dir: session_dir_for(session_id).map(|d| d.join("workspace")),
-                })
-            });
+                }))
+            };
 
             // Store MCP config on AppState for Tauri commands (call_mcp_tool).
             if let Some(ref config) = mcp_config {
