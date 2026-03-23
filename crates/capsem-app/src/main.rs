@@ -1886,7 +1886,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
             let workspace = dir.join("workspace");
             let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
                 dir.clone(),
-                12, // max slots
+                10,  // max auto slots
+                12,  // max manual slots
                 std::time::Duration::from_secs(300), // 5 min
             );
             let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));

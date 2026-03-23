@@ -622,6 +622,42 @@ name = "VM"
 description = "Virtual machine configuration"
 collapsed = false
 
+# -- VM > Snapshots ----------------------------------------------------------
+
+[settings.vm.snapshots]
+name = "Snapshots"
+description = "Automatic and manual workspace snapshot settings"
+
+[settings.vm.snapshots.auto_max]
+name = "Auto snapshot limit"
+description = "Maximum number of automatic rolling snapshots."
+type = "number"
+default = 10
+
+[settings.vm.snapshots.auto_max.meta]
+min = 1
+max = 50
+
+[settings.vm.snapshots.manual_max]
+name = "Manual snapshot limit"
+description = "Maximum number of named manual snapshots."
+type = "number"
+default = 12
+
+[settings.vm.snapshots.manual_max.meta]
+min = 1
+max = 50
+
+[settings.vm.snapshots.auto_interval]
+name = "Auto snapshot interval"
+description = "Seconds between automatic snapshots."
+type = "number"
+default = 300
+
+[settings.vm.snapshots.auto_interval.meta]
+min = 30
+max = 3600
+
 # -- VM > Environment --------------------------------------------------------
 
 [settings.vm.environment]

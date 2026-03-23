@@ -240,13 +240,19 @@ async fn handle_json_rpc(
                         }
                         ToolDecision::Allow => {}
                     }
-                    let sched = sched.lock().await;
+                    let mut sched = sched.lock().await;
                     return Some(match tool_name {
                         "list_changed_files" => {
                             super::file_tools::handle_list_changed_files(&sched, ws, req.id.clone())
                         }
                         "revert_file" => {
                             super::file_tools::handle_revert_file(&arguments, &sched, ws, req.id.clone())
+                        }
+                        "snapshot" => {
+                            super::file_tools::handle_snapshot(&arguments, &mut sched, req.id.clone())
+                        }
+                        "delete_snapshot" => {
+                            super::file_tools::handle_delete_snapshot(&arguments, &sched, req.id.clone())
                         }
                         _ => JsonRpcResponse::err(req.id.clone(), -32602, format!("unknown file tool: {tool_name}")),
                     });

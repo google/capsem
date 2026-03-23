@@ -533,6 +533,8 @@ def test_mcp_tools_list_has_file_tools():
     names = [t["name"] for t in tools]
     assert "list_changed_files" in names, f"list_changed_files missing from tools: {names}"
     assert "revert_file" in names, f"revert_file missing from tools: {names}"
+    assert "snapshot" in names, f"snapshot missing from tools: {names}"
+    assert "delete_snapshot" in names, f"delete_snapshot missing from tools: {names}"
 
 
 def test_mcp_list_changed_files():
@@ -562,44 +564,103 @@ def test_mcp_list_changed_files_after_write():
     run("rm -f /root/mcp_test_file.txt")
 
 
-def test_mcp_revert_file():
-    """revert_file restores a file using a checkpoint from list_changed_files."""
+def test_mcp_snapshot_tool():
+    """snapshot tool creates a named checkpoint with hash."""
     import json
-    import time
+    result = _init_and_call("snapshot", {"name": "doctor_test"})
+    assert result.get("isError") is not True, f"snapshot failed: {result}"
+    data = json.loads(result["content"][0]["text"])
+    assert data["name"] == "doctor_test"
+    assert data["checkpoint"].startswith("cp-")
+    assert isinstance(data["hash"], str) and len(data["hash"]) == 64
+    assert isinstance(data["available"], int)
 
-    # Create a file, wait for fs monitor to pick it up.
-    r = run("echo revert-me > /root/revert_test.txt")
+
+def test_mcp_revert_file():
+    """revert_file restores file content (not just deletes)."""
+    import json
+
+    # 1. Create file with original content.
+    r = run("echo original > /root/revert_content_test.txt")
     assert r.returncode == 0
-    time.sleep(2)
 
-    # Get checkpoint ID from list_changed_files.
+    # 2. Take a named snapshot.
+    snap_result = _init_and_call("snapshot", {"name": "before_modify"})
+    assert snap_result.get("isError") is not True, f"snapshot failed: {snap_result}"
+    snap_data = json.loads(snap_result["content"][0]["text"])
+    checkpoint = snap_data["checkpoint"]
+
+    # 3. Modify the file.
+    r = run("echo modified > /root/revert_content_test.txt")
+    assert r.returncode == 0
+    r = run("cat /root/revert_content_test.txt")
+    assert "modified" in r.stdout
+
+    # 4. list_changed_files should show it as modified.
     list_result = _init_and_call("list_changed_files", {})
-    assert list_result.get("isError") is not True, f"list_changed_files failed: {list_result}"
     text = list_result["content"][0]["text"]
-    try:
-        changes = json.loads(text)
-    except json.JSONDecodeError:
-        changes = []
+    changes = json.loads(text)
+    found = [c for c in changes if "revert_content_test.txt" in c.get("path", "")]
+    assert len(found) > 0, f"file not in changed list: {text}"
 
-    # Find our file and its checkpoint.
-    entry = None
-    for c in changes:
-        if isinstance(c, dict) and "revert_test.txt" in c.get("path", ""):
-            entry = c
-            break
-    assert entry is not None, (
-        f"revert_test.txt not in list_changed_files: {text}"
-    )
-    checkpoint = entry.get("checkpoint")
-    assert checkpoint, f"no checkpoint for revert_test.txt: {entry}"
-
-    # Revert the file.
+    # 5. Revert to the named snapshot.
     revert_result = _init_and_call(
         "revert_file",
-        {"path": entry["path"], "checkpoint": checkpoint},
+        {"path": "revert_content_test.txt", "checkpoint": checkpoint},
     )
-    assert revert_result.get("isError") is not True, f"revert_file failed: {revert_result}"
+    assert revert_result.get("isError") is not True, f"revert failed: {revert_result}"
 
-    # Verify file is gone (it was created after the checkpoint).
-    r = run("test -f /root/revert_test.txt")
-    assert r.returncode != 0, "revert_test.txt should have been deleted by revert_file"
+    # 6. Verify content is restored to "original".
+    r = run("cat /root/revert_content_test.txt")
+    assert "original" in r.stdout, (
+        f"expected 'original' after revert, got: {r.stdout}"
+    )
+    # Cleanup.
+    run("rm -f /root/revert_content_test.txt")
+
+
+def test_mcp_delete_snapshot():
+    """delete_snapshot removes a manual snapshot."""
+    import json
+    # Create.
+    result = _init_and_call("snapshot", {"name": "to_delete"})
+    assert result.get("isError") is not True
+    data = json.loads(result["content"][0]["text"])
+    checkpoint = data["checkpoint"]
+
+    # Delete.
+    del_result = _init_and_call("delete_snapshot", {"checkpoint": checkpoint})
+    assert del_result.get("isError") is not True, f"delete failed: {del_result}"
+    del_data = json.loads(del_result["content"][0]["text"])
+    assert del_data["deleted"] is True
+
+
+def test_mcp_snapshot_name_sanitized():
+    """snapshot rejects XSS in name."""
+    responses = _mcp_call([
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "capsem-doctor", "version": "1.0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {"name": "snapshot", "arguments": {"name": "<script>alert(1)</script>"}},
+        },
+    ], timeout=15)
+    call_resp = [r for r in responses if r.get("id") == 10]
+    assert len(call_resp) == 1
+    resp = call_resp[0]
+    # Must be an error (isError in result) or a JSON-RPC error.
+    if "result" in resp:
+        assert resp["result"].get("isError") is True, f"XSS name should fail: {resp}"
+    else:
+        assert "error" in resp, f"expected error for XSS name: {resp}"

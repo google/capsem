@@ -13,12 +13,14 @@ use std::time::SystemTime;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-use crate::auto_snapshot::AutoSnapshotScheduler;
+use crate::auto_snapshot::{AutoSnapshotScheduler, SnapshotOrigin};
 
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// Tool names for file operations.
-pub const FILE_TOOL_NAMES: &[&str] = &["list_changed_files", "revert_file"];
+pub const FILE_TOOL_NAMES: &[&str] = &[
+    "list_changed_files", "revert_file", "snapshot", "delete_snapshot",
+];
 
 pub fn is_file_tool(name: &str) -> bool {
     FILE_TOOL_NAMES.contains(&name)
@@ -82,6 +84,61 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 open_world_hint: false,
             }),
         },
+        McpToolDef {
+            namespaced_name: "snapshot".into(),
+            original_name: "snapshot".into(),
+            description: Some(concat!(
+                "Create a named workspace snapshot (checkpoint). ",
+                "The snapshot captures the current state of all files and can be used ",
+                "with revert_file to restore files later. Returns the checkpoint ID, ",
+                "a blake3 hash of the workspace, and the number of remaining snapshot slots.",
+            ).into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Label for this snapshot (alphanumeric, underscore, hyphen; max 64 chars)"
+                    }
+                },
+                "required": ["name"]
+            }),
+            server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("Create snapshot".into()),
+                read_only_hint: false,
+                destructive_hint: false,
+                idempotent_hint: false,
+                open_world_hint: false,
+            }),
+        },
+        McpToolDef {
+            namespaced_name: "delete_snapshot".into(),
+            original_name: "delete_snapshot".into(),
+            description: Some(concat!(
+                "Delete a manual snapshot by checkpoint ID. ",
+                "Only manual (named) snapshots can be deleted. ",
+                "Automatic snapshots are managed by the scheduler.",
+            ).into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "checkpoint": {
+                        "type": "string",
+                        "description": "Checkpoint ID to delete (e.g., 'cp-12')"
+                    }
+                },
+                "required": ["checkpoint"]
+            }),
+            server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("Delete snapshot".into()),
+                read_only_hint: false,
+                destructive_hint: true,
+                idempotent_hint: true,
+                open_world_hint: false,
+            }),
+        },
     ]
 }
 
@@ -109,6 +166,17 @@ fn parse_checkpoint(cp: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("invalid checkpoint ID: {cp:?}"))
 }
 
+/// Validate a snapshot name: alphanumeric + underscore + hyphen, 1-64 chars.
+fn validate_snapshot_name(name: &str) -> Result<&str, String> {
+    if name.is_empty() || name.len() > 64 {
+        return Err("name must be 1-64 characters".into());
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err("name must be alphanumeric, underscore, or hyphen only".into());
+    }
+    Ok(name)
+}
+
 /// Entry describing a changed file.
 #[derive(Debug, serde::Serialize)]
 struct ChangedFile {
@@ -117,6 +185,8 @@ struct ChangedFile {
     size: Option<u64>,
     checkpoint: String,
     checkpoint_age: String,
+    checkpoint_origin: String,
+    checkpoint_name: Option<String>,
 }
 
 /// Collect file listing from a directory (relative paths + sizes).
@@ -181,6 +251,10 @@ pub fn handle_list_changed_files(
         let snap_files = collect_files(&snap_root);
         let cp_id = format!("cp-{}", snap.slot);
         let age = age_string(snap.timestamp);
+        let origin_str = match snap.origin {
+            SnapshotOrigin::Auto => "auto",
+            SnapshotOrigin::Manual => "manual",
+        };
 
         // Created: in current but not in snapshot.
         for (path, size) in &current_files {
@@ -191,6 +265,8 @@ pub fn handle_list_changed_files(
                     size: Some(*size),
                     checkpoint: cp_id.clone(),
                     checkpoint_age: age.clone(),
+                    checkpoint_origin: origin_str.into(),
+                    checkpoint_name: snap.name.clone(),
                 });
             }
         }
@@ -204,6 +280,8 @@ pub fn handle_list_changed_files(
                     size: None,
                     checkpoint: cp_id.clone(),
                     checkpoint_age: age.clone(),
+                    checkpoint_origin: origin_str.into(),
+                    checkpoint_name: snap.name.clone(),
                 });
             }
         }
@@ -218,6 +296,8 @@ pub fn handle_list_changed_files(
                         size: Some(*current_size),
                         checkpoint: cp_id.clone(),
                         checkpoint_age: age.clone(),
+                        checkpoint_origin: origin_str.into(),
+                        checkpoint_name: snap.name.clone(),
                     });
                 }
             }
@@ -330,6 +410,85 @@ pub fn handle_revert_file(
     )
 }
 
+/// Handle `snapshot` tool call — create a named manual snapshot.
+pub fn handle_snapshot(
+    arguments: &Value,
+    scheduler: &mut AutoSnapshotScheduler,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let name = match arguments.get("name").and_then(|v| v.as_str()) {
+        Some(n) => n,
+        None => return JsonRpcResponse::err(request_id, -32602, "missing 'name' argument"),
+    };
+    if let Err(e) = validate_snapshot_name(name) {
+        return JsonRpcResponse::err(request_id, -32602, format!("invalid name: {e}"));
+    }
+
+    match scheduler.take_named_snapshot(name) {
+        Ok(slot) => {
+            let available = scheduler.available_manual_slots();
+            JsonRpcResponse::ok(
+                request_id,
+                serde_json::json!({
+                    "content": [{"type": "text", "text": serde_json::json!({
+                        "checkpoint": format!("cp-{}", slot.slot),
+                        "name": name,
+                        "hash": slot.hash,
+                        "available": available,
+                    }).to_string()}]
+                }),
+            )
+        }
+        Err(e) => JsonRpcResponse::err(request_id, -32603, format!("{e}")),
+    }
+}
+
+/// Handle `delete_snapshot` tool call — delete a manual snapshot.
+pub fn handle_delete_snapshot(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let cp_str = match arguments.get("checkpoint").and_then(|v| v.as_str()) {
+        Some(c) => c,
+        None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoint' argument"),
+    };
+    let slot = match parse_checkpoint(cp_str) {
+        Ok(s) => s,
+        Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
+    };
+
+    // Only allow deleting manual snapshots.
+    match scheduler.get_metadata(slot) {
+        Some(meta) if meta.origin == SnapshotOrigin::Auto => {
+            return JsonRpcResponse::err(
+                request_id, -32602,
+                "cannot delete automatic snapshots (managed by scheduler)",
+            );
+        }
+        None => {
+            return JsonRpcResponse::err(
+                request_id, -32602,
+                format!("checkpoint {cp_str} not found"),
+            );
+        }
+        _ => {}
+    }
+
+    match scheduler.delete_snapshot(slot) {
+        Ok(()) => JsonRpcResponse::ok(
+            request_id,
+            serde_json::json!({
+                "content": [{"type": "text", "text": serde_json::json!({
+                    "deleted": true,
+                    "checkpoint": cp_str,
+                }).to_string()}]
+            }),
+        ),
+        Err(e) => JsonRpcResponse::err(request_id, -32603, format!("{e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,7 +501,7 @@ mod tests {
         std::fs::create_dir_all(session.join("workspace")).unwrap();
         std::fs::create_dir_all(session.join("system")).unwrap();
         std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
-        let sched = AutoSnapshotScheduler::new(session.clone(), 12, Duration::from_secs(300));
+        let sched = AutoSnapshotScheduler::new(session.clone(), 10, 12, Duration::from_secs(300));
         (tmp, session, sched)
     }
 
