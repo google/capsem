@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Boot timing via vsock** -- capsem-init records per-stage durations as JSONL, PTY agent sends `BootTiming` message to host after boot. Host logs each stage with tracing and emits `boot-timing` event to frontend. Stages: squashfs, virtiofs, overlayfs, workspace, network, net_proxy, deploy, venv, agent_start.
+- **Named snapshots** -- new `snapshot` MCP tool creates named checkpoints with blake3 workspace hash. Manual snapshots are stored in a separate pool from auto snapshots and are never auto-culled.
+- **Snapshot management MCP tools** -- `list_snapshots` (returns all snapshots with origin, name, hash, age), `delete_snapshot` (remove manual snapshots only, refuses auto). `list_changed_files` now includes `checkpoint_origin` and `checkpoint_name` in output.
+- **Snapshots UI tab** -- new tab in StatsView showing auto and manual snapshots with stat cards (total, auto, manual, available slots), delete button for manual snapshots.
+- **`call_mcp_tool` Tauri command** -- generic frontend dispatcher for MCP built-in tools (list_snapshots, snapshot, delete_snapshot, revert_file, list_changed_files). Prepares for Phase 3 daemon MCP server.
+- **Configurable snapshot limits** -- `settings.vm.snapshots.auto_max` (default 10), `settings.vm.snapshots.manual_max` (default 12), `settings.vm.snapshots.auto_interval` (default 300s) in the settings registry.
+- **Boot time regression test** -- `test_boot_time_under_1s` fails if guest boot exceeds 1 second, catches regressions like the AI CLI copy stall.
+- **XSS sanitization on guest data** -- boot timing stage names validated alphanumeric+underscore at both agent and host layers. File event paths reject NUL bytes, path traversal, control chars. In-VM `test_boot_timing_rejects_xss` test.
+- New capsem-doctor tests: PATH validation (opt/ai-clis/bin in PATH, no .npm-global), login shell CLI availability (claude/gemini/codex via `bash -lc`), package managers (uv pip install, npm install -g, apt-get install, tmux), MCP file tools (snapshot, revert with content verification, delete, XSS name rejection), env var check from login shell.
+- `SnapshotOrigin` enum (Auto/Manual) replaces implicit auto-only model in snapshot metadata.
+- Dual-pool snapshot scheduler: auto slots (ring buffer) + manual slots (named, never auto-culled).
+
+### Changed
+- **AI CLIs use /opt/ai-clis directly** -- eliminated boot-time `cp -a` of hundreds of MB from squashfs to scratch disk. Overlayfs makes `/opt/ai-clis` writable for self-updates and `npm install -g`. Boot time dropped from multi-second stall to ~530ms.
+- **PATH single source of truth** -- `config/defaults.toml` defines PATH (sent via BootConfig SetEnv). Removed duplicate PATH exports from capsem-init, capsem-bashrc, capsem-doctor, profile.d. npm prefix set at build time in Dockerfile.
+- **capsem-doctor no longer overrides PATH** -- tests run with the same PATH the user sees, preventing hidden bugs.
+- **Env var injection test rewritten** -- checks from `bash -lc env` (what the user actually sees) instead of scanning scripts for overrides.
+- **Zero skipped tests** -- `test_swap_active`, `test_ai_provider_domain_blocked`, `test_boot_time_under_1s` all assert instead of skipping. 228 tests, 0 skipped.
+
+### Fixed
+- Zombie session vacuum warnings on startup -- sessions that crashed before creating a DB are now marked as vacuumed (size 0) instead of warning on every boot.
+
 ### Removed
 - Guest `capsem-fs-watch` inotify daemon and vsock port 5005 -- host-side FSEvents monitoring (`fs_monitor.rs`) fully replaces guest-side file watching; guest-cooperative monitoring was a security weakness
 
