@@ -245,6 +245,9 @@ async fn handle_json_rpc(
                         "list_changed_files" => {
                             super::file_tools::handle_list_changed_files(&sched, ws, req.id.clone())
                         }
+                        "list_snapshots" => {
+                            super::file_tools::handle_list_snapshots(&sched, req.id.clone())
+                        }
                         "revert_file" => {
                             super::file_tools::handle_revert_file(&arguments, &sched, ws, req.id.clone())
                         }

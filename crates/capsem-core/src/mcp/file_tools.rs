@@ -19,7 +19,7 @@ use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// Tool names for file operations.
 pub const FILE_TOOL_NAMES: &[&str] = &[
-    "list_changed_files", "revert_file", "snapshot", "delete_snapshot",
+    "list_changed_files", "list_snapshots", "revert_file", "snapshot", "delete_snapshot",
 ];
 
 pub fn is_file_tool(name: &str) -> bool {
@@ -45,6 +45,26 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
             server_name: "builtin".into(),
             annotations: Some(ToolAnnotations {
                 title: Some("List changed files".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: false,
+            }),
+        },
+        McpToolDef {
+            namespaced_name: "list_snapshots".into(),
+            original_name: "list_snapshots".into(),
+            description: Some(concat!(
+                "List all workspace snapshots (automatic and manual). ",
+                "Returns slot index, origin (auto/manual), name, age, and blake3 hash.",
+            ).into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("List snapshots".into()),
                 read_only_hint: true,
                 destructive_hint: false,
                 idempotent_hint: true,
@@ -406,6 +426,40 @@ pub fn handle_revert_file(
                 "reverted": true,
                 "path": path_str,
             }).to_string()}]
+        }),
+    )
+}
+
+/// Handle `list_snapshots` tool call — return all snapshot metadata.
+pub fn handle_list_snapshots(
+    scheduler: &AutoSnapshotScheduler,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let snapshots = scheduler.list_snapshots();
+    let entries: Vec<_> = snapshots.iter().map(|s| {
+        let origin = match s.origin {
+            SnapshotOrigin::Auto => "auto",
+            SnapshotOrigin::Manual => "manual",
+        };
+        serde_json::json!({
+            "checkpoint": format!("cp-{}", s.slot),
+            "slot": s.slot,
+            "origin": origin,
+            "name": s.name,
+            "hash": s.hash,
+            "age": age_string(s.timestamp),
+        })
+    }).collect();
+    let summary = serde_json::json!({
+        "snapshots": entries,
+        "auto_max": scheduler.max_auto(),
+        "manual_max": scheduler.max_manual(),
+        "manual_available": scheduler.available_manual_slots(),
+    });
+    JsonRpcResponse::ok(
+        request_id,
+        serde_json::json!({
+            "content": [{"type": "text", "text": summary.to_string()}]
         }),
     )
 }

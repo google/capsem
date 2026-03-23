@@ -1884,11 +1884,24 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     if !virtiofs_shares.is_empty() {
         if let Some(ref dir) = cli_session_dir {
             let workspace = dir.join("workspace");
+            let snap_settings = policy_config::load_merged_settings();
+            let snap_auto_max = snap_settings.iter()
+                .find(|s| s.id == "vm.snapshots.auto_max")
+                .and_then(|s| s.effective_value.as_number())
+                .unwrap_or(10) as usize;
+            let snap_manual_max = snap_settings.iter()
+                .find(|s| s.id == "vm.snapshots.manual_max")
+                .and_then(|s| s.effective_value.as_number())
+                .unwrap_or(12) as usize;
+            let snap_interval = snap_settings.iter()
+                .find(|s| s.id == "vm.snapshots.auto_interval")
+                .and_then(|s| s.effective_value.as_number())
+                .unwrap_or(300) as u64;
             let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
                 dir.clone(),
-                10,  // max auto slots
-                12,  // max manual slots
-                std::time::Duration::from_secs(300), // 5 min
+                snap_auto_max,
+                snap_manual_max,
+                std::time::Duration::from_secs(snap_interval),
             );
             let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
 
@@ -1913,7 +1926,7 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
 
             // Start periodic snapshot timer.
             let sched_clone = Arc::clone(&scheduler);
-            let interval = std::time::Duration::from_secs(300);
+            let interval = std::time::Duration::from_secs(snap_interval);
             rt.spawn(async move {
                 let mut tick = tokio::time::interval(interval);
                 tick.tick().await; // skip first (already took initial snapshot)
