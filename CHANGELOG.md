@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - File monitoring and MCP gateway no longer silently disabled when MITM proxy fails -- session DB is now opened independently via `open_session_db`, decoupled from CA/policy loading
 - `create_net_state` errors are now logged instead of silently swallowed with `.ok()`
+- Host file monitor (`FsMonitor`) was dropped immediately after creation, stopping FSEvents watcher -- now kept alive for the session lifetime
+- `FsMonitor::emit` was not awaiting `db.write()`, so file events were never written to the session DB
 - `cargo audit` no longer blocks `just run` on upstream Tauri/GTK unmaintained warnings
 
 ### Removed
