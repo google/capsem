@@ -267,3 +267,26 @@ export function listLogSessions(): Promise<LogSessionInfo[]> {
   if (isMock) return mockApi.listLogSessions();
   return tauriInvoke<LogSessionInfo[]>('list_log_sessions');
 }
+
+// ---------------------------------------------------------------------------
+// MCP tool calls from frontend
+// ---------------------------------------------------------------------------
+
+export function callMcpTool(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
+  if (isMock) return mockApi.callMcpTool(tool, args);
+  return tauriInvoke<unknown>('call_mcp_tool', { tool, arguments: args });
+}
+
+export async function listSnapshots(): Promise<{
+  snapshots: { checkpoint: string; slot: number; origin: string; name: string | null; hash: string | null; age: string }[];
+  auto_max: number;
+  manual_max: number;
+  manual_available: number;
+}> {
+  const result = await callMcpTool('list_snapshots') as { content: { text: string }[] };
+  return JSON.parse(result.content[0].text);
+}
+
+export async function deleteSnapshot(checkpoint: string): Promise<void> {
+  await callMcpTool('delete_snapshot', { checkpoint });
+}

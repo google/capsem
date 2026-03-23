@@ -6,6 +6,7 @@
   import ToolsTab from './stats/ToolsTab.svelte';
   import NetworkTab from './stats/NetworkTab.svelte';
   import FilesTab from './stats/FilesTab.svelte';
+  import SnapshotsTab from './stats/SnapshotsTab.svelte';
 
   const groups = [
     {
@@ -15,6 +16,7 @@
         { id: 'tools', label: 'Tools' },
         { id: 'network', label: 'Network' },
         { id: 'files', label: 'Files' },
+        { id: 'snapshots', label: 'Snapshots' },
       ],
     },
   ];
@@ -35,6 +37,8 @@
       <NetworkTab />
     {:else if statsStore.activeTab === 'files'}
       <FilesTab />
+    {:else if statsStore.activeTab === 'snapshots'}
+      <SnapshotsTab />
     {/if}
   </div>
 </div>

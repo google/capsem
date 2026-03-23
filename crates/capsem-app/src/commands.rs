@@ -122,6 +122,54 @@ pub async fn terminal_resize(
 }
 
 // ---------------------------------------------------------------------------
+// MCP tool call from frontend
+// ---------------------------------------------------------------------------
+
+/// Call an MCP built-in tool from the frontend.
+/// Returns the tool result as a JSON value.
+#[tauri::command]
+pub async fn call_mcp_tool(
+    tool: String,
+    arguments: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use capsem_core::mcp::file_tools;
+
+    let config = state.mcp_config.lock().unwrap().clone()
+        .ok_or_else(|| "MCP not initialized".to_string())?;
+
+    if !file_tools::is_file_tool(&tool) {
+        return Err(format!("unknown tool: {tool}"));
+    }
+
+    let sched = Arc::clone(config.auto_snapshots.as_ref()
+        .ok_or_else(|| "snapshots not available (not in VirtioFS mode)".to_string())?);
+    let ws = config.workspace_dir.clone()
+        .ok_or_else(|| "workspace not available".to_string())?;
+
+    let resp = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            let mut sched = sched.lock().await;
+            match tool.as_str() {
+                "list_snapshots" => file_tools::handle_list_snapshots(&sched, None),
+                "list_changed_files" => file_tools::handle_list_changed_files(&sched, &ws, None),
+                "snapshot" => file_tools::handle_snapshot(&arguments, &mut sched, None),
+                "delete_snapshot" => file_tools::handle_delete_snapshot(&arguments, &sched, None),
+                "revert_file" => file_tools::handle_revert_file(&arguments, &sched, &ws, None),
+                _ => unreachable!("is_file_tool check above"),
+            }
+        })
+    }).await.map_err(|e| format!("task failed: {e}"))?;
+
+    // Extract the result content from the JsonRpcResponse.
+    if let Some(err) = resp.error {
+        return Err(format!("{}: {}", err.code, err.message));
+    }
+    resp.result.ok_or_else(|| "empty response".to_string())
+}
+
+// ---------------------------------------------------------------------------
 // IPC commands for Svelte UI
 // ---------------------------------------------------------------------------
 

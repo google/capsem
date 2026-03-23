@@ -2589,6 +2589,7 @@ fn main() {
             commands::check_for_app_update,
             commands::load_session_log,
             commands::list_log_sessions,
+            commands::call_mcp_tool,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

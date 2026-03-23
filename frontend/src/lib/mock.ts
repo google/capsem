@@ -1098,6 +1098,24 @@ export const mockApi = {
     { session_id: '20260316-142001-c3d4', entry_count: 6 },
     { session_id: '20260315-091500-e5f6', entry_count: 12 },
   ],
+
+  callMcpTool: async (tool: string, _args: Record<string, unknown> = {}): Promise<unknown> => {
+    if (tool === 'list_snapshots') {
+      return { content: [{ text: JSON.stringify({
+        snapshots: [
+          { checkpoint: 'cp-0', slot: 0, origin: 'auto', name: null, hash: null, age: '5 min ago' },
+          { checkpoint: 'cp-1', slot: 1, origin: 'auto', name: null, hash: null, age: '10 min ago' },
+          { checkpoint: 'cp-2', slot: 2, origin: 'auto', name: null, hash: null, age: '15 min ago' },
+          { checkpoint: 'cp-10', slot: 10, origin: 'manual', name: 'before_refactor', hash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', age: '2 min ago' },
+          { checkpoint: 'cp-11', slot: 11, origin: 'manual', name: 'working_state', hash: 'f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2', age: '8 min ago' },
+        ],
+        auto_max: 10,
+        manual_max: 12,
+        manual_available: 10,
+      }) }] };
+    }
+    return { content: [{ text: '{}' }] };
+  },
 };
 
 // ---------------------------------------------------------------------------

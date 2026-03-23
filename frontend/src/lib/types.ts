@@ -132,7 +132,7 @@ export interface UpdateInfo {
 export type ViewName = 'terminal' | 'stats' | 'settings' | 'wizard' | 'logs';
 
 /** Stats panel tab names. */
-export type StatsTab = 'ai' | 'tools' | 'network' | 'files';
+export type StatsTab = 'ai' | 'tools' | 'network' | 'files' | 'snapshots';
 
 /** Aggregated model stats (from stats bar polling). */
 export interface ModelStatsRow {

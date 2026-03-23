@@ -131,6 +131,8 @@ pub struct AppState {
     /// Tracks states like "downloading" that exist before a VM is created.
     /// Valid values: "not created", "downloading", "booting", "running", "error".
     pub app_status: Mutex<String>,
+    /// MCP gateway config (set after boot, provides access to snapshot scheduler + tools).
+    pub mcp_config: Mutex<Option<Arc<capsem_core::mcp::gateway::McpGatewayConfig>>>,
 }
 
 impl AppState {
@@ -189,6 +191,7 @@ impl AppState {
             terminal_input_tx: tx,
             log_handle,
             app_status: Mutex::new(VmState::NotCreated.to_string()),
+            mcp_config: Mutex::new(None),
         }
     }
 }

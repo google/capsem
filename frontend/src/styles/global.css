@@ -34,6 +34,10 @@
   --color-token-output: oklch(0.72 0.14 145);
   --color-token-cache: oklch(0.65 0.12 210);
 
+  /* Snapshots */
+  --color-snap-manual: oklch(0.7 0.15 250);
+  --color-snap-auto: oklch(0.6 0.05 250);
+
   /* File actions */
   --color-file-created: oklch(0.74 0.16 233);
   --color-file-modified: oklch(0.72 0.14 185);
