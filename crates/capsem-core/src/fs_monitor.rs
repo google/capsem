@@ -1,8 +1,7 @@
 //! Host-based file monitor for VirtioFS overlay directories.
 //!
-//! Replaces the in-guest capsem-fs-watch daemon when using VirtioFS storage.
 //! Uses macOS FSEvents (via the `notify` crate) to watch the session's
-//! `upper/root/` directory on the host filesystem.
+//! workspace directory on the host filesystem.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,7 +14,7 @@ use tracing::{debug, info, warn};
 
 use capsem_logger::{DbWriter, FileAction, FileEvent, WriteOp};
 
-/// Directories excluded from monitoring (same as guest fs-watch).
+/// Directories excluded from monitoring.
 const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     "node_modules",
@@ -128,7 +127,7 @@ impl FsMonitor {
                 _ = shutdown_rx.recv() => {
                     // Flush remaining
                     for (path, entry) in pending.drain() {
-                        Self::emit(&db, &path, entry.action);
+                        Self::emit(&db, &path, entry.action).await;
                     }
                     break;
                 }
@@ -164,7 +163,7 @@ impl FsMonitor {
                         .collect();
                     for key in expired {
                         if let Some(entry) = pending.remove(&key) {
-                            Self::emit(&db, &key, entry.action);
+                            Self::emit(&db, &key, entry.action).await;
                         }
                     }
                 }
@@ -173,7 +172,7 @@ impl FsMonitor {
         debug!("host fs-monitor stopped");
     }
 
-    fn emit(db: &DbWriter, path: &str, action: FileAction) {
+    async fn emit(db: &DbWriter, path: &str, action: FileAction) {
         let size = if action != FileAction::Deleted {
             std::fs::metadata(path).ok().map(|m| m.len())
         } else {
@@ -184,7 +183,7 @@ impl FsMonitor {
             action,
             path: path.to_string(),
             size,
-        }));
+        })).await;
     }
 
     /// Signal the monitor to stop.

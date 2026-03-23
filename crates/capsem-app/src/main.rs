@@ -1773,6 +1773,8 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     }
 
     // Start auto-snapshot scheduler and file monitor in VirtioFS mode.
+    // _fs_monitor must outlive the session -- dropping it stops FSEvents.
+    let mut _fs_monitor: Option<capsem_core::fs_monitor::FsMonitor> = None;
     if !virtiofs_shares.is_empty() {
         if let Some(ref dir) = cli_session_dir {
             let workspace = dir.join("workspace");
@@ -1832,17 +1834,21 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
             });
 
             // Start host file monitor (uses session_db directly, not gated on MITM proxy).
-            match capsem_core::fs_monitor::FsMonitor::start(
+            // _fs_monitor must live until session ends -- dropping it stops the FSEvents watcher.
+            _fs_monitor = match capsem_core::fs_monitor::FsMonitor::start(
                 workspace.clone(),
                 workspace.clone(),
                 Arc::clone(&session_db),
             ) {
-                Ok(_monitor) => {
+                Ok(monitor) => {
                     info!("host file monitor started");
-                    // monitor is kept alive by the tokio task inside it
+                    Some(monitor)
                 }
-                Err(e) => warn!("failed to start host file monitor: {e}"),
-            }
+                Err(e) => {
+                    warn!("failed to start host file monitor: {e}");
+                    None
+                }
+            };
 
             info!("VirtioFS auto-snapshots and file monitor started");
         }
