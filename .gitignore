@@ -32,6 +32,9 @@ dist/*
 *_Store
 private/
 
+# Coverage output
+coverage/
+
 # Rust
 target/
 Cargo.lock

@@ -15,5 +15,12 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,svelte}'],
+      exclude: ['src/**/*.test.ts', 'src/**/__mocks__/**'],
+      reporter: ['text', 'json'],
+      reportsDirectory: '../coverage/frontend',
+    },
   },
 });

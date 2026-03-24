@@ -53,16 +53,16 @@ jobs:
         run: |
           cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-integration.json -p capsem-core --test '*' || true
 
-      # Frontend tests with JUnit output
+      # Frontend tests with coverage + JUnit output
       - name: Frontend type-check, test, and build
         run: |
           cd frontend
           pnpm run check
-          pnpm run test -- --reporter=default --reporter=junit --outputFile=../frontend-junit.xml
+          npx vitest run --coverage --reporter=default --reporter=junit --outputFile=../frontend-junit.xml
           pnpm run build
 
       # Upload coverage with flags
-      - name: Upload unit test coverage
+      - name: Upload Rust unit test coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v5
         with:
@@ -71,12 +71,21 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
-      - name: Upload integration test coverage
+      - name: Upload Rust integration test coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v5
         with:
           files: codecov-integration.json
           flags: integration
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Upload frontend coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/frontend/coverage-final.json
+          flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
