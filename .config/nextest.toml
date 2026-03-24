@@ -1,0 +1,5 @@
+[profile.ci.junit]
+path = "junit.xml"
+report-name = "capsem-tests"
+store-success-output = false
+store-failure-output = true

@@ -10,10 +10,45 @@ coverage:
       default:
         target: auto
         threshold: 1%
+      unit:
+        target: 80%
+        flags:
+          - unit
+      integration:
+        target: auto
+        flags:
+          - integration
+      e2e:
+        target: auto
+        flags:
+          - e2e
     patch:
       default:
         target: 80%
 
+comment:
+  layout: "diff, flags, components, files"
+  behavior: default
+  require_changes: false
+  require_base: yes
+  require_head: yes
+
+flags:
+  unit:
+    paths:
+      - crates/**
+      - frontend/src/**
+    carryforward: true
+  integration:
+    paths:
+      - crates/**
+    carryforward: true
+  e2e:
+    paths:
+      - crates/**
+    carryforward: true
+
+# Components tag code paths by functional service.
 component_management:
   default_rules:
     statuses:
