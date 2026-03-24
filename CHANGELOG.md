@@ -7,46 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-24
+
 ### Added
-- **`snapshots` CLI tool** -- in-VM command for managing workspace snapshots (`snapshots create/list/changes/history/revert/delete`). Uses FastMCP client to talk to the host MCP gateway. Supports `--json` flag for machine-readable output.
+- **`snapshots` CLI tool** -- in-VM command for managing workspace snapshots (`snapshots create/list/changes/history/compact/revert/delete`). Uses FastMCP client to talk to the host MCP gateway. Supports `--json` flag for machine-readable output.
 - **`snapshots_history` MCP tool** -- shows all versions of a file across snapshots with sequential status (new/modified/unchanged/deleted). Accepts both relative paths and `/root/` prefixed paths.
 - **`snapshots_compact` MCP tool** -- merges multiple snapshots into a single new manual snapshot. Newest-file-wins strategy. Deletes source snapshots after compaction, freeing pool slots.
 - **Boot timing via vsock** -- capsem-init records per-stage durations as JSONL, PTY agent sends `BootTiming` message to host after boot. Host logs each stage with tracing and emits `boot-timing` event to frontend. Stages: squashfs, virtiofs, overlayfs, workspace, network, net_proxy, deploy, venv, agent_start.
-- **Named snapshots** -- new `snapshot` MCP tool creates named checkpoints with blake3 workspace hash. Manual snapshots are stored in a separate pool from auto snapshots and are never auto-culled.
-- **Snapshot management MCP tools** -- `list_snapshots` (returns all snapshots with origin, name, hash, age), `delete_snapshot` (remove manual snapshots only, refuses auto). `list_changed_files` now includes `checkpoint_origin` and `checkpoint_name` in output.
+- **Named snapshots** -- `snapshots_create` MCP tool creates named checkpoints with blake3 workspace hash. Manual snapshots are stored in a separate pool from auto snapshots and are never auto-culled.
+- **Snapshot management MCP tools** -- 8 namespaced tools: `snapshots_create`, `snapshots_list`, `snapshots_changes`, `snapshots_revert`, `snapshots_delete`, `snapshots_history`, `snapshots_compact`. All prefixed with `snapshots_` to avoid collisions.
 - **Snapshots UI tab** -- new tab in StatsView showing auto and manual snapshots with stat cards (total, auto, manual, available slots), delete button for manual snapshots.
-- **`call_mcp_tool` Tauri command** -- generic frontend dispatcher for MCP built-in tools (list_snapshots, snapshot, delete_snapshot, revert_file, list_changed_files). Prepares for Phase 3 daemon MCP server.
+- **`call_mcp_tool` Tauri command** -- generic frontend dispatcher for MCP built-in tools. Prepares for Phase 3 daemon MCP server.
 - **Configurable snapshot limits** -- `settings.vm.snapshots.auto_max` (default 10), `settings.vm.snapshots.manual_max` (default 12), `settings.vm.snapshots.auto_interval` (default 300s) in the settings registry.
 - **Boot time regression test** -- `test_boot_time_under_1s` fails if guest boot exceeds 1 second, catches regressions like the AI CLI copy stall.
-- **XSS sanitization on guest data** -- boot timing stage names validated alphanumeric+underscore at both agent and host layers. File event paths reject NUL bytes, path traversal, control chars. In-VM `test_boot_timing_rejects_xss` test.
-- New capsem-doctor tests: PATH validation (opt/ai-clis/bin in PATH, no .npm-global), login shell CLI availability (claude/gemini/codex via `bash -lc`), package managers (uv pip install, npm install -g, apt-get install, tmux), MCP file tools (snapshot, revert with content verification, delete, XSS name rejection), env var check from login shell.
-- `SnapshotOrigin` enum (Auto/Manual) replaces implicit auto-only model in snapshot metadata.
-- Dual-pool snapshot scheduler: auto slots (ring buffer) + manual slots (named, never auto-culled).
+- **XSS sanitization on guest data** -- boot timing stage names validated alphanumeric+underscore at both agent and host layers. File event paths reject NUL bytes, path traversal, control chars.
+- **88 capsem-doctor MCP tests** -- comprehensive snapshot scenario coverage: modify/delete/recreate flows, copy/move, same-name-different-dirs, edge cases (deep paths, special chars, rapid snaps, 100 files), per-tool edge cases, belt-and-suspenders (MCP + CLI paths).
+- Dual-pool snapshot scheduler: auto slots (ring buffer) + manual slots (named, never auto-culled). `SnapshotOrigin` enum (Auto/Manual).
 
 ### Changed
-- **MCP snapshot tools namespaced** -- all snapshot MCP tools renamed with `snapshots_` prefix to avoid collisions: `snapshots_create`, `snapshots_list`, `snapshots_changes`, `snapshots_revert`, `snapshots_delete`, `snapshots_history`. `snapshots_list` now includes per-snapshot file changes (vs previous snapshot, not current). `snapshots_revert` checkpoint is optional (auto-picks latest), errors on "already current", and restores permissions. All snapshots now include blake3 hash. Path normalization accepts both `hello.txt` and `/root/hello.txt`.
-- **AI CLIs use /opt/ai-clis directly** -- eliminated boot-time `cp -a` of hundreds of MB from squashfs to scratch disk. Overlayfs makes `/opt/ai-clis` writable for self-updates and `npm install -g`. Boot time dropped from multi-second stall to ~530ms.
-- **PATH single source of truth** -- `config/defaults.toml` defines PATH (sent via BootConfig SetEnv). Removed duplicate PATH exports from capsem-init, capsem-bashrc, capsem-doctor, profile.d. npm prefix set at build time in Dockerfile.
-- **capsem-doctor no longer overrides PATH** -- tests run with the same PATH the user sees, preventing hidden bugs.
-- **Env var injection test rewritten** -- checks from `bash -lc env` (what the user actually sees) instead of scanning scripts for overrides.
-- **Zero skipped tests** -- `test_swap_active`, `test_ai_provider_domain_blocked`, `test_boot_time_under_1s` all assert instead of skipping. 228 tests, 0 skipped.
+- **`snapshots_list` shows per-snapshot diffs** -- changes computed vs previous snapshot (not current workspace), showing what changed AT each snapshot. Includes `files_count` per entry.
+- **`snapshots_revert` checkpoint is optional** -- auto-picks latest snapshot containing the file. Errors on "already current" (content + permissions match). Restores file permissions from snapshot.
+- **All snapshots include blake3 hash** -- auto snapshots now compute workspace hash (previously manual-only).
+- **Path normalization** -- all snapshot tools accept both `hello.txt` and `/root/hello.txt`.
+- **AI CLIs use /opt/ai-clis directly** -- eliminated boot-time `cp -a` of hundreds of MB from squashfs to scratch disk. Boot time dropped from multi-second stall to ~530ms.
+- **PATH single source of truth** -- `config/defaults.toml` defines PATH (sent via BootConfig SetEnv). Removed duplicate PATH exports from capsem-init, capsem-bashrc, capsem-doctor, profile.d.
 
 ### Fixed
 - MCP file tools unavailable in GUI mode -- auto-snapshot scheduler was only wired into MCP config in CLI path, never in GUI boot path. Extracted shared `wire_auto_snapshots()` to eliminate duplication.
-- `snapshots_list` changes were computed vs current workspace instead of vs previous snapshot -- now correctly shows what changed AT each snapshot
-- `snapshots_history` status was computed vs current instead of sequentially -- now shows new/modified/unchanged/deleted progression across snapshots
-- `snapshots_revert` silently overwrote identical files -- now errors "already current" when file content and permissions match snapshot
-- Zombie session vacuum warnings on startup -- sessions that crashed before creating a DB are now marked as vacuumed (size 0) instead of warning on every boot.
-
-### Fixed
-- File monitoring and MCP gateway no longer silently disabled when MITM proxy fails -- session DB is now opened independently via `open_session_db`, decoupled from CA/policy loading
-- `create_net_state` errors are now logged instead of silently swallowed with `.ok()`
-- Host file monitor (`FsMonitor`) was dropped immediately after creation, stopping FSEvents watcher -- now kept alive for the session lifetime
+- `snapshots_list` changes were computed vs current workspace instead of vs previous snapshot
+- `snapshots_history` status was computed vs current instead of sequentially
+- `snapshots_revert` silently overwrote identical files
+- File monitoring and MCP gateway no longer silently disabled when MITM proxy fails -- session DB decoupled from CA/policy loading
+- Host file monitor (`FsMonitor`) was dropped immediately after creation, stopping FSEvents watcher
 - `FsMonitor::emit` was not awaiting `db.write()`, so file events were never written to the session DB
-- `cargo audit` no longer blocks `just run` on upstream Tauri/GTK unmaintained warnings
+- Zombie session vacuum warnings on startup
+- `_init_and_call` test helper now surfaces actual MCP error messages instead of crashing with `KeyError`
+- Snapshot test pool exhaustion -- autouse cleanup fixture deletes manual snapshots after each test
 
 ### Removed
-- Guest `capsem-fs-watch` inotify daemon and vsock port 5005 -- host-side FSEvents monitoring (`fs_monitor.rs`) fully replaces guest-side file watching; guest-cooperative monitoring was a security weakness
+- Guest `capsem-fs-watch` inotify daemon and vsock port 5005 -- host-side FSEvents monitoring fully replaces guest-side file watching
 
 ## [0.10.0] - 2026-03-21
 
