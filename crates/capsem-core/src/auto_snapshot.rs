@@ -731,7 +731,7 @@ mod tests {
         let mut s = AutoSnapshotScheduler::new(session.to_path_buf(), 3, 1, Duration::from_secs(300));
 
         std::fs::write(session.join("workspace/f.txt"), "data").unwrap();
-        let snap1 = s.take_named_snapshot("fill").unwrap();
+        let _snap1 = s.take_named_snapshot("fill").unwrap();
         // Manual pool is now full (1/1).
         // Create an auto snapshot to compact.
         let snap2 = s.take_snapshot().unwrap();

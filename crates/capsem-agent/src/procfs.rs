@@ -1,7 +1,7 @@
-/// Process name resolution from /proc filesystem.
-///
-/// Reads /proc/{pid}/cmdline first (gets the actual binary name, not the thread
-/// name), falls back to /proc/{pid}/comm, then "unknown".
+//! Process name resolution from /proc filesystem.
+//!
+//! Reads /proc/{pid}/cmdline first (gets the actual binary name, not the thread
+//! name), falls back to /proc/{pid}/comm, then "unknown".
 
 /// Get the process name for a given PID.
 ///

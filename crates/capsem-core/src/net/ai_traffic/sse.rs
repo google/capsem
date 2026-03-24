@@ -1,12 +1,12 @@
-/// SSE wire-format parser. Fed chunk-by-chunk, emits complete SSE events.
-///
-/// Hand-rolled (no crate). Handles: \r\n/\n/\r line endings, comment lines
-/// (`:` prefix), multiple `data:` lines joined with \n, `[DONE]` sentinel
-/// filtering, and partial chunks split at arbitrary byte boundaries.
-///
-/// Hot path: called for every response body chunk from AI providers.
-/// Optimized for minimal allocation: reuses line buffer, avoids intermediate
-/// copies, and emits events in-place.
+//! SSE wire-format parser. Fed chunk-by-chunk, emits complete SSE events.
+//!
+//! Hand-rolled (no crate). Handles: \r\n/\n/\r line endings, comment lines
+//! (`:` prefix), multiple `data:` lines joined with \n, `[DONE]` sentinel
+//! filtering, and partial chunks split at arbitrary byte boundaries.
+//!
+//! Hot path: called for every response body chunk from AI providers.
+//! Optimized for minimal allocation: reuses line buffer, avoids intermediate
+//! copies, and emits events in-place.
 
 /// A single SSE event parsed from the wire format.
 #[derive(Debug, Clone, PartialEq)]

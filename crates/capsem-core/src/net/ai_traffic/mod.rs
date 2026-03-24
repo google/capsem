@@ -146,7 +146,7 @@ mod tests {
 
         for call in &calls {
             assert_eq!(
-                state.lookup(&[call.clone()]).as_deref(),
+                state.lookup(std::slice::from_ref(call)).as_deref(),
                 Some("trace_X"),
             );
         }

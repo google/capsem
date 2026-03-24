@@ -562,6 +562,7 @@ fn check_available_space(path: &Path, needed: u64) -> Result<bool> {
             std::io::Error::last_os_error()
         );
     }
+    #[allow(clippy::unnecessary_cast)]
     let available = stat.f_bavail as u64 * stat.f_frsize as u64;
     Ok(available >= needed)
 }

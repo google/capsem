@@ -1,5 +1,5 @@
-/// Provider trait and routing: maps inbound request paths to upstream AI
-/// providers and handles provider-specific key injection.
+//! Provider trait and routing: maps inbound request paths to upstream AI
+//! providers and handles provider-specific key injection.
 
 use super::events::ProviderStreamParser;
 

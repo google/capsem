@@ -374,14 +374,9 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         Err(e) => anyhow::bail!("failed to clone control fd: {e}"),
     };
     std::thread::spawn(move || {
-        loop {
-            match read_control_msg(&mut ctrl_fd_reader) {
-                Ok(msg) => {
-                    if ctrl_msg_tx.send(msg).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(msg) = read_control_msg(&mut ctrl_fd_reader) {
+            if ctrl_msg_tx.send(msg).is_err() {
+                break;
             }
         }
     });

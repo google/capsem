@@ -433,7 +433,7 @@ pub(crate) async fn setup_vsock(
                     let sid = sid.clone();
                     let db = Arc::clone(&db);
                     let flush_handle = flush_handle.clone();
-                    let checkpoint_main = tick_count % 10 == 0;
+                    let checkpoint_main = tick_count.is_multiple_of(10);
                     let _ = tokio::task::spawn_blocking(move || {
                         use tauri::Manager;
                         let reader = match db.reader() {

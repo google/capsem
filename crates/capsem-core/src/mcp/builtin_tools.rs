@@ -204,6 +204,7 @@ pub async fn call_builtin_tool(
 }
 
 /// Emit a NetEvent for a builtin tool HTTP request.
+#[allow(clippy::too_many_arguments)]
 async fn emit_net_event(
     db: &Arc<DbWriter>,
     domain: &str,
@@ -437,9 +438,10 @@ async fn handle_grep_http(
             let start = i.saturating_sub(context_lines);
             let end = (i + context_lines + 1).min(lines.len());
             let mut block = String::new();
-            for j in start..end {
+            for (offset, line) in lines[start..end].iter().enumerate() {
+                let j = start + offset;
                 let marker = if j == i { ">>>" } else { "   " };
-                block.push_str(&format!("{marker} {}: {}\n", j + 1, lines[j]));
+                block.push_str(&format!("{marker} {}: {}\n", j + 1, line));
             }
             matches.push(block);
         }

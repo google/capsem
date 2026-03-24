@@ -65,6 +65,7 @@ pub(crate) async fn check_for_update(app: tauri::AppHandle) {
 /// Boot the VM and set up all subsystems (vsock, serial, MITM proxy, MCP gateway).
 /// Called either immediately from the setup hook (rootfs available in bundle) or
 /// after async rootfs download completes.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn gui_boot_vm(
     handle: &tauri::AppHandle,
     assets: &Path,

@@ -161,6 +161,7 @@ mod tests {
     use hyper::body::Bytes;
 
     /// Create a simple body from byte chunks for testing.
+    #[allow(clippy::type_complexity)]
     fn chunks_body(chunks: Vec<&'static [u8]>) -> http_body_util::StreamBody<futures::stream::Iter<std::vec::IntoIter<Result<Frame<Bytes>, std::io::Error>>>> {
         let frames: Vec<Result<Frame<Bytes>, std::io::Error>> = chunks
             .into_iter()

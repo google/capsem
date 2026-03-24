@@ -37,7 +37,7 @@ impl SessionDb {
 mod tests {
     use super::*;
     use crate::events::{Decision, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry};
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
 
     fn temp_db_path(name: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("capsem-test-db-{name}-{}.db", std::process::id()));

@@ -1,11 +1,11 @@
-/// Google Gemini provider: handles /v1beta/models/* requests.
-///
-/// Key injection: ?key= query parameter.
-/// Upstream: https://generativelanguage.googleapis.com
-///
-/// SSE stream format: Each SSE event is a complete JSON object (not deltas).
-/// Parts contain `text`, `functionCall`, or `thought` fields.
-/// Gemini doesn't provide tool call IDs -- we generate synthetic ones.
+//! Google Gemini provider: handles /v1beta/models/* requests.
+//!
+//! Key injection: ?key= query parameter.
+//! Upstream: https://generativelanguage.googleapis.com
+//!
+//! SSE stream format: Each SSE event is a complete JSON object (not deltas).
+//! Parts contain `text`, `functionCall`, or `thought` fields.
+//! Gemini doesn't provide tool call IDs -- we generate synthetic ones.
 
 use std::collections::BTreeMap;
 

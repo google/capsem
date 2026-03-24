@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn meta_line_nul_prefix_required() {
         // The NUL byte distinguishes metadata from NDJSON content
-        let meta = format!("\0CAPSEM_META:gemini\n");
+        let meta = "\0CAPSEM_META:gemini\n".to_string();
         assert_eq!(meta.as_bytes()[0], 0x00);
         // A valid JSON-RPC line would never start with NUL
         let json = r#"{"jsonrpc":"2.0","method":"tools/call"}"#;

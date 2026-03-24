@@ -272,6 +272,7 @@ async fn handle_inner(
 /// Reads the live policy from `config.policy` RwLock per-request so that
 /// settings changes (e.g. disabling a provider) take effect immediately,
 /// even for in-flight keep-alive connections.
+#[allow(clippy::too_many_arguments)]
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
     domain: &str,
@@ -1093,7 +1094,7 @@ where
                 }
                 Poll::Ready(Some(Err(e))) => {
                     let err: anyhow::Error = e.into();
-                    return Poll::Ready(Some(Err(io::Error::new(io::ErrorKind::Other, err))));
+                    return Poll::Ready(Some(Err(io::Error::other(err))));
                 }
                 Poll::Ready(None) => return Poll::Ready(None),
                 Poll::Pending => return Poll::Pending,

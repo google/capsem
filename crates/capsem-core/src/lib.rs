@@ -31,7 +31,7 @@ pub use vm::vsock::{
 ///
 /// Layout (shared as one VirtioFS share with the guest):
 /// - `system/rootfs.img` -- sparse ext4 loopback image for overlayfs upper
-///                          (packages, config, /run binaries)
+///   (packages, config, /run binaries)
 /// - `workspace/`        -- direct host-visible files for /root (AI workspace)
 /// - `auto_snapshots/`   -- rolling ring buffer for host-side APFS clone snapshots
 ///

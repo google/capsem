@@ -586,6 +586,7 @@ impl SessionIndex {
     // -- Per-session summary writes -----------------------------------------
 
     /// Update the summary columns on a session row.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_session_summary(
         &self,
         id: &str,

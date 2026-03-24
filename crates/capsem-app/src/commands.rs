@@ -877,7 +877,7 @@ pub async fn approve_mcp_tool(
     // Find the tool in the live catalog to get its current hash.
     let current_hash = mgr.tool_catalog().iter()
         .find(|t| t.namespaced_name == tool)
-        .map(|t| capsem_core::mcp::compute_tool_hash(t));
+        .map(capsem_core::mcp::compute_tool_hash);
 
     // Update cache entry or create one.
     if let Some(entry) = cache.iter_mut().find(|e| e.namespaced_name == tool) {
@@ -886,7 +886,7 @@ pub async fn approve_mcp_tool(
             entry.pin_hash = hash.clone();
         }
     } else if let Some(tool_def) = mgr.tool_catalog().iter().find(|t| t.namespaced_name == tool) {
-        let new_cache = capsem_core::mcp::build_cache_entries(&[tool_def.clone()], &cache);
+        let new_cache = capsem_core::mcp::build_cache_entries(std::slice::from_ref(tool_def), &cache);
         for mut entry in new_cache {
             entry.approved = true;
             cache.push(entry);
@@ -919,10 +919,8 @@ pub async fn refresh_mcp_tools(
         if let Err(e) = mgr.initialize_all().await {
             return Err(format!("refresh failed: {e:#}"));
         }
-    } else {
-        if let Err(e) = mgr.initialize_all().await {
-            return Err(format!("refresh failed: {e:#}"));
-        }
+    } else if let Err(e) = mgr.initialize_all().await {
+        return Err(format!("refresh failed: {e:#}"));
     }
 
     // Update tool cache.
@@ -1317,7 +1315,7 @@ mod tests {
         let first = &defs[0];
         let hash = capsem_core::mcp::compute_tool_hash(first);
 
-        let cache = vec![capsem_core::mcp::ToolCacheEntry {
+        let cache = [capsem_core::mcp::ToolCacheEntry {
             namespaced_name: first.namespaced_name.clone(),
             original_name: first.original_name.clone(),
             description: first.description.clone(),
@@ -1346,7 +1344,7 @@ mod tests {
         let defs = capsem_core::mcp::builtin_tools::builtin_tool_defs();
         let first = &defs[0];
 
-        let cache = vec![capsem_core::mcp::ToolCacheEntry {
+        let cache = [capsem_core::mcp::ToolCacheEntry {
             namespaced_name: first.namespaced_name.clone(),
             original_name: first.original_name.clone(),
             description: first.description.clone(),

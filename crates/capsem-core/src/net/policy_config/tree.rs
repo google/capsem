@@ -24,7 +24,7 @@ pub enum SettingsNode {
         children: Vec<SettingsNode>,
     },
     #[serde(rename = "leaf")]
-    Leaf(ResolvedSetting),
+    Leaf(Box<ResolvedSetting>),
 }
 
 /// Build a settings tree mirroring the TOML hierarchy with resolved values at leaves.
@@ -41,7 +41,7 @@ fn build_tree_from_table(
     // Check if this is a leaf (has "type" key)
     if table.contains_key("type") {
         if let Some(resolved) = resolved_map.get(path) {
-            return vec![SettingsNode::Leaf(resolved.clone())];
+            return vec![SettingsNode::Leaf(Box::new(resolved.clone()))];
         }
         return vec![];
     }
@@ -84,7 +84,7 @@ fn build_tree_from_table(
                 child_table,
                 &group_enabled_by,
                 group_collapsed,
-                &resolved_map,
+                resolved_map,
             );
             children.extend(child_nodes);
         }
@@ -158,12 +158,12 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
 
     if !dynamic_envs.is_empty() {
         // Find the Environment group (child of VM) and append
-        fn append_dynamic(nodes: &mut Vec<SettingsNode>, envs: &[&ResolvedSetting]) {
+        fn append_dynamic(nodes: &mut [SettingsNode], envs: &[&ResolvedSetting]) {
             for node in nodes.iter_mut() {
                 if let SettingsNode::Group { name, children, .. } = node {
                     if name == "Environment" {
                         for env in envs {
-                            children.push(SettingsNode::Leaf((*env).clone()));
+                            children.push(SettingsNode::Leaf(Box::new((*env).clone())));
                         }
                         return;
                     }

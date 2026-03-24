@@ -1,8 +1,8 @@
-/// Provider-agnostic LLM event types emitted by SSE stream parsers.
-///
-/// Each AI provider (Anthropic, OpenAI, Google) has its own SSE wire format.
-/// Provider-specific parsers convert those into these unified events, which
-/// are then collected into a `StreamSummary` for audit logging.
+//! Provider-agnostic LLM event types emitted by SSE stream parsers.
+//!
+//! Each AI provider (Anthropic, OpenAI, Google) has its own SSE wire format.
+//! Provider-specific parsers convert those into these unified events, which
+//! are then collected into a `StreamSummary` for audit logging.
 
 use std::collections::BTreeMap;
 

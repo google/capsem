@@ -444,8 +444,8 @@ mod tests {
         // Verify that the level comparison is correct
         assert!(Level::DEBUG > Level::INFO); // DEBUG is "less important" = higher numeric
         assert!(Level::TRACE > Level::INFO);
-        assert!(!(Level::WARN > Level::INFO)); // WARN passes the filter
-        assert!(!(Level::ERROR > Level::INFO)); // ERROR passes the filter
-        assert!(!(Level::INFO > Level::INFO)); // INFO passes the filter
+        assert!(Level::WARN <= Level::INFO); // WARN passes the filter
+        assert!(Level::ERROR <= Level::INFO); // ERROR passes the filter
+        assert!(Level::INFO <= Level::INFO); // INFO passes the filter
     }
 }

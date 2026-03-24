@@ -159,18 +159,21 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
         // -- API key whitespace check --
         if s.setting_type == SettingType::ApiKey {
             if let Some(text) = text_value {
-                if !text.is_empty() {
-                    if text.contains(' ') || text.contains('\n') || text.contains('\r') || text.contains('\t') {
-                        issues.push(ConfigIssue {
-                            id: s.id.clone(),
-                            severity: "warning".into(),
-                            message: format!(
-                                "{}: key contains whitespace -- check for copy-paste errors",
-                                s.id
-                            ),
-                            docs_url: None,
-                        });
-                    }
+                if !text.is_empty()
+                    && (text.contains(' ')
+                        || text.contains('\n')
+                        || text.contains('\r')
+                        || text.contains('\t'))
+                {
+                    issues.push(ConfigIssue {
+                        id: s.id.clone(),
+                        severity: "warning".into(),
+                        message: format!(
+                            "{}: key contains whitespace -- check for copy-paste errors",
+                            s.id
+                        ),
+                        docs_url: None,
+                    });
                 }
             }
         }

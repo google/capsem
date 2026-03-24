@@ -316,7 +316,7 @@ mod tests {
         let fd = a.into_raw_fd();
         let mut vsock = AsyncVsock::new(fd).unwrap();
 
-        let meta = format!("\0CAPSEM_META:test-agent\n");
+        let meta = "\0CAPSEM_META:test-agent\n".to_string();
         tokio::io::AsyncWriteExt::write_all(&mut vsock, meta.as_bytes())
             .await
             .unwrap();

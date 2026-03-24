@@ -1,5 +1,5 @@
-/// Domain policy engine: decides whether a domain is allowed or denied
-/// based on allow-list, block-list, and wildcard pattern matching.
+//! Domain policy engine: decides whether a domain is allowed or denied
+//! based on allow-list, block-list, and wildcard pattern matching.
 
 /// The result of evaluating a domain against the policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -317,6 +317,37 @@ fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<(
     Ok(())
 }
 
+fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(call.timestamp).to_string();
+    let req_preview = cap_field(&call.request_preview);
+    let resp_preview = cap_field(&call.response_preview);
+    conn.execute(
+        "INSERT INTO mcp_calls (
+            timestamp, server_name, method, tool_name, request_id,
+            request_preview, response_preview, decision,
+            duration_ms, error_message, process_name,
+            bytes_sent, bytes_received
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            timestamp,
+            call.server_name,
+            call.method,
+            call.tool_name,
+            call.request_id,
+            req_preview,
+            resp_preview,
+            call.decision,
+            call.duration_ms as i64,
+            call.error_message,
+            call.process_name,
+            call.bytes_sent as i64,
+            call.bytes_received as i64,
+        ],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,33 +473,3 @@ mod tests {
     }
 }
 
-fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(call.timestamp).to_string();
-    let req_preview = cap_field(&call.request_preview);
-    let resp_preview = cap_field(&call.response_preview);
-    conn.execute(
-        "INSERT INTO mcp_calls (
-            timestamp, server_name, method, tool_name, request_id,
-            request_preview, response_preview, decision,
-            duration_ms, error_message, process_name,
-            bytes_sent, bytes_received
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            timestamp,
-            call.server_name,
-            call.method,
-            call.tool_name,
-            call.request_id,
-            req_preview,
-            resp_preview,
-            call.decision,
-            call.duration_ms as i64,
-            call.error_message,
-            call.process_name,
-            call.bytes_sent as i64,
-            call.bytes_received as i64,
-        ],
-    )?;
-    Ok(())
-}

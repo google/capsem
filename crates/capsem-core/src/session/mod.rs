@@ -11,7 +11,7 @@ pub use maintenance::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::index::{SCHEMA_VERSION, SESSION_SCHEMA};
+    use super::index::SCHEMA_VERSION;
     use rusqlite::{params, Connection};
 
     // -- ID generation --

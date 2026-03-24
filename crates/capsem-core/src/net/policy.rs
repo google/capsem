@@ -1,9 +1,9 @@
-/// Network policy engine: per-domain read/write verb control.
-///
-/// Each rule matches a domain pattern and specifies whether read methods
-/// (GET, HEAD, OPTIONS) and write methods (POST, PUT, DELETE, PATCH) are
-/// allowed. Rules are evaluated in order; first match wins. If no rule
-/// matches, the default applies.
+//! Network policy engine: per-domain read/write verb control.
+//!
+//! Each rule matches a domain pattern and specifies whether read methods
+//! (GET, HEAD, OPTIONS) and write methods (POST, PUT, DELETE, PATCH) are
+//! allowed. Rules are evaluated in order; first match wins. If no rule
+//! matches, the default applies.
 
 /// How a domain pattern matches incoming requests.
 #[derive(Debug, Clone)]

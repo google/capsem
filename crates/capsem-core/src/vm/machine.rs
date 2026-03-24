@@ -377,7 +377,7 @@ mod tests {
     fn is_main_thread_returns_false_on_worker() {
         // Cargo test harness runs tests on worker threads, not the main thread.
         // Spawning another thread should also return false.
-        let result = std::thread::spawn(|| is_main_thread()).join().unwrap();
+        let result = std::thread::spawn(is_main_thread).join().unwrap();
         assert!(!result);
     }
 

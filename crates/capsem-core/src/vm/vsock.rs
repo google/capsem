@@ -294,6 +294,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn port_constants_are_in_expected_range() {
         assert!(VSOCK_PORT_CONTROL < 65536);
         assert!(VSOCK_PORT_TERMINAL < 65536);

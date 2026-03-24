@@ -1386,7 +1386,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza-test");
         // Only GEMINI_API_KEY is set (not GOOGLE_API_KEY) to avoid
         // gemini CLI warning: "Both GOOGLE_API_KEY and GEMINI_API_KEY are set"
-        assert!(env.get("GOOGLE_API_KEY").is_none());
+        assert!(!env.contains_key("GOOGLE_API_KEY"));
     }
 
     #[test]
@@ -3020,7 +3020,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let has_creds = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
         assert!(
             !has_creds,
             ".git-credentials should not be generated when allow=false"
@@ -3035,7 +3035,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let has_creds = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
         assert!(
             !has_creds,
             ".git-credentials should not be generated when token is empty"
@@ -3054,7 +3054,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let has_creds = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
         assert!(
             !has_creds,
             ".git-credentials should not be generated when corp blocks provider"
@@ -3076,7 +3076,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let has_creds = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
         assert!(
             !has_creds,
             ".git-credentials should not be generated when token contains newlines"
@@ -3095,7 +3095,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let has_creds = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
         assert!(
             !has_creds,
             ".git-credentials should not be generated when token contains @"
@@ -3114,7 +3114,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let has_creds = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
         assert!(
             !has_creds,
             ".git-credentials should not be generated when token contains :"
@@ -3130,11 +3130,11 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let has_creds = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.git-credentials"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
         let has_gitconfig = gc
             .files
             .as_ref()
-            .map_or(false, |f| f.iter().any(|f| f.path == "/root/.gitconfig"));
+            .is_some_and(|f| f.iter().any(|f| f.path == "/root/.gitconfig"));
         assert!(!has_creds, ".git-credentials should not exist without tokens");
         assert!(!has_gitconfig, ".gitconfig should not exist without tokens");
     }
@@ -3412,10 +3412,13 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let user_path = dir.path().join("user.toml");
         let corp_path = dir.path().join("corp.toml");
         write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-        let mut corp = SettingsFile::default();
-        let mut corp_mcp = crate::mcp::policy::McpUserConfig::default();
-        corp_mcp.default_tool_permission = Some(crate::mcp::policy::ToolDecision::Block);
-        corp.mcp = Some(corp_mcp);
+        let corp = SettingsFile {
+            mcp: Some(crate::mcp::policy::McpUserConfig {
+                default_tool_permission: Some(crate::mcp::policy::ToolDecision::Block),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
         write_settings_file(&corp_path, &corp).unwrap();
 
         let skipped = apply_preset_to("medium", &user_path, &corp_path).unwrap();

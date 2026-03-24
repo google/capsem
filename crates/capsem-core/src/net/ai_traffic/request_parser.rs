@@ -1,10 +1,10 @@
 #![allow(dead_code)]
-/// Request body parser: extracts structured metadata from inbound LLM API
-/// request JSON. Provider-aware, uses targeted serde structs (not `Value`).
-///
-/// Extracts: model, stream flag, system prompt preview, message/tool counts,
-/// and tool_result entries from subsequent requests (for linking tool call
-/// lifecycle).
+//! Request body parser: extracts structured metadata from inbound LLM API
+//! request JSON. Provider-aware, uses targeted serde structs (not `Value`).
+//!
+//! Extracts: model, stream flag, system prompt preview, message/tool counts,
+//! and tool_result entries from subsequent requests (for linking tool call
+//! lifecycle).
 
 use super::provider::ProviderKind;
 

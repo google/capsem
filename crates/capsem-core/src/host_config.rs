@@ -350,7 +350,7 @@ mod tests {
             "[user]\n\tname = Alice Example\n\temail = alice@example.com\n[core]\n\teditor = vim\n",
         )
         .unwrap();
-        let (name, email) = detect_git_identity(&dir.path().to_path_buf());
+        let (name, email) = detect_git_identity(dir.path());
         assert_eq!(name.as_deref(), Some("Alice Example"));
         assert_eq!(email.as_deref(), Some("alice@example.com"));
     }
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn parse_gitconfig_missing_file() {
         let dir = tempfile::tempdir().unwrap();
-        let (name, email) = detect_git_identity(&dir.path().to_path_buf());
+        let (name, email) = detect_git_identity(dir.path());
         assert!(name.is_none());
         assert!(email.is_none());
     }
@@ -368,7 +368,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gitconfig = dir.path().join(".gitconfig");
         std::fs::write(&gitconfig, "[user]\n\tname = \n\temail = \n").unwrap();
-        let (name, email) = detect_git_identity(&dir.path().to_path_buf());
+        let (name, email) = detect_git_identity(dir.path());
         assert!(name.is_none());
         assert!(email.is_none());
     }
@@ -378,7 +378,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gitconfig = dir.path().join(".gitconfig");
         std::fs::write(&gitconfig, "[core]\n\teditor = vim\n").unwrap();
-        let (name, email) = detect_git_identity(&dir.path().to_path_buf());
+        let (name, email) = detect_git_identity(dir.path());
         assert!(name.is_none());
         assert!(email.is_none());
     }
@@ -388,7 +388,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gitconfig = dir.path().join(".gitconfig");
         std::fs::write(&gitconfig, "[User]\n\tname = Bob\n\temail = bob@test.com\n").unwrap();
-        let (name, email) = detect_git_identity(&dir.path().to_path_buf());
+        let (name, email) = detect_git_identity(dir.path());
         assert_eq!(name.as_deref(), Some("Bob"));
         assert_eq!(email.as_deref(), Some("bob@test.com"));
     }
@@ -400,7 +400,7 @@ mod tests {
         std::fs::create_dir_all(&ssh_dir).unwrap();
         let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest user@host";
         std::fs::write(ssh_dir.join("id_ed25519.pub"), key).unwrap();
-        assert_eq!(detect_ssh_public_key(&dir.path().to_path_buf()).as_deref(), Some(key));
+        assert_eq!(detect_ssh_public_key(dir.path()).as_deref(), Some(key));
     }
 
     #[test]
@@ -410,7 +410,7 @@ mod tests {
         std::fs::create_dir_all(&ssh_dir).unwrap();
         let key = "ssh-rsa AAAAB3NzaC1yc2EAAAATest user@host";
         std::fs::write(ssh_dir.join("id_rsa.pub"), key).unwrap();
-        assert_eq!(detect_ssh_public_key(&dir.path().to_path_buf()).as_deref(), Some(key));
+        assert_eq!(detect_ssh_public_key(dir.path()).as_deref(), Some(key));
     }
 
     #[test]
@@ -420,7 +420,7 @@ mod tests {
         std::fs::create_dir_all(&ssh_dir).unwrap();
         let key = "ecdsa-sha2-nistp256 AAAAE2VjZHNhTest user@host";
         std::fs::write(ssh_dir.join("id_ecdsa.pub"), key).unwrap();
-        assert_eq!(detect_ssh_public_key(&dir.path().to_path_buf()).as_deref(), Some(key));
+        assert_eq!(detect_ssh_public_key(dir.path()).as_deref(), Some(key));
     }
 
     #[test]
@@ -432,7 +432,7 @@ mod tests {
         std::fs::write(ssh_dir.join("id_ecdsa.pub"), "ecdsa-sha2-nistp256 SECOND").unwrap();
         std::fs::write(ssh_dir.join("id_rsa.pub"), "ssh-rsa FALLBACK").unwrap();
         assert_eq!(
-            detect_ssh_public_key(&dir.path().to_path_buf()).as_deref(),
+            detect_ssh_public_key(dir.path()).as_deref(),
             Some("ssh-ed25519 PREFERRED")
         );
     }
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn ssh_public_key_missing() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(detect_ssh_public_key(&dir.path().to_path_buf()).is_none());
+        assert!(detect_ssh_public_key(dir.path()).is_none());
     }
 
     // -- Claude OAuth detection --

@@ -402,7 +402,7 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
 mod tests {
     use super::*;
     use std::io::Write;
-    use crate::mcp::policy::{McpManualServer, McpUserConfig, ToolDecision};
+    use crate::mcp::policy::{McpManualServer, McpUserConfig};
 
     fn make_tool(ns_name: &str, orig_name: &str, server: &str, desc: Option<&str>) -> McpToolDef {
         McpToolDef {
