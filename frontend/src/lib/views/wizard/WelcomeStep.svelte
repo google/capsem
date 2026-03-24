@@ -12,6 +12,11 @@
   <p class="text-xs text-base-content/40">
     The VM image is downloading in the background while you set things up.
   </p>
+  <p class="text-xs text-base-content/30 max-w-md">
+    This project is not an official Google project. It is not supported by Google and Google
+    specifically disclaims all warranties as to its quality, merchantability, or fitness for
+    a particular purpose.
+  </p>
   <button
     class="btn bg-interactive text-white mt-4"
     onclick={() => wizardStore.next()}

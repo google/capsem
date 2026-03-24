@@ -209,6 +209,10 @@ All defaults can be overridden per-setting in `~/.capsem/user.toml`. Corporate d
 
 Release builds include Tauri's updater plugin. When a new version is published to GitHub Releases, the app shows a native dialog offering to download and install the update.
 
+## Disclaimer
+
+This project is not an official Google project. It is not supported by Google and Google specifically disclaims all warranties as to its quality, merchantability, or fitness for a particular purpose.
+
 ## License
 
 See [LICENSE](LICENSE).
