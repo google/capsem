@@ -137,17 +137,50 @@ The MITM proxy already identifies which AI agent is running from HTTP traffic to
 
 ### Subprocess sandboxing
 
-The daemon spawns several subprocesses (MITM proxy, future web renderer, etc.). These need a generalized sandbox model, not ad-hoc spawning:
+**Every service runs as its own sandboxed process.** Today everything runs as async tasks in one process -- this is a Phase 3 blocker. The daemon must be a process supervisor, not a monolith. Each service gets its own process, its own sandbox profile, its own resource limits, and its own crash domain.
 
-1. **Process isolation**: Each subprocess type runs with minimal privileges. On macOS: `sandbox-exec` profiles. On Linux: seccomp + namespaces.
-2. **Resource limits**: CPU, memory, file descriptor limits per subprocess type. Configurable in settings.
-3. **Crash recovery**: Supervisor restarts crashed subprocesses with exponential backoff. Crash count tracked in health endpoint.
-4. **Lifecycle**: Subprocesses tied to daemon lifecycle. SIGTERM cascades to all children.
-5. **Extensibility**: New subprocess types (web renderer, code analyzer) plug into the same framework.
+**Mandatory process separation (Phase 3):**
 
-Architecture: `SubprocessManager` in daemon owns a registry of subprocess specs (binary, args, sandbox profile, resource limits, restart policy). Phase 3 ships with MITM proxy as the first managed subprocess. Future subprocess types register via the same interface.
+| Process | Responsibility | IPC |
+|---------|---------------|-----|
+| `capsem-daemon` | Orchestrator, HTTP/WS API, auth, menu bar, subprocess supervisor | Parent process |
+| `capsem-mitm` | HTTPS MITM proxy (TLS termination, HTTP inspection, AI traffic parsing) | Unix socket / pipe |
+| `capsem-mcp-gateway` | MCP tool routing (builtin tools, external servers, policy) | Unix socket / pipe |
+| `capsem-monitor` | Telemetry DB writer, session index, FS monitoring, auto-snapshots | Unix socket / pipe |
 
-*Deferred to post-Phase 3:* Full seccomp profiles, per-subprocess network namespace isolation, web renderer integration. Phase 3 establishes the `SubprocessManager` abstraction; later phases add subprocess types.
+**Future processes (later phases):**
+
+| Process | Phase | Responsibility |
+|---------|-------|---------------|
+| `capsem-ssh-bridge` | Phase 6 | MITM SSH proxy (russh server, SSH telemetry) |
+| `capsem-web-renderer` | Phase 7 | Headless browser for chat UI / web rendering |
+| `capsem-mcp-server` | Phase 3 | External MCP server exposing capsem tools to AI agents |
+
+**Process abstraction (`SubprocessSpec` trait):**
+
+Every managed process implements the same interface:
+
+1. **Identity**: binary path, args, environment
+2. **Sandbox profile**: macOS `sandbox-exec` profile / Linux seccomp + namespaces. Principle of least privilege -- MITM proxy needs network, MCP gateway does not, monitor only needs filesystem.
+3. **Resource limits**: CPU, memory, file descriptor caps. Configurable in settings per process type.
+4. **IPC**: How the daemon communicates with the subprocess (Unix socket, pipe, shared fd). Defined per process type.
+5. **Restart policy**: max restarts, backoff (exponential with cap), crash count tracked in health endpoint.
+6. **Lifecycle**: Start, health check, graceful stop (SIGTERM + timeout), force kill (SIGKILL). SIGTERM cascades from daemon to all children.
+7. **Logging**: Each subprocess logs to its own file or structured channel. Daemon aggregates.
+
+**`SubprocessManager`** in daemon owns a registry of `SubprocessSpec` instances. It handles:
+- Startup ordering (monitor before mitm, mitm before mcp-gateway)
+- Health monitoring (periodic liveness checks)
+- Crash recovery with exponential backoff
+- Graceful shutdown in reverse startup order
+- Resource accounting (aggregate CPU/memory across all children)
+
+**Why separate processes, not threads:**
+- **Crash isolation**: MITM proxy crash doesn't kill the MCP gateway or telemetry writer.
+- **Sandbox granularity**: Each process gets its own OS-level sandbox. MITM proxy needs network access, MCP gateway does not.
+- **Resource limits**: OS-enforced per-process limits. A runaway parser can't starve the telemetry writer.
+- **Upgradability**: Individual processes can be restarted without bouncing the whole daemon.
+- **Auditability**: Each process has its own PID, its own log stream, its own resource usage visible in `ps`/Activity Monitor.
 
 ### Terminal notifications
 
