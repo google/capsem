@@ -33,22 +33,33 @@
 
 ## How it works
 
-```
-Developer                  Capsem (macOS)                    Linux VM
-    |                           |                               |
-    |-- capsem run "task" ----->|                                |
-    |                           |-- Boot VM (VZ.framework) ---->|
-    |                           |-- vsock:5001 terminal I/O --->|
-    |                           |-- vsock:5002 HTTPS MITM ----->|
-    |                           |-- vsock:5003 MCP gateway ---->|
-    |                           |                               |
-    |                           |   AI agent runs in sandbox    |
-    |                           |   All HTTPS inspected         |
-    |                           |   All MCP tools policy-checked|
-    |                           |   Workspace auto-snapshotted  |
-    |                           |                               |
-    |<-- Terminal output -------|<-- vsock:5001 ----------------|
-    |<-- Telemetry UI ----------|<-- session.db (SQLite) -------|
+```mermaid
+sequenceDiagram
+    participant D as Developer
+    participant C as Capsem (macOS)
+    participant VM as Linux VM
+
+    D->>C: capsem run "task"
+    C->>VM: Boot VM (Virtualization.framework)
+    C->>VM: vsock:5001 terminal I/O
+    C->>VM: vsock:5002 HTTPS MITM proxy
+    C->>VM: vsock:5003 MCP gateway
+
+    Note over VM: AI agent runs in sandbox
+
+    VM->>C: HTTPS requests (intercepted)
+    C->>C: Inspect, log, apply policy
+    C-->>VM: Forward to upstream (if allowed)
+
+    VM->>C: MCP tool calls
+    C->>C: Policy check + route
+    C-->>VM: Tool results
+
+    C->>C: Auto-snapshot workspace (APFS clonefile)
+    C->>C: Record telemetry to session.db
+
+    VM->>C: Terminal output (vsock:5001)
+    C->>D: Display in UI / terminal
 ```
 
 1. Capsem boots a Linux VM with a hardened kernel and read-only rootfs
