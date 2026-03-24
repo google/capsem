@@ -22,7 +22,7 @@ use capsem_logger::validate_select_only;
 use serde::Serialize;
 use tauri::State;
 
-use crate::clone_fd;
+use crate::boot::clone_fd;
 use crate::state::AppState;
 
 /// Get the active VM ID from app state, or return an error.

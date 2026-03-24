@@ -173,7 +173,7 @@ impl AppState {
                 // Reuse the file handle if it's the same FD.
                 if current_fd != Some(fd) {
                     current_fd = Some(fd);
-                    current_file = crate::clone_fd(fd).ok();
+                    current_file = crate::boot::clone_fd(fd).ok();
                 }
 
                 if let Some(mut file) = current_file.as_ref() {
