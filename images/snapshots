@@ -249,11 +249,47 @@ def cmd_history(args, as_json):
         print(data)
 
 
+def cmd_compact(args, as_json):
+    if len(args) < 2:
+        print("Usage: snapshots compact <cp1> <cp2> [cp3...] [--name NAME]", file=sys.stderr)
+        sys.exit(1)
+    checkpoints = []
+    name = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--name" and i + 1 < len(args):
+            name = args[i + 1]
+            i += 2
+        else:
+            checkpoints.append(args[i])
+            i += 1
+    arguments = {"checkpoints": checkpoints}
+    if name:
+        arguments["name"] = name
+    text = asyncio.run(call_tool("snapshots_compact", arguments))
+    data = parse_json_text(text)
+
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+
+    if isinstance(data, dict) and data.get("compacted"):
+        print(f"Compacted {data.get('merged_count', '?')} snapshots into {data.get('checkpoint', '?')}")
+        print(f"  Name: {data.get('name', '?')}")
+        print(f"  Hash: {data.get('hash', '?')}")
+        print(f"  Files: {data.get('files_count', '?')}")
+        deleted = data.get("deleted_checkpoints", [])
+        print(f"  Deleted: {', '.join(deleted)}")
+    else:
+        print(data)
+
+
 COMMANDS = {
     "create": cmd_create,
     "list": cmd_list,
     "changes": cmd_changes,
     "history": cmd_history,
+    "compact": cmd_compact,
     "revert": cmd_revert,
     "delete": cmd_delete,
 }
@@ -265,6 +301,7 @@ Commands:
     list                   List all snapshots with file changes
     changes                List changed files since checkpoints
     history <path>         Show all versions of a file across snapshots
+    compact <cp> <cp> ...  Merge snapshots into one (--name NAME)
     revert <path> [cp]     Revert a file (latest snapshot if cp omitted)
     delete <cp>            Delete a manual snapshot
 

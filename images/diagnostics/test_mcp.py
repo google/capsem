@@ -1717,3 +1717,99 @@ def test_scenario_s21_symlink_revert():
     r = run("test -e /root/s21_link && echo exists || echo gone")
     assert "exists" in r.stdout, f"link should be restored: {r.stdout}"
     run("rm -f /root/s21_a.txt /root/s21_link")
+
+
+# ---------------------------------------------------------------
+# Compact tests (belt-and-suspenders: MCP + CLI)
+# ---------------------------------------------------------------
+
+
+def test_compact_merges_and_frees_slots():
+    """Compact 2 snaps with different files -> merged has both, originals deleted."""
+    run("echo compact_a > /root/cpt_a.txt")
+    cp1 = _mcp_snap_create("cpt_v1")
+    run("echo compact_b > /root/cpt_b.txt")
+    cp2 = _mcp_snap_create("cpt_v2")
+
+    # MCP path
+    result = _init_and_call("snapshots_compact", {
+        "checkpoints": [cp1, cp2],
+        "name": "cpt_merged",
+    })
+    data = json.loads(result["content"][0]["text"])
+    assert data["compacted"] is True
+    assert data["merged_count"] == 2
+    new_cp = data["checkpoint"]
+    _created_snapshots.append(new_cp)
+
+    # Originals should be gone.
+    listing = _mcp_list()
+    cps = [s["checkpoint"] for s in listing["snapshots"]]
+    assert cp1 not in cps, f"{cp1} should be deleted"
+    assert cp2 not in cps, f"{cp2} should be deleted"
+    assert new_cp in cps, f"{new_cp} should exist"
+
+    # Merged snapshot should have both files.
+    h_a = _mcp_history("cpt_a.txt")
+    h_b = _mcp_history("cpt_b.txt")
+    assert any(v["checkpoint"] == new_cp for v in h_a["versions"]), "cpt_a.txt missing"
+    assert any(v["checkpoint"] == new_cp for v in h_b["versions"]), "cpt_b.txt missing"
+
+    run("rm -f /root/cpt_a.txt /root/cpt_b.txt")
+
+
+def test_compact_newest_wins():
+    """Compact: same file in 2 snaps -> newest version kept."""
+    run("echo old_content > /root/cpt_nw.txt")
+    cp1 = _mcp_snap_create("cpt_nw_old")
+    run("echo new_content > /root/cpt_nw.txt")
+    cp2 = _mcp_snap_create("cpt_nw_new")
+
+    result = _init_and_call("snapshots_compact", {
+        "checkpoints": [cp1, cp2],
+        "name": "cpt_nw_merged",
+    })
+    data = json.loads(result["content"][0]["text"])
+    new_cp = data["checkpoint"]
+    _created_snapshots.append(new_cp)
+
+    # Revert to merged snapshot and verify newest content.
+    run("echo overwritten > /root/cpt_nw.txt")
+    _mcp_revert("cpt_nw.txt", new_cp)
+    r = run("cat /root/cpt_nw.txt")
+    assert "new_content" in r.stdout, f"expected new_content, got: {r.stdout}"
+    run("rm -f /root/cpt_nw.txt")
+
+
+def test_compact_invalid_checkpoint():
+    """Compact with invalid checkpoint ID errors."""
+    with pytest.raises(AssertionError, match="not found"):
+        _init_and_call("snapshots_compact", {
+            "checkpoints": ["cp-9999"],
+            "name": "bad",
+        })
+
+
+def test_compact_cli():
+    """Compact via CLI (belt-and-suspenders)."""
+    run("echo cli_compact > /root/cpt_cli.txt")
+    cp1 = _snap_create("cpt_cli_a")
+    run("echo cli_compact_v2 > /root/cpt_cli.txt")
+    cp2 = _snap_create("cpt_cli_b")
+
+    r = run(f"snapshots compact {cp1} {cp2} --name cpt_cli_merged --json")
+    assert r.returncode == 0, f"compact failed: {r.stderr}"
+    data = json.loads(r.stdout)
+    assert data["compacted"] is True
+    new_cp = data["checkpoint"]
+    _created_snapshots.append(new_cp)
+
+    # Verify originals gone.
+    r = run("snapshots list --json")
+    listing = json.loads(r.stdout)
+    cps = [s["checkpoint"] for s in listing["snapshots"]]
+    assert cp1 not in cps
+    assert cp2 not in cps
+    assert new_cp in cps
+
+    run("rm -f /root/cpt_cli.txt")

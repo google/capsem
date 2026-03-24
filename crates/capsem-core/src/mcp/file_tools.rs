@@ -22,7 +22,7 @@ use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// Tool names for file operations.
 pub const FILE_TOOL_NAMES: &[&str] = &[
-    "snapshots_changes", "snapshots_list", "snapshots_revert", "snapshots_create", "snapshots_delete", "snapshots_history",
+    "snapshots_changes", "snapshots_list", "snapshots_revert", "snapshots_create", "snapshots_delete", "snapshots_history", "snapshots_compact",
 ];
 
 pub fn is_file_tool(name: &str) -> bool {
@@ -190,6 +190,39 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 read_only_hint: true,
                 destructive_hint: false,
                 idempotent_hint: true,
+                open_world_hint: false,
+            }),
+        },
+        McpToolDef {
+            namespaced_name: "snapshots_compact".into(),
+            original_name: "snapshots_compact".into(),
+            description: Some(concat!(
+                "Compact multiple snapshots into a single new manual snapshot. ",
+                "Merges workspaces with newest-file-wins strategy. ",
+                "Deletes all source snapshots after successful compaction. ",
+                "Frees snapshot slots while preserving file state.",
+            ).into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "checkpoints": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Checkpoint IDs to compact (e.g., ['cp-0', 'cp-1', 'cp-10'])"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name for the compacted snapshot (optional, defaults to timestamp)"
+                    }
+                },
+                "required": ["checkpoints"]
+            }),
+            server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("Compact snapshots".into()),
+                read_only_hint: false,
+                destructive_hint: true,
+                idempotent_hint: false,
                 open_world_hint: false,
             }),
         },
@@ -823,6 +856,71 @@ pub fn handle_snapshots_history(
             "content": [{"type": "text", "text": result.to_string()}]
         }),
     )
+}
+
+/// Handle `snapshots_compact` tool call -- merge multiple snapshots into one.
+pub fn handle_snapshots_compact(
+    arguments: &Value,
+    scheduler: &mut AutoSnapshotScheduler,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let checkpoints = match arguments.get("checkpoints").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoints' array"),
+    };
+
+    let name = arguments.get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name = if name.is_empty() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format!("compacted_{now}")
+    } else {
+        if let Err(e) = validate_snapshot_name(&name) {
+            return JsonRpcResponse::err(request_id, -32602, format!("invalid name: {e}"));
+        }
+        name
+    };
+
+    // Parse checkpoint IDs.
+    let mut slots = Vec::new();
+    for cp in checkpoints {
+        let cp_str = match cp.as_str() {
+            Some(s) => s,
+            None => return JsonRpcResponse::err(request_id, -32602, "checkpoint must be a string"),
+        };
+        match parse_checkpoint(cp_str) {
+            Ok(slot) => slots.push(slot),
+            Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
+        }
+    }
+
+    let deleted_cps: Vec<String> = slots.iter().map(|s| format!("cp-{s}")).collect();
+
+    match scheduler.compact_snapshots(&slots, &name) {
+        Ok(result) => {
+            let files_count = collect_files(&result.workspace_path).len();
+            JsonRpcResponse::ok(
+                request_id,
+                serde_json::json!({
+                    "content": [{"type": "text", "text": serde_json::json!({
+                        "compacted": true,
+                        "checkpoint": format!("cp-{}", result.slot),
+                        "name": name,
+                        "hash": result.hash,
+                        "merged_count": deleted_cps.len(),
+                        "deleted_checkpoints": deleted_cps,
+                        "files_count": files_count,
+                    }).to_string()}]
+                }),
+            )
+        }
+        Err(e) => JsonRpcResponse::err(request_id, -32603, format!("{e}")),
+    }
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`snapshots` CLI tool** -- in-VM command for managing workspace snapshots (`snapshots create/list/changes/history/revert/delete`). Uses FastMCP client to talk to the host MCP gateway. Supports `--json` flag for machine-readable output.
 - **`snapshots_history` MCP tool** -- shows all versions of a file across snapshots with sequential status (new/modified/unchanged/deleted). Accepts both relative paths and `/root/` prefixed paths.
+- **`snapshots_compact` MCP tool** -- merges multiple snapshots into a single new manual snapshot. Newest-file-wins strategy. Deletes source snapshots after compaction, freeing pool slots.
 - **Boot timing via vsock** -- capsem-init records per-stage durations as JSONL, PTY agent sends `BootTiming` message to host after boot. Host logs each stage with tracing and emits `boot-timing` event to frontend. Stages: squashfs, virtiofs, overlayfs, workspace, network, net_proxy, deploy, venv, agent_start.
 - **Named snapshots** -- new `snapshot` MCP tool creates named checkpoints with blake3 workspace hash. Manual snapshots are stored in a separate pool from auto snapshots and are never auto-culled.
 - **Snapshot management MCP tools** -- `list_snapshots` (returns all snapshots with origin, name, hash, age), `delete_snapshot` (remove manual snapshots only, refuses auto). `list_changed_files` now includes `checkpoint_origin` and `checkpoint_name` in output.

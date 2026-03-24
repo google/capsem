@@ -284,6 +284,125 @@ impl AutoSnapshotScheduler {
         }
         false
     }
+
+    /// Compact multiple snapshots into a single new manual snapshot.
+    ///
+    /// Merges workspaces oldest-first (newest file version wins).
+    /// Deletes all source snapshots after successful compaction.
+    pub fn compact_snapshots(&mut self, slots: &[usize], name: &str) -> anyhow::Result<SnapshotSlot> {
+        anyhow::ensure!(!slots.is_empty(), "no snapshots to compact");
+        anyhow::ensure!(
+            self.available_manual_slots() > 0,
+            "no manual snapshot slots available (max {})", self.max_manual
+        );
+
+        // Validate all slots exist.
+        for &slot in slots {
+            anyhow::ensure!(
+                self.slot_dir(slot).join("metadata.json").exists(),
+                "checkpoint cp-{slot} not found"
+            );
+        }
+
+        // Load metadata for sorting by time.
+        let mut metas: Vec<(usize, u128)> = Vec::new();
+        for &slot in slots {
+            if let Some(meta) = self.get_metadata(slot) {
+                metas.push((slot, meta.epoch_millis));
+            }
+        }
+        // Sort oldest-first so newer files overwrite older.
+        metas.sort_by_key(|&(_, epoch)| epoch);
+
+        // Build merged workspace in a temp dir within snapshots dir.
+        let tmp_dir = self.snapshots_dir().join("_compact_tmp");
+        if tmp_dir.exists() {
+            std::fs::remove_dir_all(&tmp_dir)?;
+        }
+        std::fs::create_dir_all(&tmp_dir)?;
+        let merged_ws = tmp_dir.join("workspace");
+        std::fs::create_dir_all(&merged_ws)?;
+
+        for &(slot, _) in &metas {
+            let src_ws = self.slot_dir(slot).join("workspace");
+            if !src_ws.exists() {
+                continue;
+            }
+            // Copy all files from this snapshot into merged (overwriting older versions).
+            for entry in walkdir::WalkDir::new(&src_ws).into_iter().filter_map(|e| e.ok()) {
+                let rel = match entry.path().strip_prefix(&src_ws) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                let dst = merged_ws.join(rel);
+                if entry.file_type().is_dir() {
+                    let _ = std::fs::create_dir_all(&dst);
+                } else if entry.file_type().is_file() {
+                    if let Some(parent) = dst.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    std::fs::copy(entry.path(), &dst)?;
+                }
+            }
+        }
+
+        // Find an available manual slot.
+        let target_slot = (0..self.max_manual)
+            .map(|i| self.manual_slot(i))
+            .find(|&s| !self.slot_dir(s).join("metadata.json").exists())
+            .ok_or_else(|| anyhow::anyhow!("no manual snapshot slots available"))?;
+
+        // Create the new snapshot slot.
+        let slot_dir = self.slot_dir(target_slot);
+        if slot_dir.exists() {
+            std::fs::remove_dir_all(&slot_dir)?;
+        }
+        std::fs::create_dir_all(&slot_dir)?;
+
+        // Move merged workspace into slot.
+        std::fs::rename(&merged_ws, slot_dir.join("workspace"))?;
+        // Clean up temp dir.
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        // Compute hash.
+        let hash = workspace_hash(&slot_dir.join("workspace"));
+
+        // Write metadata.
+        let now = SystemTime::now();
+        let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+        let epoch = since_epoch.as_secs();
+        let epoch_millis = since_epoch.as_millis();
+        let meta = SlotMetadata {
+            slot: target_slot,
+            timestamp: chrono_like_iso(epoch),
+            epoch_secs: epoch,
+            epoch_millis,
+            origin: SnapshotOrigin::Manual,
+            name: Some(name.to_string()),
+            hash: Some(hash.clone()),
+        };
+        let meta_path = slot_dir.join("metadata.json");
+        std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+
+        // Delete source snapshots.
+        for &(slot, _) in &metas {
+            let dir = self.slot_dir(slot);
+            if dir.exists() {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+        }
+
+        info!(slot = target_slot, name, merged = metas.len(), "snapshots compacted");
+
+        Ok(SnapshotSlot {
+            slot: target_slot,
+            origin: SnapshotOrigin::Manual,
+            name: Some(name.to_string()),
+            hash: Some(hash),
+            timestamp: now,
+            workspace_path: slot_dir.join("workspace"),
+        })
+    }
 }
 
 /// Compute a blake3 hash of the workspace manifest (sorted file paths + sizes).
@@ -535,6 +654,99 @@ mod tests {
         std::fs::write(ws.join("a.txt"), "v2-longer").unwrap();
         let h2 = workspace_hash(&ws);
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn compact_two_snapshots_merges_files() {
+        let (_tmp, session) = setup_session_dir();
+        let mut s = sched(&session);
+
+        // Snap 1: file_a.txt
+        std::fs::write(session.join("workspace/file_a.txt"), "aaa").unwrap();
+        s.take_named_snapshot("snap_a").unwrap();
+
+        // Snap 2: file_b.txt (file_a still exists)
+        std::fs::write(session.join("workspace/file_b.txt"), "bbb").unwrap();
+        s.take_named_snapshot("snap_b").unwrap();
+
+        // Compact both into one.
+        let slots: Vec<usize> = s.list_snapshots().iter().map(|sn| sn.slot).collect();
+        let result = s.compact_snapshots(&slots, "merged").unwrap();
+
+        // Merged snapshot should have both files.
+        assert!(result.workspace_path.join("file_a.txt").exists());
+        assert!(result.workspace_path.join("file_b.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(result.workspace_path.join("file_a.txt")).unwrap(),
+            "aaa"
+        );
+        assert_eq!(
+            std::fs::read_to_string(result.workspace_path.join("file_b.txt")).unwrap(),
+            "bbb"
+        );
+    }
+
+    #[test]
+    fn compact_newest_wins() {
+        let (_tmp, session) = setup_session_dir();
+        let mut s = sched(&session);
+
+        // Snap 1: file.txt = "old"
+        std::fs::write(session.join("workspace/file.txt"), "old").unwrap();
+        let snap1 = s.take_named_snapshot("v1").unwrap();
+
+        // Snap 2: file.txt = "new"
+        std::fs::write(session.join("workspace/file.txt"), "new").unwrap();
+        let snap2 = s.take_named_snapshot("v2").unwrap();
+
+        let result = s.compact_snapshots(&[snap1.slot, snap2.slot], "merged").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(result.workspace_path.join("file.txt")).unwrap(),
+            "new"
+        );
+    }
+
+    #[test]
+    fn compact_deletes_originals() {
+        let (_tmp, session) = setup_session_dir();
+        let mut s = sched(&session);
+
+        std::fs::write(session.join("workspace/x.txt"), "x").unwrap();
+        let snap1 = s.take_named_snapshot("a").unwrap();
+        let snap2 = s.take_named_snapshot("b").unwrap();
+
+        let slot1 = snap1.slot;
+        let slot2 = snap2.slot;
+        s.compact_snapshots(&[slot1, slot2], "merged").unwrap();
+
+        // Originals should be gone.
+        assert!(s.get_snapshot(slot1).is_none());
+        assert!(s.get_snapshot(slot2).is_none());
+    }
+
+    #[test]
+    fn compact_requires_manual_slot() {
+        let (_tmp, session) = setup_session_dir();
+        // max_manual = 1 so only 1 manual slot available.
+        let mut s = AutoSnapshotScheduler::new(session.to_path_buf(), 3, 1, Duration::from_secs(300));
+
+        std::fs::write(session.join("workspace/f.txt"), "data").unwrap();
+        let snap1 = s.take_named_snapshot("fill").unwrap();
+        // Manual pool is now full (1/1).
+        // Create an auto snapshot to compact.
+        let snap2 = s.take_snapshot().unwrap();
+        // Compact auto into manual should fail (pool full).
+        let result = s.compact_snapshots(&[snap2.slot], "nope");
+        assert!(result.is_err(), "should fail when manual pool is full");
+    }
+
+    #[test]
+    fn compact_invalid_slot_errors() {
+        let (_tmp, session) = setup_session_dir();
+        let mut s = sched(&session);
+
+        let result = s.compact_snapshots(&[999], "bad");
+        assert!(result.is_err());
     }
 
     #[test]

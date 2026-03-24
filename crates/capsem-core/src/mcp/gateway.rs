@@ -260,6 +260,9 @@ async fn handle_json_rpc(
                         "snapshots_history" => {
                             super::file_tools::handle_snapshots_history(&arguments, &sched, ws, req.id.clone())
                         }
+                        "snapshots_compact" => {
+                            super::file_tools::handle_snapshots_compact(&arguments, &mut sched, req.id.clone())
+                        }
                         _ => JsonRpcResponse::err(req.id.clone(), -32602, format!("unknown file tool: {tool_name}")),
                     });
                 } else {
@@ -1038,8 +1041,8 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        // 3 HTTP builtins + 6 file tools = 9
-        assert_eq!(tools.len(), 9);
+        // 3 HTTP builtins + 7 file tools = 10
+        assert_eq!(tools.len(), 10);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for file_tool in super::super::file_tools::FILE_TOOL_NAMES {
             assert!(names.contains(file_tool), "file tool {file_tool} missing from tools/list");
