@@ -31,8 +31,8 @@ use tracing::{debug, info, warn};
 
 use super::cert_authority::{CertAuthority, MitmCertResolver};
 use super::policy::NetworkPolicy;
-use crate::gateway::events::{StopReason, collect_summary};
-use crate::gateway::provider::ProviderKind;
+use crate::net::ai_traffic::events::{StopReason, collect_summary};
+use crate::net::ai_traffic::provider::ProviderKind;
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.
 pub type UpstreamTlsConfig = rustls::ClientConfig;
@@ -52,9 +52,9 @@ pub struct MitmProxyConfig {
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,
     /// Model pricing lookup table for cost estimation.
-    pub pricing: crate::gateway::pricing::PricingTable,
+    pub pricing: crate::net::ai_traffic::pricing::PricingTable,
     /// Trace state for linking multi-turn tool-use conversations.
-    pub trace_state: std::sync::Mutex<crate::gateway::TraceState>,
+    pub trace_state: std::sync::Mutex<crate::net::ai_traffic::TraceState>,
 }
 
 /// Detect AI provider from domain name.
@@ -547,12 +547,12 @@ async fn handle_request(
 
     // Build the response body with telemetry wrapper.
     let (inner_body, resp_kind) = if let Some(provider) = ai_provider {
-        use crate::gateway::ai_body::AiResponseBody;
-        use crate::gateway::anthropic::AnthropicStreamParserWithState;
-        use crate::gateway::google::GoogleStreamParser;
-        use crate::gateway::openai::OpenAiStreamParser;
+        use crate::net::ai_traffic::ai_body::AiResponseBody;
+        use crate::net::ai_traffic::anthropic::AnthropicStreamParserWithState;
+        use crate::net::ai_traffic::google::GoogleStreamParser;
+        use crate::net::ai_traffic::openai::OpenAiStreamParser;
 
-        let provider_parser: Box<dyn crate::gateway::events::ProviderStreamParser + Send> = match provider {
+        let provider_parser: Box<dyn crate::net::ai_traffic::events::ProviderStreamParser + Send> = match provider {
             ProviderKind::Anthropic => Box::new(AnthropicStreamParserWithState::new()),
             ProviderKind::OpenAi => Box::new(OpenAiStreamParser::new()),
             ProviderKind::Google => Box::new(GoogleStreamParser::new()),
@@ -624,8 +624,8 @@ enum RespStatsKind {
     Plain(Arc<Mutex<BodyStats>>),
     /// AI response: SSE-parsed body with events + stats.
     Ai {
-        stats: Arc<Mutex<crate::gateway::ai_body::AiBodyStats>>,
-        state: Arc<Mutex<crate::gateway::ai_body::AiStreamState>>,
+        stats: Arc<Mutex<crate::net::ai_traffic::ai_body::AiBodyStats>>,
+        state: Arc<Mutex<crate::net::ai_traffic::ai_body::AiStreamState>>,
     },
 }
 
@@ -775,11 +775,11 @@ impl TelemetryEmitter {
         request_bytes: u64,
         response_bytes: u64,
         duration_ms: u64,
-        ai_state_ref: &Option<Arc<Mutex<crate::gateway::ai_body::AiStreamState>>>,
+        ai_state_ref: &Option<Arc<Mutex<crate::net::ai_traffic::ai_body::AiStreamState>>>,
     ) {
-        use crate::gateway::events::parse_non_streaming_usage;
-        use crate::gateway::provider::{extract_model_from_path, tool_origin};
-        use crate::gateway::request_parser;
+        use crate::net::ai_traffic::events::parse_non_streaming_usage;
+        use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin};
+        use crate::net::ai_traffic::request_parser;
 
         // Parse request body for metadata.
         let req_body_bytes: Vec<u8> = self.req_stats.lock()
@@ -1443,8 +1443,8 @@ mod tests {
             policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
             db,
             upstream_tls: make_upstream_tls_config(),
-            pricing: crate::gateway::pricing::PricingTable::load(),
-            trace_state: std::sync::Mutex::new(crate::gateway::TraceState::new()),
+            pricing: crate::net::ai_traffic::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(crate::net::ai_traffic::TraceState::new()),
         })
     }
 
@@ -1951,21 +1951,21 @@ mod tests {
         let db = make_test_db();
 
         // Set up AI provider emitter with fake SSE state
-        let ai_state = Arc::new(Mutex::new(crate::gateway::ai_body::AiStreamState {
-            sse_parser: crate::gateway::sse::SseParser::new(),
-            provider_parser: Box::new(crate::gateway::anthropic::AnthropicStreamParserWithState::new()),
+        let ai_state = Arc::new(Mutex::new(crate::net::ai_traffic::ai_body::AiStreamState {
+            sse_parser: crate::net::ai_traffic::sse::SseParser::new(),
+            provider_parser: Box::new(crate::net::ai_traffic::anthropic::AnthropicStreamParserWithState::new()),
             events: vec![
-                crate::gateway::events::LlmEvent::MessageStart {
+                crate::net::ai_traffic::events::LlmEvent::MessageStart {
                     message_id: Some("msg_test".into()),
                     model: Some("claude-test".into()),
                 },
-                crate::gateway::events::LlmEvent::TextDelta { index: 0, text: "Hello".into() },
-                crate::gateway::events::LlmEvent::MessageEnd {
-                    stop_reason: Some(crate::gateway::events::StopReason::EndTurn),
+                crate::net::ai_traffic::events::LlmEvent::TextDelta { index: 0, text: "Hello".into() },
+                crate::net::ai_traffic::events::LlmEvent::MessageEnd {
+                    stop_reason: Some(crate::net::ai_traffic::events::StopReason::EndTurn),
                 },
             ],
         }));
-        let ai_stats = Arc::new(Mutex::new(crate::gateway::ai_body::AiBodyStats {
+        let ai_stats = Arc::new(Mutex::new(crate::net::ai_traffic::ai_body::AiBodyStats {
             bytes: 500,
             preview: Vec::new(),
             max_preview: 0,
@@ -2318,10 +2318,10 @@ mod tests {
     }
 
     /// Build an `AiStreamState` with pre-populated events for testing.
-    fn make_ai_state(events: Vec<crate::gateway::events::LlmEvent>) -> Arc<Mutex<crate::gateway::ai_body::AiStreamState>> {
-        use crate::gateway::anthropic::AnthropicStreamParserWithState;
-        Arc::new(Mutex::new(crate::gateway::ai_body::AiStreamState {
-            sse_parser: crate::gateway::sse::SseParser::new(),
+    fn make_ai_state(events: Vec<crate::net::ai_traffic::events::LlmEvent>) -> Arc<Mutex<crate::net::ai_traffic::ai_body::AiStreamState>> {
+        use crate::net::ai_traffic::anthropic::AnthropicStreamParserWithState;
+        Arc::new(Mutex::new(crate::net::ai_traffic::ai_body::AiStreamState {
+            sse_parser: crate::net::ai_traffic::sse::SseParser::new(),
             provider_parser: Box::new(AnthropicStreamParserWithState::new()),
             events,
         }))
@@ -2349,7 +2349,7 @@ mod tests {
 
     #[tokio::test]
     async fn emit_model_call_estimates_cost() {
-        use crate::gateway::events::LlmEvent;
+        use crate::net::ai_traffic::events::LlmEvent;
         let config = make_config_dev();
         let ai_state = make_ai_state(vec![
             LlmEvent::MessageStart {
@@ -2382,7 +2382,7 @@ mod tests {
 
     #[tokio::test]
     async fn trace_chains_across_tool_use() {
-        use crate::gateway::events::{LlmEvent, StopReason};
+        use crate::net::ai_traffic::events::{LlmEvent, StopReason};
         let config = make_config_dev();
 
         // First call: model responds with tool_use, tool_call_id = "call_1".
@@ -2466,7 +2466,7 @@ mod tests {
 
     #[tokio::test]
     async fn trace_completes_on_end_turn() {
-        use crate::gateway::events::{LlmEvent, StopReason};
+        use crate::net::ai_traffic::events::{LlmEvent, StopReason};
         let config = make_config_dev();
 
         let ai_state = make_ai_state(vec![

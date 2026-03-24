@@ -11,6 +11,14 @@ use serde_json::Value;
 use crate::events::{Decision, FileAction, FileEvent, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry};
 use crate::schema;
 
+/// Counts of network events by decision outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NetEventCounts {
+    pub total: usize,
+    pub allowed: usize,
+    pub denied: usize,
+}
+
 /// Aggregate statistics for a session (computed from SQL queries).
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionStats {
@@ -465,7 +473,7 @@ impl DbReader {
     }
 
     /// Count net events by decision: returns (total, allowed, denied).
-    pub fn net_event_counts(&self) -> rusqlite::Result<(usize, usize, usize)> {
+    pub fn net_event_counts(&self) -> rusqlite::Result<NetEventCounts> {
         self.conn.query_row(
             "SELECT
                 COUNT(*),
@@ -474,11 +482,11 @@ impl DbReader {
              FROM net_events",
             [],
             |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as usize,
-                    row.get::<_, i64>(1)? as usize,
-                    row.get::<_, i64>(2)? as usize,
-                ))
+                Ok(NetEventCounts {
+                    total: row.get::<_, i64>(0)? as usize,
+                    allowed: row.get::<_, i64>(1)? as usize,
+                    denied: row.get::<_, i64>(2)? as usize,
+                })
             },
         )
     }

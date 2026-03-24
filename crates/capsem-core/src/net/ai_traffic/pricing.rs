@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 /// Embedded pricing data (updated via `just update_prices`).
-const PRICING_JSON: &str = include_str!("../../../../config/genai-prices.json");
+const PRICING_JSON: &str = include_str!("../../../../../config/genai-prices.json");
 
 /// Pre-parsed pricing lookup table.
 pub struct PricingTable {

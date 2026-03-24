@@ -205,10 +205,10 @@ async fn net_event_counts() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    let (total, allowed, denied) = reader.net_event_counts().unwrap();
-    assert_eq!(total, 6);
-    assert_eq!(allowed, 3);
-    assert_eq!(denied, 2);
+    let counts = reader.net_event_counts().unwrap();
+    assert_eq!(counts.total, 6);
+    assert_eq!(counts.allowed, 3);
+    assert_eq!(counts.denied, 2);
 }
 
 #[tokio::test]
@@ -261,7 +261,8 @@ async fn empty_db_queries() {
     let reader = capsem_logger::DbReader::open(&path).unwrap();
     assert!(reader.recent_net_events(10).unwrap().is_empty());
     assert!(reader.recent_model_calls(10).unwrap().is_empty());
-    assert_eq!(reader.net_event_counts().unwrap(), (0, 0, 0));
+    let empty = reader.net_event_counts().unwrap();
+    assert_eq!((empty.total, empty.allowed, empty.denied), (0, 0, 0));
     assert_eq!(reader.model_call_count().unwrap(), 0);
     assert!(reader.tool_calls_for(999).unwrap().is_empty());
 }
@@ -282,7 +283,7 @@ async fn writer_drop_flushes_pending_writes() {
     }
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().0, 10);
+    assert_eq!(reader.net_event_counts().unwrap().total, 10);
 }
 
 // ── Concurrent writes ────────────────────────────────────────────────
@@ -302,7 +303,7 @@ async fn concurrent_async_writes() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().0, 50);
+    assert_eq!(reader.net_event_counts().unwrap().total, 50);
 }
 
 // ── WAL concurrent access ───────────────────────────────────────────
@@ -459,7 +460,7 @@ async fn rapid_fire_writes() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().0, 500);
+    assert_eq!(reader.net_event_counts().unwrap().total, 500);
 }
 
 // ── Mixed operations ─────────────────────────────────────────────────
@@ -477,7 +478,7 @@ async fn mixed_net_events_and_model_calls() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().0, 2);
+    assert_eq!(reader.net_event_counts().unwrap().total, 2);
     assert_eq!(reader.model_call_count().unwrap(), 2);
 }
 
@@ -580,7 +581,7 @@ async fn creates_parent_directories() {
 
     assert!(path.exists());
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().0, 1);
+    assert_eq!(reader.net_event_counts().unwrap().total, 1);
 }
 
 // ========================================================================
@@ -681,12 +682,12 @@ async fn net_event_counts_error_counted_in_total_only() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let (total, allowed, denied) = reader.net_event_counts().unwrap();
-    assert_eq!(total, 4);
-    assert_eq!(allowed, 1);
-    assert_eq!(denied, 1);
+    let counts = reader.net_event_counts().unwrap();
+    assert_eq!(counts.total, 4);
+    assert_eq!(counts.allowed, 1);
+    assert_eq!(counts.denied, 1);
     // Error events are in total but not in allowed or denied.
-    let error_count = total - allowed - denied;
+    let error_count = counts.total - counts.allowed - counts.denied;
     assert_eq!(error_count, 2, "error events must be counted in total only");
 }
 

@@ -1,7 +1,6 @@
 pub mod asset_manager;
 pub mod auto_snapshot;
 pub mod fs_monitor;
-pub mod gateway;
 pub mod host_config;
 pub mod host_state;
 pub mod log_layer;

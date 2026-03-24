@@ -116,20 +116,8 @@ impl AsyncWrite for AsyncVsock {
     }
 }
 
-impl Drop for AsyncVsock {
-    fn drop(&mut self) {
-        // Close the underlying file descriptor
-        unsafe {
-            libc::close(self.fd);
-        }
-        // Let the std_stream drop as normal, but its FD is now closed,
-        // which might cause an issue on drop, so we take it out using into_raw_fd if we could.
-        // Actually, UnixStream Drop will close it. So let's not double-close.
-        // wait, we used UnixStream::from_raw_fd. So when inner is dropped,
-        // the std UnixStream is dropped, which closes the fd automatically!
-        // So we MUST NOT call libc::close(self.fd) manually.
-    }
-}
+// No custom Drop: inner AsyncFd<UnixStream> owns the fd via from_raw_fd
+// and closes it automatically. Manual libc::close would double-close.
 
 /// Retrieve the process name that initiated the TCP connection.
 async fn get_process_name(client_port: u16) -> Option<String> {
@@ -278,6 +266,8 @@ async fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::io::IntoRawFd;
+    use std::os::unix::net::UnixStream;
 
     #[test]
     fn vsock_port_matches_host() {
@@ -287,5 +277,73 @@ mod tests {
     #[test]
     fn listen_port_is_10443() {
         assert_eq!(LISTEN_PORT_HTTPS, 10443);
+    }
+
+    #[test]
+    fn async_vsock_from_socketpair() {
+        // Verify AsyncVsock wraps a raw fd from a unix socketpair
+        let (a, _b) = UnixStream::pair().unwrap();
+        let fd = a.into_raw_fd();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let vsock = AsyncVsock::new(fd);
+            assert!(vsock.is_ok(), "AsyncVsock should wrap a socketpair fd");
+            // Drop will close the fd
+        });
+    }
+
+    #[tokio::test]
+    async fn tcp_bind_accept_localhost() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (server, peer) = listener.accept().await.unwrap();
+
+        assert_eq!(peer.ip(), std::net::Ipv4Addr::LOCALHOST);
+        assert!(client.peer_addr().is_ok());
+        drop(server);
+        drop(client);
+    }
+
+    #[tokio::test]
+    async fn meta_line_injected_before_data() {
+        // Simulate the meta line injection that handle_connection does
+        let (a, b) = UnixStream::pair().unwrap();
+        let fd = a.into_raw_fd();
+        let mut vsock = AsyncVsock::new(fd).unwrap();
+
+        let meta = format!("\0CAPSEM_META:test-agent\n");
+        tokio::io::AsyncWriteExt::write_all(&mut vsock, meta.as_bytes())
+            .await
+            .unwrap();
+
+        // Read from the other end
+        let mut buf = vec![0u8; meta.len()];
+        use std::io::Read;
+        let mut reader = b;
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf[0], 0); // NUL prefix
+        assert!(String::from_utf8_lossy(&buf).contains("CAPSEM_META:test-agent"));
+    }
+
+    #[tokio::test]
+    async fn async_vsock_write_then_read() {
+        let (a, b) = UnixStream::pair().unwrap();
+        let fd_a = a.into_raw_fd();
+        let fd_b = b.into_raw_fd();
+
+        let mut va = AsyncVsock::new(fd_a).unwrap();
+        let mut vb = AsyncVsock::new(fd_b).unwrap();
+
+        // Write from a, read fixed-size from b
+        tokio::io::AsyncWriteExt::write_all(&mut va, b"ping").await.unwrap();
+
+        let mut buf = [0u8; 4];
+        tokio::io::AsyncReadExt::read_exact(&mut vb, &mut buf).await.unwrap();
+        assert_eq!(&buf, b"ping");
     }
 }

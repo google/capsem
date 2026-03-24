@@ -423,8 +423,8 @@ impl ProviderStreamParser for OpenAiStreamParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::events::collect_summary;
-    use crate::gateway::sse::SseParser;
+    use crate::net::ai_traffic::events::collect_summary;
+    use crate::net::ai_traffic::sse::SseParser;
 
     #[test]
     fn upstream_url_responses() {

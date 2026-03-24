@@ -155,8 +155,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::anthropic::AnthropicStreamParserWithState;
-    use crate::gateway::events::collect_summary;
+    use crate::net::ai_traffic::anthropic::AnthropicStreamParserWithState;
+    use crate::net::ai_traffic::events::collect_summary;
     use http_body_util::BodyExt;
     use hyper::body::Bytes;
 

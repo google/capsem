@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Decomposed god modules into focused sub-modules** -- split `main.rs` (2,722 LOC) into 7 modules (assets, boot, cli, gui, logging, session_mgmt, vsock_wiring); split `policy_config.rs` (5,999 LOC) into 8 sub-modules (types, registry, loader, presets, resolver, builder, lint, tree); split `session.rs` (1,995 LOC) into 3 sub-modules (types, index, maintenance). All existing import paths preserved via re-exports.
+- **Moved AI traffic parsing under `net/`** -- `gateway/` renamed to `net/ai_traffic/` to reflect its role as the MITM proxy's AI parsing layer. All import paths updated.
+- **`net_event_counts()` returns a named struct** -- replaced bare `(usize, usize, usize)` tuple with `NetEventCounts { total, allowed, denied }` to prevent field-order bugs.
+
+### Fixed
+- **Guest agent vsock I/O no longer hangs on host stall** -- `vsock_connect()` now sets `SO_SNDTIMEO`/`SO_RCVTIMEO` (30s) on all vsock sockets. `write_all_fd` and `read_exact_fd` explicitly handle `EAGAIN` as a fatal timeout, preventing both kernel-level hangs and userspace spin-loops.
+- **AsyncVsock double-close bug** -- removed manual `libc::close()` in `Drop` that double-closed the fd already owned by the inner `UnixStream`.
 
 ## [0.11.0] - 2026-03-24
 

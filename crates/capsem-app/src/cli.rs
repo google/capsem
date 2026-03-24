@@ -230,8 +230,8 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             policy: Arc::clone(&ns.policy),
             db: Arc::clone(&ns.db),
             upstream_tls: Arc::clone(&ns.upstream_tls),
-            pricing: capsem_core::gateway::pricing::PricingTable::load(),
-            trace_state: std::sync::Mutex::new(capsem_core::gateway::TraceState::new()),
+            pricing: capsem_core::net::ai_traffic::pricing::PricingTable::load(),
+            trace_state: std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()),
         })
     });
 

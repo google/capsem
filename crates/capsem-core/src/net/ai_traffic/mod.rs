@@ -9,6 +9,26 @@
 /// - Provider-specific SSE parsers (`anthropic.rs`, `openai.rs`, `google.rs`)
 /// - Unified event collection and summarization (`events.rs`)
 /// - Model pricing estimation (`pricing.rs`)
+///
+/// # Tool call data paths (3 parallel systems)
+///
+/// 1. **model_calls.tool_calls** (MITM proxy): every tool_use block in an
+///    LLM response is recorded with origin ("native"/"local"/"mcp_proxy")
+///    via `provider::tool_origin()`. Linked to model_calls by FK.
+/// 2. **mcp_calls** (MCP gateway, vsock:5003): every tools/call JSON-RPC
+///    request is recorded independently in `mcp::gateway::log_mcp_call()`.
+/// 3. **net_events** (builtin HTTP tools): `fetch_http`/`grep_http`/
+///    `http_headers` emit NetEvents for domain policy enforcement.
+///
+/// # Correlation gaps (next-gen TODOs)
+///
+/// - `tool_calls.mcp_call_id` column exists but is never populated.
+///   No FK links a model's tool_use to the MCP gateway call that executed it.
+/// - `mcp_calls` has no `trace_id`, so MCP tool executions cannot be grouped
+///   by agent turn.
+/// - Builtin tool NetEvents are not linked to their tool_call entries.
+/// - `tool_origin()` imports `mcp::builtin_tools::is_builtin_tool()` --
+///   cross-module coupling that should be replaced by a shared registry.
 pub mod ai_body;
 pub mod anthropic;
 pub mod events;

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use capsem_logger::{DbWriter, FileAction, FileEvent, WriteOp};
 

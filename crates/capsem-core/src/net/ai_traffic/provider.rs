@@ -92,11 +92,24 @@ pub fn extract_model_from_path(path: &str) -> Option<String> {
     Some(model.to_string())
 }
 
-/// Determine the origin of a tool call based on its name.
+/// Classify a tool call's origin from its name (heuristic).
 ///
 /// - Built-in MCP tools (fetch_http, grep_http, http_headers): "local"
 /// - External MCP tools with server__tool namespacing: "mcp_proxy"
 /// - Native model tools (write_file, bash, run_shell_command, etc.): "native"
+///
+/// # Known limitations (next-gen TODOs)
+///
+/// - **Cross-module import**: calls `mcp::builtin_tools::is_builtin_tool()`,
+///   coupling ai_traffic to the MCP module. A shared tool registry would be
+///   cleaner but premature until next-gen unifies tool tracking.
+/// - **Heuristic-only**: uses `__` as MCP namespace separator. If a native
+///   tool name contains `__`, it would be misclassified as mcp_proxy.
+/// - **No correlation to mcp_calls**: the `mcp_call_id` column in
+///   `tool_calls` is defined but never populated. There is no mechanism to
+///   link a model_call's tool_call entry to the corresponding mcp_calls row.
+///   Next-gen should propagate a shared call_id or request_id through the
+///   MCP gateway.
 pub fn tool_origin(name: &str) -> &'static str {
     if crate::mcp::builtin_tools::is_builtin_tool(name) {
         "local"

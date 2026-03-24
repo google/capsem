@@ -375,8 +375,8 @@ pub(crate) async fn setup_vsock(
                     policy: Arc::clone(&ns.policy),
                     db: Arc::clone(&ns.db),
                     upstream_tls: Arc::clone(&ns.upstream_tls),
-                    pricing: capsem_core::gateway::pricing::PricingTable::load(),
-                    trace_state: std::sync::Mutex::new(capsem_core::gateway::TraceState::new()),
+                    pricing: capsem_core::net::ai_traffic::pricing::PricingTable::load(),
+                    trace_state: std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()),
                 })
             });
             let mcp = instance.mcp_state.clone();
@@ -445,12 +445,12 @@ pub(crate) async fn setup_vsock(
                             Ok(g) => g,
                             Err(_) => return,
                         };
-                        if let Ok((total, allowed, denied)) = reader.net_event_counts() {
+                        if let Ok(counts) = reader.net_event_counts() {
                             let _ = idx.update_request_counts(
                                 &sid,
-                                total as u64,
-                                allowed as u64,
-                                denied as u64,
+                                counts.total as u64,
+                                counts.allowed as u64,
+                                counts.denied as u64,
                             );
                         }
                         flush_session_summary(&sid, &idx, &reader);

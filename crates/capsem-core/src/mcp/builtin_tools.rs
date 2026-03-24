@@ -613,7 +613,7 @@ fn check_domain_policy(url: &str, policy: &DomainPolicy) -> Result<String, Strin
 /// Skips script, style, noscript, svg, and template elements.
 /// Inserts newlines around block elements.
 pub fn extract_text_from_html(html: &str) -> String {
-    use scraper::{Html, Node};
+    use scraper::Html;
 
     let doc = Html::parse_document(html);
     let mut output = String::new();
@@ -633,7 +633,7 @@ pub fn extract_text_from_html(html: &str) -> String {
 /// Convert HTML to markdown, preserving headings, links, lists, bold/italic,
 /// code blocks, and blockquotes.
 pub fn extract_markdown_from_html(html: &str) -> String {
-    use scraper::{Html, Node};
+    use scraper::Html;
 
     let doc = Html::parse_document(html);
     let mut output = String::new();

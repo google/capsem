@@ -10,7 +10,7 @@
 //! The guest sees changes immediately via VirtioFS.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 use serde_json::Value;
@@ -312,57 +312,6 @@ fn age_string(ts: SystemTime) -> String {
     }
 }
 
-/// Compute per-snapshot change entries: created/modified/deleted vs current workspace.
-fn compute_snapshot_changes(
-    snap_files: &HashMap<String, u64>,
-    current_files: &HashMap<String, u64>,
-) -> Vec<Value> {
-    let mut changes = Vec::new();
-
-    // Created: in current but not in snapshot (file was created after snapshot).
-    for (path, size) in current_files {
-        if !snap_files.contains_key(path) {
-            changes.push(serde_json::json!({
-                "path": path,
-                "op": "created",
-                "size": size,
-            }));
-        }
-    }
-
-    // Deleted: in snapshot but not in current (file was deleted after snapshot).
-    for path in snap_files.keys() {
-        if !current_files.contains_key(path) {
-            changes.push(serde_json::json!({
-                "path": path,
-                "op": "deleted",
-            }));
-        }
-    }
-
-    // Modified: in both but different size.
-    for (path, current_size) in current_files {
-        if let Some(snap_size) = snap_files.get(path) {
-            if current_size != snap_size {
-                changes.push(serde_json::json!({
-                    "path": path,
-                    "op": "modified",
-                    "size": current_size,
-                }));
-            }
-        }
-    }
-
-    // Sort by path for deterministic output.
-    changes.sort_by(|a, b| {
-        let pa = a["path"].as_str().unwrap_or("");
-        let pb = b["path"].as_str().unwrap_or("");
-        pa.cmp(pb)
-    });
-
-    changes
-}
-
 /// Handle `snapshots_changes` tool call.
 pub fn handle_list_changed_files(
     scheduler: &AutoSnapshotScheduler,
@@ -610,7 +559,7 @@ pub fn handle_revert_file(
 /// This shows what changed AT the time of each snapshot.
 pub fn handle_list_snapshots(
     scheduler: &AutoSnapshotScheduler,
-    workspace_root: &Path,
+    _workspace_root: &Path,
     request_id: Option<Value>,
 ) -> JsonRpcResponse {
     let mut snapshots = scheduler.list_snapshots();
@@ -927,6 +876,7 @@ pub fn handle_snapshots_compact(
 mod tests {
     use super::*;
     use crate::auto_snapshot::AutoSnapshotScheduler;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     fn setup() -> (tempfile::TempDir, PathBuf, AutoSnapshotScheduler) {

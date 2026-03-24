@@ -72,12 +72,12 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
                 flush_session_summary(&rec.id, index, &reader);
                 // Also backfill request counts if zero.
                 if rec.total_requests == 0 {
-                    if let Ok((total, allowed, denied)) = reader.net_event_counts() {
+                    if let Ok(counts) = reader.net_event_counts() {
                         let _ = index.update_request_counts(
                             &rec.id,
-                            total as u64,
-                            allowed as u64,
-                            denied as u64,
+                            counts.total as u64,
+                            counts.allowed as u64,
+                            counts.denied as u64,
                         );
                     }
                 }
@@ -240,12 +240,12 @@ pub(crate) fn cleanup_session(
     // Snapshot request counts + summary data.
     if let Some(writer) = db {
         if let Ok(reader) = writer.reader() {
-            if let Ok((total, allowed, denied)) = reader.net_event_counts() {
+            if let Ok(counts) = reader.net_event_counts() {
                 let _ = index.update_request_counts(
                     session_id,
-                    total as u64,
-                    allowed as u64,
-                    denied as u64,
+                    counts.total as u64,
+                    counts.allowed as u64,
+                    counts.denied as u64,
                 );
             }
             flush_session_summary(session_id, index, &reader);
