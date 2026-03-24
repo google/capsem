@@ -1,6 +1,20 @@
-# Capsem
+<p align="center">
+  <img src="crates/capsem-app/icons/icon.svg" alt="Capsem" width="120" />
+</p>
 
-Sandbox AI coding agents in hardware-isolated Linux VMs on your Mac. Full network control, HTTPS inspection, MCP tool routing, and per-session telemetry.
+<h1 align="center">Capsem</h1>
+
+<p align="center">
+  Sandbox AI coding agents in hardware-isolated Linux VMs on your Mac.<br/>
+  Full network control, HTTPS inspection, MCP tool routing, and per-session telemetry.
+</p>
+
+<p align="center">
+  <a href="https://github.com/google/capsem/releases/latest"><img src="https://img.shields.io/github/v/release/google/capsem?label=download&color=blue" alt="Latest Release" /></a>
+  <a href="https://codecov.io/gh/google/capsem"><img src="https://codecov.io/gh/google/capsem/graph/badge.svg" alt="Coverage" /></a>
+  <a href="https://github.com/google/capsem/actions/workflows/ci.yaml"><img src="https://github.com/google/capsem/actions/workflows/ci.yaml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/google/capsem/blob/main/LICENSE"><img src="https://img.shields.io/github/license/google/capsem" alt="License" /></a>
+</p>
 
 > **Disclaimer**: This project is not an official Google project. It is not supported by Google and Google specifically disclaims all warranties as to its quality, merchantability, or fitness for a particular purpose.
 
@@ -46,7 +60,13 @@ Developer                  Capsem (macOS)                    Linux VM
 
 ## Install
 
-Download the latest release from [Releases](https://github.com/ebursztein/capsem/releases) and drag Capsem.app to Applications.
+**Download the DMG** from the [latest release](https://github.com/google/capsem/releases/latest), open it, and drag Capsem.app to Applications.
+
+Or with Homebrew (coming soon):
+
+```sh
+brew install --cask capsem
+```
 
 Or build from source:
 
