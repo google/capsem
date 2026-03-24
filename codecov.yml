@@ -1,0 +1,99 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 1
+  round: down
+
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 2%
+      - type: patch
+        target: 80%
+
+  individual_components:
+    # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
+    # AI traffic parsing (SSE, providers, pricing). All of net/
+    # except policy_config.
+    - component_id: network
+      name: Network
+      paths:
+        - crates/capsem-core/src/net/mitm_proxy.rs
+        - crates/capsem-core/src/net/cert_authority.rs
+        - crates/capsem-core/src/net/domain_policy.rs
+        - crates/capsem-core/src/net/http_policy.rs
+        - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/ai_traffic/**
+
+    # Policy engine, settings registry, host_config, corp
+    # lockdown/MDM. Small now, grows with corp features.
+    - component_id: security
+      name: Security
+      paths:
+        - crates/capsem-core/src/net/policy_config/**
+        - crates/capsem-core/src/host_config.rs
+
+    # MCP gateway, builtin HTTP tools, file/snapshot tools,
+    # MCP policy, auto-snapshots, FS monitor.
+    - component_id: tooling
+      name: Tooling
+      paths:
+        - crates/capsem-core/src/mcp/**
+        - crates/capsem-core/src/auto_snapshot.rs
+        - crates/capsem-core/src/fs_monitor.rs
+
+    # Logger DB, session index/maintenance, log layer.
+    # Future: OTEL, reporting, SSH session recording.
+    - component_id: monitoring
+      name: Monitoring
+      paths:
+        - crates/capsem-logger/src/**
+        - crates/capsem-core/src/session/**
+        - crates/capsem-core/src/log_layer.rs
+
+    # Machine lifecycle, VM config, vsock manager.
+    # Hypervisor abstraction layer.
+    - component_id: virtualization
+      name: Virtualization
+      paths:
+        - crates/capsem-core/src/vm/**
+
+    # In-VM agent binaries: PTY agent, net-proxy, MCP server
+    # relay, wire protocol.
+    - component_id: runtime
+      name: Runtime
+      paths:
+        - crates/capsem-agent/src/**
+        - crates/capsem-proto/src/**
+
+    # App shell: CLI/GUI wiring, boot, vsock wiring, session
+    # management. Evolves into orchestrator + API + auth.
+    - component_id: daemon
+      name: Daemon
+      paths:
+        - crates/capsem-app/src/**
+
+    # Frontend: Astro + Svelte components, views, stores.
+    # Populated when vitest coverage is added to pipeline.
+    - component_id: ui
+      name: UI
+      paths:
+        - frontend/src/**
+
+ignore:
+  - crates/*/tests/**
+  - site/**
+  - images/**
+  - scripts/**
