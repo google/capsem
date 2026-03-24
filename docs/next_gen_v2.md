@@ -135,52 +135,163 @@ The MITM proxy already identifies which AI agent is running from HTTP traffic to
 - **Security**: Corp policy can restrict allowed agents (`[agents] allowed = ["claude", "gemini"]`).
 - **Health endpoint**: Per-VM `agent` field derived from model_calls data.
 
-### Subprocess sandboxing
+### Process architecture
 
-**Every service runs as its own sandboxed process.** Today everything runs as async tasks in one process -- this is a Phase 3 blocker. The daemon must be a process supervisor, not a monolith. Each service gets its own process, its own sandbox profile, its own resource limits, and its own crash domain.
+**Every service runs as its own sandboxed process.** Today everything runs as async tasks in one process -- this is a Phase 3 blocker. The daemon is a process supervisor, not a monolith.
 
-**Mandatory process separation (Phase 3):**
+#### `capsem-process` crate
 
-| Process | Responsibility | IPC |
-|---------|---------------|-----|
-| `capsem-daemon` | Orchestrator, HTTP/WS API, auth, menu bar, subprocess supervisor | Parent process |
-| `capsem-mitm` | HTTPS MITM proxy (TLS termination, HTTP inspection, AI traffic parsing) | Unix socket / pipe |
-| `capsem-mcp-gateway` | MCP tool routing (builtin tools, external servers, policy) | Unix socket / pipe |
-| `capsem-monitor` | Telemetry DB writer, session index, FS monitoring, auto-snapshots | Unix socket / pipe |
+New crate: `crates/capsem-process/`. Provides the common runtime that every Capsem service process gets for free. A service author implements one trait and gets logging, health checks, IPC, config, metrics, and graceful shutdown without writing any boilerplate.
 
-**Future processes (later phases):**
+**`Service` trait** -- the only thing a new service needs to implement:
 
-| Process | Phase | Responsibility |
-|---------|-------|---------------|
-| `capsem-ssh-bridge` | Phase 6 | MITM SSH proxy (russh server, SSH telemetry) |
-| `capsem-web-renderer` | Phase 7 | Headless browser for chat UI / web rendering |
-| `capsem-mcp-server` | Phase 3 | External MCP server exposing capsem tools to AI agents |
+```rust
+/// Every Capsem service process implements this trait.
+/// The process runtime (`ServiceRunner`) handles everything else.
+#[async_trait]
+pub trait Service: Send + Sync + 'static {
+    /// Unique name (e.g. "mitm", "mcp-gateway", "monitor").
+    fn name(&self) -> &str;
 
-**Process abstraction (`SubprocessSpec` trait):**
+    /// Run the service. Called once after the runtime is initialized.
+    /// The service should run until the shutdown token is cancelled.
+    async fn run(&self, ctx: ServiceContext) -> anyhow::Result<()>;
 
-Every managed process implements the same interface:
+    /// Health check. Called periodically by the supervisor.
+    /// Default: returns healthy if `run()` hasn't panicked.
+    async fn health_check(&self) -> HealthStatus {
+        HealthStatus::Healthy
+    }
+}
+```
 
-1. **Identity**: binary path, args, environment
-2. **Sandbox profile**: macOS `sandbox-exec` profile / Linux seccomp + namespaces. Principle of least privilege -- MITM proxy needs network, MCP gateway does not, monitor only needs filesystem.
-3. **Resource limits**: CPU, memory, file descriptor caps. Configurable in settings per process type.
-4. **IPC**: How the daemon communicates with the subprocess (Unix socket, pipe, shared fd). Defined per process type.
-5. **Restart policy**: max restarts, backoff (exponential with cap), crash count tracked in health endpoint.
-6. **Lifecycle**: Start, health check, graceful stop (SIGTERM + timeout), force kill (SIGKILL). SIGTERM cascades from daemon to all children.
-7. **Logging**: Each subprocess logs to its own file or structured channel. Daemon aggregates.
+**`ServiceContext`** -- provided to `run()`, gives access to all common facilities:
 
-**`SubprocessManager`** in daemon owns a registry of `SubprocessSpec` instances. It handles:
-- Startup ordering (monitor before mitm, mitm before mcp-gateway)
-- Health monitoring (periodic liveness checks)
-- Crash recovery with exponential backoff
-- Graceful shutdown in reverse startup order
-- Resource accounting (aggregate CPU/memory across all children)
+```rust
+pub struct ServiceContext {
+    /// Structured logger, pre-configured with service name and PID.
+    pub log: slog::Logger,
+    /// Cancellation token -- select on this to shut down gracefully.
+    pub shutdown: CancellationToken,
+    /// IPC channel back to the daemon (typed messages).
+    pub ipc: IpcChannel,
+    /// Read-only config snapshot (reloads on SIGHUP via watch channel).
+    pub config: watch::Receiver<Arc<ServiceConfig>>,
+    /// Metrics registry (counters, gauges, histograms). Auto-exported
+    /// to daemon health endpoint and OTEL.
+    pub metrics: MetricsRegistry,
+    /// Data directory for this service instance (e.g. session DBs).
+    pub data_dir: PathBuf,
+}
+```
+
+**`ServiceRunner`** -- the process entry point. Wraps a `Service` impl and provides the runtime:
+
+```rust
+// In each service binary's main():
+fn main() {
+    capsem_process::run(MitmService::new());
+}
+```
+
+`ServiceRunner::run()` does:
+1. Parse common CLI flags (`--config`, `--log-level`, `--data-dir`)
+2. Initialize structured logging (per-service log file + stderr)
+3. Apply OS sandbox profile (macOS `sandbox-exec` / Linux seccomp)
+4. Apply resource limits (rlimit: max fds, max memory, CPU affinity)
+5. Set up IPC channel (Unix socket inherited from parent)
+6. Load config, set up SIGHUP reload watcher
+7. Initialize metrics registry
+8. Call `service.run(ctx)` on the tokio runtime
+9. On SIGTERM: cancel the shutdown token, wait for `run()` to return (with timeout), then exit
+
+**Common facilities provided by the crate:**
+
+| Facility | What it provides | How services use it |
+|----------|-----------------|---------------------|
+| **Logging** | Structured tracing with service name, PID, span context. Per-service log file + daemon aggregation. | `ctx.log` -- just log, no setup needed |
+| **Health** | Periodic liveness checks, crash counting, health endpoint data. | Implement `health_check()` or use default |
+| **IPC** | Typed bidirectional channel to daemon. Framed messages over inherited Unix socket fd. | `ctx.ipc.send()` / `ctx.ipc.recv()` |
+| **Config** | Settings snapshot, hot-reloaded on SIGHUP. Service sees only its own config section. | `ctx.config.borrow()` -- reactive |
+| **Metrics** | Counters, gauges, histograms. Auto-exported to health endpoint + OTEL. | `ctx.metrics.counter("requests_total")` |
+| **Shutdown** | Graceful shutdown via CancellationToken. Timeout + SIGKILL fallback handled by runner. | `ctx.shutdown.cancelled().await` |
+| **Sandbox** | OS-level sandbox applied before `run()`. Service code cannot escape. | Declarative: `SandboxProfile::network()` or `SandboxProfile::filesystem_only()` |
+| **Resources** | rlimit enforcement (max fds, memory). Configurable per service type. | Declarative in service manifest |
+
+#### Sandbox profiles
+
+Each service declares what OS capabilities it needs. The runner applies the most restrictive sandbox that satisfies these:
+
+```rust
+pub enum SandboxProfile {
+    /// Network + filesystem (MITM proxy, SSH bridge)
+    Network,
+    /// Filesystem only, no network (MCP gateway, monitor)
+    FilesystemOnly,
+    /// Minimal: no network, no filesystem writes (read-only services)
+    ReadOnly,
+    /// Custom sandbox-exec/seccomp profile (escape hatch)
+    Custom(PathBuf),
+}
+```
+
+On macOS: `sandbox-exec` profiles. On Linux: seccomp-bpf + mount namespaces.
+
+#### Process registry
+
+| Process | Binary | Sandbox | Phase |
+|---------|--------|---------|-------|
+| `capsem-daemon` | `capsem` | Parent supervisor (no sandbox on itself) | 3 |
+| `capsem-mitm` | `capsem-mitm` | `Network` (needs outbound HTTPS to upstreams) | 3 |
+| `capsem-mcp-gateway` | `capsem-mcp-gateway` | `FilesystemOnly` (reads workspace, no network) | 3 |
+| `capsem-monitor` | `capsem-monitor` | `FilesystemOnly` (writes session DBs) | 3 |
+| `capsem-mcp-server` | `capsem-mcp-server` | `FilesystemOnly` (daemon-level MCP for external agents) | 3 |
+| `capsem-ssh-bridge` | `capsem-ssh-bridge` | `Network` (SSH to guest + upstream) | 6 |
+| `capsem-web-renderer` | `capsem-web-renderer` | `Network` (fetches web content) | 7 |
+
+#### `ProcessManager` in daemon
+
+The daemon side that supervises all child processes:
+
+```rust
+pub struct ProcessManager {
+    /// Registered process specs (binary, args, sandbox, resources, restart policy).
+    specs: Vec<ProcessSpec>,
+    /// Running child handles.
+    children: HashMap<String, ChildHandle>,
+}
+
+impl ProcessManager {
+    /// Start all processes in dependency order.
+    async fn start_all(&mut self) -> anyhow::Result<()>;
+    /// Stop all processes in reverse order (SIGTERM + timeout + SIGKILL).
+    async fn stop_all(&mut self);
+    /// Restart a crashed process with exponential backoff.
+    async fn restart(&mut self, name: &str);
+    /// Aggregate health from all children for the /health endpoint.
+    fn health(&self) -> DaemonHealth;
+    /// Aggregate metrics from all children for OTEL export.
+    fn metrics(&self) -> AggregateMetrics;
+}
+```
+
+**Startup ordering**: monitor -> mitm -> mcp-gateway -> mcp-server (monitor must be ready to receive telemetry before other services start).
+
+**Crash recovery**: exponential backoff (100ms -> 200ms -> ... -> 30s cap), max 10 restarts in 5 minutes. After that, mark service as failed in health endpoint, alert via menu bar notification.
 
 **Why separate processes, not threads:**
 - **Crash isolation**: MITM proxy crash doesn't kill the MCP gateway or telemetry writer.
-- **Sandbox granularity**: Each process gets its own OS-level sandbox. MITM proxy needs network access, MCP gateway does not.
+- **Sandbox granularity**: Each process gets its own OS-level sandbox. MITM proxy needs network, MCP gateway does not.
 - **Resource limits**: OS-enforced per-process limits. A runaway parser can't starve the telemetry writer.
 - **Upgradability**: Individual processes can be restarted without bouncing the whole daemon.
-- **Auditability**: Each process has its own PID, its own log stream, its own resource usage visible in `ps`/Activity Monitor.
+- **Auditability**: Each process has its own PID, its own log stream, its own resource usage in `ps`/Activity Monitor.
+
+#### Adding a new service
+
+1. Create `crates/capsem-<name>/src/main.rs`
+2. Implement `Service` trait (name + run + optional health_check)
+3. Add `ProcessSpec` to daemon's process registry (binary, sandbox profile, resource limits)
+4. Done. Logging, IPC, config, metrics, shutdown, sandbox all come from the `capsem-process` runtime.
 
 ### Terminal notifications
 
