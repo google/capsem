@@ -1,7 +1,10 @@
-//! Built-in MCP tools for workspace file tracking and revert.
+//! Built-in MCP tools for workspace snapshot tracking and revert.
 //!
-//! - `list_changed_files`: diff current workspace against auto-snapshot checkpoints
-//! - `revert_file`: restore a file from a checkpoint to the current workspace
+//! - `snapshots_changes`: diff current workspace against auto-snapshot checkpoints
+//! - `snapshots_list`: list all snapshots with per-snapshot diffs
+//! - `snapshots_revert`: restore a file from a checkpoint to the current workspace
+//! - `snapshots_create`: create a named manual snapshot
+//! - `snapshots_delete`: delete a manual snapshot
 //!
 //! These tools operate entirely on the host filesystem (VirtioFS directories).
 //! The guest sees changes immediately via VirtioFS.
@@ -19,7 +22,7 @@ use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// Tool names for file operations.
 pub const FILE_TOOL_NAMES: &[&str] = &[
-    "list_changed_files", "list_snapshots", "revert_file", "snapshot", "delete_snapshot",
+    "snapshots_changes", "snapshots_list", "snapshots_revert", "snapshots_create", "snapshots_delete", "snapshots_history",
 ];
 
 pub fn is_file_tool(name: &str) -> bool {
@@ -30,12 +33,12 @@ pub fn is_file_tool(name: &str) -> bool {
 pub fn file_tool_defs() -> Vec<McpToolDef> {
     vec![
         McpToolDef {
-            namespaced_name: "list_changed_files".into(),
-            original_name: "list_changed_files".into(),
+            namespaced_name: "snapshots_changes".into(),
+            original_name: "snapshots_changes".into(),
             description: Some(concat!(
                 "List files that have changed in the workspace compared to automatic checkpoints. ",
                 "Each entry includes the file path, operation (created/modified/deleted), size, ",
-                "and a checkpoint ID that can be passed to revert_file. ",
+                "and a checkpoint ID that can be passed to snapshots_revert. ",
                 "Shows newest changes first.",
             ).into()),
             input_schema: serde_json::json!({
@@ -52,11 +55,13 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            namespaced_name: "list_snapshots".into(),
-            original_name: "list_snapshots".into(),
+            namespaced_name: "snapshots_list".into(),
+            original_name: "snapshots_list".into(),
             description: Some(concat!(
                 "List all workspace snapshots (automatic and manual). ",
-                "Returns slot index, origin (auto/manual), name, age, and blake3 hash.",
+                "Returns slot index, origin (auto/manual), name, age, blake3 hash, ",
+                "and a changes array showing created/modified/deleted files vs current workspace. ",
+                "Empty snapshots (zero files) are filtered out.",
             ).into()),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -72,11 +77,12 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            namespaced_name: "revert_file".into(),
-            original_name: "revert_file".into(),
+            namespaced_name: "snapshots_revert".into(),
+            original_name: "snapshots_revert".into(),
             description: Some(concat!(
                 "Revert a file to its state at a specific checkpoint. ",
-                "Use the checkpoint ID from list_changed_files output. ",
+                "Use the checkpoint ID from snapshots_changes output, or omit checkpoint ",
+                "to auto-select the most recent snapshot containing the file. ",
                 "If the file was created after the checkpoint, it is deleted. ",
                 "If the file was modified, it is restored to its checkpoint state. ",
                 "Changes are reflected immediately in the guest via VirtioFS.",
@@ -86,14 +92,14 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative file path from list_changed_files output (e.g., 'project/app.js')"
+                        "description": "Relative file path from snapshots_changes output (e.g., 'project/app.js')"
                     },
                     "checkpoint": {
                         "type": "string",
-                        "description": "Checkpoint ID from list_changed_files output (e.g., 'cp-0')"
+                        "description": "Checkpoint ID (e.g., 'cp-0'). Optional: defaults to the most recent snapshot containing the file."
                     }
                 },
-                "required": ["path", "checkpoint"]
+                "required": ["path"]
             }),
             server_name: "builtin".into(),
             annotations: Some(ToolAnnotations {
@@ -105,12 +111,12 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            namespaced_name: "snapshot".into(),
-            original_name: "snapshot".into(),
+            namespaced_name: "snapshots_create".into(),
+            original_name: "snapshots_create".into(),
             description: Some(concat!(
                 "Create a named workspace snapshot (checkpoint). ",
                 "The snapshot captures the current state of all files and can be used ",
-                "with revert_file to restore files later. Returns the checkpoint ID, ",
+                "with snapshots_revert to restore files later. Returns the checkpoint ID, ",
                 "a blake3 hash of the workspace, and the number of remaining snapshot slots.",
             ).into()),
             input_schema: serde_json::json!({
@@ -133,8 +139,8 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            namespaced_name: "delete_snapshot".into(),
-            original_name: "delete_snapshot".into(),
+            namespaced_name: "snapshots_delete".into(),
+            original_name: "snapshots_delete".into(),
             description: Some(concat!(
                 "Delete a manual snapshot by checkpoint ID. ",
                 "Only manual (named) snapshots can be deleted. ",
@@ -159,16 +165,46 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 open_world_hint: false,
             }),
         },
+        McpToolDef {
+            namespaced_name: "snapshots_history".into(),
+            original_name: "snapshots_history".into(),
+            description: Some(concat!(
+                "Show the history of a specific file across all snapshots. ",
+                "For each snapshot that contains a version of the file, shows the checkpoint, ",
+                "origin, age, size, and whether the file was created, modified, or unchanged. ",
+                "Accepts both relative paths (hello.txt) and absolute guest paths (/root/hello.txt).",
+            ).into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path (e.g., 'hello.txt' or '/root/hello.txt')"
+                    }
+                },
+                "required": ["path"]
+            }),
+            server_name: "builtin".into(),
+            annotations: Some(ToolAnnotations {
+                title: Some("File history".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: false,
+            }),
+        },
     ]
 }
 
-/// Validate a relative path: no `..`, no absolute, no null bytes.
-fn validate_path(path: &str) -> Result<&str, String> {
+/// Normalize and validate a path. Strips `/root/` prefix (guest workspace mount)
+/// so both `hello.txt` and `/root/hello.txt` work. Rejects traversal and null bytes.
+fn normalize_path(path: &str) -> Result<String, String> {
+    let path = path.strip_prefix("/root/").unwrap_or(path);
     if path.is_empty() {
         return Err("path is empty".into());
     }
     if path.starts_with('/') {
-        return Err("absolute paths not allowed".into());
+        return Err("absolute paths not allowed (use relative or /root/ prefix)".into());
     }
     if path.contains("..") {
         return Err("path traversal not allowed".into());
@@ -176,7 +212,7 @@ fn validate_path(path: &str) -> Result<&str, String> {
     if path.contains('\0') {
         return Err("null bytes not allowed in path".into());
     }
-    Ok(path)
+    Ok(path.to_string())
 }
 
 /// Parse checkpoint ID like "cp-3" into slot index 3.
@@ -243,7 +279,58 @@ fn age_string(ts: SystemTime) -> String {
     }
 }
 
-/// Handle `list_changed_files` tool call.
+/// Compute per-snapshot change entries: created/modified/deleted vs current workspace.
+fn compute_snapshot_changes(
+    snap_files: &HashMap<String, u64>,
+    current_files: &HashMap<String, u64>,
+) -> Vec<Value> {
+    let mut changes = Vec::new();
+
+    // Created: in current but not in snapshot (file was created after snapshot).
+    for (path, size) in current_files {
+        if !snap_files.contains_key(path) {
+            changes.push(serde_json::json!({
+                "path": path,
+                "op": "created",
+                "size": size,
+            }));
+        }
+    }
+
+    // Deleted: in snapshot but not in current (file was deleted after snapshot).
+    for path in snap_files.keys() {
+        if !current_files.contains_key(path) {
+            changes.push(serde_json::json!({
+                "path": path,
+                "op": "deleted",
+            }));
+        }
+    }
+
+    // Modified: in both but different size.
+    for (path, current_size) in current_files {
+        if let Some(snap_size) = snap_files.get(path) {
+            if current_size != snap_size {
+                changes.push(serde_json::json!({
+                    "path": path,
+                    "op": "modified",
+                    "size": current_size,
+                }));
+            }
+        }
+    }
+
+    // Sort by path for deterministic output.
+    changes.sort_by(|a, b| {
+        let pa = a["path"].as_str().unwrap_or("");
+        let pb = b["path"].as_str().unwrap_or("");
+        pa.cmp(pb)
+    });
+
+    changes
+}
+
+/// Handle `snapshots_changes` tool call.
 pub fn handle_list_changed_files(
     scheduler: &AutoSnapshotScheduler,
     workspace_root: &Path,
@@ -333,31 +420,47 @@ pub fn handle_list_changed_files(
     )
 }
 
-/// Handle `revert_file` tool call.
+/// Handle `snapshots_revert` tool call.
 pub fn handle_revert_file(
     arguments: &Value,
     scheduler: &AutoSnapshotScheduler,
     workspace_root: &Path,
     request_id: Option<Value>,
 ) -> JsonRpcResponse {
-    let path_str = match arguments.get("path").and_then(|v| v.as_str()) {
+    let raw_path = match arguments.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
     };
-    let cp_str = match arguments.get("checkpoint").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoint' argument"),
+
+    // Normalize and validate path (strips /root/ prefix if present).
+    let path_str = match normalize_path(raw_path) {
+        Ok(p) => p,
+        Err(e) => return JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}")),
     };
 
-    // Validate path.
-    if let Err(e) = validate_path(path_str) {
-        return JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}"));
-    }
-
-    // Parse checkpoint.
-    let slot = match parse_checkpoint(cp_str) {
-        Ok(s) => s,
-        Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
+    // Resolve checkpoint: explicit or auto-select newest containing the file.
+    let (slot, cp_str_owned) = if let Some(cp_str) = arguments.get("checkpoint").and_then(|v| v.as_str()) {
+        let slot = match parse_checkpoint(cp_str) {
+            Ok(s) => s,
+            Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
+        };
+        (slot, cp_str.to_string())
+    } else {
+        // Auto-select: scan snapshots newest-first, find first containing the file.
+        let snapshots = scheduler.list_snapshots();
+        let found = snapshots.iter().find(|s| {
+            s.workspace_path.join(&path_str).exists()
+        });
+        match found {
+            Some(s) => (s.slot, format!("cp-{}", s.slot)),
+            None => {
+                return JsonRpcResponse::err(
+                    request_id,
+                    -32602,
+                    "no snapshot contains this file",
+                );
+            }
+        }
     };
 
     // Get snapshot.
@@ -367,13 +470,13 @@ pub fn handle_revert_file(
             return JsonRpcResponse::err(
                 request_id,
                 -32602,
-                format!("checkpoint {cp_str} not found"),
+                format!("checkpoint {} not found", cp_str_owned),
             )
         }
     };
 
-    let snap_file = snap.workspace_path.clone().join(path_str);
-    let current_file = workspace_root.join(path_str);
+    let snap_file = snap.workspace_path.clone().join(&path_str);
+    let current_file = workspace_root.join(&path_str);
 
     // Check for symlink escape: canonicalize both paths to handle macOS /var -> /private/var.
     if let (Ok(resolved_file), Ok(resolved_root)) =
@@ -388,8 +491,39 @@ pub fn handle_revert_file(
         }
     }
 
+    let action;
+    // Check if file already matches snapshot (no-op): same content AND same permissions.
+    if snap_file.exists() && current_file.exists() {
+        if let (Ok(snap_bytes), Ok(cur_bytes)) = (
+            std::fs::read(&snap_file),
+            std::fs::read(&current_file),
+        ) {
+            let same_perms = match (snap_file.metadata(), current_file.metadata()) {
+                (Ok(sm), Ok(cm)) => {
+                    use std::os::unix::fs::PermissionsExt;
+                    sm.permissions().mode() == cm.permissions().mode()
+                }
+                _ => true, // can't read metadata, assume same
+            };
+            if snap_bytes == cur_bytes && same_perms {
+                return JsonRpcResponse::err(
+                    request_id,
+                    -32602,
+                    "file already matches snapshot (already current)",
+                );
+            }
+        }
+    } else if !snap_file.exists() && !current_file.exists() {
+        return JsonRpcResponse::err(
+            request_id,
+            -32602,
+            "file does not exist in snapshot or workspace",
+        );
+    }
+
     if snap_file.exists() {
         // File exists in snapshot -- restore it.
+        action = "restored";
         if let Some(parent) = current_file.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 return JsonRpcResponse::err(
@@ -406,8 +540,13 @@ pub fn handle_revert_file(
                 format!("failed to restore file: {e}"),
             );
         }
+        // Restore permissions from snapshot.
+        if let Ok(snap_meta) = snap_file.metadata() {
+            let _ = std::fs::set_permissions(&current_file, snap_meta.permissions());
+        }
     } else {
         // File was created after checkpoint -- delete it.
+        action = "deleted";
         if current_file.exists() {
             if let Err(e) = std::fs::remove_file(&current_file) {
                 return JsonRpcResponse::err(
@@ -425,31 +564,58 @@ pub fn handle_revert_file(
             "content": [{"type": "text", "text": serde_json::json!({
                 "reverted": true,
                 "path": path_str,
+                "action": action,
+                "checkpoint": cp_str_owned,
             }).to_string()}]
         }),
     )
 }
 
-/// Handle `list_snapshots` tool call — return all snapshot metadata.
+/// Handle `snapshots_list` tool call -- return all snapshot metadata with per-snapshot diffs.
+///
+/// Changes are computed vs the PREVIOUS snapshot (oldest-first), not vs current workspace.
+/// This shows what changed AT the time of each snapshot.
 pub fn handle_list_snapshots(
     scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
     request_id: Option<Value>,
 ) -> JsonRpcResponse {
-    let snapshots = scheduler.list_snapshots();
-    let entries: Vec<_> = snapshots.iter().map(|s| {
+    let mut snapshots = scheduler.list_snapshots();
+    // list_snapshots returns newest-first; reverse to walk oldest-first.
+    snapshots.reverse();
+
+    let mut prev_files: HashMap<String, u64> = HashMap::new();
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    for s in &snapshots {
+        let snap_files = collect_files(&s.workspace_path);
         let origin = match s.origin {
             SnapshotOrigin::Auto => "auto",
             SnapshotOrigin::Manual => "manual",
         };
-        serde_json::json!({
+
+        // Diff this snapshot vs previous snapshot (not vs current workspace).
+        // "new" = in this snap but not in prev, "deleted" = in prev but not here,
+        // "modified" = in both but different size.
+        let changes = compute_changes_vs_previous(&snap_files, &prev_files);
+
+        entries.push(serde_json::json!({
             "checkpoint": format!("cp-{}", s.slot),
             "slot": s.slot,
             "origin": origin,
             "name": s.name,
             "hash": s.hash,
             "age": age_string(s.timestamp),
-        })
-    }).collect();
+            "files_count": snap_files.len(),
+            "changes": changes,
+        }));
+
+        prev_files = snap_files;
+    }
+
+    // Return newest-first (reverse back).
+    entries.reverse();
+
     let summary = serde_json::json!({
         "snapshots": entries,
         "auto_max": scheduler.max_auto(),
@@ -464,7 +630,45 @@ pub fn handle_list_snapshots(
     )
 }
 
-/// Handle `snapshot` tool call — create a named manual snapshot.
+/// Compute changes between two snapshots: what's new/modified/deleted in `current` vs `prev`.
+fn compute_changes_vs_previous(
+    current: &HashMap<String, u64>,
+    prev: &HashMap<String, u64>,
+) -> Vec<Value> {
+    let mut changes = Vec::new();
+
+    // New: in current but not in prev.
+    for (path, size) in current {
+        if !prev.contains_key(path) {
+            changes.push(serde_json::json!({"path": path, "op": "new", "size": size}));
+        }
+    }
+
+    // Deleted: in prev but not in current.
+    for path in prev.keys() {
+        if !current.contains_key(path) {
+            changes.push(serde_json::json!({"path": path, "op": "deleted"}));
+        }
+    }
+
+    // Modified: in both but different size.
+    for (path, cur_size) in current {
+        if let Some(prev_size) = prev.get(path) {
+            if cur_size != prev_size {
+                changes.push(serde_json::json!({"path": path, "op": "modified", "size": cur_size}));
+            }
+        }
+    }
+
+    changes.sort_by(|a, b| {
+        let pa = a["path"].as_str().unwrap_or("");
+        let pb = b["path"].as_str().unwrap_or("");
+        pa.cmp(pb)
+    });
+    changes
+}
+
+/// Handle `snapshots_create` tool call -- create a named manual snapshot.
 pub fn handle_snapshot(
     arguments: &Value,
     scheduler: &mut AutoSnapshotScheduler,
@@ -497,7 +701,7 @@ pub fn handle_snapshot(
     }
 }
 
-/// Handle `delete_snapshot` tool call — delete a manual snapshot.
+/// Handle `snapshots_delete` tool call -- delete a manual snapshot.
 pub fn handle_delete_snapshot(
     arguments: &Value,
     scheduler: &AutoSnapshotScheduler,
@@ -543,6 +747,84 @@ pub fn handle_delete_snapshot(
     }
 }
 
+/// Handle `snapshots_history` tool call -- show all versions of a file across snapshots.
+pub fn handle_snapshots_history(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let raw_path = match arguments.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
+    };
+
+    let path_str = match normalize_path(raw_path) {
+        Ok(p) => p,
+        Err(e) => return JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}")),
+    };
+
+    let mut snapshots = scheduler.list_snapshots();
+    // Walk oldest-first to compute sequential status.
+    snapshots.reverse();
+
+    let current_file = workspace_root.join(&path_str);
+    let current_size = current_file.metadata().ok().map(|m| m.len());
+
+    let mut versions: Vec<serde_json::Value> = Vec::new();
+    let mut prev_size: Option<u64> = None; // None = file didn't exist in previous snap
+
+    for snap in &snapshots {
+        let snap_file = snap.workspace_path.join(&path_str);
+        let snap_size = snap_file.metadata().ok().map(|m| m.len());
+
+        // Compare this version to PREVIOUS snapshot version.
+        let status = match (snap_size, prev_size) {
+            (Some(ss), Some(ps)) if ss == ps => "unchanged",
+            (Some(_), Some(_)) => "modified",
+            (Some(_), None) => "new",
+            (None, Some(_)) => "deleted",
+            (None, None) => {
+                // File not in this snapshot and not in previous -- skip.
+                prev_size = snap_size;
+                continue;
+            }
+        };
+
+        let origin = match snap.origin {
+            SnapshotOrigin::Auto => "auto",
+            SnapshotOrigin::Manual => "manual",
+        };
+
+        versions.push(serde_json::json!({
+            "checkpoint": format!("cp-{}", snap.slot),
+            "origin": origin,
+            "name": snap.name,
+            "age": age_string(snap.timestamp),
+            "size": snap_size,
+            "status": status,
+        }));
+
+        prev_size = snap_size;
+    }
+
+    // Return newest-first.
+    versions.reverse();
+
+    let result = serde_json::json!({
+        "path": path_str,
+        "current_size": current_size,
+        "versions": versions,
+    });
+
+    JsonRpcResponse::ok(
+        request_id,
+        serde_json::json!({
+            "content": [{"type": "text", "text": result.to_string()}]
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,30 +842,50 @@ mod tests {
     }
 
     #[test]
+    fn tool_names_match_defs() {
+        let defs = file_tool_defs();
+        assert_eq!(defs.len(), FILE_TOOL_NAMES.len());
+        for def in &defs {
+            assert!(
+                FILE_TOOL_NAMES.contains(&def.namespaced_name.as_str()),
+                "def name {:?} not in FILE_TOOL_NAMES",
+                def.namespaced_name,
+            );
+        }
+    }
+
+    #[test]
     fn validate_path_rejects_traversal() {
-        assert!(validate_path("../etc/passwd").is_err());
-        assert!(validate_path("foo/../../bar").is_err());
+        assert!(normalize_path("../etc/passwd").is_err());
+        assert!(normalize_path("foo/../../bar").is_err());
     }
 
     #[test]
     fn validate_path_rejects_absolute() {
-        assert!(validate_path("/etc/passwd").is_err());
+        assert!(normalize_path("/etc/passwd").is_err());
     }
 
     #[test]
     fn validate_path_rejects_empty() {
-        assert!(validate_path("").is_err());
+        assert!(normalize_path("").is_err());
     }
 
     #[test]
     fn validate_path_rejects_null_bytes() {
-        assert!(validate_path("foo\0bar").is_err());
+        assert!(normalize_path("foo\0bar").is_err());
     }
 
     #[test]
     fn validate_path_accepts_normal() {
-        assert!(validate_path("project/app.js").is_ok());
-        assert!(validate_path("a.txt").is_ok());
+        assert!(normalize_path("project/app.js").is_ok());
+        assert!(normalize_path("a.txt").is_ok());
+    }
+
+    #[test]
+    fn normalize_path_strips_root_prefix() {
+        assert_eq!(normalize_path("/root/hello.txt").unwrap(), "hello.txt");
+        assert_eq!(normalize_path("/root/sub/file.py").unwrap(), "sub/file.py");
+        assert_eq!(normalize_path("hello.txt").unwrap(), "hello.txt");
     }
 
     #[test]
@@ -661,7 +963,7 @@ mod tests {
     }
 
     /// Roundtrip test: write a file, snapshot, copy it, delete original,
-    /// revert via revert_file, verify content matches exactly.
+    /// revert via snapshots_revert, verify content matches exactly.
     #[test]
     fn revert_file_roundtrip_content_preserved() {
         let (_tmp, session, mut sched) = setup();
@@ -681,7 +983,7 @@ mod tests {
         std::fs::remove_file(session.join("workspace/important.txt")).unwrap();
         assert!(!session.join("workspace/important.txt").exists());
 
-        // Revert via revert_file.
+        // Revert via snapshots_revert.
         let args = serde_json::json!({"path": "important.txt", "checkpoint": "cp-0"});
         let resp = handle_revert_file(
             &args,
@@ -690,10 +992,13 @@ mod tests {
             Some(serde_json::json!(1)),
         );
 
-        // Verify success.
-        assert!(resp.error.is_none(), "revert_file failed: {:?}", resp.error);
+        // Verify success with action and checkpoint fields.
+        assert!(resp.error.is_none(), "snapshots_revert failed: {:?}", resp.error);
         let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        assert!(result_text.contains("\"reverted\":true") || result_text.contains("\"reverted\": true"));
+        let result: Value = serde_json::from_str(&result_text).unwrap();
+        assert_eq!(result["reverted"], true);
+        assert_eq!(result["action"], "restored");
+        assert_eq!(result["checkpoint"], "cp-0");
 
         // Verify the file is back with exact same content.
         let recovered = std::fs::read_to_string(session.join("workspace/important.txt")).unwrap();
@@ -721,6 +1026,12 @@ mod tests {
 
         assert!(resp.error.is_none());
         assert!(!session.join("workspace/new.txt").exists());
+
+        // Verify action and checkpoint in response.
+        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let result: Value = serde_json::from_str(&result_text).unwrap();
+        assert_eq!(result["action"], "deleted");
+        assert_eq!(result["checkpoint"], "cp-0");
     }
 
     #[test]
@@ -795,6 +1106,10 @@ mod tests {
         let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
         assert!(resp.error.is_none(), "revert to cp-0 failed: {:?}", resp.error);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "version ONE");
+        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let result: Value = serde_json::from_str(&result_text).unwrap();
+        assert_eq!(result["action"], "restored");
+        assert_eq!(result["checkpoint"], "cp-0");
 
         // Revert to version 2 (cp-1)
         let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-1"});
@@ -836,6 +1151,12 @@ mod tests {
         // Verify exact content
         let recovered = std::fs::read_to_string(&file).unwrap();
         assert_eq!(recovered, content, "recovered content must match original exactly");
+
+        // Verify response fields
+        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let result: Value = serde_json::from_str(&result_text).unwrap();
+        assert_eq!(result["action"], "restored");
+        assert_eq!(result["checkpoint"], "cp-0");
     }
 
     /// list_changed_files shows all 3 file operations across snapshots.
@@ -874,5 +1195,111 @@ mod tests {
         assert_eq!(get_op("brand_new.txt"), "created");
         assert_eq!(get_op("modify_me.txt"), "modified");
         assert_eq!(get_op("delete_me.txt"), "deleted");
+    }
+
+    /// snapshots_list includes per-snapshot changes and filters empty snapshots.
+    #[test]
+    fn list_snapshots_changes_vs_previous() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        // Create a file and snapshot.
+        std::fs::write(ws.join("hello.txt"), "world").unwrap();
+        sched.take_snapshot().unwrap(); // cp-0
+
+        // Modify the file and snapshot again.
+        std::fs::write(ws.join("hello.txt"), "modified world content").unwrap();
+        sched.take_snapshot().unwrap(); // cp-1
+
+        let resp = handle_list_snapshots(&sched, &ws, Some(serde_json::json!(1)));
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let summary: Value = serde_json::from_str(&text).unwrap();
+        let entries = summary["snapshots"].as_array().unwrap();
+
+        assert_eq!(entries.len(), 2);
+        // Newest first: cp-1, cp-0
+        let cp1_changes = entries[0]["changes"].as_array().unwrap();
+        let cp0_changes = entries[1]["changes"].as_array().unwrap();
+
+        // cp-0: hello.txt is "new" (didn't exist before)
+        assert_eq!(cp0_changes.len(), 1);
+        assert_eq!(cp0_changes[0]["path"], "hello.txt");
+        assert_eq!(cp0_changes[0]["op"], "new");
+
+        // cp-1: hello.txt is "modified" (changed since cp-0)
+        assert_eq!(cp1_changes.len(), 1);
+        assert_eq!(cp1_changes[0]["path"], "hello.txt");
+        assert_eq!(cp1_changes[0]["op"], "modified");
+    }
+
+    /// All snapshots are shown (no empty filtering).
+    #[test]
+    fn list_snapshots_shows_all() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        // Snapshot with empty workspace.
+        sched.take_snapshot().unwrap(); // cp-0 (empty)
+
+        // Create a file and snapshot again.
+        std::fs::write(ws.join("data.txt"), "content").unwrap();
+        sched.take_snapshot().unwrap(); // cp-1
+
+        let resp = handle_list_snapshots(&sched, &ws, Some(serde_json::json!(1)));
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let summary: Value = serde_json::from_str(&text).unwrap();
+        let entries = summary["snapshots"].as_array().unwrap();
+
+        // Both should be present (no filtering).
+        assert_eq!(entries.len(), 2);
+    }
+
+    /// snapshots_revert auto-selects newest snapshot containing the file when
+    /// checkpoint is omitted.
+    #[test]
+    fn revert_file_auto_selects_checkpoint() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        // Create a file and take two snapshots.
+        std::fs::write(ws.join("auto.txt"), "version 1").unwrap();
+        sched.take_snapshot().unwrap(); // cp-0
+
+        std::fs::write(ws.join("auto.txt"), "version 2 is longer").unwrap();
+        sched.take_snapshot().unwrap(); // cp-1
+
+        // Now corrupt the file.
+        std::fs::write(ws.join("auto.txt"), "CORRUPTED").unwrap();
+
+        // Revert without specifying checkpoint -- should pick cp-1 (newest).
+        let args = serde_json::json!({"path": "auto.txt"});
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        assert!(resp.error.is_none(), "auto-select revert failed: {:?}", resp.error);
+
+        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let result: Value = serde_json::from_str(&result_text).unwrap();
+        assert_eq!(result["action"], "restored");
+        assert_eq!(result["checkpoint"], "cp-1");
+        assert_eq!(std::fs::read_to_string(ws.join("auto.txt")).unwrap(), "version 2 is longer");
+    }
+
+    /// snapshots_revert errors when no snapshot contains the file and checkpoint
+    /// is omitted.
+    #[test]
+    fn revert_file_auto_select_no_match() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        // Snapshot empty workspace.
+        sched.take_snapshot().unwrap();
+
+        // Create a file that doesn't exist in any snapshot.
+        std::fs::write(ws.join("orphan.txt"), "data").unwrap();
+
+        let args = serde_json::json!({"path": "orphan.txt"});
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        assert!(resp.error.is_some());
+        let err_msg = &resp.error.unwrap().message;
+        assert!(err_msg.contains("no snapshot contains this file"), "unexpected error: {err_msg}");
     }
 }

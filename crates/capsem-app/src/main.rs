@@ -897,6 +897,81 @@ async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) 
     }
 }
 
+/// Initialize auto-snapshot scheduler and wire it into the MCP gateway config.
+///
+/// Returns the scheduler Arc + snapshot interval if VirtioFS mode is active
+/// (i.e. `session_dir/workspace` exists). The caller must spawn the periodic
+/// snapshot timer using the returned values.
+async fn wire_auto_snapshots(
+    config: &Arc<McpGatewayConfig>,
+    session_dir: &Path,
+) -> Option<(Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>, Duration)> {
+    let workspace = session_dir.join("workspace");
+    if !workspace.exists() {
+        return None;
+    }
+
+    let snap_settings = policy_config::load_merged_settings();
+    let snap_auto_max = snap_settings.iter()
+        .find(|s| s.id == "vm.snapshots.auto_max")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(10) as usize;
+    let snap_manual_max = snap_settings.iter()
+        .find(|s| s.id == "vm.snapshots.manual_max")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(12) as usize;
+    let snap_interval = snap_settings.iter()
+        .find(|s| s.id == "vm.snapshots.auto_interval")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(300) as u64;
+
+    let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
+        session_dir.to_path_buf(),
+        snap_auto_max,
+        snap_manual_max,
+        Duration::from_secs(snap_interval),
+    );
+    let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
+
+    // Take initial snapshot (slot 0 = baseline).
+    {
+        let mut s = scheduler.lock().await;
+        if let Err(e) = s.take_snapshot() {
+            warn!("failed to take initial snapshot: {e}");
+        }
+    }
+
+    // Wire scheduler into MCP gateway config.
+    // Safety: we're the only writer at this point (boot sequence).
+    // auto_snapshots is Option<Arc<Mutex<...>>> -- set once here.
+    let config_ptr = Arc::as_ptr(config) as *mut McpGatewayConfig;
+    unsafe {
+        (*config_ptr).auto_snapshots = Some(Arc::clone(&scheduler));
+    }
+
+    let interval = Duration::from_secs(snap_interval);
+    Some((scheduler, interval))
+}
+
+/// Spawn a periodic auto-snapshot timer that takes a snapshot every `interval`.
+fn spawn_auto_snapshot_timer(
+    rt: &tokio::runtime::Handle,
+    scheduler: Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>,
+    interval: Duration,
+) {
+    rt.spawn(async move {
+        let mut tick = tokio::time::interval(interval);
+        tick.tick().await; // skip first (already took initial snapshot)
+        loop {
+            tick.tick().await;
+            let mut s = scheduler.lock().await;
+            if let Err(e) = s.take_snapshot() {
+                tracing::warn!("auto-snapshot failed: {e}");
+            }
+        }
+    });
+}
+
 /// Set up vsock listeners and handle connections after VM boot.
 ///
 /// Once vsock connects, the serial forwarding task is aborted since all
@@ -1052,6 +1127,18 @@ async fn setup_vsock(
         "trigger": "boot_ready_received",
     }));
     let _ = app_handle.emit("terminal-source-changed", "vsock");
+
+    // Wire auto-snapshot scheduler into MCP config (VirtioFS mode only).
+    if let Some(ref config) = mcp_config {
+        let state = app_handle.state::<AppState>();
+        let vm_id = state.active_session_id.lock().unwrap().clone();
+        if let Some(session_dir) = vm_id.as_deref().and_then(session_dir_for) {
+            if let Some((scheduler, interval)) = wire_auto_snapshots(config, &session_dir).await {
+                let handle = tokio::runtime::Handle::current();
+                spawn_auto_snapshot_timer(&handle, scheduler, interval);
+            }
+        }
+    }
 
     // Spawn forwarding tasks.
     let terminal_output = {
@@ -1777,64 +1864,16 @@ fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionI
     let mut _fs_monitor: Option<capsem_core::fs_monitor::FsMonitor> = None;
     if !virtiofs_shares.is_empty() {
         if let Some(ref dir) = cli_session_dir {
-            let workspace = dir.join("workspace");
-            let snap_settings = policy_config::load_merged_settings();
-            let snap_auto_max = snap_settings.iter()
-                .find(|s| s.id == "vm.snapshots.auto_max")
-                .and_then(|s| s.effective_value.as_number())
-                .unwrap_or(10) as usize;
-            let snap_manual_max = snap_settings.iter()
-                .find(|s| s.id == "vm.snapshots.manual_max")
-                .and_then(|s| s.effective_value.as_number())
-                .unwrap_or(12) as usize;
-            let snap_interval = snap_settings.iter()
-                .find(|s| s.id == "vm.snapshots.auto_interval")
-                .and_then(|s| s.effective_value.as_number())
-                .unwrap_or(300) as u64;
-            let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
-                dir.clone(),
-                snap_auto_max,
-                snap_manual_max,
-                std::time::Duration::from_secs(snap_interval),
-            );
-            let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
-
-            // Take initial snapshot (slot 0 = baseline).
-            {
-                let mut s = rt.block_on(scheduler.lock());
-                if let Err(e) = s.take_snapshot() {
-                    warn!("failed to take initial snapshot: {e}");
-                }
-            }
-
-            // Wire scheduler into MCP gateway config.
+            // Wire auto-snapshot scheduler into MCP config.
             if let Some(ref config) = mcp_config {
-                // Safety: we're the only writer at this point (boot sequence).
-                // The Arc<McpGatewayConfig> is shared but fields are behind interior mutability.
-                // auto_snapshots is Option<Arc<Mutex<...>>> -- we set it once here.
-                let config_ptr = Arc::as_ptr(config) as *mut McpGatewayConfig;
-                unsafe {
-                    (*config_ptr).auto_snapshots = Some(Arc::clone(&scheduler));
+                if let Some((scheduler, interval)) = rt.block_on(wire_auto_snapshots(config, dir)) {
+                    spawn_auto_snapshot_timer(rt.handle(), scheduler, interval);
                 }
             }
-
-            // Start periodic snapshot timer.
-            let sched_clone = Arc::clone(&scheduler);
-            let interval = std::time::Duration::from_secs(snap_interval);
-            rt.spawn(async move {
-                let mut tick = tokio::time::interval(interval);
-                tick.tick().await; // skip first (already took initial snapshot)
-                loop {
-                    tick.tick().await;
-                    let mut s = sched_clone.lock().await;
-                    if let Err(e) = s.take_snapshot() {
-                        tracing::warn!("auto-snapshot failed: {e}");
-                    }
-                }
-            });
 
             // Start host file monitor (uses session_db directly, not gated on MITM proxy).
             // _fs_monitor must live until session ends -- dropping it stops the FSEvents watcher.
+            let workspace = dir.join("workspace");
             _fs_monitor = match capsem_core::fs_monitor::FsMonitor::start(
                 workspace.clone(),
                 workspace.clone(),

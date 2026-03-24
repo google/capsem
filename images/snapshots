@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""snapshots -- manage VM workspace snapshots.
+
+Usage:
+    snapshots create [name]          Create a named snapshot
+    snapshots list                   List all snapshots with file changes
+    snapshots changes                List changed files since checkpoints
+    snapshots revert <path> [cp]     Revert a file (latest snapshot if cp omitted)
+    snapshots delete <cp>            Delete a manual snapshot
+
+Options:
+    --json    Output raw JSON instead of formatted tables
+"""
+
+import asyncio
+import json
+import sys
+from datetime import datetime
+
+MCP_SERVER = "/run/capsem-mcp-server"
+
+
+async def call_tool(name, arguments=None):
+    """Call an MCP tool via capsem-mcp-server and return parsed result."""
+    from fastmcp import Client
+    from fastmcp.client.transports import StdioTransport
+
+    client = Client(StdioTransport(command=MCP_SERVER, args=[]))
+    async with client:
+        result = await client.call_tool(name, arguments or {})
+
+    for block in result.content:
+        if hasattr(block, "text"):
+            return block.text
+    return ""
+
+
+def parse_json_text(text):
+    """Try to parse text as JSON, return raw string on failure."""
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text
+
+
+def cmd_create(args, as_json):
+    name = args[0] if args else datetime.now().strftime("%Y%m%d_%H%M%S")
+    text = asyncio.run(call_tool("snapshots_create", {"name": name}))
+    data = parse_json_text(text)
+
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+
+    if isinstance(data, dict):
+        print(f"Snapshot created: {data.get('checkpoint', '?')}")
+        print(f"  Name: {data.get('name', '?')}")
+        print(f"  Hash: {data.get('hash', '?')}")
+        print(f"  Available slots: {data.get('available', '?')}")
+    else:
+        print(data)
+
+
+def cmd_list(_args, as_json):
+    text = asyncio.run(call_tool("snapshots_list"))
+    data = parse_json_text(text)
+
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+
+    if isinstance(data, dict):
+        snaps = data.get("snapshots", [])
+        if not snaps:
+            print("No snapshots.")
+            return
+        from rich.console import Console
+        from rich.table import Table
+
+        table = Table(title="Snapshots")
+        table.add_column("Checkpoint", style="cyan")
+        table.add_column("Origin")
+        table.add_column("Name")
+        table.add_column("Age")
+        table.add_column("Hash")
+        table.add_column("Changes")
+        for s in snaps:
+            origin = s.get("origin", "?")
+            style = "blue" if origin == "auto" else "magenta"
+            changes = s.get("changes", [])
+            change_summary = _format_changes(changes) if changes else "-"
+            table.add_row(
+                s.get("checkpoint", "?"),
+                f"[{style}]{origin}[/{style}]",
+                s.get("name") or "-",
+                s.get("age", "?"),
+                (s.get("hash") or "-")[:12],
+                change_summary,
+            )
+        Console().print(table)
+        avail = data.get("manual_available", "?")
+        max_m = data.get("manual_max", "?")
+        print(f"Manual slots: {avail}/{max_m} available")
+    else:
+        print(data)
+
+
+def _format_changes(changes):
+    """Format per-snapshot changes as a compact string."""
+    ops = {"created": "+", "modified": "~", "deleted": "-"}
+    parts = []
+    for c in changes[:5]:
+        op = ops.get(c.get("op", ""), "?")
+        path = c.get("path", "?")
+        parts.append(f"{op}{path}")
+    result = ", ".join(parts)
+    if len(changes) > 5:
+        result += f" (+{len(changes) - 5} more)"
+    return result
+
+
+def cmd_changes(_args, as_json):
+    text = asyncio.run(call_tool("snapshots_changes"))
+    data = parse_json_text(text)
+
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+
+    if isinstance(data, list):
+        if not data:
+            print("No changes detected.")
+            return
+        from rich.console import Console
+        from rich.table import Table
+
+        table = Table(title="Changed Files")
+        table.add_column("Path")
+        table.add_column("Op")
+        table.add_column("Size")
+        table.add_column("Checkpoint")
+        for f in data:
+            op = f.get("op", "?")
+            op_style = {"created": "green", "modified": "yellow", "deleted": "red"}.get(op, "white")
+            size = f.get("size")
+            size_str = str(size) if size is not None else "-"
+            table.add_row(
+                f.get("path", "?"),
+                f"[{op_style}]{op}[/{op_style}]",
+                size_str,
+                f.get("checkpoint", "?"),
+            )
+        Console().print(table)
+    elif isinstance(data, str) and "No checkpoints" in data:
+        print("No checkpoints available yet.")
+    else:
+        print(data)
+
+
+def cmd_revert(args, as_json):
+    if not args:
+        print("Usage: snapshots revert <path> [checkpoint]", file=sys.stderr)
+        sys.exit(1)
+    arguments = {"path": args[0]}
+    if len(args) >= 2:
+        arguments["checkpoint"] = args[1]
+    text = asyncio.run(call_tool("snapshots_revert", arguments))
+    data = parse_json_text(text)
+
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+
+    if isinstance(data, dict) and data.get("reverted"):
+        action = data.get("action", "reverted")
+        cp = data.get("checkpoint", "?")
+        print(f"Reverted: {data.get('path', args[0])}")
+        print(f"  Checkpoint: {cp}")
+        print(f"  Action: {action}")
+    else:
+        print(data)
+
+
+def cmd_delete(args, as_json):
+    if not args:
+        print("Usage: snapshots delete <checkpoint>", file=sys.stderr)
+        sys.exit(1)
+    checkpoint = args[0]
+    text = asyncio.run(call_tool("snapshots_delete", {"checkpoint": checkpoint}))
+    data = parse_json_text(text)
+
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+
+    if isinstance(data, dict) and data.get("deleted"):
+        print(f"Deleted snapshot: {checkpoint}")
+    else:
+        print(data)
+
+
+def cmd_history(args, as_json):
+    if not args:
+        print("Usage: snapshots history <path>", file=sys.stderr)
+        sys.exit(1)
+    text = asyncio.run(call_tool("snapshots_history", {"path": args[0]}))
+    data = parse_json_text(text)
+
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+
+    if isinstance(data, dict):
+        versions = data.get("versions", [])
+        path = data.get("path", args[0])
+        current_size = data.get("current_size")
+        print(f"History: {path} (current: {current_size or 'deleted'}B)")
+        if not versions:
+            print("  No snapshots contain this file.")
+            return
+        from rich.console import Console
+        from rich.table import Table
+
+        table = Table()
+        table.add_column("Checkpoint", style="cyan")
+        table.add_column("Origin")
+        table.add_column("Name")
+        table.add_column("Age")
+        table.add_column("Size")
+        table.add_column("Status")
+        for v in versions:
+            status = v.get("status", "?")
+            status_style = {
+                "unchanged": "dim", "modified": "yellow",
+                "deleted_since": "red", "created_since": "green",
+            }.get(status, "white")
+            size = v.get("size")
+            size_str = str(size) if size is not None else "-"
+            table.add_row(
+                v.get("checkpoint", "?"),
+                v.get("origin", "?"),
+                v.get("name") or "-",
+                v.get("age", "?"),
+                size_str,
+                f"[{status_style}]{status}[/{status_style}]",
+            )
+        Console().print(table)
+    else:
+        print(data)
+
+
+COMMANDS = {
+    "create": cmd_create,
+    "list": cmd_list,
+    "changes": cmd_changes,
+    "history": cmd_history,
+    "revert": cmd_revert,
+    "delete": cmd_delete,
+}
+
+USAGE = """Usage: snapshots <command> [args...]
+
+Commands:
+    create [name]          Create a named snapshot
+    list                   List all snapshots with file changes
+    changes                List changed files since checkpoints
+    history <path>         Show all versions of a file across snapshots
+    revert <path> [cp]     Revert a file (latest snapshot if cp omitted)
+    delete <cp>            Delete a manual snapshot
+
+Options:
+    --json                 Output raw JSON"""
+
+
+def main():
+    args = sys.argv[1:]
+    as_json = "--json" in args
+    if as_json:
+        args.remove("--json")
+
+    if not args or args[0] in ("-h", "--help"):
+        print(USAGE)
+        sys.exit(0)
+
+    cmd = args[0]
+    if cmd not in COMMANDS:
+        print(f"Unknown command: {cmd}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        COMMANDS[cmd](args[1:], as_json)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

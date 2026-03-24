@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`snapshots` CLI tool** -- in-VM command for managing workspace snapshots (`snapshots create/list/changes/history/revert/delete`). Uses FastMCP client to talk to the host MCP gateway. Supports `--json` flag for machine-readable output.
+- **`snapshots_history` MCP tool** -- shows all versions of a file across snapshots with sequential status (new/modified/unchanged/deleted). Accepts both relative paths and `/root/` prefixed paths.
 - **Boot timing via vsock** -- capsem-init records per-stage durations as JSONL, PTY agent sends `BootTiming` message to host after boot. Host logs each stage with tracing and emits `boot-timing` event to frontend. Stages: squashfs, virtiofs, overlayfs, workspace, network, net_proxy, deploy, venv, agent_start.
 - **Named snapshots** -- new `snapshot` MCP tool creates named checkpoints with blake3 workspace hash. Manual snapshots are stored in a separate pool from auto snapshots and are never auto-culled.
 - **Snapshot management MCP tools** -- `list_snapshots` (returns all snapshots with origin, name, hash, age), `delete_snapshot` (remove manual snapshots only, refuses auto). `list_changed_files` now includes `checkpoint_origin` and `checkpoint_name` in output.
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dual-pool snapshot scheduler: auto slots (ring buffer) + manual slots (named, never auto-culled).
 
 ### Changed
+- **MCP snapshot tools namespaced** -- all snapshot MCP tools renamed with `snapshots_` prefix to avoid collisions: `snapshots_create`, `snapshots_list`, `snapshots_changes`, `snapshots_revert`, `snapshots_delete`, `snapshots_history`. `snapshots_list` now includes per-snapshot file changes (vs previous snapshot, not current). `snapshots_revert` checkpoint is optional (auto-picks latest), errors on "already current", and restores permissions. All snapshots now include blake3 hash. Path normalization accepts both `hello.txt` and `/root/hello.txt`.
 - **AI CLIs use /opt/ai-clis directly** -- eliminated boot-time `cp -a` of hundreds of MB from squashfs to scratch disk. Overlayfs makes `/opt/ai-clis` writable for self-updates and `npm install -g`. Boot time dropped from multi-second stall to ~530ms.
 - **PATH single source of truth** -- `config/defaults.toml` defines PATH (sent via BootConfig SetEnv). Removed duplicate PATH exports from capsem-init, capsem-bashrc, capsem-doctor, profile.d. npm prefix set at build time in Dockerfile.
 - **capsem-doctor no longer overrides PATH** -- tests run with the same PATH the user sees, preventing hidden bugs.
@@ -28,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Zero skipped tests** -- `test_swap_active`, `test_ai_provider_domain_blocked`, `test_boot_time_under_1s` all assert instead of skipping. 228 tests, 0 skipped.
 
 ### Fixed
+- MCP file tools unavailable in GUI mode -- auto-snapshot scheduler was only wired into MCP config in CLI path, never in GUI boot path. Extracted shared `wire_auto_snapshots()` to eliminate duplication.
+- `snapshots_list` changes were computed vs current workspace instead of vs previous snapshot -- now correctly shows what changed AT each snapshot
+- `snapshots_history` status was computed vs current instead of sequentially -- now shows new/modified/unchanged/deleted progression across snapshots
+- `snapshots_revert` silently overwrote identical files -- now errors "already current" when file content and permissions match snapshot
 - Zombie session vacuum warnings on startup -- sessions that crashed before creating a DB are now marked as vacuumed (size 0) instead of warning on every boot.
 
 ### Fixed

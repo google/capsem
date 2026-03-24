@@ -242,20 +242,23 @@ async fn handle_json_rpc(
                     }
                     let mut sched = sched.lock().await;
                     return Some(match tool_name {
-                        "list_changed_files" => {
+                        "snapshots_changes" => {
                             super::file_tools::handle_list_changed_files(&sched, ws, req.id.clone())
                         }
-                        "list_snapshots" => {
-                            super::file_tools::handle_list_snapshots(&sched, req.id.clone())
+                        "snapshots_list" => {
+                            super::file_tools::handle_list_snapshots(&sched, ws, req.id.clone())
                         }
-                        "revert_file" => {
+                        "snapshots_revert" => {
                             super::file_tools::handle_revert_file(&arguments, &sched, ws, req.id.clone())
                         }
-                        "snapshot" => {
+                        "snapshots_create" => {
                             super::file_tools::handle_snapshot(&arguments, &mut sched, req.id.clone())
                         }
-                        "delete_snapshot" => {
+                        "snapshots_delete" => {
                             super::file_tools::handle_delete_snapshot(&arguments, &sched, req.id.clone())
+                        }
+                        "snapshots_history" => {
+                            super::file_tools::handle_snapshots_history(&arguments, &sched, ws, req.id.clone())
                         }
                         _ => JsonRpcResponse::err(req.id.clone(), -32602, format!("unknown file tool: {tool_name}")),
                     });
@@ -961,6 +964,132 @@ mod tests {
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
         assert!(resp.error.as_ref().unwrap().message.contains("missing resource URI"));
+    }
+
+    #[test]
+    fn file_tool_returns_error_without_virtiofs() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "snapshots_create",
+                "arguments": {"name": "test"}
+            })),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        let err = resp.error.as_ref().unwrap();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("not in VirtioFS mode"));
+    }
+
+    #[test]
+    fn tools_list_excludes_file_tools_without_virtiofs() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/list".into(),
+            params: None,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt);
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        for file_tool in super::super::file_tools::FILE_TOOL_NAMES {
+            assert!(!names.contains(file_tool), "file tool {file_tool} should not appear without VirtioFS");
+        }
+    }
+
+    #[test]
+    fn tools_list_includes_file_tools_with_virtiofs() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/list".into(),
+            params: None,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = rt.block_on(async {
+            let path = dir.path().join("test.db");
+            Arc::new(DbWriter::open(&path, 64).unwrap())
+        });
+        let config = McpGatewayConfig {
+            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
+            db,
+            policy: RwLock::new(Arc::new(McpPolicy::new())),
+            domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
+            http_client: reqwest::Client::new(),
+            auto_snapshots: None,
+            workspace_dir: Some(dir.path().to_path_buf()),
+        };
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        // 3 HTTP builtins + 6 file tools = 9
+        assert_eq!(tools.len(), 9);
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        for file_tool in super::super::file_tools::FILE_TOOL_NAMES {
+            assert!(names.contains(file_tool), "file tool {file_tool} missing from tools/list");
+        }
+    }
+
+    #[test]
+    fn file_tool_succeeds_with_virtiofs() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("session");
+        std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+        std::fs::create_dir_all(session_dir.join("auto_snapshots")).unwrap();
+
+        let scheduler = crate::auto_snapshot::AutoSnapshotScheduler::new(
+            session_dir.clone(),
+            10,
+            12,
+            std::time::Duration::from_secs(300),
+        );
+        let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
+
+        let db = rt.block_on(async {
+            let path = dir.path().join("test.db");
+            Arc::new(DbWriter::open(&path, 64).unwrap())
+        });
+        let config = McpGatewayConfig {
+            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
+            db,
+            policy: RwLock::new(Arc::new(McpPolicy::new())),
+            domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
+            http_client: reqwest::Client::new(),
+            auto_snapshots: Some(scheduler),
+            workspace_dir: Some(session_dir.join("workspace")),
+        };
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "snapshots_create",
+                "arguments": {"name": "test_snap"}
+            })),
+        };
+
+        let policy = McpPolicy::new();
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_none(), "snapshot should succeed: {:?}", resp.error);
     }
 
     #[test]

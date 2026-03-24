@@ -249,6 +249,7 @@ Session ephemerality depends on the storage mode:
 - `capsem-net-proxy` -- TCP-to-vsock relay for air-gapped HTTPS proxying
 - `capsem-mcp-server` -- MCP stdio-to-vsock relay for AI agent tool access
 - `capsem-doctor` -- VM self-diagnostic suite (bash script)
+- `snapshots` -- snapshot management CLI (Python, uses FastMCP client)
 - `diagnostics/` -- pytest test files for capsem-doctor
 
 **When adding a new guest binary**, update three places:

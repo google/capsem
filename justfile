@@ -428,6 +428,8 @@ _pack-initrd:
     chmod 755 capsem-doctor
     cp "$ROOT/images/capsem-bench" capsem-bench
     chmod 755 capsem-bench
+    cp "$ROOT/images/snapshots" snapshots
+    chmod 755 snapshots
     rm -rf diagnostics
     cp -r "$ROOT/images/diagnostics" diagnostics
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"

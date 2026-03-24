@@ -172,8 +172,8 @@ impl AutoSnapshotScheduler {
         let epoch = since_epoch.as_secs();
         let epoch_millis = since_epoch.as_millis();
 
-        // Compute workspace hash for manual snapshots.
-        let hash = if origin == SnapshotOrigin::Manual {
+        // Compute workspace hash for all snapshots.
+        let hash = if ws_dst.exists() {
             Some(workspace_hash(&ws_dst))
         } else {
             None
@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(slot.slot, 0);
         assert_eq!(slot.origin, SnapshotOrigin::Auto);
         assert!(slot.name.is_none());
-        assert!(slot.hash.is_none()); // auto snapshots don't compute hash
+        assert!(slot.hash.is_some()); // all snapshots compute hash
         assert!(slot.workspace_path.join("hello.txt").exists());
         let content = std::fs::read_to_string(slot.workspace_path.join("hello.txt")).unwrap();
         assert_eq!(content, "world");
