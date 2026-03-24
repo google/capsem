@@ -1,17 +1,59 @@
 # Capsem
 
-Native macOS app that sandboxes AI agents in Linux VMs using Apple's Virtualization.framework.
+Sandbox AI coding agents in hardware-isolated Linux VMs on your Mac. Full network control, HTTPS inspection, MCP tool routing, and per-session telemetry.
 
-Built with Rust, Tauri 2.0, and Astro.
+> **Disclaimer**: This project is not an official Google project. It is not supported by Google and Google specifically disclaims all warranties as to its quality, merchantability, or fitness for a particular purpose.
+
+## Features
+
+- **Hardware VM isolation** -- Each agent runs in its own Apple Virtualization.framework VM with Stage 2 page tables. No shared memory, no container escapes.
+- **Air-gapped networking** -- No NIC exists in the VM. All HTTPS traffic is intercepted by a transparent MITM proxy with per-domain allow/block policy and full request/response telemetry.
+- **Hardened kernel** -- Custom-compiled Linux kernel: no loadable modules, no IP stack, KASLR, stack protector, FORTIFY_SOURCE. 7MB vs 30MB stock Debian.
+- **HTTPS inspection** -- TLS termination with per-domain minted certificates. Every API call is logged: provider, model, tokens, cost, tool calls, trace linking.
+- **MCP tool gateway** -- Routes MCP tool calls from AI agents through a policy engine. Built-in tools (`fetch_http`, `grep_http`, `http_headers`) and external MCP server passthrough.
+- **Workspace snapshots** -- Rolling auto-snapshots via APFS clonefile. Create, list, diff, revert, compact snapshots from MCP tools or the in-VM `snapshots` CLI.
+- **Per-session telemetry** -- SQLite database per session: network events, model calls (with token counts and cost), tool calls, MCP calls, file events. Queryable from the UI.
+- **Security presets** -- Medium/High security profiles. Corporate lockdown via `/etc/capsem/corp.toml` (MDM-distributed). Per-domain HTTP method+path rules.
+- **AI agent support** -- Claude Code, Gemini CLI, and Codex run in yolo mode by default. The VM is the security boundary, not the agent's permission system.
+- **Boot in ~2 seconds** -- Squashfs rootfs + VirtioFS overlay + initrd-bundled agent binaries. No disk formatting, no package installs.
+
+## How it works
+
+```
+Developer                  Capsem (macOS)                    Linux VM
+    |                           |                               |
+    |-- capsem run "task" ----->|                                |
+    |                           |-- Boot VM (VZ.framework) ---->|
+    |                           |-- vsock:5001 terminal I/O --->|
+    |                           |-- vsock:5002 HTTPS MITM ----->|
+    |                           |-- vsock:5003 MCP gateway ---->|
+    |                           |                               |
+    |                           |   AI agent runs in sandbox    |
+    |                           |   All HTTPS inspected         |
+    |                           |   All MCP tools policy-checked|
+    |                           |   Workspace auto-snapshotted  |
+    |                           |                               |
+    |<-- Terminal output -------|<-- vsock:5001 ----------------|
+    |<-- Telemetry UI ----------|<-- session.db (SQLite) -------|
+```
+
+1. Capsem boots a Linux VM with a hardened kernel and read-only rootfs
+2. The AI agent (Claude, Gemini, Codex) starts in `/root` with full filesystem access
+3. All HTTPS traffic is intercepted -- API calls are parsed for model, tokens, cost, and tool usage
+4. MCP tool calls are routed through a policy engine with built-in and external tool support
+5. Workspace snapshots are taken automatically every 5 minutes (APFS clonefile, zero-copy)
+6. The session database records everything for the telemetry UI
 
 ## Install
 
-Download the latest release from [Releases](https://github.com/google/capsem/releases) and drag Capsem.app to your Applications folder.
+Download the latest release from [Releases](https://github.com/ebursztein/capsem/releases) and drag Capsem.app to Applications.
 
 Or build from source:
 
 ```sh
-bash install.sh
+just doctor          # check prerequisites
+just build-assets    # build VM assets (~10 min, first time only)
+just install         # test + build + codesign + install
 ```
 
 Requires macOS 13+ on Apple Silicon.
@@ -26,188 +68,76 @@ open /Applications/Capsem.app
 
 ### CLI
 
-Run a command inside the sandboxed Linux VM:
-
 ```sh
 capsem uname -a
 capsem echo hello
 capsem 'ls -la /proc/cpuinfo'
 ```
 
-The CLI binary lives at `/Applications/Capsem.app/Contents/MacOS/capsem`.
+## Architecture
+
+```
+crates/capsem-core/    VM library (config, boot, vsock, MITM proxy, MCP gateway)
+crates/capsem-app/     Tauri binary (GUI, CLI, IPC commands)
+crates/capsem-agent/   Guest binaries (PTY agent, net proxy, MCP relay)
+crates/capsem-logger/  Telemetry DB (writer, reader, schema)
+crates/capsem-proto/   Wire protocol (vsock message encoding)
+frontend/              Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5
+images/                VM image tooling (Dockerfile, build.py, capsem-init)
+```
 
 ## Development
 
-### Prerequisites
-
-- macOS 13+ on Apple Silicon
-- Rust via [rustup](https://rustup.rs/)
-- Node.js 20+ and pnpm (`npm install -g pnpm`)
-- [just](https://github.com/casey/just) (`brew install just`)
-- Tauri CLI (`cargo install tauri-cli`)
-- Podman (`brew install podman` or [podman.io](https://podman.io/))
-- `b3sum` (`brew install b3sum`)
-- `aarch64-unknown-linux-musl` toolchain (required to cross-compile the guest agent)
-  - `brew install messense/tap/musl-cross`
-
-### Project Structure
-
-```
-crates/capsem-core/    Rust VM library (config, boot, serial, machine)
-crates/capsem-app/     Tauri 2.0 binary (GUI, CLI, updater, IPC commands)
-frontend/              Astro + xterm.js (shadow DOM web component)
-images/                VM image build tooling (Dockerfile + build.py + capsem-init)
-assets/                Built VM assets (vmlinuz, initrd, rootfs -- gitignored)
-docs/                  Architecture and security documentation
-```
-
-### Just Commands
-
-All build workflows use `just`. Run `just --list` to see all targets.
-
-| Command | What it does |
-|---------|-------------|
-| `just dev` | Hot-reload app (frontend + Rust, full Tauri app) |
-| `just ui` | Frontend-only dev server (mock mode, no VM) |
-| `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
-| `just run "CMD"` | Same but run a command instead of interactive shell |
-| `just build-assets` | Full VM asset rebuild (kernel, initrd, rootfs) via Docker/Podman |
-| `just test` | Unit tests + cross-compile check + frontend type-check (no VM) |
-| `just full-test` | test + capsem-doctor + integration test + bench (boots VM) |
-| `just bench` | In-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP) |
-| `just release` | wait for CI + download artifacts + create GitHub release |
-| `just install` | full-test + release `.app` + install to /Applications + launch |
-| `just clean` | Remove all build artifacts |
-| `just inspect-session` | Inspect session DB integrity and event summary |
-| `just update-fixture` | Copy + scrub a real session DB as the test fixture |
-
-### First-Time Setup
-
 ```sh
-podman machine init && podman machine start   # first time only
-cd frontend && pnpm install
-just build-assets                              # build VM assets (~10 min)
+just dev             # hot-reloading Tauri app (frontend + Rust)
+just ui              # frontend-only dev server (mock mode, no VM)
+just run             # cross-compile + repack + build + sign + boot (~10s)
+just test            # unit tests + cross-compile + frontend check
+just full-test       # test + capsem-doctor + integration + bench
 ```
 
-### Development Workflow
+See `just --list` for all targets.
 
-```sh
-just dev        # hot-reloading dev server (frontend + Rust)
-just ui         # frontend-only dev server (mock mode, no VM)
-just run        # cross-compile + repack + build + sign + boot VM (~10s)
-```
+## Testing
 
-### Release
-
-Releases are CI-built. Push a tag, then `just release` waits for CI and publishes:
-
-```sh
-git tag vX.Y.Z && git push origin main --tags
-just release        # waits for CI, downloads artifacts, creates GitHub release
-```
-
-### Testing
-
-Testing has three layers: host-side Rust tests, frontend checks, and in-VM diagnostics.
-
-**Host-side (out of VM)** -- standard Rust unit and integration tests that run on macOS without booting a VM:
-
-```sh
-cargo test --workspace
-just test                             # cargo llvm-cov + cross-compile + frontend check
-```
-
-**Frontend** -- the UI can be developed and tested in a browser without booting a VM. Mock data (fake VM state, network events, settings) is served automatically when Tauri is not present:
-
-```sh
-just ui                               # starts Astro dev server on http://localhost:5173
-cd frontend && pnpm run check         # astro check + svelte-check (type errors)
-cd frontend && pnpm run build         # production build (catches bundling issues)
-```
-
-The mock mode is transparent -- `src/lib/api.ts` detects the absence of `window.__TAURI_INTERNALS__` and returns fake data from `src/lib/mock.ts`. All views (Terminal, Sessions, Network, Settings) are functional with mock data.
-
-**In-VM diagnostics** -- a pytest suite that runs inside the guest VM to verify the sandbox actually works end-to-end. It checks sandbox security (read-only rootfs, no kernel modules, no networking), unix utilities, dev runtimes (Python, Node.js, git), AI CLI availability, and file I/O workflows.
-
-```sh
-just run "capsem-doctor"              # repack + build + sign + boot VM + run diagnostics (~10s)
-just run                              # or boot interactively, then:
-capsem-doctor                         # run all diagnostics
-capsem-doctor -k sandbox              # run only sandbox tests
-capsem-doctor -x                      # stop on first failure
-```
-
-The diagnostic suite lives in `images/diagnostics/` and is baked into the rootfs via `Dockerfile.rootfs`. `capsem-doctor` (aliased as `capsem-test`) is the entry point. It returns a non-zero exit code on failure, so `just run "capsem-doctor"` fails the build when tests fail.
-
-**Full validation** -- to test everything end-to-end (Rust tests + cross-compile + frontend + VM boot + diagnostics + integration + bench):
-
-```sh
-just test                             # host-side: llvm-cov + cross-compile + frontend
-just full-test                        # everything: test + capsem-doctor + integration + bench
-```
-
-### Entitlements
-
-The binary must be signed with `com.apple.security.virtualization` or Virtualization.framework calls crash at runtime. The justfile handles this automatically.
+| Layer | Command | What it tests |
+|-------|---------|---------------|
+| Unit | `cargo test --workspace` | 1,500+ Rust tests across all crates |
+| Frontend | `cd frontend && pnpm run test` | Svelte component + store tests |
+| In-VM | `just run "capsem-doctor"` | 284 sandbox/network/runtime diagnostics inside the VM |
+| Integration | `just full-test` | End-to-end: boot VM, exercise all telemetry pipelines, verify DBs |
 
 ## Security
 
-Capsem assumes the AI agent inside the VM is adversarial. The sandbox is hardened at every layer:
+Capsem assumes the AI agent is adversarial. The sandbox is hardened at every layer:
 
-- **Hardware VM isolation** -- Apple Silicon Stage 2 page tables, no shared memory
-- **Custom hardened kernel** -- compiled from source with `CONFIG_MODULES=n` (no rootkits), `CONFIG_INET=n` (no IP stack), KASLR, stack protector, FORTIFY_SOURCE. 7MB vs 30MB stock Debian. See `images/defconfig.arm64` for the full config.
-- **No network interface** -- no NIC exists in the VM. DNS, HTTP, and all IP traffic are physically impossible.
-- **Read-only rootfs** -- system binaries are immutable. Only `/root`, `/tmp`, and `/run` are writable (tmpfs, wiped on reboot).
-- **Boot asset integrity** -- BLAKE3 hashes of kernel, initrd, and rootfs are compiled into the binary. Tampered assets are rejected before the VM boots.
-- **No systemd, no services** -- PID 1 is our init script. No cron, no sshd, no background processes.
+| Layer | Protection |
+|-------|-----------|
+| Hardware | Apple Silicon Stage 2 page tables, no shared memory |
+| Kernel | Custom-compiled, `CONFIG_MODULES=n`, `CONFIG_INET=n`, KASLR |
+| Network | No NIC. DNS/HTTP/IP physically impossible. MITM proxy on vsock only. |
+| Filesystem | Read-only squashfs rootfs. Only `/root`, `/tmp`, `/run` writable. |
+| Boot integrity | BLAKE3 hashes of kernel/initrd/rootfs compiled into the binary |
+| Processes | PID 1 is our init. No systemd, no cron, no sshd. |
+| Agent binaries | Deployed read-only (chmod 555), verified at boot |
 
-Full threat model and security analysis: **[docs/security.md](docs/security.md)**
+Full threat model: [docs/security.md](docs/security.md)
 
-## Defaults
+## Tech stack
 
-AI agents run in **yolo mode** by default -- all permission prompts are bypassed because Capsem's VM sandbox is the security boundary. Telemetry, auto-updates, and first-run prompts are also disabled since they serve no purpose in an air-gapped VM.
-
-### Claude Code
-
-Boot files injected to `~/.claude/settings.json` and `~/.claude.json`:
-
-| Setting | Value | Why |
-|---------|-------|-----|
-| `permissions.defaultMode` | `bypassPermissions` | Capsem is the sandbox -- Claude's own permission prompts are redundant |
-| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | Master switch: disables telemetry, error reporting, auto-updates, and `/bug` command. The VM is air-gapped anyway. |
-| `hasCompletedOnboarding` | `true` | Skips the first-run onboarding wizard |
-| `hasTrustDialogAccepted` | `true` | No "trust this folder?" prompt |
-| `hasTrustDialogHooksAccepted` | `true` | No hooks trust dialog |
-| `shiftEnterKeyBindingInstalled` | `true` | No keybinding installation prompt |
-
-### Gemini CLI
-
-Boot files injected to `~/.gemini/settings.json`, `projects.json`, `trustedFolders.json`, and `installation_id`:
-
-| Setting | Value | Why |
-|---------|-------|-----|
-| `approvalMode` | `yolo` | Auto-approve all tool calls -- Capsem is the sandbox |
-| `enableAutoUpdate` | `false` | VM has a fixed version, update checks would fail anyway |
-| `telemetry.enabled` | `false` | No telemetry in an air-gapped VM |
-| `usageStatisticsEnabled` | `false` | No usage stats collection |
-| `folderTrust.enabled` | `false` | No folder trust prompts -- `/root` is pre-trusted |
-| `tools.sandbox` | `false` | Disable Gemini's own sandbox (Capsem IS the sandbox) |
-| `hideTips`, `showShortcutsHint` | suppressed | Reduce terminal noise |
-| `homeDirectoryWarningDismissed` | `true` | No "running in home dir" warning |
-
-### Overriding defaults
-
-All defaults can be overridden per-setting in `~/.capsem/user.toml`. Corporate deployments can lock settings via `/etc/capsem/corp.toml` (MDM-distributed). See [docs/security.md](docs/security.md) for details.
+- [Rust](https://www.rust-lang.org) -- VM library, MITM proxy, MCP gateway, guest agents
+- [Tauri 2.0](https://tauri.app) -- Desktop app framework
+- [Apple Virtualization.framework](https://developer.apple.com/documentation/virtualization) -- Hardware VM isolation
+- [Astro 5](https://astro.build) + [Svelte 5](https://svelte.dev) -- Frontend
+- [Tailwind v4](https://tailwindcss.com) + [DaisyUI v5](https://daisyui.com) -- Design system
+- [rustls](https://github.com/rustls/rustls) + [hyper](https://hyper.rs) -- TLS termination and HTTP inspection
+- [SQLite](https://sqlite.org) -- Per-session telemetry storage
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) -- how the system works
-- [Security](docs/security.md) -- threat model, isolation guarantees, supply chain
-- [Status](docs/status.md) -- milestone progress
-
-## Auto-Update
-
-Release builds include Tauri's updater plugin. When a new version is published to GitHub Releases, the app shows a native dialog offering to download and install the update.
+- [Architecture](docs/architecture.md) -- system design and data flows
+- [Security](docs/security.md) -- threat model, isolation guarantees
+- [Configuration](docs/config.md) -- settings registry and policy engine
 
 ## Disclaimer
 
