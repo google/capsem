@@ -426,12 +426,12 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
     }
 }
 
-/// Inject the capsem MCP server entry into a settings.json string.
+/// Inject MCP server entries into a JSON config string (Claude Code, Gemini CLI).
 ///
-/// Parses the JSON, inserts `{"capsem": {"command": "/run/capsem-mcp-server"}}`
-/// under `mcpServers`, preserving any user-provided entries. Returns the
-/// original string unchanged if parsing fails.
-pub(super) fn inject_capsem_mcp_server(json_str: &str) -> String {
+/// For each server with a stdio transport and command, inserts
+/// `mcpServers.{key}.command = "{command}"` preserving any user-provided entries.
+/// Returns the original string unchanged if parsing fails.
+pub(super) fn inject_mcp_servers_json(json_str: &str, servers: &[McpServerDef]) -> String {
     let mut json: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(_) => return json_str.to_string(),
@@ -446,22 +446,34 @@ pub(super) fn inject_capsem_mcp_server(json_str: &str) -> String {
         .entry("mcpServers")
         .or_insert_with(|| serde_json::json!({}));
 
-    if let Some(servers) = mcp_servers.as_object_mut() {
-        servers.insert(
-            "capsem".to_string(),
-            serde_json::json!({"command": "/run/capsem-mcp-server"}),
-        );
+    if let Some(server_map) = mcp_servers.as_object_mut() {
+        for s in servers {
+            if s.transport == McpTransport::Stdio {
+                if let Some(cmd) = &s.command {
+                    server_map.insert(
+                        s.key.clone(),
+                        serde_json::json!({"command": cmd}),
+                    );
+                }
+            }
+        }
     }
 
     serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
 }
 
-/// Inject the capsem MCP server entry into a TOML config string (Codex CLI).
+/// Backward-compatible wrapper: inject capsem MCP server (delegates to generic version).
+pub(super) fn inject_capsem_mcp_server(json_str: &str) -> String {
+    let servers = super::loader::load_mcp_servers();
+    inject_mcp_servers_json(json_str, &servers)
+}
+
+/// Inject MCP server entries into a TOML config string (Codex CLI).
 ///
-/// Parses the TOML, inserts `[mcp_servers.capsem] command = "/run/capsem-mcp-server"`,
-/// preserving any user-provided entries. Returns the original string unchanged
-/// if parsing fails.
-pub(super) fn inject_capsem_mcp_server_toml(toml_str: &str) -> String {
+/// For each server with a stdio transport and command, inserts
+/// `[mcp_servers.{key}] command = "{command}"` preserving user-provided entries.
+/// Returns the original string unchanged if parsing fails.
+pub(super) fn inject_mcp_servers_toml(toml_str: &str, servers: &[McpServerDef]) -> String {
     let mut doc: toml::Value = match toml::from_str(toml_str) {
         Ok(v) => v,
         Err(_) => return toml_str.to_string(),
@@ -473,15 +485,24 @@ pub(super) fn inject_capsem_mcp_server_toml(toml_str: &str) -> String {
     let mcp = table
         .entry("mcp_servers")
         .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    if let Some(servers) = mcp.as_table_mut() {
-        let mut capsem = toml::map::Map::new();
-        capsem.insert(
-            "command".into(),
-            toml::Value::String("/run/capsem-mcp-server".into()),
-        );
-        servers.insert("capsem".into(), toml::Value::Table(capsem));
+    if let Some(server_map) = mcp.as_table_mut() {
+        for s in servers {
+            if s.transport == McpTransport::Stdio {
+                if let Some(cmd) = &s.command {
+                    let mut entry = toml::map::Map::new();
+                    entry.insert("command".into(), toml::Value::String(cmd.clone()));
+                    server_map.insert(s.key.clone(), toml::Value::Table(entry));
+                }
+            }
+        }
     }
     toml::to_string(&doc).unwrap_or_else(|_| toml_str.to_string())
+}
+
+/// Backward-compatible wrapper: inject capsem MCP server into TOML (delegates to generic version).
+pub(super) fn inject_capsem_mcp_server_toml(toml_str: &str) -> String {
+    let servers = super::loader::load_mcp_servers();
+    inject_mcp_servers_toml(toml_str, &servers)
 }
 
 /// Inject `customApiKeyResponses` into Claude state JSON.

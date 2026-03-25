@@ -1,11 +1,12 @@
 <script lang="ts">
-  import type { ConfigIssue, SettingsGroup, SettingsLeaf, SettingsNode, SettingValue, UpdateInfo } from '../../types';
+  import type { ConfigIssue, SettingsGroup, SettingsLeaf, SettingsAction, SettingsNode, SettingValue, UpdateInfo } from '../../types';
   import { settingsStore } from '../../stores/settings.svelte';
   import { themeStore } from '../../stores/theme.svelte';
   import { openUrl, checkForAppUpdate } from '../../api';
   import Self from './SettingsSection.svelte';
   import PresetSection from './PresetSection.svelte';
   import { wizardStore } from '../../stores/wizard.svelte';
+  import { SideEffect, ActionKind } from '../../models/settings-enums';
 
   let { group, depth = 0 }: { group: SettingsGroup; depth?: number } = $props();
 
@@ -169,7 +170,7 @@
     for (const child of children) {
       if (child.kind === 'leaf') {
         issues.push(...settingsStore.issuesFor(child.id));
-      } else {
+      } else if (child.kind === 'group') {
         issues.push(...groupIssues(child.children));
       }
     }
@@ -177,11 +178,17 @@
   }
 
   async function handleUpdate(id: string, value: unknown) {
-    // Theme special case
-    if (id === 'appearance.dark_mode') {
+    // Side effect dispatch (grammar-driven, no hardcoded IDs)
+    const leaf = settingsStore.findLeaf(id);
+    if (leaf?.metadata.side_effect === SideEffect.ToggleTheme) {
       themeStore.toggle();
     }
-    await settingsStore.update(id, value as any);
+    // Toggles save immediately; other types accumulate for batch save
+    if (leaf?.setting_type === 'bool') {
+      await settingsStore.updateImmediate(id, value as SettingValue);
+    } else {
+      settingsStore.stage(id, value as SettingValue);
+    }
   }
 
   /** Detect filetype from metadata or path extension. */
@@ -552,6 +559,69 @@
   {/if}
 {/snippet}
 
+{#snippet actionControl(a: SettingsAction)}
+  {#if a.action === ActionKind.CheckUpdate}
+    <div class="form-control">
+      <div class="flex items-start gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-0.5">
+            <span class="text-sm font-medium">{a.name}</span>
+          </div>
+          {#if a.description}
+            <p class="text-xs text-base-content/50 mb-1.5">{a.description}</p>
+          {/if}
+          {#if updateResult === 'none'}
+            <p class="text-xs text-allowed">You are on the latest version.</p>
+          {:else if updateResult === 'error'}
+            <p class="text-xs text-denied">Update check failed.</p>
+          {:else if updateResult && typeof updateResult === 'object'}
+            <p class="text-xs text-interactive">Version {updateResult.version} is available (current: {updateResult.current_version}).</p>
+          {/if}
+        </div>
+        <div class="flex-shrink-0">
+          <button
+            class="btn btn-sm btn-outline"
+            disabled={updateChecking}
+            onclick={handleCheckUpdate}
+          >
+            {#if updateChecking}
+              <span class="loading loading-spinner loading-xs"></span>
+              Checking...
+            {:else}
+              Check now
+            {/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {:else if a.action === ActionKind.PresetSelect}
+    <div id="settings-group-Preset" data-subgroup="Preset" class="mt-6 first:mt-0 mb-2 scroll-mt-4">
+      <h2 class="text-lg font-semibold text-interactive mb-0.5">{a.name}</h2>
+      {#if a.description}
+        <p class="text-xs text-base-content/50 mb-2">{a.description}</p>
+      {/if}
+      <PresetSection />
+    </div>
+  {:else if a.action === ActionKind.RerunWizard}
+    <div class="mt-8 pt-4 border-t border-base-200">
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm font-medium">{a.name}</span>
+          {#if a.description}
+            <p class="text-xs text-base-content/50">{a.description}</p>
+          {/if}
+        </div>
+        <button
+          class="btn btn-ghost btn-sm"
+          onclick={() => wizardStore.rerun()}
+        >
+          Re-run Wizard
+        </button>
+      </div>
+    </div>
+  {/if}
+{/snippet}
+
 <!-- Top-level group header -->
 {#if depth === 0}
   <div class="mb-4">
@@ -560,53 +630,15 @@
       <p class="text-sm text-base-content/50">{group.description}</p>
     {/if}
   </div>
-  {#if group.name === 'Security'}
-    <div id="settings-group-Preset" data-subgroup="Preset" class="mt-6 first:mt-0 mb-2 scroll-mt-4">
-      <h2 class="text-lg font-semibold text-interactive mb-0.5">Preset</h2>
-      <p class="text-xs text-base-content/50 mb-2">Predefined security configurations</p>
-      <PresetSection />
-    </div>
-  {/if}
-  {#if group.name === 'App'}
-    <div class="py-2 border-b border-base-200">
-      <div class="form-control">
-        <div class="flex items-start gap-3">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 mb-0.5">
-              <span class="text-sm font-medium">Check for updates</span>
-            </div>
-            <p class="text-xs text-base-content/50 mb-1.5">Manually check if a new version is available</p>
-            {#if updateResult === 'none'}
-              <p class="text-xs text-allowed">You are on the latest version.</p>
-            {:else if updateResult === 'error'}
-              <p class="text-xs text-denied">Update check failed.</p>
-            {:else if updateResult && typeof updateResult === 'object'}
-              <p class="text-xs text-interactive">Version {updateResult.version} is available (current: {updateResult.current_version}).</p>
-            {/if}
-          </div>
-          <div class="flex-shrink-0">
-            <button
-              class="btn btn-sm btn-outline"
-              disabled={updateChecking}
-              onclick={handleCheckUpdate}
-            >
-              {#if updateChecking}
-                <span class="loading loading-spinner loading-xs"></span>
-                Checking...
-              {:else}
-                Check now
-              {/if}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  {/if}
 {/if}
 
 <!-- Render children -->
 {#each group.children as child}
-  {#if child.kind === 'leaf'}
+  {#if child.kind === 'action'}
+    <div class="py-2 border-b border-base-200 last:border-b-0">
+      {@render actionControl(child)}
+    </div>
+  {:else if child.kind === 'leaf'}
     <div class="py-2 border-b border-base-200 last:border-b-0">
       {@render leafControl(child)}
     </div>
@@ -694,20 +726,3 @@
   {/if}
 {/each}
 
-<!-- Re-run Setup Wizard (VM section only) -->
-{#if depth === 0 && group.name === 'VM'}
-  <div class="mt-8 pt-4 border-t border-base-200">
-    <div class="flex items-center justify-between">
-      <div>
-        <span class="text-sm font-medium">Setup Wizard</span>
-        <p class="text-xs text-base-content/50">Re-run the first-time setup wizard to reconfigure providers, repositories, and security.</p>
-      </div>
-      <button
-        class="btn btn-ghost btn-sm"
-        onclick={() => wizardStore.rerun()}
-      >
-        Re-run Wizard
-      </button>
-    </div>
-  </div>
-{/if}

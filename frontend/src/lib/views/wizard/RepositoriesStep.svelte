@@ -9,7 +9,7 @@
   }
 
   async function updateSetting(id: string, value: string | boolean) {
-    await settingsStore.update(id, value);
+    await settingsStore.updateImmediate(id, value);
   }
 
   async function clearDetected(id: string) {

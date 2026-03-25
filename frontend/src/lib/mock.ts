@@ -476,16 +476,16 @@ function leaf(s: ResolvedSetting): SettingsNode {
 function buildMockTree(): SettingsNode[] {
   return [
   {
-    kind: 'group', key: 'ai', name: 'AI Providers', description: 'AI model provider configuration',
+    kind: 'group', enabled: true, key: 'ai', name: 'AI Providers', description: 'AI model provider configuration',
     collapsed: false, children: [
       {
-        kind: 'group', key: 'ai.anthropic', name: 'Anthropic', description: 'Claude Code AI agent',
+        kind: 'group', enabled: true, key: 'ai.anthropic', name: 'Anthropic', description: 'Claude Code AI agent',
         enabled_by: 'ai.anthropic.allow', collapsed: false, children: [
           leaf(mockSettings.find(s => s.id === 'ai.anthropic.allow')!),
           leaf(mockSettings.find(s => s.id === 'ai.anthropic.api_key')!),
           leaf(mockSettings.find(s => s.id === 'ai.anthropic.domains')!),
           {
-            kind: 'group', key: 'ai.anthropic.claude', name: 'Claude Code', description: 'Claude Code configuration files',
+            kind: 'group', enabled: true, key: 'ai.anthropic.claude', name: 'Claude Code', description: 'Claude Code configuration files',
             collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'ai.anthropic.claude.settings_json')!),
               leaf(mockSettings.find(s => s.id === 'ai.anthropic.claude.state_json')!),
@@ -494,7 +494,7 @@ function buildMockTree(): SettingsNode[] {
         ],
       },
       {
-        kind: 'group', key: 'ai.openai', name: 'OpenAI', description: 'OpenAI API provider',
+        kind: 'group', enabled: true, key: 'ai.openai', name: 'OpenAI', description: 'OpenAI API provider',
         enabled_by: 'ai.openai.allow', collapsed: false, children: [
           leaf(mockSettings.find(s => s.id === 'ai.openai.allow')!),
           leaf(mockSettings.find(s => s.id === 'ai.openai.api_key')!),
@@ -502,13 +502,13 @@ function buildMockTree(): SettingsNode[] {
         ],
       },
       {
-        kind: 'group', key: 'ai.google', name: 'Google AI', description: 'Google Gemini AI provider',
+        kind: 'group', enabled: true, key: 'ai.google', name: 'Google AI', description: 'Google Gemini AI provider',
         enabled_by: 'ai.google.allow', collapsed: false, children: [
           leaf(mockSettings.find(s => s.id === 'ai.google.allow')!),
           leaf(mockSettings.find(s => s.id === 'ai.google.api_key')!),
           leaf(mockSettings.find(s => s.id === 'ai.google.domains')!),
           {
-            kind: 'group', key: 'ai.google.gemini', name: 'Gemini CLI', description: 'Gemini CLI configuration files',
+            kind: 'group', enabled: true, key: 'ai.google.gemini', name: 'Gemini CLI', description: 'Gemini CLI configuration files',
             collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'ai.google.gemini.settings_json')!),
               leaf(mockSettings.find(s => s.id === 'ai.google.gemini.projects_json')!),
@@ -521,20 +521,20 @@ function buildMockTree(): SettingsNode[] {
     ],
   },
   {
-    kind: 'group', key: 'repository', name: 'Repositories', description: 'Code hosting and git configuration',
+    kind: 'group', enabled: true, key: 'repository', name: 'Repositories', description: 'Code hosting and git configuration',
     collapsed: false, children: [
       {
-        kind: 'group', key: 'repository.git.identity', name: 'Git Identity', description: 'Author name and email for commits inside the VM',
+        kind: 'group', enabled: true, key: 'repository.git.identity', name: 'Git Identity', description: 'Author name and email for commits inside the VM',
         collapsed: false, children: [
           leaf(mockSettings.find(s => s.id === 'repository.git.identity.author_name')!),
           leaf(mockSettings.find(s => s.id === 'repository.git.identity.author_email')!),
         ],
       },
       {
-        kind: 'group', key: 'repository.providers', name: 'Providers', description: 'Code hosting platforms',
+        kind: 'group', enabled: true, key: 'repository.providers', name: 'Providers', description: 'Code hosting platforms',
         collapsed: false, children: [
           {
-            kind: 'group', key: 'repository.providers.github', name: 'GitHub', description: 'GitHub and GitHub-hosted content',
+            kind: 'group', enabled: true, key: 'repository.providers.github', name: 'GitHub', description: 'GitHub and GitHub-hosted content',
             enabled_by: 'repository.providers.github.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'repository.providers.github.allow')!),
               leaf(mockSettings.find(s => s.id === 'repository.providers.github.domains')!),
@@ -542,7 +542,7 @@ function buildMockTree(): SettingsNode[] {
             ],
           },
           {
-            kind: 'group', key: 'repository.providers.gitlab', name: 'GitLab', description: 'GitLab and GitLab-hosted content',
+            kind: 'group', enabled: true, key: 'repository.providers.gitlab', name: 'GitLab', description: 'GitLab and GitLab-hosted content',
             enabled_by: 'repository.providers.gitlab.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'repository.providers.gitlab.allow')!),
               leaf(mockSettings.find(s => s.id === 'repository.providers.gitlab.domains')!),
@@ -554,10 +554,11 @@ function buildMockTree(): SettingsNode[] {
     ],
   },
   {
-    kind: 'group', key: 'security', name: 'Security', description: 'Network access control and security presets',
+    kind: 'group', enabled: true, key: 'security', name: 'Security', description: 'Network access control and security presets',
     collapsed: false, children: [
+      { kind: 'action', key: 'security.preset', name: 'Security Preset', description: 'Predefined security configurations', action: 'preset_select' } as any,
       {
-        kind: 'group', key: 'security.web', name: 'Web', description: 'Default actions for unknown domains',
+        kind: 'group', enabled: true, key: 'security.web', name: 'Web', description: 'Default actions for unknown domains',
         collapsed: false, children: [
           leaf(mockSettings.find(s => s.id === 'security.web.allow_read')!),
           leaf(mockSettings.find(s => s.id === 'security.web.allow_write')!),
@@ -568,27 +569,27 @@ function buildMockTree(): SettingsNode[] {
     ],
   },
   {
-    kind: 'group', key: 'services', name: 'Services', description: 'Search engines and package registries',
+    kind: 'group', enabled: true, key: 'services', name: 'Services', description: 'Search engines and package registries',
     collapsed: false, children: [
       {
-        kind: 'group', key: 'services.search', name: 'Search Engines', description: 'Web search engine access',
+        kind: 'group', enabled: true, key: 'services.search', name: 'Search Engines', description: 'Web search engine access',
         collapsed: false, children: [
           {
-            kind: 'group', key: 'security.services.search.google', name: 'Google', description: 'Google web search',
+            kind: 'group', enabled: true, key: 'security.services.search.google', name: 'Google', description: 'Google web search',
             enabled_by: 'security.services.search.google.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'security.services.search.google.allow')!),
               leaf(mockSettings.find(s => s.id === 'security.services.search.google.domains')!),
             ],
           },
           {
-            kind: 'group', key: 'security.services.search.bing', name: 'Bing', description: 'Microsoft Bing web search',
+            kind: 'group', enabled: true, key: 'security.services.search.bing', name: 'Bing', description: 'Microsoft Bing web search',
             enabled_by: 'security.services.search.bing.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'security.services.search.bing.allow')!),
               leaf(mockSettings.find(s => s.id === 'security.services.search.bing.domains')!),
             ],
           },
           {
-            kind: 'group', key: 'security.services.search.duckduckgo', name: 'DuckDuckGo', description: 'DuckDuckGo web search',
+            kind: 'group', enabled: true, key: 'security.services.search.duckduckgo', name: 'DuckDuckGo', description: 'DuckDuckGo web search',
             enabled_by: 'security.services.search.duckduckgo.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'security.services.search.duckduckgo.allow')!),
               leaf(mockSettings.find(s => s.id === 'security.services.search.duckduckgo.domains')!),
@@ -597,31 +598,31 @@ function buildMockTree(): SettingsNode[] {
         ],
       },
       {
-        kind: 'group', key: 'services.registry', name: 'Package Registries', description: 'Package manager registries',
+        kind: 'group', enabled: true, key: 'services.registry', name: 'Package Registries', description: 'Package manager registries',
         collapsed: false, children: [
           {
-            kind: 'group', key: 'security.services.registry.debian', name: 'Debian', description: 'Debian package repositories',
+            kind: 'group', enabled: true, key: 'security.services.registry.debian', name: 'Debian', description: 'Debian package repositories',
             enabled_by: 'security.services.registry.debian.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'security.services.registry.debian.allow')!),
               leaf(mockSettings.find(s => s.id === 'security.services.registry.debian.domains')!),
             ],
           },
           {
-            kind: 'group', key: 'security.services.registry.npm', name: 'npm', description: 'npm package registry',
+            kind: 'group', enabled: true, key: 'security.services.registry.npm', name: 'npm', description: 'npm package registry',
             enabled_by: 'security.services.registry.npm.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'security.services.registry.npm.allow')!),
               leaf(mockSettings.find(s => s.id === 'security.services.registry.npm.domains')!),
             ],
           },
           {
-            kind: 'group', key: 'security.services.registry.pypi', name: 'PyPI', description: 'Python Package Index',
+            kind: 'group', enabled: true, key: 'security.services.registry.pypi', name: 'PyPI', description: 'Python Package Index',
             enabled_by: 'security.services.registry.pypi.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'security.services.registry.pypi.allow')!),
               leaf(mockSettings.find(s => s.id === 'security.services.registry.pypi.domains')!),
             ],
           },
           {
-            kind: 'group', key: 'security.services.registry.crates', name: 'crates.io', description: 'Rust crate registry',
+            kind: 'group', enabled: true, key: 'security.services.registry.crates', name: 'crates.io', description: 'Rust crate registry',
             enabled_by: 'security.services.registry.crates.allow', collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'security.services.registry.crates.allow')!),
               leaf(mockSettings.find(s => s.id === 'security.services.registry.crates.domains')!),
@@ -632,20 +633,21 @@ function buildMockTree(): SettingsNode[] {
     ],
   },
   {
-    kind: 'group', key: 'appearance', name: 'Appearance', description: 'UI appearance and display settings',
+    kind: 'group', enabled: true, key: 'appearance', name: 'Appearance', description: 'UI appearance and display settings',
     collapsed: false, children: [
       leaf(mockSettings.find(s => s.id === 'appearance.dark_mode')!),
       leaf(mockSettings.find(s => s.id === 'appearance.font_size')!),
     ],
   },
   {
-    kind: 'group', key: 'vm', name: 'VM', description: 'Virtual machine configuration',
+    kind: 'group', enabled: true, key: 'vm', name: 'VM', description: 'Virtual machine configuration',
     collapsed: false, children: [
+      { kind: 'action', key: 'vm.rerun_wizard', name: 'Setup Wizard', description: 'Re-run the first-time setup wizard to reconfigure providers, repositories, and security.', action: 'rerun_wizard' } as any,
       {
-        kind: 'group', key: 'vm.environment', name: 'Environment', description: 'Shell and environment variables',
+        kind: 'group', enabled: true, key: 'vm.environment', name: 'Environment', description: 'Shell and environment variables',
         collapsed: false, children: [
           {
-            kind: 'group', key: 'vm.environment.shell', name: 'Shell', description: 'Guest shell settings',
+            kind: 'group', enabled: true, key: 'vm.environment.shell', name: 'Shell', description: 'Guest shell settings',
             collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.term')!),
               leaf(mockSettings.find(s => s.id === 'vm.environment.shell.home')!),
@@ -656,13 +658,13 @@ function buildMockTree(): SettingsNode[] {
             ],
           },
           {
-            kind: 'group', key: 'vm.environment.ssh', name: 'SSH', description: 'SSH key configuration',
+            kind: 'group', enabled: true, key: 'vm.environment.ssh', name: 'SSH', description: 'SSH key configuration',
             collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'vm.environment.ssh.public_key')!),
             ],
           },
           {
-            kind: 'group', key: 'vm.environment.tls', name: 'TLS', description: 'TLS certificate configuration',
+            kind: 'group', enabled: true, key: 'vm.environment.tls', name: 'TLS', description: 'TLS certificate configuration',
             collapsed: false, children: [
               leaf(mockSettings.find(s => s.id === 'vm.environment.tls.ca_bundle')!),
             ],
@@ -670,7 +672,7 @@ function buildMockTree(): SettingsNode[] {
         ],
       },
       {
-        kind: 'group', key: 'vm.resources', name: 'Resources', description: 'Hardware, telemetry, and session limits',
+        kind: 'group', enabled: true, key: 'vm.resources', name: 'Resources', description: 'Hardware, telemetry, and session limits',
         collapsed: false, children: [
           leaf(mockSettings.find(s => s.id === 'vm.resources.cpu_count')!),
           leaf(mockSettings.find(s => s.id === 'vm.resources.ram_gb')!),
@@ -972,6 +974,26 @@ export const mockApi = {
     s.source = 'user';
     s.modified = new Date().toISOString();
     recomputeEnabled();
+  },
+  loadSettings: async () => ({
+    tree: buildMockTree(),
+    issues: computeMockLint(),
+    presets: await mockApi.listPresets(),
+  }),
+  saveSettings: async (changes: Record<string, any>) => {
+    for (const [id, value] of Object.entries(changes)) {
+      const s = mockSettings.find(s => s.id === id);
+      if (!s || s.corp_locked) continue;
+      s.effective_value = value;
+      s.source = 'user' as const;
+      s.modified = new Date().toISOString();
+    }
+    recomputeEnabled();
+    return {
+      tree: buildMockTree(),
+      issues: computeMockLint(),
+      presets: await mockApi.listPresets(),
+    };
   },
   getVmState: async () => MOCK_VM_STATE,
   getMcpServers: async (): Promise<McpServerInfo[]> => MOCK_MCP_SERVERS.map(s => ({ ...s })),

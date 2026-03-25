@@ -18,6 +18,7 @@ import type {
   SecurityPreset,
   SessionInfo,
   SettingsNode,
+  SettingsResponse,
   SettingValue,
   UpdateInfo,
   VmStateResponse,
@@ -108,6 +109,16 @@ export function applyPreset(id: string): Promise<string[]> {
 export function updateSetting(id: string, value: SettingValue): Promise<void> {
   if (isMock) return mockApi.updateSetting(id, value);
   return tauriInvoke('update_setting', { id, value });
+}
+
+export function loadSettings(): Promise<SettingsResponse> {
+  if (isMock) return mockApi.loadSettings();
+  return tauriInvoke<SettingsResponse>('load_settings');
+}
+
+export function saveSettings(changes: Record<string, SettingValue>): Promise<SettingsResponse> {
+  if (isMock) return mockApi.saveSettings(changes);
+  return tauriInvoke<SettingsResponse>('save_settings', { changes });
 }
 
 export function detectHostConfig(): Promise<HostConfig> {

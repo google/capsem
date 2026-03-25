@@ -45,6 +45,14 @@ struct SettingMetaToml {
     prefix: Option<String>,
     #[serde(default)]
     filetype: Option<String>,
+    #[serde(default)]
+    widget: Option<Widget>,
+    #[serde(default)]
+    side_effect: Option<SideEffect>,
+    #[serde(default)]
+    hidden: bool,
+    #[serde(default)]
+    builtin: bool,
 }
 
 /// Category/group metadata from TOML grouping nodes.
@@ -68,6 +76,11 @@ fn collect_settings(
     parent: &GroupMeta,
     out: &mut Vec<SettingDef>,
 ) {
+    // Action nodes have `action` key -- skip them in the setting registry
+    if table.contains_key("action") {
+        return;
+    }
+
     if table.contains_key("type") {
         // Leaf setting -- deserialize the table into SettingDefToml
         let val = toml::Value::Table(table.clone());
@@ -100,6 +113,10 @@ fn collect_settings(
                 docs_url: def.meta.docs_url,
                 prefix: def.meta.prefix,
                 filetype: def.meta.filetype,
+                widget: def.meta.widget,
+                side_effect: def.meta.side_effect,
+                hidden: def.meta.hidden,
+                builtin: def.meta.builtin,
             },
         });
         return;

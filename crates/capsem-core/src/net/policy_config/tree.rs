@@ -5,10 +5,9 @@ use super::registry::{setting_definitions, DEFAULTS_TOML};
 use super::loader::load_settings_files;
 use super::resolver::resolve_settings;
 
-/// A settings tree node: either a group of children or a leaf setting.
+/// A settings tree node: group, leaf setting, action button, or MCP server.
 ///
-/// Serialized with `tag = "kind"` so JSON includes `{"kind": "group", ...}` or
-/// `{"kind": "leaf", ...}`.
+/// Serialized with `tag = "kind"` so JSON includes `{"kind": "group", ...}` etc.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 pub enum SettingsNode {
@@ -20,11 +19,24 @@ pub enum SettingsNode {
         description: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         enabled_by: Option<String>,
+        enabled: bool,
         collapsed: bool,
         children: Vec<SettingsNode>,
     },
     #[serde(rename = "leaf")]
     Leaf(Box<ResolvedSetting>),
+    /// A grammar-driven action node (button/widget, no stored value).
+    #[serde(rename = "action")]
+    Action {
+        key: String,
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        action: ActionKind,
+    },
+    /// A declarative MCP server definition.
+    #[serde(rename = "mcp_server")]
+    McpServer(Box<McpServerDef>),
 }
 
 /// Build a settings tree mirroring the TOML hierarchy with resolved values at leaves.
@@ -41,9 +53,45 @@ fn build_tree_from_table(
     // Check if this is a leaf (has "type" key)
     if table.contains_key("type") {
         if let Some(resolved) = resolved_map.get(path) {
+            if resolved.metadata.hidden {
+                return vec![];
+            }
             return vec![SettingsNode::Leaf(Box::new(resolved.clone()))];
         }
         return vec![];
+    }
+
+    // Check if this is an action node (has "action" key)
+    if let Some(action_val) = table.get("action").and_then(|v| v.as_str()) {
+        let action: ActionKind = match serde_json::from_value(
+            serde_json::Value::String(action_val.to_string()),
+        ) {
+            Ok(a) => a,
+            Err(_) => {
+                tracing::warn!("unknown action kind '{action_val}' at {path}");
+                return vec![];
+            }
+        };
+        let hidden = table
+            .get("hidden")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if hidden {
+            return vec![];
+        }
+        return vec![SettingsNode::Action {
+            key: path.to_string(),
+            name: table
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            description: table
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            action,
+        }];
     }
 
     // Group node
@@ -65,11 +113,19 @@ fn build_tree_from_table(
         .and_then(|v| v.as_bool())
         .unwrap_or(parent_collapsed);
 
+    let group_hidden = table
+        .get("hidden")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if group_hidden && !path.is_empty() {
+        return vec![];
+    }
+
     let mut children = Vec::new();
     for (key, val) in table {
         if matches!(
             key.as_str(),
-            "name" | "description" | "enabled_by" | "collapsed"
+            "name" | "description" | "enabled_by" | "collapsed" | "enabled" | "hidden"
         ) {
             continue;
         }
@@ -94,6 +150,10 @@ fn build_tree_from_table(
     // Top-level call (path is empty) skips wrapping.
     if let Some(name) = group_name {
         if !path.is_empty() {
+            let group_enabled = table
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
             return vec![SettingsNode::Group {
                 key: path.to_string(),
                 name,
@@ -108,6 +168,7 @@ fn build_tree_from_table(
                         .and_then(|v| v.as_str())
                         .map(String::from)
                 },
+                enabled: group_enabled,
                 collapsed: group_collapsed,
                 children,
             }];
@@ -177,9 +238,43 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
     tree
 }
 
+/// Build a settings tree including MCP server nodes.
+///
+/// MCP servers are appended as a top-level "MCP Servers" group if any exist.
+pub fn build_settings_tree_with_mcp(
+    resolved: &[ResolvedSetting],
+    mcp_servers: &[McpServerDef],
+) -> Vec<SettingsNode> {
+    let mut tree = build_settings_tree(resolved);
+
+    if !mcp_servers.is_empty() {
+        let mcp_children: Vec<SettingsNode> = mcp_servers
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| SettingsNode::McpServer(Box::new(s.clone())))
+            .collect();
+        if !mcp_children.is_empty() {
+            tree.push(SettingsNode::Group {
+                key: "mcp".to_string(),
+                name: "MCP Servers".to_string(),
+                description: Some(
+                    "Model Context Protocol servers available to AI agents".to_string(),
+                ),
+                enabled_by: None,
+                enabled: true,
+                collapsed: false,
+                children: mcp_children,
+            });
+        }
+    }
+
+    tree
+}
+
 /// Load settings tree from standard locations.
 pub fn load_settings_tree() -> Vec<SettingsNode> {
     let (user, corp) = load_settings_files();
     let resolved = resolve_settings(&user, &corp);
-    build_settings_tree(&resolved)
+    let mcp_servers = super::loader::load_mcp_servers();
+    build_settings_tree_with_mcp(&resolved, &mcp_servers)
 }

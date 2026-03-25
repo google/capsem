@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Config-driven settings grammar** -- formalized the settings TOML grammar with three node types (Group, Leaf, Action), complete field specifications, and enum-based types. Settings UI is now fully data-driven with no hardcoded group-name checks.
+- **Action nodes** -- new grammar node type for UI buttons/widgets (`check_update`, `preset_select`, `rerun_wizard`). Previously hardcoded in the Svelte template, now declared in `defaults.toml`.
+- **Declarative MCP server definitions** -- `[mcp]` section in defaults.toml/user.toml/corp.toml for declaring MCP servers that get auto-injected into AI agent configs. Replaces hardcoded capsem MCP injection.
+- **Batch settings IPC** -- `load_settings` (unified response) and `save_settings` (atomic batch update with corp enforcement) Tauri commands. Replaces 3 parallel calls with 1.
+- **SettingsModel TypeScript class** -- pure TS class encapsulating settings logic (parsing, accessors, widget resolution, pending state). Separated from Svelte rendering, fully unit-tested (43 tests).
+- **New setting types** -- `string_list`, `int_list`, `float_list` for native list values.
+- **Settings metadata extensions** -- `widget` (explicit UI widget override), `side_effect` (frontend action on change), `hidden` (exclude from UI), `builtin` (non-removable).
+- **Save/discard bar** -- settings UI shows sticky bar for unsaved changes with Discard/Save buttons.
+
+### Fixed
+- **MCP snapshot tools returned unbounded JSON, exceeding AI agent token limits** -- `snapshots_changes` and `snapshots_list` now return paginated text tables (default 5000 chars) instead of raw JSON. Supports `start_index`/`max_length` for pagination and `format=json` for machine-readable output.
+
+### Changed
+- **Settings grammar documented** -- `docs/config.md` rewritten as full grammar specification with all valid fields, enums, resolution rules, and MCP server format.
+- **Settings architecture page** -- new `site/src/content/docs/architecture/settings.md` with 7 mermaid diagrams covering file sources, resolution, presets, IPC protocol, frontend architecture, boot-time injection, and MCP server flow.
+- **Side effect dispatch** -- dark mode toggle now driven by `meta.side_effect = "toggle_theme"` instead of hardcoded `id === 'appearance.dark_mode'` check.
+- **MCP injection generalized** -- `inject_mcp_servers_json/toml()` replace hardcoded `inject_capsem_mcp_server()`, supporting multiple servers from config.
+- **Site: mermaid diagram support** -- added `astro-mermaid` integration for rendering mermaid diagrams in documentation pages.
+
 ## [0.12.1] - 2026-03-25
 
 ### Fixed

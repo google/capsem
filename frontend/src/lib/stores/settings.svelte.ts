@@ -1,114 +1,126 @@
-// Settings store -- loads settings tree and lint issues.
-import { getSettingsTree, lintConfig, listPresets, applyPreset, updateSetting } from '../api';
-import type { ConfigIssue, SecurityPreset, SettingsNode, SettingsLeaf, SettingValue } from '../types';
-
-/** Recursively collect all leaf nodes from a settings tree. */
-function flattenLeaves(nodes: SettingsNode[]): SettingsLeaf[] {
-  const leaves: SettingsLeaf[] = [];
-  for (const node of nodes) {
-    if (node.kind === 'leaf') {
-      leaves.push(node);
-    } else {
-      leaves.push(...flattenLeaves(node.children));
-    }
-  }
-  return leaves;
-}
+// Settings store -- thin Svelte wrapper around SettingsModel.
+import {
+  getSettingsTree,
+  lintConfig,
+  listPresets,
+  applyPreset,
+  loadSettings,
+  saveSettings,
+} from '../api';
+import { SettingsModel } from '../models/settings-model';
+import type {
+  ConfigIssue,
+  SecurityPreset,
+  SettingsGroup,
+  SettingsNode,
+  SettingsLeaf,
+  SettingValue,
+} from '../types';
 
 class SettingsStore {
-  tree = $state<SettingsNode[]>([]);
-  issues = $state<ConfigIssue[]>([]);
-  presets = $state<SecurityPreset[]>([]);
+  model = $state<SettingsModel | null>(null);
   applyingPreset = $state<string | null>(null);
   loading = $state(false);
   error = $state<string | null>(null);
 
-  /** Top-level section names derived from the tree. */
+  // --- Delegated accessors (backward-compatible) ---
+
+  get tree(): SettingsNode[] {
+    return this.model?.tree ?? [];
+  }
+
+  get issues(): ConfigIssue[] {
+    return this.model?.issues ?? [];
+  }
+
+  get presets(): SecurityPreset[] {
+    return this.model?.presets ?? [];
+  }
+
   sections = $derived(
-    this.tree
-      .filter((n): n is Extract<SettingsNode, { kind: 'group' }> => n.kind === 'group')
-      .map((g) => g.name),
+    this.model?.sections.map((g) => g.name) ?? [],
   );
 
-  /** All leaf settings (for needsSetup and other flat lookups). */
-  private flatLeaves = $derived(flattenLeaves(this.tree));
+  activePresetId = $derived(this.model?.activePresetId ?? null);
 
-  /** ID of the preset that matches current effective values, or null if modified. */
-  activePresetId = $derived.by(() => {
-    if (this.presets.length === 0 || this.tree.length === 0) return null;
-    const leafMap = new Map(this.flatLeaves.map(l => [l.id, l.effective_value]));
-    for (const preset of this.presets) {
-      const allMatch = Object.entries(preset.settings).every(
-        ([id, val]) => leafMap.has(id) && leafMap.get(id) === val,
-      );
-      if (allMatch) return preset.id;
-    }
-    return null;
-  });
+  needsSetup = $derived(this.model?.needsSetup ?? false);
 
-  /** True when no enabled API key is configured. */
-  needsSetup = $derived(
-    this.flatLeaves.length > 0 &&
-    !this.flatLeaves.some(
-      (s) => s.setting_type === 'apikey' && s.enabled && String(s.effective_value).trim().length > 0
-    )
-  );
+  isDirty = $derived(this.model?.isDirty ?? false);
 
-  /** Find a top-level group by name. */
-  section(name: string): SettingsNode | undefined {
-    return this.tree.find(
-      (n) => n.kind === 'group' && n.name === name,
-    );
+  section(name: string): SettingsGroup | undefined {
+    return this.model?.section(name);
   }
 
-  /** Find a leaf setting by its ID. */
   findLeaf(id: string): SettingsLeaf | undefined {
-    return this.flatLeaves.find((l) => l.id === id);
+    return this.model?.getLeaf(id);
   }
 
-  /** Find a group anywhere in the tree by name (searches recursively). */
-  findGroup(name: string): SettingsNode | undefined {
-    function search(nodes: SettingsNode[]): SettingsNode | undefined {
-      for (const node of nodes) {
-        if (node.kind === 'group' && node.name === name) return node;
-        if (node.kind === 'group') {
-          const found = search(node.children);
-          if (found) return found;
-        }
-      }
-      return undefined;
-    }
-    return search(this.tree);
+  findGroup(name: string): SettingsGroup | undefined {
+    return this.model?.getGroup(name);
   }
 
-  /** Get lint issues for a specific setting ID. */
   issuesFor(id: string): ConfigIssue[] {
-    return this.issues.filter((i) => i.id === id);
+    return this.model?.issuesFor(id) ?? [];
   }
+
+  // --- Load (unified) ---
 
   async load() {
     this.loading = true;
     this.error = null;
     try {
-      const [tree, issues, presets] = await Promise.all([
-        getSettingsTree(),
-        lintConfig(),
-        listPresets(),
-      ]);
-      this.tree = tree;
-      this.issues = issues;
-      this.presets = presets;
+      const response = await loadSettings();
+      this.model = new SettingsModel(response);
     } catch (e) {
-      console.error('Failed to load settings:', e);
+      // Fallback to legacy 3-call approach if new command not available
+      try {
+        const [tree, issues, presets] = await Promise.all([
+          getSettingsTree(),
+          lintConfig(),
+          listPresets(),
+        ]);
+        this.model = new SettingsModel({ tree, issues, presets });
+      } catch (e2) {
+        console.error('Failed to load settings:', e2);
+        this.error = String(e2);
+      }
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  // --- Mutations ---
+
+  /** Stage a local change without persisting (for text/number/file fields). */
+  stage(id: string, value: SettingValue) {
+    this.model?.stage(id, value);
+  }
+
+  /** Persist all pending changes in one IPC call. */
+  async save() {
+    if (!this.model?.isDirty) return;
+    const changes = this.model.getPendingAsRecord();
+    this.loading = true;
+    try {
+      const response = await saveSettings(changes);
+      this.model = new SettingsModel(response);
+    } catch (e) {
       this.error = String(e);
     } finally {
       this.loading = false;
     }
   }
 
-  async update(id: string, value: SettingValue) {
-    await updateSetting(id, value);
+  /** Discard all pending changes and reload from backend. */
+  async discard() {
+    this.model?.clearPending();
     await this.load();
+  }
+
+  /** Stage + save immediately (for toggles that need instant feedback). */
+  async updateImmediate(id: string, value: SettingValue) {
+    this.model?.stage(id, value);
+    await this.save();
   }
 
   async applySecurityPreset(id: string) {

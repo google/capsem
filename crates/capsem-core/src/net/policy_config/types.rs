@@ -34,18 +34,65 @@ pub const SETTING_SSH_PUBLIC_KEY: &str = "vm.environment.ssh.public_key";
 
 /// The data type of a setting (drives UI rendering).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SettingType {
     Text,
     Number,
     Password,
     Url,
     Email,
+    #[serde(rename = "apikey")]
     ApiKey,
     Bool,
     /// File to write to a guest path. Value is `{ path, content }`.
     /// JSON files (.json extension) are validated on save.
     File,
+    /// List of strings (e.g. domain patterns, tags).
+    StringList,
+    /// List of integers.
+    IntList,
+    /// List of floats.
+    FloatList,
+}
+
+/// Explicit UI widget override. When set on a setting's metadata,
+/// the frontend renders this widget instead of inferring from SettingType.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Widget {
+    Toggle,
+    TextInput,
+    NumberInput,
+    PasswordInput,
+    Select,
+    FileEditor,
+    DomainChips,
+    StringChips,
+    Slider,
+}
+
+/// Frontend side effect triggered when a setting value changes.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SideEffect {
+    ToggleTheme,
+}
+
+/// Action identifier for grammar-driven action nodes (buttons/widgets).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionKind {
+    CheckUpdate,
+    PresetSelect,
+    RerunWizard,
+}
+
+/// MCP server transport protocol.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransport {
+    Stdio,
+    Sse,
 }
 
 /// A setting value (untagged for clean TOML serialization).
@@ -54,12 +101,17 @@ pub enum SettingType {
 /// `File` (a table with `path` + `content`) must come before `Text` (a plain
 /// string) so TOML tables like `{ path = "...", content = "..." }` deserialize
 /// as `File` rather than failing on `Text`.
+/// List variants must come before `Text` so arrays deserialize correctly.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum SettingValue {
     Bool(bool),
     Number(i64),
+    Float(f64),
     File { path: String, content: String },
+    StringList(Vec<String>),
+    IntList(Vec<i64>),
+    FloatList(Vec<f64>),
     Text(String),
 }
 
@@ -91,6 +143,35 @@ impl SettingValue {
             _ => None,
         }
     }
+
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            SettingValue::Float(f) => Some(*f),
+            SettingValue::Number(n) => Some(*n as f64),
+            _ => None,
+        }
+    }
+
+    pub fn as_string_list(&self) -> Option<&[String]> {
+        match self {
+            SettingValue::StringList(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_int_list(&self) -> Option<&[i64]> {
+        match self {
+            SettingValue::IntList(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_float_list(&self) -> Option<&[f64]> {
+        match self {
+            SettingValue::FloatList(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 /// Per-rule HTTP method permissions.
@@ -119,9 +200,9 @@ pub struct HttpMethodPermissions {
 
 /// Structured metadata for a setting.
 ///
-/// Note: `skip_serializing_if` is intentionally NOT used here. The frontend
-/// accesses fields like `metadata.choices.length` directly, so omitting empty
-/// fields from JSON would cause `undefined.length` TypeErrors in the UI.
+/// Note: `skip_serializing_if` is intentionally NOT used on collection fields.
+/// The frontend accesses fields like `metadata.choices.length` directly, so
+/// omitting empty fields from JSON would cause `undefined.length` TypeErrors.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SettingMetadata {
     /// Domain patterns for network settings.
@@ -145,10 +226,10 @@ pub struct SettingMetadata {
     /// Whether this setting or section starts collapsed in the UI.
     #[serde(default)]
     pub collapsed: bool,
-    /// Display format hint (e.g. "domain_list" for chip editor).
+    /// Display format hint (DEPRECATED: use `widget` instead).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
-    /// Documentation URL for getting an API key / token.
+    /// Documentation URL (applies to any setting type).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs_url: Option<String>,
     /// Expected token/key prefix hint for the UI (e.g. "ghp_", "sk-ant-").
@@ -157,6 +238,19 @@ pub struct SettingMetadata {
     /// File type hint for syntax highlighting (e.g. "json", "bash", "conf").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filetype: Option<String>,
+    /// Explicit UI widget override. When set, the frontend renders this widget
+    /// instead of inferring from setting_type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget: Option<Widget>,
+    /// Frontend side effect triggered when the value changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_effect: Option<SideEffect>,
+    /// Setting is hidden from the UI but still active for policy building.
+    #[serde(default)]
+    pub hidden: bool,
+    /// Non-removable by user (e.g. built-in MCP servers).
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 /// Schema definition for a setting (loaded from defaults.toml at compile time).
@@ -190,9 +284,10 @@ pub struct SettingsFile {
 }
 
 /// Where a setting's effective value came from.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicySource {
+    #[default]
     Default,
     User,
     Corp,
@@ -218,6 +313,72 @@ pub struct ResolvedSetting {
     /// Whether this setting starts collapsed in the UI.
     #[serde(default)]
     pub collapsed: bool,
+}
+
+// ---------------------------------------------------------------------------
+// MCP server definitions
+// ---------------------------------------------------------------------------
+
+pub fn default_true() -> bool {
+    true
+}
+
+/// A declarative MCP server definition from defaults.toml, user.toml, or corp.toml.
+///
+/// MCP servers are auto-injected into AI agent config files (Claude, Gemini, Codex)
+/// at boot time. Enterprises can add servers via corp.toml.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct McpServerDef {
+    /// TOML key (e.g. "capsem", "internal_tools").
+    #[serde(default)]
+    pub key: String,
+    /// Display name.
+    pub name: String,
+    /// Help text.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Transport protocol.
+    pub transport: McpTransport,
+    /// Command to run (required for stdio transport).
+    #[serde(default)]
+    pub command: Option<String>,
+    /// URL to connect to (required for sse transport).
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Command-line arguments (stdio only).
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variables for the server process.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// HTTP headers (sse only).
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Non-removable by user (built-in servers).
+    #[serde(default)]
+    pub builtin: bool,
+    /// Explicit enable/disable.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Where this definition came from.
+    #[serde(default)]
+    pub source: PolicySource,
+    /// Whether corp.toml defines this server (user cannot modify).
+    #[serde(default)]
+    pub corp_locked: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Unified settings response
+// ---------------------------------------------------------------------------
+
+/// Unified response returned by `load_settings` and `save_settings` commands.
+/// Bundles everything the frontend needs in a single IPC call.
+#[derive(Serialize, Debug, Clone)]
+pub struct SettingsResponse {
+    pub tree: Vec<crate::net::policy_config::tree::SettingsNode>,
+    pub issues: Vec<crate::net::policy_config::lint::ConfigIssue>,
+    pub presets: Vec<crate::net::policy_config::presets::SecurityPreset>,
 }
 
 // ---------------------------------------------------------------------------

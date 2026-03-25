@@ -714,13 +714,32 @@ mod tests {
 
     #[test]
     fn parse_toml_wrong_value_type_fails() {
-        // value is an array -- not a valid SettingValue variant
+        // value is a nested table that doesn't match any SettingValue variant
         let toml_str = r#"
 [settings]
-"ai.anthropic.allow" = { value = [1, 2, 3], modified = "2026-01-01T00:00:00Z" }
+"ai.anthropic.allow" = { value = { nested = { deep = true } }, modified = "2026-01-01T00:00:00Z" }
 "#;
         let result: Result<SettingsFile, _> = toml::from_str(toml_str);
-        assert!(result.is_err(), "array value should fail deserialization");
+        assert!(result.is_err(), "nested table value should fail deserialization");
+    }
+
+    #[test]
+    fn parse_toml_list_values() {
+        // Lists are now valid SettingValue variants.
+        let toml_str = r#"
+[settings]
+"domains" = { value = ["a.com", "b.com"], modified = "2026-01-01T00:00:00Z" }
+"counts" = { value = [1, 2, 3], modified = "2026-01-01T00:00:00Z" }
+"#;
+        let file: SettingsFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            file.settings["domains"].value,
+            SettingValue::StringList(vec!["a.com".into(), "b.com".into()])
+        );
+        assert_eq!(
+            file.settings["counts"].value,
+            SettingValue::IntList(vec![1, 2, 3])
+        );
     }
 
     #[test]
@@ -2826,6 +2845,9 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
                 SettingsNode::Leaf(_) => {
                     panic!("top-level nodes should be groups, not leaves");
                 }
+                SettingsNode::Action { .. } | SettingsNode::McpServer(_) => {
+                    // Action and MCP nodes can appear at top level
+                }
             }
         }
     }
@@ -2844,6 +2866,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
                     SettingsNode::Group { children, .. } => {
                         ids.extend(collect_leaf_ids(children));
                     }
+                    SettingsNode::Action { .. } | SettingsNode::McpServer(_) => {}
                 }
             }
             ids
@@ -2913,6 +2936,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
                                     _ => false,
                                 })
                             }
+                            _ => false,
                         });
                     }
                     if find_leaf_in_group(children, group_name, leaf_id) {
@@ -2954,6 +2978,274 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         if let Some(SettingsNode::Group { enabled_by, .. }) = anthropic {
             assert_eq!(enabled_by, Some("ai.anthropic.allow".to_string()));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Grammar: action nodes in tree
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn settings_tree_contains_action_nodes() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let tree = build_settings_tree(&resolved);
+
+        fn find_action(nodes: &[SettingsNode], action: ActionKind) -> bool {
+            for node in nodes {
+                match node {
+                    SettingsNode::Action { action: a, .. } if *a == action => return true,
+                    SettingsNode::Group { children, .. } => {
+                        if find_action(children, action) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+
+        assert!(
+            find_action(&tree, ActionKind::CheckUpdate),
+            "tree should contain check_update action"
+        );
+        assert!(
+            find_action(&tree, ActionKind::PresetSelect),
+            "tree should contain preset_select action"
+        );
+        assert!(
+            find_action(&tree, ActionKind::RerunWizard),
+            "tree should contain rerun_wizard action"
+        );
+    }
+
+    #[test]
+    fn action_nodes_not_in_setting_definitions() {
+        let defs = setting_definitions();
+        // Action node keys should NOT appear as setting definitions
+        assert!(
+            defs.iter().all(|d| d.id != "app.check_update"),
+            "action nodes should not be in setting_definitions"
+        );
+        assert!(
+            defs.iter().all(|d| d.id != "security.preset"),
+            "action nodes should not be in setting_definitions"
+        );
+        assert!(
+            defs.iter().all(|d| d.id != "vm.rerun_wizard"),
+            "action nodes should not be in setting_definitions"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Grammar: side_effect metadata
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dark_mode_has_side_effect() {
+        let defs = setting_definitions();
+        let dark_mode = defs.iter().find(|d| d.id == "appearance.dark_mode").unwrap();
+        assert_eq!(dark_mode.metadata.side_effect, Some(SideEffect::ToggleTheme));
+    }
+
+    // -----------------------------------------------------------------------
+    // Grammar: MCP server loading
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mcp_section_parsed_from_defaults() {
+        // defaults.toml has [mcp.capsem]
+        let servers = super::loader::load_mcp_servers();
+        let capsem = servers.iter().find(|s| s.key == "capsem");
+        assert!(capsem.is_some(), "capsem MCP server should be in defaults");
+        let capsem = capsem.unwrap();
+        assert_eq!(capsem.name, "Capsem");
+        assert_eq!(capsem.transport, McpTransport::Stdio);
+        assert_eq!(capsem.command.as_deref(), Some("/run/capsem-mcp-server"));
+        assert!(capsem.builtin);
+        assert!(capsem.enabled);
+        assert_eq!(capsem.source, PolicySource::Default);
+    }
+
+    #[test]
+    fn mcp_servers_in_tree() {
+        let resolved = resolve_settings(&empty_file(), &empty_file());
+        let servers = super::loader::load_mcp_servers();
+        let tree = build_settings_tree_with_mcp(&resolved, &servers);
+
+        // Find the MCP Servers group
+        let mcp_group = tree.iter().find(|n| {
+            matches!(n, SettingsNode::Group { name, .. } if name == "MCP Servers")
+        });
+        assert!(mcp_group.is_some(), "tree should have MCP Servers group");
+
+        if let Some(SettingsNode::Group { children, .. }) = mcp_group {
+            let has_capsem = children.iter().any(|c| {
+                matches!(c, SettingsNode::McpServer(s) if s.key == "capsem")
+            });
+            assert!(has_capsem, "MCP Servers group should contain capsem");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Grammar: list value types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn setting_value_string_list_roundtrip() {
+        let val = SettingValue::StringList(vec!["a.com".into(), "b.com".into()]);
+        let json = serde_json::to_string(&val).unwrap();
+        let back: SettingValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(val, back);
+    }
+
+    #[test]
+    fn setting_value_int_list_roundtrip() {
+        let val = SettingValue::IntList(vec![1, 2, 3]);
+        let json = serde_json::to_string(&val).unwrap();
+        let back: SettingValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(val, back);
+    }
+
+    #[test]
+    fn setting_value_float_list_roundtrip() {
+        let val = SettingValue::FloatList(vec![1.5, 2.5]);
+        let json = serde_json::to_string(&val).unwrap();
+        let back: SettingValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(val, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Batch update + corp enforcement
+    // -----------------------------------------------------------------------
+
+    fn with_temp_configs<F: FnOnce(&std::path::Path, &std::path::Path)>(
+        user_entries: Vec<(&str, SettingValue)>,
+        corp_entries: Vec<(&str, SettingValue)>,
+        f: F,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let user_path = dir.path().join("user.toml");
+        let corp_path = dir.path().join("corp.toml");
+        let user_file = file_with(user_entries);
+        let corp_file = file_with(corp_entries);
+        loader::write_settings_file(&user_path, &user_file).unwrap();
+        loader::write_settings_file(&corp_path, &corp_file).unwrap();
+        // Point env vars to temp files
+        std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
+        std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
+        f(&user_path, &corp_path);
+        std::env::remove_var("CAPSEM_USER_CONFIG");
+        std::env::remove_var("CAPSEM_CORP_CONFIG");
+    }
+
+    #[test]
+    fn batch_update_accepts_valid_changes() {
+        with_temp_configs(vec![], vec![], |_, _| {
+            let mut changes = HashMap::new();
+            changes.insert(
+                SETTING_ANTHROPIC_API_KEY.to_string(),
+                SettingValue::Text("sk-ant-test".into()),
+            );
+            let result = loader::batch_update_settings(&changes);
+            assert!(result.is_ok(), "valid changes should succeed: {:?}", result);
+            let applied = result.unwrap();
+            assert_eq!(applied, vec![SETTING_ANTHROPIC_API_KEY]);
+        });
+    }
+
+    #[test]
+    fn batch_update_rejects_corp_locked() {
+        with_temp_configs(
+            vec![],
+            vec![(SETTING_ANTHROPIC_ALLOW, SettingValue::Bool(false))],
+            |_, _| {
+                let mut changes = HashMap::new();
+                changes.insert(
+                    SETTING_ANTHROPIC_ALLOW.to_string(),
+                    SettingValue::Bool(true),
+                );
+                let result = loader::batch_update_settings(&changes);
+                assert!(result.is_err());
+                assert!(result.unwrap_err().contains("corp-locked"));
+            },
+        );
+    }
+
+    #[test]
+    fn batch_update_rejects_mixed_batch_atomically() {
+        with_temp_configs(
+            vec![],
+            vec![(SETTING_ANTHROPIC_ALLOW, SettingValue::Bool(false))],
+            |user_path, _| {
+                let mut changes = HashMap::new();
+                // One valid change
+                changes.insert(
+                    SETTING_ANTHROPIC_API_KEY.to_string(),
+                    SettingValue::Text("sk-ant-test".into()),
+                );
+                // One corp-locked change
+                changes.insert(
+                    SETTING_ANTHROPIC_ALLOW.to_string(),
+                    SettingValue::Bool(true),
+                );
+                let result = loader::batch_update_settings(&changes);
+                assert!(result.is_err(), "mixed batch should be rejected");
+
+                // Verify nothing was written (atomic rejection)
+                let file = loader::load_settings_file(user_path).unwrap();
+                assert!(
+                    !file.settings.contains_key(SETTING_ANTHROPIC_API_KEY),
+                    "valid change should NOT be written when batch is rejected"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn batch_update_rejects_unknown_setting_id() {
+        with_temp_configs(vec![], vec![], |_, _| {
+            let mut changes = HashMap::new();
+            changes.insert(
+                "nonexistent.setting".to_string(),
+                SettingValue::Bool(true),
+            );
+            let result = loader::batch_update_settings(&changes);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("unknown setting"));
+        });
+    }
+
+    #[test]
+    fn batch_update_allows_dynamic_guest_env() {
+        with_temp_configs(vec![], vec![], |_, _| {
+            let mut changes = HashMap::new();
+            changes.insert(
+                "guest.env.MY_VAR".to_string(),
+                SettingValue::Text("hello".into()),
+            );
+            let result = loader::batch_update_settings(&changes);
+            assert!(result.is_ok(), "dynamic guest.env.* should be allowed");
+        });
+    }
+
+    #[test]
+    fn batch_update_empty_is_noop() {
+        with_temp_configs(vec![], vec![], |_, _| {
+            let changes = HashMap::new();
+            let result = loader::batch_update_settings(&changes);
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn load_settings_response_returns_all_fields() {
+        with_temp_configs(vec![], vec![], |_, _| {
+            let response = loader::load_settings_response();
+            assert!(!response.tree.is_empty(), "tree should not be empty");
+            // Presets should include medium and high
+            assert!(response.presets.len() >= 2, "should have at least 2 presets");
+        });
     }
 
     // -----------------------------------------------------------------------

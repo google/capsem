@@ -396,6 +396,8 @@ fn main() {
             commands::list_presets,
             commands::apply_preset,
             commands::update_setting,
+            commands::load_settings,
+            commands::save_settings,
             commands::get_session_info,
             commands::query_db,
             commands::get_mcp_servers,

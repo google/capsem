@@ -176,4 +176,11 @@
       <p class="text-base-content/40 text-sm">Select a section from the left.</p>
     {/if}
   </div>
+  {#if settingsStore.isDirty}
+    <div class="sticky bottom-0 bg-base-100 border-t border-base-300 px-4 py-2 flex items-center justify-end gap-2 z-10">
+      <span class="text-xs text-base-content/50">{settingsStore.model?.pendingChanges.size ?? 0} unsaved change(s)</span>
+      <button class="btn btn-ghost btn-sm" onclick={() => settingsStore.discard()}>Discard</button>
+      <button class="btn btn-sm bg-interactive text-white" onclick={() => settingsStore.save()}>Save</button>
+    </div>
+  {/if}
 </div>

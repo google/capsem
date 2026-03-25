@@ -23,6 +23,11 @@ description = "Check for new Capsem versions on launch"
 type = "bool"
 default = true
 
+[settings.app.check_update]
+name = "Check for updates"
+description = "Manually check if a new version is available"
+action = "check_update"
+
 # -- AI Providers ------------------------------------------------------------
 
 [settings.ai]
@@ -379,6 +384,11 @@ name = "Security"
 description = "Network access control, web services, and security presets"
 collapsed = false
 
+[settings.security.preset]
+name = "Security Preset"
+description = "Predefined security configurations"
+action = "preset_select"
+
 # -- Security > Web ----------------------------------------------------------
 
 [settings.security.web]
@@ -621,6 +631,11 @@ format = "domain_list"
 name = "VM"
 description = "Virtual machine configuration"
 collapsed = false
+
+[settings.vm.rerun_wizard]
+name = "Setup Wizard"
+description = "Re-run the first-time setup wizard to reconfigure providers, repositories, and security."
+action = "rerun_wizard"
 
 # -- VM > Snapshots ----------------------------------------------------------
 
@@ -881,6 +896,9 @@ description = "Use dark color scheme in the UI."
 type = "bool"
 default = true
 
+[settings.appearance.dark_mode.meta]
+side_effect = "toggle_theme"
+
 [settings.appearance.font_size]
 name = "Font size"
 description = "Terminal font size in pixels."
@@ -890,3 +908,14 @@ default = 14
 [settings.appearance.font_size.meta]
 min = 8
 max = 32
+
+# -- MCP Servers -------------------------------------------------------------
+# Declarative MCP server definitions. Auto-injected into AI agent configs at boot.
+# Enterprises can add servers via corp.toml [mcp] section.
+
+[mcp.capsem]
+name = "Capsem"
+description = "Built-in Capsem MCP server for file and snapshot tools"
+transport = "stdio"
+command = "/run/capsem-mcp-server"
+builtin = true

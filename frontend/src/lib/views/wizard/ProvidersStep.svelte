@@ -17,11 +17,11 @@
   }
 
   async function toggleProvider(allowId: string, enabled: boolean) {
-    await settingsStore.update(allowId, enabled);
+    await settingsStore.updateImmediate(allowId, enabled);
   }
 
   async function updateKey(keyId: string, value: string) {
-    await settingsStore.update(keyId, value);
+    await settingsStore.updateImmediate(keyId, value);
   }
 
   async function clearKey(keyId: string) {

@@ -1,4 +1,6 @@
-use capsem_core::net::policy_config::{self, ConfigIssue, ResolvedSetting, SecurityPreset, SettingEntry, SettingsNode, SettingValue};
+use std::collections::HashMap;
+
+use capsem_core::net::policy_config::{self, ConfigIssue, ResolvedSetting, SecurityPreset, SettingEntry, SettingsNode, SettingsResponse, SettingValue};
 use capsem_core::session;
 
 use crate::state::AppState;
@@ -85,6 +87,40 @@ pub async fn apply_preset(id: String, app_handle: tauri::AppHandle) -> Result<Ve
     }
 
     Ok(skipped)
+}
+
+/// Load the unified settings response (tree + issues + presets) in one call.
+#[tauri::command]
+pub async fn load_settings() -> Result<SettingsResponse, String> {
+    tokio::task::spawn_blocking(policy_config::load_settings_response)
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))
+}
+
+/// Batch-update settings. Validates all changes upfront; rejects entire batch
+/// if any change is invalid (corp-locked, type mismatch, unknown ID).
+/// Hot-reloads all policies once after writing.
+#[tauri::command]
+pub async fn save_settings(
+    changes: HashMap<String, SettingValue>,
+    app_handle: tauri::AppHandle,
+) -> Result<SettingsResponse, String> {
+    tokio::task::spawn_blocking(move || {
+        policy_config::batch_update_settings(&changes)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking: {e}"))??;
+
+    use tauri::Manager;
+    let state = app_handle.state::<AppState>();
+    if let Ok(vm_id) = active_vm_id(&state) {
+        reload_all_policies(&state, &vm_id).await;
+    }
+
+    // Return fresh state after the write
+    tokio::task::spawn_blocking(policy_config::load_settings_response)
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))
 }
 
 /// Update a single user setting by ID. Hot-reloads all policies so

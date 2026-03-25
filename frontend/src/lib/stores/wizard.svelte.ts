@@ -1,5 +1,5 @@
 // Wizard store -- tracks setup wizard step and host detection state.
-import { detectHostConfig, updateSetting } from '../api';
+import { detectHostConfig, saveSettings } from '../api';
 import type { HostConfig } from '../types';
 
 const STEP_IDS = ['welcome', 'security', 'providers', 'repositories', 'mcp', 'allset'] as const;
@@ -89,21 +89,24 @@ class WizardStore {
       { field: 'google_adc', settingId: 'ai.google.gemini.google_adc_json', toggleId: 'ai.google.allow' },
     ];
 
+    const changes: Record<string, any> = {};
     const applied = new Set<string>();
     for (const { field, settingId, toggleId } of mapping) {
       const value = config[field];
       if (value) {
-        try {
-          await updateSetting(settingId, value);
-          applied.add(settingId);
-          // Also enable the provider toggle if there's one
-          if (toggleId) {
-            await updateSetting(toggleId, true);
-            applied.add(toggleId);
-          }
-        } catch {
-          // best-effort
+        changes[settingId] = value;
+        applied.add(settingId);
+        if (toggleId) {
+          changes[toggleId] = true;
+          applied.add(toggleId);
         }
+      }
+    }
+    if (Object.keys(changes).length > 0) {
+      try {
+        await saveSettings(changes);
+      } catch {
+        // best-effort
       }
     }
     this.autoApplied = applied;
@@ -111,7 +114,7 @@ class WizardStore {
 
   /** Clear an auto-applied setting back to empty. */
   async clearDetected(settingId: string) {
-    await updateSetting(settingId, '');
+    await saveSettings({ [settingId]: '' });
     const next = new Set(this.autoApplied);
     next.delete(settingId);
     this.autoApplied = next;

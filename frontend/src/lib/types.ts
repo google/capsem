@@ -29,7 +29,7 @@ export interface VmStateResponse {
   history: TransitionEntry[];
 }
 
-/** The data type of a setting (serde rename_all = "lowercase"). */
+/** The data type of a setting (serde rename_all = "snake_case"). */
 export type SettingType =
   | 'text'
   | 'number'
@@ -38,10 +38,13 @@ export type SettingType =
   | 'email'
   | 'apikey'
   | 'bool'
-  | 'file';
+  | 'file'
+  | 'string_list'
+  | 'int_list'
+  | 'float_list';
 
-/** A setting value (serde untagged -- bool | number | { path, content } | string). */
-export type SettingValue = boolean | number | string | { path: string; content: string };
+/** A setting value (serde untagged -- bool | number | float | { path, content } | string[] | number[] | string). */
+export type SettingValue = boolean | number | string | { path: string; content: string } | string[] | number[];
 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
 export type PolicySource = 'default' | 'user' | 'corp';
@@ -68,6 +71,10 @@ export interface SettingMetadata {
   docs_url?: string | null;
   prefix?: string | null;
   filetype?: string | null;
+  widget?: string | null;
+  side_effect?: string | null;
+  hidden?: boolean;
+  builtin?: boolean;
 }
 
 /** A fully resolved setting for UI consumption. */
@@ -271,6 +278,7 @@ export interface SettingsGroup {
   name: string;
   description?: string | null;
   enabled_by?: string | null;
+  enabled: boolean;
   collapsed: boolean;
   children: SettingsNode[];
 }
@@ -293,8 +301,42 @@ export interface SettingsLeaf {
   metadata: SettingMetadata;
 }
 
-/** A settings tree node: either a group or a leaf. */
-export type SettingsNode = SettingsGroup | SettingsLeaf;
+/** A grammar-driven action node (button/widget, no stored value). */
+export interface SettingsAction {
+  kind: 'action';
+  key: string;
+  name: string;
+  description?: string | null;
+  action: string;
+}
+
+/** A declarative MCP server node in the settings tree. */
+export interface McpServerNode {
+  kind: 'mcp_server';
+  key: string;
+  name: string;
+  description?: string | null;
+  transport: string;
+  command?: string | null;
+  url?: string | null;
+  args: string[];
+  env: Record<string, string>;
+  headers: Record<string, string>;
+  builtin: boolean;
+  enabled: boolean;
+  source: PolicySource;
+  corp_locked: boolean;
+}
+
+/** A settings tree node: group, leaf, action, or MCP server. */
+export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpServerNode;
+
+/** Unified response from load_settings / save_settings. */
+export interface SettingsResponse {
+  tree: SettingsNode[];
+  issues: ConfigIssue[];
+  presets: SecurityPreset[];
+}
 
 /** A structured log event from the Rust backend. */
 export interface LogEntry {
