@@ -53,8 +53,9 @@ frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5
   src/lib/api.ts          Typed Tauri invoke/listen wrappers
   src/components/         Web components (capsem-terminal xterm.js)
   src/pages/index.astro   Thin shell rendering <App client:only="svelte" />
-site/                     Product website (Astro + Svelte + Tailwind)
-  src/pages/documentation/  User-facing documentation (markdown pages)
+site/                     Product website (Astro Starlight)
+  src/content/docs/         Documentation pages (markdown/MDX, Starlight content collection)
+  src/styles/custom.css     Theme overrides (accent colors, fonts)
 images/                   VM image tooling (Dockerfiles, build.py, capsem-init)
 assets/                   Built VM assets (gitignored)
 ```
@@ -420,17 +421,24 @@ Charts use [LayerChart](https://layerchart.com) v2 -- a composable Svelte charti
 
 ## Documentation
 
-User-facing documentation lives in `site/src/pages/documentation/` as markdown files rendered by the Astro site. The `docs/` directory contains older internal notes and is being deprecated -- new documentation goes in `site/` only.
+The product website uses [Astro Starlight](https://starlight.astro.build/) (Astro 6 + Tailwind v4). Documentation lives in `site/src/content/docs/` as markdown/MDX files in Starlight's content collection. The `docs/` directory contains older internal notes and is being deprecated -- new documentation goes in `site/` only.
 
-**Writing style:** tight and to the point, like a manual. One topic per page. No filler, no marketing language. Tables over prose when listing configs or test cases. Code examples only when they clarify usage.
+**Writing style:** tight and to the point, like a manual. One topic per page. No filler, no marketing language. Tables over prose when listing configs or test cases. Code examples only when they clarify usage. Diagrams in mermaid.
 
-**Frontmatter:** every doc page must include `title`, `description`, `lastUpdated` (ISO date), and optionally `tags` (string array). Update `lastUpdated` when modifying a page.
+**Frontmatter:** every doc page must include `title` and `description`. Starlight handles `lastUpdated` from git history automatically. No `layout:` field -- Starlight provides its own. Sidebar ordering uses `sidebar: { order: N }` in frontmatter.
 
-**Structure:** `site/src/pages/documentation/<category>/<topic>.md`. Each file uses `layout: ../../../layouts/Doc.astro` frontmatter. Current categories:
-- `security/` -- kernel hardening, network isolation, sandbox model
-- `testing/` -- capsem-doctor, test suites, benchmarks
+**Structure:** `site/src/content/docs/<category>/<topic>.md`. Current categories:
+- `security/` -- kernel hardening, network isolation, build verification
+- `testing/` -- capsem-doctor, benchmarks
+- `releases/` -- one page per minor version (e.g., `0-12.md`)
 
-**News / release posts:** One page per minor version: `site/src/pages/news/<major>.<minor>.md` (e.g., `0.9.md`). Each page consolidates all patch releases for that minor. Uses `layout: ../../layouts/Doc.astro`. The index page at `site/src/pages/news/index.astro` lists minors -- update the existing entry when cutting a patch release. When bumping to a new minor, create a new page and add an entry to the `releases` array.
+**Sidebar:** configured in `site/astro.config.mjs` under `starlight({ sidebar: [...] })`. Uses `autogenerate: { directory: '<category>' }` for each section.
+
+**Release pages:** `site/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots). Each page consolidates all patch releases for that minor. Uses `sidebar: { order: N }` for reverse-chrono ordering (higher = newer = listed first). When bumping to a new minor, create a new page.
+
+**Dev workflow:** `cd site && pnpm run dev` (Astro dev server on localhost:4321). `pnpm run build` for production build.
+
+**Keep docs in sync:** The site documents user-facing behavior. When features change (new settings, new CLI flags, new MCP tools, new security invariants, new benchmarks), update the corresponding doc page in `site/src/content/docs/`. When cutting a new minor release, create a new release page. Most pages are still stubs -- fill them in as the features they describe stabilize.
 
 ## Logging
 

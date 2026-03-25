@@ -54,3 +54,8 @@ crates/capsem-app/gen/
 frontend/.astro/
 frontend/dist/
 frontend/node_modules/
+
+# Site
+site/dist/
+site/node_modules/
+site/.astro/
