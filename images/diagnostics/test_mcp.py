@@ -548,7 +548,7 @@ def test_mcp_list_changed_files():
     result = _init_and_call("snapshots_changes", {})
     assert result.get("isError") is not True, f"list_changed_files failed: {result}"
     text = result["content"][0]["text"]
-    # Response is either empty or a JSON list of file paths.
+    # Response is a text table (default) or JSON (with format=json).
     assert isinstance(text, str), f"expected string response: {result}"
 
 
@@ -603,7 +603,7 @@ def test_mcp_revert_file():
     assert "modified" in r.stdout
 
     # 4. list_changed_files should show it as modified.
-    list_result = _init_and_call("snapshots_changes", {})
+    list_result = _init_and_call("snapshots_changes", {"format": "json"})
     text = list_result["content"][0]["text"]
     changes = json.loads(text)
     found = [c for c in changes if "revert_content_test.txt" in c.get("path", "")]
@@ -1014,7 +1014,7 @@ def _mcp_history(path):
 
 def _mcp_list():
     """MCP path: list snapshots."""
-    result = _init_and_call("snapshots_list", {})
+    result = _init_and_call("snapshots_list", {"format": "json"})
     assert result.get("isError") is not True, f"snapshots_list failed: {result}"
     return json.loads(result["content"][0]["text"])
 
@@ -1339,7 +1339,7 @@ def test_tool_changes_all_three_ops():
     run("echo t6_modified_longer > /root/t6_modify.txt")
     run("rm /root/t6_delete.txt")
 
-    result = _init_and_call("snapshots_changes", {})
+    result = _init_and_call("snapshots_changes", {"format": "json"})
     text = result["content"][0]["text"]
     changes = json.loads(text)
     ops = {c["path"]: c["op"] for c in changes}

@@ -18,6 +18,7 @@ use walkdir::WalkDir;
 
 use crate::auto_snapshot::{AutoSnapshotScheduler, SnapshotOrigin};
 
+use super::builtin_tools::{paginate, DEFAULT_MAX_LENGTH};
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// Tool names for file operations.
@@ -39,11 +40,25 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 "List files that have changed in the workspace compared to automatic checkpoints. ",
                 "Each entry includes the file path, operation (created/modified/deleted), size, ",
                 "and a checkpoint ID that can be passed to snapshots_revert. ",
-                "Shows newest changes first.",
+                "Shows newest changes first. Output is paginated (default 5000 chars).",
             ).into()),
             input_schema: serde_json::json!({
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "start_index": {
+                        "type": "integer",
+                        "description": "Character offset to start from (default: 0). Use the value from the pagination hint to continue."
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "Maximum characters to return (default: 5000). If truncated, a pagination hint shows the next start_index."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["text", "json"],
+                        "description": "Output format: 'text' (default) for a compact table, 'json' for machine-readable JSON array."
+                    }
+                }
             }),
             server_name: "builtin".into(),
             annotations: Some(ToolAnnotations {
@@ -59,13 +74,26 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
             original_name: "snapshots_list".into(),
             description: Some(concat!(
                 "List all workspace snapshots (automatic and manual). ",
-                "Returns slot index, origin (auto/manual), name, age, blake3 hash, ",
-                "and a changes array showing created/modified/deleted files vs current workspace. ",
-                "Empty snapshots (zero files) are filtered out.",
+                "Shows slot index, origin (auto/manual), name, age, blake3 hash, file count, ",
+                "and a compact change summary. Output is paginated (default 5000 chars).",
             ).into()),
             input_schema: serde_json::json!({
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "start_index": {
+                        "type": "integer",
+                        "description": "Character offset to start from (default: 0). Use the value from the pagination hint to continue."
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "Maximum characters to return (default: 5000). If truncated, a pagination hint shows the next start_index."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["text", "json"],
+                        "description": "Output format: 'text' (default) for a compact table, 'json' for machine-readable JSON."
+                    }
+                }
             }),
             server_name: "builtin".into(),
             annotations: Some(ToolAnnotations {
@@ -312,24 +340,13 @@ fn age_string(ts: SystemTime) -> String {
     }
 }
 
-/// Handle `snapshots_changes` tool call.
-pub fn handle_list_changed_files(
+/// Collect changes between current workspace and snapshots.
+fn collect_changes(
     scheduler: &AutoSnapshotScheduler,
     workspace_root: &Path,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
+) -> Vec<ChangedFile> {
     let current_files = collect_files(workspace_root);
     let snapshots = scheduler.list_snapshots();
-
-    if snapshots.is_empty() {
-        return JsonRpcResponse::ok(
-            request_id,
-            serde_json::json!({
-                "content": [{"type": "text", "text": "No checkpoints available yet."}]
-            }),
-        );
-    }
-
     let mut changes: Vec<ChangedFile> = Vec::new();
     let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -392,14 +409,128 @@ pub fn handle_list_changed_files(
             }
         }
     }
+    changes
+}
 
-    let text = serde_json::to_string_pretty(&changes).unwrap_or_else(|_| "[]".into());
+/// Format bytes as human-readable size.
+fn human_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1_048_576 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    }
+}
+
+/// Render changed files as a text table.
+fn render_changes_table(changes: &[ChangedFile]) -> String {
+    let mut out = format!("Changed Files ({} total)\n", changes.len());
+    out.push_str("Path                              Op        Size     Checkpoint\n");
+    out.push_str("---------------------------------------------------------------\n");
+    for c in changes {
+        let size_str = match c.size {
+            Some(s) => human_size(s),
+            None => "-".into(),
+        };
+        let cp_info = format!(
+            "{} ({}, {})",
+            c.checkpoint, c.checkpoint_origin, c.checkpoint_age
+        );
+        out.push_str(&format!(
+            "{:<34}{:<10}{:<9}{}\n",
+            truncate_path(&c.path, 33),
+            c.op,
+            size_str,
+            cp_info,
+        ));
+    }
+    out
+}
+
+/// Truncate a path string to fit a column, adding "..." if too long.
+fn truncate_path(path: &str, max: usize) -> String {
+    if path.len() <= max {
+        path.to_string()
+    } else {
+        format!("...{}", &path[path.len() - (max - 3)..])
+    }
+}
+
+/// Extract pagination params (start_index, max_length, format) from arguments.
+fn extract_pagination_params(arguments: &Value) -> (usize, usize, &str) {
+    let start_index = arguments
+        .get("start_index")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let max_length = arguments
+        .get("max_length")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let format = arguments
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text");
+    (start_index, max_length, format)
+}
+
+/// Build paginated MCP response from text content.
+fn paginated_response(
+    text: &str,
+    start_index: usize,
+    max_length: usize,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let (chunk, total, has_more) = paginate(text, start_index, max_length);
+    let mut output = String::new();
+    if start_index > 0 || has_more {
+        output.push_str(&format!(
+            "Content length: {total}\nShowing: {start_index}..{}\n",
+            start_index + chunk.len(),
+        ));
+        if has_more {
+            output.push_str(&format!(
+                "Use start_index={} to continue.\n",
+                start_index + chunk.len(),
+            ));
+        }
+        output.push('\n');
+    }
+    output.push_str(&chunk);
+    tool_ok(request_id, &output)
+}
+
+fn tool_ok(id: Option<Value>, text: &str) -> JsonRpcResponse {
     JsonRpcResponse::ok(
-        request_id,
+        id,
         serde_json::json!({
             "content": [{"type": "text", "text": text}]
         }),
     )
+}
+
+/// Handle `snapshots_changes` tool call.
+pub fn handle_list_changed_files(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let snapshots = scheduler.list_snapshots();
+    if snapshots.is_empty() {
+        return tool_ok(request_id, "No checkpoints available yet.");
+    }
+
+    let changes = collect_changes(scheduler, workspace_root);
+    let (start_index, max_length, format) = extract_pagination_params(arguments);
+
+    let text = if format == "json" {
+        serde_json::to_string(&changes).unwrap_or_else(|_| "[]".into())
+    } else {
+        render_changes_table(&changes)
+    };
+
+    paginated_response(&text, start_index, max_length, request_id)
 }
 
 /// Handle `snapshots_revert` tool call.
@@ -553,15 +684,75 @@ pub fn handle_revert_file(
     )
 }
 
-/// Handle `snapshots_list` tool call -- return all snapshot metadata with per-snapshot diffs.
-///
-/// Changes are computed vs the PREVIOUS snapshot (oldest-first), not vs current workspace.
-/// This shows what changed AT the time of each snapshot.
-pub fn handle_list_snapshots(
+/// Summarize changes as compact "+N, ~N, -N" string.
+fn format_change_summary(changes: &[Value]) -> String {
+    let mut created = 0u32;
+    let mut modified = 0u32;
+    let mut deleted = 0u32;
+    for c in changes {
+        match c["op"].as_str().unwrap_or("") {
+            "new" => created += 1,
+            "modified" => modified += 1,
+            "deleted" => deleted += 1,
+            _ => {}
+        }
+    }
+    let mut parts = Vec::new();
+    if created > 0 {
+        parts.push(format!("+{created}"));
+    }
+    if modified > 0 {
+        parts.push(format!("~{modified}"));
+    }
+    if deleted > 0 {
+        parts.push(format!("-{deleted}"));
+    }
+    if parts.is_empty() {
+        "(none)".into()
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// Render snapshot list as a text table.
+fn render_snapshots_table(
+    entries: &[serde_json::Value],
+    manual_available: usize,
+) -> String {
+    let mut out = format!(
+        "Snapshots ({} total, {} manual slots available)\n",
+        entries.len(),
+        manual_available,
+    );
+    out.push_str("Checkpoint  Origin  Name            Age          Hash          Files  Changes\n");
+    out.push_str("----------------------------------------------------------------------------\n");
+    for e in entries {
+        let cp = e["checkpoint"].as_str().unwrap_or("-");
+        let origin = e["origin"].as_str().unwrap_or("-");
+        let name = e["name"].as_str().unwrap_or("-");
+        let age = e["age"].as_str().unwrap_or("-");
+        let hash = e["hash"].as_str().map(|h| &h[..h.len().min(12)]).unwrap_or("-");
+        let files = e["files_count"].as_u64().unwrap_or(0);
+        let changes = e["changes"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+        let summary = format_change_summary(changes);
+        out.push_str(&format!(
+            "{:<12}{:<8}{:<16}{:<13}{:<14}{:<7}{}\n",
+            cp,
+            origin,
+            truncate_path(name, 15),
+            age,
+            hash,
+            files,
+            summary,
+        ));
+    }
+    out
+}
+
+/// Collect snapshot entries as JSON values (for both text and json rendering).
+fn collect_snapshot_entries(
     scheduler: &AutoSnapshotScheduler,
-    _workspace_root: &Path,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
+) -> Vec<serde_json::Value> {
     let mut snapshots = scheduler.list_snapshots();
     // list_snapshots returns newest-first; reverse to walk oldest-first.
     snapshots.reverse();
@@ -576,9 +767,6 @@ pub fn handle_list_snapshots(
             SnapshotOrigin::Manual => "manual",
         };
 
-        // Diff this snapshot vs previous snapshot (not vs current workspace).
-        // "new" = in this snap but not in prev, "deleted" = in prev but not here,
-        // "modified" = in both but different size.
         let changes = compute_changes_vs_previous(&snap_files, &prev_files);
 
         entries.push(serde_json::json!({
@@ -595,21 +783,37 @@ pub fn handle_list_snapshots(
         prev_files = snap_files;
     }
 
-    // Return newest-first (reverse back).
+    // Return newest-first.
     entries.reverse();
+    entries
+}
 
-    let summary = serde_json::json!({
-        "snapshots": entries,
-        "auto_max": scheduler.max_auto(),
-        "manual_max": scheduler.max_manual(),
-        "manual_available": scheduler.available_manual_slots(),
-    });
-    JsonRpcResponse::ok(
-        request_id,
-        serde_json::json!({
-            "content": [{"type": "text", "text": summary.to_string()}]
-        }),
-    )
+/// Handle `snapshots_list` tool call -- return all snapshot metadata with per-snapshot diffs.
+///
+/// Changes are computed vs the PREVIOUS snapshot (oldest-first), not vs current workspace.
+/// This shows what changed AT the time of each snapshot.
+pub fn handle_list_snapshots(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    _workspace_root: &Path,
+    request_id: Option<Value>,
+) -> JsonRpcResponse {
+    let entries = collect_snapshot_entries(scheduler);
+    let (start_index, max_length, format) = extract_pagination_params(arguments);
+
+    let text = if format == "json" {
+        let summary = serde_json::json!({
+            "snapshots": entries,
+            "auto_max": scheduler.max_auto(),
+            "manual_max": scheduler.max_manual(),
+            "manual_available": scheduler.available_manual_slots(),
+        });
+        summary.to_string()
+    } else {
+        render_snapshots_table(&entries, scheduler.available_manual_slots())
+    };
+
+    paginated_response(&text, start_index, max_length, request_id)
 }
 
 /// Compute changes between two snapshots: what's new/modified/deleted in `current` vs `prev`.
@@ -961,7 +1165,8 @@ mod tests {
         std::fs::write(session.join("workspace/new.txt"), "hello").unwrap();
 
         let workspace = session.join("workspace");
-        let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
@@ -981,7 +1186,8 @@ mod tests {
         std::fs::write(session.join("workspace/file.txt"), "modified content that is longer").unwrap();
 
         let workspace = session.join("workspace");
-        let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
@@ -1001,7 +1207,8 @@ mod tests {
         std::fs::remove_file(session.join("workspace/gone.txt")).unwrap();
 
         let workspace = session.join("workspace");
-        let resp = handle_list_changed_files(&sched, &workspace, Some(serde_json::json!(1)));
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
@@ -1224,7 +1431,8 @@ mod tests {
         std::fs::remove_file(ws.join("delete_me.txt")).unwrap();
         std::fs::write(ws.join("brand_new.txt"), "hello").unwrap();
 
-        let resp = handle_list_changed_files(&sched, &ws, Some(serde_json::json!(1)));
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
@@ -1259,7 +1467,8 @@ mod tests {
         std::fs::write(ws.join("hello.txt"), "modified world content").unwrap();
         sched.take_snapshot().unwrap(); // cp-1
 
-        let resp = handle_list_snapshots(&sched, &ws, Some(serde_json::json!(1)));
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let summary: Value = serde_json::from_str(&text).unwrap();
         let entries = summary["snapshots"].as_array().unwrap();
@@ -1293,7 +1502,8 @@ mod tests {
         std::fs::write(ws.join("data.txt"), "content").unwrap();
         sched.take_snapshot().unwrap(); // cp-1
 
-        let resp = handle_list_snapshots(&sched, &ws, Some(serde_json::json!(1)));
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let summary: Value = serde_json::from_str(&text).unwrap();
         let entries = summary["snapshots"].as_array().unwrap();
@@ -1349,5 +1559,234 @@ mod tests {
         assert!(resp.error.is_some());
         let err_msg = &resp.error.unwrap().message;
         assert!(err_msg.contains("no snapshot contains this file"), "unexpected error: {err_msg}");
+    }
+
+    // -- Pagination and text table tests (TDD: written before implementation) --
+
+    /// Helper to extract the text content from a JsonRpcResponse.
+    fn extract_text(resp: &JsonRpcResponse) -> String {
+        resp.result.as_ref().unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn changes_returns_text_table() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        std::fs::write(ws.join("hello.txt"), "world").unwrap();
+        sched.take_snapshot().unwrap();
+        std::fs::write(ws.join("new.txt"), "created").unwrap();
+
+        let args = serde_json::json!({});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        // Default format is text table, not JSON.
+        assert!(
+            serde_json::from_str::<Vec<Value>>(&text).is_err(),
+            "default response should NOT be a JSON array"
+        );
+        assert!(text.contains("Changed Files"), "missing header: {text}");
+        assert!(text.contains("Path"), "missing Path column: {text}");
+        assert!(text.contains("Op"), "missing Op column: {text}");
+        assert!(text.contains("new.txt"), "missing file entry: {text}");
+        assert!(text.contains("created"), "missing op value: {text}");
+    }
+
+    #[test]
+    fn changes_pagination_truncates_large_output() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        // Take empty snapshot, then create 300 files.
+        sched.take_snapshot().unwrap();
+        for i in 0..300 {
+            std::fs::write(ws.join(format!("file_{i:04}.txt")), format!("content {i}")).unwrap();
+        }
+
+        let args = serde_json::json!({});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        // Response should be bounded by DEFAULT_MAX_LENGTH + header overhead.
+        let max_allowed = super::super::builtin_tools::DEFAULT_MAX_LENGTH as usize + 500;
+        assert!(
+            text.len() <= max_allowed,
+            "response too large: {} chars (max {})",
+            text.len(),
+            max_allowed
+        );
+        // Should indicate pagination is available.
+        assert!(text.contains("start_index="), "missing pagination hint: {text}");
+    }
+
+    #[test]
+    fn changes_pagination_continuation() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        sched.take_snapshot().unwrap();
+        for i in 0..300 {
+            std::fs::write(ws.join(format!("file_{i:04}.txt")), format!("content {i}")).unwrap();
+        }
+
+        // First page.
+        let args = serde_json::json!({});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let page1 = extract_text(&resp);
+
+        // Extract start_index from pagination hint.
+        let idx_str = page1
+            .split("start_index=")
+            .nth(1)
+            .unwrap()
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .unwrap();
+        let next_start: u64 = idx_str.parse().unwrap();
+
+        // Second page.
+        let args = serde_json::json!({"start_index": next_start});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let page2 = extract_text(&resp);
+
+        // Pages should have different content.
+        assert_ne!(page1, page2, "pages should differ");
+        // Page 2 should not re-include the header.
+        assert!(!page2.starts_with("Changed Files"), "page 2 should not repeat the header");
+    }
+
+    #[test]
+    fn changes_custom_max_length() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        sched.take_snapshot().unwrap();
+        for i in 0..20 {
+            std::fs::write(ws.join(format!("f_{i}.txt")), "x").unwrap();
+        }
+
+        let args = serde_json::json!({"max_length": 200});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        // Header + chunk: allow some overhead for the pagination hint itself.
+        assert!(
+            text.len() <= 500,
+            "response should be short with max_length=200, got {} chars",
+            text.len()
+        );
+        assert!(text.contains("start_index="), "should paginate at max_length=200");
+    }
+
+    #[test]
+    fn changes_small_result_no_pagination() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        sched.take_snapshot().unwrap();
+        std::fs::write(ws.join("only.txt"), "small").unwrap();
+
+        let args = serde_json::json!({});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        assert!(!text.contains("start_index="), "should not paginate small results: {text}");
+        assert!(text.contains("only.txt"), "missing file entry: {text}");
+    }
+
+    #[test]
+    fn changes_format_json_returns_raw() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        std::fs::write(ws.join("a.txt"), "original").unwrap();
+        sched.take_snapshot().unwrap();
+        std::fs::write(ws.join("b.txt"), "new").unwrap();
+
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        // format=json should return valid JSON array.
+        let changes: Vec<Value> = serde_json::from_str(&text)
+            .expect("format=json should return valid JSON array");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["path"], "b.txt");
+        assert_eq!(changes[0]["op"], "created");
+    }
+
+    #[test]
+    fn list_returns_text_table() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        std::fs::write(ws.join("hello.txt"), "world").unwrap();
+        sched.take_snapshot().unwrap();
+        std::fs::write(ws.join("hello.txt"), "modified world content").unwrap();
+        sched.take_snapshot().unwrap();
+
+        let args = serde_json::json!({});
+        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        // Default format is text table, not JSON.
+        assert!(
+            serde_json::from_str::<Value>(&text).is_err(),
+            "default response should NOT be JSON"
+        );
+        assert!(text.contains("Snapshots"), "missing header: {text}");
+        assert!(text.contains("Checkpoint"), "missing Checkpoint column: {text}");
+        // Changes should use compact format.
+        assert!(
+            text.contains('+') || text.contains('~'),
+            "changes should use compact +/~ format: {text}"
+        );
+    }
+
+    #[test]
+    fn list_pagination_works() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        // Create many snapshots with files to generate a large response.
+        for i in 0..8 {
+            for j in 0..20 {
+                std::fs::write(ws.join(format!("f_{i}_{j}.txt")), format!("{i}{j}")).unwrap();
+            }
+            sched.take_snapshot().unwrap();
+        }
+
+        let args = serde_json::json!({"max_length": 500});
+        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        assert!(
+            text.len() <= 1000,
+            "response should respect max_length, got {} chars",
+            text.len()
+        );
+        assert!(text.contains("start_index="), "should paginate: {text}");
+    }
+
+    #[test]
+    fn list_format_json_returns_raw() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        std::fs::write(ws.join("a.txt"), "data").unwrap();
+        sched.take_snapshot().unwrap();
+
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let text = extract_text(&resp);
+
+        // format=json should return valid JSON.
+        let summary: Value = serde_json::from_str(&text)
+            .expect("format=json should return valid JSON");
+        assert!(summary["snapshots"].is_array());
     }
 }

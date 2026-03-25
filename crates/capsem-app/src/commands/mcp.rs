@@ -39,8 +39,8 @@ pub async fn call_mcp_tool(
         rt.block_on(async {
             let mut sched = sched.lock().await;
             match tool.as_str() {
-                "snapshots_list" => file_tools::handle_list_snapshots(&sched, &ws, None),
-                "snapshots_changes" => file_tools::handle_list_changed_files(&sched, &ws, None),
+                "snapshots_list" => file_tools::handle_list_snapshots(&arguments, &sched, &ws, None),
+                "snapshots_changes" => file_tools::handle_list_changed_files(&arguments, &sched, &ws, None),
                 "snapshots_create" => file_tools::handle_snapshot(&arguments, &mut sched, None),
                 "snapshots_delete" => file_tools::handle_delete_snapshot(&arguments, &sched, None),
                 "snapshots_revert" => file_tools::handle_revert_file(&arguments, &sched, &ws, None),

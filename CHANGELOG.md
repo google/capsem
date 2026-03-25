@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **MCP snapshot tools returned unbounded JSON, exceeding AI agent token limits** -- `snapshots_changes` and `snapshots_list` now return paginated text tables (default 5000 chars) instead of raw JSON. Supports `start_index`/`max_length` for pagination and `format=json` for machine-readable output.
+- **Frontend npm audit vulnerabilities** -- pinned transitive deps `yaml`, `picomatch`, and `smol-toml` to patched versions via pnpm overrides.
 
 ### Changed
 - **Settings grammar documented** -- `docs/config.md` rewritten as full grammar specification with all valid fields, enums, resolution rules, and MCP server format.

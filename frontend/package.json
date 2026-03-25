@@ -19,6 +19,13 @@
     "layerchart": "2.0.0-next.46",
     "sql.js": "^1.14.1"
   },
+  "pnpm": {
+    "overrides": {
+      "yaml": ">=2.8.3",
+      "picomatch": ">=4.0.4",
+      "smol-toml": ">=1.6.1"
+    }
+  },
   "devDependencies": {
     "@astrojs/check": "^0.9.8",
     "@sveltejs/vite-plugin-svelte": "^5.1.1",

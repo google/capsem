@@ -62,99 +62,25 @@ def cmd_create(args, as_json):
 
 
 def cmd_list(_args, as_json):
-    text = asyncio.run(call_tool("snapshots_list"))
-    data = parse_json_text(text)
-
     if as_json:
+        text = asyncio.run(call_tool("snapshots_list", {"format": "json"}))
+        data = parse_json_text(text)
         print(json.dumps(data, indent=2))
-        return
-
-    if isinstance(data, dict):
-        snaps = data.get("snapshots", [])
-        if not snaps:
-            print("No snapshots.")
-            return
-        from rich.console import Console
-        from rich.table import Table
-
-        table = Table(title="Snapshots")
-        table.add_column("Checkpoint", style="cyan")
-        table.add_column("Origin")
-        table.add_column("Name")
-        table.add_column("Age")
-        table.add_column("Hash")
-        table.add_column("Changes")
-        for s in snaps:
-            origin = s.get("origin", "?")
-            style = "blue" if origin == "auto" else "magenta"
-            changes = s.get("changes", [])
-            change_summary = _format_changes(changes) if changes else "-"
-            table.add_row(
-                s.get("checkpoint", "?"),
-                f"[{style}]{origin}[/{style}]",
-                s.get("name") or "-",
-                s.get("age", "?"),
-                (s.get("hash") or "-")[:12],
-                change_summary,
-            )
-        Console().print(table)
-        avail = data.get("manual_available", "?")
-        max_m = data.get("manual_max", "?")
-        print(f"Manual slots: {avail}/{max_m} available")
     else:
-        print(data)
-
-
-def _format_changes(changes):
-    """Format per-snapshot changes as a compact string."""
-    ops = {"created": "+", "modified": "~", "deleted": "-"}
-    parts = []
-    for c in changes[:5]:
-        op = ops.get(c.get("op", ""), "?")
-        path = c.get("path", "?")
-        parts.append(f"{op}{path}")
-    result = ", ".join(parts)
-    if len(changes) > 5:
-        result += f" (+{len(changes) - 5} more)"
-    return result
+        # MCP returns pre-formatted text table with pagination.
+        text = asyncio.run(call_tool("snapshots_list"))
+        print(text)
 
 
 def cmd_changes(_args, as_json):
-    text = asyncio.run(call_tool("snapshots_changes"))
-    data = parse_json_text(text)
-
     if as_json:
+        text = asyncio.run(call_tool("snapshots_changes", {"format": "json"}))
+        data = parse_json_text(text)
         print(json.dumps(data, indent=2))
-        return
-
-    if isinstance(data, list):
-        if not data:
-            print("No changes detected.")
-            return
-        from rich.console import Console
-        from rich.table import Table
-
-        table = Table(title="Changed Files")
-        table.add_column("Path")
-        table.add_column("Op")
-        table.add_column("Size")
-        table.add_column("Checkpoint")
-        for f in data:
-            op = f.get("op", "?")
-            op_style = {"created": "green", "modified": "yellow", "deleted": "red"}.get(op, "white")
-            size = f.get("size")
-            size_str = str(size) if size is not None else "-"
-            table.add_row(
-                f.get("path", "?"),
-                f"[{op_style}]{op}[/{op_style}]",
-                size_str,
-                f.get("checkpoint", "?"),
-            )
-        Console().print(table)
-    elif isinstance(data, str) and "No checkpoints" in data:
-        print("No checkpoints available yet.")
     else:
-        print(data)
+        # MCP returns pre-formatted text table with pagination.
+        text = asyncio.run(call_tool("snapshots_changes"))
+        print(text)
 
 
 def cmd_revert(args, as_json):

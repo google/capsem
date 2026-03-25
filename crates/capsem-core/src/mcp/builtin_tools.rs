@@ -22,7 +22,7 @@ const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"]
 
 /// Default max characters returned by HTTP tools. Keep small to avoid
 /// blowing up the AI agent's context window; callers can paginate for more.
-const DEFAULT_MAX_LENGTH: u64 = 5000;
+pub(crate) const DEFAULT_MAX_LENGTH: u64 = 5000;
 const DEFAULT_CONTEXT_LINES: u64 = 3;
 const DEFAULT_MAX_MATCHES: u64 = 50;
 const BUILTIN_PROCESS_NAME: &str = "mcp_builtin";

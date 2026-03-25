@@ -243,10 +243,10 @@ async fn handle_json_rpc(
                     let mut sched = sched.lock().await;
                     return Some(match tool_name {
                         "snapshots_changes" => {
-                            super::file_tools::handle_list_changed_files(&sched, ws, req.id.clone())
+                            super::file_tools::handle_list_changed_files(&arguments, &sched, ws, req.id.clone())
                         }
                         "snapshots_list" => {
-                            super::file_tools::handle_list_snapshots(&sched, ws, req.id.clone())
+                            super::file_tools::handle_list_snapshots(&arguments, &sched, ws, req.id.clone())
                         }
                         "snapshots_revert" => {
                             super::file_tools::handle_revert_file(&arguments, &sched, ws, req.id.clone())
