@@ -15,7 +15,7 @@ use crate::boot::boot_vm;
 use crate::boot::create_net_state;
 use crate::session_mgmt::{session_dir_for, open_session_db};
 use crate::state::{AppState, VmInstance};
-use crate::vsock_wiring::{serial_to_events, setup_vsock};
+use crate::vsock_wiring::{serial_to_events, setup_vsock, wire_auto_snapshots, spawn_auto_snapshot_timer};
 
 /// Check for app updates using Tauri's updater plugin.
 pub(crate) async fn check_for_update(app: tauri::AppHandle) {
@@ -177,6 +177,40 @@ pub(crate) fn gui_boot_vm(
                 });
             }
 
+            // Start auto-snapshot scheduler and file monitor in VirtioFS mode.
+            let mut fs_monitor: Option<capsem_core::fs_monitor::FsMonitor> = None;
+            if !virtiofs_shares.is_empty() {
+                if let Some(ref dir) = session_dir_for(session_id) {
+                    // Wire auto-snapshot scheduler into MCP config.
+                    if let Some(ref config) = mcp_config {
+                        let config = Arc::clone(config);
+                        let dir = dir.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Some((scheduler, interval)) = wire_auto_snapshots(&config, &dir).await {
+                                spawn_auto_snapshot_timer(&tokio::runtime::Handle::current(), scheduler, interval);
+                            }
+                        });
+                    }
+
+                    // Start host file monitor.
+                    let workspace = dir.join("workspace");
+                    fs_monitor = match capsem_core::fs_monitor::FsMonitor::start(
+                        workspace.clone(),
+                        workspace.clone(),
+                        Arc::clone(&gui_session_db),
+                    ) {
+                        Ok(monitor) => {
+                            info!("host file monitor started");
+                            Some(monitor)
+                        }
+                        Err(e) => {
+                            warn!("failed to start host file monitor: {e}");
+                            None
+                        }
+                    };
+                }
+            }
+
             // Store VM state.
             {
                 let app_state = handle.state::<AppState>();
@@ -190,6 +224,7 @@ pub(crate) fn gui_boot_vm(
                     mcp_state: mcp_config.clone(),
                     state_machine: sm,
                     _scratch_disk_path: scratch_path,
+                    _fs_monitor: fs_monitor,
                 });
             }
 

@@ -1100,14 +1100,36 @@ export const mockApi = {
   ],
 
   callMcpTool: async (tool: string, _args: Record<string, unknown> = {}): Promise<unknown> => {
-    if (tool === 'list_snapshots') {
+    if (tool === 'snapshots_list') {
       return { content: [{ text: JSON.stringify({
         snapshots: [
-          { checkpoint: 'cp-0', slot: 0, origin: 'auto', name: null, hash: null, age: '5 min ago' },
-          { checkpoint: 'cp-1', slot: 1, origin: 'auto', name: null, hash: null, age: '10 min ago' },
-          { checkpoint: 'cp-2', slot: 2, origin: 'auto', name: null, hash: null, age: '15 min ago' },
-          { checkpoint: 'cp-10', slot: 10, origin: 'manual', name: 'before_refactor', hash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', age: '2 min ago' },
-          { checkpoint: 'cp-11', slot: 11, origin: 'manual', name: 'working_state', hash: 'f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2', age: '8 min ago' },
+          { checkpoint: 'cp-0', slot: 0, origin: 'auto', name: null, hash: null, age: '5 min ago', files_count: 14,
+            changes: [
+              { path: 'src/main.py', op: 'modified', size: 2048 },
+              { path: 'tests/test_api.py', op: 'new', size: 1024 },
+            ] },
+          { checkpoint: 'cp-1', slot: 1, origin: 'auto', name: null, hash: null, age: '10 min ago', files_count: 12,
+            changes: [
+              { path: 'src/main.py', op: 'modified', size: 1920 },
+              { path: 'src/utils.py', op: 'new', size: 512 },
+              { path: 'old_config.json', op: 'deleted' },
+            ] },
+          { checkpoint: 'cp-2', slot: 2, origin: 'auto', name: null, hash: null, age: '15 min ago', files_count: 11,
+            changes: [
+              { path: 'src/main.py', op: 'new', size: 1800 },
+              { path: 'README.md', op: 'new', size: 256 },
+            ] },
+          { checkpoint: 'cp-10', slot: 10, origin: 'manual', name: 'before_refactor', hash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', age: '2 min ago', files_count: 14,
+            changes: [
+              { path: 'src/api.py', op: 'modified', size: 4096 },
+              { path: 'src/models.py', op: 'modified', size: 3072 },
+              { path: 'src/legacy.py', op: 'deleted' },
+              { path: 'src/new_handler.py', op: 'new', size: 2048 },
+            ] },
+          { checkpoint: 'cp-11', slot: 11, origin: 'manual', name: 'working_state', hash: 'f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2', age: '8 min ago', files_count: 13,
+            changes: [
+              { path: 'config.toml', op: 'modified', size: 512 },
+            ] },
         ],
         auto_max: 10,
         manual_max: 12,

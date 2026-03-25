@@ -39,6 +39,8 @@ pub struct VmInstance {
     pub mcp_state: Option<Arc<McpGatewayConfig>>,
     pub state_machine: HostStateMachine,
     pub _scratch_disk_path: Option<PathBuf>,
+    /// Host-side FSEvents file monitor. Must outlive the session -- dropping stops the watcher.
+    pub _fs_monitor: Option<capsem_core::fs_monitor::FsMonitor>,
 }
 
 /// Max queued output chunks before dropping to prevent OOM when the frontend

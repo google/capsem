@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-03-25
+
+### Fixed
+- **Files and Snapshots tabs broken in GUI mode** -- `FsMonitor` (file watcher) and `AutoSnapshotScheduler` were only started in CLI mode, never wired into the GUI boot path. Both now start automatically when running the Tauri app.
+- **Snapshot API tool name mismatch** -- frontend sent `list_snapshots`/`delete_snapshot` but backend expected `snapshots_list`/`snapshots_delete`, causing all snapshot operations to fail silently.
+
+### Changed
+- **Snapshots tab revamped** -- unified table replacing separate manual/auto sections. New columns: total changes, added, modified, deleted per snapshot. Change counts sourced from per-snapshot diffs already computed by the backend.
+
 ## [0.12.0] - 2026-03-24
 
 ### Changed

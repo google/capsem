@@ -3,6 +3,12 @@
   import { listSnapshots } from '../../api';
   import StatCards from './StatCards.svelte';
 
+  interface Change {
+    path: string;
+    op: 'new' | 'modified' | 'deleted';
+    size?: number;
+  }
+
   interface Snapshot {
     checkpoint: string;
     slot: number;
@@ -10,6 +16,8 @@
     name: string | null;
     hash: string | null;
     age: string;
+    files_count: number;
+    changes: Change[];
   }
 
   interface SnapshotData {
@@ -47,13 +55,14 @@
     deleting = null;
   }
 
-  const autoSnaps = $derived(data?.snapshots.filter(s => s.origin === 'auto') ?? []);
-  const manualSnaps = $derived(data?.snapshots.filter(s => s.origin === 'manual') ?? []);
+  function countOp(changes: Change[], op: string): number {
+    return changes.filter(c => c.op === op).length;
+  }
 
   const statCards = $derived(data ? [
     { label: 'Total', value: data.snapshots.length },
-    { label: 'Auto', value: autoSnaps.length, sub: `of ${data.auto_max}` },
-    { label: 'Manual', value: manualSnaps.length, sub: `of ${data.manual_max}` },
+    { label: 'Auto', value: data.snapshots.filter(s => s.origin === 'auto').length, sub: `of ${data.auto_max}` },
+    { label: 'Manual', value: data.snapshots.filter(s => s.origin === 'manual').length, sub: `of ${data.manual_max}` },
     { label: 'Available', value: data.manual_available, sub: 'manual slots' },
   ] : []);
 
@@ -78,34 +87,57 @@
     </div>
   {:else}
     <div class="flex-1 overflow-auto">
-      {#if manualSnaps.length > 0}
-        <div class="px-3 pt-2">
-          <div class="text-[10px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">
-            Named Snapshots
-          </div>
-        </div>
-        <table class="table table-xs table-pin-rows">
-          <thead><tr>
-            <th class="w-20">Slot</th>
-            <th>Name</th>
-            <th class="w-24">Age</th>
-            <th class="w-32">Hash</th>
-            <th class="w-16"></th>
-          </tr></thead>
-          <tbody>
-            {#each manualSnaps as snap}
-              <tr class="hover:bg-base-200/40 transition-colors">
-                <td>
+      <table class="table table-xs table-pin-rows">
+        <thead><tr>
+          <th class="w-20">Slot</th>
+          <th>Name</th>
+          <th class="w-20">Age</th>
+          <th class="w-16 text-right">Changes</th>
+          <th class="w-16 text-right">Added</th>
+          <th class="w-16 text-right">Modified</th>
+          <th class="w-16 text-right">Deleted</th>
+          <th class="w-28">Hash</th>
+          <th class="w-12"></th>
+        </tr></thead>
+        <tbody>
+          {#each data.snapshots as snap}
+            {@const added = countOp(snap.changes, 'new')}
+            {@const modified = countOp(snap.changes, 'modified')}
+            {@const deleted = countOp(snap.changes, 'deleted')}
+            {@const total = snap.changes.length}
+            <tr class="hover:bg-base-200/40 transition-colors">
+              <td>
+                {#if snap.origin === 'manual'}
                   <span class="badge badge-xs bg-snap-manual/15 text-snap-manual">{snap.checkpoint}</span>
-                </td>
-                <td class="font-medium">{snap.name ?? ''}</td>
-                <td class="text-base-content/50 text-xs">{snap.age}</td>
-                <td>
-                  {#if snap.hash}
-                    <code class="text-[10px] text-base-content/30 font-mono tracking-tight">{truncHash(snap.hash)}</code>
-                  {/if}
-                </td>
-                <td>
+                {:else}
+                  <span class="badge badge-xs badge-outline text-snap-auto">{snap.checkpoint}</span>
+                {/if}
+              </td>
+              <td class="font-medium">{snap.name ?? ''}</td>
+              <td class="text-base-content/50 text-xs">{snap.age}</td>
+              <td class="text-right tabular-nums">{total || ''}</td>
+              <td class="text-right tabular-nums">
+                {#if added > 0}
+                  <span class="text-info">{added}</span>
+                {/if}
+              </td>
+              <td class="text-right tabular-nums">
+                {#if modified > 0}
+                  <span class="text-warning">{modified}</span>
+                {/if}
+              </td>
+              <td class="text-right tabular-nums">
+                {#if deleted > 0}
+                  <span class="text-secondary">{deleted}</span>
+                {/if}
+              </td>
+              <td>
+                {#if snap.hash}
+                  <code class="text-[10px] text-base-content/30 font-mono tracking-tight">{truncHash(snap.hash)}</code>
+                {/if}
+              </td>
+              <td>
+                {#if snap.origin === 'manual'}
                   <button
                     class="btn btn-ghost btn-xs text-base-content/30 hover:text-denied"
                     disabled={deleting === snap.checkpoint}
@@ -119,37 +151,10 @@
                       </svg>
                     {/if}
                   </button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      {/if}
-
-      <div class="px-3 pt-3">
-        <div class="text-[10px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">
-          Auto Snapshots
-        </div>
-      </div>
-      <table class="table table-xs table-pin-rows">
-        <thead><tr>
-          <th class="w-20">Slot</th>
-          <th>Origin</th>
-          <th class="w-24">Age</th>
-        </tr></thead>
-        <tbody>
-          {#each autoSnaps as snap}
-            <tr class="hover:bg-base-200/40 transition-colors">
-              <td>
-                <span class="badge badge-xs badge-outline text-snap-auto">{snap.checkpoint}</span>
+                {/if}
               </td>
-              <td class="text-base-content/40 text-xs">auto</td>
-              <td class="text-base-content/50 text-xs">{snap.age}</td>
             </tr>
           {/each}
-          {#if autoSnaps.length === 0}
-            <tr><td colspan="3" class="text-center text-base-content/30 text-xs py-4">No auto snapshots yet</td></tr>
-          {/if}
         </tbody>
       </table>
     </div>

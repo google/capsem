@@ -278,15 +278,19 @@ export function callMcpTool(tool: string, args: Record<string, unknown> = {}): P
 }
 
 export async function listSnapshots(): Promise<{
-  snapshots: { checkpoint: string; slot: number; origin: string; name: string | null; hash: string | null; age: string }[];
+  snapshots: {
+    checkpoint: string; slot: number; origin: string; name: string | null;
+    hash: string | null; age: string; files_count: number;
+    changes: { path: string; op: 'new' | 'modified' | 'deleted'; size?: number }[];
+  }[];
   auto_max: number;
   manual_max: number;
   manual_available: number;
 }> {
-  const result = await callMcpTool('list_snapshots') as { content: { text: string }[] };
+  const result = await callMcpTool('snapshots_list') as { content: { text: string }[] };
   return JSON.parse(result.content[0].text);
 }
 
 export async function deleteSnapshot(checkpoint: string): Promise<void> {
-  await callMcpTool('delete_snapshot', { checkpoint });
+  await callMcpTool('snapshots_delete', { checkpoint });
 }
