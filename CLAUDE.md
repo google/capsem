@@ -277,6 +277,10 @@ We use [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format in `CHANG
 - Update the changelog as part of every commit that adds, fixes, or changes user-visible behavior
 - When a release is cut, move Unreleased items into a new `## [X.Y.Z] - YYYY-MM-DD` section and bump the version (see Versioning)
 
+## Coverage (codecov.yml)
+
+When files or directories are added, moved, or renamed, update `codecov.yml` component paths to ensure coverage tracking stays accurate. Each component maps to a functional area of the codebase (network, security, tooling, monitoring, virtualization, runtime, daemon, ui).
+
 ## Commits
 
 Every commit that touches code should:
