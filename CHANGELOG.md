@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hypervisor abstraction layer** -- `Hypervisor`, `VmHandle`, `SerialConsole` traits in new `hypervisor` module. Platform-agnostic `VsockConnection` with lifetime anchor pattern. Prepares for Linux (KVM) and Windows (crosvm) backends.
+- **Hardlink-based incremental snapshots** -- `SnapshotBackend` trait with `ApfsSnapshot` (macOS) and `HardlinkSnapshot` (cross-platform) implementations. Auto-selects based on platform.
+- **capsem-builder CLI** -- Click-based CLI with `validate`, `build --dry-run`, `inspect`, `init`, and `add` (ai-provider, packages, mcp) commands. Scaffolding generates valid TOML templates. 55 CliRunner tests.
+
+### Changed
+- Apple Virtualization.framework code moved to `hypervisor/apple_vz/` behind `cfg(target_os = "macos")` gate. macOS-only dependencies (objc2, block2, dispatch2) are now target-conditional.
+- `VsockManager` replaced by `mpsc::UnboundedReceiver<VsockConnection>` returned from `Hypervisor::boot()`. App crate uses channel directly.
+- `auto_snapshot` uses `SnapshotBackend` trait (APFS clonefile on macOS, recursive copy elsewhere).
+- `notify` crate uses default features (cross-platform) instead of macOS-only `macos_fsevent`.
+
+### Added (previous)
+- **Settings schema (Pydantic)** -- Pydantic models as canonical schema source of truth with two-node-type design (Group + Setting). JSON Schema generation, cross-language golden fixtures with Python/Rust/TypeScript conformance tests (73 + 12 + 14 = 99 tests). Actions and MCP servers are now setting types, not separate node types.
 - **Config-driven settings grammar** -- formalized the settings TOML grammar with three node types (Group, Leaf, Action), complete field specifications, and enum-based types. Settings UI is now fully data-driven with no hardcoded group-name checks.
 - **Action nodes** -- new grammar node type for UI buttons/widgets (`check_update`, `preset_select`, `rerun_wizard`). Previously hardcoded in the Svelte template, now declared in `defaults.toml`.
 - **Declarative MCP server definitions** -- `[mcp]` section in defaults.toml/user.toml/corp.toml for declaring MCP servers that get auto-injected into AI agent configs. Replaces hardcoded capsem MCP injection.
