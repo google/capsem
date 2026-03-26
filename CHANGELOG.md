@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Safe FUSE deserialization** -- `read_struct` returns `Option<T>` with hard bounds check in all builds (not just debug). All 25 call sites updated.
+- **fsync/flush error propagation** -- `do_fsync` and `do_flush` now return mapped errno on failure instead of silently returning success. Missing file handles return `EBADF`.
+- **VirtioFS resource limits** -- file handle cap (4096, returns `EMFILE`), read size clamp (1MB), gather buffer limit (2MB, returns `ENOMEM`).
+- **Async VirtioFS worker thread** -- FUSE request processing runs on a dedicated thread, not the vCPU. Guest interrupt delivery via irqfd. Virtqueue memory barriers for cross-thread safety.
+- **Security documentation** -- security model overview page (threat model, defense layers, trust boundaries) and virtualization security page (VirtioFS path traversal, TOCTOU analysis, resource limits, data integrity).
+
 ### Added
 - **Hypervisor abstraction layer** -- `Hypervisor`, `VmHandle`, `SerialConsole` traits in new `hypervisor` module. Platform-agnostic `VsockConnection` with lifetime anchor pattern. Prepares for Linux (KVM) and Windows (crosvm) backends.
 - **Hardlink-based incremental snapshots** -- `SnapshotBackend` trait with `ApfsSnapshot` (macOS) and `HardlinkSnapshot` (cross-platform) implementations. Auto-selects based on platform.
