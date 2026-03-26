@@ -1,0 +1,214 @@
+# CAPSEM Hardened Kernel Configuration
+# Minimal x86_64 for QEMU/KVM virtualization
+#
+# Apply on top of allnoconfig:
+#   cp defconfig.x86_64 .config && make olddefconfig
+#
+# Produces a minimal kernel with only VirtIO drivers, no loadable modules,
+# air-gapped IP stack (dummy NIC + iptables REDIRECT), and full exploit
+# mitigations enabled.
+
+# ==========================================
+# 1. CORE x86_64
+# ==========================================
+CONFIG_64BIT=y
+CONFIG_X86_64=y
+CONFIG_SMP=y
+CONFIG_NR_CPUS=8
+CONFIG_HYPERVISOR_GUEST=y
+CONFIG_PARAVIRT=y
+CONFIG_KVM_GUEST=y
+
+# ==========================================
+# 2. BOOT ESSENTIALS
+# ==========================================
+CONFIG_PRINTK=y
+CONFIG_BUG=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+
+# ==========================================
+# 3. PCI & VIRTIO
+# ==========================================
+CONFIG_PCI=y
+CONFIG_PCI_HOST_GENERIC=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_HW_RANDOM=y
+CONFIG_HW_RANDOM_VIRTIO=y
+
+# ==========================================
+# 4. SERIAL CONSOLE
+# ==========================================
+CONFIG_TTY=y
+CONFIG_VT=n
+CONFIG_SERIAL_CORE=y
+CONFIG_SERIAL_CORE_CONSOLE=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+
+# ==========================================
+# 5. BLOCK LAYER
+# ==========================================
+CONFIG_BLOCK=y
+CONFIG_BLK_DEV=y
+CONFIG_BLK_DEV_LOOP=y
+
+# ==========================================
+# 6. FILESYSTEMS
+# ==========================================
+CONFIG_EXT4_FS=y
+CONFIG_EXT4_USE_FOR_EXT2=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_ZSTD=y
+CONFIG_OVERLAY_FS=y
+CONFIG_OVERLAY_FS_REDIRECT_DIR=y
+CONFIG_OVERLAY_FS_INDEX=y
+CONFIG_FUSE_FS=y
+CONFIG_VIRTIO_FS=y
+CONFIG_PROC_FS=y
+CONFIG_PROC_SYSCTL=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_XATTR=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_DEVPTS_FS=y
+CONFIG_UNIX98_PTYS=y
+
+# ==========================================
+# 7. NETWORKING (Unix sockets + vsock + air-gapped IP)
+# ==========================================
+# Unix domain sockets: required by node, python, git.
+# AF_VSOCK: host<->guest communication (PTY, control, SNI proxy).
+# IP stack: enabled for air-gapped networking. Guest uses a dummy
+# NIC + fake DNS + iptables REDIRECT to funnel all HTTPS through
+# a vsock-backed SNI proxy on the host. No real NIC is attached.
+CONFIG_NET=y
+CONFIG_UNIX=y
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
+CONFIG_INET=y
+CONFIG_IP_MULTICAST=n
+CONFIG_IPV6=n
+
+# Dummy NIC (air-gapped: no real NIC, just a local IP for routing)
+CONFIG_NETDEVICES=y
+CONFIG_DUMMY=y
+CONFIG_ETHERNET=n
+CONFIG_NET_VENDOR_VIRTIO=n
+
+# Netfilter/iptables: REDIRECT target for transparent proxy
+CONFIG_NETFILTER=y
+CONFIG_NETFILTER_ADVANCED=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_NAT=y
+CONFIG_NF_TABLES=n
+CONFIG_IP_NF_IPTABLES=y
+CONFIG_IP_NF_FILTER=y
+CONFIG_IP_NF_NAT=y
+CONFIG_NF_NAT_REDIRECT=y
+CONFIG_NETFILTER_XTABLES=y
+CONFIG_NETFILTER_XT_TARGET_REDIRECT=y
+CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
+
+# ==========================================
+# 8. PROCESS MANAGEMENT
+# ==========================================
+CONFIG_MULTIUSER=y
+CONFIG_FUTEX=y
+CONFIG_EPOLL=y
+CONFIG_SIGNALFD=y
+CONFIG_TIMERFD=y
+CONFIG_EVENTFD=y
+CONFIG_POSIX_TIMERS=y
+CONFIG_INOTIFY_USER=y
+CONFIG_AIO=y
+CONFIG_ADVISE_SYSCALLS=y
+CONFIG_FHANDLE=y
+
+# ==========================================
+# 9. SECURITY HARDENING
+# ==========================================
+# Expert mode: required so KALLSYMS=n and other hardening options take effect
+# (many security-sensitive options are gated behind CONFIG_EXPERT)
+CONFIG_EXPERT=y
+
+# Enforce strict memory permissions
+CONFIG_STRICT_KERNEL_RWX=y
+CONFIG_VMAP_STACK=y
+
+# KASLR
+CONFIG_RANDOMIZE_BASE=y
+
+# Stack and buffer protections
+CONFIG_STACKPROTECTOR=y
+CONFIG_STACKPROTECTOR_STRONG=y
+CONFIG_FORTIFY_SOURCE=y
+
+# Restrict information leaks
+CONFIG_SECURITY_DMESG_RESTRICT=y
+CONFIG_KALLSYMS=n
+CONFIG_DEBUG_FS=n
+
+# Heap hardening
+CONFIG_COMPAT_BRK=n
+
+# Memory hardening
+CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
+CONFIG_SLAB_FREELIST_RANDOMIZE=y
+CONFIG_SLAB_FREELIST_HARDENED=y
+CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
+CONFIG_HARDENED_USERCOPY=y
+
+# x86-specific mitigations
+CONFIG_PAGE_TABLE_ISOLATION=y
+CONFIG_RETPOLINE=y
+
+# ==========================================
+# 10. ATTACK SURFACE REDUCTION
+# ==========================================
+# No loadable kernel modules -- even root cannot load .ko files
+CONFIG_MODULES=n
+
+# No direct physical memory access
+CONFIG_DEVMEM=n
+CONFIG_DEVPORT=n
+
+# No 32-bit compat (eliminates entire legacy syscall attack surface)
+CONFIG_IA32_EMULATION=n
+
+# No kernel hot-swap or suspend
+CONFIG_KEXEC=n
+CONFIG_KEXEC_FILE=n
+CONFIG_HIBERNATION=n
+CONFIG_MAGIC_SYSRQ=n
+
+# High-CVE-count subsystems
+CONFIG_IO_URING=n
+CONFIG_BPF_SYSCALL=n
+CONFIG_USERFAULTFD=n
+
+# Seccomp: userspace syscall filtering (defense in depth)
+CONFIG_SECCOMP=y
+CONFIG_SECCOMP_FILTER=y
+
+# ==========================================
+# 11. DISABLED SUBSYSTEMS
+# ==========================================
+CONFIG_USB_SUPPORT=n
+CONFIG_SOUND=n
+CONFIG_DRM=n
+CONFIG_WLAN=n
+CONFIG_WIRELESS=n
+CONFIG_BT=n
+CONFIG_INPUT_KEYBOARD=n
+CONFIG_INPUT_MOUSE=n
+CONFIG_NFS_FS=n
+CONFIG_NETWORK_FILESYSTEMS=n
+CONFIG_SCSI=n
+CONFIG_ATA=n

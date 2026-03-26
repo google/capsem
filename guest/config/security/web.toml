@@ -1,0 +1,61 @@
+[web]
+allow_read = false
+allow_write = false
+custom_allow = ["elie.net", "*.elie.net", "ash-speed.hetzner.com", "en.wikipedia.org", "*.wikipedia.org"]
+custom_block = []
+
+[web.search.google]
+name = "Google"
+enabled = true
+domains = ["www.google.com", "google.com"]
+allow_get = true
+
+[web.search.bing]
+name = "Bing"
+enabled = false
+domains = ["www.bing.com", "bing.com"]
+allow_get = true
+
+[web.search.duckduckgo]
+name = "DuckDuckGo"
+enabled = false
+domains = ["duckduckgo.com", "*.duckduckgo.com"]
+allow_get = true
+
+[web.registry.debian]
+name = "Debian"
+enabled = true
+domains = ["deb.debian.org", "security.debian.org"]
+allow_get = true
+
+[web.registry.npm]
+name = "npm"
+enabled = true
+domains = ["registry.npmjs.org", "*.npmjs.org"]
+allow_get = true
+
+[web.registry.pypi]
+name = "PyPI"
+enabled = true
+domains = ["pypi.org", "files.pythonhosted.org"]
+allow_get = true
+
+[web.registry.crates]
+name = "crates.io"
+enabled = true
+domains = ["crates.io", "static.crates.io"]
+allow_get = true
+
+[web.repository.github]
+name = "GitHub"
+enabled = true
+domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
+allow_get = true
+allow_post = true
+
+[web.repository.gitlab]
+name = "GitLab"
+enabled = false
+domains = ["gitlab.com", "*.gitlab.com"]
+allow_get = true
+allow_post = true

@@ -1,0 +1,29 @@
+[openai]
+name = "OpenAI"
+description = "OpenAI API provider"
+enabled = true
+
+[openai.cli]
+key = "codex"
+name = "Codex CLI"
+description = "Codex CLI configuration files"
+
+[openai.api_key]
+name = "OpenAI API Key"
+env_vars = ["OPENAI_API_KEY"]
+prefix = "sk-"
+docs_url = "https://platform.openai.com/api-keys"
+
+[openai.network]
+domains = ["*.openai.com"]
+allow_get = true
+allow_post = true
+
+[openai.install]
+manager = "npm"
+prefix = "/opt/ai-clis"
+packages = ["@openai/codex"]
+
+[openai.files.config_toml]
+path = "/root/.codex/config.toml"
+content = "[mcp_servers.capsem]\ncommand = \"/run/capsem-mcp-server\""

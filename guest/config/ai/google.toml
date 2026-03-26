@@ -1,0 +1,45 @@
+[google]
+name = "Google AI"
+description = "Google Gemini AI provider"
+enabled = true
+
+[google.cli]
+key = "gemini"
+name = "Gemini CLI"
+description = "Gemini CLI configuration files"
+
+[google.api_key]
+name = "Google AI API Key"
+env_vars = ["GEMINI_API_KEY"]
+prefix = "AIza"
+docs_url = "https://aistudio.google.com/apikey"
+
+[google.network]
+domains = ["*.googleapis.com"]
+allow_get = true
+allow_post = true
+
+[google.install]
+manager = "npm"
+prefix = "/opt/ai-clis"
+packages = ["@google/gemini-cli"]
+
+[google.files.settings_json]
+path = "/root/.gemini/settings.json"
+content = '{"homeDirectoryWarningDismissed":true,"general":{"disableAutoUpdate":true,"disableUpdateNag":true},"ui":{"hideTips":true,"hideBanner":false},"privacy":{"usageStatisticsEnabled":false,"sessionRetention":"none"},"telemetry":{"enabled":false},"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust.enabled":false},"ide":{"hasSeenNudge":true},"tools":{"sandbox":false}}'
+
+[google.files.projects_json]
+path = "/root/.gemini/projects.json"
+content = '{"projects":{"/root":"root"}}'
+
+[google.files.trusted_folders_json]
+path = "/root/.gemini/trustedFolders.json"
+content = '{"/root":"TRUST_FOLDER"}'
+
+[google.files.installation_id]
+path = "/root/.gemini/installation_id"
+content = "capsem-sandbox-00000000-0000-0000-0000-000000000000"
+
+[google.files.google_adc_json]
+path = "/root/.config/gcloud/application_default_credentials.json"
+content = ""

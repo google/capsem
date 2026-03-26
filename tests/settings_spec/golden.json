@@ -1,0 +1,563 @@
+{
+  "settings": [
+    {
+      "kind": "group",
+      "key": "test_app",
+      "name": "Test App",
+      "description": "Application settings for testing",
+      "enabled": true,
+      "collapsed": false,
+      "children": [
+        {
+          "kind": "setting",
+          "key": "test_app.auto_update",
+          "name": "Auto-check for updates",
+          "description": "Check for new versions on launch",
+          "setting_type": "bool",
+          "default_value": true,
+          "effective_value": true,
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_app.font_size",
+          "name": "Font size",
+          "description": "Terminal font size in points",
+          "setting_type": "number",
+          "default_value": 14,
+          "effective_value": 14,
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "min": 8,
+            "max": 72,
+            "rules": {},
+            "widget": "slider",
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_app.check_update",
+          "name": "Check for updates",
+          "description": "Manually check if a new version is available",
+          "setting_type": "action",
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "action": "check_update",
+            "hidden": false,
+            "builtin": false
+          }
+        }
+      ]
+    },
+    {
+      "kind": "group",
+      "key": "test_ai",
+      "name": "Test AI",
+      "description": "AI provider configuration",
+      "enabled": true,
+      "collapsed": false,
+      "children": [
+        {
+          "kind": "group",
+          "key": "test_ai.provider",
+          "name": "Test Provider",
+          "description": "A test AI provider",
+          "enabled_by": "test_ai.provider.allow",
+          "enabled": true,
+          "collapsed": false,
+          "children": [
+            {
+              "kind": "setting",
+              "key": "test_ai.provider.allow",
+              "name": "Allow Provider",
+              "description": "Enable API access to this provider",
+              "setting_type": "bool",
+              "default_value": true,
+              "effective_value": true,
+              "source": "default",
+              "corp_locked": false,
+              "enabled": true,
+              "collapsed": false,
+              "metadata": {
+                "domains": [],
+                "choices": [],
+                "rules": {
+                  "default": {
+                    "domains": [],
+                    "get": true,
+                    "post": true,
+                    "put": false,
+                    "delete": false,
+                    "other": false
+                  }
+                },
+                "hidden": false,
+                "builtin": false
+              }
+            },
+            {
+              "kind": "setting",
+              "key": "test_ai.provider.api_key",
+              "name": "API Key",
+              "description": "API key for the provider",
+              "setting_type": "apikey",
+              "default_value": "",
+              "effective_value": "",
+              "source": "default",
+              "corp_locked": false,
+              "enabled_by": "test_ai.provider.allow",
+              "enabled": true,
+              "collapsed": false,
+              "metadata": {
+                "domains": [],
+                "choices": [],
+                "rules": {},
+                "env_vars": ["TEST_API_KEY"],
+                "docs_url": "https://docs.example.com/keys",
+                "prefix": "sk-test-",
+                "hidden": false,
+                "builtin": false
+              }
+            },
+            {
+              "kind": "setting",
+              "key": "test_ai.provider.domains",
+              "name": "Provider Domains",
+              "description": "Comma-separated domain patterns",
+              "setting_type": "text",
+              "default_value": "*.example.com",
+              "effective_value": "*.example.com",
+              "source": "default",
+              "corp_locked": false,
+              "enabled_by": "test_ai.provider.allow",
+              "enabled": true,
+              "collapsed": false,
+              "metadata": {
+                "domains": ["*.example.com"],
+                "choices": [],
+                "rules": {},
+                "format": "domain_list",
+                "hidden": false,
+                "builtin": false
+              }
+            },
+            {
+              "kind": "setting",
+              "key": "test_ai.provider.settings_json",
+              "name": "Provider settings.json",
+              "description": "Configuration file content",
+              "setting_type": "file",
+              "default_value": {
+                "path": "/root/.provider/settings.json",
+                "content": "{\"mode\": \"sandbox\"}"
+              },
+              "effective_value": {
+                "path": "/root/.provider/settings.json",
+                "content": "{\"mode\": \"sandbox\"}"
+              },
+              "source": "default",
+              "corp_locked": false,
+              "enabled_by": "test_ai.provider.allow",
+              "enabled": true,
+              "collapsed": true,
+              "metadata": {
+                "domains": [],
+                "choices": [],
+                "rules": {},
+                "filetype": "json",
+                "hidden": false,
+                "builtin": false
+              }
+            },
+            {
+              "kind": "setting",
+              "key": "test_ai.provider.rerun",
+              "name": "Rerun wizard",
+              "description": "Re-run the setup wizard",
+              "setting_type": "action",
+              "metadata": {
+                "domains": [],
+                "choices": [],
+                "rules": {},
+                "action": "rerun_wizard",
+                "hidden": false,
+                "builtin": false
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "group",
+      "key": "test_security",
+      "name": "Test Security",
+      "description": "Security and misc settings",
+      "enabled": true,
+      "collapsed": false,
+      "children": [
+        {
+          "kind": "setting",
+          "key": "test_security.masked_field",
+          "name": "Masked Text",
+          "description": "A masked text field (replaces password type)",
+          "setting_type": "text",
+          "default_value": "",
+          "effective_value": "",
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": ["option_a", "option_b", "option_c"],
+            "rules": {},
+            "hidden": false,
+            "builtin": false,
+            "mask": true
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.url_field",
+          "name": "URL",
+          "description": "A URL field",
+          "setting_type": "url",
+          "default_value": "https://example.com",
+          "effective_value": "https://example.com",
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.email_field",
+          "name": "Email",
+          "description": "An email field",
+          "setting_type": "email",
+          "default_value": "user@example.com",
+          "effective_value": "user@example.com",
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.tags",
+          "name": "Tags",
+          "description": "A list of string tags",
+          "setting_type": "string_list",
+          "default_value": ["security", "network"],
+          "effective_value": ["security", "network"],
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "widget": "string_chips",
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.ports",
+          "name": "Ports",
+          "description": "A list of port numbers",
+          "setting_type": "int_list",
+          "default_value": [80, 443, 8080],
+          "effective_value": [80, 443, 8080],
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.weights",
+          "name": "Weights",
+          "description": "A list of float weights",
+          "setting_type": "float_list",
+          "default_value": [0.5, 1.0, 2.5],
+          "effective_value": [0.5, 1.0, 2.5],
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.hidden_field",
+          "name": "Hidden Setting",
+          "description": "A setting hidden from the UI",
+          "setting_type": "text",
+          "default_value": "internal",
+          "effective_value": "internal",
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "hidden": true,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.dark_mode",
+          "name": "Dark Mode",
+          "description": "Toggle dark mode",
+          "setting_type": "bool",
+          "default_value": false,
+          "effective_value": false,
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "side_effect": "toggle_theme",
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.preset",
+          "name": "Security Preset",
+          "description": "Apply a security preset",
+          "setting_type": "action",
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "action": "preset_select",
+            "hidden": false,
+            "builtin": false
+          }
+        },
+        {
+          "kind": "setting",
+          "key": "test_security.env_vars",
+          "name": "Environment Variables",
+          "description": "Key-value environment variables",
+          "setting_type": "kv_map",
+          "default_value": {"DEBUG": "1"},
+          "effective_value": {"DEBUG": "1"},
+          "source": "default",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": [],
+            "rules": {},
+            "widget": "kv_editor",
+            "hidden": false,
+            "builtin": false,
+            "validator": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "group",
+      "key": "test_appearance",
+      "name": "Test Appearance",
+      "description": "Appearance settings",
+      "enabled": true,
+      "collapsed": true,
+      "children": [
+        {
+          "kind": "setting",
+          "key": "test_appearance.theme",
+          "name": "Theme",
+          "description": "UI color theme",
+          "setting_type": "text",
+          "default_value": "system",
+          "effective_value": "dark",
+          "source": "user",
+          "modified": "2025-06-01T12:00:00Z",
+          "corp_locked": false,
+          "enabled": true,
+          "collapsed": false,
+          "metadata": {
+            "domains": [],
+            "choices": ["light", "dark", "system"],
+            "rules": {},
+            "widget": "select",
+            "hidden": false,
+            "builtin": false
+          }
+        }
+      ]
+    },
+    {
+      "kind": "group",
+      "key": "mcp",
+      "name": "MCP Servers",
+      "description": "Model Context Protocol servers",
+      "enabled": true,
+      "collapsed": false,
+      "children": [
+        {
+          "kind": "group",
+          "key": "mcp.capsem",
+          "name": "Capsem",
+          "description": "Built-in Capsem MCP server for file and snapshot tools",
+          "enabled": true,
+          "collapsed": false,
+          "children": [
+            {
+              "kind": "setting",
+              "key": "mcp.capsem.type",
+              "name": "Server Type",
+              "description": "Transport protocol (stdio or sse)",
+              "setting_type": "text",
+              "default_value": "stdio",
+              "effective_value": "stdio",
+              "source": "default",
+              "corp_locked": false,
+              "enabled": true,
+              "collapsed": false,
+              "metadata": {
+                "domains": [],
+                "choices": ["stdio", "sse"],
+                "rules": {},
+                "hidden": false,
+                "builtin": true
+              }
+            },
+            {
+              "kind": "setting",
+              "key": "mcp.capsem.command",
+              "name": "Command",
+              "description": "Command to run for stdio transport",
+              "setting_type": "text",
+              "default_value": "/run/capsem-mcp-server",
+              "effective_value": "/run/capsem-mcp-server",
+              "source": "default",
+              "corp_locked": false,
+              "enabled": true,
+              "collapsed": false,
+              "metadata": {
+                "domains": [],
+                "choices": [],
+                "rules": {},
+                "hidden": false,
+                "builtin": true
+              }
+            },
+            {
+              "kind": "setting",
+              "key": "mcp.capsem.env",
+              "name": "Environment",
+              "description": "Environment variables for the server process",
+              "setting_type": "kv_map",
+              "default_value": {},
+              "effective_value": {},
+              "source": "default",
+              "corp_locked": false,
+              "enabled": true,
+              "collapsed": false,
+              "metadata": {
+                "domains": [],
+                "choices": [],
+                "rules": {},
+                "widget": "kv_editor",
+                "hidden": false,
+                "builtin": true
+              }
+            },
+            {
+              "kind": "group",
+              "key": "mcp.capsem.tools",
+              "name": "Tools",
+              "description": "Available tools from this server",
+              "enabled": true,
+              "collapsed": false,
+              "children": [
+                {
+                  "kind": "setting",
+                  "key": "mcp.capsem.tools.snapshot_create",
+                  "name": "snapshot_create",
+                  "description": "Create a VM snapshot",
+                  "setting_type": "mcp_tool",
+                  "source": "default",
+                  "corp_locked": false,
+                  "enabled": true,
+                  "collapsed": false,
+                  "metadata": {
+                    "domains": [],
+                    "choices": [],
+                    "rules": {},
+                    "hidden": false,
+                    "builtin": true,
+                    "origin": "builtin"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

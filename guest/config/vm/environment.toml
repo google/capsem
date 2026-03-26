@@ -1,0 +1,41 @@
+[environment.shell]
+term = "xterm-256color"
+home = "/root"
+path = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+lang = "C"
+
+[environment.shell.bashrc]
+path = "/root/.bashrc"
+content = '''
+# Prompt: green bold "capsem" with blue directory
+PS1='\[\033[1;32m\]capsem\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
+
+# Aliases
+alias pip='uv pip'
+alias pip3='uv pip'
+alias python='uv run python'
+alias python3='uv run python3'
+alias gemini='gemini --yolo'
+alias ls='ls --color=auto'
+alias ll='ls -la --color=auto'
+alias grep='grep --color=auto'
+'''
+
+[environment.shell.tmux_conf]
+path = "/root/.tmux.conf"
+content = '''
+set -g default-terminal "tmux-256color"
+set -ag terminal-features ",xterm-256color:RGB"
+set -g mouse on
+set -g escape-time 0
+set -g history-limit 50000
+set -g status-style "bg=default,fg=colour8"
+set -g status-left ""
+set -g status-right ""
+set -g pane-border-style "fg=colour8"
+set -g pane-active-border-style "fg=colour4"
+set -g message-style "bg=default,fg=colour4"
+'''
+
+[environment.tls]
+ca_bundle = "/etc/ssl/certs/ca-certificates.crt"

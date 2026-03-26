@@ -1,0 +1,19 @@
+[apt]
+name = "System Packages"
+manager = "apt"
+install_cmd = "apt-get install -y --no-install-recommends"
+packages = [
+    "coreutils", "util-linux", "procps", "psmisc", "findutils", "diffutils",
+    "lsof", "strace", "file", "less", "man-db", "tmux",
+    "grep", "sed", "gawk",
+    "tar", "gzip", "bzip2", "xz-utils",
+    "vim-tiny",
+    "git", "gh",
+    "curl", "ca-certificates", "wrk", "iproute2", "iptables", "dnsmasq",
+    "python3", "python3-pip", "python3-venv",
+]
+
+[apt.network]
+name = "Debian"
+domains = ["deb.debian.org", "security.debian.org"]
+allow_get = true

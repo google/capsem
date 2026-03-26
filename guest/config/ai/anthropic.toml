@@ -1,0 +1,37 @@
+[anthropic]
+name = "Anthropic"
+description = "Claude Code AI agent"
+enabled = true
+
+[anthropic.cli]
+key = "claude"
+name = "Claude Code"
+description = "Claude Code configuration files"
+
+[anthropic.api_key]
+name = "Anthropic API Key"
+env_vars = ["ANTHROPIC_API_KEY"]
+prefix = "sk-ant-"
+docs_url = "https://console.anthropic.com/settings/keys"
+
+[anthropic.network]
+domains = ["*.anthropic.com", "*.claude.com"]
+allow_get = true
+allow_post = true
+
+[anthropic.install]
+manager = "npm"
+prefix = "/opt/ai-clis"
+packages = ["@anthropic-ai/claude-code"]
+
+[anthropic.files.settings_json]
+path = "/root/.claude/settings.json"
+content = '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"}}'
+
+[anthropic.files.state_json]
+path = "/root/.claude.json"
+content = '{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark","numStartups":1,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"projects":{"/root":{"allowedTools":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}}}'
+
+[anthropic.files.credentials_json]
+path = "/root/.claude/.credentials.json"
+content = ""

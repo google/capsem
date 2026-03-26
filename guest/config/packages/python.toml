@@ -1,0 +1,14 @@
+[python]
+name = "Python Packages"
+manager = "uv"
+install_cmd = "uv pip install --system --break-system-packages"
+packages = [
+    "pytest", "numpy", "requests", "httpx", "pandas",
+    "scipy", "scikit-learn", "matplotlib", "pillow",
+    "pyyaml", "beautifulsoup4", "lxml", "tqdm", "rich", "fastmcp",
+]
+
+[python.network]
+name = "PyPI"
+domains = ["pypi.org", "files.pythonhosted.org"]
+allow_get = true

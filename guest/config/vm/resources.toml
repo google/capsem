@@ -1,0 +1,10 @@
+[resources]
+cpu_count = 4
+ram_gb = 4
+scratch_disk_size_gb = 16
+log_bodies = false
+max_body_capture = 4096
+retention_days = 30
+max_sessions = 100
+max_disk_gb = 100
+terminated_retention_days = 365

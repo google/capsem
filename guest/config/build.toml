@@ -1,0 +1,21 @@
+[build]
+compression = "zstd"
+compression_level = 15
+
+[build.architectures.arm64]
+base_image = "debian:bookworm-slim"
+docker_platform = "linux/arm64"
+rust_target = "aarch64-unknown-linux-musl"
+kernel_branch = "6.6"
+kernel_image = "arch/arm64/boot/Image"
+defconfig = "kernel/defconfig.arm64"
+node_major = 24
+
+[build.architectures.x86_64]
+base_image = "debian:bookworm-slim"
+docker_platform = "linux/amd64"
+rust_target = "x86_64-unknown-linux-musl"
+kernel_branch = "6.6"
+kernel_image = "arch/x86_64/boot/bzImage"
+defconfig = "kernel/defconfig.x86_64"
+node_major = 24
