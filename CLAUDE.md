@@ -62,7 +62,7 @@ assets/                   Built VM assets (gitignored)
 
 ## Planning
 
-The overall project plan and milestone roadmap is in `docs/overall_plan.md`.
+The overall project plan and milestone roadmap is tracked in project memory and RFCs.
 
 ## Architecture
 
@@ -140,7 +140,7 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
 - `crates/capsem-core/src/net/mitm_proxy.rs` -- async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging
 - `crates/capsem-core/src/net/cert_authority.rs` -- CA loader + on-demand domain cert minting with RwLock cache
 - `crates/capsem-core/src/net/http_policy.rs` -- method+path policy engine (extends domain-level policy)
-- `config/defaults.toml` -- settings registry (all built-in settings, embedded at compile time). See `docs/config.md` for format reference.
+- `config/defaults.toml` -- settings registry (all built-in settings, embedded at compile time). Grammar spec at `site/src/content/docs/architecture/settings.md`.
 - `config/capsem-ca.key` + `config/capsem-ca.crt` -- static MITM CA keypair (ECDSA P-256)
 - `crates/capsem-app/src/commands.rs` -- Tauri IPC commands (serial_input, vm_status, terminal_resize, net_events)
 - `crates/capsem-app/src/state.rs` -- per-VM state (serial + vsock fds)
@@ -395,11 +395,11 @@ Walk through all four views (Console, Sessions, Network, Settings) and toggle th
 - `frontend/src/styles/global.css` -- Tailwind config with `@source` directives and DaisyUI plugin
 ### Design System
 
-**Read `docs/design.md` before building or modifying any UI component.** It defines the color system, DaisyUI component usage policy, custom `@theme` tokens, and chart color semantics. Use the `frontend-design` skill for UI work.
+Use the `frontend-design` skill for UI work. The color system uses semantic DaisyUI tokens (`info` for positive/blue, `secondary` for negative/purple) defined in `frontend/src/styles/global.css`.
 
 ### Chart Library (LayerChart v2)
 
-Charts use [LayerChart](https://layerchart.com) v2 -- a composable Svelte charting library built on D3. **Full API docs are in `docs/libs/layercharts.md`** -- read it before building or modifying any chart component.
+Charts use [LayerChart](https://layerchart.com) v2 -- a composable Svelte charting library built on D3.
 
 **Simplified chart components** (preferred for common patterns):
 - `BarChart` -- vertical/horizontal bars, stacked/grouped series
@@ -421,7 +421,7 @@ Charts use [LayerChart](https://layerchart.com) v2 -- a composable Svelte charti
 
 ## Documentation
 
-The product website uses [Astro Starlight](https://starlight.astro.build/) (Astro 6 + Tailwind v4). Documentation lives in `site/src/content/docs/` as markdown/MDX files in Starlight's content collection. The `docs/` directory contains older internal notes and is being deprecated -- new documentation goes in `site/` only.
+The product website uses [Astro Starlight](https://starlight.astro.build/) (Astro 6 + Tailwind v4). Documentation lives in `site/src/content/docs/` as markdown/MDX files in Starlight's content collection.
 
 **Writing style:** tight and to the point, like a manual. One topic per page. No filler, no marketing language. Tables over prose when listing configs or test cases. Code examples only when they clarify usage. Diagrams in mermaid.
 
