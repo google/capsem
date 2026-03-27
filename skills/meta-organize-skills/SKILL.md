@@ -82,6 +82,32 @@ curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/skills/<name>/SKI
 
 ## Naming conventions
 
-- Use lowercase kebab-case: `find-skills`, `skill-creation`, `organize-skills`
+Skills are flat (one level under `skills/`). Nested subdirectories are NOT discovered by Claude Code or Gemini CLI. Use **prefix-based grouping** to organize related skills into logical categories:
+
+```
+skills/
+  dev-testing/SKILL.md          dev category -- testing
+  dev-debugging/SKILL.md        dev category -- debugging
+  dev-diagnostics/SKILL.md      dev category -- in-VM diagnostics
+  build-images/SKILL.md         build category -- capsem-builder
+  build-initrd/SKILL.md         build category -- initrd repack
+  release-process/SKILL.md      release category
+  release-docs/SKILL.md         release category -- site docs
+  find-skills/SKILL.md          meta (no prefix needed)
+  skill-creation/SKILL.md       meta
+  organize-skills/SKILL.md      meta
+```
+
+Rules:
+- Lowercase kebab-case: `dev-testing`, `build-images`
+- Prefix is the category, suffix is the topic: `<category>-<topic>`
+- Meta/standalone skills that don't belong to a category skip the prefix
 - Name after the action or domain: what the skill helps you *do*
 - Avoid generic names like `utils` or `helpers`
+
+Current categories:
+- `meta-*` -- skills about skills (find, create, organize)
+- `dev-*` -- daily development (toolchain, testing, debugging, diagnostics)
+- `build-*` -- building VM images and guest binaries
+- `release-*` -- release process, CI, documentation site
+- `frontend-*` -- frontend development (reserved)
