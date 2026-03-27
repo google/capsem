@@ -11,7 +11,9 @@ All workflows use `just` (not make):
 - `just ui` -- frontend-only dev server with mock data (no VM needed)
 - `just run` -- cross-compile agent + repack initrd + build + codesign + boot VM (~10s)
 - `just run "CMD"` -- same but run a command instead of interactive shell
-- `just build-assets` -- doctor + full VM asset build from scratch (kernel, initrd, rootfs) via Docker/Podman
+- `just build-assets` -- doctor + full VM asset build via capsem-builder (kernel + rootfs, needs docker/podman)
+- `just build-kernel [arch]` -- build kernel only (default: arm64)
+- `just build-rootfs [arch]` -- build rootfs only (default: arm64)
 - `just test` -- unit tests + cross-compile check + frontend type-check (no VM)
 - `just full-test` -- test + capsem-doctor + integration test + bench (boots VM multiple times)
 - `just bench` -- in-VM benchmarks (scratch disk I/O, rootfs read, CLI startup latency, HTTP throughput)
@@ -30,7 +32,7 @@ _check-assets    verifies VM assets exist, fails with "run just build-assets" if
 
 run            -> _check-assets + _pack-initrd -> _sign -> _compile -> _frontend
 test           -> _install-tools
-build-assets   -> doctor + _install-tools
+build-assets   -> doctor + _install-tools (uses capsem-builder: kernel + rootfs)
 full-test      -> test + _check-assets + _pack-initrd + _sign
 install        -> doctor + full-test + _frontend
 ```
@@ -56,9 +58,30 @@ frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5
 site/                     Product website (Astro Starlight)
   src/content/docs/         Documentation pages (markdown/MDX, Starlight content collection)
   src/styles/custom.css     Theme overrides (accent colors, fonts)
-images/                   VM image tooling (Dockerfiles, build.py, capsem-init)
-assets/                   Built VM assets (gitignored)
+src/capsem/builder/       capsem-builder CLI (config-driven image builder, Pydantic + Jinja2)
+  templates/              Jinja2 Dockerfile templates (rootfs, kernel)
+guest/                    Guest image configuration (TOML configs for build, AI providers, packages, MCP)
+  config/                 Build, AI provider, package, MCP, security, VM configs
+  config/kernel/          Kernel defconfigs per architecture
+images/                   VM source files (capsem-init, bashrc, diagnostics, doctor, bench)
+assets/                   Built VM assets (gitignored, per-arch layout: assets/{arch}/)
+skills/                   Shared AI agent skills (SKILL.md format, used by Claude + Gemini)
 ```
+
+## Skills
+
+AI coding agent skills live in `skills/` at the project root. Both Claude Code and Gemini CLI discover them via symlinks:
+
+```
+skills/                   Canonical skill directory (checked into git)
+  <name>/SKILL.md         One skill per directory
+.claude/skills -> ../skills   Claude Code symlink
+.agents/skills -> ../skills   Gemini CLI symlink (.agents/skills/ is a Gemini discovery path)
+```
+
+One skill per directory, each containing a `SKILL.md` with YAML frontmatter (`name`, `description`) and markdown body. Both CLIs read the same files -- no duplication. See `/organize-skills` for full conventions (format, progressive disclosure, naming, when to split vs. bundle).
+
+**Do not** put files directly in `.claude/skills/` or `.agents/skills/` -- those are symlinks. All skills go in `skills/`.
 
 ## Planning
 
@@ -129,10 +152,34 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
 - **`capsem-core` is the shared library.** All reusable logic (config parsing, policy evaluation, network, telemetry, VM management) belongs in `capsem-core`. The app crate (`capsem-app`) is a thin Tauri shell that wires commands to core. The agent crate (`capsem-agent`) is a thin guest binary. Neither should contain business logic that could live in core.
 - **One way to do things.** Don't introduce a second pattern when an existing one works. One config format, one error handling style, one serialization approach. Match what's already in the codebase.
 
+## Builder (capsem-builder)
+
+Config-driven guest image builder. Reads TOML configs from `guest/config/`, renders Jinja2 Dockerfiles, builds kernel+rootfs via Docker/Podman. Outputs per-arch assets to `assets/{arch}/`.
+
+- `uv run capsem-builder doctor guest/` -- check build prerequisites
+- `uv run capsem-builder validate guest/` -- lint guest config
+- `uv run capsem-builder build guest/ --dry-run` -- preview rendered Dockerfiles
+- `uv run capsem-builder build guest/ --arch arm64` -- build for arm64
+- `uv run capsem-builder inspect guest/` -- show config summary
+- `uv run capsem-builder new my-image/ --from guest/` -- create new image from base
+
+Guest config layout:
+```
+guest/config/build.toml           -- architectures, compression, base images
+guest/config/manifest.toml        -- image name, version, changelog
+guest/config/ai/*.toml            -- AI provider configs (Claude, Gemini, Codex)
+guest/config/packages/*.toml      -- package sets (apt, python)
+guest/config/mcp/*.toml           -- MCP server configs
+guest/config/security/web.toml    -- web security (allow/block domains)
+guest/config/vm/resources.toml    -- CPU, RAM, disk
+guest/config/vm/environment.toml  -- shell, TLS, env vars
+guest/config/kernel/*.defconfig   -- kernel defconfigs per arch
+```
+
 ## Key Files
 
 - `images/capsem-init` -- guest init script (PID 1). Changes require `just run` to take effect (repacks initrd automatically).
-- `images/capsem-bashrc` -- guest shell config (baked into rootfs, requires `just build`)
+- `images/capsem-bashrc` -- guest shell config (baked into rootfs, requires `just build-assets`)
 - `images/README.md` -- full documentation of the guest VM environment (packages, banner, tips, AI status)
 - `crates/capsem-agent/src/main.rs` -- guest PTY agent (vsock bridge, cross-compiled)
 - `crates/capsem-agent/src/net_proxy.rs` -- guest TCP-to-vsock relay (cross-compiled)
@@ -215,7 +262,7 @@ The `capsem-doctor` suite runs inside the guest VM to verify sandbox integrity, 
 1. Add test functions to the appropriate `images/diagnostics/test_*.py` file, or create a new `test_<category>.py`
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (conftest.py checks for root + writable /root)
-4. Rebuild rootfs with `just build` to pick up new/modified test files
+4. Rebuild rootfs with `just build-assets` to pick up new/modified test files
 5. Verify with `just run "capsem-doctor"`
 
 ## Ephemeral VM Model -- Invariants (do not break)
@@ -260,12 +307,12 @@ Session ephemerality depends on the storage mode:
 
 **When to use which:**
 - `just run` -- changed `capsem-init`, `capsem-agent`, `capsem-doctor`, `diagnostics/`, or any repacked binary (~10s)
-- `just build-assets` -- changed `Dockerfile.rootfs`, `capsem-bashrc`, installed packages, or added new rootfs files (minutes)
+- `just build-assets` -- changed guest config (`guest/config/`), `capsem-bashrc`, installed packages, or added new rootfs files (minutes)
 
 ## Guest Binary Security
 
 All guest-side binaries (PTY agent, future credential helpers, etc.) are deployed read-only:
-- **Rootfs**: `chmod 555` in `Dockerfile.rootfs` (rootfs itself is mounted read-only)
+- **Rootfs**: `chmod 555` in Dockerfile template (rootfs itself is mounted read-only)
 - **Initrd override**: `chmod 555` in `_pack-initrd` and `capsem-init` after copying to tmpfs
 - Guest processes cannot modify these binaries at runtime
 
