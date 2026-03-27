@@ -1,16 +1,4 @@
-use std::os::unix::io::RawFd;
-
-use anyhow::Result;
-use objc2::rc::Retained;
-use objc2::runtime::{Bool, ProtocolObject};
-use objc2::{define_class, msg_send, AnyThread, DefinedClass, Message};
-use objc2_foundation::{NSArray, NSObject, NSObjectProtocol};
-use objc2_virtualization::{
-    VZSocketDevice, VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketListener,
-    VZVirtioSocketListenerDelegate,
-};
-use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+//! Platform-agnostic vsock utilities: output coalescing and port constants.
 
 // Re-export protocol types from capsem-proto.
 pub use capsem_proto::{
@@ -121,162 +109,6 @@ impl CoalesceBuffer {
 impl Default for CoalesceBuffer {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// VsockConnection: represents an accepted guest connection
-// ---------------------------------------------------------------------------
-
-/// An accepted vsock connection with its file descriptor and port info.
-pub struct VsockConnection {
-    pub fd: RawFd,
-    pub port: u32,
-    // Keep the ObjC connection alive so the fd stays valid.
-    _connection: Retained<VZVirtioSocketConnection>,
-}
-
-// Safety: The fd is a valid unix file descriptor that can be used across threads.
-unsafe impl Send for VsockConnection {}
-
-// ---------------------------------------------------------------------------
-// Listener delegate (ObjC bridge)
-// ---------------------------------------------------------------------------
-
-struct DelegateIvars {
-    tx: mpsc::UnboundedSender<VsockConnection>,
-}
-
-define_class!(
-    // Safety: NSObject has no subclassing requirements.
-    #[unsafe(super(NSObject))]
-    #[name = "CapsemVsockListenerDelegate"]
-    #[ivars = DelegateIvars]
-    struct VsockListenerDelegate;
-
-    unsafe impl NSObjectProtocol for VsockListenerDelegate {}
-
-    unsafe impl VZVirtioSocketListenerDelegate for VsockListenerDelegate {
-        #[unsafe(method(listener:shouldAcceptNewConnection:fromSocketDevice:))]
-        fn listener_should_accept(
-            &self,
-            _listener: &VZVirtioSocketListener,
-            connection: &VZVirtioSocketConnection,
-            _socket_device: &VZVirtioSocketDevice,
-        ) -> Bool {
-            let fd = unsafe { connection.fileDescriptor() };
-            let port = unsafe { connection.destinationPort() };
-            debug!(fd, port, "vsock: incoming connection");
-
-            if fd < 0 {
-                warn!("vsock: connection has invalid fd (-1), rejecting");
-                return Bool::NO;
-            }
-
-            // Retain the connection object so the fd stays open.
-            let retained_conn: Retained<VZVirtioSocketConnection> = connection.retain();
-            let conn = VsockConnection {
-                fd,
-                port,
-                _connection: retained_conn,
-            };
-
-            if let Err(e) = self.ivars().tx.send(conn) {
-                warn!("vsock: failed to send connection to manager: {e}");
-                return Bool::NO;
-            }
-
-            Bool::YES
-        }
-    }
-);
-
-impl VsockListenerDelegate {
-    fn new(tx: mpsc::UnboundedSender<VsockConnection>) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(DelegateIvars { tx });
-        unsafe { msg_send![super(this), init] }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// VsockManager
-// ---------------------------------------------------------------------------
-
-/// Manages vsock listeners on the host side.
-///
-/// After VM boot, call `new` with the VM's socket devices to attach listeners.
-/// Accepted connections are delivered via the `accept` method.
-pub struct VsockManager {
-    rx: mpsc::UnboundedReceiver<VsockConnection>,
-    // Keep delegates alive so they don't get deallocated.
-    _delegate: Retained<VsockListenerDelegate>,
-    _listeners: Vec<Retained<VZVirtioSocketListener>>,
-}
-
-// Safety: We manage thread safety through the channel.
-unsafe impl Send for VsockManager {}
-
-impl VsockManager {
-    /// Create a VsockManager and register listeners on the given socket device.
-    ///
-    /// The socket device is obtained from `VZVirtualMachine::socketDevices()` after
-    /// the VM is created. Must be called from the main thread (ObjC constraint).
-    pub fn new(socket_devices: &NSArray<VZSocketDevice>, ports: &[u32]) -> Result<Self> {
-        let device_count = socket_devices.count();
-        if device_count == 0 {
-            anyhow::bail!("no socket devices configured on VM");
-        }
-
-        // There's only one VZVirtioSocketDeviceConfiguration allowed per VM.
-        let socket_device = socket_devices.objectAtIndex(0);
-
-        // Downcast VZSocketDevice -> VZVirtioSocketDevice.
-        // Safety: We only configure VZVirtioSocketDeviceConfiguration, so the
-        // runtime type is always VZVirtioSocketDevice.
-        let device_ref: &VZSocketDevice = &socket_device;
-        let virtio_device: &VZVirtioSocketDevice =
-            unsafe { &*(device_ref as *const VZSocketDevice as *const VZVirtioSocketDevice) };
-
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        let delegate = VsockListenerDelegate::new(tx);
-        let delegate_proto =
-            ProtocolObject::from_retained(delegate.clone() as Retained<VsockListenerDelegate>);
-
-        let mut listeners = Vec::new();
-        for &port in ports {
-            let listener = unsafe { VZVirtioSocketListener::new() };
-            unsafe {
-                listener.setDelegate(Some(&delegate_proto));
-                virtio_device.setSocketListener_forPort(&listener, port);
-            }
-            info!(port, "vsock: listener registered");
-            listeners.push(listener);
-        }
-
-        Ok(Self {
-            rx,
-            _delegate: delegate,
-            _listeners: listeners,
-        })
-    }
-
-    /// Receive the next accepted connection (async).
-    pub async fn accept(&mut self) -> Option<VsockConnection> {
-        self.rx.recv().await
-    }
-
-    /// Receive the next accepted connection (blocking).
-    /// For use in non-async contexts like CLI mode.
-    pub fn accept_blocking(&mut self) -> Option<VsockConnection> {
-        self.rx.blocking_recv()
-    }
-
-    /// Try to receive the next accepted connection without blocking.
-    /// Returns `Ok(conn)` if a connection is available, `Err` if the channel
-    /// is empty or closed. For use in poll loops that must also pump CFRunLoop.
-    pub fn try_accept(&mut self) -> Result<VsockConnection, tokio::sync::mpsc::error::TryRecvError> {
-        self.rx.try_recv()
     }
 }
 
@@ -454,7 +286,6 @@ mod tests {
 
     #[test]
     fn coalesce_many_small_chunks() {
-        // Simulate `find /` producing thousands of small lines.
         let mut buf = CoalesceBuffer::with_limits(1024, 8);
         let line = b"/usr/lib/some/path\n";
         let mut total = 0;
@@ -473,14 +304,12 @@ mod tests {
             flush_count += 1;
         }
         assert_eq!(total, 200 * line.len());
-        // With 1024 cap and 19-byte lines, expect ~4 flushes (19*54=1026 per batch).
         assert!(flush_count >= 3, "expected at least 3 flushes, got {flush_count}");
         assert!(flush_count <= 10, "expected at most 10 flushes, got {flush_count}");
     }
 
     #[test]
     fn coalesce_single_large_chunk_triggers_immediate_flush() {
-        // A single chunk larger than the cap should signal full immediately.
         let mut buf = CoalesceBuffer::with_limits(100, 8);
         let big = vec![0x41u8; 500];
         let full = buf.push(&big);
@@ -515,8 +344,6 @@ mod tests {
         let mut buf = CoalesceBuffer::with_limits(1024, 8);
         buf.push(b"data");
         let _ = buf.take();
-        // After take, internal buffer should still have capacity pre-allocated
-        // so the next push doesn't trigger a reallocation.
         assert!(buf.buf.capacity() >= 1024);
     }
 
@@ -527,7 +354,6 @@ mod tests {
             buf.push(b"0123456789abcdef"); // 16 bytes
             if buf.is_full() {
                 let _ = buf.take();
-                // Capacity must be restored after take.
                 assert!(
                     buf.buf.capacity() >= 256,
                     "capacity dropped to {} after take",

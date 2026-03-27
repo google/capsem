@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use capsem_core::{
-    CoalesceBuffer, GuestToHost, HostState, VsockManager,
+    CoalesceBuffer, GuestToHost, HostState, VsockConnection,
     VSOCK_PORT_CONTROL, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
     decode_guest_msg, validate_guest_msg, MAX_FRAME_SIZE,
 };
@@ -251,7 +251,7 @@ pub(crate) fn spawn_auto_snapshot_timer(
 /// Set up vsock listeners and handle connections after VM boot.
 pub(crate) async fn setup_vsock(
     app_handle: tauri::AppHandle,
-    mut vsock_manager: VsockManager,
+    mut vsock_rx: tokio::sync::mpsc::UnboundedReceiver<VsockConnection>,
     serial_task: tauri::async_runtime::JoinHandle<()>,
 ) {
     let mut terminal_conn = None;
@@ -259,7 +259,7 @@ pub(crate) async fn setup_vsock(
     let mut deferred_conns = Vec::new();
 
     while terminal_conn.is_none() || control_conn.is_none() {
-        match vsock_manager.accept().await {
+        match vsock_rx.recv().await {
             Some(conn) => {
                 info!(port = conn.port, fd = conn.fd, "vsock: accepted connection");
                 match conn.port {
@@ -496,7 +496,7 @@ pub(crate) async fn setup_vsock(
     // Accept MITM proxy + MCP gateway connections indefinitely.
     info!("vsock: listening for proxy connections on ports 5002/5003");
     loop {
-        match vsock_manager.accept().await {
+        match vsock_rx.recv().await {
             Some(conn) if conn.port == VSOCK_PORT_SNI_PROXY => {
                 if let Some(ref config) = mitm_config {
                     let fd = conn.fd;

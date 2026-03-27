@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use capsem_core::VirtualMachine;
+use capsem_core::VmHandle;
 use capsem_core::VmState;
 use capsem_core::HostStateMachine;
 use capsem_core::log_layer::LogHandle;
@@ -31,7 +31,7 @@ pub struct VmNetworkState {
 
 /// Per-VM instance state.
 pub struct VmInstance {
-    pub _vm: VirtualMachine,
+    pub _vm: Box<dyn VmHandle>,
     pub serial_input_fd: RawFd,
     pub vsock_terminal_fd: Option<RawFd>,
     pub vsock_control_fd: Option<RawFd>,
@@ -39,7 +39,7 @@ pub struct VmInstance {
     pub mcp_state: Option<Arc<McpGatewayConfig>>,
     pub state_machine: HostStateMachine,
     pub _scratch_disk_path: Option<PathBuf>,
-    /// Host-side FSEvents file monitor. Must outlive the session -- dropping stops the watcher.
+    /// Host-side file monitor. Must outlive the session -- dropping stops the watcher.
     pub _fs_monitor: Option<capsem_core::fs_monitor::FsMonitor>,
 }
 

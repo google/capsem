@@ -6,15 +6,16 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use capsem_core::{
-    GuestToHost, HostState, HostStateMachine, HostToGuest, VirtioFsShare,
-    VirtualMachine, VmConfig, decode_guest_msg, encode_host_msg,
-    MAX_FRAME_SIZE,
+    AppleVzHypervisor, GuestToHost, Hypervisor, HostState, HostStateMachine, HostToGuest,
+    VirtioFsShare, VmConfig, VmHandle, VsockConnection, decode_guest_msg, encode_host_msg,
+    MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY,
+    VSOCK_PORT_TERMINAL,
 };
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy;
 use capsem_core::net::policy_config;
 use capsem_logger::DbWriter;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tracing::{debug_span, info, info_span, warn};
 
 use crate::state::VmNetworkState;
@@ -51,7 +52,8 @@ pub(crate) fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<VmNetwo
     })
 }
 
-/// Build config, create VM, start it, and return the VM + serial receiver + input fd + state machine.
+/// Build config, boot the VM via the hypervisor trait, and return the handle +
+/// vsock receiver + state machine.
 ///
 /// If `scratch_disk_path` is provided, the scratch disk is attached as a second
 /// block device (read-write) for the guest `/root` workspace.
@@ -65,7 +67,7 @@ pub(crate) fn boot_vm(
     virtiofs_shares: &[VirtioFsShare],
     cpu_count: u32,
     ram_bytes: u64,
-) -> Result<(VirtualMachine, broadcast::Receiver<Vec<u8>>, RawFd, HostStateMachine)> {
+) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>, HostStateMachine)> {
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
 
@@ -126,19 +128,22 @@ pub(crate) fn boot_vm(
         builder.build().context("failed to build VmConfig")?
     };
 
-    let (mut vm, rx, input_fd) = {
-        let _span = debug_span!("vm_create").entered();
-        VirtualMachine::create(&config).context("failed to create VM")?
-    };
+    let vsock_ports = [
+        VSOCK_PORT_CONTROL,
+        VSOCK_PORT_TERMINAL,
+        VSOCK_PORT_SNI_PROXY,
+        VSOCK_PORT_MCP_GATEWAY,
+    ];
 
-    {
-        let _span = debug_span!("vm_start").entered();
-        vm.start().context("failed to start VM")?;
-    }
+    let (vm, vsock_rx) = {
+        let _span = debug_span!("hypervisor_boot").entered();
+        AppleVzHypervisor.boot(&config, &vsock_ports)
+            .context("failed to boot VM")?
+    };
 
     sm.transition(HostState::Booting, "vm_started")?;
 
-    Ok((vm, rx, input_fd, sm))
+    Ok((vm, vsock_rx, sm))
 }
 
 /// Read one guest-to-host control message from an fd (blocking).

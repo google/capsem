@@ -3,6 +3,7 @@ pub mod auto_snapshot;
 pub mod fs_monitor;
 pub mod host_config;
 pub mod host_state;
+pub mod hypervisor;
 pub mod log_layer;
 pub mod mcp;
 pub mod net;
@@ -20,12 +21,20 @@ pub use host_state::{
     HostState, HostStateMachine, StateMachine, Transition, validate_guest_msg, validate_host_msg,
 };
 pub use vm::config::{VirtioFsShare, VmConfig};
-pub use vm::machine::VirtualMachine;
 pub use vm::VmState;
 pub use vm::vsock::{
-    self, CoalesceBuffer, VsockConnection, VsockManager, VSOCK_PORT_CONTROL,
+    self, CoalesceBuffer, VSOCK_PORT_CONTROL,
     VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
+
+// Hypervisor abstraction layer
+pub use hypervisor::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
+
+#[cfg(target_os = "macos")]
+pub use hypervisor::apple_vz::{AppleVzHypervisor, is_main_thread};
+
+#[cfg(target_os = "linux")]
+pub use hypervisor::kvm::KvmHypervisor;
 
 /// Create VirtioFS session directories for the single-share hybrid architecture.
 ///
@@ -208,8 +217,10 @@ mod tests {
         buf.push(b"x");
         let _ = buf.take();
 
-        // VsockConnection (just verify the type exists)
-        let _ = std::mem::size_of::<VsockConnection>();
+        // VsockConnection (verify the type exists via hypervisor re-export)
+        let conn = VsockConnection::new(42, 5001, Box::new(()));
+        assert_eq!(conn.fd, 42);
+        assert_eq!(conn.port, 5001);
 
         // Port constants
         let _ports = [
@@ -231,6 +242,20 @@ mod tests {
         // Codec functions (verify they exist as fn pointers)
         let _: fn(&GuestToHost) -> anyhow::Result<Vec<u8>> = encode_guest_msg;
         let _: fn(&HostToGuest) -> anyhow::Result<Vec<u8>> = encode_host_msg;
+
+        // Hypervisor traits (verify they exist as trait objects)
+        fn _assert_hypervisor_traits(
+            _h: &dyn Hypervisor,
+            _v: &dyn VmHandle,
+            _s: &dyn SerialConsole,
+        ) {}
+
+        // AppleVzHypervisor (macOS-only)
+        #[cfg(target_os = "macos")]
+        {
+            let h = AppleVzHypervisor;
+            let _: &dyn Hypervisor = &h;
+        }
 
         // Cleanup
         std::fs::remove_dir_all(&kernel).unwrap();

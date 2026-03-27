@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capsem_core::{
-    GuestToHost, HostState, HostToGuest, VirtioFsShare, VmState, VsockManager,
+    GuestToHost, HostState, HostToGuest, VirtioFsShare, VmState,
     VSOCK_PORT_CONTROL, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
     create_virtiofs_session,
 };
@@ -196,7 +196,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         warn!("failed to record session: {e}");
     }
 
-    let (vm, mut rx, _serial_input_fd, mut sm) = boot_vm(
+    let (vm, mut vsock_rx, mut sm) = boot_vm(
         &assets,
         rootfs_path.as_deref(),
         "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
@@ -206,12 +206,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         ram_bytes,
     )?;
 
-    // Set up vsock listeners (including SNI proxy and MCP gateway ports).
-    let socket_devices = vm.socket_devices();
-    let mut mgr = VsockManager::new(
-        &socket_devices,
-        &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_MCP_GATEWAY],
-    ).context("failed to set up vsock")?;
+    let mut rx = vm.serial().subscribe();
 
     // Open session DB (hard fail -- needed by file monitor, MCP, telemetry).
     let session_db = open_session_db(&cli_session_id)?;
@@ -331,7 +326,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             );
         }
         // Check for accepted connections (non-blocking via try_recv on the channel).
-        while let Ok(conn) = mgr.try_accept() {
+        while let Ok(conn) = vsock_rx.try_recv() {
             match conn.port {
                 VSOCK_PORT_TERMINAL => terminal_fd = Some(conn.fd),
                 VSOCK_PORT_CONTROL => control_fd = Some(conn.fd),
@@ -539,7 +534,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             );
         }
         // Accept any incoming proxy connections during exec.
-        while let Ok(conn) = mgr.try_accept() {
+        while let Ok(conn) = vsock_rx.try_recv() {
             if conn.port == VSOCK_PORT_SNI_PROXY {
                 if let Some(ref config) = mitm_config {
                     let fd = conn.fd;

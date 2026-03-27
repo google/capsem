@@ -1,4 +1,3 @@
-use std::os::unix::io::RawFd;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -20,12 +19,12 @@ use objc2_virtualization::{
     VZVirtualMachine as ObjcVZVirtualMachine,
     VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
-use tokio::sync::broadcast;
 use tracing::{debug_span, info};
 
 use super::boot::create_boot_loader;
-use super::config::VmConfig;
-use super::serial;
+use super::serial::{self, AppleVzSerialConsole};
+use crate::vm::VmState;
+use crate::vm::config::VmConfig;
 
 /// Returns true if the current thread is the main thread.
 /// VZVirtualMachine operations must be called from the main dispatch queue.
@@ -38,29 +37,29 @@ pub fn is_main_thread() -> bool {
     unsafe { pthread_main_np() == 1 }
 }
 
-/// High-level wrapper around VZVirtualMachine.
-pub struct VirtualMachine {
+/// Internal wrapper around VZVirtualMachine.
+pub(crate) struct AppleVzMachine {
     inner: Retained<ObjcVZVirtualMachine>,
-    serial_console: Option<serial::SerialConsole>,
 }
 
 // VZVirtualMachine is main-thread-only, but we manage that with dispatch.
 // We wrap access behind a Mutex and ensure VZ calls happen on the main queue.
-unsafe impl Send for VirtualMachine {}
+unsafe impl Send for AppleVzMachine {}
 
-impl VirtualMachine {
-    /// Create a new virtual machine from the given config.
+impl AppleVzMachine {
+    /// Create and configure a new virtual machine from the given config.
     /// Must be called from the main thread (or dispatched to it).
     ///
-    /// Returns the VM, a broadcast receiver for serial console output,
-    /// and a RawFd for writing input to the guest's serial console.
-    pub fn create(config: &VmConfig) -> Result<(Self, broadcast::Receiver<Vec<u8>>, RawFd)> {
+    /// Returns the machine, and the serial console that owns both read and input fds.
+    pub fn create(
+        config: &VmConfig,
+    ) -> Result<(Self, AppleVzSerialConsole)> {
         let boot_loader = {
             let _span = debug_span!("create_boot_loader").entered();
             create_boot_loader(config)?
         };
 
-        let (serial_port_config, serial_console, input_fd) = {
+        let (serial_port_config, serial_console) = {
             let _span = debug_span!("create_serial_port").entered();
             serial::create_serial_port()?
         };
@@ -155,14 +154,9 @@ impl VirtualMachine {
 
         info!("virtual machine created");
 
-        let rx = serial_console.subscribe();
         Ok((
-            Self {
-                inner: vm,
-                serial_console: Some(serial_console),
-            },
-            rx,
-            input_fd,
+            Self { inner: vm },
+            serial_console,
         ))
     }
 
@@ -178,9 +172,8 @@ impl VirtualMachine {
 
     /// Start the VM. Must be called on the main thread.
     ///
-    /// Spins the CFRunLoop while waiting for the completion handler,
-    /// since VZVirtualMachine dispatches callbacks on the main queue.
-    pub fn start(&mut self) -> Result<()> {
+    /// Also spawns the serial reader thread.
+    pub fn start(&self, serial: &AppleVzSerialConsole) -> Result<()> {
         let _span = debug_span!("vm_start").entered();
 
         anyhow::ensure!(
@@ -189,9 +182,7 @@ impl VirtualMachine {
         );
 
         // Start the serial reader before the VM
-        if let Some(console) = self.serial_console.take() {
-            console.spawn_reader();
-        }
+        serial.spawn_reader();
 
         let (tx, rx) = std::sync::mpsc::channel();
 
@@ -243,29 +234,25 @@ impl VirtualMachine {
     }
 
     /// Get the current VM state.
-    pub fn state(&self) -> super::VmState {
+    pub fn state(&self) -> VmState {
         let state = unsafe { self.inner.state() };
         match state {
-            VZVirtualMachineState::Stopped => super::VmState::Stopped,
-            VZVirtualMachineState::Running => super::VmState::Running,
-            VZVirtualMachineState::Paused => super::VmState::Paused,
-            VZVirtualMachineState::Error => super::VmState::Error,
-            VZVirtualMachineState::Starting => super::VmState::Starting,
-            VZVirtualMachineState::Stopping => super::VmState::Stopping,
-            VZVirtualMachineState::Pausing => super::VmState::Pausing,
-            VZVirtualMachineState::Resuming => super::VmState::Resuming,
-            VZVirtualMachineState::Saving => super::VmState::Saving,
-            VZVirtualMachineState::Restoring => super::VmState::Restoring,
-            _ => super::VmState::Unknown,
+            VZVirtualMachineState::Stopped => VmState::Stopped,
+            VZVirtualMachineState::Running => VmState::Running,
+            VZVirtualMachineState::Paused => VmState::Paused,
+            VZVirtualMachineState::Error => VmState::Error,
+            VZVirtualMachineState::Starting => VmState::Starting,
+            VZVirtualMachineState::Stopping => VmState::Stopping,
+            VZVirtualMachineState::Pausing => VmState::Pausing,
+            VZVirtualMachineState::Resuming => VmState::Resuming,
+            VZVirtualMachineState::Saving => VmState::Saving,
+            VZVirtualMachineState::Restoring => VmState::Restoring,
+            _ => VmState::Unknown,
         }
     }
 }
 
 /// Create a VZ block device attachment from a disk image path.
-///
-/// `read_only`: true for rootfs, false for scratch disks.
-/// `identifier`: optional virtio block device identifier (max 20 ASCII bytes),
-/// exposed in guest as `/dev/disk/by-id/virtio-<identifier>`.
 fn attach_disk(
     path: &std::path::Path,
     read_only: bool,
@@ -301,10 +288,6 @@ fn attach_disk(
 }
 
 /// Create a VirtioFS directory sharing device from a host directory.
-///
-/// `tag`: mount tag visible in guest (used with `mount -t virtiofs <tag> <mountpoint>`).
-/// `host_path`: host directory to share with the guest.
-/// `read_only`: if true, guest cannot write to the share.
 fn attach_virtiofs_share(
     tag: &str,
     host_path: &std::path::Path,
@@ -343,10 +326,6 @@ fn attach_virtiofs_share(
 }
 
 /// Spin the main CFRunLoop until `rx` has a value.
-///
-/// VZVirtualMachine completion handlers are dispatched on the main queue.
-/// If we just block with `rx.recv()`, the main run loop never processes them
-/// and we deadlock. This pumps the run loop in short intervals.
 fn spin_runloop_until(rx: &std::sync::mpsc::Receiver<Result<()>>) -> Result<()> {
     loop {
         match rx.try_recv() {
@@ -375,23 +354,17 @@ mod tests {
 
     #[test]
     fn is_main_thread_returns_false_on_worker() {
-        // Cargo test harness runs tests on worker threads, not the main thread.
-        // Spawning another thread should also return false.
         let result = std::thread::spawn(is_main_thread).join().unwrap();
         assert!(!result);
     }
 
     #[test]
     fn is_main_thread_returns_false_in_test_harness() {
-        // The test harness itself uses worker threads.
-        // This verifies the guard would catch a VZ call from a test thread.
         assert!(!is_main_thread());
     }
 
     #[tokio::test]
     async fn is_main_thread_returns_false_in_tokio() {
-        // tokio::test uses a worker thread -- the exact scenario that caused
-        // the crash when gui_boot_vm was called after rootfs download.
         assert!(!is_main_thread());
     }
 }

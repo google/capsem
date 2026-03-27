@@ -12,9 +12,10 @@ use tokio::sync::broadcast;
 use tracing::{debug, debug_span, warn};
 
 /// A serial console reader that pipes VM output into a broadcast channel.
-pub struct SerialConsole {
+pub struct AppleVzSerialConsole {
     tx: broadcast::Sender<Vec<u8>>,
     read_fd: RawFd,
+    input_fd: RawFd,
     // Keep the NSPipes alive so the Virtualization framework's file handles stay valid.
     #[allow(dead_code)]
     _pipes: Option<(Retained<NSPipe>, Retained<NSPipe>)>,
@@ -22,12 +23,11 @@ pub struct SerialConsole {
 
 /// Create a serial port configuration backed by NSPipe pairs.
 ///
-/// Returns the ObjC serial port config, a SerialConsole for reading output,
-/// and a RawFd for writing input to the guest (host -> guest).
+/// Returns the ObjC serial port config and an AppleVzSerialConsole
+/// that owns both the read (output) and write (input) file descriptors.
 pub fn create_serial_port() -> Result<(
     Retained<VZVirtioConsoleDeviceSerialPortConfiguration>,
-    SerialConsole,
-    RawFd,
+    AppleVzSerialConsole,
 )> {
     let _span = debug_span!("create_serial_port").entered();
     // Input pipe: host writes to inputPipe.fileHandleForWriting,
@@ -73,34 +73,45 @@ pub fn create_serial_port() -> Result<(
     }
 
     let (tx, _rx) = broadcast::channel(256);
-    let console = SerialConsole {
+    let console = AppleVzSerialConsole {
         tx,
         read_fd: output_read_fd_dup,
+        input_fd: input_write_fd_dup,
         _pipes: Some((input_pipe, output_pipe)),
     };
 
-    Ok((serial_config, console, input_write_fd_dup))
+    Ok((serial_config, console))
 }
 
-/// Create a SerialConsole from raw pipe file descriptors (for testing).
-pub fn create_console_from_fd(read_fd: RawFd) -> SerialConsole {
+/// Create an AppleVzSerialConsole from raw pipe file descriptors (for testing).
+pub fn create_console_from_fd(read_fd: RawFd, input_fd: RawFd) -> AppleVzSerialConsole {
     let (tx, _rx) = broadcast::channel(256);
-    SerialConsole { tx, read_fd, _pipes: None }
+    AppleVzSerialConsole { tx, read_fd, input_fd, _pipes: None }
 }
 
-impl SerialConsole {
+impl AppleVzSerialConsole {
     /// Subscribe to serial output bytes.
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.tx.subscribe()
     }
 
     /// Spawn a background thread that reads from the pipe and broadcasts raw bytes.
-    pub fn spawn_reader(self) {
+    pub fn spawn_reader(&self) {
+        let read_fd = self.read_fd;
+        let tx = self.tx.clone();
         std::thread::spawn(move || {
-            // Keep pipes alive for the duration of the reader thread
-            let _keep_alive = self._pipes;
-            read_loop(self.read_fd, &self.tx);
+            read_loop(read_fd, &tx);
         });
+    }
+}
+
+impl crate::hypervisor::SerialConsole for AppleVzSerialConsole {
+    fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
+        self.tx.subscribe()
+    }
+
+    fn input_fd(&self) -> RawFd {
+        self.input_fd
     }
 }
 
@@ -156,10 +167,10 @@ mod tests {
     #[test]
     fn reader_broadcasts_written_data() {
         let (read_fd, write_fd) = make_pipe();
-        let console = create_console_from_fd(read_fd);
+        let console = create_console_from_fd(read_fd, -1);
         let mut rx = console.subscribe();
-
         console.spawn_reader();
+        drop(console); // drop tx so collect_all gets Closed after EOF
 
         let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
         writer.write_all(b"hello world\n").unwrap();
@@ -173,10 +184,10 @@ mod tests {
     #[test]
     fn reader_broadcasts_partial_writes() {
         let (read_fd, write_fd) = make_pipe();
-        let console = create_console_from_fd(read_fd);
+        let console = create_console_from_fd(read_fd, -1);
         let mut rx = console.subscribe();
-
         console.spawn_reader();
+        drop(console);
 
         let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
         writer.write_all(b"partial").unwrap();
@@ -190,10 +201,10 @@ mod tests {
     #[test]
     fn reader_broadcasts_data_without_trailing_newline() {
         let (read_fd, write_fd) = make_pipe();
-        let console = create_console_from_fd(read_fd);
+        let console = create_console_from_fd(read_fd, -1);
         let mut rx = console.subscribe();
-
         console.spawn_reader();
+        drop(console);
 
         let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
         writer.write_all(b"first\nno newline at end").unwrap();
@@ -206,10 +217,10 @@ mod tests {
     #[test]
     fn reader_broadcasts_empty_lines() {
         let (read_fd, write_fd) = make_pipe();
-        let console = create_console_from_fd(read_fd);
+        let console = create_console_from_fd(read_fd, -1);
         let mut rx = console.subscribe();
-
         console.spawn_reader();
+        drop(console);
 
         let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
         writer.write_all(b"a\n\nb\n").unwrap();
@@ -222,7 +233,7 @@ mod tests {
     #[test]
     fn reader_handles_immediate_eof() {
         let (read_fd, write_fd) = make_pipe();
-        let console = create_console_from_fd(read_fd);
+        let console = create_console_from_fd(read_fd, -1);
         let mut rx = console.subscribe();
 
         // Close write end immediately
@@ -242,7 +253,7 @@ mod tests {
     #[test]
     fn subscribe_returns_receiver() {
         let (read_fd, _write_fd) = make_pipe();
-        let console = create_console_from_fd(read_fd);
+        let console = create_console_from_fd(read_fd, -1);
 
         let _rx1 = console.subscribe();
         let _rx2 = console.subscribe();
@@ -251,12 +262,20 @@ mod tests {
 
     #[test]
     fn create_serial_port_returns_valid_config() {
-        let (config, _console, input_fd) = create_serial_port().unwrap();
+        let (config, console, ) = create_serial_port().unwrap();
         // The config should have an attachment set
         let attachment = unsafe { config.attachment() };
         assert!(attachment.is_some());
         // input_fd should be a valid file descriptor
-        assert!(input_fd >= 0);
-        unsafe { libc::close(input_fd); }
+        assert!(console.input_fd >= 0);
+        unsafe { libc::close(console.input_fd); }
+    }
+
+    #[test]
+    fn serial_console_trait_input_fd() {
+        let (read_fd, write_fd) = make_pipe();
+        let console = create_console_from_fd(read_fd, write_fd);
+        let trait_ref: &dyn crate::hypervisor::SerialConsole = &console;
+        assert_eq!(trait_ref.input_fd(), write_fd);
     }
 }

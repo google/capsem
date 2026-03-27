@@ -1,10 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use capsem_core::{
-    VirtioFsShare, VsockManager,
-    VSOCK_PORT_CONTROL, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
-};
+use capsem_core::VirtioFsShare;
 use capsem_core::mcp::gateway::McpGatewayConfig;
 use capsem_core::mcp::server_manager::McpServerManager;
 use capsem_core::net::policy_config;
@@ -77,23 +74,11 @@ pub(crate) fn gui_boot_vm(
     ram_bytes: u64,
 ) {
     match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), &virtiofs_shares, cpu_count, ram_bytes) {
-        Ok((vm, rx, input_fd, sm)) => {
+        Ok((vm, vsock_rx, sm)) => {
             info!("VM booted successfully");
 
-            // Register vsock listeners on the socket device.
-            let vsock_manager = {
-                let socket_devices = vm.socket_devices();
-                match VsockManager::new(
-                    &socket_devices,
-                    &[VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_MCP_GATEWAY],
-                ) {
-                    Ok(mgr) => Some(mgr),
-                    Err(e) => {
-                        warn!("vsock setup failed: {e:#}, using serial-only mode");
-                        None
-                    }
-                }
-            };
+            let rx = vm.serial().subscribe();
+            let input_fd = vm.serial().input_fd();
 
             // Open session DB (independently of MITM proxy state).
             let gui_session_db = match open_session_db(session_id) {
@@ -243,13 +228,11 @@ pub(crate) fn gui_boot_vm(
                 serial_to_events(serial_output, rx),
             );
 
-            // Spawn vsock connection handler if available.
+            // Spawn vsock connection handler.
             let h = handle.clone();
-            if let Some(mgr) = vsock_manager {
-                tauri::async_runtime::spawn(
-                    setup_vsock(h.clone(), mgr, serial_task),
-                );
-            }
+            tauri::async_runtime::spawn(
+                setup_vsock(h.clone(), vsock_rx, serial_task),
+            );
 
             // Push initial state to frontend (Booting, not yet Running).
             let _ = h.emit("vm-state-changed", serde_json::json!({

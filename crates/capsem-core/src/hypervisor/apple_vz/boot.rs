@@ -6,7 +6,7 @@ use objc2_foundation::{NSString, NSURL};
 use objc2_virtualization::VZLinuxBootLoader;
 use tracing::debug_span;
 
-use super::config::VmConfig;
+use crate::vm::config::VmConfig;
 
 /// Create a VZLinuxBootLoader from a VmConfig.
 ///
