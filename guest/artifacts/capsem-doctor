@@ -1,0 +1,28 @@
+#!/bin/bash
+# capsem-doctor -- VM self-diagnostic suite
+# Runs all pytest-based diagnostics and reports pass/fail.
+# Usage: capsem-doctor [pytest-args...]
+#   capsem-doctor              # run all tests
+#   capsem-doctor -k sandbox   # run only sandbox tests
+#   capsem-doctor -x           # stop on first failure
+
+set -o pipefail
+# Do NOT override PATH here -- capsem-doctor must run with the same PATH
+# that the interactive shell sees, otherwise it masks PATH bugs.
+
+TESTS_DIR="/usr/local/lib/capsem-tests"
+
+echo "=== Capsem VM Diagnostics ==="
+echo ""
+
+python3 -m pytest "$TESTS_DIR" -v --tb=short --no-header "$@"
+EXIT_CODE=$?
+
+echo ""
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "RESULT: PASS -- all diagnostics passed"
+else
+    echo "RESULT: FAIL -- diagnostics failed (exit $EXIT_CODE)"
+fi
+
+exit $EXIT_CODE

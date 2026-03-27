@@ -22,8 +22,9 @@ crates/capsem-agent/      Guest PTY agent (vsock bridge, cross-compiled)
 frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + Preline
 site/                     Product website (Astro Starlight)
 src/capsem/builder/       capsem-builder CLI (config-driven image builder)
-guest/                    Guest image configuration (TOML configs)
-images/                   VM source files (capsem-init, bashrc, diagnostics)
+guest/config/             Guest image configuration (TOML configs)
+guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
+images/                   Legacy build files (deprecated, see guest/)
 assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
 skills/                   Shared AI agent skills (SKILL.md format)
 ```

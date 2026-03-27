@@ -42,7 +42,7 @@ Stress-test boundary conditions. Write tests for the attacks you'd attempt yours
 
 - Rust unit: `#[cfg(test)] mod tests` in each module
 - Rust integration: `crates/capsem-core/tests/`
-- In-VM diagnostics: `images/diagnostics/test_*.py` (see dev-testing-vm)
+- In-VM diagnostics: `guest/artifacts/diagnostics/test_*.py` (see dev-testing-vm)
 - Hypervisor: KVM + Apple VZ tests (see dev-testing-hypervisor)
 - Frontend: `frontend/src/lib/__tests__/` (see dev-testing-frontend)
 - Python (builder): `tests/`

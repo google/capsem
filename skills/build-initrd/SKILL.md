@@ -24,7 +24,7 @@ description: Initrd repack and guest binary management for Capsem. Use when addi
 Update three places:
 
 1. **`_pack-initrd` recipe in `justfile`** -- add the cross-compile + copy step
-2. **`capsem-init` in `images/capsem-init`** -- add initrd-bundled fallback logic (check `/binary` before rootfs path)
+2. **`capsem-init` in `guest/artifacts/capsem-init`** -- add initrd-bundled fallback logic (check `/binary` before rootfs path)
 3. **Binary list above** -- add it to this skill
 
 ## When to use which build path
@@ -33,8 +33,8 @@ Update three places:
 |---------|---------|-----|
 | Guest binary source (Rust agent code) | `just run` | Auto-repacks initrd with new binary |
 | `capsem-init` script | `just run` | Init script is repacked into initrd |
-| `images/diagnostics/*.py` | `just run "capsem-doctor"` | Test files repacked into initrd |
-| `images/capsem-bashrc` | `just build-assets` | Baked into rootfs, not initrd |
+| `guest/artifacts/diagnostics/*.py` | `just run "capsem-doctor"` | Test files repacked into initrd |
+| `guest/artifacts/capsem-bashrc` | `just build-assets` | Baked into rootfs, not initrd |
 | Guest config (`guest/config/`) | `just build-assets` | Affects Dockerfile rendering |
 | Installed packages (apt, pip) | `just build-assets` | Baked into rootfs squashfs |
 

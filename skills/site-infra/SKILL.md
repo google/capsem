@@ -36,11 +36,26 @@ sidebar:
 ```
 site/src/content/docs/
   getting-started.md
-  architecture/         Hypervisor, settings grammar
-  security/             Kernel hardening, network isolation, build verification, virtualization
-  testing/              capsem-doctor, benchmarks
-  development/          Getting started (dev)
-  releases/             One page per minor version
+  architecture/
+    hypervisor.md         Hypervisor abstraction, Apple VZ + KVM backends (5 mermaid diagrams)
+    settings.md           Settings grammar, value resolution, presets, IPC, boot injection
+    build-system.md       capsem-builder architecture, TOML configs, Jinja, multi-arch
+    custom-images.md      Corporate image customization guide
+    settings-schema.md    Two-node schema, JSON Schema, Pydantic, cross-language conformance
+  security/
+    overview.md           Security model overview
+    network-isolation.md  Air-gapped networking, domain policy
+    virtualization.md     VM isolation guarantees
+    build-verification.md Build reproducibility, checksums
+    kernel-hardening.md   Custom kernel, allnoconfig, minimal attack surface
+  testing/
+    capsem-doctor.md      In-VM diagnostic suite
+    benchmarks.md         Performance benchmarks
+  development/
+    getting-started.md    Dev environment setup (stub)
+    skills.md             AI agent skills system
+  releases/
+    0-8.md through 0-12.md   One page per minor version
 ```
 
 ## Sidebar
@@ -86,6 +101,10 @@ Read `references/astro.md` for Astro framework patterns (components, content col
 ## Theme
 
 Custom CSS in `site/src/styles/custom.css`. Accent colors and fonts. Logo at `site/src/assets/logo.svg`.
+
+## Drafts
+
+`tmp/build_sprint/custom-images.md` -- 443-line draft for the custom images doc. Covers quick start, config reference, CLI reference, manifest, corporate deployment, troubleshooting.
 
 ## Keep docs in sync
 

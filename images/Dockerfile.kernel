@@ -1,3 +1,6 @@
+# DEPRECATED: Use `capsem-builder build guest/` which renders from Jinja templates.
+# See src/capsem/builder/templates/Dockerfile.kernel.j2 for the config-driven version.
+#
 # Compile a hardened, minimal ARM64 kernel for Apple Virtualization.framework.
 # Produces vmlinuz (~5MB) and initrd.img (<1MB) with busybox + capsem-init.
 #

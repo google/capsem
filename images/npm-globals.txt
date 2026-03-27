@@ -1,3 +1,5 @@
+# DEPRECATED: npm packages now defined in guest/config/ai/*.toml install sections
+#
 # npm packages pre-installed globally in the capsem VM.
 # Installed to /opt/ai-clis during rootfs build. Used directly via overlayfs (no boot-time copy).
 @anthropic-ai/claude-code

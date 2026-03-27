@@ -1,3 +1,5 @@
+# DEPRECATED: Packages now defined in guest/config/packages/apt.toml
+#
 # Core utilities and inspection tools installed in the capsem VM rootfs.
 # One package per line; lines starting with # are ignored.
 

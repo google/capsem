@@ -15,9 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security documentation** -- security model overview page (threat model, defense layers, trust boundaries) and virtualization security page (VirtioFS path traversal, TOCTOU analysis, resource limits, data integrity).
 
 ### Fixed
+- **Snapshot MCP no longer hangs** -- all 7 file tool handlers, auto-snapshot timer, and asset hash verification now run blocking I/O (clonefile, walkdir, blake3) on `spawn_blocking` threads instead of starving the tokio runtime. Single-file operations (revert, compact) use platform-native CoW (`clone_file`) instead of byte copies.
+- **Snapshot panel now displays snapshots** -- frontend was calling `snapshots_list` without `format: "json"`, getting a text table that `JSON.parse()` silently rejected. Added frontend contract test to prevent regression.
+- **Vacuum preserves content sessions** -- session cleanup now always keeps at least 25 sessions with AI activity regardless of age. Empty test sessions (0 tokens, 0 tool calls) are terminated first. New `min_content_sessions` setting (default: 25) controls the floor.
 - **Integration test Gemini API key handling** -- reads Google API key from `~/.capsem/user.toml` as fallback instead of requiring env var. Removed dummy API key from test config. Promoted Gemini token/model warnings to proper pass/fail checks.
 
 ### Changed
+- **Guest artifacts moved to `guest/artifacts/`** -- capsem-init, capsem-bashrc, diagnostics, benchmarks, and snapshots now live in `guest/artifacts/` instead of `images/`. Justfile `_pack-initrd` and builder doctor updated. Old `images/` files deprecated with headers pointing to new locations.
+- **Multi-arch diagnostics** -- `test_architecture` now accepts both `aarch64` (Apple VZ) and `x86_64` (KVM/crosvm).
 - **`just build-assets` now uses capsem-builder** -- config-driven Dockerfile generation replaces hard-coded `images/build.py`. Assets output to per-arch layout (`assets/{arch}/`).
 - **Multi-arch cross-compilation** -- `.cargo/config.toml` configures `rust-lld` for both `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. CI cross-compile checks cover both targets.
 

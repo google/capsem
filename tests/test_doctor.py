@@ -235,8 +235,8 @@ class TestCheckGuestConfig:
 
 class TestCheckSourceFiles:
     def test_all_present(self, tmp_path):
-        images = tmp_path / "images"
-        images.mkdir()
+        artifacts = tmp_path / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
         config = tmp_path / "config"
         config.mkdir()
         # Create all required files
@@ -244,37 +244,37 @@ class TestCheckSourceFiles:
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench",
         ]:
-            (images / name).write_text("stub")
-        (images / "diagnostics").mkdir()
+            (artifacts / name).write_text("stub")
+        (artifacts / "diagnostics").mkdir()
         (config / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is True
 
     def test_missing_capsem_init(self, tmp_path):
-        images = tmp_path / "images"
-        images.mkdir()
+        artifacts = tmp_path / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
         config = tmp_path / "config"
         config.mkdir()
         for name in [
             "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench",
         ]:
-            (images / name).write_text("stub")
-        (images / "diagnostics").mkdir()
+            (artifacts / name).write_text("stub")
+        (artifacts / "diagnostics").mkdir()
         (config / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem-init" in result.detail
 
     def test_missing_ca_cert(self, tmp_path):
-        images = tmp_path / "images"
-        images.mkdir()
+        artifacts = tmp_path / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench",
         ]:
-            (images / name).write_text("stub")
-        (images / "diagnostics").mkdir()
+            (artifacts / name).write_text("stub")
+        (artifacts / "diagnostics").mkdir()
         # No config/capsem-ca.crt
         result = check_source_files(tmp_path)
         assert result.passed is False

@@ -195,13 +195,13 @@ def check_guest_config(guest_dir: Path) -> CheckResult:
 def check_source_files(repo_root: Path) -> CheckResult:
     """Check that required source files exist for build context assembly."""
     required = {
-        "images/capsem-init": repo_root / "images" / "capsem-init",
-        "images/capsem-bashrc": repo_root / "images" / "capsem-bashrc",
-        "images/banner.txt": repo_root / "images" / "banner.txt",
-        "images/tips.txt": repo_root / "images" / "tips.txt",
-        "images/capsem-doctor": repo_root / "images" / "capsem-doctor",
-        "images/capsem-bench": repo_root / "images" / "capsem-bench",
-        "images/diagnostics/": repo_root / "images" / "diagnostics",
+        "guest/artifacts/capsem-init": repo_root / "guest" / "artifacts" / "capsem-init",
+        "guest/artifacts/capsem-bashrc": repo_root / "guest" / "artifacts" / "capsem-bashrc",
+        "guest/artifacts/banner.txt": repo_root / "guest" / "artifacts" / "banner.txt",
+        "guest/artifacts/tips.txt": repo_root / "guest" / "artifacts" / "tips.txt",
+        "guest/artifacts/capsem-doctor": repo_root / "guest" / "artifacts" / "capsem-doctor",
+        "guest/artifacts/capsem-bench": repo_root / "guest" / "artifacts" / "capsem-bench",
+        "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
         "config/capsem-ca.crt": repo_root / "config" / "capsem-ca.crt",
     }
 
@@ -219,7 +219,7 @@ def check_source_files(repo_root: Path) -> CheckResult:
             name="source-files",
             passed=False,
             detail=f"missing: {', '.join(missing)}",
-            fix="files missing from images/ or config/ -- check your checkout",
+            fix="files missing from guest/artifacts/ or config/ -- check your checkout",
         )
 
     total = len(required)

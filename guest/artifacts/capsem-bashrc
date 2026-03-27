@@ -1,0 +1,78 @@
+# Capsem sandbox shell config
+
+# Terminal setup (xterm.js renders in the browser)
+# Note: stderr stays on the PTY (not redirected to /dev/hvc0) so that
+# readline's prompt output goes through the vsock terminal path.
+export TERM=xterm-256color
+export LANG=C
+export HISTSIZE=500
+export HISTFILE=/root/.bash_history
+export HOME=/root
+cd /root
+
+# Activate Python virtualenv (packages install here since rootfs is read-only).
+# Created by capsem-init at boot using uv.
+if [ -f /root/.venv/bin/activate ]; then
+    . /root/.venv/bin/activate
+fi
+
+# PATH is set by the host via BootConfig SetEnv (source of truth: config/defaults.toml).
+# Do NOT set PATH here -- it creates duplicates and hides bugs.
+
+# Source user-editable bashrc (prompt, aliases, functions).
+# This file is injected as a boot file from the settings registry.
+source /root/.bashrc 2>/dev/null || true
+
+# Colors: blue for positive/ready, purple for negative/disabled, dim for neutral.
+_BLUE='\033[0;34m'
+_PURPLE='\033[0;35m'
+_DIM='\033[0;90m'
+_BOLD='\033[1;37m'
+_RST='\033[0m'
+
+# Clear screen and show welcome banner
+printf '\033[2J\033[H'
+if [ -f /etc/capsem-banner.txt ]; then
+    sed "s/%KERNEL%/$(uname -r)/g; s/%ARCH%/$(uname -m)/g" /etc/capsem-banner.txt | \
+        while IFS= read -r line; do echo -e "$line"; done
+fi
+
+# Show AI tool status based on policy (CAPSEM_*_ALLOWED) and API key env vars.
+# Host injects CAPSEM_ANTHROPIC_ALLOWED, CAPSEM_OPENAI_ALLOWED, CAPSEM_GOOGLE_ALLOWED
+# as "1" or "0" at boot based on the provider allow toggles in settings.
+_ai_status() {
+    local name=$1 allowed_var=$2 key_var=$3
+    local allowed="${!allowed_var}"
+    local has_key="${!key_var}"
+    if [ "$allowed" = "1" ] && [ -n "$has_key" ]; then
+        echo -e "  ${_BOLD}$name${_RST} ${_BLUE}ready${_RST}"
+    elif [ "$allowed" = "1" ]; then
+        echo -e "  ${_BOLD}$name${_RST} ${_PURPLE}no api key -- configure in settings${_RST}"
+    elif [ "$allowed" = "0" ]; then
+        echo -e "  ${_BOLD}$name${_RST} ${_PURPLE}disabled by policy${_RST}"
+    fi
+}
+echo ""
+echo -e "  ${_DIM}AI:${_RST}"
+_ai_status "claude" "CAPSEM_ANTHROPIC_ALLOWED" "ANTHROPIC_API_KEY"
+_ai_status "gemini" "CAPSEM_GOOGLE_ALLOWED"    "GEMINI_API_KEY"
+_ai_status "codex"  "CAPSEM_OPENAI_ALLOWED"    "OPENAI_API_KEY"
+unset -f _ai_status
+
+# Random tip from /etc/capsem-tips.txt
+if [ -f /etc/capsem-tips.txt ]; then
+    _tips=()
+    while IFS= read -r _line; do
+        case "$_line" in \#*|"") continue ;; esac
+        _tips+=("$_line")
+    done < /etc/capsem-tips.txt
+    if [ ${#_tips[@]} -gt 0 ]; then
+        echo ""
+        echo -e "  ${_DIM}tip: ${_tips[RANDOM % ${#_tips[@]}]}${_RST}"
+    fi
+    unset _tips _line
+fi
+
+unset _BLUE _PURPLE _DIM _BOLD _RST
+echo ""
+ulimit -n 65536

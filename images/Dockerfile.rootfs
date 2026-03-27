@@ -1,3 +1,6 @@
+# DEPRECATED: Use `capsem-builder build guest/` which renders from Jinja templates.
+# See src/capsem/builder/templates/Dockerfile.rootfs.j2 for the config-driven version.
+#
 # Build a populated rootfs for the capsem VM.
 # Contains developer tools, runtimes, and AI coding CLIs.
 # Mounted read-only at boot; only /root is writable (tmpfs).

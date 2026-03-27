@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Build VM boot assets using Podman/Docker.
+"""DEPRECATED: Use `capsem-builder build guest/` instead. See guest/config/ for TOML configs.
+
+Build VM boot assets using Podman/Docker.
 
 Extracts vmlinuz + initrd from Debian ARM64, builds a squashfs rootfs
 (zstd-compressed) with developer tools and AI CLIs pre-installed.

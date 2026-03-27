@@ -266,6 +266,7 @@ class VmResourcesConfig(BaseModel):
     max_body_capture: int = Field(default=4096, ge=0, le=1048576)
     retention_days: int = Field(default=30, ge=1, le=365)
     max_sessions: int = Field(default=100, ge=1, le=10000)
+    min_content_sessions: int = Field(default=25, ge=0, le=1000)
     max_disk_gb: int = Field(default=100, ge=1, le=1000)
     terminated_retention_days: int = Field(default=365, ge=30, le=3650)
 

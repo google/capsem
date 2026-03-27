@@ -1,0 +1,396 @@
+#!/bin/sh
+# Capsem sandbox init script.
+# Replaces /init in the initramfs.
+# Mounts squashfs rootfs from /dev/vda, stacks overlayfs (immutable lower
+# + ephemeral tmpfs upper), then chroot into the real root.
+
+# Mount essential filesystems
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts
+mount -t devpts   devpts   /dev/pts
+
+# Optimize block I/O: virtio performs best with 'none' scheduler (host OS handles it)
+# and a larger read-ahead buffer.
+for dev in /sys/block/vd*; do
+    if [ -d "$dev" ]; then
+        echo none > "$dev/queue/scheduler" 2>/dev/null || true
+        echo 4096 > "$dev/queue/read_ahead_kb" 2>/dev/null || true
+        echo 256 > "$dev/queue/nr_requests" 2>/dev/null || true
+    fi
+done
+
+# Load kernel modules listed in /conf/modules (populated by initramfs-tools)
+if [ -f /conf/modules ]; then
+    while read -r mod args; do
+        case "$mod" in \#*|"") continue ;; esac
+        modprobe -q "$mod" $args 2>/dev/null || true
+    done < /conf/modules
+fi
+
+# IMPORTANT: Wait for hardware to enumerate (including virtio_console/hvc0).
+# Redirecting to /dev/console before this will fail and crash the init script.
+sleep 1
+
+# Send all output to console so we can see what happens
+exec 0</dev/console 1>/dev/console 2>/dev/console
+
+# Boot timing: record stage durations as JSONL for the PTY agent to send via vsock.
+TIMING_FILE=/tmp/capsem-boot-timing
+boot_ms() { awk '{printf "%d", $1 * 1000}' /proc/uptime; }
+_LAST_MARK=$(boot_ms)
+boot_mark() {
+    local now=$(boot_ms)
+    printf '{"name":"%s","duration_ms":%d}\n' "$1" "$(( now - _LAST_MARK ))" >> "$TIMING_FILE"
+    _LAST_MARK=$now
+}
+
+echo "[capsem-init] listing block devices..."
+ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
+
+# Mount squashfs (immutable lower layer)
+mkdir -p /mnt/a
+echo "[capsem-init] mounting /dev/vda (squashfs)..."
+mount -t squashfs /dev/vda /mnt/a
+echo "[capsem-init] mount exit: $?"
+
+echo "[capsem-init] checking /mnt/a/bin/bash..."
+ls /mnt/a/bin/bash 2>&1
+boot_mark "squashfs"
+
+# Detect storage mode from kernel cmdline.
+# VirtioFS mode: overlay upper + /root backed by host-side shared directory.
+# Block mode (legacy): tmpfs overlay + scratch disk.
+STORAGE_MODE="block"
+if grep -q 'capsem.storage=virtiofs' /proc/cmdline; then
+    STORAGE_MODE="virtiofs"
+fi
+echo "[capsem-init] storage mode: $STORAGE_MODE"
+
+mkdir -p /newroot
+if [ "$STORAGE_MODE" = "virtiofs" ]; then
+    # === Single-Share Hybrid Architecture ===
+    # One VirtioFS share from the host contains:
+    #   system/rootfs.img  -- ext4 loopback image for overlayfs upper (packages, config)
+    #   workspace/         -- direct files for /root (AI workspace, host-visible)
+    #
+    # Apple VZ VirtioFS can't be overlayfs upper directly (no mknod for whiteouts).
+    # The ext4 loopback provides full POSIX compliance for overlayfs.
+    # The workspace/ dir is bind-mounted at /root so the host can read/write files
+    # natively for MCP tools, snapshots, and monitoring.
+
+    mkdir -p /mnt/shared
+    mount -t virtiofs capsem /mnt/shared || {
+        echo "[capsem-init] FATAL: cannot mount virtiofs 'capsem' -- aborting"
+        exit 1
+    }
+    echo "[capsem-init] VirtioFS share mounted"
+    boot_mark "virtiofs"
+
+    # Mount the ext4 loopback image for overlayfs upper.
+    # Host creates the sparse file; guest formats on first boot.
+    SYSTEM_IMG=/mnt/shared/system/rootfs.img
+    if [ ! -f "$SYSTEM_IMG" ]; then
+        echo "[capsem-init] FATAL: system image not found at $SYSTEM_IMG"
+        ls -la /mnt/shared/system/ 2>&1
+        exit 1
+    fi
+
+    mkdir -p /mnt/system
+
+    # Set up loop device for the ext4 system image.
+    # Host creates a sparse file (0 bytes actual). Guest formats on first boot.
+    LOOP_DEV=$(losetup -f 2>/dev/null)
+    if [ -z "$LOOP_DEV" ]; then
+        mknod /dev/loop0 b 7 0 2>/dev/null || true
+        LOOP_DEV=/dev/loop0
+    fi
+    losetup "$LOOP_DEV" "$SYSTEM_IMG" || {
+        echo "[capsem-init] FATAL: losetup failed for $SYSTEM_IMG"
+        exit 1
+    }
+    echo "[capsem-init] loop device: $LOOP_DEV"
+
+    # Format if unformatted (first boot). Uses mke2fs from the squashfs rootfs
+    # since busybox doesn't include it. Bind-mount /dev so chroot can see loop devices.
+    if ! blkid "$LOOP_DEV" 2>/dev/null | grep -q ext4; then
+        echo "[capsem-init] formatting system image..."
+        mount --bind /dev /mnt/a/dev
+        chroot /mnt/a /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal \
+            -E lazy_itable_init=1 -L system -q "$LOOP_DEV" 2>&1
+        umount /mnt/a/dev
+        echo "[capsem-init] system image formatted"
+    fi
+
+    mount -t ext4 -o noatime,nodiratime "$LOOP_DEV" /mnt/system || {
+        echo "[capsem-init] FATAL: cannot mount system image -- aborting"
+        exit 1
+    }
+    mkdir -p /mnt/system/upper /mnt/system/work
+    mkdir -p /mnt/system/upper /mnt/system/work
+
+    # Stack overlayfs: squashfs (lower) + ext4 loopback (upper).
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,redirect_dir=on,metacopy=on \
+      /newroot || \
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work \
+      /newroot || {
+        echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
+        exit 1
+    }
+    echo "[capsem-init] overlayfs mounted (ext4 loopback upper)"
+    boot_mark "overlayfs"
+else
+    # === Block mode (legacy) ===
+    # tmpfs overlay upper -- ephemeral, lost on reboot.
+    mkdir -p /mnt/b
+    mount -t tmpfs tmpfs /mnt/b || {
+        echo "[capsem-init] FATAL: cannot mount tmpfs on /mnt/b -- aborting"
+        exit 1
+    }
+    mkdir -p /mnt/b/upper /mnt/b/work
+
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/b/upper,workdir=/mnt/b/work,redirect_dir=on,metacopy=on \
+      /newroot || \
+    mount -t overlay overlay \
+      -o lowerdir=/mnt/a,upperdir=/mnt/b/upper,workdir=/mnt/b/work \
+      /newroot || {
+        echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
+        exit 1
+    }
+    boot_mark "overlayfs"
+fi
+
+# Mount virtual filesystems fresh in the new root.
+# /proc, /sys, /dev exist as empty dirs from docker export.
+# /dev/pts is created after devtmpfs is mounted (devtmpfs is writable).
+mount -t proc     proc     /newroot/proc
+mount -t sysfs    sysfs    /newroot/sys
+mount -t devtmpfs devtmpfs /newroot/dev
+mkdir -p /newroot/dev/pts
+mount -t devpts   devpts   /newroot/dev/pts
+
+# Mount /root workspace.
+# VirtioFS mode: bind-mount the workspace/ dir from the VirtioFS share.
+# Block mode: prefer scratch disk (virtio block device), fall back to tmpfs.
+if [ "$STORAGE_MODE" = "virtiofs" ]; then
+    # Bind-mount the host-visible workspace directory as /root.
+    # The host can read/write these files directly for MCP tools and snapshots.
+    mkdir -p /newroot/root
+    mount --bind /mnt/shared/workspace /newroot/root || {
+        echo "[capsem-init] FATAL: cannot bind-mount workspace to /root"
+        exit 1
+    }
+    echo "[capsem-init] /root bind-mounted from VirtioFS workspace"
+    boot_mark "workspace"
+else
+    # Block mode: scratch disk provides ~8GB of workspace.
+    # Must happen AFTER /newroot/dev is mounted so device nodes resolve in chroot.
+    # Uses rootfs e2fsprogs (not busybox) for ext4 support.
+    SCRATCH=""
+    if [ -b /dev/vdb ]; then
+        SCRATCH=/dev/vdb
+    fi
+
+    if [ -n "$SCRATCH" ]; then
+        echo "[capsem-init] formatting scratch disk ($SCRATCH)..."
+        if chroot /newroot /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal -E lazy_itable_init=1 -L scratch -q "$SCRATCH" 2>&1; then
+            if mount -t ext4 -o rw,noatime,nodiratime "$SCRATCH" /newroot/root; then
+                echo "[capsem-init] /root mounted from scratch disk"
+                # Create a 1GB swap file on the scratch disk.
+                dd if=/dev/zero of=/newroot/root/.swapfile bs=1M count=1024 2>/dev/null
+                chmod 600 /newroot/root/.swapfile
+                mkswap /newroot/root/.swapfile >/dev/null 2>&1
+                swapon /newroot/root/.swapfile
+                echo "[capsem-init] swap enabled (1GB)"
+            else
+                echo "[capsem-init] WARNING: scratch disk mount failed, falling back to tmpfs"
+                mount -t tmpfs tmpfs /newroot/root
+            fi
+        else
+            echo "[capsem-init] WARNING: scratch disk format failed, falling back to tmpfs"
+            mount -t tmpfs tmpfs /newroot/root
+        fi
+    else
+        mount -t tmpfs tmpfs /newroot/root
+        echo "[capsem-init] /root mounted as tmpfs (no scratch disk)"
+    fi
+    boot_mark "workspace"
+fi
+
+# Create writable bin dir for pip install --user / uvx entry points.
+# Must happen after /root is mounted (scratch disk or tmpfs).
+mkdir -p /newroot/root/.local/bin
+
+# Remove legacy HTTP sources.list if present (belt-and-suspenders).
+# The rootfs already has HTTPS-only debian.sources from the Docker build.
+rm -f /newroot/etc/apt/sources.list
+
+# dpkg: skip fsync/atomic-rename; overlayfs redirect_dir handles consistency.
+mkdir -p /newroot/etc/dpkg/dpkg.cfg.d
+echo "force-unsafe-io" > /newroot/etc/dpkg/dpkg.cfg.d/force-unsafe-io
+
+# === Network: air-gapped IP stack ===
+# The guest has no real NIC. We create a dummy interface with a local IP,
+# run a fake DNS that resolves everything to that IP, and use iptables to
+# redirect port 443 to our vsock-backed proxy. The host SNI proxy then
+# inspects TLS ClientHello for the domain and bridges to the real server.
+echo "[capsem-init] setting up network..."
+chroot /newroot ip link set lo up 2>/dev/null || true
+chroot /newroot ip link add dummy0 type dummy
+chroot /newroot ip addr add 10.0.0.1/24 dev dummy0
+chroot /newroot ip link set dummy0 up
+chroot /newroot ip route add default dev dummy0
+
+# Fake DNS: all domains resolve to 10.0.0.1.
+# Bind-mount resolv.conf from /run to ensure dnsmasq config takes effect.
+echo "nameserver 127.0.0.1" > /newroot/run/resolv.conf
+mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
+chroot /newroot dnsmasq --no-daemon --no-resolv --no-hosts \
+    --address=/#/10.0.0.1 --listen-address=127.0.0.1 --port=53 &
+sleep 0.2
+
+# iptables REDIRECT: use iptables-legacy since kernel has NF_TABLES=n.
+IPTABLES=iptables
+if [ -x /newroot/usr/sbin/iptables-legacy ]; then
+    IPTABLES=iptables-legacy
+fi
+chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443
+echo "[capsem-init] network ready"
+boot_mark "network"
+
+# Launch net proxy (TCP->vsock bridge) as background process.
+# Prefer initrd-bundled copy, fall back to rootfs.
+NET_PROXY_PATH=""
+if [ -x /capsem-net-proxy ]; then
+    cp /capsem-net-proxy /newroot/run/capsem-net-proxy
+    chmod 555 /newroot/run/capsem-net-proxy
+    NET_PROXY_PATH=/run/capsem-net-proxy
+elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
+    NET_PROXY_PATH=/usr/local/bin/capsem-net-proxy
+fi
+if [ -n "$NET_PROXY_PATH" ]; then
+    chroot /newroot "$NET_PROXY_PATH" &
+    sleep 0.1
+    echo "[capsem-init] net-proxy started"
+else
+    echo "[capsem-init] WARNING: capsem-net-proxy not found, no HTTPS proxy"
+fi
+boot_mark "net_proxy"
+
+# Deploy MCP server binary (stdio-to-vsock relay for AI agents).
+# Prefer initrd-bundled copy, fall back to rootfs.
+if [ -x /capsem-mcp-server ]; then
+    cp /capsem-mcp-server /newroot/run/capsem-mcp-server
+    chmod 555 /newroot/run/capsem-mcp-server
+    echo "[capsem-init] mcp-server deployed"
+elif [ -x /newroot/usr/local/bin/capsem-mcp-server ]; then
+    cp /newroot/usr/local/bin/capsem-mcp-server /newroot/run/capsem-mcp-server
+    chmod 555 /newroot/run/capsem-mcp-server
+    echo "[capsem-init] mcp-server deployed (from rootfs)"
+fi
+
+# Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).
+# Overwrites rootfs copies via the overlayfs upper layer.
+if [ -x /capsem-doctor ]; then
+    cp /capsem-doctor /newroot/usr/local/bin/capsem-doctor
+    chmod 755 /newroot/usr/local/bin/capsem-doctor
+    echo "[capsem-init] capsem-doctor deployed"
+fi
+if [ -x /capsem-bench ]; then
+    cp /capsem-bench /newroot/usr/local/bin/capsem-bench
+    chmod 755 /newroot/usr/local/bin/capsem-bench
+    echo "[capsem-init] capsem-bench deployed"
+fi
+if [ -x /snapshots ]; then
+    cp /snapshots /newroot/usr/local/bin/snapshots
+    chmod 755 /newroot/usr/local/bin/snapshots
+    echo "[capsem-init] snapshots deployed"
+fi
+if [ -d /diagnostics ]; then
+    cp -a /diagnostics/* /newroot/usr/local/lib/capsem-tests/
+    echo "[capsem-init] diagnostics deployed"
+fi
+boot_mark "deploy"
+
+# Increase open file descriptor limit to prevent EMFILE/Errno 24 crashes
+ulimit -n 65536
+
+# Minimal PATH for chroot commands below (uv, npm, python3 are in /usr/local/bin).
+# The interactive shell PATH is set by the host via BootConfig SetEnv later.
+export PATH=/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+export COLORTERM=truecolor
+export IS_SANDBOX=1
+
+# Optimize Node.js and Python for the sandboxed VM environment
+# 1. Prevent kernel OOMs by capping Node's V8 heap (VM has 4GB RAM by default)
+export NODE_OPTIONS="--max-old-space-size=2048"
+# 2. Disable slow network checks and ads during CLI executions
+export NO_UPDATE_NOTIFIER=1
+export NPM_CONFIG_UPDATE_NOTIFIER=false
+export NPM_CONFIG_FUND=false
+export NPM_CONFIG_AUDIT=false
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Create Python virtualenv so pip/uv installs go to the scratch disk.
+# --system-site-packages: inherit pre-installed packages (numpy, requests, etc.)
+# from the squashfs rootfs while allowing new installs into the writable venv.
+# uv venv is ~100ms; fall back to stdlib venv if uv is missing.
+chroot /newroot uv venv --system-site-packages /root/.venv 2>/dev/null || \
+    chroot /newroot python3 -m venv --system-site-packages /root/.venv 2>/dev/null || true
+boot_mark "venv"
+
+# Ensure PATH and venv survive login shells (tmux panes).
+# /etc/profile resets PATH, so we must restore the host-injected dirs here.
+# Source of truth for the base PATH is config/defaults.toml.
+cat > /newroot/etc/profile.d/capsem.sh << 'PROFILE'
+# Prepend dirs that the host injects via BootConfig but /etc/profile drops.
+case ":$PATH:" in
+    *:/opt/ai-clis/bin:*) ;;
+    *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
+esac
+if [ -f /root/.venv/bin/activate ]; then
+    . /root/.venv/bin/activate
+fi
+PROFILE
+
+# Copy boot timing data into chroot for the PTY agent to send via vsock.
+boot_mark "agent_start"
+cp "$TIMING_FILE" /newroot/run/capsem-boot-timing 2>/dev/null || true
+
+echo "[capsem-init] about to chroot..."
+
+# Launch the PTY agent for vsock-based terminal I/O.
+# The agent creates a PTY pair, forks bash, and bridges via vsock to the host.
+# This gives full terminal features (resize, job control, TUI apps) and
+# high-throughput I/O without serial bottlenecks.
+#
+# Prefer initrd-bundled agent (injected by `just repack`) over rootfs copy.
+# This allows fast agent iteration without a full rootfs rebuild.
+AGENT_PATH=""
+if [ -x /capsem-pty-agent ]; then
+    # Copy from initrd to writable tmpfs so chroot can access it.
+    # Read-only + execute (555): prevent guest processes from modifying the agent.
+    cp /capsem-pty-agent /newroot/run/capsem-pty-agent
+    chmod 555 /newroot/run/capsem-pty-agent
+    AGENT_PATH=/run/capsem-pty-agent
+    echo "[capsem-init] using initrd-bundled agent"
+elif [ -x /newroot/usr/local/bin/capsem-pty-agent ]; then
+    AGENT_PATH=/usr/local/bin/capsem-pty-agent
+    echo "[capsem-init] using rootfs agent"
+else
+    echo "[capsem-init] FATAL: capsem-pty-agent not found"
+    echo "[capsem-init] Rebuild with 'just build' or 'just repack'"
+    # Keep PID 1 alive to prevent kernel panic, but no shell is started.
+    while true; do sleep 60; done
+fi
+
+echo "[capsem-init] starting PTY agent (vsock mode)"
+chroot /newroot "$AGENT_PATH"
+
+# If bash exits (e.g. user types 'exit'), keep PID 1 alive to prevent kernel panic.
+while true; do sleep 1; done

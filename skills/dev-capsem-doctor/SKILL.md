@@ -53,7 +53,7 @@ def output_dir():
 
 ## Adding a new test
 
-1. Add test functions to the appropriate `images/diagnostics/test_*.py` file, or create `test_<category>.py`
+1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_*.py` file, or create `test_<category>.py`
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (no special guards needed)
 4. `just run "capsem-doctor"` picks up changes immediately (diagnostics repacked into initrd)
@@ -61,7 +61,7 @@ def output_dir():
 
 ## Where tests live on disk
 
-- **Source**: `images/diagnostics/test_*.py` (in the repo)
+- **Source**: `guest/artifacts/diagnostics/test_*.py` (in the repo)
 - **In rootfs**: `/usr/local/lib/capsem-tests/test_*.py` (baked by Dockerfile.rootfs)
 - **In initrd**: overrides rootfs copies via `_pack-initrd` (fast iteration)
 

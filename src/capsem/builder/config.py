@@ -567,6 +567,7 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
             "max_body_capture": {"name": "Max body capture", "description": "Maximum bytes of body to capture in telemetry.", "type": "number", "default": res.max_body_capture, "meta": {"min": 0, "max": 1048576}},
             "retention_days": {"name": "Session retention", "description": "Number of days to retain session data.", "type": "number", "default": res.retention_days, "meta": {"min": 1, "max": 365}},
             "max_sessions": {"name": "Maximum sessions", "description": "Keep at most this many sessions (oldest culled first).", "type": "number", "default": res.max_sessions, "meta": {"min": 1, "max": 10000}},
+            "min_content_sessions": {"name": "Minimum content sessions", "description": "Always keep at least this many sessions that contain AI activity, regardless of age. Empty test sessions are terminated first.", "type": "number", "default": res.min_content_sessions, "meta": {"min": 0, "max": 1000, "step": 1}},
             "max_disk_gb": {"name": "Maximum disk usage", "description": "Maximum total disk usage for all sessions in GB.", "type": "number", "default": res.max_disk_gb, "meta": {"min": 1, "max": 1000}},
             "terminated_retention_days": {"name": "Terminated session retention", "description": "Days to keep terminated session records in the index. After this, the record is permanently deleted.", "type": "number", "default": res.terminated_retention_days, "meta": {"min": 30, "max": 3650}},
         },

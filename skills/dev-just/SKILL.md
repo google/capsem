@@ -39,7 +39,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Rust host code | `just run` or `just test` |
 | Guest binary (agent, net-proxy, mcp-server) | `just run` (auto-repacks initrd) |
 | `capsem-init` | `just run` (auto-repacks initrd) |
-| In-VM diagnostics (`images/diagnostics/`) | `just run "capsem-doctor"` |
+| In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just run "capsem-doctor"` |
 | Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just run` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
 | Telemetry pipelines | `just run "<cmd>"` then `just inspect-session` |

@@ -497,7 +497,7 @@ _pack-initrd:
     WORKDIR=$(mktemp -d)
     cd "$WORKDIR"
     gzip -dc "$INITRD" | cpio -id 2>/dev/null
-    cp "$ROOT/images/capsem-init" init
+    cp "$ROOT/guest/artifacts/capsem-init" init
     chmod 755 init
     rm -f capsem-pty-agent capsem-net-proxy capsem-mcp-server
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
@@ -506,14 +506,14 @@ _pack-initrd:
     chmod 555 capsem-net-proxy
     cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-mcp-server" capsem-mcp-server
     chmod 555 capsem-mcp-server
-    cp "$ROOT/images/capsem-doctor" capsem-doctor
+    cp "$ROOT/guest/artifacts/capsem-doctor" capsem-doctor
     chmod 755 capsem-doctor
-    cp "$ROOT/images/capsem-bench" capsem-bench
+    cp "$ROOT/guest/artifacts/capsem-bench" capsem-bench
     chmod 755 capsem-bench
-    cp "$ROOT/images/snapshots" snapshots
+    cp "$ROOT/guest/artifacts/snapshots" snapshots
     chmod 755 snapshots
     rm -rf diagnostics
-    cp -r "$ROOT/images/diagnostics" diagnostics
+    cp -r "$ROOT/guest/artifacts/diagnostics" diagnostics
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"

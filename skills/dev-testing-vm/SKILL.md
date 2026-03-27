@@ -7,7 +7,7 @@ description: In-VM diagnostics and test fixtures for Capsem. Use when working wi
 
 ## capsem-doctor
 
-The diagnostic suite runs inside the guest VM via pytest. Tests live in `images/diagnostics/` and are baked into the rootfs.
+The diagnostic suite runs inside the guest VM via pytest. Tests live in `guest/artifacts/diagnostics/` and are baked into the rootfs.
 
 ### Running diagnostics
 
@@ -33,7 +33,7 @@ just run "capsem-doctor -x"           # Stop on first failure
 
 ### Adding new in-VM tests
 
-1. Add test functions to the appropriate `images/diagnostics/test_*.py` or create `test_<category>.py`
+1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_*.py` or create `test_<category>.py`
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (conftest checks for root + writable /root)
 4. Rebuild rootfs with `just build-assets` to bake new test files into the image
