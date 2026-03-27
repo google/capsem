@@ -33,15 +33,16 @@ export interface VmStateResponse {
 export type SettingType =
   | 'text'
   | 'number'
-  | 'password'
   | 'url'
   | 'email'
   | 'apikey'
   | 'bool'
   | 'file'
+  | 'kv_map'
   | 'string_list'
   | 'int_list'
-  | 'float_list';
+  | 'float_list'
+  | 'mcp_tool';
 
 /** A setting value (serde untagged -- bool | number | float | { path, content } | string[] | number[] | string). */
 export type SettingValue = boolean | number | string | { path: string; content: string } | string[] | number[];
@@ -75,6 +76,9 @@ export interface SettingMetadata {
   side_effect?: string | null;
   hidden?: boolean;
   builtin?: boolean;
+  mask?: boolean;
+  validator?: string | null;
+  origin?: string | null;
 }
 
 /** A fully resolved setting for UI consumption. */

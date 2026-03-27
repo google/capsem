@@ -479,7 +479,7 @@
             {disabled}
             onchange={(e) => handleUpdate(s.id, e.currentTarget.checked)}
           />
-        {:else if s.setting_type === 'apikey' || s.setting_type === 'password'}
+        {:else if s.setting_type === 'apikey' || s.metadata?.mask}
           <div class="flex flex-col items-end gap-0.5">
             <div class="flex items-center gap-1">
               <input

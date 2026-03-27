@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use super::types::*;
-use super::registry::{setting_definitions, DEFAULTS_TOML};
+use super::registry::{setting_definitions, DEFAULTS_JSON};
 use super::loader::load_settings_files;
 use super::resolver::resolve_settings;
 
@@ -39,13 +39,13 @@ pub enum SettingsNode {
     McpServer(Box<McpServerDef>),
 }
 
-/// Build a settings tree mirroring the TOML hierarchy with resolved values at leaves.
+/// Build a settings tree mirroring the JSON hierarchy with resolved values at leaves.
 ///
-/// Walks the TOML structure like `collect_settings` but produces nested
+/// Walks the JSON structure like `collect_settings` but produces nested
 /// `SettingsNode::Group` / `SettingsNode::Leaf` instead of flattening.
-fn build_tree_from_table(
+fn build_tree_from_object(
     path: &str,
-    table: &toml::value::Table,
+    table: &serde_json::Map<String, serde_json::Value>,
     parent_enabled_by: &Option<String>,
     parent_collapsed: bool,
     resolved_map: &HashMap<String, ResolvedSetting>,
@@ -129,13 +129,13 @@ fn build_tree_from_table(
         ) {
             continue;
         }
-        if let Some(child_table) = val.as_table() {
+        if let Some(child_table) = val.as_object() {
             let child_path = if path.is_empty() {
                 key.clone()
             } else {
                 format!("{path}.{key}")
             };
-            let child_nodes = build_tree_from_table(
+            let child_nodes = build_tree_from_object(
                 &child_path,
                 child_table,
                 &group_enabled_by,
@@ -178,17 +178,17 @@ fn build_tree_from_table(
     children
 }
 
-/// Build the full settings tree from defaults.toml + resolved values.
+/// Build the full settings tree from defaults.json + resolved values.
 ///
 /// Returns top-level groups (AI Providers, Package Registries, etc.).
 /// Dynamic `guest.env.*` settings are appended to the Guest Environment group.
 pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
-    let root: toml::Value =
-        toml::from_str(DEFAULTS_TOML).expect("built-in defaults.toml is invalid");
+    let root: serde_json::Value =
+        serde_json::from_str(DEFAULTS_JSON).expect("built-in defaults.json is invalid");
     let settings = root
         .get("settings")
-        .and_then(|v| v.as_table())
-        .expect("defaults.toml missing [settings]");
+        .and_then(|v| v.as_object())
+        .expect("defaults.json missing settings");
 
     // Build a lookup from ID to resolved setting.
     let resolved_map: HashMap<String, ResolvedSetting> = resolved
@@ -198,8 +198,8 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
 
     let mut tree = Vec::new();
     for (key, val) in settings {
-        if let Some(child_table) = val.as_table() {
-            let nodes = build_tree_from_table(
+        if let Some(child_table) = val.as_object() {
+            let nodes = build_tree_from_object(
                 key,
                 child_table,
                 &None,

@@ -2049,12 +2049,12 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     #[test]
     fn all_env_vars_metadata_refers_to_text_settings() {
         // Every setting with env_vars metadata must have a text-like type
-        // (Text, ApiKey, Password, Url, Email).
+        // (Text, ApiKey, Url, Email).
         let defs = setting_definitions();
         for def in &defs {
             if !def.metadata.env_vars.is_empty() {
                 assert!(
-                    matches!(def.setting_type, SettingType::Text | SettingType::ApiKey | SettingType::Password | SettingType::Url | SettingType::Email),
+                    matches!(def.setting_type, SettingType::Text | SettingType::ApiKey | SettingType::Url | SettingType::Email),
                     "setting {} has env_vars but type {:?} (should be text-like)",
                     def.id, def.setting_type,
                 );
@@ -2503,6 +2503,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             enabled: true,
             metadata: meta,
             collapsed: false,
+            history: Vec::new(),
         }
     }
 

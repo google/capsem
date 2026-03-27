@@ -214,16 +214,54 @@ fn parse_mcp_section(toml_str: &str, source: PolicySource) -> Vec<McpServerDef> 
     servers
 }
 
+/// Parse `mcp` section from a JSON string into McpServerDef entries.
+fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServerDef> {
+    let root: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    let mcp_obj = match root.get("mcp").and_then(|v| v.as_object()) {
+        Some(t) => t,
+        None => return vec![],
+    };
+    let mut servers = Vec::new();
+    for (key, val) in mcp_obj {
+        let server: McpServerToml = match serde_json::from_value(val.clone()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("skipping MCP server '{key}': {e}");
+                continue;
+            }
+        };
+        servers.push(McpServerDef {
+            key: key.clone(),
+            name: server.name,
+            description: server.description,
+            transport: server.transport,
+            command: server.command,
+            url: server.url,
+            args: server.args,
+            env: server.env,
+            headers: server.headers,
+            builtin: server.builtin,
+            enabled: server.enabled,
+            source,
+            corp_locked: false,
+        });
+    }
+    servers
+}
+
 /// Load and merge MCP server definitions from defaults, user, and corp configs.
 ///
 /// Resolution: corp > user > defaults (per key). Corp entries are corp_locked.
 pub fn load_mcp_servers() -> Vec<McpServerDef> {
-    use super::registry::DEFAULTS_TOML;
+    use super::registry::DEFAULTS_JSON;
 
     let mut by_key: HashMap<String, McpServerDef> = HashMap::new();
 
-    // 1. Defaults (lowest priority)
-    for s in parse_mcp_section(DEFAULTS_TOML, PolicySource::Default) {
+    // 1. Defaults from JSON (lowest priority)
+    for s in parse_mcp_section_json(DEFAULTS_JSON, PolicySource::Default) {
         by_key.insert(s.key.clone(), s);
     }
 

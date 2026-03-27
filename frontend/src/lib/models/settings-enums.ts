@@ -5,14 +5,15 @@ export enum SettingType {
   Text = 'text',
   Number = 'number',
   Bool = 'bool',
-  Password = 'password',
   ApiKey = 'apikey',
   Url = 'url',
   Email = 'email',
   File = 'file',
+  KvMap = 'kv_map',
   StringList = 'string_list',
   IntList = 'int_list',
   FloatList = 'float_list',
+  McpTool = 'mcp_tool',
 }
 
 export enum Widget {
@@ -25,6 +26,7 @@ export enum Widget {
   DomainChips = 'domain_chips',
   StringChips = 'string_chips',
   Slider = 'slider',
+  KvEditor = 'kv_editor',
 }
 
 export enum SideEffect {
@@ -49,17 +51,25 @@ export enum PolicySource {
 }
 
 /** Map SettingType to its default Widget (no string comparison). */
+export enum McpToolOrigin {
+  Builtin = 'builtin',
+  Remote = 'remote',
+  InVm = 'in_vm',
+}
+
 export function defaultWidget(type: SettingType): Widget {
   switch (type) {
     case SettingType.Bool:
+    case SettingType.McpTool:
       return Widget.Toggle;
     case SettingType.Number:
       return Widget.NumberInput;
-    case SettingType.Password:
     case SettingType.ApiKey:
       return Widget.PasswordInput;
     case SettingType.File:
       return Widget.FileEditor;
+    case SettingType.KvMap:
+      return Widget.KvEditor;
     case SettingType.StringList:
       return Widget.StringChips;
     case SettingType.IntList:

@@ -35,6 +35,7 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
             enabled: true, // computed below
             metadata: def.metadata.clone(),
             collapsed: def.metadata.collapsed,
+            history: Vec::new(),
         });
     }
 
@@ -60,6 +61,7 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
             enabled: true,
             metadata: SettingMetadata::default(),
             collapsed: false,
+            history: Vec::new(),
         });
     }
 

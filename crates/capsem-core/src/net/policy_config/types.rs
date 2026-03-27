@@ -38,7 +38,6 @@ pub const SETTING_SSH_PUBLIC_KEY: &str = "vm.environment.ssh.public_key";
 pub enum SettingType {
     Text,
     Number,
-    Password,
     Url,
     Email,
     #[serde(rename = "apikey")]
@@ -47,12 +46,16 @@ pub enum SettingType {
     /// File to write to a guest path. Value is `{ path, content }`.
     /// JSON files (.json extension) are validated on save.
     File,
+    /// Key-value string map (e.g. env vars, HTTP headers).
+    KvMap,
     /// List of strings (e.g. domain patterns, tags).
     StringList,
     /// List of integers.
     IntList,
     /// List of floats.
     FloatList,
+    /// An MCP tool discovered from a server.
+    McpTool,
 }
 
 /// Explicit UI widget override. When set on a setting's metadata,
@@ -69,6 +72,7 @@ pub enum Widget {
     DomainChips,
     StringChips,
     Slider,
+    KvEditor,
 }
 
 /// Frontend side effect triggered when a setting value changes.
@@ -95,6 +99,15 @@ pub enum McpTransport {
     Sse,
 }
 
+/// Where an MCP tool runs.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolOrigin {
+    Builtin,
+    Remote,
+    InVm,
+}
+
 /// A setting value (untagged for clean TOML serialization).
 ///
 /// Variant order matters: `#[serde(untagged)]` tries variants top-to-bottom.
@@ -109,6 +122,7 @@ pub enum SettingValue {
     Number(i64),
     Float(f64),
     File { path: String, content: String },
+    KvMap(HashMap<String, String>),
     StringList(Vec<String>),
     IntList(Vec<i64>),
     FloatList(Vec<f64>),
@@ -169,6 +183,13 @@ impl SettingValue {
     pub fn as_float_list(&self) -> Option<&[f64]> {
         match self {
             SettingValue::FloatList(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_kv_map(&self) -> Option<&HashMap<String, String>> {
+        match self {
+            SettingValue::KvMap(m) => Some(m),
             _ => None,
         }
     }
@@ -251,6 +272,15 @@ pub struct SettingMetadata {
     /// Non-removable by user (e.g. built-in MCP servers).
     #[serde(default)]
     pub builtin: bool,
+    /// Render as masked input (replaces the old `password` SettingType).
+    #[serde(default)]
+    pub mask: bool,
+    /// Regex pattern for value validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validator: Option<String>,
+    /// MCP tool origin (builtin, remote, in_vm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<McpToolOrigin>,
 }
 
 /// Schema definition for a setting (loaded from defaults.toml at compile time).
@@ -293,6 +323,14 @@ pub enum PolicySource {
     Corp,
 }
 
+/// A single value change record for audit trail.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct HistoryEntry {
+    pub timestamp: String,
+    pub value: serde_json::Value,
+    pub source: PolicySource,
+}
+
 /// A fully resolved setting (for UI consumption).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ResolvedSetting {
@@ -313,6 +351,9 @@ pub struct ResolvedSetting {
     /// Whether this setting starts collapsed in the UI.
     #[serde(default)]
     pub collapsed: bool,
+    /// Value change history (audit trail).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<HistoryEntry>,
 }
 
 // ---------------------------------------------------------------------------

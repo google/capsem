@@ -307,6 +307,8 @@ describe('SettingsModel', () => {
     it('file -> FileEditor', () => expect(defaultWidget(SettingType.File)).toBe(Widget.FileEditor));
     it('string_list -> StringChips', () => expect(defaultWidget(SettingType.StringList)).toBe(Widget.StringChips));
     it('text -> TextInput', () => expect(defaultWidget(SettingType.Text)).toBe(Widget.TextInput));
+    it('kv_map -> KvEditor', () => expect(defaultWidget(SettingType.KvMap)).toBe(Widget.KvEditor));
+    it('mcp_tool -> Toggle', () => expect(defaultWidget(SettingType.McpTool)).toBe(Widget.Toggle));
   });
 
   describe('pending changes', () => {

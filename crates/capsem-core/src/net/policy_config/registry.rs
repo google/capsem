@@ -5,13 +5,13 @@ use serde::Deserialize;
 use super::types::*;
 
 // ---------------------------------------------------------------------------
-// TOML registry parser
+// JSON registry parser
 // ---------------------------------------------------------------------------
 
-/// A setting leaf as it appears in TOML. Core fields at top level,
+/// A setting leaf as it appears in the defaults JSON. Core fields at top level,
 /// metadata under `meta` sub-table.
 #[derive(Deserialize, Debug)]
-struct SettingDefToml {
+struct SettingDefRaw {
     name: String,
     description: String,
     #[serde(rename = "type")]
@@ -20,11 +20,11 @@ struct SettingDefToml {
     #[serde(default)]
     collapsed: bool,
     #[serde(default)]
-    meta: SettingMetaToml,
+    meta: SettingMetaRaw,
 }
 
 #[derive(Deserialize, Debug, Default)]
-struct SettingMetaToml {
+struct SettingMetaRaw {
     #[serde(default)]
     domains: Vec<String>,
     #[serde(default)]
@@ -55,7 +55,7 @@ struct SettingMetaToml {
     builtin: bool,
 }
 
-/// Category/group metadata from TOML grouping nodes.
+/// Category/group metadata from grouping nodes.
 #[derive(Debug, Clone, Default)]
 struct GroupMeta {
     /// Display name from nearest ancestor group with a `name` key.
@@ -66,13 +66,13 @@ struct GroupMeta {
     collapsed: bool,
 }
 
-/// Recursively walk the TOML table, collecting setting leaves.
+/// Recursively walk the JSON object, collecting setting leaves.
 ///
-/// A table with a `type` key is a leaf setting; otherwise it is a group node
+/// An object with a `type` key is a leaf setting; otherwise it is a group node
 /// whose `name`, `description`, `enabled_by`, and `collapsed` are group metadata.
 fn collect_settings(
     path: &str,
-    table: &toml::value::Table,
+    table: &serde_json::Map<String, serde_json::Value>,
     parent: &GroupMeta,
     out: &mut Vec<SettingDef>,
 ) {
@@ -82,10 +82,9 @@ fn collect_settings(
     }
 
     if table.contains_key("type") {
-        // Leaf setting -- deserialize the table into SettingDefToml
-        let val = toml::Value::Table(table.clone());
-        let def: SettingDefToml = val
-            .try_into()
+        // Leaf setting -- deserialize the object into SettingDefRaw
+        let val = serde_json::Value::Object(table.clone());
+        let def: SettingDefRaw = serde_json::from_value(val)
             .unwrap_or_else(|e| panic!("bad setting '{path}': {e}"));
         // Inherit enabled_by from parent group, unless this IS the toggle itself
         let enabled_by = if parent.enabled_by.as_deref() == Some(path) {
@@ -117,6 +116,7 @@ fn collect_settings(
                 side_effect: def.meta.side_effect,
                 hidden: def.meta.hidden,
                 builtin: def.meta.builtin,
+                ..Default::default()
             },
         });
         return;
@@ -148,7 +148,7 @@ fn collect_settings(
         ) {
             continue;
         }
-        if let Some(child) = val.as_table() {
+        if let Some(child) = val.as_object() {
             let child_path = if path.is_empty() {
                 key.clone()
             } else {
@@ -159,16 +159,16 @@ fn collect_settings(
     }
 }
 
-pub(super) const DEFAULTS_TOML: &str = include_str!("../../../../../config/defaults.toml");
+pub(super) const DEFAULTS_JSON: &str = include_str!("../../../../../config/defaults.json");
 
-/// Returns the setting definitions parsed from the embedded defaults.toml.
+/// Returns the setting definitions parsed from the embedded defaults.json.
 pub fn setting_definitions() -> Vec<SettingDef> {
-    let root: toml::Value =
-        toml::from_str(DEFAULTS_TOML).expect("built-in defaults.toml is invalid");
+    let root: serde_json::Value =
+        serde_json::from_str(DEFAULTS_JSON).expect("built-in defaults.json is invalid");
     let settings = root
         .get("settings")
-        .and_then(|v| v.as_table())
-        .expect("defaults.toml missing [settings]");
+        .and_then(|v| v.as_object())
+        .expect("defaults.json missing settings");
     let mut defs = Vec::new();
     let root_group = GroupMeta::default();
     collect_settings("", settings, &root_group, &mut defs);
