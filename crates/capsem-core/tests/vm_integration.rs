@@ -79,7 +79,7 @@ fn serial_console_trait_is_object_safe() {
 
 #[test]
 fn hypervisor_boot_fails_with_missing_kernel() {
-    let h = capsem_core::AppleVzHypervisor;
+    let _h = capsem_core::AppleVzHypervisor;
     let config = VmConfig::builder()
         .kernel_path("/nonexistent/vmlinuz");
     // Should fail at build() -- missing kernel

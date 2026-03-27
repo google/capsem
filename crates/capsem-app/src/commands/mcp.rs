@@ -34,6 +34,16 @@ pub async fn call_mcp_tool(
     let ws = config.workspace_dir.clone()
         .ok_or_else(|| "workspace not available".to_string())?;
 
+    // Frontend always needs JSON responses. Inject format:"json" to prevent
+    // the text-table default from silently breaking JSON.parse() in the UI.
+    let mut arguments = arguments;
+    if arguments.get("format").is_none() {
+        if let Some(obj) = arguments.as_object_mut() {
+            obj.insert("format".into(), serde_json::json!("json"));
+            tracing::debug!(tool = %tool, "injected format:json for frontend call");
+        }
+    }
+
     let resp = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {

@@ -8,7 +8,9 @@ pub mod inode_table;
 pub mod file_handles;
 
 pub use protocol::*;
+#[allow(unused_imports)] // Used by KVM backend (not compiled on macOS)
 pub use inode_table::{InodeTable, InodeEntry};
+#[allow(unused_imports)] // Used by KVM backend (not compiled on macOS)
 pub use file_handles::{FileHandleTable, OpenHandle, DirEntryData};
 
 use std::os::unix::fs::MetadataExt;

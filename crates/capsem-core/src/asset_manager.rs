@@ -413,7 +413,10 @@ impl AssetManager {
             phase: "verifying".to_string(),
         });
 
-        let actual_hash = hash_file(&tmp)?;
+        let tmp_clone = tmp.clone();
+        let actual_hash = tokio::task::spawn_blocking(move || hash_file(&tmp_clone))
+            .await
+            .context("hash verification task panicked")??;
         if actual_hash != entry.hash {
             let _ = tokio::fs::remove_file(&tmp).await;
             bail!(

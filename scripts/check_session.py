@@ -268,6 +268,27 @@ def check_session(db_path: Path, preview_rows: int = 5):
                     )
             print()
 
+    # -- MCP tool usage breakdown --
+    if "mcp_calls" in existing:
+        mcp_total = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+        if mcp_total > 0:
+            tool_rows = conn.execute(
+                "SELECT tool_name, decision, COUNT(*) as cnt,"
+                " ROUND(AVG(duration_ms), 1) as avg_ms"
+                " FROM mcp_calls"
+                " WHERE tool_name IS NOT NULL"
+                " GROUP BY tool_name, decision"
+                " ORDER BY cnt DESC"
+            ).fetchall()
+            if tool_rows:
+                print(f"{BOLD}MCP tool usage:{RESET}")
+                print(
+                    table(
+                        ["tool_name", "decision", "count", "avg_ms"],
+                        [[r[0], r[1], str(r[2]), str(r[3])] for r in tool_rows],
+                    )
+                )
+
     # -- Preview rows per table --
     for tbl, cols in SESSION_TABLES.items():
         if tbl not in existing:

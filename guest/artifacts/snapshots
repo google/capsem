@@ -13,21 +13,53 @@ Options:
 """
 
 import asyncio
+import atexit
 import json
 import sys
 from datetime import datetime
 
+from fastmcp import Client
+from fastmcp.client.transports import StdioTransport
+
 MCP_SERVER = "/run/capsem-mcp-server"
+
+# Persistent MCP client -- reused across all call_tool() invocations.
+# Avoids ~270ms fastmcp import + ~100ms subprocess/handshake per call.
+_client = None
+
+
+async def _get_client():
+    global _client
+    if _client is None:
+        _client = Client(StdioTransport(command=MCP_SERVER, args=[]))
+        await _client.__aenter__()
+    return _client
+
+
+async def _close_client():
+    global _client
+    if _client is not None:
+        try:
+            await _client.__aexit__(None, None, None)
+        except Exception:
+            pass
+        _client = None
+
+
+def _cleanup():
+    if _client is not None:
+        try:
+            asyncio.get_event_loop().run_until_complete(_close_client())
+        except Exception:
+            pass
+
+atexit.register(_cleanup)
 
 
 async def call_tool(name, arguments=None):
     """Call an MCP tool via capsem-mcp-server and return parsed result."""
-    from fastmcp import Client
-    from fastmcp.client.transports import StdioTransport
-
-    client = Client(StdioTransport(command=MCP_SERVER, args=[]))
-    async with client:
-        result = await client.call_tool(name, arguments or {})
+    client = await _get_client()
+    result = await client.call_tool(name, arguments or {})
 
     for block in result.content:
         if hasattr(block, "text"):

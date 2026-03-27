@@ -224,6 +224,8 @@ async fn handle_json_rpc(
                 .unwrap_or(serde_json::json!({}));
 
             // Route file tools (VirtioFS mode only).
+            // File tools do blocking I/O (directory cloning, walkdir, blake3 hashing,
+            // subprocess execution) so they MUST run off the tokio worker threads.
             if super::file_tools::is_file_tool(tool_name) {
                 if let (Some(ref sched), Some(ref ws)) = (&config.auto_snapshots, &config.workspace_dir) {
                     let decision = policy.evaluate("builtin", Some(tool_name));
@@ -240,31 +242,45 @@ async fn handle_json_rpc(
                         }
                         ToolDecision::Allow => {}
                     }
-                    let mut sched = sched.lock().await;
-                    return Some(match tool_name {
-                        "snapshots_changes" => {
-                            super::file_tools::handle_list_changed_files(&arguments, &sched, ws, req.id.clone())
-                        }
-                        "snapshots_list" => {
-                            super::file_tools::handle_list_snapshots(&arguments, &sched, ws, req.id.clone())
-                        }
-                        "snapshots_revert" => {
-                            super::file_tools::handle_revert_file(&arguments, &sched, ws, req.id.clone())
-                        }
-                        "snapshots_create" => {
-                            super::file_tools::handle_snapshot(&arguments, &mut sched, req.id.clone())
-                        }
-                        "snapshots_delete" => {
-                            super::file_tools::handle_delete_snapshot(&arguments, &sched, req.id.clone())
-                        }
-                        "snapshots_history" => {
-                            super::file_tools::handle_snapshots_history(&arguments, &sched, ws, req.id.clone())
-                        }
-                        "snapshots_compact" => {
-                            super::file_tools::handle_snapshots_compact(&arguments, &mut sched, req.id.clone())
-                        }
-                        _ => JsonRpcResponse::err(req.id.clone(), -32602, format!("unknown file tool: {tool_name}")),
+                    let sched = Arc::clone(sched);
+                    let ws = ws.clone();
+                    let arguments = arguments.clone();
+                    let tool_name = tool_name.to_string();
+                    let req_id = req.id.clone();
+                    let req_id_fallback = req.id.clone();
+                    let resp = tokio::task::spawn_blocking(move || {
+                        let rt = tokio::runtime::Handle::current();
+                        rt.block_on(async {
+                            let mut sched = sched.lock().await;
+                            match tool_name.as_str() {
+                                "snapshots_changes" => {
+                                    super::file_tools::handle_list_changed_files(&arguments, &sched, &ws, req_id)
+                                }
+                                "snapshots_list" => {
+                                    super::file_tools::handle_list_snapshots(&arguments, &sched, &ws, req_id)
+                                }
+                                "snapshots_revert" => {
+                                    super::file_tools::handle_revert_file(&arguments, &sched, &ws, req_id)
+                                }
+                                "snapshots_create" => {
+                                    super::file_tools::handle_snapshot(&arguments, &mut sched, req_id)
+                                }
+                                "snapshots_delete" => {
+                                    super::file_tools::handle_delete_snapshot(&arguments, &sched, req_id)
+                                }
+                                "snapshots_history" => {
+                                    super::file_tools::handle_snapshots_history(&arguments, &sched, &ws, req_id)
+                                }
+                                "snapshots_compact" => {
+                                    super::file_tools::handle_snapshots_compact(&arguments, &mut sched, req_id)
+                                }
+                                _ => JsonRpcResponse::err(req_id, -32602, format!("unknown file tool: {tool_name}")),
+                            }
+                        })
+                    }).await.unwrap_or_else(|e| {
+                        JsonRpcResponse::err(req_id_fallback, -32603, format!("file tool task failed: {e}"))
                     });
+                    return Some(resp);
                 } else {
                     return Some(JsonRpcResponse::err(
                         req.id.clone(),
@@ -1118,6 +1134,147 @@ mod tests {
         // floor_char_boundary(200) should be 199 (before the emoji at 199..203)
         assert_eq!(truncated.len(), 199);
         assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    /// Test config with auto-snapshots enabled (VirtioFS mode).
+    fn test_config_with_snapshots(rt: &tokio::runtime::Runtime) -> (McpGatewayConfig, tempfile::TempDir) {
+        use crate::auto_snapshot::AutoSnapshotScheduler;
+
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().to_path_buf();
+        std::fs::create_dir_all(session.join("workspace")).unwrap();
+        std::fs::create_dir_all(session.join("system")).unwrap();
+        std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
+
+        // Write a file so snapshots have content.
+        std::fs::write(session.join("workspace/test.txt"), "hello").unwrap();
+
+        let scheduler = AutoSnapshotScheduler::new(
+            session.clone(), 3, 4, std::time::Duration::from_secs(300),
+        );
+
+        let db = rt.block_on(async {
+            let path = session.join("test.db");
+            Arc::new(DbWriter::open(&path, 64).unwrap())
+        });
+
+        let config = McpGatewayConfig {
+            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
+            db,
+            policy: RwLock::new(Arc::new(McpPolicy::new())),
+            domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
+            http_client: reqwest::Client::new(),
+            auto_snapshots: Some(Arc::new(tokio::sync::Mutex::new(scheduler))),
+            workspace_dir: Some(session.join("workspace")),
+        };
+        (config, dir)
+    }
+
+    /// Verifies that snapshot_create runs via spawn_blocking and returns
+    /// without deadlocking. This is the regression test for the blocking-in-async
+    /// bug where file tools ran on tokio worker threads.
+    #[test]
+    fn snapshot_create_does_not_block_runtime() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (config, _dir) = test_config_with_snapshots(&rt);
+        let policy = McpPolicy::new();
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "snapshots_create",
+                "arguments": {"name": "test_snap"}
+            })),
+        };
+
+        // This must complete within 5 seconds. Before the spawn_blocking fix,
+        // this could deadlock or stall the runtime indefinitely.
+        let resp = rt.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                handle_json_rpc(&req, &config, &policy, "test"),
+            ).await
+        });
+
+        let resp = resp.expect("snapshot_create timed out -- possible deadlock")
+            .expect("should return Some for tools/call");
+        assert!(resp.error.is_none(), "snapshot_create should succeed: {:?}", resp.error);
+
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let data: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["name"], "test_snap");
+        assert!(data["checkpoint"].as_str().unwrap().starts_with("cp-"));
+    }
+
+    /// Verifies snapshots_list returns JSON through the gateway spawn_blocking path.
+    #[test]
+    fn snapshot_list_via_gateway_returns_json() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (config, _dir) = test_config_with_snapshots(&rt);
+        let policy = McpPolicy::new();
+
+        // Create a snapshot first.
+        let create_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "snapshots_create",
+                "arguments": {"name": "list_test"}
+            })),
+        };
+        let resp = rt.block_on(handle_json_rpc(&create_req, &config, &policy, "test"));
+        assert!(resp.unwrap().error.is_none());
+
+        // List with format:json.
+        let list_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(2)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "snapshots_list",
+                "arguments": {"format": "json"}
+            })),
+        };
+        let resp = rt.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                handle_json_rpc(&list_req, &config, &policy, "test"),
+            ).await
+        });
+        let resp = resp.expect("snapshots_list timed out").unwrap();
+        assert!(resp.error.is_none());
+
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let data: serde_json::Value = serde_json::from_str(&text)
+            .expect("snapshots_list must return valid JSON when format=json");
+        assert!(data["snapshots"].as_array().unwrap().len() >= 1);
+    }
+
+    /// Verifies that file tools without VirtioFS return a clean error, not a hang.
+    #[test]
+    fn file_tool_without_virtiofs_returns_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_config(&rt); // no auto_snapshots
+        let policy = McpPolicy::new();
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "snapshots_create",
+                "arguments": {"name": "test"}
+            })),
+        };
+
+        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
+        let resp = resp.unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.unwrap().message.contains("not in VirtioFS mode"));
     }
 
     #[test]

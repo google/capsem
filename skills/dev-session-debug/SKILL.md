@@ -201,6 +201,17 @@ Rollup happens when a session ends.
 - Model not found in pricing table (`config/genai-prices.json`)
 - Run `just update-prices` to refresh pricing data
 
+## When to inspect sessions
+
+**Always** run `just inspect-session` after changes to:
+- MCP gateway (tool routing, spawn_blocking, response format)
+- MITM proxy (SSE parsing, body preview, Content-Encoding)
+- File monitor (VirtioFS events, debouncer)
+- Snapshot system (create, revert, compact, list)
+- Telemetry pipeline (model_calls extraction, tool_calls, cost)
+
+The inspect output now includes an **MCP tool usage breakdown** showing per-tool call counts, decisions, and average duration. Check it after MCP changes to verify tools return `allowed` with reasonable latency (not 0ms errors or multi-second hangs).
+
 ## Ad-hoc SQL queries
 
 Use `just query-session` to run SQL against session DBs. Auto-selects the latest non-vacuumed session with a DB on disk. Pass a session ID as second argument to target a specific session.
@@ -214,6 +225,9 @@ just query-session "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tok
 
 # Find orphaned tool calls
 just query-session "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
+
+# MCP tool usage breakdown (snapshot, http, etc.)
+just query-session "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM mcp_calls WHERE tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
 
 # Check fs_events actions
 just query-session "SELECT action, COUNT(*) FROM fs_events GROUP BY action"

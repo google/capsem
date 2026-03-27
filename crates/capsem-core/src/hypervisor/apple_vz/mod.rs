@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn boot_without_assets_fails() {
-        let h = AppleVzHypervisor;
+        let _h = AppleVzHypervisor;
         let config = crate::vm::config::VmConfig::builder()
             .kernel_path("/nonexistent/vmlinuz")
             .build();

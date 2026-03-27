@@ -291,6 +291,115 @@ impl SessionIndex {
         Ok(count)
     }
 
+    /// Terminate old sessions with content-awareness.
+    ///
+    /// Empty sessions (0 tokens, 0 tool calls, 0 requests) are terminated
+    /// without protection. Content sessions are terminated only if there are
+    /// more than `min_content_keep` remaining after culling.
+    pub fn terminate_older_than_days_content_aware(
+        &self,
+        days: u32,
+        min_content_keep: usize,
+    ) -> rusqlite::Result<usize> {
+        let cutoff_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(days as u64 * 86400);
+        let cutoff_str = epoch_to_iso(cutoff_secs);
+
+        // Terminate ALL old empty sessions (no protection).
+        let empty_count = self.conn.execute(
+            "UPDATE sessions SET status = 'terminated'
+             WHERE created_at < ?1
+             AND status IN ('stopped', 'crashed', 'vacuumed')
+             AND total_input_tokens = 0 AND total_tool_calls = 0 AND total_requests = 0",
+            params![cutoff_str],
+        )?;
+
+        // Terminate old content sessions, but protect newest min_content_keep.
+        let content_count = self.conn.execute(
+            "UPDATE sessions SET status = 'terminated'
+             WHERE created_at < ?1
+             AND status IN ('stopped', 'crashed', 'vacuumed')
+             AND (total_input_tokens > 0 OR total_tool_calls > 0)
+             AND id NOT IN (
+                 SELECT id FROM sessions
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 AND (total_input_tokens > 0 OR total_tool_calls > 0)
+                 ORDER BY created_at DESC LIMIT ?2
+             )",
+            params![cutoff_str, min_content_keep as i64],
+        )?;
+
+        Ok(empty_count + content_count)
+    }
+
+    /// Terminate excess sessions beyond `max`, prioritizing empty sessions first.
+    ///
+    /// Always protects at least `min_content_keep` content sessions.
+    pub fn terminate_excess_sessions_content_aware(
+        &self,
+        max: usize,
+        min_content_keep: usize,
+    ) -> rusqlite::Result<usize> {
+        // Count non-terminated, non-running sessions.
+        let active_count: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed')",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if active_count <= max {
+            return Ok(0);
+        }
+
+        // Terminate empty sessions first (those with no content).
+        let empty_count = self.conn.execute(
+            "UPDATE sessions SET status = 'terminated'
+             WHERE status IN ('stopped', 'crashed', 'vacuumed')
+             AND total_input_tokens = 0 AND total_tool_calls = 0 AND total_requests = 0
+             AND id NOT IN (
+                 SELECT id FROM sessions
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 ORDER BY created_at DESC LIMIT ?1
+             )",
+            params![max as i64],
+        )?;
+
+        // Check if we're still over the cap after removing empty sessions.
+        let still_active: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed')",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if still_active <= max {
+            return Ok(empty_count);
+        }
+
+        // Still over cap: terminate oldest content sessions, but protect min_content_keep.
+        let content_count = self.conn.execute(
+            "UPDATE sessions SET status = 'terminated'
+             WHERE status IN ('stopped', 'crashed', 'vacuumed')
+             AND (total_input_tokens > 0 OR total_tool_calls > 0)
+             AND id NOT IN (
+                 SELECT id FROM sessions
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 ORDER BY created_at DESC LIMIT ?1
+             )
+             AND id NOT IN (
+                 SELECT id FROM sessions
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 AND (total_input_tokens > 0 OR total_tool_calls > 0)
+                 ORDER BY created_at DESC LIMIT ?2
+             )",
+            params![max as i64, min_content_keep as i64],
+        )?;
+
+        Ok(empty_count + content_count)
+    }
+
     /// Return stopped/crashed/vacuumed sessions ordered oldest first (for disk culling).
     pub fn stopped_sessions_oldest_first(&self) -> rusqlite::Result<Vec<SessionRecord>> {
         let sql = format!(
@@ -699,5 +808,217 @@ impl SessionIndex {
             ])?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::types::SessionRecord;
+
+    fn make_session(id: &str, created_at: &str, status: &str, tokens: u64, tool_calls: u64, requests: u64) -> SessionRecord {
+        SessionRecord {
+            id: id.to_string(),
+            mode: "virtiofs".to_string(),
+            command: None,
+            status: status.to_string(),
+            created_at: created_at.to_string(),
+            stopped_at: None,
+            scratch_disk_size_gb: 16,
+            ram_bytes: 4294967296,
+            total_requests: requests,
+            allowed_requests: 0,
+            denied_requests: 0,
+            total_input_tokens: tokens,
+            total_output_tokens: 0,
+            total_estimated_cost: 0.0,
+            total_tool_calls: tool_calls,
+            total_mcp_calls: 0,
+            total_file_events: 0,
+            compressed_size_bytes: None,
+            vacuumed_at: None,
+            storage_mode: "virtiofs".to_string(),
+            rootfs_hash: None,
+            rootfs_version: None,
+        }
+    }
+
+    #[test]
+    fn content_aware_age_terminates_empty_first() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // Old empty session (60 days ago).
+        let empty = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
+        idx.create_session(&empty).unwrap();
+
+        // Old content session (60 days ago).
+        let content = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped", 1000, 5, 10);
+        idx.create_session(&content).unwrap();
+
+        // Terminate sessions older than 30 days, protect 1 content session.
+        let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
+        assert_eq!(n, 1, "only the empty session should be terminated");
+
+        // Verify: empty is terminated, content is still stopped.
+        let sessions = idx.recent(100).unwrap();
+        let empty_rec = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
+        assert_eq!(empty_rec.status, "terminated");
+
+        let content_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
+        assert_eq!(content_rec.status, "stopped");
+    }
+
+    #[test]
+    fn content_aware_age_protects_min_content_sessions() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // 3 old content sessions.
+        for i in 1..=3 {
+            let rec = make_session(
+                &format!("20260126-12000{i}-000{i}"),
+                &format!("2026-01-26T12:00:0{i}Z"),
+                "stopped", 500, 2, 5,
+            );
+            idx.create_session(&rec).unwrap();
+        }
+
+        // Protect 2 content sessions. One should be terminated.
+        let n = idx.terminate_older_than_days_content_aware(30, 2).unwrap();
+        assert_eq!(n, 1, "only oldest content session should be terminated");
+
+        let sessions = idx.recent(100).unwrap();
+        let terminated: Vec<_> = sessions.iter().filter(|s| s.status == "terminated").collect();
+        assert_eq!(terminated.len(), 1);
+        assert_eq!(terminated[0].id, "20260126-120001-0001"); // oldest
+    }
+
+    #[test]
+    fn content_aware_excess_terminates_empty_first() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // 3 empty sessions + 2 content sessions = 5 total.
+        for i in 1..=3 {
+            let rec = make_session(
+                &format!("20260326-12000{i}-000{i}"),
+                &format!("2026-03-26T12:00:0{i}Z"),
+                "stopped", 0, 0, 0,
+            );
+            idx.create_session(&rec).unwrap();
+        }
+        for i in 4..=5 {
+            let rec = make_session(
+                &format!("20260326-12000{i}-000{i}"),
+                &format!("2026-03-26T12:00:0{i}Z"),
+                "stopped", 1000, 10, 20,
+            );
+            idx.create_session(&rec).unwrap();
+        }
+
+        // Max 3 sessions, protect 2 content sessions.
+        let n = idx.terminate_excess_sessions_content_aware(3, 2).unwrap();
+        assert_eq!(n, 2, "should terminate 2 empty sessions");
+
+        let sessions = idx.recent(100).unwrap();
+        let active: Vec<_> = sessions.iter().filter(|s| s.status != "terminated").collect();
+        assert_eq!(active.len(), 3, "should have 3 remaining");
+
+        // Both content sessions should survive.
+        for s in &active {
+            if s.total_input_tokens > 0 {
+                assert_ne!(s.status, "terminated");
+            }
+        }
+    }
+
+    #[test]
+    fn content_aware_excess_no_action_when_under_cap() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        let rec = make_session("20260326-120000-0001", "2026-03-26T12:00:00Z", "stopped", 100, 1, 5);
+        idx.create_session(&rec).unwrap();
+
+        let n = idx.terminate_excess_sessions_content_aware(10, 5).unwrap();
+        assert_eq!(n, 0, "no action when under cap");
+    }
+
+    #[test]
+    fn content_aware_tool_calls_only_counts_as_content() {
+        // Sessions with tool_calls > 0 but tokens = 0 should be treated as content.
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        let empty = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
+        idx.create_session(&empty).unwrap();
+
+        // Has tool calls but no tokens -- still content.
+        let tool_only = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped", 0, 5, 0);
+        idx.create_session(&tool_only).unwrap();
+
+        let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
+        assert_eq!(n, 1, "only the truly empty session should be terminated");
+
+        let sessions = idx.recent(100).unwrap();
+        let tool_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
+        assert_eq!(tool_rec.status, "stopped", "tool-calls-only session is content");
+    }
+
+    #[test]
+    fn content_aware_never_terminates_running() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // Running session -- must never be terminated regardless of age.
+        let running = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "running", 0, 0, 0);
+        idx.create_session(&running).unwrap();
+
+        let n = idx.terminate_older_than_days_content_aware(30, 0).unwrap();
+        assert_eq!(n, 0, "running sessions must never be terminated");
+
+        let sessions = idx.recent(100).unwrap();
+        assert_eq!(sessions[0].status, "running");
+    }
+
+    #[test]
+    fn content_aware_excess_all_content_over_cap_protects_min() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // 5 content sessions, cap is 3, protect 4.
+        for i in 1..=5 {
+            let rec = make_session(
+                &format!("20260326-12000{i}-000{i}"),
+                &format!("2026-03-26T12:00:0{i}Z"),
+                "stopped", 500, 2, 5,
+            );
+            idx.create_session(&rec).unwrap();
+        }
+
+        // Cap is 3 but min_content_keep is 4: should only terminate 1 (the oldest).
+        let n = idx.terminate_excess_sessions_content_aware(3, 4).unwrap();
+        assert_eq!(n, 1, "should terminate oldest to approach cap, but protect 4");
+
+        let sessions = idx.recent(100).unwrap();
+        let active: Vec<_> = sessions.iter().filter(|s| s.status != "terminated").collect();
+        assert_eq!(active.len(), 4, "min_content_keep overrides max_sessions");
+    }
+
+    #[test]
+    fn content_aware_age_with_mixed_statuses() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // Crashed empty session -- should be terminated.
+        let crashed = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "crashed", 0, 0, 0);
+        idx.create_session(&crashed).unwrap();
+
+        // Vacuumed content session -- should be protected.
+        let vacuumed = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "vacuumed", 100, 0, 5);
+        idx.create_session(&vacuumed).unwrap();
+
+        let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
+        assert_eq!(n, 1, "only crashed empty session terminated");
+
+        let sessions = idx.recent(100).unwrap();
+        let crashed_rec = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
+        assert_eq!(crashed_rec.status, "terminated");
+
+        let vacuumed_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
+        assert_eq!(vacuumed_rec.status, "vacuumed", "vacuumed content session preserved");
     }
 }

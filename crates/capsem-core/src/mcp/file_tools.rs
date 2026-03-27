@@ -646,6 +646,9 @@ pub fn handle_revert_file(
                 );
             }
         }
+        // Use std::fs::copy (not clone_file) because the destination is in the
+        // VirtioFS shared workspace. APFS clonefile is metadata-only and may not
+        // propagate through VirtioFS immediately, causing stale reads in the guest.
         if let Err(e) = std::fs::copy(&snap_file, &current_file) {
             return JsonRpcResponse::err(
                 request_id,
@@ -1788,5 +1791,54 @@ mod tests {
         let summary: Value = serde_json::from_str(&text)
             .expect("format=json should return valid JSON");
         assert!(summary["snapshots"].is_array());
+    }
+
+    /// Contract test: verifies the exact response shape the frontend depends on.
+    ///
+    /// The frontend (api.ts:listSnapshots) calls callMcpTool('snapshots_list', {format:'json'})
+    /// and parses result.content[0].text as JSON expecting these fields. If this test
+    /// breaks, the snapshot panel will break too.
+    #[test]
+    fn list_format_json_frontend_contract() {
+        let (_tmp, session, mut sched) = setup();
+        let ws = session.join("workspace");
+
+        std::fs::write(ws.join("hello.txt"), "world").unwrap();
+        sched.take_snapshot().unwrap();
+        std::fs::write(ws.join("hello.txt"), "changed").unwrap();
+        sched.take_snapshot().unwrap();
+
+        // Frontend always passes format: "json".
+        let args = serde_json::json!({"format": "json"});
+        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
+
+        // Response must have result.content[0].text.
+        let result = resp.result.as_ref().expect("response must have result");
+        let content = result["content"].as_array().expect("result must have content array");
+        assert!(!content.is_empty(), "content must not be empty");
+        let text = content[0]["text"].as_str().expect("content[0] must have text string");
+
+        // text must be valid JSON with the expected shape.
+        let data: Value = serde_json::from_str(text)
+            .expect("content text must be valid JSON when format=json");
+
+        // Top-level fields the frontend depends on.
+        assert!(data["snapshots"].is_array(), "must have snapshots array");
+        assert!(data["auto_max"].is_number(), "must have auto_max number");
+        assert!(data["manual_max"].is_number(), "must have manual_max number");
+        assert!(data["manual_available"].is_number(), "must have manual_available number");
+
+        // Each snapshot must have the fields SnapshotsTab.svelte reads.
+        let snaps = data["snapshots"].as_array().unwrap();
+        assert!(snaps.len() >= 2, "should have at least 2 snapshots");
+        for snap in snaps {
+            assert!(snap["checkpoint"].is_string(), "snapshot must have checkpoint: {snap}");
+            assert!(snap["slot"].is_number(), "snapshot must have slot: {snap}");
+            assert!(snap["origin"].is_string(), "snapshot must have origin: {snap}");
+            // name and hash can be null.
+            assert!(snap["age"].is_string(), "snapshot must have age: {snap}");
+            assert!(snap["files_count"].is_number(), "snapshot must have files_count: {snap}");
+            assert!(snap["changes"].is_array(), "snapshot must have changes array: {snap}");
+        }
     }
 }

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Mock settings generated from build system** -- `mock.ts` was 1213 lines of hand-crafted settings data that drifted from `defaults.json` (9 settings missing, values stale). Now generated from `config/defaults.json` via `generate_mock_ts()`. New `mock-settings.generated.ts` is produced alongside `defaults.json` and `settings-schema.json` by `_generate-settings` recipe, which runs automatically as part of `just run` and `just test`.
+- **`step` metadata field flows to UI** -- Rust `SettingMetaRaw` was silently dropping the `step` field from generated JSON. Added to both `registry.rs` and `types.rs` so number input increments work.
+- **Staleness CI tests** -- `test_defaults_json_not_stale` and `test_mock_ts_not_stale` assert generated outputs match on-disk files, catching future drift.
+
 ### Security
 - **Safe FUSE deserialization** -- `read_struct` returns `Option<T>` with hard bounds check in all builds (not just debug). All 25 call sites updated.
 - **fsync/flush error propagation** -- `do_fsync` and `do_flush` now return mapped errno on failure instead of silently returning success. Missing file handles return `EBADF`.
@@ -18,7 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Snapshot MCP no longer hangs** -- all 7 file tool handlers, auto-snapshot timer, and asset hash verification now run blocking I/O (clonefile, walkdir, blake3) on `spawn_blocking` threads instead of starving the tokio runtime. Single-file operations (revert, compact) use platform-native CoW (`clone_file`) instead of byte copies.
 - **Snapshot panel now displays snapshots** -- frontend was calling `snapshots_list` without `format: "json"`, getting a text table that `JSON.parse()` silently rejected. Added frontend contract test to prevent regression.
 - **Vacuum preserves content sessions** -- session cleanup now always keeps at least 25 sessions with AI activity regardless of age. Empty test sessions (0 tokens, 0 tool calls) are terminated first. New `min_content_sessions` setting (default: 25) controls the floor.
+- **inspect-session shows MCP tool usage** -- new per-tool breakdown (count, decision, avg latency) replaces the old "last 5 rows" view that buried snapshot data.
 - **Integration test Gemini API key handling** -- reads Google API key from `~/.capsem/user.toml` as fallback instead of requiring env var. Removed dummy API key from test config. Promoted Gemini token/model warnings to proper pass/fail checks.
+
+### Added
+- **Snapshot benchmarks** -- `capsem-bench snapshot` measures create/list/changes/revert/delete latency end-to-end via MCP at 10/100/500 file workspace sizes. Per-stage tracing (`RUST_LOG=capsem=debug`) shows clone vs hash vs metadata breakdown.
+- **dev-benchmark skill** -- documents all 7 benchmark categories, JSON output format, and how to investigate performance regressions.
+- **Direct clonefile(2) syscall** -- `ApfsSnapshot` and `clone_file()` use `libc::clonefile()` directly instead of spawning `cp -c -R` subprocess. Snapshot create dropped from 50ms to 3.7ms (93% faster). Auto-snapshots skip hash computation for additional savings.
+- **Persistent MCP client** -- `snapshots` CLI reuses a single fastmcp Client across all tool calls instead of spawning a new subprocess per invocation.
 
 ### Changed
 - **Builder cleans up container images** -- `build_image` now removes tagged images after extracting assets, and `build_all_architectures` prunes dangling layers. Prevents multi-GB storage waste from accumulated build images.

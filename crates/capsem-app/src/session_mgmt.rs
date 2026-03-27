@@ -102,7 +102,8 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
         }
     }
 
-    // Age-based culling (terminate, not delete).
+    // Content-aware culling: empty test sessions terminated first,
+    // content sessions protected up to min_content_sessions.
     let settings = policy_config::load_merged_settings();
     let retention_days = settings.iter()
         .find(|s| s.id == "vm.resources.retention_days")
@@ -112,6 +113,10 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
         .find(|s| s.id == "vm.resources.max_sessions")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(100) as usize;
+    let min_content_sessions = settings.iter()
+        .find(|s| s.id == "vm.resources.min_content_sessions")
+        .and_then(|s| s.effective_value.as_number())
+        .unwrap_or(25) as usize;
     let max_disk_gb = settings.iter()
         .find(|s| s.id == "vm.resources.max_disk_gb")
         .and_then(|s| s.effective_value.as_number())
@@ -121,14 +126,14 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(365) as u32;
 
-    if let Ok(n) = index.terminate_older_than_days(retention_days) {
+    if let Ok(n) = index.terminate_older_than_days_content_aware(retention_days, min_content_sessions) {
         if n > 0 {
-            info!(count = n, "terminated old sessions (>{retention_days} days)");
+            info!(count = n, "terminated old sessions (>{retention_days} days, protecting {min_content_sessions} content sessions)");
         }
     }
-    if let Ok(n) = index.terminate_excess_sessions(max_sessions) {
+    if let Ok(n) = index.terminate_excess_sessions_content_aware(max_sessions, min_content_sessions) {
         if n > 0 {
-            info!(count = n, "terminated sessions over cap ({max_sessions})");
+            info!(count = n, "terminated excess sessions (cap {max_sessions}, protecting {min_content_sessions} content sessions)");
         }
     }
 

@@ -230,6 +230,9 @@ pub(crate) async fn wire_auto_snapshots(
 }
 
 /// Spawn a periodic auto-snapshot timer that takes a snapshot every `interval`.
+///
+/// Snapshot creation does blocking I/O (directory cloning, walkdir, blake3 hashing)
+/// so it runs on a spawn_blocking thread to avoid starving the tokio runtime.
 pub(crate) fn spawn_auto_snapshot_timer(
     rt: &tokio::runtime::Handle,
     scheduler: Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>,
@@ -240,9 +243,18 @@ pub(crate) fn spawn_auto_snapshot_timer(
         tick.tick().await;
         loop {
             tick.tick().await;
-            let mut s = scheduler.lock().await;
-            if let Err(e) = s.take_snapshot() {
-                tracing::warn!("auto-snapshot failed: {e}");
+            let sched = Arc::clone(&scheduler);
+            let result = tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    let mut s = sched.lock().await;
+                    s.take_snapshot()
+                })
+            }).await;
+            match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => tracing::warn!("auto-snapshot failed: {e}"),
+                Err(e) => tracing::warn!("auto-snapshot task panicked: {e}"),
             }
         }
     });

@@ -15,6 +15,30 @@ Long-running synchronous work (FUSE request processing, disk I/O, compression) m
 
 The VirtioFS FUSE server runs on its own thread for this reason -- FUSE ops are synchronous by nature (read, write, lookup) and can't be made async without significant complexity.
 
+### Blocking-in-async anti-pattern (systemic -- audit, don't spot-fix)
+
+Any code path that does blocking I/O inside an async function or while holding a `tokio::sync::Mutex` is a bug. This causes the tokio worker thread to stall, freezing the entire gateway, UI, or network stack until the blocking operation completes.
+
+**What counts as blocking I/O:**
+- `std::process::Command` (subprocess execution)
+- `std::fs::*` (read, write, copy, remove_dir_all, create_dir_all)
+- `walkdir::WalkDir` (directory traversal)
+- `blake3::Hasher` on large data (hash computation)
+- `std::thread::sleep`
+
+**The fix pattern** -- same as `call_mcp_tool` in `crates/capsem-app/src/commands/mcp.rs`:
+```rust
+let result = tokio::task::spawn_blocking(move || {
+    let rt = tokio::runtime::Handle::current();
+    rt.block_on(async {
+        let mut guard = mutex.lock().await;
+        sync_blocking_work(&mut guard)
+    })
+}).await.unwrap_or_else(|e| /* handle panic */);
+```
+
+**Known fixed sites (2026-03-27):** MCP gateway file tool dispatch (gateway.rs), auto-snapshot timer (vsock_wiring.rs), asset hash verification (asset_manager.rs). If you add new file tools or snapshot operations, use the same `spawn_blocking` pattern.
+
 ### Channel patterns
 
 - `tokio::sync::mpsc` for producer-consumer (vsock data flow, telemetry events)
@@ -76,6 +100,12 @@ Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-mus
 4. **VirtioFS whiteouts**: Apple VZ's VirtioFS doesn't support `mknod`, so overlayfs can't use it directly as upper. The ext4 loopback workaround provides full POSIX.
 
 5. **setsid for controlling terminal**: Without `setsid`, the PTY has no foreground process group and Ctrl-C (SIGINT) is not delivered. `capsem-init` uses `setsid` to fix this.
+
+6. **Prefer syscalls over subprocesses**: `std::process::Command` costs 5-30ms per spawn (fork/exec). If a syscall does the same thing, use it. Example: `cp -c -R` for APFS clonefile was 20-30ms; direct `libc::clonefile()` is <1ms. On Linux, `ReflinkSnapshot` already uses `FICLONE` ioctl directly -- no subprocess. Always check if the OS provides a syscall before reaching for `Command`.
+
+7. **Blocking I/O in MCP gateway**: All 7 snapshot file tool handlers ran blocking I/O (clonefile subprocess, walkdir, blake3) directly on tokio worker threads while holding a `tokio::sync::Mutex`. The auto-snapshot timer did the same. This caused snapshot creation to hang from the model's perspective. Fixed by wrapping in `spawn_blocking` everywhere.
+
+7. **Single-file CoW**: Added `clone_file()` helper that uses APFS clonefile on macOS and FICLONE on Linux for instant CoW copies. Used in snapshot compact (host-to-host). **Not safe for revert** (snapshot-to-VirtioFS-workspace) because APFS clonefile is metadata-only and VirtioFS may serve stale data to the guest. Revert must use `std::fs::copy` (byte copy) so the guest sees the new content immediately.
 
 ## Async reference
 

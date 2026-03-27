@@ -146,6 +146,7 @@ impl AutoSnapshotScheduler {
         origin: SnapshotOrigin,
         name: Option<String>,
     ) -> anyhow::Result<SnapshotSlot> {
+        let t0 = std::time::Instant::now();
         let slot_dir = self.slot_dir(slot);
 
         if slot_dir.exists() {
@@ -157,6 +158,7 @@ impl AutoSnapshotScheduler {
         let ws_src = self.workspace_dir();
         let ws_dst = slot_dir.join("workspace");
         clone_directory(&ws_src, &ws_dst)?;
+        let clone_ws_ms = t0.elapsed().as_millis();
 
         // Clone system image.
         let sys_src = self.system_dir();
@@ -164,6 +166,7 @@ impl AutoSnapshotScheduler {
         if sys_src.exists() {
             clone_directory(&sys_src, &sys_dst)?;
         }
+        let clone_sys_ms = t0.elapsed().as_millis() - clone_ws_ms;
 
         let now = SystemTime::now();
         let since_epoch = now
@@ -172,12 +175,15 @@ impl AutoSnapshotScheduler {
         let epoch = since_epoch.as_secs();
         let epoch_millis = since_epoch.as_millis();
 
-        // Compute workspace hash for all snapshots.
-        let hash = if ws_dst.exists() {
-            Some(workspace_hash(&ws_dst))
-        } else {
-            None
+        // Compute workspace hash for manual snapshots only.
+        // Auto-snapshots skip the hash (rolling ring buffer, never compared by hash).
+        let hash = match origin {
+            SnapshotOrigin::Manual => {
+                if ws_dst.exists() { Some(workspace_hash(&ws_dst)) } else { None }
+            }
+            SnapshotOrigin::Auto => None,
         };
+        let hash_ms = t0.elapsed().as_millis() - clone_ws_ms - clone_sys_ms;
 
         let meta = SlotMetadata {
             slot,
@@ -190,6 +196,16 @@ impl AutoSnapshotScheduler {
         };
         let meta_path = slot_dir.join("metadata.json");
         std::fs::write(&meta_path, serde_json::to_string(&meta)?)?;
+
+        let total_ms = t0.elapsed().as_millis();
+        debug!(
+            slot,
+            clone_ws_ms,
+            clone_sys_ms,
+            hash_ms,
+            total_ms,
+            "snapshot_into_slot timing"
+        );
 
         Ok(SnapshotSlot {
             slot,
@@ -290,6 +306,7 @@ impl AutoSnapshotScheduler {
     /// Merges workspaces oldest-first (newest file version wins).
     /// Deletes all source snapshots after successful compaction.
     pub fn compact_snapshots(&mut self, slots: &[usize], name: &str) -> anyhow::Result<SnapshotSlot> {
+        let t0 = std::time::Instant::now();
         anyhow::ensure!(!slots.is_empty(), "no snapshots to compact");
         anyhow::ensure!(
             self.available_manual_slots() > 0,
@@ -341,7 +358,8 @@ impl AutoSnapshotScheduler {
                     if let Some(parent) = dst.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    std::fs::copy(entry.path(), &dst)?;
+                    let _ = std::fs::remove_file(&dst);
+                    clone_file(entry.path(), &dst)?;
                 }
             }
         }
@@ -392,7 +410,8 @@ impl AutoSnapshotScheduler {
             }
         }
 
-        info!(slot = target_slot, name, merged = metas.len(), "snapshots compacted");
+        let total_ms = t0.elapsed().as_millis();
+        info!(slot = target_slot, name, merged = metas.len(), total_ms, "snapshots compacted");
 
         Ok(SnapshotSlot {
             slot: target_slot,
@@ -433,28 +452,40 @@ pub trait SnapshotBackend: Send + Sync {
     fn snapshot(&self, source: &Path, dest: &Path) -> anyhow::Result<()>;
 }
 
-/// APFS clonefile backend (macOS). Instant copy-on-write.
+/// APFS clonefile backend (macOS). Instant copy-on-write via clonefile(2) syscall.
 /// Falls back to recursive copy on non-APFS filesystems.
 pub struct ApfsSnapshot;
 
 impl SnapshotBackend for ApfsSnapshot {
     fn snapshot(&self, source: &Path, dest: &Path) -> anyhow::Result<()> {
-        let status = std::process::Command::new("cp")
-            .args(["-c", "-R"])
-            .arg(source)
-            .arg(dest)
-            .status()?;
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
 
-        if !status.success() {
-            warn!("APFS clonefile failed, falling back to regular copy");
-            let status = std::process::Command::new("cp")
-                .args(["-R"])
-                .arg(source)
-                .arg(dest)
-                .status()?;
-            anyhow::ensure!(status.success(), "directory copy failed");
+        let src_c = CString::new(source.as_os_str().as_bytes())
+            .map_err(|_| anyhow::anyhow!("source path contains null byte"))?;
+        let dst_c = CString::new(dest.as_os_str().as_bytes())
+            .map_err(|_| anyhow::anyhow!("dest path contains null byte"))?;
+
+        // Direct clonefile(2) syscall -- no subprocess overhead.
+        let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
+        if ret == 0 {
+            return Ok(());
         }
-        Ok(())
+
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::ENOTSUP) | Some(libc::EXDEV) => {
+                warn!("clonefile not supported, falling back to recursive copy");
+                let status = std::process::Command::new("cp")
+                    .args(["-R"])
+                    .arg(source)
+                    .arg(dest)
+                    .status()?;
+                anyhow::ensure!(status.success(), "directory copy failed");
+                Ok(())
+            }
+            _ => Err(anyhow::anyhow!("clonefile failed: {err}")),
+        }
     }
 }
 
@@ -477,7 +508,7 @@ impl ReflinkSnapshot {
 
     /// Try to reflink a single file. Returns true on success, false if
     /// FICLONE is not supported (caller should fall back to byte copy).
-    fn try_reflink(src: &Path, dst: &Path) -> std::io::Result<bool> {
+    pub(crate) fn try_reflink(src: &Path, dst: &Path) -> std::io::Result<bool> {
         use std::os::unix::io::AsRawFd;
 
         let src_file = std::fs::File::open(src)?;
@@ -570,24 +601,6 @@ impl SnapshotBackend for ReflinkSnapshot {
     }
 }
 
-/// Recursive directory copy using std::fs.
-fn copy_directory_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in walkdir::WalkDir::new(src).min_depth(1) {
-        let entry = entry?;
-        let rel = entry.path().strip_prefix(src)?;
-        let target = dst.join(rel);
-        if entry.file_type().is_dir() {
-            std::fs::create_dir_all(&target)?;
-        } else {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::copy(entry.path(), &target)?;
-        }
-    }
-    Ok(())
-}
 
 /// Return the default snapshot backend for the current platform.
 pub fn default_snapshot_backend() -> Box<dyn SnapshotBackend> {
@@ -604,6 +617,46 @@ pub fn default_snapshot_backend() -> Box<dyn SnapshotBackend> {
 /// Clone a directory tree using the platform-appropriate backend.
 pub fn clone_directory(src: &Path, dst: &Path) -> anyhow::Result<()> {
     default_snapshot_backend().snapshot(src, dst)
+}
+
+/// Clone a single file using platform-appropriate copy-on-write.
+///
+/// On macOS: uses `cp -c` (APFS clonefile) with fallback to regular copy.
+/// On Linux: uses FICLONE ioctl with fallback to `std::fs::copy`.
+pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let src_c = CString::new(src.as_os_str().as_bytes())
+            .map_err(|_| anyhow::anyhow!("source path contains null byte"))?;
+        let dst_c = CString::new(dst.as_os_str().as_bytes())
+            .map_err(|_| anyhow::anyhow!("dest path contains null byte"))?;
+
+        let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
+        if ret == 0 {
+            return Ok(());
+        }
+        // clonefile not supported (cross-volume, non-APFS) -- fall back to byte copy.
+        std::fs::copy(src, dst)?;
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match ReflinkSnapshot::try_reflink(src, dst) {
+            Ok(true) => return Ok(()),
+            Ok(false) | Err(_) => {
+                std::fs::copy(src, dst)?;
+                return Ok(());
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        std::fs::copy(src, dst)?;
+        Ok(())
+    }
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).
@@ -642,7 +695,7 @@ mod tests {
         assert_eq!(slot.slot, 0);
         assert_eq!(slot.origin, SnapshotOrigin::Auto);
         assert!(slot.name.is_none());
-        assert!(slot.hash.is_some()); // all snapshots compute hash
+        assert!(slot.hash.is_none()); // auto-snapshots skip hash for performance
         assert!(slot.workspace_path.join("hello.txt").exists());
         let content = std::fs::read_to_string(slot.workspace_path.join("hello.txt")).unwrap();
         assert_eq!(content, "world");
@@ -951,7 +1004,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // copy_directory_recursive
+    // clone_directory
     // -----------------------------------------------------------------------
 
     #[test]
@@ -961,7 +1014,7 @@ mod tests {
         let dst = tmp.path().join("empty_dst");
         std::fs::create_dir_all(&src).unwrap();
 
-        copy_directory_recursive(&src, &dst).unwrap();
+        clone_directory(&src, &dst).unwrap();
         assert!(dst.is_dir());
     }
 
@@ -973,7 +1026,7 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("file.txt"), "content").unwrap();
 
-        copy_directory_recursive(&src, &dst).unwrap();
+        clone_directory(&src, &dst).unwrap();
 
         assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "content");
     }
@@ -987,7 +1040,7 @@ mod tests {
         std::fs::write(src.join("a/top.txt"), "top").unwrap();
 
         let dst = tmp.path().join("dst");
-        copy_directory_recursive(&src, &dst).unwrap();
+        clone_directory(&src, &dst).unwrap();
 
         assert_eq!(std::fs::read_to_string(dst.join("a/b/c/deep.txt")).unwrap(), "deep");
         assert_eq!(std::fs::read_to_string(dst.join("a/top.txt")).unwrap(), "top");
@@ -1002,7 +1055,7 @@ mod tests {
         std::fs::write(src.join("binary.bin"), &binary).unwrap();
 
         let dst = tmp.path().join("dst");
-        copy_directory_recursive(&src, &dst).unwrap();
+        clone_directory(&src, &dst).unwrap();
 
         assert_eq!(std::fs::read(dst.join("binary.bin")).unwrap(), binary);
     }
@@ -1015,7 +1068,7 @@ mod tests {
         std::fs::write(src.join("empty"), "").unwrap();
 
         let dst = tmp.path().join("dst");
-        copy_directory_recursive(&src, &dst).unwrap();
+        clone_directory(&src, &dst).unwrap();
 
         assert_eq!(std::fs::read(dst.join("empty")).unwrap().len(), 0);
     }
@@ -1030,7 +1083,7 @@ mod tests {
         }
 
         let dst = tmp.path().join("dst");
-        copy_directory_recursive(&src, &dst).unwrap();
+        clone_directory(&src, &dst).unwrap();
 
         for i in 0..50 {
             let content = std::fs::read_to_string(dst.join(format!("file_{i}.txt"))).unwrap();
@@ -1041,7 +1094,7 @@ mod tests {
     #[test]
     fn copy_recursive_source_not_found_errors() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = copy_directory_recursive(
+        let result = clone_directory(
             &tmp.path().join("nonexistent"),
             &tmp.path().join("dst"),
         );
@@ -1056,7 +1109,7 @@ mod tests {
         std::fs::write(src.join("file.txt"), "ok").unwrap();
 
         let dst = tmp.path().join("dst");
-        copy_directory_recursive(&src, &dst).unwrap();
+        clone_directory(&src, &dst).unwrap();
 
         assert!(dst.join("empty_subdir").is_dir());
         assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "ok");
@@ -1201,6 +1254,58 @@ mod tests {
         clone_directory(&src, &dst).unwrap();
 
         assert_eq!(std::fs::read_to_string(dst.join("test.txt")).unwrap(), "cloned");
+    }
+
+    // -----------------------------------------------------------------------
+    // clone_file (single-file CoW with platform fallback)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clone_file_copies_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.txt");
+        std::fs::write(&src, "hello capsem").unwrap();
+
+        let dst = tmp.path().join("dst.txt");
+        clone_file(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "hello capsem");
+    }
+
+    #[test]
+    fn clone_file_overwrites_existing_if_removed_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.txt");
+        std::fs::write(&src, "new content").unwrap();
+
+        let dst = tmp.path().join("dst.txt");
+        std::fs::write(&dst, "old content").unwrap();
+
+        // clone_file expects dst to not exist (caller removes first).
+        std::fs::remove_file(&dst).unwrap();
+        clone_file(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "new content");
+    }
+
+    #[test]
+    fn clone_file_empty_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("empty.txt");
+        std::fs::write(&src, "").unwrap();
+
+        let dst = tmp.path().join("dst.txt");
+        clone_file(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "");
+    }
+
+    #[test]
+    fn clone_file_nonexistent_source_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("no_such_file.txt");
+        let dst = tmp.path().join("dst.txt");
+        assert!(clone_file(&src, &dst).is_err());
     }
 
     // -----------------------------------------------------------------------

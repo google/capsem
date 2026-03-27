@@ -84,13 +84,15 @@ pub fn create_serial_port() -> Result<(
 }
 
 /// Create an AppleVzSerialConsole from raw pipe file descriptors (for testing).
+#[cfg(test)]
 pub fn create_console_from_fd(read_fd: RawFd, input_fd: RawFd) -> AppleVzSerialConsole {
     let (tx, _rx) = broadcast::channel(256);
     AppleVzSerialConsole { tx, read_fd, input_fd, _pipes: None }
 }
 
 impl AppleVzSerialConsole {
-    /// Subscribe to serial output bytes.
+    /// Subscribe to serial output bytes (used by tests; production goes through SerialConsole trait).
+    #[cfg(test)]
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.tx.subscribe()
     }

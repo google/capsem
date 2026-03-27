@@ -298,7 +298,7 @@ export async function listSnapshots(): Promise<{
   manual_max: number;
   manual_available: number;
 }> {
-  const result = await callMcpTool('snapshots_list') as { content: { text: string }[] };
+  const result = await callMcpTool('snapshots_list', { format: 'json' }) as { content: { text: string }[] };
   return JSON.parse(result.content[0].text);
 }
 
