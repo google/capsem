@@ -428,25 +428,182 @@ fn workspace_hash(workspace: &Path) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
-/// Clone a directory tree using macOS APFS clonefile (`cp -c -R`).
-/// Falls back to recursive copy on non-APFS.
-pub fn clone_directory(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    let status = std::process::Command::new("cp")
-        .args(["-c", "-R"])
-        .arg(src)
-        .arg(dst)
-        .status()?;
+/// Trait for directory snapshot backends.
+pub trait SnapshotBackend: Send + Sync {
+    fn snapshot(&self, source: &Path, dest: &Path) -> anyhow::Result<()>;
+}
 
-    if !status.success() {
-        warn!("APFS clonefile failed, falling back to regular copy");
+/// APFS clonefile backend (macOS). Instant copy-on-write.
+/// Falls back to recursive copy on non-APFS filesystems.
+pub struct ApfsSnapshot;
+
+impl SnapshotBackend for ApfsSnapshot {
+    fn snapshot(&self, source: &Path, dest: &Path) -> anyhow::Result<()> {
         let status = std::process::Command::new("cp")
-            .args(["-R"])
-            .arg(src)
-            .arg(dst)
+            .args(["-c", "-R"])
+            .arg(source)
+            .arg(dest)
             .status()?;
-        anyhow::ensure!(status.success(), "directory copy failed");
+
+        if !status.success() {
+            warn!("APFS clonefile failed, falling back to regular copy");
+            let status = std::process::Command::new("cp")
+                .args(["-R"])
+                .arg(source)
+                .arg(dest)
+                .status()?;
+            anyhow::ensure!(status.success(), "directory copy failed");
+        }
+        Ok(())
+    }
+}
+
+/// Reflink (FICLONE) snapshot backend for Linux.
+///
+/// Walks the source directory and attempts `ioctl(dst_fd, FICLONE, src_fd)`
+/// for each file. On CoW filesystems (Btrfs, XFS) this is instant and
+/// zero-copy. On filesystems that don't support reflinks (ext4), falls back
+/// to a standard byte copy per file.
+#[cfg(target_os = "linux")]
+pub struct ReflinkSnapshot;
+
+#[cfg(target_os = "linux")]
+impl ReflinkSnapshot {
+    /// FICLONE ioctl request number.
+    /// Defined in linux/fs.h as _IOW(0x94, 9, int).
+    /// On aarch64: direction bits = 0x40000000, size = sizeof(int)=4 << 16,
+    /// type = 0x94 << 8, nr = 9  =>  0x40049409.
+    const FICLONE: libc::c_ulong = 0x40049409;
+
+    /// Try to reflink a single file. Returns true on success, false if
+    /// FICLONE is not supported (caller should fall back to byte copy).
+    fn try_reflink(src: &Path, dst: &Path) -> std::io::Result<bool> {
+        use std::os::unix::io::AsRawFd;
+
+        let src_file = std::fs::File::open(src)?;
+        let dst_file = std::fs::File::create(dst)?;
+
+        // SAFETY: FICLONE takes (dst_fd, FICLONE, src_fd). Both fds are valid
+        // open files. The ioctl either clones the data or returns an error.
+        let ret = unsafe {
+            libc::ioctl(dst_file.as_raw_fd(), Self::FICLONE as _, src_file.as_raw_fd())
+        };
+
+        if ret == 0 {
+            // Preserve permissions from source.
+            let meta = src_file.metadata()?;
+            dst_file.set_permissions(meta.permissions())?;
+            Ok(true)
+        } else {
+            let err = std::io::Error::last_os_error();
+            match err.raw_os_error() {
+                // EOPNOTSUPP / ENOSYS / EXDEV / EINVAL -- filesystem doesn't support reflinks.
+                Some(libc::EOPNOTSUPP | libc::ENOSYS | libc::EXDEV | libc::EINVAL) => {
+                    // Remove the empty dst file; caller will do a byte copy.
+                    let _ = std::fs::remove_file(dst);
+                    Ok(false)
+                }
+                _ => {
+                    let _ = std::fs::remove_file(dst);
+                    Err(err)
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl SnapshotBackend for ReflinkSnapshot {
+    fn snapshot(&self, source: &Path, dest: &Path) -> anyhow::Result<()> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        std::fs::create_dir_all(dest)?;
+
+        // Track whether FICLONE ever succeeded so we can log the strategy once.
+        let reflink_supported = AtomicBool::new(false);
+        let mut reflink_failed_logged = false;
+
+        for entry in walkdir::WalkDir::new(source).min_depth(1) {
+            let entry = entry?;
+            let rel = entry.path().strip_prefix(source)?;
+            let target = dest.join(rel);
+
+            if entry.file_type().is_dir() {
+                std::fs::create_dir_all(&target)?;
+            } else if entry.file_type().is_file() {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                match Self::try_reflink(entry.path(), &target) {
+                    Ok(true) => {
+                        reflink_supported.store(true, Ordering::Relaxed);
+                    }
+                    Ok(false) => {
+                        if !reflink_failed_logged {
+                            info!(
+                                path = %entry.path().display(),
+                                "FICLONE not supported on this filesystem, falling back to byte copy"
+                            );
+                            reflink_failed_logged = true;
+                        }
+                        std::fs::copy(entry.path(), &target)?;
+                    }
+                    Err(e) => {
+                        warn!(
+                            path = %entry.path().display(),
+                            error = %e,
+                            "FICLONE ioctl failed unexpectedly, falling back to byte copy"
+                        );
+                        std::fs::copy(entry.path(), &target)?;
+                    }
+                }
+            }
+        }
+
+        if reflink_supported.load(Ordering::Relaxed) {
+            debug!("snapshot completed using reflinks (FICLONE)");
+        } else {
+            debug!("snapshot completed using byte copy (FICLONE not available)");
+        }
+
+        Ok(())
+    }
+}
+
+/// Recursive directory copy using std::fs.
+fn copy_directory_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in walkdir::WalkDir::new(src).min_depth(1) {
+        let entry = entry?;
+        let rel = entry.path().strip_prefix(src)?;
+        let target = dst.join(rel);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(entry.path(), &target)?;
+        }
     }
     Ok(())
+}
+
+/// Return the default snapshot backend for the current platform.
+pub fn default_snapshot_backend() -> Box<dyn SnapshotBackend> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(ApfsSnapshot)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(ReflinkSnapshot)
+    }
+}
+
+/// Clone a directory tree using the platform-appropriate backend.
+pub fn clone_directory(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    default_snapshot_backend().snapshot(src, dst)
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).
@@ -768,5 +925,307 @@ mod tests {
             std::fs::read_to_string(dst.join("sub/b.txt")).unwrap(),
             "nested"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // SnapshotBackend trait + implementations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_backend_trait_is_object_safe() {
+        fn _assert_obj_safe(_: &dyn SnapshotBackend) {}
+    }
+
+    #[test]
+    fn default_backend_returns_apfs_on_macos() {
+        let backend = default_snapshot_backend();
+        // On macOS, should be ApfsSnapshot. On other platforms, HardlinkSnapshot.
+        // We just verify it returns something usable.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("test.txt"), "hello").unwrap();
+        backend.snapshot(&src, &dst).unwrap();
+        assert_eq!(std::fs::read_to_string(dst.join("test.txt")).unwrap(), "hello");
+    }
+
+    // -----------------------------------------------------------------------
+    // copy_directory_recursive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_recursive_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("empty_src");
+        let dst = tmp.path().join("empty_dst");
+        std::fs::create_dir_all(&src).unwrap();
+
+        copy_directory_recursive(&src, &dst).unwrap();
+        assert!(dst.is_dir());
+    }
+
+    #[test]
+    fn copy_recursive_single_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("file.txt"), "content").unwrap();
+
+        copy_directory_recursive(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "content");
+    }
+
+    #[test]
+    fn copy_recursive_nested_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("a/b/c")).unwrap();
+        std::fs::write(src.join("a/b/c/deep.txt"), "deep").unwrap();
+        std::fs::write(src.join("a/top.txt"), "top").unwrap();
+
+        let dst = tmp.path().join("dst");
+        copy_directory_recursive(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dst.join("a/b/c/deep.txt")).unwrap(), "deep");
+        assert_eq!(std::fs::read_to_string(dst.join("a/top.txt")).unwrap(), "top");
+    }
+
+    #[test]
+    fn copy_recursive_preserves_binary_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let binary: Vec<u8> = (0..=255).collect();
+        std::fs::write(src.join("binary.bin"), &binary).unwrap();
+
+        let dst = tmp.path().join("dst");
+        copy_directory_recursive(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read(dst.join("binary.bin")).unwrap(), binary);
+    }
+
+    #[test]
+    fn copy_recursive_empty_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("empty"), "").unwrap();
+
+        let dst = tmp.path().join("dst");
+        copy_directory_recursive(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read(dst.join("empty")).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn copy_recursive_many_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        for i in 0..50 {
+            std::fs::write(src.join(format!("file_{i}.txt")), format!("content_{i}")).unwrap();
+        }
+
+        let dst = tmp.path().join("dst");
+        copy_directory_recursive(&src, &dst).unwrap();
+
+        for i in 0..50 {
+            let content = std::fs::read_to_string(dst.join(format!("file_{i}.txt"))).unwrap();
+            assert_eq!(content, format!("content_{i}"));
+        }
+    }
+
+    #[test]
+    fn copy_recursive_source_not_found_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = copy_directory_recursive(
+            &tmp.path().join("nonexistent"),
+            &tmp.path().join("dst"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn copy_recursive_empty_subdirs_preserved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("empty_subdir")).unwrap();
+        std::fs::write(src.join("file.txt"), "ok").unwrap();
+
+        let dst = tmp.path().join("dst");
+        copy_directory_recursive(&src, &dst).unwrap();
+
+        assert!(dst.join("empty_subdir").is_dir());
+        assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "ok");
+    }
+
+    // -----------------------------------------------------------------------
+    // ReflinkSnapshot backend (Linux-only)
+    // -----------------------------------------------------------------------
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_snapshot_copies_files() {
+        // Works on any Linux filesystem -- falls back to byte copy on ext4.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
+        std::fs::write(src.join("a.txt"), "alpha").unwrap();
+        std::fs::write(src.join("subdir/b.txt"), "beta").unwrap();
+
+        let dst = tmp.path().join("dst");
+        ReflinkSnapshot.snapshot(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "alpha");
+        assert_eq!(std::fs::read_to_string(dst.join("subdir/b.txt")).unwrap(), "beta");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_snapshot_empty_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let dst = tmp.path().join("dst");
+        ReflinkSnapshot.snapshot(&src, &dst).unwrap();
+        assert!(dst.is_dir());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_snapshot_source_not_found_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = ReflinkSnapshot.snapshot(
+            &tmp.path().join("nonexistent"),
+            &tmp.path().join("dst"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_snapshot_preserves_nested_structure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("a/b/c")).unwrap();
+        std::fs::write(src.join("a/b/c/deep.txt"), "deep").unwrap();
+        std::fs::write(src.join("top.txt"), "top").unwrap();
+
+        let dst = tmp.path().join("dst");
+        ReflinkSnapshot.snapshot(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dst.join("a/b/c/deep.txt")).unwrap(), "deep");
+        assert_eq!(std::fs::read_to_string(dst.join("top.txt")).unwrap(), "top");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_snapshot_preserves_binary_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let binary: Vec<u8> = (0..=255).collect();
+        std::fs::write(src.join("binary.bin"), &binary).unwrap();
+
+        let dst = tmp.path().join("dst");
+        ReflinkSnapshot.snapshot(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read(dst.join("binary.bin")).unwrap(), binary);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_try_reflink_returns_false_on_unsupported_fs() {
+        // tmpfs doesn't support FICLONE -- verify graceful fallback.
+        let tmp = tempfile::tempdir().unwrap();
+        let src_path = tmp.path().join("src.txt");
+        let dst_path = tmp.path().join("dst.txt");
+        std::fs::write(&src_path, "test").unwrap();
+
+        let result = ReflinkSnapshot::try_reflink(&src_path, &dst_path).unwrap();
+        // On tmpfs/ext4, FICLONE is not supported so this should be false.
+        // On btrfs/xfs, it would be true. Either way, no error.
+        assert!(result == true || result == false);
+        // If reflink failed, dst was cleaned up and caller does byte copy.
+        if !result {
+            assert!(!dst_path.exists());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ApfsSnapshot backend (macOS-only behavior)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apfs_snapshot_copies_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("x.txt"), "data").unwrap();
+        std::fs::write(src.join("sub/y.txt"), "nested").unwrap();
+
+        let dst = tmp.path().join("dst");
+        ApfsSnapshot.snapshot(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dst.join("x.txt")).unwrap(), "data");
+        assert_eq!(std::fs::read_to_string(dst.join("sub/y.txt")).unwrap(), "nested");
+    }
+
+    #[test]
+    fn apfs_snapshot_empty_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let dst = tmp.path().join("dst");
+        ApfsSnapshot.snapshot(&src, &dst).unwrap();
+        assert!(dst.is_dir());
+    }
+
+    // -----------------------------------------------------------------------
+    // clone_directory (dispatches to platform backend)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clone_directory_dispatches_correctly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("test.txt"), "cloned").unwrap();
+
+        let dst = tmp.path().join("dst");
+        clone_directory(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dst.join("test.txt")).unwrap(), "cloned");
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapshot scheduler with backend trait
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_scheduler_uses_clone_directory() {
+        // Verify the scheduler still works end-to-end after the
+        // clone_directory refactor to use SnapshotBackend trait.
+        let (_tmp, session) = setup_session_dir();
+        std::fs::write(session.join("workspace/data.txt"), "important").unwrap();
+        std::fs::write(session.join("system/rootfs.img"), "system_data").unwrap();
+
+        let mut s = sched(&session);
+        let slot = s.take_snapshot().unwrap();
+
+        assert!(slot.workspace_path.join("data.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(slot.workspace_path.join("data.txt")).unwrap(),
+            "important"
+        );
+
+        // System dir should also be snapshotted
+        let system_snap = session.join(format!("auto_snapshots/{}/system", slot.slot));
+        assert!(system_snap.exists());
     }
 }

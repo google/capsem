@@ -38,6 +38,7 @@ flags:
     paths:
       - crates/**
       - frontend/src/**
+      - src/capsem/**
     carryforward: true
   integration:
     paths:
@@ -99,11 +100,12 @@ component_management:
         - crates/capsem-core/src/log_layer.rs
 
     # Machine lifecycle, VM config, vsock manager.
-    # Hypervisor abstraction layer.
+    # Hypervisor abstraction layer + platform backends.
     - component_id: virtualization
       name: Virtualization
       paths:
         - crates/capsem-core/src/vm/**
+        - crates/capsem-core/src/hypervisor/**
 
     # In-VM agent binaries: PTY agent, net-proxy, MCP server
     # relay, wire protocol.
@@ -126,6 +128,12 @@ component_management:
       name: UI
       paths:
         - frontend/src/**
+
+    # Builder: Pydantic schema, config models, image builder.
+    - component_id: builder
+      name: Builder
+      paths:
+        - src/capsem/**
 
 ignore:
   - crates/*/tests/**
