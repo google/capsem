@@ -203,6 +203,68 @@ def inspect(guest_dir: str, json_output: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# audit
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option("--scanner", default="trivy", type=click.Choice(["trivy", "grype"]),
+              help="Vulnerability scanner format.")
+@click.option("--input", "input_file", type=click.Path(exists=True), default=None,
+              help="Read scanner JSON from file (default: stdin).")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def audit(scanner: str, input_file: str | None, json_output: bool) -> None:
+    """Parse vulnerability scan results."""
+    from capsem.builder.audit import parse_audit_output, summarize_vulns
+
+    if input_file:
+        text = Path(input_file).read_text()
+    else:
+        text = click.get_text_stream("stdin").read()
+
+    if not text.strip():
+        click.echo("error: no input (provide --input or pipe via stdin)", err=True)
+        raise SystemExit(1)
+
+    try:
+        vulns = parse_audit_output(text, scanner)
+    except ValueError as e:
+        click.echo(f"error: {e}", err=True)
+        raise SystemExit(1)
+
+    if json_output:
+        click.echo(json.dumps([v.model_dump() for v in vulns], indent=2))
+    else:
+        summary = summarize_vulns(vulns)
+        click.echo(f"Scanner: {scanner}")
+        click.echo(f"Total: {len(vulns)} vulnerabilities")
+        for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"):
+            if summary[sev]:
+                click.echo(f"  {sev}: {summary[sev]}")
+        if vulns:
+            click.echo("")
+            for v in vulns:
+                fixed = f" (fix: {v.fixed_version})" if v.fixed_version else ""
+                click.echo(f"  {v.severity:8s}  {v.id:20s}  {v.package} {v.installed_version}{fixed}")
+
+    summary = summarize_vulns(vulns)
+    if summary["CRITICAL"] or summary["HIGH"]:
+        raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# mcp
+# ---------------------------------------------------------------------------
+
+
+@cli.command("mcp")
+def mcp_cmd() -> None:
+    """Start MCP stdio server for builder tools."""
+    from capsem.builder.mcp_server import run_mcp_server
+    run_mcp_server()
+
+
+# ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
 

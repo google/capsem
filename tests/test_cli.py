@@ -628,6 +628,96 @@ class TestAddMcpCommand:
 
 
 # ---------------------------------------------------------------------------
+# audit command
+# ---------------------------------------------------------------------------
+
+
+TRIVY_JSON_FIXTURE = json.dumps({
+    "Results": [{
+        "Target": "test",
+        "Vulnerabilities": [
+            {"VulnerabilityID": "CVE-2024-1234", "Severity": "HIGH",
+             "PkgName": "openssl", "InstalledVersion": "3.0.13",
+             "FixedVersion": "3.0.14"},
+            {"VulnerabilityID": "CVE-2024-5678", "Severity": "LOW",
+             "PkgName": "curl", "InstalledVersion": "7.88"},
+        ],
+    }],
+})
+
+TRIVY_NO_VULNS_FIXTURE = json.dumps({"Results": [{"Target": "test"}]})
+
+
+class TestAuditCommand:
+    """Tests for the audit command."""
+
+    def test_audit_from_file(self, tmp_path):
+        f = tmp_path / "trivy.json"
+        f.write_text(TRIVY_JSON_FIXTURE)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["audit", "--input", str(f)])
+        # Has HIGH vuln so exit code 1
+        assert result.exit_code == 1
+        assert "CVE-2024-1234" in result.output
+        assert "HIGH" in result.output
+
+    def test_audit_json_output(self, tmp_path):
+        f = tmp_path / "trivy.json"
+        f.write_text(TRIVY_JSON_FIXTURE)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["audit", "--input", str(f), "--json"])
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert len(data) == 2
+
+    def test_audit_no_vulns_exit_zero(self, tmp_path):
+        f = tmp_path / "trivy.json"
+        f.write_text(TRIVY_NO_VULNS_FIXTURE)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["audit", "--input", str(f)])
+        assert result.exit_code == 0
+
+    def test_audit_grype_scanner(self, tmp_path):
+        grype = json.dumps({"matches": [{
+            "vulnerability": {"id": "CVE-2024-1", "severity": "Low",
+                              "fix": {"versions": [], "state": "not-fixed"}},
+            "artifact": {"name": "zlib", "version": "1.2.3"},
+        }]})
+        f = tmp_path / "grype.json"
+        f.write_text(grype)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["audit", "--scanner", "grype", "--input", str(f)])
+        assert result.exit_code == 0  # Only LOW, no HIGH/CRITICAL
+        assert "zlib" in result.output
+
+    def test_audit_no_input_fails(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["audit"], input="")
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# mcp command
+# ---------------------------------------------------------------------------
+
+
+class TestMcpCommand:
+    """Tests for the mcp command."""
+
+    def test_mcp_initialize(self):
+        init_msg = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                       "clientInfo": {"name": "test", "version": "1.0"}},
+        })
+        runner = CliRunner()
+        result = runner.invoke(cli, ["mcp"], input=init_msg + "\n")
+        assert result.exit_code == 0
+        resp = json.loads(result.output.strip().splitlines()[0])
+        assert resp["result"]["serverInfo"]["name"] == "capsem-builder"
+
+
+# ---------------------------------------------------------------------------
 # Real config (project guest/ directory)
 # ---------------------------------------------------------------------------
 
