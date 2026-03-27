@@ -12,12 +12,11 @@ Commands:
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import click
 
-from capsem.builder.config import generate_defaults_json, load_guest_config
+from capsem.builder.config import load_guest_config
 from capsem.builder.docker import render_dockerfile
 from capsem.builder.scaffold import (
     add_ai_provider,
@@ -208,6 +207,13 @@ def build(
         except RuntimeError as e:
             click.echo(f"error: {e}", err=True)
             raise SystemExit(1)
+        finally:
+            # Prune dangling images from multi-stage builds
+            from capsem.builder.docker import run_cmd
+            try:
+                run_cmd([runtime, "image", "prune", "-f"], capture=True)
+            except RuntimeError:
+                pass
 
         click.echo(f"\nDone! Assets are in {out}/")
 
@@ -247,7 +253,7 @@ def inspect(guest_dir: str, json_output: bool) -> None:
 
     click.echo("Build")
     click.echo(f"  compression: {config.build.compression.value} (level {config.build.compression_level})")
-    click.echo(f"  architectures:")
+    click.echo("  architectures:")
     for name, arch in config.build.architectures.items():
         click.echo(f"    {name}: {arch.docker_platform} ({arch.rust_target})")
 
@@ -269,7 +275,7 @@ def inspect(guest_dir: str, json_output: bool) -> None:
             click.echo(f"  {key}: {server.name} ({server.transport.value})")
 
     res = config.vm_resources
-    click.echo(f"\nVM Resources")
+    click.echo("\nVM Resources")
     click.echo(f"  cpu: {res.cpu_count} cores, ram: {res.ram_gb} GB, disk: {res.scratch_disk_size_gb} GB")
 
 

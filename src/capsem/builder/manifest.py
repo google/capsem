@@ -8,7 +8,6 @@ render() produces a plain-text table -- the single human-readable output path.
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 

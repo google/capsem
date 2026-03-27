@@ -232,6 +232,14 @@ def get_project_version(repo_root: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def remove_image(runtime: str, tag: str) -> None:
+    """Remove a container image by tag. Silently ignores missing images."""
+    try:
+        run_cmd([runtime, "rmi", "-f", tag], capture=True)
+    except RuntimeError:
+        pass
+
+
 def docker_build(
     runtime: str,
     tag: str,
@@ -584,6 +592,7 @@ def build_image(
             vmlinuz, initrd = extract_kernel_assets(
                 runtime, tag, arch.docker_platform, arch_output,
             )
+            remove_image(runtime, tag)
             print(f"  vmlinuz:    {vmlinuz}")
             print(f"  initrd.img: {initrd}")
 
@@ -618,6 +627,7 @@ def build_image(
 
             print("Extracting tool versions...")
             extract_tool_versions(runtime, tag, arch.docker_platform, arch_output)
+            remove_image(runtime, tag)
 
             print(f"  rootfs.squashfs: {squashfs_path}")
 
@@ -645,6 +655,14 @@ def build_all_architectures(
             kernel_version=kernel_version,
             repo_root=repo_root,
         )
+
+    # Prune dangling images left by multi-stage builds
+    runtime = detect_runtime()
+    try:
+        run_cmd([runtime, "image", "prune", "-f"], capture=True)
+        print("Pruned dangling images.")
+    except RuntimeError:
+        pass
 
     version = get_project_version(repo_root)
     print(f"\nGenerating checksums (version {version})...")

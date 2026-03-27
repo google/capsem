@@ -15,9 +15,8 @@ JSON Schema is generated from SettingsRoot.model_json_schema().
 
 from __future__ import annotations
 
-import json
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag
 

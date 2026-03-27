@@ -18,14 +18,14 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
-from capsem.builder.config import generate_defaults_json, load_guest_config
+from capsem.builder.config import load_guest_config
 from capsem.builder.models import GuestImageConfig
 
 
@@ -172,7 +172,6 @@ def _validate_pydantic(
         for err in e.errors():
             loc = ".".join(str(p) for p in err["loc"])
             msg = err["msg"]
-            err_type = err["type"]
 
             # Determine specific error code
             code = "E003"
