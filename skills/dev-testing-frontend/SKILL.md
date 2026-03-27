@@ -1,13 +1,13 @@
 ---
 name: dev-testing-frontend
-description: Testing the Capsem frontend (Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5). Use when writing frontend tests, running type checks, debugging UI issues, or doing visual verification with Chrome DevTools MCP. Covers vitest, svelte-check, astro check, mock mode, and systematic visual verification workflow.
+description: Testing the Capsem frontend (Astro 5 + Svelte 5 + Tailwind v4 + Preline). Use when writing frontend tests, running type checks, debugging UI issues, or doing visual verification with Chrome DevTools MCP. Covers vitest, svelte-check, astro check, mock mode, and systematic visual verification workflow.
 ---
 
 # Frontend Testing
 
 ## Stack
 
-Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5 + LayerChart v2.
+Astro 5 + Svelte 5 + Tailwind v4 + Preline + LayerChart v2.
 
 ## Running tests
 

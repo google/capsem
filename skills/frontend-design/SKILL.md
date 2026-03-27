@@ -10,22 +10,35 @@ description: Capsem frontend design system. Use when building UI components, sty
 - **Astro 5** -- static site generator, renders `index.astro` as a thin shell
 - **Svelte 5** -- reactive UI framework, loaded via `client:only="svelte"`
 - **Tailwind v4** -- utility-first CSS (via Vite plugin, `@source` directives in `global.css`)
-- **Preline** -- Tailwind UI component library (migrating from DaisyUI v5)
+- **Preline** -- Tailwind UI component library (27 headless plugins, 70+ component patterns, semantic token system)
 
 ## Framework references
 
-- Read `references/preline.md` for the Preline theme generator. Step-by-step docs in `references/preline-docs/`. Official htmlstream team.
+- Read `references/preline.md` for Preline UI overview and quick reference. Detailed docs in `references/preline-docs/` covering JS plugins, CSS components, variants, tokens, and framework integration.
 - Read `references/tailwind.md` for Tailwind v4 utility patterns, responsive design, and CSS-first config.
 - Read `references/svelte5.md` for Svelte 5 patterns and `@sveltejs/mcp` CLI doc lookups. Official sveltejs.
 - Read `references/astro.md` for Astro framework patterns (components, content collections, SSR). Official Astro team.
 
 ## Color scheme (firm -- do not deviate)
 
-- **Blue** (`info`) = main/positive color (allowed, running, ok states)
-- **Purple** (`secondary`) = negative color (denied, stopped, error states)
+- **Blue** = main/positive color (allowed, running, ok states). Use Preline `primary` tokens (`bg-primary`, `text-primary-foreground`, etc.)
+- **Purple** = negative color (denied, stopped, error states). Override Preline `destructive` tokens with purple, not red.
 - **No green or red anywhere in the UI** -- use blue for positive, purple for negative
 - Chart colors: blue `oklch(0.7 0.15 250)` for allowed, purple `oklch(0.65 0.15 300)` for denied
 - Terminal emulation colors (xterm #4ade80 green) are fine -- that's xterm, not UI chrome
+
+## Component patterns
+
+Use Preline's semantic token classes for all UI components. Read `references/preline.md` for the overview and load the relevant `preline-docs/` reference for details.
+
+- **Buttons**: `bg-primary text-primary-foreground hover:bg-primary-hover` (solid), `bg-layer border border-layer-line text-layer-foreground` (white), etc.
+- **Cards**: `bg-card border border-card-line rounded-xl`, headers `bg-surface border-b border-card-divider`
+- **Forms**: `border-line-2 rounded-lg bg-layer text-foreground focus:border-primary focus:ring-primary`
+- **Navigation**: `bg-navbar border-navbar-border text-navbar-nav-foreground hover:bg-navbar-nav-hover`
+- **Overlays**: `bg-overlay border-overlay-border`, `bg-dropdown text-dropdown-item-foreground`
+- **Text hierarchy**: `text-foreground` (primary), `text-muted-foreground-1` (secondary), `text-muted-foreground` (tertiary)
+
+Do NOT use raw Tailwind colors (`bg-gray-200`, `text-blue-600`) for UI chrome. Always use semantic tokens so themes work.
 
 ## Svelte 5 rune patterns
 

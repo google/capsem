@@ -45,10 +45,10 @@ Provides actionable patterns for responsive, accessible UIs with Tailwind CSS v4
   <!-- Items -->
 </div>
 
-<!-- Card component -->
-<div class="bg-white rounded-lg shadow-lg p-6">
-  <h3 class="text-xl font-bold">Title</h3>
-  <p class="text-gray-600">Description</p>
+<!-- Card (use Preline semantic tokens) -->
+<div class="bg-card border border-card-line rounded-xl shadow-2xs p-6">
+  <h3 class="text-xl font-bold text-foreground">Title</h3>
+  <p class="text-muted-foreground-1">Description</p>
 </div>
 ```
 
@@ -63,29 +63,29 @@ Provides actionable patterns for responsive, accessible UIs with Tailwind CSS v4
 
 ## Examples
 
-### Responsive Card Component
-
-```tsx
-function ProductCard({ product }: { product: Product }) {
-  return (
-    <div className="bg-white rounded-lg shadow-lg overflow-hidden sm:flex">
-      <img className="h-48 w-full object-cover sm:h-auto sm:w-48" src={product.image} />
-      <div className="p-6">
-        <h3 className="text-lg font-semibold">{product.name}</h3>
-        <button className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
-          Add to Cart
-        </button>
-      </div>
-    </div>
-  );
-}
-```
-
-### Dark Mode Toggle
+### Responsive Card (Preline tokens)
 
 ```html
-<div class="bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
-  <h1 class="dark:text-white">Title</h1>
+<div class="bg-card border border-card-line rounded-xl shadow-2xs overflow-hidden sm:flex">
+  <img class="h-48 w-full object-cover sm:h-auto sm:w-48" src="..." />
+  <div class="p-6">
+    <h3 class="text-lg font-semibold text-foreground">Title</h3>
+    <button class="mt-4 py-2 px-4 bg-primary text-primary-foreground rounded-lg hover:bg-primary-hover focus:outline-hidden focus:bg-primary-focus">
+      Action
+    </button>
+  </div>
+</div>
+```
+
+### Dark Mode
+
+Preline handles dark mode via `.dark` class on `<html>`. All semantic tokens flip automatically -- no manual `dark:` prefixes needed for token-based styles.
+
+```html
+<!-- Tokens auto-adapt to dark mode -->
+<div class="bg-background text-foreground">
+  <h1 class="text-foreground">Title</h1>
+  <p class="text-muted-foreground-1">Subtitle</p>
 </div>
 ```
 
@@ -93,7 +93,7 @@ function ProductCard({ product }: { product: Product }) {
 
 ```html
 <input
-  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+  class="py-3 px-4 block w-full border-line-2 rounded-lg text-sm focus:border-primary focus:ring-primary bg-layer text-foreground"
   placeholder="you@example.com"
 />
 ```
