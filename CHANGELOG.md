@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Integration test Gemini API key handling** -- reads Google API key from `~/.capsem/user.toml` as fallback instead of requiring env var. Removed dummy API key from test config. Promoted Gemini token/model warnings to proper pass/fail checks.
 
 ### Changed
+- **Build system documentation** -- three new site pages: build system architecture (capsem-builder pipeline, TOML configs, multi-arch), settings schema (two-node design, JSON Schema, conformance tests), and custom images (corporate deployment guide).
 - **Guest artifacts moved to `guest/artifacts/`** -- capsem-init, capsem-bashrc, diagnostics, benchmarks, and snapshots now live in `guest/artifacts/` instead of `images/`. Justfile `_pack-initrd` and builder doctor updated. Old `images/` files deprecated with headers pointing to new locations.
 - **Multi-arch diagnostics** -- `test_architecture` now accepts both `aarch64` (Apple VZ) and `x86_64` (KVM/crosvm).
 - **`just build-assets` now uses capsem-builder** -- config-driven Dockerfile generation replaces hard-coded `images/build.py`. Assets output to per-arch layout (`assets/{arch}/`).
