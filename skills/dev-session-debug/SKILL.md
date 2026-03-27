@@ -9,17 +9,33 @@ Every Capsem VM session produces a SQLite database at `~/.capsem/sessions/<id>/s
 
 ## Quick inspection
 
+### Listing sessions
+
 ```bash
-just list-sessions                # Table of recent sessions with per-table event counts
-just list-sessions -n 20          # Show more sessions
+just list-sessions                    # Recent non-vacuumed sessions
+just list-sessions -n 20              # Show more
+just list-sessions --with-model       # Only sessions with AI model calls
+just list-sessions --with-db          # Only sessions with session.db on disk
+just list-sessions --with-net         # Only sessions with network events
+just list-sessions --with-mcp         # Only sessions with MCP calls
+just list-sessions --min-cost 0.01    # Only sessions that cost money
+just list-sessions --all              # Include vacuumed sessions
+just list-sessions --all --with-model # Combine filters
+```
+
+Output columns: ID, Created (MM-DD HH:MM:SS), Duration, Cost, net events, tokens (in+out), tool calls, MCP calls, fs events. Sessions with `*` after the ID still have a `session.db` on disk (queryable).
+
+Stats come from the main.db rollup, so they're always available even after the session DB is vacuumed.
+
+### Deep inspection
+
+```bash
 just inspect-session              # Full integrity check on latest session
-just inspect-session <id>         # Specific session
+just inspect-session <id>         # Specific session (use full ID from list)
 just inspect-session -n 10        # Show 10 preview rows per table
 ```
 
-`just list-sessions` shows a compact table: session ID, status, duration, cost, and row counts for each of the 6 tables. Use this to quickly spot sessions with missing telemetry.
-
-`just inspect-session` does a deep check: table existence, row counts, tool lifecycle integrity, AI provider correlation, NULL detection in critical fields, and MCP correlation.
+Checks: table existence, row counts, tool lifecycle integrity (orphaned tool_calls), AI provider correlation (net_events vs model_calls), NULL detection in critical fields, MCP correlation.
 
 ## Session database tables (session.db)
 
@@ -187,14 +203,14 @@ Rollup happens when a session ends.
 
 ## Ad-hoc SQL queries
 
-Use `just query-session` to run SQL against the latest (or a specific) session. This avoids permission prompts that raw `sqlite3` triggers.
+Use `just query-session` to run SQL against session DBs. Auto-selects the latest non-vacuumed session with a DB on disk. Pass a session ID as second argument to target a specific session.
 
 ```bash
 # Decisions breakdown
 just query-session "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
 
 # Token totals by provider
-just query-session "SELECT provider, SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost_usd) FROM model_calls GROUP BY provider"
+just query-session "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tokens) as out_tok, SUM(estimated_cost_usd) as cost FROM model_calls GROUP BY provider"
 
 # Find orphaned tool calls
 just query-session "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
@@ -205,6 +221,8 @@ just query-session "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
 # Trace a tool call chain
 just query-session "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
 
-# Query a specific session
-just query-session "SELECT COUNT(*) FROM net_events" <session-id>
+# Query a specific session (use full ID from just list-sessions)
+just query-session "SELECT COUNT(*) FROM net_events" 20260327-154418-f907
 ```
+
+Tip: use `just list-sessions --with-db --with-model` to find sessions worth querying.
