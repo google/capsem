@@ -1,10 +1,15 @@
-"""Tests for Dockerfile generation from GuestImageConfig via Jinja2 templates.
+"""Tests for Dockerfile generation and build execution from GuestImageConfig.
 
 TDD: these tests define the expected behavior of docker.py before implementation.
+Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 """
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -396,3 +401,339 @@ class TestEdgeCases:
         a = render_dockerfile("Dockerfile.rootfs.j2", real_config, "arm64")
         b = render_dockerfile("Dockerfile.rootfs.j2", real_config, "arm64")
         assert a == b
+
+
+# ---------------------------------------------------------------------------
+# Build execution: resolve_kernel_version
+# ---------------------------------------------------------------------------
+
+
+from capsem.builder.docker import (
+    FALLBACK_KERNEL_VERSION,
+    create_squashfs,
+    detect_runtime,
+    docker_build,
+    export_container_fs,
+    extract_kernel_assets,
+    generate_checksums,
+    get_project_version,
+    is_ci,
+    prepare_build_context,
+    resolve_kernel_version,
+    run_cmd,
+)
+
+
+class TestResolveKernelVersion:
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_valid_json(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "releases": [
+                {"version": "6.6.131", "moniker": "longterm", "iseol": False},
+                {"version": "6.6.127", "moniker": "longterm", "iseol": False},
+                {"version": "6.12.5", "moniker": "stable", "iseol": False},
+            ]
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        result = resolve_kernel_version("6.6")
+        assert result == "6.6.131"
+
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_network_error_fallback(self, mock_urlopen):
+        mock_urlopen.side_effect = Exception("network error")
+        result = resolve_kernel_version("6.6")
+        assert result == FALLBACK_KERNEL_VERSION
+
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_no_matching_branch(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "releases": [
+                {"version": "6.12.5", "moniker": "stable", "iseol": False},
+            ]
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        result = resolve_kernel_version("6.6")
+        assert result == FALLBACK_KERNEL_VERSION
+
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_eol_versions_skipped(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "releases": [
+                {"version": "6.6.131", "moniker": "longterm", "iseol": True},
+                {"version": "6.6.127", "moniker": "longterm", "iseol": False},
+            ]
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        result = resolve_kernel_version("6.6")
+        assert result == "6.6.127"
+
+
+# ---------------------------------------------------------------------------
+# Build execution: detect_runtime, is_ci
+# ---------------------------------------------------------------------------
+
+
+class TestDetectRuntime:
+    @patch("capsem.builder.docker.check_container_runtime")
+    def test_podman_found(self, mock_check):
+        from capsem.builder.doctor import CheckResult
+        mock_check.return_value = CheckResult(
+            name="container-runtime", passed=True, detail="podman version 5.3.1"
+        )
+        assert detect_runtime() == "podman"
+
+    @patch("capsem.builder.docker.check_container_runtime")
+    def test_docker_found(self, mock_check):
+        from capsem.builder.doctor import CheckResult
+        mock_check.return_value = CheckResult(
+            name="container-runtime", passed=True, detail="Docker version 27.1.1"
+        )
+        assert detect_runtime() == "docker"
+
+    @patch("capsem.builder.docker.check_container_runtime")
+    def test_neither_raises(self, mock_check):
+        from capsem.builder.doctor import CheckResult
+        mock_check.return_value = CheckResult(
+            name="container-runtime", passed=False,
+            detail="not found", fix="install podman",
+        )
+        with pytest.raises(RuntimeError, match="container-runtime"):
+            detect_runtime()
+
+
+class TestIsCi:
+    @patch.dict("os.environ", {"GITHUB_ACTIONS": "true"})
+    def test_ci_true(self):
+        assert is_ci() is True
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_ci_false(self):
+        assert is_ci() is False
+
+
+# ---------------------------------------------------------------------------
+# Build execution: docker_build
+# ---------------------------------------------------------------------------
+
+
+class TestDockerBuild:
+    @patch("capsem.builder.docker.run_cmd")
+    def test_regular_build(self, mock_run):
+        docker_build(
+            runtime="podman", tag="test-image", dockerfile_path="/tmp/Dockerfile",
+            context_dir="/tmp/ctx", platform="linux/arm64",
+        )
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "podman"
+        assert "build" in cmd
+        assert "--platform" in cmd
+        assert "linux/arm64" in cmd
+        assert "-t" in cmd
+        assert "test-image" in cmd
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_ci_docker_uses_buildx(self, mock_run):
+        docker_build(
+            runtime="docker", tag="test-image", dockerfile_path="/tmp/Dockerfile",
+            context_dir="/tmp/ctx", platform="linux/arm64", ci_cache=True,
+        )
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:3] == ["docker", "buildx", "build"]
+        assert "--cache-from" in cmd
+        assert "--cache-to" in cmd
+        assert "--load" in cmd
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_podman_no_buildx(self, mock_run):
+        docker_build(
+            runtime="podman", tag="test-image", dockerfile_path="/tmp/Dockerfile",
+            context_dir="/tmp/ctx", platform="linux/arm64", ci_cache=True,
+        )
+        cmd = mock_run.call_args[0][0]
+        # Podman ignores ci_cache, uses plain build
+        assert cmd[0] == "podman"
+        assert "buildx" not in cmd
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_build_args(self, mock_run):
+        docker_build(
+            runtime="docker", tag="test", dockerfile_path="/tmp/Dockerfile",
+            context_dir="/tmp/ctx", platform="linux/arm64",
+            build_args={"KERNEL_VERSION": "6.6.131"},
+        )
+        cmd = mock_run.call_args[0][0]
+        assert "--build-arg" in cmd
+        idx = cmd.index("--build-arg")
+        assert cmd[idx + 1] == "KERNEL_VERSION=6.6.131"
+
+
+# ---------------------------------------------------------------------------
+# Build execution: extract/export
+# ---------------------------------------------------------------------------
+
+
+class TestExtractKernelAssets:
+    @patch("capsem.builder.docker.run_cmd")
+    def test_create_cp_rm_sequence(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="container123\n")
+        out = Path("/tmp/test-assets")
+        extract_kernel_assets("podman", "kernel-img", "linux/arm64", out)
+        calls = mock_run.call_args_list
+        # create, cp vmlinuz, cp initrd, rm
+        assert len(calls) == 4
+        assert "create" in calls[0][0][0]
+        assert "cp" in calls[1][0][0]
+        assert "cp" in calls[2][0][0]
+        assert "rm" in calls[3][0][0]
+
+
+class TestExportContainerFs:
+    @patch("capsem.builder.docker.run_cmd")
+    def test_create_export_rm_sequence(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="container456\n")
+        export_container_fs("docker", "rootfs-img", "linux/arm64", Path("/tmp/rootfs.tar"))
+        calls = mock_run.call_args_list
+        assert len(calls) == 3
+        assert "create" in calls[0][0][0]
+        assert "export" in calls[1][0][0]
+        assert "rm" in calls[2][0][0]
+
+
+# ---------------------------------------------------------------------------
+# Build execution: squashfs
+# ---------------------------------------------------------------------------
+
+
+class TestCreateSquashfs:
+    @patch("capsem.builder.docker.run_cmd")
+    def test_zstd_compression(self, mock_run):
+        create_squashfs(
+            "podman", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
+            "zstd", 15,
+        )
+        cmd = mock_run.call_args[0][0]
+        cmd_str = " ".join(cmd)
+        assert "mksquashfs" in cmd_str
+        assert "-comp zstd" in cmd_str
+        assert "-Xcompression-level 15" in cmd_str
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_gzip_no_level_flag(self, mock_run):
+        create_squashfs(
+            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
+            "gzip", 9,
+        )
+        cmd = mock_run.call_args[0][0]
+        cmd_str = " ".join(cmd)
+        assert "mksquashfs" in cmd_str
+        assert "-comp gzip" in cmd_str
+        # gzip doesn't support -Xcompression-level in mksquashfs
+        assert "-Xcompression-level" not in cmd_str
+
+
+# ---------------------------------------------------------------------------
+# Build execution: prepare_build_context
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareBuildContext:
+    def test_rootfs_context_has_all_files(self, real_config, tmp_path):
+        context_dir = tmp_path / "ctx"
+        context_dir.mkdir()
+        prepare_build_context(
+            real_config, "arm64", "Dockerfile.rootfs.j2",
+            context_dir, PROJECT_ROOT,
+        )
+        # Dockerfile
+        assert (context_dir / "Dockerfile").is_file()
+        # CA cert
+        assert (context_dir / "capsem-ca.crt").is_file()
+        # Shell config
+        assert (context_dir / "capsem-bashrc").is_file()
+        assert (context_dir / "banner.txt").is_file()
+        assert (context_dir / "tips.txt").is_file()
+        # Diagnostics
+        assert (context_dir / "diagnostics").is_dir()
+        assert (context_dir / "capsem-doctor").is_file()
+        assert (context_dir / "capsem-bench").is_file()
+
+    def test_kernel_context_has_defconfig_and_init(self, real_config, tmp_path):
+        context_dir = tmp_path / "ctx"
+        context_dir.mkdir()
+        prepare_build_context(
+            real_config, "arm64", "Dockerfile.kernel.j2",
+            context_dir, PROJECT_ROOT, kernel_version="6.6.127",
+        )
+        assert (context_dir / "Dockerfile").is_file()
+        assert (context_dir / "kernel" / "defconfig.arm64").is_file()
+        assert (context_dir / "capsem-init").is_file()
+
+    def test_rootfs_dockerfile_content(self, real_config, tmp_path):
+        context_dir = tmp_path / "ctx"
+        context_dir.mkdir()
+        prepare_build_context(
+            real_config, "arm64", "Dockerfile.rootfs.j2",
+            context_dir, PROJECT_ROOT,
+        )
+        content = (context_dir / "Dockerfile").read_text()
+        assert "FROM --platform=linux/arm64" in content
+
+    def test_kernel_dockerfile_has_version(self, real_config, tmp_path):
+        context_dir = tmp_path / "ctx"
+        context_dir.mkdir()
+        prepare_build_context(
+            real_config, "arm64", "Dockerfile.kernel.j2",
+            context_dir, PROJECT_ROOT, kernel_version="6.6.131",
+        )
+        content = (context_dir / "Dockerfile").read_text()
+        assert "6.6.131" in content
+
+
+# ---------------------------------------------------------------------------
+# Build execution: get_project_version
+# ---------------------------------------------------------------------------
+
+
+class TestGetProjectVersion:
+    def test_reads_real_cargo_toml(self):
+        version = get_project_version(PROJECT_ROOT)
+        assert re.match(r"\d+\.\d+\.\d+", version)
+
+    def test_missing_cargo_toml_raises(self, tmp_path):
+        with pytest.raises(RuntimeError):
+            get_project_version(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Build execution: generate_checksums
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateChecksums:
+    @patch("capsem.builder.docker.run_cmd")
+    def test_b3sum_and_manifest(self, mock_run, tmp_path):
+        # Create fake arch dirs with files
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
+        mock_run.return_value = MagicMock(
+            stdout="abc123  arm64/vmlinuz\ndef456  arm64/initrd.img\nghi789  arm64/rootfs.squashfs\n"
+        )
+        generate_checksums(tmp_path, "0.13.0")
+        # b3sum was called
+        assert mock_run.called
+        # manifest.json was written
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        assert manifest["latest"] == "0.13.0"
+        assert "0.13.0" in manifest["releases"]

@@ -29,8 +29,8 @@
     "targets": ["app", "dmg"],
     "createUpdaterArtifacts": true,
     "resources": {
-      "../../assets/vmlinuz": "vmlinuz",
-      "../../assets/initrd.img": "initrd.img",
+      "../../assets/arm64/vmlinuz": "vmlinuz",
+      "../../assets/arm64/initrd.img": "initrd.img",
       "../../assets/manifest.json": "manifest.json"
     },
     "macOS": {

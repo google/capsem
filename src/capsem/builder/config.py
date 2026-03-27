@@ -14,6 +14,7 @@ from capsem.builder.models import (
     AiProviderConfig,
     BuildConfig,
     GuestImageConfig,
+    ImageManifestConfig,
     McpServerConfig,
     PackageSetConfig,
     VmEnvironmentConfig,
@@ -32,6 +33,14 @@ def parse_toml(path: Path) -> dict:
 def _load_build(config_dir: Path) -> BuildConfig:
     data = parse_toml(config_dir / "build.toml")
     return BuildConfig.model_validate(data["build"])
+
+
+def _load_manifest(config_dir: Path) -> ImageManifestConfig | None:
+    manifest_path = config_dir / "manifest.toml"
+    if not manifest_path.is_file():
+        return None
+    data = parse_toml(manifest_path)
+    return ImageManifestConfig.model_validate(data["image"])
 
 
 def _load_ai_providers(config_dir: Path) -> dict[str, AiProviderConfig]:
@@ -107,6 +116,7 @@ def load_guest_config(guest_dir: Path) -> GuestImageConfig:
     config_dir = guest_dir / "config"
     return GuestImageConfig(
         build=_load_build(config_dir),
+        manifest=_load_manifest(config_dir),
         ai_providers=_load_ai_providers(config_dir),
         package_sets=_load_package_sets(config_dir),
         mcp_servers=_load_mcp_servers(config_dir),

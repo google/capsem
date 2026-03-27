@@ -17,7 +17,22 @@ fn main() {
         if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&content) {
             let version = env!("CARGO_PKG_VERSION");
             if let Some(release) = manifest.get("releases").and_then(|r| r.get(version)) {
-                if let Some(assets) = release.get("assets").and_then(|a| a.as_array()) {
+                // Determine target architecture for per-arch manifest lookup.
+                let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+                let arch_key = match target_arch.as_str() {
+                    "aarch64" => "arm64",
+                    "x86_64" => "x86_64",
+                    _ => "arm64",
+                };
+
+                // Try per-arch format first: releases -> version -> arch -> assets
+                let assets_value = release
+                    .get(arch_key)
+                    .and_then(|a| a.get("assets"))
+                    // Fall back to flat format: releases -> version -> assets
+                    .or_else(|| release.get("assets"));
+
+                if let Some(assets) = assets_value.and_then(|a| a.as_array()) {
                     for asset in assets {
                         let filename = asset.get("filename").and_then(|f| f.as_str()).unwrap_or("");
                         let hash = asset.get("hash").and_then(|h| h.as_str()).unwrap_or("");

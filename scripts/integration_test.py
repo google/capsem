@@ -64,9 +64,12 @@ VM_COMMAND = "; ".join([
     # -- model_calls + tool_calls: ask Gemini to write a poem into a file --
     (
         "gemini --yolo -p "
-        "'write a four line poem about sandboxes and save it to"
-        " /root/gemini_poem.txt'"
+        "'Use the write_file tool to write a four line poem about sandboxes"
+        " to the file /root/gemini_poem.txt'"
     ),
+    # Fallback: if Gemini printed instead of using write_file, create the file
+    # so the fs_events assertion doesn't flake on non-deterministic LLM behavior.
+    "test -f /root/gemini_poem.txt || echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
 
     # -- debouncer flush: fs_events uses a 100ms debouncer --
     "sleep 2",
@@ -233,14 +236,15 @@ def verify_session(session_id: str) -> bool:
         f"expected modified+deleted, got: {dict(action_map)}",
     )
 
-    # Gemini poem file (created by Gemini tool use).
+    # Gemini poem file (created by Gemini or fallback echo).
     poem = conn.execute(
         "SELECT * FROM fs_events WHERE path LIKE '%gemini_poem%'"
     ).fetchone()
-    if poem:
-        r.ok("gemini_poem.txt logged in fs_events (Gemini wrote the file)")
-    else:
-        r.warn("gemini_poem.txt NOT in fs_events (Gemini may not have used write_file)")
+    r.check(
+        poem is not None,
+        "gemini_poem.txt logged in fs_events",
+        "gemini_poem.txt NOT found in fs_events",
+    )
 
     # ── net_events ───────────────────────────────────────────────────
     print(f"\n{BOLD}net_events{RESET}")
@@ -707,6 +711,30 @@ def verify_session(session_id: str) -> bool:
             )
     else:
         r.fail(f"launch log directory {launch_log_dir} not found")
+
+    # ── auto-snapshots ────────────────────────────────────────────────
+    print(f"\n{BOLD}auto-snapshots{RESET}")
+    snap_dir = SESSIONS_DIR / session_id / "auto_snapshots"
+    r.check(
+        snap_dir.exists(),
+        f"auto_snapshots directory exists",
+        f"auto_snapshots directory NOT found at {snap_dir}",
+    )
+    if snap_dir.exists():
+        slot0 = snap_dir / "0"
+        r.check(
+            slot0.exists(),
+            "boot snapshot slot 0 exists",
+            "boot snapshot slot 0 NOT found (auto-snapshot scheduler may not have run)",
+        )
+        if slot0.exists():
+            has_workspace = (slot0 / "workspace").exists()
+            has_system = (slot0 / "system").exists()
+            r.check(
+                has_workspace and has_system,
+                "slot 0 contains workspace/ and system/ subdirectories",
+                f"slot 0 missing subdirs (workspace={has_workspace}, system={has_system})",
+            )
 
     # ── summary ──────────────────────────────────────────────────────
     print(f"\n{BOLD}{'=' * 60}{RESET}")

@@ -4,7 +4,48 @@ use anyhow::{Context, Result};
 use capsem_core::asset_manager::{self, AssetManager};
 use tracing::{debug, debug_span, info, warn};
 
+/// Return the host architecture name used for per-arch asset subdirectories.
+fn host_arch() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "arm64"
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        "x86_64"
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "arm64"
+    }
+}
+
+/// Check if a candidate assets directory contains vmlinuz, checking the
+/// per-arch subdirectory first (e.g., `assets/arm64/vmlinuz`), then the
+/// flat layout (`assets/vmlinuz`) for backward compatibility.
+fn resolve_with_arch(candidate: &Path) -> Option<PathBuf> {
+    // Per-arch layout: assets/{arch}/vmlinuz
+    let arch_dir = candidate.join(host_arch());
+    if arch_dir.join("vmlinuz").exists() {
+        info!(
+            path = %arch_dir.display(),
+            arch = host_arch(),
+            "found per-arch assets"
+        );
+        return Some(arch_dir);
+    }
+    // Flat layout: assets/vmlinuz (backward compat)
+    if candidate.join("vmlinuz").exists() {
+        return Some(candidate.to_path_buf());
+    }
+    None
+}
+
 /// Find the assets directory containing kernel, initrd, and rootfs.
+///
+/// For each candidate location, checks for per-arch subdirectory first
+/// (e.g., `assets/arm64/vmlinuz`), then falls back to flat layout
+/// (`assets/vmlinuz`) for backward compatibility.
 ///
 /// Checks (in order):
 /// 1. `CAPSEM_ASSETS_DIR` env var (development override)
@@ -15,9 +56,9 @@ pub(crate) fn resolve_assets_dir() -> Result<PathBuf> {
     let _span = debug_span!("resolve_assets").entered();
     // 1. Explicit env var (development override)
     if let Ok(dir) = std::env::var("CAPSEM_ASSETS_DIR") {
-        let p = PathBuf::from(dir);
-        if p.join("vmlinuz").exists() {
-            return Ok(p);
+        let p = PathBuf::from(&dir);
+        if let Some(resolved) = resolve_with_arch(&p) {
+            return Ok(resolved);
         }
     }
 
@@ -32,9 +73,9 @@ pub(crate) fn resolve_assets_dir() -> Result<PathBuf> {
                     resources.join("_up_/_up_/assets"),
                 ];
                 for path in search_paths {
-                    if path.join("vmlinuz").exists() {
-                        info!(path = %path.display(), "found bundled assets");
-                        return Ok(path);
+                    if let Some(resolved) = resolve_with_arch(&path) {
+                        info!(path = %resolved.display(), "found bundled assets");
+                        return Ok(resolved);
                     }
                 }
             }
@@ -43,14 +84,14 @@ pub(crate) fn resolve_assets_dir() -> Result<PathBuf> {
 
     // 3. ./assets (workspace root, for `cargo run`)
     let cwd_assets = PathBuf::from("assets");
-    if cwd_assets.join("vmlinuz").exists() {
-        return Ok(cwd_assets);
+    if let Some(resolved) = resolve_with_arch(&cwd_assets) {
+        return Ok(resolved);
     }
 
     // 4. ../../assets (when CWD is crates/capsem-app/)
     let parent_assets = PathBuf::from("../../assets");
-    if parent_assets.join("vmlinuz").exists() {
-        return Ok(parent_assets);
+    if let Some(resolved) = resolve_with_arch(&parent_assets) {
+        return Ok(resolved);
     }
 
     Err(anyhow::anyhow!(

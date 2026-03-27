@@ -1,12 +1,20 @@
 """Scaffolding for guest image configurations.
 
 Creates directory structures and template TOML files for new guest images,
-AI providers, package sets, and MCP servers.
+AI providers, package sets, and MCP servers. The `new_image` function creates
+a new image directory by selecting components from a base config.
 """
 
 from __future__ import annotations
 
+import shutil
+from datetime import date
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +241,223 @@ def add_mcp_server(
         content = _MCP_STDIO_TOML.format(name=name, display_name=display_name)
     path.write_text(content)
     return path
+
+
+# ---------------------------------------------------------------------------
+# Scan base config
+# ---------------------------------------------------------------------------
+
+
+def _parse_toml_safe(path: Path) -> dict:
+    """Parse a TOML file, returning empty dict on error."""
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
+
+def scan_base_config(base_dir: Path) -> dict:
+    """Scan a base config directory and return available components.
+
+    Returns dict with keys: providers, packages, mcp, has_security, has_vm.
+    Each component dict maps key -> display description.
+    """
+    config_dir = base_dir / "config"
+    result: dict = {
+        "providers": {},
+        "packages": {},
+        "mcp": {},
+        "has_security": False,
+        "has_vm": False,
+    }
+
+    # AI providers
+    ai_dir = config_dir / "ai"
+    if ai_dir.is_dir():
+        for path in sorted(ai_dir.glob("*.toml")):
+            data = _parse_toml_safe(path)
+            key = path.stem
+            for section in data.values():
+                if isinstance(section, dict) and "name" in section:
+                    desc = section.get("description", section["name"])
+                    result["providers"][key] = f"{section['name']} -- {desc}"
+                    break
+
+    # Package sets
+    pkg_dir = config_dir / "packages"
+    if pkg_dir.is_dir():
+        for path in sorted(pkg_dir.glob("*.toml")):
+            data = _parse_toml_safe(path)
+            key = path.stem
+            for section in data.values():
+                if isinstance(section, dict) and "name" in section:
+                    pkgs = section.get("packages", [])
+                    count = len(pkgs)
+                    result["packages"][key] = (
+                        f"{section['name']} ({count} package{'s' if count != 1 else ''})"
+                    )
+                    break
+
+    # MCP servers
+    mcp_dir = config_dir / "mcp"
+    if mcp_dir.is_dir():
+        for path in sorted(mcp_dir.glob("*.toml")):
+            data = _parse_toml_safe(path)
+            key = path.stem
+            for section in data.values():
+                if isinstance(section, dict) and "name" in section:
+                    desc = section.get("description", section["name"])
+                    result["mcp"][key] = desc
+                    break
+
+    # Security and VM
+    result["has_security"] = (config_dir / "security" / "web.toml").is_file()
+    result["has_vm"] = (config_dir / "vm").is_dir() and any(
+        (config_dir / "vm").glob("*.toml")
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Create new image from base
+# ---------------------------------------------------------------------------
+
+
+_MANIFEST_TOML = """\
+[image]
+name = "{name}"
+version = "{version}"
+description = "{description}"
+
+[[image.changelog]]
+version = "{version}"
+date = "{today}"
+changes = ["Initial image created from {base_name}"]
+"""
+
+
+def new_image(
+    target: Path,
+    base_dir: Path,
+    *,
+    name: str | None = None,
+    version: str = "0.1.0",
+    description: str = "",
+    include_providers: list[str] | None = None,
+    include_packages: list[str] | None = None,
+    include_mcp: list[str] | None = None,
+    include_security: bool = True,
+    include_vm: bool = True,
+    force: bool = False,
+) -> Path:
+    """Create a new image directory by selecting components from a base config.
+
+    Args:
+        target: Directory to create (e.g., ./corp-image).
+        base_dir: Base config to copy from (e.g., ./guest).
+        name: Image name (defaults to target directory name).
+        version: Image version.
+        description: One-line description.
+        include_providers: Provider keys to include (None = all).
+        include_packages: Package set keys to include (None = all).
+        include_mcp: MCP server keys to include (None = all).
+        include_security: Copy security/ config.
+        include_vm: Copy vm/ config.
+        force: Overwrite existing config dir.
+
+    Returns:
+        Path to the created config directory.
+    """
+    config_dir = target / "config"
+    if config_dir.exists() and not force:
+        raise FileExistsError(f"{config_dir} already exists (use --force to overwrite)")
+
+    base_config = base_dir / "config"
+    if name is None:
+        name = target.name
+
+    # Create target config dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    # Always copy build.toml
+    shutil.copy2(str(base_config / "build.toml"), str(config_dir / "build.toml"))
+
+    # Always copy kernel defconfigs
+    kernel_src = base_config / "kernel"
+    if kernel_src.is_dir():
+        kernel_dst = config_dir / "kernel"
+        kernel_dst.mkdir(exist_ok=True)
+        for f in kernel_src.glob("defconfig.*"):
+            shutil.copy2(str(f), str(kernel_dst / f.name))
+
+    # AI providers
+    ai_src = base_config / "ai"
+    if ai_src.is_dir():
+        available = [p.stem for p in sorted(ai_src.glob("*.toml"))]
+        selected = available if include_providers is None else include_providers
+        if selected:
+            ai_dst = config_dir / "ai"
+            ai_dst.mkdir(exist_ok=True)
+            for key in selected:
+                src = ai_src / f"{key}.toml"
+                if src.is_file():
+                    shutil.copy2(str(src), str(ai_dst / f"{key}.toml"))
+
+    # Package sets
+    pkg_src = base_config / "packages"
+    if pkg_src.is_dir():
+        available = [p.stem for p in sorted(pkg_src.glob("*.toml"))]
+        selected = available if include_packages is None else include_packages
+        if selected:
+            pkg_dst = config_dir / "packages"
+            pkg_dst.mkdir(exist_ok=True)
+            for key in selected:
+                src = pkg_src / f"{key}.toml"
+                if src.is_file():
+                    shutil.copy2(str(src), str(pkg_dst / f"{key}.toml"))
+
+    # MCP servers
+    mcp_src = base_config / "mcp"
+    if mcp_src.is_dir():
+        available = [p.stem for p in sorted(mcp_src.glob("*.toml"))]
+        selected = available if include_mcp is None else include_mcp
+        if selected:
+            mcp_dst = config_dir / "mcp"
+            mcp_dst.mkdir(exist_ok=True)
+            for key in selected:
+                src = mcp_src / f"{key}.toml"
+                if src.is_file():
+                    shutil.copy2(str(src), str(mcp_dst / f"{key}.toml"))
+
+    # Security
+    if include_security:
+        sec_src = base_config / "security"
+        if sec_src.is_dir():
+            sec_dst = config_dir / "security"
+            sec_dst.mkdir(exist_ok=True)
+            for f in sec_src.glob("*.toml"):
+                shutil.copy2(str(f), str(sec_dst / f.name))
+
+    # VM config
+    if include_vm:
+        vm_src = base_config / "vm"
+        if vm_src.is_dir():
+            vm_dst = config_dir / "vm"
+            vm_dst.mkdir(exist_ok=True)
+            for f in vm_src.glob("*.toml"):
+                shutil.copy2(str(f), str(vm_dst / f.name))
+
+    # Generate manifest.toml
+    base_name = base_dir.name
+    manifest_content = _MANIFEST_TOML.format(
+        name=name,
+        version=version,
+        description=description,
+        today=date.today().isoformat(),
+        base_name=base_name,
+    )
+    (config_dir / "manifest.toml").write_text(manifest_content)
+
+    return config_dir

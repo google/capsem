@@ -797,3 +797,316 @@ class TestEdgeCases:
         runner = CliRunner()
         result = runner.invoke(cli, ["add", "ai-provider", "test", "--dir", str(tmp_path / "nope")])
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# doctor command
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorCommand:
+    """Tests for the doctor command."""
+
+    def test_doctor_runs(self):
+        """Doctor command runs and produces output."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["doctor", "guest/"])
+        # May pass or fail depending on environment, but should not crash
+        assert "capsem-builder doctor" in result.output
+        assert "passed" in result.output
+
+    def test_doctor_nonexistent_dir(self, tmp_path):
+        """Doctor with nonexistent guest dir shows config failure."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["doctor", str(tmp_path / "nope")])
+        assert "FAIL" in result.output
+
+
+# ---------------------------------------------------------------------------
+# build command: new flags
+# ---------------------------------------------------------------------------
+
+
+class TestBuildNewFlags:
+    """Tests for --output and --kernel-version flags."""
+
+    def test_output_flag_accepted(self, tmp_path):
+        """--output is a valid option on build command."""
+        guest = _write_minimal_guest(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "build", str(guest), "--dry-run", "--output", str(tmp_path / "out"),
+        ])
+        assert result.exit_code == 0
+
+    def test_kernel_version_flag_accepted(self, tmp_path):
+        """--kernel-version is a valid option on build command."""
+        guest = _write_minimal_guest(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "build", str(guest), "--dry-run", "--kernel-version", "6.6.131",
+        ])
+        assert result.exit_code == 0
+
+    def test_build_no_runtime_shows_fix(self, tmp_path):
+        """Without docker/podman, build should show fix guidance."""
+        from unittest.mock import patch
+
+        from capsem.builder.doctor import CheckResult
+
+        guest = _write_minimal_guest(tmp_path)
+        runner = CliRunner()
+        with patch("capsem.builder.docker.check_container_runtime") as mock:
+            mock.return_value = CheckResult(
+                name="container-runtime", passed=False,
+                detail="not found", fix="brew install podman",
+            )
+            result = runner.invoke(cli, ["build", str(guest)])
+        assert result.exit_code != 0
+        assert "container-runtime" in result.output or "podman" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Corporate image test
+# ---------------------------------------------------------------------------
+
+
+class TestCorporateImage:
+    """Prove that a customized guest config produces a different image."""
+
+    def _write_corp_config(self, guest_dir: Path) -> None:
+        """Create a corporate image config with internal LLM + custom packages."""
+        config = guest_dir / "config"
+        config.mkdir(parents=True)
+        (config / "build.toml").write_text(MINIMAL_BUILD_TOML)
+
+        ai_dir = config / "ai"
+        ai_dir.mkdir()
+        (ai_dir / "internal-llm.toml").write_text("""\
+[internal-llm]
+name = "Internal LLM"
+description = "Corporate LLM endpoint"
+enabled = true
+
+[internal-llm.api_key]
+name = "Internal API Key"
+env_vars = ["INTERNAL_LLM_KEY"]
+prefix = "ik_"
+docs_url = "https://internal.corp.com/docs"
+
+[internal-llm.network]
+domains = ["llm.internal.corp.com"]
+allow_get = true
+allow_post = true
+
+[internal-llm.install]
+manager = "npm"
+prefix = "/opt/ai-clis"
+packages = ["@corp/internal-llm-cli"]
+""")
+
+        pkg_dir = config / "packages"
+        pkg_dir.mkdir()
+        (pkg_dir / "apt.toml").write_text("""\
+[apt]
+name = "System Packages"
+manager = "apt"
+install_cmd = "apt-get install -y --no-install-recommends"
+packages = ["curl", "git", "vim-tiny"]
+""")
+        (pkg_dir / "python.toml").write_text("""\
+[python]
+name = "Data Science"
+manager = "uv"
+install_cmd = "uv pip install --system --break-system-packages"
+packages = ["numpy", "pandas", "internal-lib==1.2.3"]
+""")
+        # Kernel defconfig (required by validator E300)
+        kernel_dir = config / "kernel"
+        kernel_dir.mkdir()
+        (kernel_dir / "defconfig.arm64").write_text("# stub kernel config\n")
+
+    def test_validate_passes(self, tmp_path):
+        """Corporate config validates without errors."""
+        guest = tmp_path / "corp"
+        self._write_corp_config(guest)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["validate", str(guest)])
+        assert result.exit_code == 0
+
+    def test_inspect_shows_custom_provider(self, tmp_path):
+        """Inspect shows the corporate provider, not defaults."""
+        guest = tmp_path / "corp"
+        self._write_corp_config(guest)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["inspect", str(guest)])
+        assert result.exit_code == 0
+        assert "Internal LLM" in result.output
+        assert "llm.internal.corp.com" in result.output
+
+    def test_dry_run_has_custom_npm_package(self, tmp_path):
+        """Rendered Dockerfile contains the corporate npm package."""
+        guest = tmp_path / "corp"
+        self._write_corp_config(guest)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["build", str(guest), "--dry-run"])
+        assert result.exit_code == 0
+        assert "@corp/internal-llm-cli" in result.output
+
+    def test_dry_run_has_custom_python_packages(self, tmp_path):
+        """Rendered Dockerfile contains corporate Python packages."""
+        guest = tmp_path / "corp"
+        self._write_corp_config(guest)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["build", str(guest), "--dry-run"])
+        assert result.exit_code == 0
+        assert "numpy" in result.output
+        assert "pandas" in result.output
+        assert "internal-lib==1.2.3" in result.output
+
+    def test_no_default_providers(self, tmp_path):
+        """Corporate config without default providers doesn't install them."""
+        guest = tmp_path / "corp"
+        self._write_corp_config(guest)
+
+        from capsem.builder.config import load_guest_config
+        from capsem.builder.docker import render_dockerfile
+
+        config = load_guest_config(guest)
+        dockerfile = render_dockerfile("Dockerfile.rootfs.j2", config, "arm64")
+        # Extract only the npm install RUN line (not template comments)
+        npm_lines = [
+            ln for ln in dockerfile.split("\n")
+            if "npm install -g" in ln or ln.strip().startswith("@")
+        ]
+        npm_block = "\n".join(npm_lines)
+        # Default providers should NOT be in the npm install block
+        assert "@anthropic-ai/claude-code" not in npm_block
+        assert "@openai/codex" not in npm_block
+        # But custom provider should be
+        assert "@corp/internal-llm-cli" in npm_block
+
+    def test_differs_from_default(self, tmp_path):
+        """Corporate Dockerfile differs from the default guest/ config."""
+        from capsem.builder.config import load_guest_config
+        from capsem.builder.docker import render_dockerfile
+
+        guest = tmp_path / "corp"
+        self._write_corp_config(guest)
+        corp_config = load_guest_config(guest)
+        corp_df = render_dockerfile("Dockerfile.rootfs.j2", corp_config, "arm64")
+
+        default_config = load_guest_config(PROJECT_ROOT / "guest")
+        default_df = render_dockerfile("Dockerfile.rootfs.j2", default_config, "arm64")
+
+        assert corp_df != default_df
+        assert "@corp/internal-llm-cli" in corp_df
+        assert "@corp/internal-llm-cli" not in default_df
+
+
+# ---------------------------------------------------------------------------
+# new command
+# ---------------------------------------------------------------------------
+
+
+class TestNewCommand:
+    """Tests for the new command (non-interactive mode via CliRunner)."""
+
+    def test_non_interactive_creates_config(self, tmp_path):
+        target = tmp_path / "my-image"
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "new", str(target),
+            "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        assert result.exit_code == 0
+        assert (target / "config" / "manifest.toml").is_file()
+        assert (target / "config" / "build.toml").is_file()
+
+    def test_non_interactive_copies_all_providers(self, tmp_path):
+        target = tmp_path / "my-image"
+        runner = CliRunner()
+        runner.invoke(cli, [
+            "new", str(target),
+            "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        ai = target / "config" / "ai"
+        assert (ai / "anthropic.toml").is_file()
+        assert (ai / "google.toml").is_file()
+        assert (ai / "openai.toml").is_file()
+
+    def test_non_interactive_loadable(self, tmp_path):
+        """Created image can be loaded and inspected."""
+        from capsem.builder.config import load_guest_config
+
+        target = tmp_path / "test-img"
+        runner = CliRunner()
+        runner.invoke(cli, [
+            "new", str(target),
+            "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        config = load_guest_config(target)
+        assert config.manifest is not None
+        assert config.manifest.name == "test-img"
+        assert "anthropic" in config.ai_providers
+
+    def test_non_interactive_validates(self, tmp_path):
+        """Created image passes validation."""
+        target = tmp_path / "val-img"
+        runner = CliRunner()
+        runner.invoke(cli, [
+            "new", str(target),
+            "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        result = runner.invoke(cli, ["validate", str(target)])
+        assert result.exit_code == 0
+
+    def test_non_interactive_dry_run_works(self, tmp_path):
+        """Created image can produce a Dockerfile via --dry-run."""
+        target = tmp_path / "dr-img"
+        runner = CliRunner()
+        runner.invoke(cli, [
+            "new", str(target),
+            "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        result = runner.invoke(cli, ["build", str(target), "--dry-run"])
+        assert result.exit_code == 0
+        assert "FROM" in result.output
+
+    def test_force_overwrites(self, tmp_path):
+        target = tmp_path / "ow-img"
+        runner = CliRunner()
+        runner.invoke(cli, [
+            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        # Without force -> fails
+        result = runner.invoke(cli, [
+            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        assert result.exit_code != 0
+        # With force -> succeeds
+        result = runner.invoke(cli, [
+            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive", "--force",
+        ])
+        assert result.exit_code == 0
+
+    def test_inspect_shows_manifest(self, tmp_path):
+        """inspect command shows image name and version."""
+        target = tmp_path / "ins-img"
+        runner = CliRunner()
+        runner.invoke(cli, [
+            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
+            "--non-interactive",
+        ])
+        result = runner.invoke(cli, ["inspect", str(target)])
+        assert result.exit_code == 0
+        assert "ins-img" in result.output
+        assert "v0.1.0" in result.output

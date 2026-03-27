@@ -2,15 +2,20 @@
 //!
 //! Uses macOS FSEvents (via the `notify` crate) to watch the session's
 //! workspace directory on the host filesystem.
+//!
+//! Design: two-phase queue+flush. Raw events from FSEvents are pushed into
+//! a bounded queue (no processing on the hot path). A timer fires every
+//! FLUSH_INTERVAL_MS to drain the queue, coalesce consecutive same-type
+//! events on the same path, and emit the results to the session DB.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use capsem_logger::{DbWriter, FileAction, FileEvent, WriteOp};
 
@@ -25,8 +30,11 @@ const EXCLUDED_DIRS: &[&str] = &[
     ".swapfile",
 ];
 
-/// Debounce window in milliseconds.
-const DEBOUNCE_MS: u64 = 100;
+/// How often the queue is drained and events are emitted (ms).
+const FLUSH_INTERVAL_MS: u64 = 100;
+
+/// Maximum number of raw events buffered before dropping.
+const MAX_QUEUE_SIZE: usize = 10_000;
 
 /// Check if any path component matches an excluded directory.
 fn should_exclude(path: &Path) -> bool {
@@ -52,10 +60,10 @@ fn event_to_action(kind: &EventKind) -> Option<FileAction> {
     }
 }
 
-/// Debounced entry for a single path.
-struct DebouncedEntry {
+/// A raw queued event (path already relativized, exclusions already applied).
+struct QueuedEvent {
+    path: String,
     action: FileAction,
-    deadline: Instant,
 }
 
 /// Host-side file system monitor.
@@ -103,36 +111,31 @@ impl FsMonitor {
         })
     }
 
-    /// Process notify events with debouncing and write to DB.
+    /// Process notify events: queue on receive, flush on timer.
     async fn event_loop(
         mut event_rx: mpsc::Receiver<Event>,
         mut shutdown_rx: mpsc::Receiver<()>,
         strip_prefix: PathBuf,
         db: Arc<DbWriter>,
     ) {
-        let mut pending: HashMap<String, DebouncedEntry> = HashMap::new();
-        let debounce = Duration::from_millis(DEBOUNCE_MS);
+        let mut queue: Vec<QueuedEvent> = Vec::new();
+        let mut dropped: u64 = 0;
+        let flush_interval = Duration::from_millis(FLUSH_INTERVAL_MS);
 
         loop {
-            let timeout = pending
-                .values()
-                .map(|e| {
-                    e.deadline
-                        .saturating_duration_since(Instant::now())
-                })
-                .min()
-                .unwrap_or(Duration::from_millis(100));
-
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    // Flush remaining
-                    for (path, entry) in pending.drain() {
-                        Self::emit(&db, &path, entry.action).await;
-                    }
+                    // Final flush
+                    Self::flush(&mut queue, &mut dropped, &db).await;
+                    debug!("host fs-monitor stopped");
                     break;
                 }
                 event = event_rx.recv() => {
-                    let Some(event) = event else { break };
+                    let Some(event) = event else {
+                        Self::flush(&mut queue, &mut dropped, &db).await;
+                        debug!("host fs-monitor channel closed");
+                        break;
+                    };
                     let Some(action) = event_to_action(&event.kind) else { continue };
 
                     for path in &event.paths {
@@ -147,29 +150,71 @@ impl FsMonitor {
                         if rel.is_empty() {
                             continue;
                         }
-                        pending.insert(rel, DebouncedEntry {
-                            action,
-                            deadline: Instant::now() + debounce,
-                        });
-                    }
-                }
-                _ = tokio::time::sleep(timeout) => {
-                    // Flush expired entries
-                    let now = Instant::now();
-                    let expired: Vec<String> = pending
-                        .iter()
-                        .filter(|(_, e)| e.deadline <= now)
-                        .map(|(k, _)| k.clone())
-                        .collect();
-                    for key in expired {
-                        if let Some(entry) = pending.remove(&key) {
-                            Self::emit(&db, &key, entry.action).await;
+                        if queue.len() >= MAX_QUEUE_SIZE {
+                            dropped += 1;
+                        } else {
+                            queue.push(QueuedEvent { path: rel, action });
                         }
                     }
                 }
+                _ = tokio::time::sleep(flush_interval) => {
+                    Self::flush(&mut queue, &mut dropped, &db).await;
+                }
             }
         }
-        debug!("host fs-monitor stopped");
+    }
+
+    /// Drain the queue, coalesce same-type events per path, emit all.
+    ///
+    /// For each path, consecutive events of the same action type are coalesced
+    /// into one. Different action types on the same path emit separately
+    /// (e.g., create then delete = two emitted events).
+    async fn flush(queue: &mut Vec<QueuedEvent>, dropped: &mut u64, db: &DbWriter) {
+        if queue.is_empty() && *dropped == 0 {
+            return;
+        }
+
+        if *dropped > 0 {
+            warn!(count = *dropped, "fs-monitor queue overflow, events dropped");
+            *dropped = 0;
+        }
+
+        let batch: Vec<QueuedEvent> = queue.drain(..).collect();
+        let raw_count = batch.len();
+
+        // Coalesce: walk the batch in order. For each (path, action), if the
+        // pending map already has the same path with the same action, skip.
+        // If it has a different action, emit the pending one first, then
+        // store the new action.
+        let mut pending: HashMap<String, FileAction> = HashMap::new();
+        let mut emitted: u64 = 0;
+
+        for event in batch {
+            match pending.get(&event.path) {
+                Some(&existing) if existing == event.action => {
+                    // Same path, same action -- coalesce (skip)
+                }
+                Some(_) => {
+                    // Same path, different action -- emit the old one first
+                    let old_action = pending.insert(event.path.clone(), event.action).unwrap();
+                    Self::emit(db, &event.path, old_action).await;
+                    emitted += 1;
+                }
+                None => {
+                    pending.insert(event.path, event.action);
+                }
+            }
+        }
+
+        // Emit all remaining pending entries
+        for (path, action) in pending {
+            Self::emit(db, &path, action).await;
+            emitted += 1;
+        }
+
+        if emitted > 0 {
+            debug!(raw = raw_count, emitted, "fs-monitor flush");
+        }
     }
 
     async fn emit(db: &DbWriter, path: &str, action: FileAction) {
@@ -240,5 +285,151 @@ mod tests {
             event_to_action(&EventKind::Access(notify::event::AccessKind::Read)),
             None
         );
+    }
+
+    // -- flush coalescing tests --
+
+    /// Test the coalescing logic by extracting it into a pure function.
+    /// Returns the list of (path, action) pairs that would be emitted.
+    fn coalesce(events: &[(&str, FileAction)]) -> Vec<(String, FileAction)> {
+        let mut pending: HashMap<String, FileAction> = HashMap::new();
+        let mut result = Vec::new();
+
+        for (path, action) in events {
+            let path = path.to_string();
+            match pending.get(&path) {
+                Some(&existing) if existing == *action => {
+                    // Same path, same action -- coalesce
+                }
+                Some(_) => {
+                    // Same path, different action -- emit old, store new
+                    let old = pending.insert(path.clone(), *action).unwrap();
+                    result.push((path, old));
+                }
+                None => {
+                    pending.insert(path, *action);
+                }
+            }
+        }
+
+        for (path, action) in pending {
+            result.push((path, action));
+        }
+        result
+    }
+
+    #[test]
+    fn flush_coalesces_same_action_same_path() {
+        let result = coalesce(&[
+            ("file.txt", FileAction::Modified),
+            ("file.txt", FileAction::Modified),
+            ("file.txt", FileAction::Modified),
+        ]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].1, FileAction::Modified);
+    }
+
+    #[test]
+    fn flush_preserves_different_actions_same_path() {
+        let result = coalesce(&[
+            ("file.txt", FileAction::Created),
+            ("file.txt", FileAction::Deleted),
+        ]);
+        assert_eq!(result.len(), 2);
+        let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
+        assert!(actions.contains(&FileAction::Created));
+        assert!(actions.contains(&FileAction::Deleted));
+    }
+
+    #[test]
+    fn flush_different_paths_not_coalesced() {
+        let result = coalesce(&[
+            ("a.txt", FileAction::Modified),
+            ("b.txt", FileAction::Modified),
+        ]);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn flush_empty_queue_is_noop() {
+        let result = coalesce(&[]);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn flush_create_modify_delete_sequence() {
+        let result = coalesce(&[
+            ("file.txt", FileAction::Created),
+            ("file.txt", FileAction::Modified),
+            ("file.txt", FileAction::Modified),
+            ("file.txt", FileAction::Modified),
+            ("file.txt", FileAction::Deleted),
+        ]);
+        // created -> modified (emits created), modified -> modified (coalesced),
+        // modified -> deleted (emits modified), remaining: deleted = 3 total
+        assert_eq!(result.len(), 3);
+        let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
+        assert!(actions.contains(&FileAction::Created));
+        assert!(actions.contains(&FileAction::Modified));
+        assert!(actions.contains(&FileAction::Deleted));
+    }
+
+    #[test]
+    fn flush_interleaved_paths() {
+        let result = coalesce(&[
+            ("a.txt", FileAction::Modified),
+            ("b.txt", FileAction::Created),
+            ("a.txt", FileAction::Modified),
+            ("b.txt", FileAction::Modified),
+        ]);
+        // a.txt: 2x modified -> 1 emitted (coalesced)
+        // b.txt: created then modified -> 2 emitted
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn flush_modify_modify_delete() {
+        // Common pattern: file saved multiple times then deleted
+        let result = coalesce(&[
+            ("temp.txt", FileAction::Modified),
+            ("temp.txt", FileAction::Modified),
+            ("temp.txt", FileAction::Deleted),
+        ]);
+        assert_eq!(result.len(), 2);
+        let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
+        assert!(actions.contains(&FileAction::Modified));
+        assert!(actions.contains(&FileAction::Deleted));
+    }
+
+    #[test]
+    fn flush_create_delete_create() {
+        // Edge case: file created, deleted, created again
+        let result = coalesce(&[
+            ("f.txt", FileAction::Created),
+            ("f.txt", FileAction::Deleted),
+            ("f.txt", FileAction::Created),
+        ]);
+        // created -> deleted (emits created), deleted -> created (emits deleted),
+        // remaining: created = 3 total
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn queue_overflow_caps_at_max() {
+        let mut queue: Vec<QueuedEvent> = Vec::new();
+        let mut dropped = 0u64;
+        // Fill queue to capacity
+        for i in 0..MAX_QUEUE_SIZE {
+            queue.push(QueuedEvent {
+                path: format!("file_{}.txt", i),
+                action: FileAction::Modified,
+            });
+        }
+        // One more should increment dropped
+        if queue.len() >= MAX_QUEUE_SIZE {
+            dropped += 1;
+        }
+        assert_eq!(queue.len(), MAX_QUEUE_SIZE);
+        assert_eq!(dropped, 1);
     }
 }

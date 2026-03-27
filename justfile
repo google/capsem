@@ -16,7 +16,7 @@
 #
 # First-time setup:
 #   just doctor       (shows what's missing)
-#   just build-assets (builds kernel, initrd, rootfs -- needs docker/podman)
+#   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker/podman)
 #
 # Daily dev:          just run     (fast ~10s, auto-repacks initrd)
 # Before release:     just install (doctor + full-test -- all validation gates)
@@ -45,9 +45,27 @@ run *CMD: audit _check-assets _pack-initrd _sign
     pkill -x capsem 2>/dev/null || true
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
 
-# Full VM asset rebuild (kernel, initrd, rootfs) via Docker/Podman
+# Full VM asset rebuild (kernel, initrd, rootfs) via capsem-builder
 build-assets: doctor _install-tools audit
-    cd images && python3 build.py
+    #!/bin/bash
+    set -euo pipefail
+    arch=$(uname -m | sed 's/aarch64/arm64/')
+    echo "=== Building kernel for $arch ==="
+    uv run capsem-builder build guest/ --arch "$arch" --template kernel --output "{{assets_dir}}/"
+    echo ""
+    echo "=== Building rootfs for $arch ==="
+    uv run capsem-builder build guest/ --arch "$arch" --template rootfs --output "{{assets_dir}}/"
+    echo ""
+    echo "=== Generating checksums ==="
+    uv run python3 -c 'from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path(".")); generate_checksums(Path("{{assets_dir}}"), v); print(f"manifest.json generated (v{v})")'
+
+# Build kernel only
+build-kernel arch="arm64":
+    uv run capsem-builder build guest/ --arch {{arch}} --template kernel --output {{assets_dir}}/
+
+# Build rootfs only
+build-rootfs arch="arm64":
+    uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
 
 # Dependency audit: check for known vulnerabilities in Rust and npm deps
 audit: _install-tools _pnpm-install
@@ -89,6 +107,9 @@ full-test: test _check-assets _pack-initrd _sign
     @echo ""
     @echo "=== capsem-doctor ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
+    @echo ""
+    @echo "=== Doctor session validation ==="
+    python3 scripts/doctor_session_test.py --binary {{binary}} --assets {{assets_dir}}
     @echo ""
     @echo "=== Injection test ==="
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
@@ -218,6 +239,11 @@ doctor: _pnpm-install
     else
         fail "target: aarch64-unknown-linux-musl -- run: rustup target add aarch64-unknown-linux-musl"
     fi
+    if rustup target list --installed 2>/dev/null | grep -q x86_64-unknown-linux-musl; then
+        pass "target: x86_64-unknown-linux-musl"
+    else
+        fail "target: x86_64-unknown-linux-musl -- run: rustup target add x86_64-unknown-linux-musl"
+    fi
     if rustup component list --installed 2>/dev/null | grep -q llvm-tools; then
         pass "component: llvm-tools (provides rust-lld)"
     else
@@ -342,10 +368,14 @@ _clean-stale:
 _install-tools:
     #!/bin/bash
     set -euo pipefail
-    # Musl target for cross-compiling guest binaries
+    # Musl targets for cross-compiling guest binaries
     if ! rustup target list --installed | grep -q aarch64-unknown-linux-musl; then
         echo "Installing aarch64-unknown-linux-musl target..."
         rustup target add aarch64-unknown-linux-musl
+    fi
+    if ! rustup target list --installed | grep -q x86_64-unknown-linux-musl; then
+        echo "Installing x86_64-unknown-linux-musl target..."
+        rustup target add x86_64-unknown-linux-musl
     fi
     # rust-lld linker (from llvm-tools component)
     if ! rustup component list --installed | grep -q llvm-tools; then
@@ -378,12 +408,22 @@ _check-assets:
     #!/bin/bash
     set -euo pipefail
     dir="{{assets_dir}}"
+    # Map host architecture to asset directory name
+    arch=$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/')
     missing=()
-    for f in vmlinuz initrd.img; do
-        [ -f "$dir/$f" ] || missing+=("$f")
-    done
-    if [ ! -f "$dir/rootfs.squashfs" ]; then
-        missing+=("rootfs.squashfs")
+    if [ -f "$dir/$arch/vmlinuz" ]; then
+        # Per-arch layout: assets/{arch}/vmlinuz
+        for f in vmlinuz initrd.img rootfs.squashfs; do
+            [ -f "$dir/$arch/$f" ] || missing+=("$arch/$f")
+        done
+    elif [ -f "$dir/vmlinuz" ]; then
+        # Flat layout (legacy): assets/vmlinuz
+        for f in vmlinuz initrd.img; do
+            [ -f "$dir/$f" ] || missing+=("$f")
+        done
+        [ -f "$dir/rootfs.squashfs" ] || missing+=("rootfs.squashfs")
+    else
+        missing+=("vmlinuz (checked $dir/$arch/ and $dir/)")
     fi
     if [ ${#missing[@]} -gt 0 ]; then
         echo "ERROR: Missing VM assets in $dir/: ${missing[*]}"
@@ -408,9 +448,14 @@ _pack-initrd:
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
-    INITRD="$ROOT/{{assets_dir}}/initrd.img"
-    if [ ! -f "$INITRD" ]; then
-        echo "ERROR: $INITRD not found. Run 'just build-assets' first."
+    # Find initrd: per-arch layout first, then flat layout
+    arch=$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/')
+    if [ -f "$ROOT/{{assets_dir}}/$arch/initrd.img" ]; then
+        INITRD="$ROOT/{{assets_dir}}/$arch/initrd.img"
+    elif [ -f "$ROOT/{{assets_dir}}/initrd.img" ]; then
+        INITRD="$ROOT/{{assets_dir}}/initrd.img"
+    else
+        echo "ERROR: initrd.img not found. Run 'just build-assets' first."
         exit 1
     fi
     echo "=== Cross-compile agent ==="
@@ -440,9 +485,15 @@ _pack-initrd:
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
-    (cd "{{assets_dir}}" && b3sum vmlinuz initrd.img rootfs.squashfs > B3SUMS)
+    # Regenerate checksums -- handle per-arch and flat layouts
+    ASSETS="$ROOT/{{assets_dir}}"
+    if [ -f "$ASSETS/$arch/vmlinuz" ]; then
+        (cd "$ASSETS" && b3sum "$arch/vmlinuz" "$arch/initrd.img" "$arch/rootfs.squashfs" > B3SUMS)
+    else
+        (cd "$ASSETS" && b3sum vmlinuz initrd.img rootfs.squashfs > B3SUMS)
+    fi
     # Generate manifest.json from B3SUMS + file sizes
-    python3 "$ROOT/scripts/gen_manifest.py" "$ROOT/{{assets_dir}}" "$ROOT/Cargo.toml"
+    python3 "$ROOT/scripts/gen_manifest.py" "$ASSETS" "$ROOT/Cargo.toml"
     # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
     echo "initrd repacked (with agent + net-proxy + mcp-server + doctor)"

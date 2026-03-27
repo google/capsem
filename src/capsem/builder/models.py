@@ -310,6 +310,32 @@ class VmEnvironmentConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Image manifest (identity + changelog)
+# ---------------------------------------------------------------------------
+
+
+class ChangelogEntry(BaseModel):
+    """Single changelog entry for an image version."""
+
+    model_config = ConfigDict(frozen=True)
+
+    version: str
+    date: str
+    changes: list[str]
+
+
+class ImageManifestConfig(BaseModel):
+    """Image identity and version history from manifest.toml."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    version: str = "0.1.0"
+    description: str = ""
+    changelog: list[ChangelogEntry] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Top-level guest image config
 # ---------------------------------------------------------------------------
 
@@ -323,6 +349,7 @@ class GuestImageConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     build: BuildConfig
+    manifest: ImageManifestConfig | None = None
     ai_providers: dict[str, AiProviderConfig] = Field(default_factory=dict)
     package_sets: dict[str, PackageSetConfig] = Field(default_factory=dict)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)

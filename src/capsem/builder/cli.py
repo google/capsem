@@ -1,6 +1,7 @@
 """Capsem builder CLI -- config-driven guest image tooling.
 
 Commands:
+  doctor    Check build prerequisites
   validate  Lint and validate guest config
   build     Render Dockerfiles (--dry-run) or build images
   inspect   Show config summary
@@ -34,6 +35,26 @@ def cli(ctx: click.Context) -> None:
     """Capsem builder -- config-driven guest image tooling."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("guest_dir", default="guest", type=click.Path(exists=False))
+def doctor(guest_dir: str) -> None:
+    """Check build prerequisites (container runtime, Rust, tools)."""
+    from capsem.builder.doctor import format_results, run_all_checks
+
+    guest_path = Path(guest_dir)
+    repo_root = Path.cwd()
+    results = run_all_checks(guest_path, repo_root)
+    click.echo(format_results(results))
+    failures = [r for r in results if not r.passed]
+    if failures:
+        raise SystemExit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -83,12 +104,18 @@ def validate(guest_dir: str, artifacts: str | None) -> None:
 @click.option("--json", "json_output", is_flag=True, help="Output build manifest as JSON (with --dry-run).")
 @click.option("--template", default="rootfs", type=click.Choice(["rootfs", "kernel"]),
               help="Dockerfile template to render.")
+@click.option("--output", "output_dir", default="assets", type=click.Path(),
+              help="Output directory for built assets (default: assets/).")
+@click.option("--kernel-version", default=None,
+              help="Explicit kernel version (skips auto-detection from kernel.org).")
 def build(
     guest_dir: str,
     arch: str | None,
     dry_run: bool,
     json_output: bool,
     template: str,
+    output_dir: str,
+    kernel_version: str | None,
 ) -> None:
     """Build guest images from config."""
     path = Path(guest_dir)
@@ -143,8 +170,46 @@ def build(
                 rendered = render_dockerfile(template_name, config, arch_name)
                 click.echo(rendered)
     else:
-        click.echo("error: docker build not yet implemented (use --dry-run to preview Dockerfiles)", err=True)
-        raise SystemExit(1)
+        import subprocess
+
+        from capsem.builder.docker import (
+            build_all_architectures,
+            build_image,
+            detect_runtime,
+        )
+
+        try:
+            runtime = detect_runtime()
+        except RuntimeError as e:
+            click.echo(f"error: {e}", err=True)
+            raise SystemExit(1)
+
+        click.echo(f"Using container runtime: {runtime}")
+        out = Path(output_dir)
+
+        try:
+            if arch:
+                build_image(
+                    config, arch,
+                    template=template,
+                    output_dir=out,
+                    kernel_version=kernel_version,
+                )
+            else:
+                build_all_architectures(
+                    config,
+                    template=template,
+                    output_dir=out,
+                    kernel_version=kernel_version,
+                )
+        except subprocess.CalledProcessError as e:
+            click.echo(f"error: build command failed: {e.cmd}", err=True)
+            raise SystemExit(1)
+        except RuntimeError as e:
+            click.echo(f"error: {e}", err=True)
+            raise SystemExit(1)
+
+        click.echo(f"\nDone! Assets are in {out}/")
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +239,12 @@ def inspect(guest_dir: str, json_output: bool) -> None:
         return
 
     # Human-readable summary
+    if config.manifest:
+        click.echo(f"Image: {config.manifest.name} v{config.manifest.version}")
+        if config.manifest.description:
+            click.echo(f"  {config.manifest.description}")
+        click.echo("")
+
     click.echo("Build")
     click.echo(f"  compression: {config.build.compression.value} (level {config.build.compression_level})")
     click.echo(f"  architectures:")
@@ -265,6 +336,137 @@ def mcp_cmd() -> None:
 
 
 # ---------------------------------------------------------------------------
+# new
+# ---------------------------------------------------------------------------
+
+
+def _select_items(
+    label: str,
+    items: dict[str, str],
+    interactive: bool,
+) -> list[str]:
+    """Present a numbered list and ask user to select items."""
+    if not items:
+        return []
+    if not interactive:
+        return list(items.keys())
+
+    keys = list(items.keys())
+    click.echo(f"\n{label} -- include from base:")
+    for i, (key, desc) in enumerate(items.items(), 1):
+        click.echo(f"  [{i}] {key} -- {desc}")
+    raw = click.prompt("Include (comma-separated, * for all)", default="*")
+    if raw.strip() == "*":
+        return keys
+    selected = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            idx = int(part) - 1
+            if 0 <= idx < len(keys):
+                selected.append(keys[idx])
+        elif part in keys:
+            selected.append(part)
+    return selected
+
+
+def _prompt_add_new(
+    label: str,
+    guest_dir: Path,
+    add_func,
+    interactive: bool,
+    **kwargs,
+) -> None:
+    """Ask user if they want to add new items from templates."""
+    if not interactive:
+        return
+    while click.confirm(f"Add a new {label}?", default=False):
+        name = click.prompt(f"  {label} name")
+        try:
+            path = add_func(guest_dir, name, force=True, **kwargs)
+            click.echo(f"  -> Created {path.relative_to(guest_dir)} from template")
+        except Exception as e:
+            click.echo(f"  error: {e}", err=True)
+
+
+@cli.command("new")
+@click.argument("target", type=click.Path())
+@click.option("--from", "base_dir", default="guest", type=click.Path(exists=True),
+              help="Base config to copy from (default: guest/).")
+@click.option("--non-interactive", is_flag=True, help="Copy all from base, no prompts.")
+@click.option("--force", is_flag=True, help="Overwrite existing config directory.")
+def new_cmd(target: str, base_dir: str, non_interactive: bool, force: bool) -> None:
+    """Create a new image config from a base config."""
+    from capsem.builder.scaffold import (
+        add_ai_provider,
+        add_mcp_server,
+        add_package_set,
+        new_image,
+        scan_base_config,
+    )
+
+    base = Path(base_dir)
+    target_path = Path(target)
+    interactive = not non_interactive
+
+    # Image metadata
+    if interactive:
+        name = click.prompt("Image name", default=target_path.name)
+        version = click.prompt("Version", default="0.1.0")
+        description = click.prompt("Description", default="")
+    else:
+        name = target_path.name
+        version = "0.1.0"
+        description = ""
+
+    # Scan base config for available components
+    scan = scan_base_config(base)
+    click.echo(f"\nScanning base config ({base_dir})...")
+
+    # Select components
+    providers = _select_items("AI Providers", scan["providers"], interactive)
+    packages = _select_items("Package Sets", scan["packages"], interactive)
+    mcp = _select_items("MCP Servers", scan["mcp"], interactive)
+
+    if interactive and scan["has_security"]:
+        include_security = click.confirm("Include security config?", default=True)
+    else:
+        include_security = scan["has_security"]
+
+    if interactive and scan["has_vm"]:
+        include_vm = click.confirm("Include VM resources/environment?", default=True)
+    else:
+        include_vm = scan["has_vm"]
+
+    try:
+        config_dir = new_image(
+            target_path, base,
+            name=name,
+            version=version,
+            description=description,
+            include_providers=providers,
+            include_packages=packages,
+            include_mcp=mcp,
+            include_security=include_security,
+            include_vm=include_vm,
+            force=force,
+        )
+    except FileExistsError as e:
+        click.echo(f"error: {e}", err=True)
+        raise SystemExit(1)
+
+    # Phase 2: add new items from templates
+    if interactive:
+        _prompt_add_new("AI provider", target_path, add_ai_provider, interactive)
+        _prompt_add_new("package set", target_path, add_package_set, interactive,
+                        manager="apt")
+        _prompt_add_new("MCP server", target_path, add_mcp_server, interactive)
+
+    file_count = sum(1 for _ in config_dir.rglob("*.toml"))
+    click.echo(f"\nCreated {config_dir}/ ({file_count} files)")
+
+
+# ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
 
@@ -273,7 +475,7 @@ def mcp_cmd() -> None:
 @click.argument("target", default="guest", type=click.Path())
 @click.option("--force", is_flag=True, help="Overwrite existing config directory.")
 def init(target: str, force: bool) -> None:
-    """Scaffold a new guest config directory."""
+    """Scaffold a new guest config directory (minimal, from template)."""
     try:
         init_guest_dir(Path(target), force=force)
     except FileExistsError as e:
