@@ -73,11 +73,16 @@ update-deps: _pnpm-install
     echo ""
     echo "Done. Run 'just audit' to verify, then 'just test' to confirm nothing broke."
 
-# Unit tests + cross-compile check + frontend type-check (no VM)
+# Unit tests + cross-compile check + frontend type-check + Python schema tests (no VM)
 test: _install-tools _clean-stale audit _pnpm-install
     cargo llvm-cov --workspace --no-cfg-coverage
     cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
     cd frontend && pnpm run check && pnpm run test && pnpm run build
+    uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+# Generate config/settings-schema.json from Pydantic models
+schema:
+    uv run python scripts/generate_schema.py
 
 # Full validation: test + capsem-doctor + injection test + integration test + bench (boots VM)
 full-test: test _check-assets _pack-initrd _sign

@@ -34,6 +34,9 @@ private/
 
 # Coverage output
 coverage/
+codecov-*.json
+codecov-*.xml
+*-junit.xml
 
 # Rust
 target/

@@ -6,6 +6,51 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Linux: compile + test KVM hypervisor backend (cfg(target_os = "linux"))
+  # ---------------------------------------------------------------------------
+  test-linux:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Enable KVM for integration tests
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install tools
+        run: |
+          cargo install cargo-nextest --locked
+
+      # Library crate tests (capsem-core includes KVM backend on Linux)
+      - name: Unit tests (KVM backend)
+        run: cargo nextest run --profile ci -p capsem-core -p capsem-logger -p capsem-proto
+
+      - name: Test summary
+        if: always()
+        run: |
+          KVM_STATUS="available"
+          [ -e /dev/kvm ] || KVM_STATUS="not available"
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Linux Test Results
+
+          | Metric | Result |
+          |--------|--------|
+          | Runner | ubuntu-24.04-arm (aarch64) |
+          | /dev/kvm | $KVM_STATUS |
+          | KVM backend | compiled + tested |
+          EOF
+
+  # ---------------------------------------------------------------------------
+  # macOS: full test suite (Apple VZ backend, frontend, Python, coverage)
+  # ---------------------------------------------------------------------------
   test:
     runs-on: macos-14
     steps:
@@ -27,6 +72,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
 
       - name: Dependency audit
         run: |
@@ -61,6 +109,16 @@ jobs:
           npx vitest run --coverage --reporter=default --reporter=junit --outputFile=../frontend-junit.xml
           pnpm run build
 
+      # Python schema tests with coverage
+      - name: Python schema tests with coverage
+        run: uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml
+
+      # Schema drift check
+      - name: Schema drift check
+        run: |
+          uv run python scripts/generate_schema.py
+          git diff --exit-code config/settings-schema.json
+
       # Upload coverage with flags
       - name: Upload Rust unit test coverage
         if: ${{ !cancelled() }}
@@ -89,12 +147,21 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+      - name: Upload Python coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov-python.xml
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       # Upload test results for test analytics
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@v1
         with:
-          files: target/nextest/ci/junit.xml,frontend-junit.xml
+          files: target/nextest/ci/junit.xml,frontend-junit.xml,python-junit.xml
           token: ${{ secrets.CODECOV_TOKEN }}
 
       # Check-only (no link) -- actual cross-compile runs on Linux in release workflow
