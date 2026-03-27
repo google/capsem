@@ -49,14 +49,20 @@ All workflows use `just` (not make). The justfile is the single entry point.
 ## Dependency chains
 
 ```
-run            -> audit + _check-assets + _pack-initrd -> _sign -> _compile -> _frontend
-test           -> audit + _install-tools
+run            -> audit + _check-assets + _generate-settings + _pack-initrd -> _sign -> _compile -> _frontend
+test           -> audit + _install-tools + _generate-settings
 full-test      -> test + _check-assets + _pack-initrd + _sign
 build-assets   -> doctor + _install-tools + audit (capsem-builder: kernel + rootfs)
 install        -> doctor + full-test
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).
+
+## Build log
+
+All build infrastructure (runner, code signing, generation scripts) logs to `target/build.log`. This is a unified diagnostic log -- never write to stdout from build scripts. The runner (`scripts/run_signed.sh`) and `_generate-settings` both append here.
+
+When debugging build issues, check `target/build.log` first. When writing new build scripts or recipes, always log to this file, never stdout (which contaminates binary output like `mcp-export`).
 
 ## First-time setup
 

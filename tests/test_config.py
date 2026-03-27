@@ -13,7 +13,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from capsem.builder.config import generate_defaults_json, load_guest_config, parse_toml
+from capsem.builder.config import (
+    generate_defaults_json,
+    generate_mock_ts,
+    load_guest_config,
+    parse_toml,
+)
 from capsem.builder.models import (
     Compression,
     GuestImageConfig,
@@ -644,3 +649,34 @@ class TestGenerateDefaultsJsonConformance:
                 continue
             if "enabled_by" in cur_provs[key]:
                 assert gen_provs[key].get("enabled_by") == cur_provs[key]["enabled_by"]
+
+    def test_defaults_json_not_stale(self, generated):
+        """Generated defaults.json must exactly match the on-disk file.
+
+        If this fails, run: just _generate-settings
+        """
+        on_disk = json.loads(
+            (PROJECT_ROOT / "config" / "defaults.json").read_text()
+        )
+        assert generated == on_disk, (
+            "config/defaults.json is stale -- regenerate with: just _generate-settings"
+        )
+
+    def test_mock_ts_not_stale(self):
+        """Generated mock-settings.generated.ts must match the on-disk file.
+
+        If this fails, run: just _generate-settings
+        """
+        config = load_guest_config(PROJECT_ROOT / "guest")
+        defaults = generate_defaults_json(config)
+        # Load MCP tool defs (exported by mcp_export binary)
+        mcp_tools_path = PROJECT_ROOT / "config" / "mcp-tools.json"
+        mcp_tools = json.loads(mcp_tools_path.read_text()) if mcp_tools_path.exists() else []
+        expected = generate_mock_ts(defaults, mcp_tools=mcp_tools)
+        on_disk = (
+            PROJECT_ROOT / "frontend" / "src" / "lib" / "mock-settings.generated.ts"
+        ).read_text()
+        assert on_disk == expected, (
+            "frontend/src/lib/mock-settings.generated.ts is stale"
+            " -- regenerate with: just _generate-settings"
+        )

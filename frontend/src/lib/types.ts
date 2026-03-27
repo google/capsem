@@ -76,6 +76,7 @@ export interface SettingMetadata {
   side_effect?: string | null;
   hidden?: boolean;
   builtin?: boolean;
+  step?: number | null;
   mask?: boolean;
   validator?: string | null;
   origin?: string | null;

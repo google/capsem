@@ -1,0 +1,339 @@
+[
+  {
+    "namespaced_name": "fetch_http",
+    "original_name": "fetch_http",
+    "description": "Fetch a URL and return its content. In 'markdown' mode (default), HTML is converted to clean markdown preserving headings, links, lists, bold/italic, and code blocks. In 'content' mode, HTML is stripped to plain text with newlines at block boundaries. In 'raw' mode, the response body is returned unchanged. Output starts with metadata lines (URL, Domain, Content length) followed by the page content. Use start_index and max_length for pagination -- if the response is truncated, a 'Remaining' line shows the next start_index value to continue. The URL's domain must be allowed by network policy; blocked or unknown domains return an error. Errors: domain blocked by policy, invalid URL, HTTP request failed.",
+    "input_schema": {
+      "properties": {
+        "format": {
+          "description": "Output format: 'markdown' (default) converts HTML to markdown preserving structure (headings, links, lists, code). 'content' strips to plain text. 'raw' returns the response body unchanged.",
+          "enum": [
+            "markdown",
+            "content",
+            "raw"
+          ],
+          "type": "string"
+        },
+        "max_length": {
+          "description": "Maximum characters to return (default: 5000). If the content exceeds this, a 'Remaining' line indicates how to fetch the rest.",
+          "type": "integer"
+        },
+        "start_index": {
+          "description": "Character offset to start reading from (default: 0). Use the value from the 'Remaining' line in a previous response to continue paginating.",
+          "type": "integer"
+        },
+        "url": {
+          "description": "The URL to fetch. The domain must be allowed by network policy or the request will be rejected.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "Fetch HTTP",
+      "read_only_hint": true,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": true
+    }
+  },
+  {
+    "namespaced_name": "grep_http",
+    "original_name": "grep_http",
+    "description": "Fetch a URL and search its content for a regex pattern (case-insensitive). By default, searches extracted text (HTML cleaned as in fetch_http); set raw=true to search the original HTML. Output starts with metadata (URL, Pattern, Matches found), then match blocks. Each match block shows context lines around the matching line, with '>>>' marking the match and line numbers. Use start_index and max_length for pagination of large result sets. The URL's domain must be allowed by network policy; blocked or unknown domains return an error. Errors: domain blocked by policy, invalid URL, invalid regex syntax, HTTP request failed.",
+    "input_schema": {
+      "properties": {
+        "context_lines": {
+          "description": "Number of lines to show before and after each matching line (default: 3)",
+          "type": "integer"
+        },
+        "max_length": {
+          "description": "Maximum characters to return (default: 5000). If truncated, use the indicated start_index to continue.",
+          "type": "integer"
+        },
+        "max_matches": {
+          "description": "Maximum number of matches to return (default: 50). If more matches exist, output notes the truncation.",
+          "type": "integer"
+        },
+        "pattern": {
+          "description": "Regex pattern to search for (case-insensitive). Uses Rust regex syntax (similar to PCRE without lookaround).",
+          "type": "string"
+        },
+        "raw": {
+          "description": "If true, search the raw HTML source instead of extracted text (default: false)",
+          "type": "boolean"
+        },
+        "start_index": {
+          "description": "Character offset to start reading output from (default: 0). Use for paginating large result sets.",
+          "type": "integer"
+        },
+        "url": {
+          "description": "The URL to fetch and search. The domain must be allowed by network policy or the request will be rejected.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "Grep HTTP",
+      "read_only_hint": true,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": true
+    }
+  },
+  {
+    "namespaced_name": "http_headers",
+    "original_name": "http_headers",
+    "description": "Return HTTP status code and response headers for a URL. By default uses HEAD (no body downloaded, faster). Set method='GET' to see headers from a full response (some servers return different headers for HEAD vs GET). Output format: 'URL:' line, 'Status:' line, then 'Headers:' section with one 'name: value' per line. The URL's domain must be allowed by network policy; blocked or unknown domains return an error. Errors: domain blocked by policy, invalid URL, HTTP request failed.",
+    "input_schema": {
+      "properties": {
+        "max_length": {
+          "description": "Maximum characters to return (default: 5000). Rarely needed since header output is typically small.",
+          "type": "integer"
+        },
+        "method": {
+          "description": "HTTP method to use (default: HEAD). HEAD is faster as it skips the body, but some servers return different headers for GET.",
+          "enum": [
+            "HEAD",
+            "GET"
+          ],
+          "type": "string"
+        },
+        "start_index": {
+          "description": "Character offset to start reading from (default: 0). Rarely needed since header output is typically small.",
+          "type": "integer"
+        },
+        "url": {
+          "description": "The URL to check. The domain must be allowed by network policy or the request will be rejected.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "HTTP Headers",
+      "read_only_hint": true,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": true
+    }
+  },
+  {
+    "namespaced_name": "snapshots_changes",
+    "original_name": "snapshots_changes",
+    "description": "List files that have changed in the workspace compared to automatic checkpoints. Each entry includes the file path, operation (created/modified/deleted), size, and a checkpoint ID that can be passed to snapshots_revert. Shows newest changes first. Output is paginated (default 5000 chars).",
+    "input_schema": {
+      "properties": {
+        "format": {
+          "description": "Output format: 'text' (default) for a compact table, 'json' for machine-readable JSON array.",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "type": "string"
+        },
+        "max_length": {
+          "description": "Maximum characters to return (default: 5000). If truncated, a pagination hint shows the next start_index.",
+          "type": "integer"
+        },
+        "start_index": {
+          "description": "Character offset to start from (default: 0). Use the value from the pagination hint to continue.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "List changed files",
+      "read_only_hint": true,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false
+    }
+  },
+  {
+    "namespaced_name": "snapshots_list",
+    "original_name": "snapshots_list",
+    "description": "List all workspace snapshots (automatic and manual). Shows slot index, origin (auto/manual), name, age, blake3 hash, file count, and a compact change summary. Output is paginated (default 5000 chars).",
+    "input_schema": {
+      "properties": {
+        "format": {
+          "description": "Output format: 'text' (default) for a compact table, 'json' for machine-readable JSON.",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "type": "string"
+        },
+        "max_length": {
+          "description": "Maximum characters to return (default: 5000). If truncated, a pagination hint shows the next start_index.",
+          "type": "integer"
+        },
+        "start_index": {
+          "description": "Character offset to start from (default: 0). Use the value from the pagination hint to continue.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "List snapshots",
+      "read_only_hint": true,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false
+    }
+  },
+  {
+    "namespaced_name": "snapshots_revert",
+    "original_name": "snapshots_revert",
+    "description": "Revert a file to its state at a specific checkpoint. Use the checkpoint ID from snapshots_changes output, or omit checkpoint to auto-select the most recent snapshot containing the file. If the file was created after the checkpoint, it is deleted. If the file was modified, it is restored to its checkpoint state. Changes are reflected immediately in the guest via VirtioFS.",
+    "input_schema": {
+      "properties": {
+        "checkpoint": {
+          "description": "Checkpoint ID (e.g., 'cp-0'). Optional: defaults to the most recent snapshot containing the file.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Relative file path from snapshots_changes output (e.g., 'project/app.js')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "Revert file",
+      "read_only_hint": false,
+      "destructive_hint": true,
+      "idempotent_hint": true,
+      "open_world_hint": false
+    }
+  },
+  {
+    "namespaced_name": "snapshots_create",
+    "original_name": "snapshots_create",
+    "description": "Create a named workspace snapshot (checkpoint). The snapshot captures the current state of all files and can be used with snapshots_revert to restore files later. Returns the checkpoint ID, a blake3 hash of the workspace, and the number of remaining snapshot slots.",
+    "input_schema": {
+      "properties": {
+        "name": {
+          "description": "Label for this snapshot (alphanumeric, underscore, hyphen; max 64 chars)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "Create snapshot",
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false
+    }
+  },
+  {
+    "namespaced_name": "snapshots_delete",
+    "original_name": "snapshots_delete",
+    "description": "Delete a manual snapshot by checkpoint ID. Only manual (named) snapshots can be deleted. Automatic snapshots are managed by the scheduler.",
+    "input_schema": {
+      "properties": {
+        "checkpoint": {
+          "description": "Checkpoint ID to delete (e.g., 'cp-12')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "checkpoint"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "Delete snapshot",
+      "read_only_hint": false,
+      "destructive_hint": true,
+      "idempotent_hint": true,
+      "open_world_hint": false
+    }
+  },
+  {
+    "namespaced_name": "snapshots_history",
+    "original_name": "snapshots_history",
+    "description": "Show the history of a specific file across all snapshots. For each snapshot that contains a version of the file, shows the checkpoint, origin, age, size, and whether the file was created, modified, or unchanged. Accepts both relative paths (hello.txt) and absolute guest paths (/root/hello.txt).",
+    "input_schema": {
+      "properties": {
+        "path": {
+          "description": "File path (e.g., 'hello.txt' or '/root/hello.txt')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "File history",
+      "read_only_hint": true,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false
+    }
+  },
+  {
+    "namespaced_name": "snapshots_compact",
+    "original_name": "snapshots_compact",
+    "description": "Compact multiple snapshots into a single new manual snapshot. Merges workspaces with newest-file-wins strategy. Deletes all source snapshots after successful compaction. Frees snapshot slots while preserving file state.",
+    "input_schema": {
+      "properties": {
+        "checkpoints": {
+          "description": "Checkpoint IDs to compact (e.g., ['cp-0', 'cp-1', 'cp-10'])",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Name for the compacted snapshot (optional, defaults to timestamp)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "checkpoints"
+      ],
+      "type": "object"
+    },
+    "server_name": "builtin",
+    "annotations": {
+      "title": "Compact snapshots",
+      "read_only_hint": false,
+      "destructive_hint": true,
+      "idempotent_hint": false,
+      "open_world_hint": false
+    }
+  }
+]

@@ -50,6 +50,8 @@ struct SettingMetaRaw {
     #[serde(default)]
     side_effect: Option<SideEffect>,
     #[serde(default)]
+    step: Option<i64>,
+    #[serde(default)]
     hidden: bool,
     #[serde(default)]
     builtin: bool,
@@ -114,6 +116,7 @@ fn collect_settings(
                 filetype: def.meta.filetype,
                 widget: def.meta.widget,
                 side_effect: def.meta.side_effect,
+                step: def.meta.step,
                 hidden: def.meta.hidden,
                 builtin: def.meta.builtin,
                 ..Default::default()

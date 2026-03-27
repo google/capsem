@@ -30,31 +30,45 @@ import { describe, it, expect } from 'vitest';
 
 ## Mock mode
 
-When `window.__TAURI_INTERNALS__` is absent (browser via `just ui`), `api.ts` auto-switches all IPC calls to return fake data from `mock.ts`. Mock includes: VM state, network events, settings tree, state timeline, terminal banner. All views are fully functional with mock data.
+When `window.__TAURI_INTERNALS__` is absent (browser via `just ui`), `api.ts` auto-switches all IPC calls to return fake data from `mock.ts`. Settings data comes from `mock-settings.generated.ts` (auto-generated from `config/defaults.json` by the builder). Other mock data (MCP servers, VM state, logs) lives in `mock.ts`.
 
 This means you can test the full UI without a VM by running `just ui`.
 
+**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from the TOML configs in `guest/config/`. It runs as part of `just run` and `just test` via the `_generate-settings` recipe. Never hand-edit this file.
+
 ## Visual verification with Chrome DevTools MCP
 
-For systematic visual testing when `just ui` is running:
+**Every UI change requires visual verification via Chrome DevTools MCP. No exceptions.** Type checks and unit tests pass on broken UIs all the time. The only way to know the UI actually works is to look at it.
 
-### Quick health check
-1. `navigate_page` to `http://localhost:5173`
-2. `list_console_messages` types=["error","warn"] -- expect zero
-3. `take_screenshot` fullPage=true -- verify page renders
+### Workflow for every UI change
 
-### Full walkthrough
-1. Navigate to each view via sidebar (Terminal, Sessions, Network, Settings)
-2. Screenshot each view in both light and dark themes
-3. Check console for new errors after each navigation
+1. Start `just ui` (if not already running)
+2. `navigate_page` to `http://localhost:5173`
+3. `list_console_messages` types=["error","warn"] -- expect zero
+4. Navigate to the view(s) affected by your change
+5. `take_screenshot` each affected view -- visually confirm it renders correctly
+6. If the change affects multiple views or layout, screenshot all views (Terminal, Sessions, Network, Settings)
+7. Check console again after navigation for new errors
 
-### Settings view specifics
-Click through every section (AI Providers, Package Registries, Search, Guest Environment, Network, VM, Appearance). Verify:
+### Settings view
+
+Click through every section (AI Providers, Repositories, Security, VM, Appearance). Verify:
+- All settings from `defaults.json` are present (currently 68 leaf settings)
 - Provider toggle enables/disables child settings visually
 - API key reveal button works (password <-> text)
-- Advanced settings expand/collapse
+- Snapshots section shows auto_max, manual_max, auto_interval
+- VM Resources section shows all resource settings including min_content_sessions
 - Theme toggle switches live
 - Lint warnings display inline
+
+### After changing TOML configs or generated mock data
+
+When modifying `guest/config/*.toml` or regenerating `mock-settings.generated.ts`:
+1. Run `just _generate-settings` (or let `just run`/`just test` do it)
+2. Start `just ui`
+3. Navigate to Settings view
+4. Screenshot and verify new/changed settings appear correctly
+5. Check that setting counts match (grep `mockSettings.find` in generated file)
 
 ### Color rules (firm)
 - Blue (`info`) = positive (allowed, running, ok). No green in UI chrome.

@@ -617,3 +617,387 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         mcp[key] = entry
 
     return {"settings": settings, "mcp": mcp}
+
+
+# ---------------------------------------------------------------------------
+# mock-settings.generated.ts generator
+# ---------------------------------------------------------------------------
+
+
+def _ts_value(val: Any, *, context: str = "") -> str:
+    """Serialize a Python value to a TypeScript literal."""
+    if val is None:
+        return "null"
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, (int, float)):
+        return str(val)
+    if isinstance(val, str):
+        # Escape backslashes, single quotes, and newlines for TS string
+        escaped = val.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        return f"'{escaped}'"
+    if isinstance(val, dict):
+        # HttpMethodPermissions rule objects need all required fields
+        if context == "rules" and val:
+            pairs = ", ".join(
+                f"{k}: {_ts_http_rule(v)}" for k, v in val.items()
+            )
+            return f"{{ {pairs} }}"
+        pairs = ", ".join(f"{k}: {_ts_value(v)}" for k, v in val.items())
+        return f"{{ {pairs} }}"
+    if isinstance(val, list):
+        items = ", ".join(_ts_value(v) for v in val)
+        return f"[{items}]"
+    return repr(val)
+
+
+def _ts_http_rule(rule: dict) -> str:
+    """Serialize an HTTP method permission rule with all required fields."""
+    return (
+        "{ "
+        f"domains: [], path: null, "
+        f"get: {_ts_value(rule.get('get', False))}, "
+        f"post: {_ts_value(rule.get('post', False))}, "
+        f"put: {_ts_value(rule.get('put', False))}, "
+        f"delete: {_ts_value(rule.get('delete', False))}, "
+        f"other: {_ts_value(rule.get('other', False))}"
+        " }"
+    )
+
+
+def _ts_meta(meta: dict) -> str:
+    """Serialize a metadata dict, handling rules with full HttpMethodPermissions."""
+    pairs = []
+    for k, v in meta.items():
+        if k == "rules":
+            pairs.append(f"{k}: {_ts_value(v, context='rules')}")
+        else:
+            pairs.append(f"{k}: {_ts_value(v)}")
+    return f"{{ {', '.join(pairs)} }}"
+
+
+def _collect_mock_settings(
+    table: dict, path: str, parent_category: str, parent_enabled_by: str | None,
+) -> list[dict[str, Any]]:
+    """Walk defaults.json hierarchy, collect leaf settings as mock entries."""
+    # Skip action nodes
+    if "action" in table:
+        return []
+
+    if "type" in table:
+        # Leaf setting
+        meta: dict[str, Any] = {
+            "domains": [],
+            "choices": [],
+            "min": None,
+            "max": None,
+            "rules": {},
+        }
+        raw_meta = table.get("meta", {})
+        if raw_meta.get("domains"):
+            meta["domains"] = raw_meta["domains"]
+        if raw_meta.get("choices"):
+            meta["choices"] = raw_meta["choices"]
+        if raw_meta.get("min") is not None:
+            meta["min"] = raw_meta["min"]
+        if raw_meta.get("max") is not None:
+            meta["max"] = raw_meta["max"]
+        if raw_meta.get("rules"):
+            meta["rules"] = raw_meta["rules"]
+        # Optional metadata fields
+        for key in ("docs_url", "prefix", "filetype", "format", "widget",
+                    "side_effect", "step"):
+            if raw_meta.get(key) is not None:
+                meta[key] = raw_meta[key]
+
+        enabled_by = parent_enabled_by
+        # If this IS the toggle itself, don't set enabled_by on it
+        if enabled_by == path:
+            enabled_by = None
+
+        default_val = table["default"]
+        setting_type = table["type"]
+        enabled = True
+        if enabled_by is not None:
+            # Default to disabled (parent toggle is typically false by default)
+            enabled = False
+
+        entry: dict[str, Any] = {
+            "id": path,
+            "category": parent_category,
+            "name": table["name"],
+            "setting_type": setting_type,
+            "description": table.get("description", ""),
+            "default_value": default_val,
+            "effective_value": default_val,
+            "enabled_by": enabled_by,
+            "enabled": enabled,
+            "metadata": meta,
+        }
+        return [entry]
+
+    # Group node -- recurse into children
+    category = table.get("name", parent_category)
+    group_enabled_by = table.get("enabled_by", parent_enabled_by)
+
+    results: list[dict[str, Any]] = []
+    for key, val in table.items():
+        if key in ("name", "description", "enabled_by", "collapsed"):
+            continue
+        if isinstance(val, dict):
+            child_path = f"{path}.{key}" if path else key
+            results.extend(
+                _collect_mock_settings(val, child_path, category, group_enabled_by)
+            )
+    return results
+
+
+def _build_mock_tree_ts(
+    table: dict, path: str, parent_enabled_by: str | None, indent: int,
+) -> list[str]:
+    """Walk defaults.json hierarchy, produce TypeScript tree node lines."""
+    pad = "  " * indent
+
+    # Action node
+    if "action" in table:
+        name = table.get("name", "")
+        desc = table.get("description", "")
+        action = table["action"]
+        return [
+            f"{pad}{{ kind: 'action', key: {_ts_value(path)}, "
+            f"name: {_ts_value(name)}, description: {_ts_value(desc)}, "
+            f"action: {_ts_value(action)} }} as any,"
+        ]
+
+    # Leaf setting
+    if "type" in table:
+        return [
+            f"{pad}leaf(mockSettings.find(s => s.id === {_ts_value(path)})!),"
+        ]
+
+    # Group node
+    group_name = table.get("name")
+    group_desc = table.get("description", "")
+    group_enabled_by = table.get("enabled_by", parent_enabled_by)
+    group_collapsed = table.get("collapsed", False)
+
+    # Collect children
+    child_lines: list[str] = []
+    for key, val in table.items():
+        if key in ("name", "description", "enabled_by", "collapsed"):
+            continue
+        if isinstance(val, dict):
+            child_path = f"{path}.{key}" if path else key
+            child_lines.extend(
+                _build_mock_tree_ts(val, child_path, group_enabled_by, indent + 1)
+            )
+
+    if not child_lines:
+        return []
+
+    # Top-level call (no path) returns children directly
+    if not path:
+        return child_lines
+
+    if group_name:
+        lines = []
+        eb = ""
+        if group_enabled_by and group_enabled_by != parent_enabled_by:
+            eb = f" enabled_by: {_ts_value(group_enabled_by)},"
+        lines.append(
+            f"{pad}{{"
+            f" kind: 'group', enabled: true, key: {_ts_value(path)},"
+            f" name: {_ts_value(group_name)},"
+            f" description: {_ts_value(group_desc)},"
+            f"{eb}"
+            f" collapsed: {_ts_value(group_collapsed)}, children: ["
+        )
+        lines.extend(child_lines)
+        lines.append(f"{pad}]}},")
+        return lines
+
+    # Unnamed group -- inline children
+    return child_lines
+
+
+def generate_mock_ts(
+    defaults: dict, *, mcp_tools: list[dict] | None = None,
+) -> str:
+    """Generate frontend/src/lib/mock-settings.generated.ts from defaults.json.
+
+    Produces:
+    - mockSettings: flat array of ResolvedSetting objects
+    - buildMockTree(): returns the SettingsNode tree
+    - MOCK_MCP_SERVERS: from defaults.json mcp section
+    - MOCK_MCP_TOOLS: from mcp-tools.json (Rust-exported tool defs)
+    - MOCK_MCP_POLICY: default allow policy
+    """
+    settings_obj = defaults.get("settings", {})
+
+    # Collect flat settings
+    all_settings = _collect_mock_settings(settings_obj, "", "", None)
+
+    # Build mockSettings array
+    lines = [
+        "// AUTO-GENERATED by scripts/generate_schema.py -- DO NOT EDIT",
+        "// Source: config/defaults.json (from guest/config/*.toml)",
+        "//",
+        "// Regenerate: just run (or just test)",
+        "",
+        "import type { ResolvedSetting, SettingsNode, McpServerInfo,"
+        " McpToolInfo, McpPolicyInfo } from './types';",
+        "",
+        "// Helper: creates a mock setting with sensible defaults for empty fields.",
+        "function ms(overrides: Partial<ResolvedSetting> & {"
+        " id: string; category: string; name: string;"
+        " setting_type: ResolvedSetting['setting_type'] }): ResolvedSetting {",
+        "  return {",
+        "    description: '',",
+        "    default_value: overrides.setting_type === 'bool' ? false"
+        " : overrides.setting_type === 'number' ? 0 : '',",
+        "    effective_value: overrides.setting_type === 'bool' ? false"
+        " : overrides.setting_type === 'number' ? 0 : '',",
+        "    source: 'default',",
+        "    modified: null,",
+        "    corp_locked: false,",
+        "    enabled_by: null,",
+        "    enabled: true,",
+        "    metadata: { domains: [], choices: [], min: null, max: null, rules: {} },",
+        "    ...overrides,",
+        "  };",
+        "}",
+        "",
+        "// Helper: wrap a flat ResolvedSetting into a SettingsLeaf node.",
+        "function leaf(s: ResolvedSetting): SettingsNode {",
+        "  return { kind: 'leaf', ...s };",
+        "}",
+        "",
+    ]
+
+    # Emit mockSettings array
+    lines.append("export let mockSettings: ResolvedSetting[] = [")
+    for s in all_settings:
+        parts = [
+            f"    id: {_ts_value(s['id'])}",
+            f"category: {_ts_value(s['category'])}",
+            f"name: {_ts_value(s['name'])}",
+            f"setting_type: {_ts_value(s['setting_type'])}",
+        ]
+        if s["description"]:
+            parts.append(f"description: {_ts_value(s['description'])}")
+        parts.append(f"default_value: {_ts_value(s['default_value'])}")
+        parts.append(f"effective_value: {_ts_value(s['effective_value'])}")
+        if s["enabled_by"]:
+            parts.append(f"enabled_by: {_ts_value(s['enabled_by'])}")
+            parts.append(f"enabled: {_ts_value(s['enabled'])}")
+        meta = s["metadata"]
+        # Only emit metadata if it has non-default values
+        has_custom = (
+            meta.get("domains")
+            or meta.get("choices")
+            or meta.get("min") is not None
+            or meta.get("max") is not None
+            or meta.get("rules")
+            or meta.get("docs_url")
+            or meta.get("prefix")
+            or meta.get("filetype")
+            or meta.get("format")
+            or meta.get("widget")
+            or meta.get("side_effect")
+            or meta.get("step") is not None
+        )
+        if has_custom:
+            parts.append(f"metadata: {_ts_meta(meta)}")
+        lines.append(f"  ms({{ {', '.join(parts)} }}),")
+    lines.append("];")
+    lines.append("")
+
+    # Emit recomputeEnabled
+    lines.extend([
+        "/** Recompute `enabled` flags based on parent toggle values. */",
+        "export function recomputeEnabled() {",
+        "  const values = new Map<string, boolean>();",
+        "  for (const s of mockSettings) {",
+        "    if (typeof s.effective_value === 'boolean') {",
+        "      values.set(s.id, s.effective_value as boolean);",
+        "    }",
+        "  }",
+        "  for (const s of mockSettings) {",
+        "    if (s.enabled_by) {",
+        "      s.enabled = values.get(s.enabled_by) ?? false;",
+        "    }",
+        "  }",
+        "}",
+        "",
+    ])
+
+    # Emit buildMockTree
+    lines.append("export function buildMockTree(): SettingsNode[] {")
+    lines.append("  return [")
+    for key, val in settings_obj.items():
+        if key in ("name", "description", "enabled_by", "collapsed"):
+            continue
+        if isinstance(val, dict):
+            tree_lines = _build_mock_tree_ts(val, key, None, 2)
+            lines.extend(tree_lines)
+    lines.append("  ];")
+    lines.append("}")
+    lines.append("")
+
+    # -- MCP mock data --
+    mcp_servers = defaults.get("mcp", {})
+    tools = mcp_tools or []
+
+    lines.append("// ---------------------------------------------------------------------------")
+    lines.append("// MCP mock data (generated from defaults.json + config/mcp-tools.json)")
+    lines.append("// ---------------------------------------------------------------------------")
+    lines.append("")
+
+    # MOCK_MCP_SERVERS -- only external servers (user-added SSE/stdio).
+    # Builtin servers (like capsem) don't appear in the server list -- their
+    # tools are shown in the Local Tools section via MOCK_MCP_TOOLS.
+    lines.append("export let MOCK_MCP_SERVERS: McpServerInfo[] = [];")
+    lines.append("")
+
+    # MOCK_MCP_TOOLS
+    lines.append("export let MOCK_MCP_TOOLS: McpToolInfo[] = [")
+    for tool in tools:
+        ann = tool.get("annotations")
+        ann_ts = "null"
+        if ann:
+            ann_ts = (
+                "{ "
+                f"title: {_ts_value(ann.get('title'))}, "
+                f"read_only_hint: {_ts_value(ann.get('read_only_hint', False))}, "
+                f"destructive_hint: {_ts_value(ann.get('destructive_hint', False))}, "
+                f"idempotent_hint: {_ts_value(ann.get('idempotent_hint', False))}, "
+                f"open_world_hint: {_ts_value(ann.get('open_world_hint', False))}"
+                " }"
+            )
+        lines.append("  {")
+        lines.append(f"    namespaced_name: {_ts_value(tool['namespaced_name'])},")
+        lines.append(f"    original_name: {_ts_value(tool['original_name'])},")
+        desc = tool.get("description") or ""
+        # Truncate long descriptions for mock readability
+        if len(desc) > 120:
+            desc = desc[:117] + "..."
+        lines.append(f"    description: {_ts_value(desc)},")
+        lines.append(f"    server_name: {_ts_value(tool.get('server_name', 'builtin'))},")
+        lines.append(f"    annotations: {ann_ts},")
+        lines.append(f"    pin_hash: null,")
+        lines.append(f"    approved: true,")
+        lines.append(f"    pin_changed: false,")
+        lines.append("  },")
+    lines.append("];")
+    lines.append("")
+
+    # MOCK_MCP_POLICY
+    lines.append("export const MOCK_MCP_POLICY: McpPolicyInfo = {")
+    lines.append("  global_policy: 'allow',")
+    lines.append("  default_tool_permission: 'allow',")
+    lines.append("  blocked_servers: [],")
+    lines.append("  tool_permissions: {},")
+    lines.append("};")
+    lines.append("")
+
+    return "\n".join(lines)

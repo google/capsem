@@ -39,7 +39,7 @@ ui: _pnpm-install
     cd frontend && pnpm run dev
 
 # Pack + boot VM (interactive or with command, ~10s)
-run *CMD: audit _check-assets _pack-initrd _sign
+run *CMD: audit _check-assets _generate-settings _pack-initrd _sign
     #!/bin/bash
     set -euo pipefail
     pkill -x capsem 2>/dev/null || true
@@ -92,15 +92,22 @@ update-deps: _pnpm-install
     echo "Done. Run 'just audit' to verify, then 'just test' to confirm nothing broke."
 
 # Unit tests + cross-compile check + frontend type-check + Python schema tests (no VM)
-test: _install-tools _clean-stale audit _pnpm-install
+test: _install-tools _clean-stale audit _pnpm-install _generate-settings
     cargo llvm-cov --workspace --no-cfg-coverage
     cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
     cd frontend && pnpm run check && pnpm run test && pnpm run build
     uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
-# Generate config/settings-schema.json from Pydantic models
-schema:
-    uv run python scripts/generate_schema.py
+# Generate settings-schema.json, defaults.json, mcp-tools.json, and mock-data.generated.ts
+_generate-settings:
+    #!/bin/bash
+    set -euo pipefail
+    LOG="target/build.log"
+    mkdir -p target
+    echo "[generate] $(date +%H:%M:%S) exporting MCP tool defs" >> "$LOG"
+    cargo run --bin mcp_export 2>>"$LOG" > config/mcp-tools.json
+    echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
+    uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
 # Full validation: test + capsem-doctor + injection test + integration test + bench (boots VM)
 full-test: test _check-assets _pack-initrd _sign

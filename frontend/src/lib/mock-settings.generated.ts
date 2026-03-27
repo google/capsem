@@ -3,7 +3,7 @@
 //
 // Regenerate: just run (or just test)
 
-import type { ResolvedSetting, SettingsNode } from './types';
+import type { ResolvedSetting, SettingsNode, McpServerInfo, McpToolInfo, McpPolicyInfo } from './types';
 
 // Helper: creates a mock setting with sensible defaults for empty fields.
 function ms(overrides: Partial<ResolvedSetting> & { id: string; category: string; name: string; setting_type: ResolvedSetting['setting_type'] }): ResolvedSetting {
@@ -253,3 +253,119 @@ export function buildMockTree(): SettingsNode[] {
     ]},
   ];
 }
+
+// ---------------------------------------------------------------------------
+// MCP mock data (generated from defaults.json + config/mcp-tools.json)
+// ---------------------------------------------------------------------------
+
+export let MOCK_MCP_SERVERS: McpServerInfo[] = [];
+
+export let MOCK_MCP_TOOLS: McpToolInfo[] = [
+  {
+    namespaced_name: 'fetch_http',
+    original_name: 'fetch_http',
+    description: 'Fetch a URL and return its content. In \'markdown\' mode (default), HTML is converted to clean markdown preserving head...',
+    server_name: 'builtin',
+    annotations: { title: 'Fetch HTTP', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'grep_http',
+    original_name: 'grep_http',
+    description: 'Fetch a URL and search its content for a regex pattern (case-insensitive). By default, searches extracted text (HTML ...',
+    server_name: 'builtin',
+    annotations: { title: 'Grep HTTP', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'http_headers',
+    original_name: 'http_headers',
+    description: 'Return HTTP status code and response headers for a URL. By default uses HEAD (no body downloaded, faster). Set method...',
+    server_name: 'builtin',
+    annotations: { title: 'HTTP Headers', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'snapshots_changes',
+    original_name: 'snapshots_changes',
+    description: 'List files that have changed in the workspace compared to automatic checkpoints. Each entry includes the file path, o...',
+    server_name: 'builtin',
+    annotations: { title: 'List changed files', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'snapshots_list',
+    original_name: 'snapshots_list',
+    description: 'List all workspace snapshots (automatic and manual). Shows slot index, origin (auto/manual), name, age, blake3 hash, ...',
+    server_name: 'builtin',
+    annotations: { title: 'List snapshots', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'snapshots_revert',
+    original_name: 'snapshots_revert',
+    description: 'Revert a file to its state at a specific checkpoint. Use the checkpoint ID from snapshots_changes output, or omit che...',
+    server_name: 'builtin',
+    annotations: { title: 'Revert file', read_only_hint: false, destructive_hint: true, idempotent_hint: true, open_world_hint: false },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'snapshots_create',
+    original_name: 'snapshots_create',
+    description: 'Create a named workspace snapshot (checkpoint). The snapshot captures the current state of all files and can be used ...',
+    server_name: 'builtin',
+    annotations: { title: 'Create snapshot', read_only_hint: false, destructive_hint: false, idempotent_hint: false, open_world_hint: false },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'snapshots_delete',
+    original_name: 'snapshots_delete',
+    description: 'Delete a manual snapshot by checkpoint ID. Only manual (named) snapshots can be deleted. Automatic snapshots are mana...',
+    server_name: 'builtin',
+    annotations: { title: 'Delete snapshot', read_only_hint: false, destructive_hint: true, idempotent_hint: true, open_world_hint: false },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'snapshots_history',
+    original_name: 'snapshots_history',
+    description: 'Show the history of a specific file across all snapshots. For each snapshot that contains a version of the file, show...',
+    server_name: 'builtin',
+    annotations: { title: 'File history', read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+  {
+    namespaced_name: 'snapshots_compact',
+    original_name: 'snapshots_compact',
+    description: 'Compact multiple snapshots into a single new manual snapshot. Merges workspaces with newest-file-wins strategy. Delet...',
+    server_name: 'builtin',
+    annotations: { title: 'Compact snapshots', read_only_hint: false, destructive_hint: true, idempotent_hint: false, open_world_hint: false },
+    pin_hash: null,
+    approved: true,
+    pin_changed: false,
+  },
+];
+
+export const MOCK_MCP_POLICY: McpPolicyInfo = {
+  global_policy: 'allow',
+  default_tool_permission: 'allow',
+  blocked_servers: [],
+  tool_permissions: {},
+};

@@ -8,8 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Mock settings generated from build system** -- `mock.ts` was 1213 lines of hand-crafted settings data that drifted from `defaults.json` (9 settings missing, values stale). Now generated from `config/defaults.json` via `generate_mock_ts()`. New `mock-settings.generated.ts` is produced alongside `defaults.json` and `settings-schema.json` by `_generate-settings` recipe, which runs automatically as part of `just run` and `just test`.
+- **Mock data generated from build system** -- `mock.ts` was 1213 lines of hand-crafted settings and MCP data that drifted from reality (9 settings missing, fake MCP servers). Settings now generated from `config/defaults.json`, MCP tools exported from Rust via `mcp-export` binary to `config/mcp-tools.json`. All generated into `mock-settings.generated.ts` by `_generate-settings` recipe (runs automatically in `just run` and `just test`).
 - **`step` metadata field flows to UI** -- Rust `SettingMetaRaw` was silently dropping the `step` field from generated JSON. Added to both `registry.rs` and `types.rs` so number input increments work.
+- **Build log** -- Runner signing and generation scripts now log to `target/build.log` instead of stdout, preventing contamination of binary output.
 - **Staleness CI tests** -- `test_defaults_json_not_stale` and `test_mock_ts_not_stale` assert generated outputs match on-disk files, catching future drift.
 
 ### Security

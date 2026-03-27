@@ -266,6 +266,9 @@ pub struct SettingMetadata {
     /// Frontend side effect triggered when the value changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_effect: Option<SideEffect>,
+    /// Step increment for number settings (e.g. 1 for integers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<i64>,
     /// Setting is hidden from the UI but still active for policy building.
     #[serde(default)]
     pub hidden: bool,

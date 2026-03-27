@@ -11,13 +11,22 @@
 
   // Server expand/collapse state.
   let expandedServers = $state<Set<string>>(new Set());
+  let expandedToolGroups = $state<Set<string>>(new Set());
   let expandedAuth = $state<Set<string>>(new Set());
 
   // Refreshing state.
   let refreshing = $state(false);
 
-  /** Builtin tools (server_name === 'builtin'). */
+  /** Builtin tools (server_name === 'builtin'), grouped by category. */
   const builtinTools = $derived(mcpStore.tools.filter((t) => t.server_name === 'builtin'));
+  const builtinGroups = $derived(() => {
+    const groups: { name: string; tools: typeof builtinTools }[] = [];
+    const http = builtinTools.filter((t) => !t.original_name.startsWith('snapshots_'));
+    const snapshots = builtinTools.filter((t) => t.original_name.startsWith('snapshots_'));
+    if (http.length > 0) groups.push({ name: 'HTTP', tools: http });
+    if (snapshots.length > 0) groups.push({ name: 'Snapshots', tools: snapshots });
+    return groups;
+  });
 
   /** HTTP servers (not unsupported_stdio). */
   const httpServers = $derived(mcpStore.servers.filter((s) => !s.unsupported_stdio));
@@ -53,6 +62,12 @@
 
   function removeHeaderPair(index: number) {
     newHeaderPairs = newHeaderPairs.filter((_, i) => i !== index);
+  }
+
+  function toggleToolGroup(name: string) {
+    const next = new Set(expandedToolGroups);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    expandedToolGroups = next;
   }
 
   function toggleServer(name: string) {
@@ -131,21 +146,6 @@
       </div>
     {/if}
 
-    <div class="border-t border-base-200/50 pt-3">
-      <button
-        class="btn btn-ghost btn-sm text-xs"
-        disabled={refreshing}
-        onclick={handleRefresh}
-      >
-        {#if refreshing}
-          <span class="loading loading-spinner loading-xs"></span>
-        {/if}
-        Refresh Tools
-      </button>
-      <span class="text-xs text-base-content/40 ml-2">
-        Re-discover tools from all connected servers.
-      </span>
-    </div>
   </div>
 </div>
 
@@ -157,49 +157,74 @@
   {#if builtinTools.length === 0}
     <p class="text-sm text-base-content/40">No built-in tools available.</p>
   {:else}
-    <div class="overflow-x-auto">
-      <table class="table table-xs">
-        <thead>
-          <tr class="text-base-content/50">
-            <th>Tool</th>
-            <th class="text-center">Read-only</th>
-            <th class="text-center">Destructive</th>
-            <th class="text-center">Idempotent</th>
-            <th class="text-center">Open World</th>
-            <th class="text-right">Permission</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each builtinTools as tool (tool.namespaced_name)}
-            {@const perm = toolPermission(mcpStore.policy, tool)}
-            <tr>
-              <td class="font-mono text-xs">{tool.original_name}</td>
-              <td class="text-center">{#if tool.annotations?.read_only_hint}<span class="text-allowed">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
-              <td class="text-center">{#if tool.annotations?.destructive_hint}<span class="text-denied">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
-              <td class="text-center">{#if tool.annotations?.idempotent_hint}<span class="text-base-content/60">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
-              <td class="text-center">{#if tool.annotations?.open_world_hint}<span class="text-base-content/60">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
-              <td class="text-right">
-                <select
-                  class="select select-xs select-bordered w-20 text-xs"
-                  value={perm}
-                  onchange={(e) => mcpStore.setToolPermission(tool.namespaced_name, e.currentTarget.value)}
-                >
-                  <option value="allow">allow</option>
-                  <option value="warn">warn</option>
-                  <option value="block">block</option>
-                </select>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    {#each builtinGroups() as group (group.name)}
+      {@const isOpen = expandedToolGroups.has(group.name)}
+      <button
+        class="flex items-center gap-2 mt-3 mb-1 w-full text-left"
+        onclick={() => toggleToolGroup(group.name)}
+      >
+        <svg class="size-3 text-base-content/40 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <span class="text-sm font-medium text-base-content/60">{group.name}</span>
+        <span class="text-xs text-base-content/30">{group.tools.length} tools</span>
+      </button>
+      {#if isOpen}
+        <div class="overflow-x-auto">
+          <table class="table table-xs">
+            <thead>
+              <tr class="text-base-content/50">
+                <th>Tool</th>
+                <th class="text-center">Read-only</th>
+                <th class="text-center">Destructive</th>
+                <th class="text-center">Idempotent</th>
+                <th class="text-center">Open World</th>
+                <th class="text-right">Permission</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each group.tools as tool (tool.namespaced_name)}
+                {@const perm = toolPermission(mcpStore.policy, tool)}
+                <tr>
+                  <td class="font-mono text-xs">{tool.original_name}</td>
+                  <td class="text-center">{#if tool.annotations?.read_only_hint}<span class="text-allowed">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
+                  <td class="text-center">{#if tool.annotations?.destructive_hint}<span class="text-denied">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
+                  <td class="text-center">{#if tool.annotations?.idempotent_hint}<span class="text-base-content/60">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
+                  <td class="text-center">{#if tool.annotations?.open_world_hint}<span class="text-base-content/60">Y</span>{:else}<span class="text-base-content/20">--</span>{/if}</td>
+                  <td class="text-right">
+                    <select
+                      class="select select-xs select-bordered w-20 text-xs"
+                      value={perm}
+                      onchange={(e) => mcpStore.setToolPermission(tool.namespaced_name, e.currentTarget.value)}
+                    >
+                      <option value="allow">allow</option>
+                      <option value="warn">warn</option>
+                      <option value="block">block</option>
+                    </select>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    {/each}
   {/if}
 </div>
 
 <!-- Servers subsection -->
 <div data-subgroup="mcp-servers" class="mt-8 scroll-mt-4">
-  <h2 class="text-lg font-semibold text-interactive mb-3">Servers</h2>
+  <div class="flex items-center gap-3 mb-3">
+    <h2 class="text-lg font-semibold text-interactive">Servers</h2>
+    <button
+      class="btn btn-ghost btn-xs text-xs text-base-content/50"
+      disabled={refreshing}
+      onclick={handleRefresh}
+    >
+      {#if refreshing}
+        <span class="loading loading-spinner loading-xs"></span>
+      {/if}
+      Refresh Tools
+    </button>
+  </div>
 
   <!-- Add server form -->
   <div class="mb-3">
