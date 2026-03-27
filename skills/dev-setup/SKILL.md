@@ -81,6 +81,36 @@ api_key = "AIza..."
 
 Needed for: `just full-test` (integration test exercises real AI API calls), interactive AI sessions inside the VM.
 
+## Claude Code permissions
+
+To avoid repeated permission prompts when using `just` and `capsem` commands, add these to your Claude Code settings. Run `/update-config` or edit `.claude/settings.local.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(just *)",
+      "Bash(uv run *)",
+      "Bash(cargo *)",
+      "Bash(pnpm *)",
+      "Bash(cd frontend && pnpm *)",
+      "Bash(npx *)",
+      "Bash(python3 scripts/*)",
+      "Bash(rustup *)"
+    ]
+  }
+}
+```
+
+This allows:
+- `just *` -- all recipes (run, test, build-assets, query-session, list-sessions, doctor, etc.)
+- `uv run *` -- capsem-builder CLI and Python scripts
+- `cargo *` -- Rust builds, tests, checks
+- `pnpm *` -- frontend package management and builds
+- `npx *` -- skills CLI and other npx tools
+- `python3 scripts/*` -- project scripts (check_session, list_sessions, etc.)
+- `rustup *` -- target/component management
+
 ## Codesigning
 
 The app binary must be codesigned with `com.apple.security.virtualization` entitlement or Virtualization.framework calls crash. The justfile handles this automatically via `_sign` recipe. No manual setup needed for development.

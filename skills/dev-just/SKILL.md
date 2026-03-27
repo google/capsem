@@ -23,6 +23,9 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just build-rootfs [arch]` | Rootfs only (default: arm64) |
 | `just bench` | In-VM benchmarks (disk I/O, rootfs, CLI startup, HTTP) |
 | `just inspect-session [id]` | Session DB integrity + event summary |
+| `just list-sessions` | Table of recent sessions with event counts |
+| `just query-session "SQL"` | Run SQL against latest session DB |
+| `just query-session "SQL" <id>` | Run SQL against specific session DB |
 | `just update-fixture <path>` | Copy + scrub real session DB as test fixture |
 | `just update-prices` | Refresh model pricing JSON |
 | `just install` | doctor + full-test + release .app + sign + /Applications |

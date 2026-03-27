@@ -313,6 +313,38 @@ clean-all: clean
 inspect-session *args='':
     python3 scripts/check_session.py {{args}}
 
+# List recent sessions with event counts per table
+list-sessions *args='':
+    python3 scripts/list_sessions.py {{args}}
+
+# Run a SQL query against a session DB (latest with a DB by default, or pass session ID)
+query-session sql session_id='':
+    #!/bin/bash
+    set -euo pipefail
+    SESSIONS_DIR="$HOME/.capsem/sessions"
+    SID="{{session_id}}"
+    if [ -z "$SID" ]; then
+        # Find latest session that still has a session.db (skip vacuumed)
+        SID=$(sqlite3 "$SESSIONS_DIR/main.db" \
+          "SELECT id FROM sessions WHERE status != 'vacuumed' ORDER BY created_at DESC LIMIT 1" \
+          2>/dev/null || true)
+        # Fallback: try any session with a DB on disk
+        if [ -z "$SID" ] || [ ! -f "$SESSIONS_DIR/$SID/session.db" ]; then
+            for d in $(ls -1t "$SESSIONS_DIR" 2>/dev/null); do
+                [ -f "$SESSIONS_DIR/$d/session.db" ] && SID="$d" && break
+            done
+        fi
+    fi
+    if [ -z "$SID" ]; then
+        echo "No sessions with a session.db found" >&2; exit 1
+    fi
+    DB="$SESSIONS_DIR/$SID/session.db"
+    if [ ! -f "$DB" ]; then
+        echo "No session.db at $DB (session may be vacuumed)" >&2; exit 1
+    fi
+    echo "Session: $SID"
+    sqlite3 -header -column "$DB" "{{sql}}"
+
 # Update test fixture DB from a real session (scrubs API keys)
 update-fixture src:
     #!/usr/bin/env bash

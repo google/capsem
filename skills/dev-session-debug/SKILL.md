@@ -10,13 +10,16 @@ Every Capsem VM session produces a SQLite database at `~/.capsem/sessions/<id>/s
 ## Quick inspection
 
 ```bash
-just inspect-session              # Latest session
+just list-sessions                # Table of recent sessions with per-table event counts
+just list-sessions -n 20          # Show more sessions
+just inspect-session              # Full integrity check on latest session
 just inspect-session <id>         # Specific session
-just inspect-session --list       # List recent sessions with stats
 just inspect-session -n 10        # Show 10 preview rows per table
 ```
 
-The script checks: table existence, row counts, tool lifecycle integrity, AI provider correlation, NULL detection in critical fields, and MCP correlation.
+`just list-sessions` shows a compact table: session ID, status, duration, cost, and row counts for each of the 6 tables. Use this to quickly spot sessions with missing telemetry.
+
+`just inspect-session` does a deep check: table existence, row counts, tool lifecycle integrity, AI provider correlation, NULL detection in critical fields, and MCP correlation.
 
 ## Session database tables (session.db)
 
@@ -182,26 +185,26 @@ Rollup happens when a session ends.
 - Model not found in pricing table (`config/genai-prices.json`)
 - Run `just update-prices` to refresh pricing data
 
-## Direct SQL queries
+## Ad-hoc SQL queries
+
+Use `just query-session` to run SQL against the latest (or a specific) session. This avoids permission prompts that raw `sqlite3` triggers.
 
 ```bash
-# Check decisions breakdown
-sqlite3 ~/.capsem/sessions/<id>/session.db \
-  "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
+# Decisions breakdown
+just query-session "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
 
-# Check token totals by provider
-sqlite3 ~/.capsem/sessions/<id>/session.db \
-  "SELECT provider, SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost_usd) FROM model_calls GROUP BY provider"
+# Token totals by provider
+just query-session "SELECT provider, SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost_usd) FROM model_calls GROUP BY provider"
 
 # Find orphaned tool calls
-sqlite3 ~/.capsem/sessions/<id>/session.db \
-  "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
+just query-session "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
 
 # Check fs_events actions
-sqlite3 ~/.capsem/sessions/<id>/session.db \
-  "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
+just query-session "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
 
 # Trace a tool call chain
-sqlite3 ~/.capsem/sessions/<id>/session.db \
-  "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
+just query-session "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
+
+# Query a specific session
+just query-session "SELECT COUNT(*) FROM net_events" <session-id>
 ```
