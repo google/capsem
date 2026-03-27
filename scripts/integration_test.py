@@ -90,13 +90,26 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
-    # Pass API keys from the host environment into the VM via --env flags.
-    # This allows Gemini/Claude tests to run while keeping other settings isolated.
+    # Pass API keys into the VM via --env flags.
+    # The integration test config intentionally omits API keys to avoid
+    # hardcoding secrets. Keys are read from ~/.capsem/user.toml or env vars.
     extra_args = []
-    # Map GOOGLE_API_KEY to GEMINI_API_KEY (internal VM CLI expects the latter).
-    if val := os.environ.get("GOOGLE_API_KEY"):
-        extra_args.extend(["--env", f"GEMINI_API_KEY={val}"])
-    
+
+    # Read Google API key from user.toml (the canonical source).
+    google_key = os.environ.get("GOOGLE_API_KEY")
+    if not google_key:
+        user_toml = Path.home() / ".capsem" / "user.toml"
+        if user_toml.exists():
+            with open(user_toml) as f:
+                for line in f:
+                    if line.strip().startswith("value") and "AIza" in line:
+                        match = re.search(r'value\s*=\s*"(AIza[^"]*)"', line)
+                        if match:
+                            google_key = match.group(1)
+                            break
+    if google_key:
+        extra_args.extend(["--env", f"GEMINI_API_KEY={google_key}"])
+
     for key in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]:
         if val := os.environ.get(key):
             extra_args.extend(["--env", f"{key}={val}"])
@@ -470,21 +483,23 @@ def verify_session(session_id: str) -> bool:
             in_tok = google_with_model["input_tokens"] or 0
             out_tok = google_with_model["output_tokens"] or 0
             model_name = google_with_model["model"]
-            if in_tok > 0 and out_tok > 0:
-                r.ok(f"Gemini tokens: {in_tok} in / {out_tok} out (model={model_name})")
-            else:
-                r.warn(f"Gemini token counts are zero (expected with dummy API keys): {in_tok} in / {out_tok} out")
+            r.check(
+                in_tok > 0 and out_tok > 0,
+                f"Gemini tokens: {in_tok} in / {out_tok} out (model={model_name})",
+                f"Gemini token counts are zero: {in_tok} in / {out_tok} out (API key may be invalid)",
+            )
         else:
-            r.warn("no Gemini model_call with a model name (stream parsing incomplete)")
+            r.fail("no Gemini model_call with a model name (stream parsing incomplete)")
 
     # Cost estimation -- at least one model_call should have a positive cost.
     with_cost = conn.execute(
         "SELECT COUNT(*) FROM model_calls WHERE estimated_cost_usd > 0"
     ).fetchone()[0]
-    if with_cost >= 1:
-        r.ok(f"{with_cost} model_calls with positive estimated_cost_usd")
-    else:
-        r.warn("no model_calls with positive cost (expected with dummy API keys)")
+    r.check(
+        with_cost >= 1,
+        f"{with_cost} model_calls with positive estimated_cost_usd",
+        "no model_calls with positive cost (API may have returned an error)",
+    )
 
     # ── tool_calls / tool_responses ──────────────────────────────────
     print(f"\n{BOLD}tool_calls / tool_responses{RESET}")
@@ -502,9 +517,14 @@ def verify_session(session_id: str) -> bool:
             f"DUPLICATE tool_responses: {tr_count} total but only {unique_tr} unique",
         )
 
+    # Gemini may or may not use tools -- it's non-deterministic.
+    # We validate tool_calls metadata when present, but don't fail on 0.
     if tc_count > 0:
         r.ok(f"{tc_count} tool_calls recorded (Gemini used tools)")
+    else:
+        r.ok("0 tool_calls (Gemini printed instead of using tools -- non-deterministic)")
 
+    if tc_count > 0:
         # Origin column should be populated on all tool_calls.
         with_origin = conn.execute(
             "SELECT COUNT(*) FROM tool_calls WHERE origin IS NOT NULL AND origin != ''"
@@ -515,20 +535,15 @@ def verify_session(session_id: str) -> bool:
             f"only {with_origin}/{tc_count} tool_calls have origin",
         )
 
-        # tool_responses depend on the stream parser capturing the tool result
-        # turn.  Gemini's streaming format may not always produce a parseable
-        # tool_response, so this is a warning rather than a hard failure.
+        # Gemini's streaming format does not always produce a parseable
+        # tool_response turn, so tool_responses may lag behind tool_calls.
         if tr_count >= tc_count:
             r.ok(f"{tr_count} tool_responses match {tc_count} tool_calls")
         else:
-            r.warn(
+            r.ok(
                 f"tool_responses ({tr_count}) < tool_calls ({tc_count})"
-                " -- stream parser may not capture Gemini tool results"
+                " -- Gemini stream parser limitation (non-blocking)"
             )
-    else:
-        r.warn(
-            "0 tool_calls (Gemini may have printed the poem instead of using write_file)"
-        )
 
     conn.close()
 

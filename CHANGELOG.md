@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Async VirtioFS worker thread** -- FUSE request processing runs on a dedicated thread, not the vCPU. Guest interrupt delivery via irqfd. Virtqueue memory barriers for cross-thread safety.
 - **Security documentation** -- security model overview page (threat model, defense layers, trust boundaries) and virtualization security page (VirtioFS path traversal, TOCTOU analysis, resource limits, data integrity).
 
+### Fixed
+- **Integration test Gemini API key handling** -- reads Google API key from `~/.capsem/user.toml` as fallback instead of requiring env var. Removed dummy API key from test config. Promoted Gemini token/model warnings to proper pass/fail checks.
+
 ### Changed
 - **`just build-assets` now uses capsem-builder** -- config-driven Dockerfile generation replaces hard-coded `images/build.py`. Assets output to per-arch layout (`assets/{arch}/`).
 - **Multi-arch cross-compilation** -- `.cargo/config.toml` configures `rust-lld` for both `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. CI cross-compile checks cover both targets.

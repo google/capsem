@@ -10,4 +10,4 @@
 "ai.anthropic.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
 
 "ai.google.allow" = { value = true, modified = "2026-03-05T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_dummy_key_for_integration_test", modified = "2026-03-05T00:00:00Z" }
+# API key injected via --env from host GOOGLE_API_KEY (see integration_test.py)
