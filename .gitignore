@@ -7,6 +7,8 @@ archive/
 .virtual_documents
 *code-workspace
 .vscode
+.claude/projects/
+.claude/settings.local.json
 .pytest_cache
 config.toml
 keys.json
@@ -34,6 +36,7 @@ private/
 
 # Coverage output
 coverage/
+.coverage
 codecov-*.json
 codecov-*.xml
 *-junit.xml
