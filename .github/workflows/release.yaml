@@ -68,31 +68,43 @@ jobs:
 
   build-assets:
     needs: preflight
-    runs-on: ubuntu-24.04-arm  # Native arm64 -- no QEMU, ~5x faster Docker builds
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            runner: ubuntu-24.04
+            rust-target: x86_64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
 
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-musl
+          targets: ${{ matrix.rust-target }}
           components: llvm-tools
 
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
-          key: build-assets
+          key: build-assets-${{ matrix.arch }}
 
       - name: Install b3sum
         run: cargo install b3sum --locked
 
       - name: Build VM assets
-        run: uv run capsem-builder build guest/ --output assets/
+        run: uv run capsem-builder build guest/ --arch ${{ matrix.arch }} --output assets/
 
       - uses: actions/upload-artifact@v7
         with:
-          name: vm-assets
-          path: assets/
+          name: vm-assets-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/
 
   test:
     needs: build-assets
@@ -101,8 +113,25 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v8
         with:
-          name: vm-assets
-          path: assets/
+          name: vm-assets-arm64
+          path: assets/arm64/
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-x86_64
+          path: assets/x86_64/
+
+      # Regenerate manifest.json from both arch dirs.
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Generate unified manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv run python3 -c "
+          from pathlib import Path
+          from capsem.builder.docker import generate_checksums
+          generate_checksums(Path('assets'), '$VERSION')
+          print('manifest.json generated for both architectures')
+          "
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -175,20 +204,36 @@ jobs:
           | Audit | cargo audit + pnpm audit |
           EOF
 
-  build-app:
+  build-app-macos:
     needs: test
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v8
         with:
-          name: vm-assets
-          path: assets/
+          name: vm-assets-arm64
+          path: assets/arm64/
+
+      # Create assets/current symlink for Tauri resource bundling.
+      - name: Link assets/current
+        run: ln -s arm64 assets/current
+
+      # Regenerate manifest for this arch.
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Generate manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv run python3 -c "
+          from pathlib import Path
+          from capsem.builder.docker import generate_checksums
+          generate_checksums(Path('assets'), '$VERSION')
+          "
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: build-app
+          key: build-app-macos
 
       - uses: pnpm/action-setup@v5
         with:
@@ -228,30 +273,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/private_keys"
           echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
 
-      # Accumulate manifest.json: merge new version's entry with previous releases.
-      - name: Build accumulated manifest
-        run: |
-          gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
-          if [ -f /tmp/prev-manifest/manifest.json ]; then
-            python3 -c "
-          import json, sys
-          with open('assets/manifest.json') as f:
-              new = json.load(f)
-          with open('/tmp/prev-manifest/manifest.json') as f:
-              prev = json.load(f)
-          for ver, entry in prev.get('releases', {}).items():
-              if ver not in new['releases']:
-                  new['releases'][ver] = entry
-          with open('assets/manifest.json', 'w') as f:
-              json.dump(new, f, indent=2)
-          print(f'Merged manifest: {len(new[\"releases\"])} releases')
-          "
-          else
-            echo "No previous manifest found, using fresh manifest"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and sign app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -264,44 +285,183 @@ jobs:
           cd crates/capsem-app
           cargo tauri build --skip-stapling
 
-      - name: Sign manifest
-        run: |
-          brew install minisign
-          echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
-          minisign -S -s /tmp/manifest-sign.key -m assets/manifest.json
-          rm /tmp/manifest-sign.key
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 
-      - name: Attest build provenance (DMG + rootfs)
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: |
-            ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
-            ${{ github.workspace }}/assets/rootfs.squashfs
-
-      - name: Attest SBOM
-        uses: actions/attest@v4
-        with:
-          subject-path: ${{ github.workspace }}/target/release/bundle/dmg/*.dmg
-          predicate-type: https://spdx.dev/Document/v2.3
-          predicate-path: capsem-sbom.spdx.json
-
-      - name: Collect release artifacts
+      - name: Collect macOS artifacts
         run: |
           mkdir -p release-artifacts
           cp target/release/bundle/dmg/*.dmg release-artifacts/
           cp target/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/macos/latest.json release-artifacts/ 2>/dev/null || true
-          cp assets/rootfs.squashfs release-artifacts/
-          cp assets/manifest.json release-artifacts/
-          cp assets/manifest.json.minisig release-artifacts/
           cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: release-artifacts/
+
+  build-app-linux:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-arm64
+          path: assets/arm64/
+
+      # Create assets/current symlink for Tauri resource bundling.
+      - name: Link assets/current
+        run: ln -s arm64 assets/current
+
+      # Regenerate manifest for this arch.
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Generate manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv run python3 -c "
+          from pathlib import Path
+          from capsem.builder.docker import generate_checksums
+          generate_checksums(Path('assets'), '$VERSION')
+          "
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-app-linux
+
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: cd frontend && pnpm build
+
+      - name: Install cargo tools
+        run: cargo install tauri-cli cargo-auditable --locked
+
+      - name: Build app (deb + AppImage)
+        run: |
+          cd crates/capsem-app
+          cargo tauri build
+
+      - name: Collect Linux artifacts
+        run: |
+          mkdir -p release-artifacts
+          cp target/release/bundle/deb/*.deb release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/appimage/*.AppImage release-artifacts/ 2>/dev/null || true
+          ls -lh release-artifacts/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: release-artifacts/
+
+  create-release:
+    needs: [build-app-macos, build-app-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Download all platform artifacts.
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-macos
+          path: release-artifacts/
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux
+          path: release-artifacts/
+
+      # Download per-arch VM assets for the release.
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-arm64
+          path: release-artifacts/arm64/
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-x86_64
+          path: release-artifacts/x86_64/
+
+      # Regenerate unified manifest.json from both arch dirs.
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Generate unified manifest
+        run: |
+          # Set up a temp assets dir with both arch subdirs for checksums.
+          mkdir -p unified-assets/arm64 unified-assets/x86_64
+          cp release-artifacts/arm64/* unified-assets/arm64/
+          cp release-artifacts/x86_64/* unified-assets/x86_64/
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv run python3 -c "
+          from pathlib import Path
+          from capsem.builder.docker import generate_checksums
+          generate_checksums(Path('unified-assets'), '$VERSION')
+          "
+          cp unified-assets/manifest.json release-artifacts/manifest.json
+
+      # Accumulate manifest.json: merge new version's entry with previous releases.
+      - name: Build accumulated manifest
+        run: |
+          gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
+          if [ -f /tmp/prev-manifest/manifest.json ]; then
+            python3 -c "
+          import json, sys
+          with open('release-artifacts/manifest.json') as f:
+              new = json.load(f)
+          with open('/tmp/prev-manifest/manifest.json') as f:
+              prev = json.load(f)
+          for ver, entry in prev.get('releases', {}).items():
+              if ver not in new['releases']:
+                  new['releases'][ver] = entry
+          with open('release-artifacts/manifest.json', 'w') as f:
+              json.dump(new, f, indent=2)
+          print(f'Merged manifest: {len(new[\"releases\"])} releases')
+          "
+          else
+            echo "No previous manifest found, using fresh manifest"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign manifest
+        run: |
+          sudo apt-get update && sudo apt-get install -y minisign
+          echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
+          minisign -S -s /tmp/manifest-sign.key -m release-artifacts/manifest.json
+          rm /tmp/manifest-sign.key
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+
+      - name: Attest build provenance (DMG + rootfs per arch)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            release-artifacts/*.dmg
+            release-artifacts/arm64/rootfs.squashfs
+            release-artifacts/x86_64/rootfs.squashfs
+
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: release-artifacts/*.dmg
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: release-artifacts/capsem-sbom.spdx.json
 
       - name: Build summary
         run: |
@@ -309,8 +469,12 @@ jobs:
           DMG=$(ls -1 release-artifacts/*.dmg 2>/dev/null | head -1)
           DMG_NAME=$(basename "$DMG" 2>/dev/null || echo "N/A")
           DMG_SIZE=$(du -h "$DMG" 2>/dev/null | cut -f1 || echo "N/A")
-          ROOTFS_SIZE=$(du -h release-artifacts/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
-          SBOM_PKGS=$(grep -c '"SPDX" ' capsem-sbom.spdx.json 2>/dev/null || python3 -c "import json; d=json.load(open('capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
+          ARM64_ROOTFS=$(du -h release-artifacts/arm64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
+          X86_ROOTFS=$(du -h release-artifacts/x86_64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
+          DEB=$(ls -1 release-artifacts/*.deb 2>/dev/null | head -1)
+          DEB_NAME=$(basename "$DEB" 2>/dev/null || echo "N/A")
+          DEB_SIZE=$(du -h "$DEB" 2>/dev/null | cut -f1 || echo "N/A")
+          SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Release $VERSION
@@ -320,7 +484,9 @@ jobs:
           | File | Size |
           |------|------|
           | $DMG_NAME | $DMG_SIZE |
-          | rootfs.squashfs | $ROOTFS_SIZE |
+          | $DEB_NAME | $DEB_SIZE |
+          | rootfs.squashfs (arm64) | $ARM64_ROOTFS |
+          | rootfs.squashfs (x86_64) | $X86_ROOTFS |
           | manifest.json | signed (minisign) |
           | capsem-sbom.spdx.json | $SBOM_PKGS packages |
 
@@ -328,17 +494,11 @@ jobs:
 
           - Apple codesigned (Developer ID)
           - Notarization submitted (skip-stapling)
-          - SLSA build provenance attested
+          - SLSA build provenance attested (DMG + both rootfs)
           - SBOM attested (SPDX 2.3)
           - Manifest signed (minisign)
           - Tauri updater signed
           EOF
-
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-artifacts
-          path: release-artifacts/
 
       - name: Create GitHub release
         env:
@@ -351,16 +511,16 @@ jobs:
           ### VM Environment
 
           "
-          if [ -f assets/tool-versions.txt ]; then
+          if [ -f release-artifacts/arm64/tool-versions.txt ]; then
             NOTES="${NOTES}| Tool | Version |
           |------|---------|
           "
             while IFS='=' read -r tool version; do
               [ -n "$tool" ] && NOTES="${NOTES}| ${tool} | ${version} |
           "
-            done < assets/tool-versions.txt
+            done < release-artifacts/arm64/tool-versions.txt
           fi
 
-          gh release create ${{ github.ref_name }} release-artifacts/* \
+          gh release create ${{ github.ref_name }} release-artifacts/*.dmg release-artifacts/*.deb release-artifacts/*.AppImage release-artifacts/arm64/* release-artifacts/x86_64/* release-artifacts/manifest.json release-artifacts/manifest.json.minisig release-artifacts/capsem-sbom.spdx.json release-artifacts/latest.json 2>/dev/null \
             --title "Capsem ${{ github.ref_name }}" \
             --notes "$NOTES"

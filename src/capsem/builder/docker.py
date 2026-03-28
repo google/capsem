@@ -465,6 +465,15 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     manifest = {"latest": version, "releases": {version: releases}}
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    # Create assets/current symlink pointing to the most recently built arch.
+    # Tauri bundle resources reference assets/current/ so they resolve on any platform.
+    current_link = output_dir / "current"
+    if arch_dirs:
+        target = sorted(arch_dirs)[-1].name
+        current_link.unlink(missing_ok=True)
+        current_link.symlink_to(target)
+
     return manifest_path
 
 

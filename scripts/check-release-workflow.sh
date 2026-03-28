@@ -69,10 +69,16 @@ echo ""
 echo "Version sync:"
 CARGO_VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 TAURI_VER=$(grep '"version"' crates/capsem-app/tauri.conf.json | sed 's/.*"\([0-9][^"]*\)".*/\1/')
+PYPROJECT_VER=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 if [ "$CARGO_VER" = "$TAURI_VER" ]; then
     pass "Cargo.toml ($CARGO_VER) == tauri.conf.json ($TAURI_VER)"
 else
     fail "version mismatch: Cargo.toml=$CARGO_VER, tauri.conf.json=$TAURI_VER"
+fi
+if [ "$CARGO_VER" = "$PYPROJECT_VER" ]; then
+    pass "Cargo.toml ($CARGO_VER) == pyproject.toml ($PYPROJECT_VER)"
+else
+    fail "version mismatch: Cargo.toml=$CARGO_VER, pyproject.toml=$PYPROJECT_VER"
 fi
 
 # --- Summary ---

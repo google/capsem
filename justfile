@@ -208,10 +208,12 @@ cut-release: test
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     # Bump tauri.conf.json
     sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
+    # Bump pyproject.toml
+    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
     # Stamp changelog: [Unreleased] -> [NEW] - TODAY
     sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
     # Commit, tag, push
-    git add Cargo.toml crates/capsem-app/tauri.conf.json CHANGELOG.md
+    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md
     git commit -m "release: v${NEW}"
     git tag "$TAG"
     git push origin main "$TAG"
@@ -476,6 +478,11 @@ _install-tools:
     if ! cargo tauri --version &>/dev/null; then
         echo "Installing Tauri CLI..."
         cargo install tauri-cli
+    fi
+    # cargo-sbom for SPDX generation
+    if ! command -v cargo-sbom &>/dev/null; then
+        echo "Installing cargo-sbom..."
+        cargo install cargo-sbom --locked
     fi
 
 # Verify VM assets exist (vmlinuz, initrd.img, rootfs)

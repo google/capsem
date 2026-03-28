@@ -317,7 +317,9 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             eprintln!("[capsem] warning: no vsock connections after 30s. Is the guest agent running?");
             warned_setup = true;
         }
-        // Pump CFRunLoop to deliver ObjC callbacks.
+        // Pump CFRunLoop to deliver ObjC callbacks (macOS VZ requires this).
+        // On Linux (KVM), vsock connections arrive via epoll -- just yield briefly.
+        #[cfg(target_os = "macos")]
         unsafe {
             core_foundation_sys::runloop::CFRunLoopRunInMode(
                 core_foundation_sys::runloop::kCFRunLoopDefaultMode,
@@ -325,6 +327,8 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
                 0,
             );
         }
+        #[cfg(not(target_os = "macos"))]
+        std::thread::sleep(Duration::from_millis(50));
         // Check for accepted connections (non-blocking via try_recv on the channel).
         while let Ok(conn) = vsock_rx.try_recv() {
             match conn.port {
@@ -376,11 +380,12 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         }
     });
 
-    // Wait for Ready, pumping CFRunLoop.
+    // Wait for Ready, pumping CFRunLoop (macOS) or sleeping (Linux).
     loop {
         if Instant::now() >= deadline {
             anyhow::bail!("timed out waiting for guest agent Ready");
         }
+        #[cfg(target_os = "macos")]
         unsafe {
             core_foundation_sys::runloop::CFRunLoopRunInMode(
                 core_foundation_sys::runloop::kCFRunLoopDefaultMode,
@@ -388,6 +393,8 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
                 0,
             );
         }
+        #[cfg(not(target_os = "macos"))]
+        std::thread::sleep(Duration::from_millis(50));
         match ctrl_msg_rx.try_recv() {
             Ok(GuestToHost::Ready { version }) => {
                 eprintln!("[capsem] guest agent ready (v{version})");
@@ -416,6 +423,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             eprintln!("[capsem] BootReady not received within 5s, proceeding");
             break;
         }
+        #[cfg(target_os = "macos")]
         unsafe {
             core_foundation_sys::runloop::CFRunLoopRunInMode(
                 core_foundation_sys::runloop::kCFRunLoopDefaultMode,
@@ -423,6 +431,8 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
                 0,
             );
         }
+        #[cfg(not(target_os = "macos"))]
+        std::thread::sleep(Duration::from_millis(50));
         match ctrl_msg_rx.try_recv() {
             Ok(GuestToHost::BootReady) => {
                 eprintln!("[capsem] guest boot ready");
@@ -526,6 +536,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             eprintln!("[capsem] warning: no control messages (heartbeats) for 30s. Guest may be hung.");
             warned_exec = true;
         }
+        #[cfg(target_os = "macos")]
         unsafe {
             core_foundation_sys::runloop::CFRunLoopRunInMode(
                 core_foundation_sys::runloop::kCFRunLoopDefaultMode,
@@ -533,6 +544,8 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
                 0,
             );
         }
+        #[cfg(not(target_os = "macos"))]
+        std::thread::sleep(Duration::from_millis(50));
         // Accept any incoming proxy connections during exec.
         while let Ok(conn) = vsock_rx.try_recv() {
             if conn.port == VSOCK_PORT_SNI_PROXY {

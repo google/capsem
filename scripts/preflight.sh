@@ -108,7 +108,7 @@ check_tools() {
     echo ""
     echo "== Required Tools =="
 
-    local tools=(openssl codesign security cargo pnpm node gh)
+    local tools=(openssl codesign security cargo pnpm node gh uv)
     for tool in "${tools[@]}"; do
         if command -v "$tool" >/dev/null 2>&1; then
             pass "$tool"
@@ -129,6 +129,12 @@ check_rust_targets() {
         pass "aarch64-unknown-linux-musl installed"
     else
         fail "aarch64-unknown-linux-musl not installed -- run: rustup target add aarch64-unknown-linux-musl"
+    fi
+
+    if rustup target list --installed 2>/dev/null | grep -q "x86_64-unknown-linux-musl"; then
+        pass "x86_64-unknown-linux-musl installed"
+    else
+        fail "x86_64-unknown-linux-musl not installed -- run: rustup target add x86_64-unknown-linux-musl"
     fi
 }
 
@@ -212,11 +218,14 @@ check_ephemeral_model() {
         return
     fi
 
-    # FAIL: conditional mke2fs skip (skip format if disk is already ext4)
-    if grep -qE 'grep[[:space:]].*ext4|file[[:space:]].*ext4' "$init"; then
-        fail "capsem-init conditionally skips mke2fs -- scratch disk would persist across reboots"
+    # FAIL: conditional mke2fs skip on scratch disk (block mode must always format).
+    # The VirtioFS ext4 loopback check (blkid + mke2fs for /mnt/shared/system/rootfs.img)
+    # is expected and safe -- it only formats on first boot of the loopback image.
+    # We only flag if the BLOCK mode scratch disk (/dev/vdb) conditionally skips formatting.
+    if grep -B5 'mke2fs.*scratch\|mke2fs.*vdb' "$init" | grep -qE 'blkid.*ext4'; then
+        fail "capsem-init conditionally skips mke2fs on scratch disk -- would persist across reboots"
     else
-        pass "capsem-init: no conditional mke2fs skip"
+        pass "capsem-init: scratch disk always formatted (or not used)"
     fi
 
     # FAIL: scratch disk used as overlay upper layer
@@ -248,13 +257,13 @@ check_ephemeral_model() {
     fi
 
     # VirtioFS mode checks
-    if grep -q 'mount -t virtiofs capsem /mnt/b' "$init"; then
+    if grep -q 'mount -t virtiofs capsem' "$init"; then
         pass "capsem-init: VirtioFS overlay path present"
     else
         fail "capsem-init: VirtioFS overlay path missing"
     fi
 
-    if grep -A3 'mount -t virtiofs capsem /mnt/b' "$init" | grep -q 'exit 1'; then
+    if grep -A5 'mount -t virtiofs capsem' "$init" | grep -q 'exit 1'; then
         pass "capsem-init: VirtioFS mount failure aborts boot"
     else
         fail "capsem-init: VirtioFS mount failure does not abort boot"
@@ -288,14 +297,8 @@ check_guest_binaries() {
     fi
 
     for bin in $binaries; do
-        # Check Dockerfile.rootfs
-        if grep -q "COPY $bin " "$dockerfile"; then
-            pass "Dockerfile.rootfs: $bin"
-        else
-            fail "Dockerfile.rootfs missing COPY for $bin"
-        fi
-
-        # Check justfile _pack-initrd section
+        # Guest binaries are injected via initrd repack, not baked into rootfs.
+        # Check justfile _pack-initrd references the binary.
         if grep -q "$bin" "$justfile"; then
             pass "justfile _pack-initrd: $bin"
         else

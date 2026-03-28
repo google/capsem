@@ -7,118 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **Skills table in CLAUDE.md and GEMINI.md** -- both agent config files now have a "Skills -- LOAD BEFORE CODING" section with a 13-row table mapping areas to skills. GEMINI.md mandates replaced with skill references to avoid duplication.
-- **Serde RawValue pattern in dev skills** -- `dev-rust-patterns` now documents the `serde_json::Value` vs `Box<RawValue>` rule for LLM payload parsing, with before/after examples. `dev-mitm-proxy` cross-references it. Wire format reference updated.
-- **Bidirectional I/O pattern in dev-rust-patterns** -- ported the thread-per-direction mandate from GEMINI.md into the skill (was missing).
-
-### Fixed
-- **Asset manifest format bug** -- `gen_manifest.py` produced filenames like `"arm64/vmlinuz"` instead of bare `"vmlinuz"`, causing `build.rs` to silently skip hash verification at boot. Fixed to produce per-arch nested format matching `capsem-builder`. Regenerated `assets/manifest.json`.
-- **Per-arch manifest parsing** -- `Manifest::from_json()` rejected per-arch manifest format. Added `from_json_for_arch()` that normalizes per-arch to flat format. `create_asset_manager()` now also searches the parent directory for manifest.json (needed when assets resolve to `assets/{arch}/`).
-- **apt clock skew in container builds** -- `apt-get update` fails when the container VM's clock drifts behind Debian mirror timestamps ("Release file not valid yet"). Added `Acquire::Check-Valid-Until=false` to all apt calls in Dockerfile templates and the squashfs helper.
-
-### Changed
-- **Claude Code installed via native installer** -- switched from `npm install -g @anthropic-ai/claude-code` to `curl -fsSL https://claude.ai/install.sh | bash`. Binary copied to `/usr/local/bin/` (chmod 555) so it survives the `/root` tmpfs overlay at boot. Added `CURL` install manager type to the builder (`PackageManager.CURL`).
-- **Claude Code yolo alias** -- added `alias claude='claude --dangerously-skip-permissions'` to guest bashrc (matches `alias gemini='gemini --yolo'` pattern).
+## [0.14.0] - 2026-03-28
 
 ### Added
-- **Container runtime resource checks** -- `just doctor` and `capsem-builder doctor` now verify podman VM / Docker Desktop have enough memory (minimum 4GB, recommended 8GB) and report CPUs. Prevents cryptic exit-137 OOM kills during rootfs builds.
-- **Asset resolution test suite** -- 28 new tests across Rust and Python covering: `resolve_with_arch` (6 tests), `resolve_rootfs` (2), manifest hash extraction (10), BLAKE3 hash verification (3), `generate_checksums` contract (3), `gen_manifest.py` compatibility (3), per-arch Manifest parsing (2). Golden fixture at `data/fixtures/manifest_per_arch.json`.
-- **`manifest_compat` module** -- shared `extract_hashes()` function for manifest hash extraction, testable independently from `build.rs`.
-- **Asset pipeline documentation** -- new site page (`architecture/asset-pipeline.md`) and skill (`/asset-pipeline`) documenting the full build-to-boot asset flow, manifest format, hash verification, and per-arch resolution.
-- **Builder internals documentation** -- expanded `build-images` skill with full architecture map (models, context flow, template variables), how-to guides for adding install managers, and rootfs Dockerfile layer ordering. Updated `build-system.md` and `custom-images.md` site pages with mermaid diagrams, install manager types, `/root` tmpfs constraint, and container runtime requirements.
-
-### Removed
-- **`images/` directory** -- legacy build files fully replaced by `guest/config/`, `guest/artifacts/`, and `src/capsem/builder/templates/`. All references in code, tests, CI, and docs updated.
-
-### Fixed
-- **Mock data generated from build system** -- `mock.ts` was 1213 lines of hand-crafted settings and MCP data that drifted from reality (9 settings missing, fake MCP servers). Settings now generated from `config/defaults.json`, MCP tools exported from Rust via `mcp-export` binary to `config/mcp-tools.json`. All generated into `mock-settings.generated.ts` by `_generate-settings` recipe (runs automatically in `just run` and `just test`).
-- **`step` metadata field flows to UI** -- Rust `SettingMetaRaw` was silently dropping the `step` field from generated JSON. Added to both `registry.rs` and `types.rs` so number input increments work.
-- **Build log** -- Runner signing and generation scripts now log to `target/build.log` instead of stdout, preventing contamination of binary output.
-- **Staleness CI tests** -- `test_defaults_json_not_stale` and `test_mock_ts_not_stale` assert generated outputs match on-disk files, catching future drift.
-
-### Security
-- **Safe FUSE deserialization** -- `read_struct` returns `Option<T>` with hard bounds check in all builds (not just debug). All 25 call sites updated.
-- **fsync/flush error propagation** -- `do_fsync` and `do_flush` now return mapped errno on failure instead of silently returning success. Missing file handles return `EBADF`.
-- **VirtioFS resource limits** -- file handle cap (4096, returns `EMFILE`), read size clamp (1MB), gather buffer limit (2MB, returns `ENOMEM`).
-- **Async VirtioFS worker thread** -- FUSE request processing runs on a dedicated thread, not the vCPU. Guest interrupt delivery via irqfd. Virtqueue memory barriers for cross-thread safety.
-- **Security documentation** -- security model overview page (threat model, defense layers, trust boundaries) and virtualization security page (VirtioFS path traversal, TOCTOU analysis, resource limits, data integrity).
-
-### Fixed
-- **Snapshot MCP no longer hangs** -- all 7 file tool handlers, auto-snapshot timer, and asset hash verification now run blocking I/O (clonefile, walkdir, blake3) on `spawn_blocking` threads instead of starving the tokio runtime. Single-file operations (revert, compact) use platform-native CoW (`clone_file`) instead of byte copies.
-- **Snapshot panel now displays snapshots** -- frontend was calling `snapshots_list` without `format: "json"`, getting a text table that `JSON.parse()` silently rejected. Added frontend contract test to prevent regression.
-- **Vacuum preserves content sessions** -- session cleanup now always keeps at least 25 sessions with AI activity regardless of age. Empty test sessions (0 tokens, 0 tool calls) are terminated first. New `min_content_sessions` setting (default: 25) controls the floor.
-- **inspect-session shows MCP tool usage** -- new per-tool breakdown (count, decision, avg latency) replaces the old "last 5 rows" view that buried snapshot data.
-- **Integration test Gemini API key handling** -- reads Google API key from `~/.capsem/user.toml` as fallback instead of requiring env var. Removed dummy API key from test config. Promoted Gemini token/model warnings to proper pass/fail checks.
-
-### Added
-- **Snapshot benchmarks** -- `capsem-bench snapshot` measures create/list/changes/revert/delete latency end-to-end via MCP at 10/100/500 file workspace sizes. Per-stage tracing (`RUST_LOG=capsem=debug`) shows clone vs hash vs metadata breakdown.
-- **dev-benchmark skill** -- documents all 7 benchmark categories, JSON output format, and how to investigate performance regressions.
-- **Direct clonefile(2) syscall** -- `ApfsSnapshot` and `clone_file()` use `libc::clonefile()` directly instead of spawning `cp -c -R` subprocess. Snapshot create dropped from 50ms to 3.7ms (93% faster). Auto-snapshots skip hash computation for additional savings.
-- **Persistent MCP client** -- `snapshots` CLI reuses a single fastmcp Client across all tool calls instead of spawning a new subprocess per invocation.
-
-### Changed
-- **Builder cleans up container images** -- `build_image` now removes tagged images after extracting assets, and `build_all_architectures` prunes dangling layers. Prevents multi-GB storage waste from accumulated build images.
-- **Build system documentation** -- three new site pages: build system architecture (capsem-builder pipeline, TOML configs, multi-arch), settings schema (two-node design, JSON Schema, conformance tests), and custom images (corporate deployment guide).
-- **Guest artifacts moved to `guest/artifacts/`** -- capsem-init, capsem-bashrc, diagnostics, benchmarks, and snapshots now live in `guest/artifacts/` instead of `images/`. Justfile `_pack-initrd` and builder doctor updated. Old `images/` files deprecated with headers pointing to new locations.
-- **Multi-arch diagnostics** -- `test_architecture` now accepts both `aarch64` (Apple VZ) and `x86_64` (KVM/crosvm).
-- **`just build-assets` now uses capsem-builder** -- config-driven Dockerfile generation replaces hard-coded `images/build.py`. Assets output to per-arch layout (`assets/{arch}/`).
-- **Multi-arch cross-compilation** -- `.cargo/config.toml` configures `rust-lld` for both `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. CI cross-compile checks cover both targets.
-
-### Added
-- **Hypervisor abstraction layer** -- `Hypervisor`, `VmHandle`, `SerialConsole` traits in new `hypervisor` module. Platform-agnostic `VsockConnection` with lifetime anchor pattern. Prepares for Linux (KVM) and Windows (crosvm) backends.
+- **Hypervisor abstraction layer** -- `Hypervisor`, `VmHandle`, `SerialConsole` traits in new `hypervisor` module. Platform-agnostic `VsockConnection` with lifetime anchor pattern.
 - **KVM backend** -- embedded VMM using rust-vmm crates (`kvm-ioctls`, `vm-memory`, `linux-loader`). Virtio console, block, vsock (vhost-vsock), and VirtioFS (embedded FUSE server) devices. GICv3 interrupt controller, FDT generation, multi-vCPU support. ~5,500 LOC.
-- **FUSE ops unit tests** -- 30+ tests covering file I/O (open, read, write, create, release, flush, fsync, lseek), directory operations (opendir, readdir, mkdir, rmdir, unlink, rename, symlink, link), metadata (lookup, getattr, setattr, statfs, forget), and adversarial cases (path traversal, truncated requests, invalid opcodes).
-- **Doctor session validation test** -- `scripts/doctor_session_test.py` boots the VM with capsem-doctor, inspects the generated session.db to verify net_events, fs_events, mcp_calls are recorded, model_calls/tool_calls are empty (regression check), and main.db rollup matches. Wired into `just full-test`.
-- **Hypervisor architecture documentation** -- expanded `site/src/content/docs/architecture/hypervisor.md` with boot sequence diagram, KVM backend internals (address map, MMIO bus, vCPU loop, FDT), virtio device slots, embedded VirtioFS server architecture, and trait design rationale. Five mermaid diagrams.
-- **Capsem-doctor documentation** -- filled `site/src/content/docs/testing/capsem-doctor.md` stub with full content: 11 test categories, running diagnostics, test infrastructure, adding new tests.
-- **Hardlink-based incremental snapshots** -- `SnapshotBackend` trait with `ApfsSnapshot` (macOS) and `HardlinkSnapshot` (cross-platform) implementations. Auto-selects based on platform.
-- **capsem-builder Python package** -- config-driven build system for guest VM images (`pyproject.toml`, `src/capsem/builder/`). Pydantic models for all TOML configs (build, AI providers, package sets, MCP servers, web security, VM resources, VM environment). TOML loader, defaults.json generator, Jinja2 Dockerfile renderer (rootfs + kernel, multi-arch), compiler-style validation linter (E001-E302, W001-W012), Click CLI, and scaffolding. 408 tests at 97% coverage.
-- **capsem-builder CLI** -- Click-based CLI with `validate`, `build --dry-run`, `inspect`, `init`, `add`, `audit`, and `mcp` commands. Scaffolding generates valid TOML templates.
-- **BOM manifest** -- `ImageManifest` with per-architecture packages, assets, and vulnerabilities. Parsers for dpkg-query, pip list, npm ls, and b3sum output. Plain-text table renderer.
-- **Vulnerability audit parsing** -- `capsem-builder audit` parses trivy and grype JSON output, shows severity summary, exits non-zero on CRITICAL/HIGH findings.
-- **MCP stdio server** -- `capsem-builder mcp` exposes builder tools (validate, build_dry_run, inspect, audit_parse) over JSON-RPC 2.0 NDJSON protocol.
-- **Build doctor** -- `capsem-builder doctor` checks all build prerequisites (container runtime, Rust cross-targets, b3sum, guest config, source files) with composable checks and fix guidance. Checks are reused by the build pipeline for fail-fast with actionable messages.
-- **Docker build execution** -- `capsem-builder build` now produces real VM assets (kernel, initrd, rootfs squashfs). Config-driven multi-architecture output to per-arch subdirectories (`assets/arm64/`, `assets/x86_64/`). Supports `--output`, `--kernel-version`, `--arch` flags. Kernel version auto-detection from kernel.org. CI-aware Docker BuildKit caching.
-- **Multi-arch asset selection** -- Rust host app detects architecture at compile time (`aarch64`/`x86_64`) and loads assets from per-arch subdirectories. Backward compatible with flat `assets/` layout.
-- **Corporate image support** -- custom guest configs produce different images. Init + customize TOML configs + validate + build pipeline verified end-to-end (6 corporate image tests).
-- **Image manifest** -- `config/manifest.toml` gives each image a name, version, description, and changelog. Loaded by `inspect` and displayed in output. Default image (`capsem-default`) gets its own manifest.
-- **`capsem-builder new`** -- interactive command to create a new image from a base config. Scans the base for available AI providers, package sets, and MCP servers. User selects which to include and can add new items from templates. Non-interactive mode (`--non-interactive`) copies everything. Supports `--from` to use any base config.
-- **Settings schema (Pydantic)** -- Pydantic models as canonical schema source of truth with two-node-type design (GroupNode + SettingNode). JSON Schema generation (`config/settings-schema.json`). Cross-language golden fixtures with Python/Rust/TypeScript conformance tests (73 + 12 + 14 = 99 tests).
-- **Guest image TOML configs** -- declarative configs in `guest/config/` replacing hardcoded values: `build.toml` (multi-arch), `ai/*.toml` (3 providers with CLI sub-groups), `packages/*.toml`, `mcp/*.toml`, `security/web.toml`, `vm/resources.toml`, `vm/environment.toml`, `kernel/defconfig.*` (arm64 + x86_64).
-- **Jinja2 Dockerfile templates** -- `Dockerfile.rootfs.j2` and `Dockerfile.kernel.j2` render multi-arch Dockerfiles from TOML configs. Packages, binaries, and hardening steps are all config-driven. 51 conformance tests verify parity with hand-authored Dockerfiles.
-- **Config validation linter** -- `capsem-builder validate` checks TOML syntax, Pydantic schema conformance, domain patterns, file paths, duplicate keys, artifacts, and 12 warning categories. Compiler-style diagnostics with error codes and file:line locations. 96 tests with adversarial inputs.
+- **Linux app builds** -- Tauri deb and AppImage targets. macOS-only dependencies gated behind `cfg(target_os = "macos")`. CFRunLoop pumping replaced with platform-agnostic sleep on Linux.
+- **capsem-builder Python package** -- config-driven build system for guest VM images. Pydantic models for all TOML configs, Jinja2 Dockerfile renderer (rootfs + kernel, multi-arch), compiler-style validation linter, Click CLI, scaffolding, BOM manifest, vulnerability audit parsing, MCP stdio server, and build doctor. 408 tests at 97% coverage.
+- **capsem-builder CLI** -- `validate`, `build`, `inspect`, `init`, `add`, `audit`, `new`, `mcp`, and `doctor` commands.
+- **Docker build execution** -- `capsem-builder build` produces real VM assets (kernel, initrd, rootfs squashfs). Config-driven multi-architecture output to per-arch subdirectories (`assets/arm64/`, `assets/x86_64/`).
+- **Guest image TOML configs** -- declarative configs in `guest/config/` replacing hardcoded values: `build.toml` (multi-arch), `ai/*.toml` (3 providers), `packages/*.toml`, `mcp/*.toml`, `security/web.toml`, `vm/resources.toml`, `vm/environment.toml`, `kernel/defconfig.*` (arm64 + x86_64).
+- **Jinja2 Dockerfile templates** -- `Dockerfile.rootfs.j2` and `Dockerfile.kernel.j2` render multi-arch Dockerfiles from TOML configs. 51 conformance tests verify parity with hand-authored Dockerfiles.
+- **Settings schema (Pydantic)** -- canonical schema source with two-node-type design (GroupNode + SettingNode). JSON Schema generation, cross-language golden fixtures with Python/Rust/TypeScript conformance tests (99 tests).
+- **Config-driven settings grammar** -- formalized TOML grammar with Group, Leaf, and Action node types. Settings UI fully data-driven.
+- **Batch settings IPC** -- `load_settings` and `save_settings` Tauri commands replace 3 parallel calls with 1.
+- **SettingsModel TypeScript class** -- pure TS class with settings logic, fully unit-tested (43 tests).
+- **Snapshot benchmarks** -- `capsem-bench snapshot` measures create/list/changes/revert/delete latency at 10/100/500 file workspace sizes.
+- **Direct clonefile(2) syscall** -- `ApfsSnapshot` uses `libc::clonefile()` directly. Snapshot create dropped from 50ms to 3.7ms (93% faster).
+- **Hardlink-based incremental snapshots** -- `SnapshotBackend` trait with `ApfsSnapshot` (macOS) and `HardlinkSnapshot` (cross-platform) implementations.
+- **FUSE ops unit tests** -- 30+ tests covering file I/O, directory operations, metadata, and adversarial cases.
+- **Doctor session validation test** -- `scripts/doctor_session_test.py` verifies session.db telemetry after capsem-doctor run.
+- **Container runtime resource checks** -- `just doctor` and `capsem-builder doctor` verify podman/Docker have enough memory (min 4GB).
+- **Asset resolution test suite** -- 28 new tests across Rust and Python for manifest parsing, hash verification, and per-arch resolution.
+- **`manifest_compat` module** -- shared `extract_hashes()` for manifest hash extraction, testable independently from `build.rs`.
+- **Multi-arch asset selection** -- host app detects architecture at compile time and loads assets from per-arch subdirectories. Backward compatible with flat layout.
+- **Asset pipeline documentation** -- new site page and skill documenting the build-to-boot asset flow.
+- **Hypervisor architecture documentation** -- boot sequence, KVM internals, virtio device slots, VirtioFS server. Five mermaid diagrams.
+- **Capsem-doctor documentation** -- 11 test categories, test infrastructure, adding new tests.
+- **Corporate image support** -- custom guest configs produce different images (6 corporate image tests).
+- **Persistent MCP client** -- `snapshots` CLI reuses a single fastmcp Client across all tool calls.
 
 ### Changed
-- Linux KVM backend status updated to Production in hypervisor architecture docs.
-- CI coverage tracking added for Linux KVM backend (`linux-unit` Codecov flag). KVM test verification step ensures tests are not silently skipped.
-- Apple Virtualization.framework code moved to `hypervisor/apple_vz/` behind `cfg(target_os = "macos")` gate. macOS-only dependencies (objc2, block2, dispatch2) are now target-conditional.
-- `VsockManager` replaced by `mpsc::UnboundedReceiver<VsockConnection>` returned from `Hypervisor::boot()`. App crate uses channel directly.
+- **Multi-arch release pipeline** -- CI builds arm64 and x86_64 VM assets in parallel on native runners. Per-arch attestation. Unified manifest with both architectures.
+- **Release workflow adds Linux builds** -- separate `build-app-linux` job produces deb and AppImage alongside macOS DMG.
+- **Site deployment fixed** -- workflow switched from npm to pnpm, Node pinned to 24.
+- Apple Virtualization.framework code moved to `hypervisor/apple_vz/` behind `cfg(target_os = "macos")` gate. macOS-only dependencies now target-conditional.
+- `VsockManager` replaced by `mpsc::UnboundedReceiver<VsockConnection>` returned from `Hypervisor::boot()`.
 - `auto_snapshot` uses `SnapshotBackend` trait (APFS clonefile on macOS, recursive copy elsewhere).
 - `notify` crate uses default features (cross-platform) instead of macOS-only `macos_fsevent`.
-
-### Added (previous)
-- **Settings schema (Pydantic)** -- Pydantic models as canonical schema source of truth with two-node-type design (Group + Setting). JSON Schema generation, cross-language golden fixtures with Python/Rust/TypeScript conformance tests (73 + 12 + 14 = 99 tests). Actions and MCP servers are now setting types, not separate node types.
-- **Config-driven settings grammar** -- formalized the settings TOML grammar with three node types (Group, Leaf, Action), complete field specifications, and enum-based types. Settings UI is now fully data-driven with no hardcoded group-name checks.
-- **Action nodes** -- new grammar node type for UI buttons/widgets (`check_update`, `preset_select`, `rerun_wizard`). Previously hardcoded in the Svelte template, now declared in `defaults.toml`.
-- **Declarative MCP server definitions** -- `[mcp]` section in defaults.toml/user.toml/corp.toml for declaring MCP servers that get auto-injected into AI agent configs. Replaces hardcoded capsem MCP injection.
-- **Batch settings IPC** -- `load_settings` (unified response) and `save_settings` (atomic batch update with corp enforcement) Tauri commands. Replaces 3 parallel calls with 1.
-- **SettingsModel TypeScript class** -- pure TS class encapsulating settings logic (parsing, accessors, widget resolution, pending state). Separated from Svelte rendering, fully unit-tested (43 tests).
-- **New setting types** -- `string_list`, `int_list`, `float_list` for native list values.
-- **Settings metadata extensions** -- `widget` (explicit UI widget override), `side_effect` (frontend action on change), `hidden` (exclude from UI), `builtin` (non-removable).
-- **Save/discard bar** -- settings UI shows sticky bar for unsaved changes with Discard/Save buttons.
+- Claude Code installed via native installer (`curl` instead of `npm`). Binary in `/usr/local/bin/` (chmod 555).
+- Builder cleans up container images after extracting assets.
+- Guest artifacts moved to `guest/artifacts/` from `images/`.
+- `just build-assets` now uses capsem-builder with config-driven Dockerfile generation.
+- Multi-arch cross-compilation configured for both `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`.
+- Multi-arch diagnostics accept both `aarch64` and `x86_64`.
+- Linux KVM backend promoted to Production status.
+- CI coverage tracking for Linux KVM backend (`linux-unit` Codecov flag).
+- Settings grammar documented with full specification.
+- Settings architecture page with 7 mermaid diagrams.
+- Side effect dispatch driven by metadata instead of hardcoded checks.
+- MCP injection generalized for multiple servers from config.
+- Site: mermaid diagram support via `astro-mermaid`.
+- Skills table added to CLAUDE.md and GEMINI.md.
+- `cut-release` recipe now bumps `pyproject.toml` alongside Cargo.toml and tauri.conf.json.
+- Preflight checks add `uv` tool and `x86_64-unknown-linux-musl` target.
+- README updated for multi-platform support (macOS + Linux), documentation links point to capsem.org.
 
 ### Fixed
-- **FS monitor debouncer lost delete events** -- replaced last-write-wins hashmap with a proper event queue. Raw events from FSEvents are appended to a bounded queue (cap 10,000); a timer flushes every 100ms, coalescing only consecutive same-type events per path. Different action types (create -> delete) are now emitted separately. Queue overflow is logged.
-- **MCP snapshot tools returned unbounded JSON, exceeding AI agent token limits** -- `snapshots_changes` and `snapshots_list` now return paginated text tables (default 5000 chars) instead of raw JSON. Supports `start_index`/`max_length` for pagination and `format=json` for machine-readable output.
-- **Frontend npm audit vulnerabilities** -- pinned transitive deps `yaml`, `picomatch`, and `smol-toml` to patched versions via pnpm overrides.
+- **Asset manifest format bug** -- `gen_manifest.py` produced filenames like `"arm64/vmlinuz"` instead of bare `"vmlinuz"`, causing `build.rs` to silently skip hash verification.
+- **Per-arch manifest parsing** -- `Manifest::from_json()` rejected per-arch format. Added `from_json_for_arch()`.
+- **apt clock skew in container builds** -- added `Acquire::Check-Valid-Until=false` to all apt calls.
+- **Mock data generated from build system** -- settings and MCP data now generated from `config/defaults.json` and Rust `mcp-export` binary instead of hand-crafted mock.
+- **`step` metadata field flows to UI** -- was silently dropped from generated JSON.
+- **Build log contamination** -- signing and generation scripts now log to `target/build.log`.
+- **Snapshot MCP no longer hangs** -- blocking I/O moved to `spawn_blocking` threads.
+- **Snapshot panel now displays snapshots** -- frontend now passes `format: "json"`.
+- **Vacuum preserves content sessions** -- keeps at least 25 sessions with AI activity.
+- **inspect-session shows MCP tool usage** -- per-tool breakdown replaces old view.
+- **Integration test Gemini API key handling** -- reads from `~/.capsem/user.toml` as fallback.
+- **FS monitor debouncer lost delete events** -- replaced last-write-wins hashmap with event queue.
+- **MCP snapshot tools returned unbounded JSON** -- now paginated text tables.
+- **Frontend npm audit vulnerabilities** -- pinned transitive deps via pnpm overrides.
 
-### Changed
-- **Settings grammar documented** -- `docs/config.md` rewritten as full grammar specification with all valid fields, enums, resolution rules, and MCP server format.
-- **Settings architecture page** -- new `site/src/content/docs/architecture/settings.md` with 7 mermaid diagrams covering file sources, resolution, presets, IPC protocol, frontend architecture, boot-time injection, and MCP server flow.
-- **Side effect dispatch** -- dark mode toggle now driven by `meta.side_effect = "toggle_theme"` instead of hardcoded `id === 'appearance.dark_mode'` check.
-- **MCP injection generalized** -- `inject_mcp_servers_json/toml()` replace hardcoded `inject_capsem_mcp_server()`, supporting multiple servers from config.
-- **Site: mermaid diagram support** -- added `astro-mermaid` integration for rendering mermaid diagrams in documentation pages.
+### Security
+- **Safe FUSE deserialization** -- `read_struct` returns `Option<T>` with hard bounds check in all builds.
+- **fsync/flush error propagation** -- returns mapped errno on failure instead of silently succeeding.
+- **VirtioFS resource limits** -- file handle cap (4096), read size clamp (1MB), gather buffer limit (2MB).
+- **Async VirtioFS worker thread** -- FUSE processing on dedicated thread, irqfd interrupt delivery, virtqueue memory barriers.
+- **Security documentation** -- threat model overview and virtualization security pages.
+
+### Removed
+- **`images/` directory** -- legacy build files fully replaced by `guest/config/`, `guest/artifacts/`, and `src/capsem/builder/templates/`.
 
 ## [0.12.1] - 2026-03-25
 

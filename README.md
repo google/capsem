@@ -5,7 +5,7 @@
 <h1 align="center">Capsem</h1>
 
 <p align="center">
-  Sandbox AI coding agents in hardware-isolated Linux VMs on your Mac.<br/>
+  Sandbox AI coding agents in hardware-isolated Linux VMs on macOS and Linux.<br/>
   Full network control, HTTPS inspection, MCP tool routing, and per-session telemetry.
 </p>
 
@@ -20,7 +20,7 @@
 
 ## Features
 
-- **Hardware VM isolation** -- Each agent runs in its own Apple Virtualization.framework VM with Stage 2 page tables. No shared memory, no container escapes.
+- **Hardware VM isolation** -- Each agent runs in its own VM via Apple Virtualization.framework (macOS) or KVM (Linux). Stage 2 page tables, no shared memory, no container escapes.
 - **Air-gapped networking** -- No NIC exists in the VM. All HTTPS traffic is intercepted by a transparent MITM proxy with per-domain allow/block policy and full request/response telemetry.
 - **Hardened kernel** -- Custom-compiled Linux kernel: no loadable modules, no IP stack, KASLR, stack protector, FORTIFY_SOURCE. 7MB vs 30MB stock Debian.
 - **HTTPS inspection** -- TLS termination with per-domain minted certificates. Every API call is logged: provider, model, tokens, cost, tool calls, trace linking.
@@ -71,6 +71,8 @@ sequenceDiagram
 
 ## Install
 
+### macOS
+
 **Download the DMG** from the [latest release](https://github.com/google/capsem/releases/latest), open it, and drag Capsem.app to Applications.
 
 Or with Homebrew (coming soon):
@@ -79,15 +81,29 @@ Or with Homebrew (coming soon):
 brew install --cask capsem
 ```
 
-Or build from source:
+Requires macOS 13+ on Apple Silicon.
+
+### Linux
+
+Download the `.deb` or `.AppImage` from the [latest release](https://github.com/google/capsem/releases/latest).
+
+```sh
+# Debian/Ubuntu
+sudo dpkg -i capsem_*.deb
+
+# Or run directly
+chmod +x Capsem*.AppImage && ./Capsem*.AppImage
+```
+
+Requires Linux kernel 5.x+ with KVM support (`/dev/kvm`).
+
+### Build from source
 
 ```sh
 just doctor          # check prerequisites
 just build-assets    # build VM assets (~10 min, first time only)
 just install         # test + build + codesign + install
 ```
-
-Requires macOS 13+ on Apple Silicon.
 
 ## Usage
 
@@ -108,12 +124,13 @@ capsem 'ls -la /proc/cpuinfo'
 ## Architecture
 
 ```
-crates/capsem-core/    VM library (config, boot, vsock, MITM proxy, MCP gateway)
+crates/capsem-core/    VM library (config, boot, vsock, MITM proxy, MCP gateway, hypervisor)
 crates/capsem-app/     Tauri binary (GUI, CLI, IPC commands)
 crates/capsem-agent/   Guest binaries (PTY agent, net proxy, MCP relay)
 crates/capsem-logger/  Telemetry DB (writer, reader, schema)
 crates/capsem-proto/   Wire protocol (vsock message encoding)
 frontend/              Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5
+src/capsem/builder/    capsem-builder CLI (config-driven image builder)
 guest/config/          Guest image configuration (TOML configs)
 guest/artifacts/       Guest scripts and diagnostics (capsem-init, tests)
 ```
@@ -145,7 +162,7 @@ Capsem assumes the AI agent is adversarial. The sandbox is hardened at every lay
 
 | Layer | Protection |
 |-------|-----------|
-| Hardware | Apple Silicon Stage 2 page tables, no shared memory |
+| Hardware | Apple Silicon Stage 2 page tables (macOS) / KVM with VT-x (Linux), no shared memory |
 | Kernel | Custom-compiled, `CONFIG_MODULES=n`, `CONFIG_INET=n`, KASLR |
 | Network | No NIC. DNS/HTTP/IP physically impossible. MITM proxy on vsock only. |
 | Filesystem | Read-only squashfs rootfs. Only `/root`, `/tmp`, `/run` writable. |
@@ -153,23 +170,30 @@ Capsem assumes the AI agent is adversarial. The sandbox is hardened at every lay
 | Processes | PID 1 is our init. No systemd, no cron, no sshd. |
 | Agent binaries | Deployed read-only (chmod 555), verified at boot |
 
-Full threat model: [docs/security.md](docs/security.md)
+Full threat model: [Security Overview](https://capsem.org/security/overview/)
 
 ## Tech stack
 
 - [Rust](https://www.rust-lang.org) -- VM library, MITM proxy, MCP gateway, guest agents
 - [Tauri 2.0](https://tauri.app) -- Desktop app framework
-- [Apple Virtualization.framework](https://developer.apple.com/documentation/virtualization) -- Hardware VM isolation
+- [Apple Virtualization.framework](https://developer.apple.com/documentation/virtualization) -- macOS hypervisor
+- [KVM](https://www.linux-kvm.org) / [rust-vmm](https://github.com/rust-vmm) -- Linux hypervisor
 - [Astro 5](https://astro.build) + [Svelte 5](https://svelte.dev) -- Frontend
 - [Tailwind v4](https://tailwindcss.com) + [DaisyUI v5](https://daisyui.com) -- Design system
 - [rustls](https://github.com/rustls/rustls) + [hyper](https://hyper.rs) -- TLS termination and HTTP inspection
 - [SQLite](https://sqlite.org) -- Per-session telemetry storage
+- [capsem-builder](https://capsem.org/architecture/build-system/) -- Config-driven guest image builder (Python/Pydantic)
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) -- system design and data flows
-- [Security](docs/security.md) -- threat model, isolation guarantees
-- [Configuration](docs/config.md) -- settings registry and policy engine
+Full documentation at [capsem.org](https://capsem.org).
+
+- [Getting Started](https://capsem.org/getting-started/) -- install and boot your first session
+- [Architecture](https://capsem.org/architecture/hypervisor/) -- hypervisor, build system, asset pipeline, settings
+- [Security](https://capsem.org/security/overview/) -- threat model, isolation layers, network policy
+- [Testing](https://capsem.org/testing/capsem-doctor/) -- in-VM diagnostics and benchmarks
+- [Custom Images](https://capsem.org/architecture/custom-images/) -- build your own guest images
+- [Development](https://capsem.org/development/getting-started/) -- contributing and dev environment
 
 ## Disclaimer
 
