@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-03-28
+
+### Fixed
+- **Builder uses Python blake3 for checksums** -- `generate_checksums()` no longer shells out to `b3sum` CLI. Uses the `blake3` Python library directly, making the builder self-contained in CI environments.
+- **Site workflow uses pnpm 10** -- pnpm 9 errored with workspace detection issues.
+
 ## [0.14.0] - 2026-03-28
 
 ### Added
