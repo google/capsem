@@ -95,6 +95,37 @@ impl Manifest {
         Ok(manifest)
     }
 
+    /// Parse a manifest from JSON, normalizing per-arch format for a specific
+    /// architecture.
+    ///
+    /// Per-arch format: `{"releases": {"0.13.0": {"arm64": {"assets": [...]}}}}`
+    /// is normalized to flat: `{"releases": {"0.13.0": {"assets": [...]}}}` for
+    /// the given `arch_key` (e.g., "arm64" or "x86_64").
+    ///
+    /// Falls through to `from_json` if the format is already flat.
+    pub fn from_json_for_arch(content: &str, arch_key: &str) -> Result<Self> {
+        let mut raw: serde_json::Value =
+            serde_json::from_str(content).context("invalid manifest JSON")?;
+
+        // Check each release entry for per-arch keys and normalize.
+        if let Some(releases) = raw.get_mut("releases").and_then(|r| r.as_object_mut()) {
+            for (_version, entry) in releases.iter_mut() {
+                if let Some(obj) = entry.as_object_mut() {
+                    // If the entry has an arch key with nested assets, flatten it.
+                    if let Some(arch_val) = obj.get(arch_key).cloned() {
+                        if arch_val.get("assets").is_some() {
+                            // Replace entry with the arch-specific sub-object.
+                            *entry = arch_val;
+                        }
+                    }
+                }
+            }
+        }
+
+        let normalized = serde_json::to_string(&raw)?;
+        Self::from_json(&normalized)
+    }
+
     /// Create a Manifest from a legacy B3SUMS file content.
     ///
     /// Wraps a single B3SUMS into the multi-version format with one release entry.
@@ -1118,6 +1149,46 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
         assert!(validate_filename("path/to/file").is_err());
         assert!(validate_filename("").is_err());
         assert!(validate_filename("rootfs.squashfs").is_ok());
+    }
+
+    // ---- per-arch manifest tests ----
+
+    #[test]
+    fn manifest_from_json_for_arch_per_arch_format() {
+        let json = r#"{
+            "latest": "0.13.0",
+            "releases": {
+                "0.13.0": {
+                    "arm64": {
+                        "assets": [{
+                            "filename": "rootfs.squashfs",
+                            "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            "size": 100
+                        }]
+                    },
+                    "x86_64": {
+                        "assets": [{
+                            "filename": "rootfs.squashfs",
+                            "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                            "size": 200
+                        }]
+                    }
+                }
+            }
+        }"#;
+        let manifest = Manifest::from_json_for_arch(json, "arm64").unwrap();
+        let r = manifest.release_for("0.13.0").unwrap();
+        assert_eq!(r.assets.len(), 1);
+        assert_eq!(r.assets[0].hash, "a".repeat(64));
+    }
+
+    #[test]
+    fn manifest_from_json_for_arch_flat_format_passthrough() {
+        // Flat format should pass through unchanged.
+        let manifest = Manifest::from_json_for_arch(SAMPLE_MANIFEST_JSON, "arm64").unwrap();
+        assert_eq!(manifest.latest, "0.9.0");
+        let r = manifest.release_for("0.9.0").unwrap();
+        assert_eq!(r.assets[0].filename, "rootfs.squashfs");
     }
 
     // ---- cleanup_old_versions tests ----

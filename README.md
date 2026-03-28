@@ -114,7 +114,8 @@ crates/capsem-agent/   Guest binaries (PTY agent, net proxy, MCP relay)
 crates/capsem-logger/  Telemetry DB (writer, reader, schema)
 crates/capsem-proto/   Wire protocol (vsock message encoding)
 frontend/              Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5
-images/                VM image tooling (Dockerfile, build.py, capsem-init)
+guest/config/          Guest image configuration (TOML configs)
+guest/artifacts/       Guest scripts and diagnostics (capsem-init, tests)
 ```
 
 ## Development

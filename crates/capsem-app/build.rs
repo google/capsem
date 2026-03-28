@@ -6,8 +6,8 @@ fn main() {
     println!("cargo:rerun-if-changed=../../assets/B3SUMS");
 
     // Extract hashes from manifest.json (preferred) or B3SUMS (legacy fallback).
-    // Optional: only set env vars if the file exists (so developers can still
-    // build without running build.py, though boot will fail at runtime).
+    // This logic mirrors capsem_core::manifest_compat::extract_hashes() --
+    // keep them in sync. Tests in manifest_compat validate the algorithm.
     let manifest_path = Path::new("../../assets/manifest.json");
     let b3sums_path = Path::new("../../assets/B3SUMS");
 

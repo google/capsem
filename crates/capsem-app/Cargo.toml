@@ -26,6 +26,9 @@ objc2-foundation = { workspace = true }
 objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSView"] }
 reqwest = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 serde_json = { workspace = true }

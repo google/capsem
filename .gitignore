@@ -42,12 +42,8 @@ codecov-*.xml
 target/
 Cargo.lock
 
-# VM assets (built by images/build.py)
+# VM assets (built by capsem-builder)
 assets/*
-
-# Cross-compiled guest binaries (rebuilt by just run)
-images/capsem-net-proxy
-images/capsem-pty-agent
 
 # Tauri
 crates/capsem-app/gen/

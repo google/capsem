@@ -31,16 +31,16 @@
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@tailwindcss/vite": "^4.2.2",
     "@testing-library/svelte": "^5.3.1",
-    "@types/sql.js": "^1.4.10",
-    "@vitest/coverage-v8": "^4.1.1",
+    "@types/sql.js": "^1.4.11",
+    "@vitest/coverage-v8": "^4.1.2",
     "astro": "^5.18.1",
     "daisyui": "^5.5.19",
-    "jsdom": "^29.0.0",
+    "jsdom": "^29.0.1",
     "marked": "^17.0.5",
-    "svelte": "^5.54.0",
+    "svelte": "^5.55.0",
     "svelte-check": "^4.4.5",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.2"
   }
 }

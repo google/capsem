@@ -142,5 +142,5 @@ component_management:
 ignore:
   - crates/*/tests/**
   - site/**
-  - images/**
+  - guest/**
   - scripts/**

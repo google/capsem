@@ -727,4 +727,60 @@ mod tests {
         let b = VmConfigBuilder::default();
         assert!(b.virtio_fs_shares.is_empty());
     }
+
+    // --- hash verification tests ---
+
+    #[test]
+    fn hash_verification_succeeds_with_correct_blake3() {
+        let dir = tempfile::tempdir().unwrap();
+        let kernel = dir.path().join("vmlinuz");
+        let initrd = dir.path().join("initrd.img");
+        let rootfs = dir.path().join("rootfs.squashfs");
+        std::fs::write(&kernel, b"test kernel data").unwrap();
+        std::fs::write(&initrd, b"test initrd data").unwrap();
+        std::fs::write(&rootfs, b"test rootfs data").unwrap();
+
+        let kh = blake3::hash(b"test kernel data").to_hex().to_string();
+        let ih = blake3::hash(b"test initrd data").to_hex().to_string();
+        let rh = blake3::hash(b"test rootfs data").to_hex().to_string();
+
+        let config = VmConfig::builder()
+            .kernel_path(&kernel)
+            .expected_kernel_hash(&kh)
+            .initrd_path(&initrd)
+            .expected_initrd_hash(&ih)
+            .disk_path(&rootfs)
+            .expected_disk_hash(&rh)
+            .build();
+        assert!(config.is_ok(), "all hashes match, build should succeed");
+    }
+
+    #[test]
+    fn hash_verification_fails_on_corrupted_kernel() {
+        let dir = tempfile::tempdir().unwrap();
+        let kernel = dir.path().join("vmlinuz");
+        std::fs::write(&kernel, b"corrupted kernel").unwrap();
+        let wrong_hash = blake3::hash(b"correct kernel").to_hex().to_string();
+
+        let result = VmConfig::builder()
+            .kernel_path(&kernel)
+            .expected_kernel_hash(&wrong_hash)
+            .build();
+        assert!(
+            matches!(result, Err(ConfigError::HashMismatch(..))),
+            "wrong hash should produce HashMismatch, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn no_expected_hash_skips_verification() {
+        let dir = tempfile::tempdir().unwrap();
+        let kernel = dir.path().join("vmlinuz");
+        std::fs::write(&kernel, b"any content at all").unwrap();
+
+        let config = VmConfig::builder()
+            .kernel_path(&kernel)
+            .build();
+        assert!(config.is_ok(), "no hash set means no verification");
+    }
 }

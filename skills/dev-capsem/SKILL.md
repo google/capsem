@@ -28,7 +28,7 @@ Rule: if logic could be reused or tested without Tauri/VM, it belongs in `capsem
 | `site/` | Starlight documentation site | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
 | `guest/config/` | Guest TOML configs | `/build-images` |
-| `images/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
+| `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
 | `assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
 | `config/` | defaults.toml, CA keypair | `/site-architecture` |

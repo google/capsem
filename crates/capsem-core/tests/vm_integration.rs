@@ -2,7 +2,7 @@
 //!
 //! These tests require:
 //! - The `com.apple.security.virtualization` entitlement (code-signed binary)
-//! - VM assets built by `images/build.py` in `assets/`
+//! - VM assets built by `just build-assets` in `assets/`
 //!
 //! Run with: CAPSEM_ASSETS_DIR=./assets cargo test --test vm_integration
 //! They are skipped by default when assets are not present.
@@ -46,7 +46,7 @@ fn make_config(assets: &std::path::Path) -> VmConfig {
 #[test]
 fn vm_config_builds_with_real_assets() {
     let Some(assets) = assets_dir() else {
-        eprintln!("SKIPPED: VM assets not found. Run images/build.py first.");
+        eprintln!("SKIPPED: VM assets not found. Run just build-assets first.");
         return;
     };
 

@@ -205,7 +205,7 @@ check_ephemeral_model() {
     echo ""
     echo "== Ephemeral VM Model =="
 
-    local init="$ROOT_DIR/images/capsem-init"
+    local init="$ROOT_DIR/guest/artifacts/capsem-init"
 
     if [[ ! -f "$init" ]]; then
         fail "capsem-init not found at $init"
@@ -270,7 +270,7 @@ check_guest_binaries() {
     echo "== Guest Binaries =="
 
     local cargo_toml="$ROOT_DIR/crates/capsem-agent/Cargo.toml"
-    local dockerfile="$ROOT_DIR/images/Dockerfile.rootfs"
+    local dockerfile="$ROOT_DIR/src/capsem/builder/templates/Dockerfile.rootfs.j2"
     local justfile="$ROOT_DIR/justfile"
 
     if [[ ! -f "$cargo_toml" ]]; then

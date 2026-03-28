@@ -24,7 +24,6 @@ site/                     Product website (Astro Starlight)
 src/capsem/builder/       capsem-builder CLI (config-driven image builder)
 guest/config/             Guest image configuration (TOML configs)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
-images/                   Legacy build files (deprecated, see guest/)
 assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
 skills/                   Shared AI agent skills (SKILL.md format)
 ```
@@ -39,7 +38,7 @@ skills/<name>/SKILL.md        One skill per directory
 .agents/skills -> ../skills   Gemini CLI symlink
 ```
 
-Prefix-based grouping: `dev-*`, `build-*`, `release-*`, `site-*`, `frontend-*`, `meta-*`. See `/meta-organize-skills` for conventions.
+Prefix-based grouping: `dev-*`, `build-*`, `release-*`, `site-*`, `frontend-*`, `meta-*`. `asset-pipeline` covers the build-to-boot asset flow. See `/meta-organize-skills` for conventions.
 
 **Do not** put files in `.claude/skills/` or `.agents/skills/` directly -- those are symlinks.
 

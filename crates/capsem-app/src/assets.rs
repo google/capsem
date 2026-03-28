@@ -135,19 +135,36 @@ pub(crate) fn resolve_rootfs(bundled_assets: &Path) -> Option<PathBuf> {
 ///
 /// Tries manifest.json first (multi-version), falls back to B3SUMS (legacy).
 /// Uses version-scoped directories: `~/.capsem/assets/v{version}/`.
+///
+/// For per-arch layouts, `bundled_assets` is `assets/{arch}/` so the manifest
+/// is searched both in the assets dir and its parent (where manifest.json lives
+/// at `assets/manifest.json`).
 pub(crate) fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager> {
     let version = env!("CARGO_PKG_VERSION");
     let download_dir = asset_manager::default_assets_dir()
         .context("cannot determine home directory")?;
     info!(version, download_dir = %download_dir.display(), "initializing asset manager");
 
-    // Try manifest.json first (new multi-version format).
-    let manifest_path = bundled_assets.join("manifest.json");
-    if manifest_path.exists() {
+    // Try manifest.json -- check both bundled dir and parent (per-arch layout).
+    let candidates = [
+        bundled_assets.join("manifest.json"),
+        bundled_assets
+            .parent()
+            .map(|p| p.join("manifest.json"))
+            .unwrap_or_default(),
+    ];
+
+    for manifest_path in &candidates {
+        if !manifest_path.exists() {
+            continue;
+        }
         info!(path = %manifest_path.display(), "loading manifest.json");
-        let content = std::fs::read_to_string(&manifest_path)
+        let content = std::fs::read_to_string(manifest_path)
             .context("failed to read manifest.json")?;
-        let manifest = asset_manager::Manifest::from_json(&content)
+
+        // Use arch-aware parsing to handle per-arch manifest format.
+        let manifest = asset_manager::Manifest::from_json_for_arch(&content, host_arch())
+            .or_else(|_| asset_manager::Manifest::from_json(&content))
             .context("invalid manifest.json")?;
         info!(
             releases = manifest.releases.len(),
@@ -161,13 +178,30 @@ pub(crate) fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager
         return AssetManager::from_manifest(&manifest, version, download_dir);
     }
 
-    // Fall back to legacy B3SUMS.
-    let b3sums_path = bundled_assets.join("B3SUMS");
-    info!(path = %b3sums_path.display(), "manifest.json not found, trying legacy B3SUMS");
-    let b3sums_content = std::fs::read_to_string(&b3sums_path)
-        .context("neither manifest.json nor B3SUMS found in app bundle")?;
-    let base_url = asset_manager::release_url(version);
-    AssetManager::new(download_dir, base_url, &b3sums_content)
+    // Fall back to legacy B3SUMS (check both bundled dir and parent).
+    let b3sums_candidates = [
+        bundled_assets.join("B3SUMS"),
+        bundled_assets
+            .parent()
+            .map(|p| p.join("B3SUMS"))
+            .unwrap_or_default(),
+    ];
+
+    for b3sums_path in &b3sums_candidates {
+        if !b3sums_path.exists() {
+            continue;
+        }
+        info!(path = %b3sums_path.display(), "loading legacy B3SUMS");
+        let b3sums_content = std::fs::read_to_string(b3sums_path)
+            .context("failed to read B3SUMS")?;
+        let base_url = asset_manager::release_url(version);
+        return AssetManager::new(download_dir, base_url, &b3sums_content);
+    }
+
+    Err(anyhow::anyhow!(
+        "neither manifest.json nor B3SUMS found in {}",
+        bundled_assets.display()
+    ))
 }
 
 /// Find the rootfs filename in the manifest.
@@ -177,4 +211,85 @@ pub(crate) fn rootfs_manifest_name(mgr: &AssetManager) -> Result<String> {
         .find(|f| f.starts_with("rootfs"))
         .map(String::from)
         .context("no rootfs entry in B3SUMS manifest")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- resolve_with_arch tests --
+
+    #[test]
+    fn resolve_with_arch_per_arch_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let arch_dir = dir.path().join(host_arch());
+        std::fs::create_dir_all(&arch_dir).unwrap();
+        std::fs::write(arch_dir.join("vmlinuz"), b"kernel").unwrap();
+        let result = resolve_with_arch(dir.path());
+        assert_eq!(result, Some(arch_dir));
+    }
+
+    #[test]
+    fn resolve_with_arch_flat_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("vmlinuz"), b"kernel").unwrap();
+        let result = resolve_with_arch(dir.path());
+        assert_eq!(result, Some(dir.path().to_path_buf()));
+    }
+
+    #[test]
+    fn resolve_with_arch_prefers_per_arch_over_flat() {
+        let dir = tempfile::tempdir().unwrap();
+        let arch_dir = dir.path().join(host_arch());
+        std::fs::create_dir_all(&arch_dir).unwrap();
+        std::fs::write(arch_dir.join("vmlinuz"), b"arch kernel").unwrap();
+        std::fs::write(dir.path().join("vmlinuz"), b"flat kernel").unwrap();
+        let result = resolve_with_arch(dir.path());
+        assert_eq!(result, Some(arch_dir), "per-arch layout should be preferred over flat");
+    }
+
+    #[test]
+    fn resolve_with_arch_empty_dir_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(resolve_with_arch(dir.path()), None);
+    }
+
+    #[test]
+    fn resolve_with_arch_wrong_arch_subdir_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let wrong = if host_arch() == "arm64" { "x86_64" } else { "arm64" };
+        let wrong_dir = dir.path().join(wrong);
+        std::fs::create_dir_all(&wrong_dir).unwrap();
+        std::fs::write(wrong_dir.join("vmlinuz"), b"kernel").unwrap();
+        assert_eq!(resolve_with_arch(dir.path()), None);
+    }
+
+    #[test]
+    fn resolve_with_arch_no_vmlinuz_in_arch_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let arch_dir = dir.path().join(host_arch());
+        std::fs::create_dir_all(&arch_dir).unwrap();
+        std::fs::write(arch_dir.join("initrd.img"), b"initrd").unwrap();
+        assert_eq!(resolve_with_arch(dir.path()), None);
+    }
+
+    // -- resolve_rootfs tests --
+
+    #[test]
+    fn resolve_rootfs_bundled_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let rootfs = dir.path().join("rootfs.squashfs");
+        std::fs::write(&rootfs, b"rootfs").unwrap();
+        let result = resolve_rootfs(dir.path());
+        assert_eq!(result, Some(rootfs));
+    }
+
+    #[test]
+    fn resolve_rootfs_bundled_missing_checks_download_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        // No rootfs in bundled dir -- result depends on ~/.capsem/assets/ state
+        let result = resolve_rootfs(dir.path());
+        // Bundled path should NOT be returned
+        assert_ne!(result, Some(dir.path().join("rootfs.squashfs")));
+    }
 }

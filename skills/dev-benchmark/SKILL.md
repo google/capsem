@@ -18,7 +18,7 @@ just full-test                      # Full validation including benchmarks
 
 Python tool that runs inside the VM. Rich tables to stderr (human), structured JSON to stdout (machine).
 
-**Location:** `guest/artifacts/capsem-bench` (source of truth), `images/capsem-bench` (synced copy)
+**Location:** `guest/artifacts/capsem-bench`
 
 ### Benchmark categories
 
@@ -94,12 +94,10 @@ Common causes:
 1. Add a function in `guest/artifacts/capsem-bench` following the pattern: Rich table to stderr, return dict for JSON
 2. Add the mode name to `VALID_MODES` tuple
 3. Wire it into `main()` with the `if mode in ("name", "all"):` pattern
-4. Sync: `cp guest/artifacts/capsem-bench images/capsem-bench`
-5. Add tests in `images/test_capsem_bench.py`
-6. Update this skill
+4. Update this skill
 
 ## Tests
 
-- Unit tests: `images/test_capsem_bench.py` (pytest)
+- In-VM benchmark test: `just run "capsem-bench all"`
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
 - Full run: `just bench` or `just full-test`

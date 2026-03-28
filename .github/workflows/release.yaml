@@ -87,7 +87,7 @@ jobs:
         run: cargo install b3sum --locked
 
       - name: Build VM assets
-        run: python3 images/build.py
+        run: uv run capsem-builder build guest/ --output assets/
 
       - uses: actions/upload-artifact@v7
         with:

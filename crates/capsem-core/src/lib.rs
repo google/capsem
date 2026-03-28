@@ -5,6 +5,7 @@ pub mod host_config;
 pub mod host_state;
 pub mod hypervisor;
 pub mod log_layer;
+pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
 pub mod session;

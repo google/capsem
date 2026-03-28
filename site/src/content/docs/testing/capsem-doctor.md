@@ -61,7 +61,7 @@ The `test_sandbox.py` file also uses a fixture-based parametrization pattern for
 
 ## Adding New Tests
 
-1. Add test functions to the appropriate `images/diagnostics/test_<category>.py` file, or create a new `test_<category>.py`.
+1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_<category>.py` file, or create a new `test_<category>.py`.
 2. Use `from conftest import run` for shell commands and the `output_dir` fixture for temp files.
 3. Tests auto-skip outside the capsem VM -- conftest checks for root user with writable `/root`.
 4. Run `just run "capsem-doctor"` to test. Initrd repacking picks up modified `diagnostics/` files automatically.

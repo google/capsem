@@ -1,5 +1,0 @@
-# DEPRECATED: Module loading now handled by kernel defconfig (modules disabled).
-virtio_pci
-virtio_console
-virtio_blk
-virtio_rng

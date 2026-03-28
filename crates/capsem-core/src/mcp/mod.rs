@@ -862,15 +862,31 @@ mod tests {
         let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
         assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-        let dockerfile = std::fs::read_to_string(root.join("images/Dockerfile.rootfs"))
-            .expect("cannot read Dockerfile.rootfs");
+        let template = std::fs::read_to_string(
+            root.join("src/capsem/builder/templates/Dockerfile.rootfs.j2"),
+        )
+        .expect("cannot read Dockerfile.rootfs.j2");
 
+        // The Jinja template uses a loop over guest_binaries to COPY each binary.
+        // Verify the loop pattern exists -- the Python build context test
+        // (test_docker.py) verifies the actual binary list matches.
+        assert!(
+            template.contains("{% for binary in guest_binaries %}"),
+            "Dockerfile.rootfs.j2 missing guest_binaries loop"
+        );
+        assert!(
+            template.contains("COPY {{ binary }} /usr/local/bin/{{ binary }}"),
+            "Dockerfile.rootfs.j2 missing COPY template for guest binaries"
+        );
+
+        // Also verify that prepare_build_context includes all agent binaries
+        // by checking the Python build context function lists them.
+        let docker_py = std::fs::read_to_string(root.join("src/capsem/builder/docker.py"))
+            .expect("cannot read docker.py");
         for bin in &bins {
-            let pattern = format!("COPY {bin} ");
             assert!(
-                dockerfile.contains(&pattern),
-                "Dockerfile.rootfs missing COPY for guest binary '{bin}'. \
-                 Add: COPY {bin} /usr/local/bin/{bin}"
+                docker_py.contains(bin),
+                "docker.py missing guest binary '{bin}' in build context"
             );
         }
     }
