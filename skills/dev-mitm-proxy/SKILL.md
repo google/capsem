@@ -43,6 +43,10 @@ The proxy MUST handle response decompression as a general capability. This is no
 
 **Why this matters**: Failing to handle gzip on Anthropic SSE responses caused all model/token/cost metadata to be NULL. The SSE parser received compressed garbage. This went undetected because Google's API happened to not compress SSE in testing. The fix was general-purpose decompression, not an Anthropic-specific hack.
 
+## Serde optimization for ai_traffic parsers
+
+The ai_traffic parsers (`openai.rs`, `google.rs`, `request_parser.rs`) deserialize LLM request/response bodies that can be megabytes. Never use `serde_json::Value` for struct fields that hold large unconstrained JSON (tool call args, function responses, model outputs). Use `Box<serde_json::value::RawValue>` for fields that are only stringified, and remove unused fields entirely. See `/dev-rust-patterns` for the full pattern and examples.
+
 ## SSE parsing
 
 AI provider APIs (Anthropic, OpenAI, Google) use Server-Sent Events for streaming responses. The proxy parses SSE to extract model names, token counts, and cost data for telemetry.

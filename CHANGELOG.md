@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Skills table in CLAUDE.md and GEMINI.md** -- both agent config files now have a "Skills -- LOAD BEFORE CODING" section with a 13-row table mapping areas to skills. GEMINI.md mandates replaced with skill references to avoid duplication.
+- **Serde RawValue pattern in dev skills** -- `dev-rust-patterns` now documents the `serde_json::Value` vs `Box<RawValue>` rule for LLM payload parsing, with before/after examples. `dev-mitm-proxy` cross-references it. Wire format reference updated.
+- **Bidirectional I/O pattern in dev-rust-patterns** -- ported the thread-per-direction mandate from GEMINI.md into the skill (was missing).
+
 ### Fixed
 - **Asset manifest format bug** -- `gen_manifest.py` produced filenames like `"arm64/vmlinuz"` instead of bare `"vmlinuz"`, causing `build.rs` to silently skip hash verification at boot. Fixed to produce per-arch nested format matching `capsem-builder`. Regenerated `assets/manifest.json`.
 - **Per-arch manifest parsing** -- `Manifest::from_json()` rejected per-arch manifest format. Added `from_json_for_arch()` that normalizes per-arch to flat format. `create_asset_manager()` now also searches the parent directory for manifest.json (needed when assets resolve to `assets/{arch}/`).

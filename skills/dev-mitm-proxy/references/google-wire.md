@@ -62,7 +62,7 @@ struct Part {
 
 struct FunctionCall {
     name: Option<String>,
-    args: Option<serde_json::Value>,
+    args: Option<Box<serde_json::value::RawValue>>,  // RawValue -- not Value
 }
 
 struct UsageMetadata {

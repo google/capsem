@@ -69,6 +69,38 @@ Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-mus
 - Propagate errors up, don't swallow them. If a function returns `Result`, the caller must handle it.
 - Log errors at the point where you have context, then propagate. Don't log AND propagate (causes duplicate log lines).
 
+## Bidirectional I/O -- thread per direction
+
+When bridging two blocking file descriptors bidirectionally (e.g., TCP socket to vsock in `net_proxy.rs`, or master PTY to vsock in `capsem-pty-agent`), doing both reads and writes in a single thread using `poll(2)` causes deadlocks. If both outgoing buffers fill simultaneously, a single thread blocks on writing and stops reading, creating mutual lockup. Always spawn a dedicated thread for at least one direction (`std::thread::spawn` for `fd_b -> fd_a` while the main thread handles `fd_a -> fd_b`).
+
+## Serde -- avoid `serde_json::Value` on LLM payloads
+
+The MITM proxy and ai_traffic parsers handle massive HTTP payloads (megabytes of tool calls, histories, images). Parsing these into `serde_json::Value` does full DOM allocation, which is inefficient and risks memory exhaustion.
+
+**Rules:**
+- Define targeted structs with `#[derive(Deserialize)]`. Serde skips and discards fields not in the struct without allocating memory for them.
+- For struct fields that hold large, unconstrained JSON (tool call arguments, function responses, full model outputs) and are only converted to strings: use `Box<serde_json::value::RawValue>` instead of `serde_json::Value`. `RawValue` keeps the JSON as an unparsed string slice -- zero DOM allocation. Access the raw JSON string via `.get()`.
+- Never add `serde_json::Value` fields to structs that parse LLM request/response bodies. If you only need a string representation, use `RawValue`. If you need to traverse nested fields, use a typed struct.
+- Remove unused fields from deserialization structs -- they still force Serde to allocate.
+
+**Example -- before (bad):**
+```rust
+struct FunctionCall {
+    name: Option<String>,
+    args: Option<serde_json::Value>,  // full DOM parse of potentially huge args
+}
+// later: let arguments = fc.args.as_ref().map(|v| v.to_string());
+```
+
+**After (good):**
+```rust
+struct FunctionCall {
+    name: Option<String>,
+    args: Option<Box<serde_json::value::RawValue>>,  // zero-copy string slice
+}
+// later: let arguments = fc.args.as_ref().map(|v| v.get().to_owned());
+```
+
 ## Memory and resource management
 
 - **File handle limits**: VirtioFS caps at 4096 open file handles, returns `EMFILE` beyond that.
@@ -101,7 +133,9 @@ Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-mus
 
 5. **setsid for controlling terminal**: Without `setsid`, the PTY has no foreground process group and Ctrl-C (SIGINT) is not delivered. `capsem-init` uses `setsid` to fix this.
 
-6. **Prefer syscalls over subprocesses**: `std::process::Command` costs 5-30ms per spawn (fork/exec). If a syscall does the same thing, use it. Example: `cp -c -R` for APFS clonefile was 20-30ms; direct `libc::clonefile()` is <1ms. On Linux, `ReflinkSnapshot` already uses `FICLONE` ioctl directly -- no subprocess. Always check if the OS provides a syscall before reaching for `Command`.
+6. **serde_json::Value on LLM hot path**: Three ai_traffic struct fields (`ResponseInfo.output`, `FunctionResponse.response`, `FunctionCall.args`) used `serde_json::Value` for large payloads that were only stringified. This forced full DOM allocation on every streaming request. Fixed by removing unused fields and switching to `Box<serde_json::value::RawValue>`.
+
+7. **Prefer syscalls over subprocesses**: `std::process::Command` costs 5-30ms per spawn (fork/exec). If a syscall does the same thing, use it. Example: `cp -c -R` for APFS clonefile was 20-30ms; direct `libc::clonefile()` is <1ms. On Linux, `ReflinkSnapshot` already uses `FICLONE` ioctl directly -- no subprocess. Always check if the OS provides a syscall before reaching for `Command`.
 
 7. **Blocking I/O in MCP gateway**: All 7 snapshot file tool handlers ran blocking I/O (clonefile subprocess, walkdir, blake3) directly on tokio worker threads while holding a `tokio::sync::Mutex`. The auto-snapshot timer did the same. This caused snapshot creation to hang from the model's perspective. Fixed by wrapping in `spawn_blocking` everywhere.
 
