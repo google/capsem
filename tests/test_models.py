@@ -106,6 +106,7 @@ class TestPackageManager:
         assert set(PackageManager) == {
             PackageManager.APT, PackageManager.UV,
             PackageManager.PIP, PackageManager.NPM,
+            PackageManager.CURL,
         }
 
     def test_string_values(self):

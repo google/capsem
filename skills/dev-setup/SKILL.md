@@ -1,6 +1,6 @@
 ---
 name: dev-setup
-description: Setting up a Capsem development environment from scratch. Use when onboarding a new developer, setting up a new machine, or troubleshooting environment issues. Covers prerequisites, first-time setup, tool installation, VM asset builds, and verification steps.
+description: Setting up a Capsem development environment from scratch. Use when onboarding a new developer, setting up a new machine, or troubleshooting environment issues. Covers prerequisites, first-time setup, tool installation, VM asset builds, container runtime configuration (podman/Docker memory and CPU requirements), and verification steps.
 ---
 
 # Developer Setup
@@ -31,6 +31,36 @@ Rust targets (auto-installed by `just test`):
 Cargo tools (auto-installed by `just test`):
 - `cargo-nextest` -- test runner
 - `cargo-llvm-cov` -- coverage
+
+## Container runtime setup
+
+On macOS, both Docker and Podman run inside a Linux VM. The default memory allocation (2GB for Podman) is too small -- the rootfs build runs apt installs, npm installs, and curl-based CLI installers concurrently, which can OOM-kill the build (exit code 137).
+
+**Minimum**: 4GB RAM. **Recommended**: 8GB RAM, 8 CPUs.
+
+### Podman
+
+```bash
+# First-time setup
+brew install podman
+podman machine init
+podman machine set --memory 8192 --cpus 8
+podman machine start
+
+# Fix existing machine
+podman machine stop
+podman machine set --memory 8192 --cpus 8
+podman machine start
+
+# Verify
+podman machine inspect | python3 -c "import sys,json; r=json.load(sys.stdin)[0]['Resources']; print(f'Memory: {r[\"Memory\"]}MB, CPUs: {r[\"CPUs\"]}')"
+```
+
+### Docker Desktop
+
+Docker Desktop -> Settings -> Resources -> set Memory to 8GB, CPUs to 8.
+
+`just doctor` checks these resources automatically and fails if below minimum.
 
 ## First-time setup
 
@@ -120,7 +150,17 @@ The app binary must be codesigned with `com.apple.security.virtualization` entit
 ### `just doctor` fails
 Install missing tools as indicated. Most can be installed via `brew` or `cargo install`.
 
-### `just build-assets` fails
+### `just build-assets` fails with exit code 137
+The container runtime VM ran out of memory. Increase to 8GB:
+- Podman: `podman machine stop && podman machine set --memory 8192 && podman machine start`
+- Docker: Docker Desktop -> Settings -> Resources -> Memory -> 8GB
+
+### `just build-assets` fails with "Release file not valid yet"
+The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Until=false` to work around this, but if you see this error on an old builder version:
+- Podman: `podman machine stop && podman machine start` (resets clock)
+- Docker: restart Docker Desktop
+
+### `just build-assets` fails (other)
 - Check Docker/Podman is running: `docker info` or `podman info`
 - Check guest config is valid: `uv run capsem-builder validate guest/`
 - On first run, Docker image pulls can be slow

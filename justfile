@@ -38,6 +38,13 @@ dev: _pnpm-install
 ui: _pnpm-install
     cd frontend && pnpm run dev
 
+# Full rebuild + boot VM (build-assets then run)
+full-run *CMD: build-assets _generate-settings _pack-initrd _sign
+    #!/bin/bash
+    set -euo pipefail
+    pkill -x capsem 2>/dev/null || true
+    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
+
 # Pack + boot VM (interactive or with command, ~10s)
 run *CMD: audit _check-assets _generate-settings _pack-initrd _sign
     #!/bin/bash
@@ -50,6 +57,9 @@ build-assets: doctor _install-tools audit
     #!/bin/bash
     set -euo pipefail
     arch=$(uname -m | sed 's/aarch64/arm64/')
+    echo "=== Cleaning old assets ==="
+    rm -rf "{{assets_dir}}/arm64" "{{assets_dir}}/x86_64"
+    rm -f "{{assets_dir}}/manifest.json" "{{assets_dir}}/B3SUMS"
     echo "=== Building kernel for $arch ==="
     uv run capsem-builder build guest/ --arch "$arch" --template kernel --output "{{assets_dir}}/"
     echo ""
@@ -237,6 +247,32 @@ doctor: _pnpm-install
         pass "podman"
     else
         fail "docker or podman -- brew install podman && podman machine init && podman machine start"
+    fi
+    # Check container runtime VM resources (macOS -- both podman and Docker run in a VM)
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        mem_mb=0; cpus=0; runtime_label=""
+        if command -v podman &>/dev/null; then
+            mem_mb=$(podman machine inspect 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0].get('Resources',{}).get('Memory',0))" 2>/dev/null || echo 0)
+            cpus=$(podman machine inspect 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0].get('Resources',{}).get('CPUs',0))" 2>/dev/null || echo 0)
+            runtime_label="podman VM"
+        elif command -v docker &>/dev/null; then
+            mem_mb=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('MemTotal',0) // 1024 // 1024)" 2>/dev/null || echo 0)
+            cpus=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('NCPU',0))" 2>/dev/null || echo 0)
+            runtime_label="Docker Desktop"
+        fi
+        if [[ "$mem_mb" -gt 0 ]]; then
+            if [[ "$mem_mb" -lt 4096 ]]; then
+                if [[ "$runtime_label" == "podman VM" ]]; then
+                    fail "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs (minimum 4096MB) -- fix: podman machine stop && podman machine set --memory 8192 && podman machine start"
+                else
+                    fail "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs (minimum 4096MB) -- fix: Docker Desktop -> Settings -> Resources -> increase Memory to 8GB"
+                fi
+            elif [[ "$mem_mb" -lt 8192 ]]; then
+                pass "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs (recommended 8192MB)"
+            else
+                pass "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs"
+            fi
+        fi
     fi
 
     echo ""

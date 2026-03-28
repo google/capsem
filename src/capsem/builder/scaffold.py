@@ -59,6 +59,7 @@ _INSTALL_CMDS = {
     "uv": "uv pip install --system --break-system-packages",
     "pip": "pip3 install --break-system-packages",
     "npm": "npm install -g",
+    "curl": "curl -fsSL",
 }
 
 _PACKAGE_SET_TOML = """\

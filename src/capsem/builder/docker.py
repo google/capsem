@@ -47,12 +47,15 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
 
     npm_packages: list[str] = []
     npm_prefix = "/opt/ai-clis"
+    curl_installs: list[str] = []
     for provider in config.ai_providers.values():
         if provider.enabled and provider.install:
             if provider.install.manager == PackageManager.NPM:
                 npm_packages.extend(provider.install.packages)
                 if provider.install.prefix:
                     npm_prefix = provider.install.prefix
+            elif provider.install.manager == PackageManager.CURL:
+                curl_installs.extend(provider.install.packages)
 
     return {
         "arch": arch,
@@ -62,6 +65,7 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "python_install_cmd": python_install_cmd,
         "npm_packages": npm_packages,
         "npm_prefix": npm_prefix,
+        "curl_installs": curl_installs,
         "guest_binaries": GUEST_BINARIES,
     }
 
@@ -340,7 +344,7 @@ def create_squashfs(
         runtime, "run", "--rm",
         "-v", f"{abs_dir}:/assets",
         "debian:bookworm-slim", "bash", "-c",
-        f"apt-get update && apt-get install -y squashfs-tools zstd && "
+        f"apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y squashfs-tools zstd && "
         f"mkdir /rootfs && tar xf /assets/{tar_name} -C /rootfs && "
         f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend",
     ])
@@ -400,7 +404,7 @@ def extract_tool_versions(
         "echo \"pip=$(pip3 --version 2>&1 | awk '{print $2}')\";"
         "echo \"git=$(git --version 2>&1 | awk '{print $3}')\";"
         "for cli in claude gemini codex; do "
-        "  ver=$(/opt/ai-clis/bin/$cli --version 2>/dev/null | head -1 || echo 'N/A'); "
+        "  ver=$(command -v $cli >/dev/null 2>&1 && $cli --version 2>/dev/null | head -1 || echo 'N/A'); "
         "  echo \"$cli=$ver\"; "
         "done;"
     )
@@ -490,19 +494,20 @@ def prepare_build_context(
             str(context_dir / "capsem-ca.crt"),
         )
         # Shell config
+        artifacts = repo_root / "guest" / "artifacts"
         for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
             shutil.copy2(
-                str(repo_root / "images" / name),
+                str(artifacts / name),
                 str(context_dir / name),
             )
         # Diagnostics
-        diag_src = repo_root / "images" / "diagnostics"
+        diag_src = artifacts / "diagnostics"
         diag_dst = context_dir / "diagnostics"
         if diag_src.is_dir():
             shutil.copytree(str(diag_src), str(diag_dst), dirs_exist_ok=True)
         # Doctor + bench scripts
         for name in ("capsem-doctor", "capsem-bench"):
-            src = repo_root / "images" / name
+            src = artifacts / name
             if src.is_file():
                 shutil.copy2(str(src), str(context_dir / name))
         # Agent binaries (if they exist in context already from cross_compile_agent)
@@ -517,7 +522,7 @@ def prepare_build_context(
         shutil.copy2(str(defconfig_src), str(defconfig_dst))
         # capsem-init
         shutil.copy2(
-            str(repo_root / "images" / "capsem-init"),
+            str(repo_root / "guest" / "artifacts" / "capsem-init"),
             str(context_dir / "capsem-init"),
         )
 

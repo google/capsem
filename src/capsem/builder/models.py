@@ -34,6 +34,7 @@ class PackageManager(str, Enum):
     UV = "uv"
     PIP = "pip"
     NPM = "npm"
+    CURL = "curl"
 
 
 # ---------------------------------------------------------------------------

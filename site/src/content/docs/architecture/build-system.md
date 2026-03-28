@@ -10,16 +10,52 @@ capsem-builder is a Python CLI that reads TOML configs from `guest/config/`, val
 ## Architecture
 
 ```mermaid
-flowchart LR
-  TOML["guest/config/*.toml"] --> Pydantic["Pydantic Models"]
-  Pydantic --> JSON["config/defaults.json"]
-  Pydantic --> Jinja["Jinja2 Dockerfile"]
-  Pydantic --> Manifest["manifest.json"]
-  Jinja --> Docker["Docker / Podman Build"]
-  Docker --> Assets["assets/{arch}/"]
+flowchart TD
+  subgraph Input["Source of Truth"]
+    TOML["guest/config/*.toml\n(AI providers, packages,\nsecurity, VM resources)"]
+  end
+
+  subgraph Validation["Validation Layer"]
+    Config["config.py\nTOML loader"]
+    Models["models.py\nPydantic models\n(PackageManager, InstallConfig,\nAiProviderConfig, ...)"]
+    Validate["validate.py\nLinter (E001-E402, W001-W012)"]
+  end
+
+  subgraph Generation["Code Generation"]
+    Context["docker.py\n_rootfs_context()\n_kernel_context()"]
+    Jinja["Jinja2 Templates\nDockerfile.rootfs.j2\nDockerfile.kernel.j2"]
+    Defaults["config.py\ngenerate_defaults_json()"]
+  end
+
+  subgraph Output["Build Outputs"]
+    Docker["Docker / Podman Build"]
+    Assets["assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.squashfs"]
+    JSON["config/defaults.json\n(consumed by Rust)"]
+    BOM["manifest.json\n+ B3SUMS"]
+  end
+
+  TOML --> Config
+  Config --> Models
+  Models --> Validate
+  Models --> Context
+  Models --> Defaults
+  Context --> Jinja
+  Jinja --> Docker
+  Docker --> Assets
+  Assets --> BOM
+  Defaults --> JSON
 ```
 
-TOML configs are the single source of truth. The Pydantic models (`models.py`) validate structure and constraints. From there, three outputs are produced:
+### Data flow
+
+TOML configs are the single source of truth. The data flows through four layers:
+
+1. **TOML configs** (`guest/config/`) -- user-facing, declarative definitions for AI providers, packages, security policy, and VM resources.
+2. **Pydantic models** (`models.py`) -- type-safe validation with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models, and cross-field validators.
+3. **Context dicts** (`docker.py`) -- template variables assembled from the validated config. Each template type (`rootfs`, `kernel`) has its own context builder that collects packages by manager type.
+4. **Jinja2 templates** -- Dockerfile output parameterized per architecture.
+
+Three outputs are produced:
 
 1. **defaults.json** -- settings interchange consumed by Rust via `include_str!`, validated against `settings-schema.json`.
 2. **Rendered Dockerfiles** -- Jinja2 templates (`Dockerfile.rootfs.j2`, `Dockerfile.kernel.j2`) parameterized per architecture.
@@ -33,7 +69,7 @@ All config lives under `guest/config/`. Each file maps to a Pydantic model.
 |------|-------|---------|------------|
 | `build.toml` | `BuildConfig` | Architectures, compression | `compression`, `compression_level`, `architectures.*` |
 | `manifest.toml` | `ImageManifestConfig` | Image identity and changelog | `name`, `version`, `description`, `changelog` |
-| `ai/*.toml` | `AiProviderConfig` | AI provider definitions | `api_key`, `network.domains`, `install`, `cli`, `files` |
+| `ai/*.toml` | `AiProviderConfig` | AI provider definitions | `api_key`, `network.domains`, `install` (manager: npm/curl), `cli`, `files` |
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
 | `mcp/*.toml` | `McpServerConfig` | MCP server definitions | `transport`, `command`, `url`, `args`, `env` |
@@ -79,9 +115,8 @@ allow_get = true
 allow_post = true
 
 [anthropic.install]
-manager = "npm"
-prefix = "/opt/ai-clis"
-packages = ["@anthropic-ai/claude-code"]
+manager = "curl"
+packages = ["https://claude.ai/install.sh"]
 ```
 
 ## Validation Pipeline
@@ -186,6 +221,90 @@ Key implementation details:
 - **CI cache integration.** Docker buildx with GitHub Actions cache (`type=gha`) when `GITHUB_ACTIONS` is set.
 - **Kernel version resolution.** Fetches the latest stable version for the configured LTS branch from `kernel.org/releases.json`, falls back to a hardcoded version on network failure.
 - **Cross-compilation.** Guest agent binaries are cross-compiled with `cargo build --target {rust_target}` using `rust-lld` as the linker (configured in `.cargo/config.toml`).
+- **Clock skew resilience.** All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift (common with Podman's libkrun backend on macOS).
+
+## Container Runtime Requirements
+
+On macOS, both Docker and Podman run inside a Linux VM with limited resources. The rootfs build runs apt, npm, and curl-based CLI installers concurrently, requiring substantial memory.
+
+| Threshold | RAM | Notes |
+|-----------|-----|-------|
+| **Minimum** | 4 GB | Below this, builds OOM-kill (exit 137) |
+| **Recommended** | 8 GB | Comfortable margin for all installers |
+| **CI (GitHub Actions)** | 7 GB | Standard runner allocation |
+
+```bash
+# Podman: configure VM resources
+podman machine stop
+podman machine set --memory 8192 --cpus 8
+podman machine start
+
+# Docker Desktop: Settings -> Resources -> Memory -> 8 GB
+```
+
+`just doctor` and `capsem-builder doctor` both check these resources automatically and fail if below minimum.
+
+## Install Manager Types
+
+AI providers declare how their CLI gets installed via `[provider.install]`. The builder supports multiple install strategies:
+
+| Manager | Template Handling | Use Case | Example |
+|---------|------------------|----------|---------|
+| `npm` | Batched into single `npm install -g --prefix` | Node.js CLI tools | Gemini CLI, Codex |
+| `curl` | Each URL gets its own `RUN curl -fsSL URL \| bash` | Native binary installers | Claude Code |
+| `apt` | Package set (not per-provider) | System packages | coreutils, git, curl |
+| `uv` | Package set (not per-provider) | Python packages | numpy, pytest |
+| `pip` | Package set (not per-provider) | Python packages (fallback) | -- |
+
+### The `/root` tmpfs constraint
+
+At runtime, `/root` is a tmpfs overlay -- anything baked into the rootfs under `/root/` during the Docker build is hidden. This matters for CLI installers that put binaries in `~/.local/bin/` or `~/.claude/bin/`:
+
+```dockerfile
+# The installer puts claude at ~/.local/bin/claude, which is /root/.local/bin/
+# inside the container. Since /root is tmpfs at runtime, copy to /usr/local/bin.
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    for bin in /root/.local/bin/*; do \
+        [ -f "$bin" ] && install -m 555 "$bin" /usr/local/bin/; \
+    done
+```
+
+The `install -m 555` enforces the guest binary security invariant: all binaries are read-only, non-writable by the guest.
+
+### Adding a new install manager
+
+To add a new manager type (e.g., `cargo`):
+
+1. Add the enum value to `PackageManager` in `models.py`
+2. Collect packages in `_rootfs_context()` in `docker.py` -- create a new list variable
+3. Pass it to the template context dict
+4. Add a Jinja2 block in `Dockerfile.rootfs.j2`
+5. Add to `_INSTALL_CMDS` in `scaffold.py`
+6. Update tests in `test_docker.py` and `test_cli.py`
+
+### Rootfs Dockerfile layer structure
+
+The generated `Dockerfile.rootfs.j2` follows a specific ordering. Understanding this is important when adding new install steps -- the `/root` cleanup and binary permissions are load-bearing:
+
+```mermaid
+flowchart TD
+  A["1. apt packages\n(system tools, runtimes)"] --> B["2. Node.js via nvm\n(for npm-based CLIs)"]
+  B --> C["3. uv installer\n(Python package manager)"]
+  C --> D["4. npm install\n(Gemini CLI, Codex)"]
+  D --> E["5. CA certificate\n+ certifi patch"]
+  E --> F["6. Guest binaries\n(COPY + chmod 555)"]
+  F --> G["7. Shell config + diagnostics\n(bashrc, banner, tests)"]
+  G --> H["8. Python packages\n(uv pip install)"]
+  H --> I["9. Security hardening\n(strip setuid, rm EXTERNALLY-MANAGED)"]
+  I --> J["10. rm -rf /root\n(clean HOME for tmpfs)"]
+  J --> K["11. curl installers\n(Claude Code, copy to /usr/local/bin)"]
+  K --> L["12. Switch apt to HTTPS"]
+
+  style J fill:#f9f,stroke:#333
+  style K fill:#bbf,stroke:#333
+```
+
+Step 10 and 11 ordering matters: curl installers run _after_ the `/root` cleanup so there's a clean HOME. Binaries are immediately copied to `/usr/local/bin/` since `/root` becomes tmpfs at boot.
 
 ## Manifest and BOM
 

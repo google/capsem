@@ -69,6 +69,75 @@ def check_container_runtime() -> CheckResult:
     )
 
 
+# Minimum memory (MB) for the podman VM to build images reliably.
+# The rootfs build runs apt, npm, and curl installers concurrently inside the
+# container -- 2 GB is not enough (OOM-killed exit 137 on Claude installer).
+PODMAN_MIN_MEMORY_MB = 4096
+PODMAN_RECOMMENDED_MEMORY_MB = 8192
+
+
+def check_container_resources() -> CheckResult | None:
+    """Check container runtime VM has enough memory and CPUs.
+
+    Checks podman machine (macOS/Windows) or Docker Desktop resource limits.
+    Returns None on native Linux or if resources can't be determined.
+    """
+    import json as _json
+
+    # Podman machine (macOS/Windows)
+    if shutil.which("podman") and sys.platform in ("darwin", "win32"):
+        try:
+            result = subprocess.run(
+                ["podman", "machine", "inspect"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                data = _json.loads(result.stdout)
+                resources = data[0].get("Resources", {})
+                memory_mb = resources.get("Memory", 0)
+                cpus = resources.get("CPUs", 0)
+                return _check_resources("podman VM", memory_mb, cpus,
+                    fix=f"podman machine stop && podman machine set --memory {PODMAN_RECOMMENDED_MEMORY_MB} && podman machine start")
+        except Exception:
+            pass
+
+    # Docker Desktop (macOS/Windows) -- uses docker info to read resource limits
+    if shutil.which("docker") and sys.platform in ("darwin", "win32"):
+        try:
+            result = subprocess.run(
+                ["docker", "info", "--format", "{{json .}}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                data = _json.loads(result.stdout)
+                memory_bytes = data.get("MemTotal", 0)
+                cpus = data.get("NCPU", 0)
+                memory_mb = memory_bytes // (1024 * 1024)
+                return _check_resources("Docker Desktop", memory_mb, cpus,
+                    fix="Docker Desktop -> Settings -> Resources -> increase Memory to 8GB")
+        except Exception:
+            pass
+
+    return None
+
+
+def _check_resources(
+    runtime_label: str, memory_mb: int, cpus: int, fix: str,
+) -> CheckResult:
+    """Evaluate container runtime resources against thresholds."""
+    if memory_mb < PODMAN_MIN_MEMORY_MB:
+        return CheckResult(
+            name="container-resources",
+            passed=False,
+            detail=f"{runtime_label}: {memory_mb}MB RAM, {cpus} CPUs (minimum {PODMAN_MIN_MEMORY_MB}MB)",
+            fix=fix,
+        )
+    detail = f"{runtime_label}: {memory_mb}MB RAM, {cpus} CPUs"
+    if memory_mb < PODMAN_RECOMMENDED_MEMORY_MB:
+        detail += f" (recommended {PODMAN_RECOMMENDED_MEMORY_MB}MB)"
+    return CheckResult(name="container-resources", passed=True, detail=detail)
+
+
 def check_rust_toolchain() -> CheckResult:
     """Check for rustup and cargo on PATH."""
     missing = []
@@ -239,6 +308,9 @@ def run_all_checks(guest_dir: Path, repo_root: Path) -> list[CheckResult]:
     """Run all prerequisite checks and return results."""
     results: list[CheckResult] = []
     results.append(check_container_runtime())
+    resources_check = check_container_resources()
+    if resources_check is not None:
+        results.append(resources_check)
     results.append(check_rust_toolchain())
     results.append(check_cross_target("aarch64-unknown-linux-musl"))
     results.append(check_cross_target("x86_64-unknown-linux-musl"))
@@ -262,7 +334,7 @@ def format_results(results: list[CheckResult]) -> str:
     # Group by category based on check name
     categories: dict[str, list[CheckResult]] = {}
     for r in results:
-        if r.name == "container-runtime":
+        if r.name in ("container-runtime", "container-resources"):
             cat = "Container Runtime"
         elif r.name in ("rust-toolchain",) or r.name.startswith("target-"):
             cat = "Rust Toolchain"

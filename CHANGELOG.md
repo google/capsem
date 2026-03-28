@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Asset manifest format bug** -- `gen_manifest.py` produced filenames like `"arm64/vmlinuz"` instead of bare `"vmlinuz"`, causing `build.rs` to silently skip hash verification at boot. Fixed to produce per-arch nested format matching `capsem-builder`. Regenerated `assets/manifest.json`.
+- **Per-arch manifest parsing** -- `Manifest::from_json()` rejected per-arch manifest format. Added `from_json_for_arch()` that normalizes per-arch to flat format. `create_asset_manager()` now also searches the parent directory for manifest.json (needed when assets resolve to `assets/{arch}/`).
+- **apt clock skew in container builds** -- `apt-get update` fails when the container VM's clock drifts behind Debian mirror timestamps ("Release file not valid yet"). Added `Acquire::Check-Valid-Until=false` to all apt calls in Dockerfile templates and the squashfs helper.
+
+### Changed
+- **Claude Code installed via native installer** -- switched from `npm install -g @anthropic-ai/claude-code` to `curl -fsSL https://claude.ai/install.sh | bash`. Binary copied to `/usr/local/bin/` (chmod 555) so it survives the `/root` tmpfs overlay at boot. Added `CURL` install manager type to the builder (`PackageManager.CURL`).
+- **Claude Code yolo alias** -- added `alias claude='claude --dangerously-skip-permissions'` to guest bashrc (matches `alias gemini='gemini --yolo'` pattern).
+
+### Added
+- **Container runtime resource checks** -- `just doctor` and `capsem-builder doctor` now verify podman VM / Docker Desktop have enough memory (minimum 4GB, recommended 8GB) and report CPUs. Prevents cryptic exit-137 OOM kills during rootfs builds.
+- **Asset resolution test suite** -- 28 new tests across Rust and Python covering: `resolve_with_arch` (6 tests), `resolve_rootfs` (2), manifest hash extraction (10), BLAKE3 hash verification (3), `generate_checksums` contract (3), `gen_manifest.py` compatibility (3), per-arch Manifest parsing (2). Golden fixture at `data/fixtures/manifest_per_arch.json`.
+- **`manifest_compat` module** -- shared `extract_hashes()` function for manifest hash extraction, testable independently from `build.rs`.
+- **Asset pipeline documentation** -- new site page (`architecture/asset-pipeline.md`) and skill (`/asset-pipeline`) documenting the full build-to-boot asset flow, manifest format, hash verification, and per-arch resolution.
+- **Builder internals documentation** -- expanded `build-images` skill with full architecture map (models, context flow, template variables), how-to guides for adding install managers, and rootfs Dockerfile layer ordering. Updated `build-system.md` and `custom-images.md` site pages with mermaid diagrams, install manager types, `/root` tmpfs constraint, and container runtime requirements.
+
+### Removed
+- **`images/` directory** -- legacy build files fully replaced by `guest/config/`, `guest/artifacts/`, and `src/capsem/builder/templates/`. All references in code, tests, CI, and docs updated.
+
+### Fixed
 - **Mock data generated from build system** -- `mock.ts` was 1213 lines of hand-crafted settings and MCP data that drifted from reality (9 settings missing, fake MCP servers). Settings now generated from `config/defaults.json`, MCP tools exported from Rust via `mcp-export` binary to `config/mcp-tools.json`. All generated into `mock-settings.generated.ts` by `_generate-settings` recipe (runs automatically in `just run` and `just test`).
 - **`step` metadata field flows to UI** -- Rust `SettingMetaRaw` was silently dropping the `step` field from generated JSON. Added to both `registry.rs` and `types.rs` so number input increments work.
 - **Build log** -- Runner signing and generation scripts now log to `target/build.log` instead of stdout, preventing contamination of binary output.

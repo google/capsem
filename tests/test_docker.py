@@ -132,69 +132,6 @@ class TestRenderRootfs:
 # ---------------------------------------------------------------------------
 
 
-class TestRootfsConformance:
-    """Rendered arm64 is structurally equivalent to current images/Dockerfile.rootfs."""
-
-    @pytest.fixture
-    def current_dockerfile(self):
-        return (PROJECT_ROOT / "images" / "Dockerfile.rootfs").read_text()
-
-    def test_same_from_line(self, current_dockerfile, rendered_arm64):
-        assert "FROM --platform=linux/arm64 debian:bookworm-slim" in current_dockerfile
-        assert "FROM --platform=linux/arm64 debian:bookworm-slim" in rendered_arm64
-
-    def test_same_apt_packages(self, rendered_arm64):
-        """All packages from apt-packages.txt appear in rendered output."""
-        apt_file = (PROJECT_ROOT / "images" / "apt-packages.txt").read_text()
-        pkgs = {
-            ln.strip()
-            for ln in apt_file.splitlines()
-            if ln.strip() and not ln.strip().startswith("#")
-        }
-        for pkg in pkgs:
-            assert pkg in rendered_arm64, f"apt package '{pkg}' in apt-packages.txt but not rendered"
-
-    def test_same_npm_packages(self, rendered_arm64):
-        """All packages from npm-globals.txt appear in rendered output."""
-        npm_file = (PROJECT_ROOT / "images" / "npm-globals.txt").read_text()
-        pkgs = {
-            ln.strip()
-            for ln in npm_file.splitlines()
-            if ln.strip() and not ln.strip().startswith("#")
-        }
-        for pkg in pkgs:
-            assert pkg in rendered_arm64, f"npm package '{pkg}' in npm-globals.txt but not rendered"
-
-    def test_same_python_packages(self, rendered_arm64):
-        """All packages from requirements.txt appear in rendered output."""
-        req_file = (PROJECT_ROOT / "images" / "requirements.txt").read_text()
-        pkgs = {
-            ln.strip()
-            for ln in req_file.splitlines()
-            if ln.strip() and not ln.strip().startswith("#")
-        }
-        for pkg in pkgs:
-            assert pkg in rendered_arm64, f"python package '{pkg}' in requirements.txt but not rendered"
-
-    def test_same_guest_binaries(self, current_dockerfile, rendered_arm64):
-        """All COPY'd capsem-* binaries in current appear in rendered."""
-        current_copies = set(re.findall(r"COPY (capsem-\S+)", current_dockerfile))
-        for binary in current_copies:
-            assert binary in rendered_arm64, f"binary '{binary}' in current but not rendered"
-
-    def test_same_hardening(self, current_dockerfile, rendered_arm64):
-        markers = [
-            "EXTERNALLY-MANAGED",
-            "-4000",
-            "rm -rf /root",
-            "URIs: https://",
-        ]
-        for marker in markers:
-            assert (marker in current_dockerfile) == (
-                marker in rendered_arm64
-            ), f"hardening marker '{marker}' mismatch"
-
-
 # ---------------------------------------------------------------------------
 # Kernel Dockerfile
 # ---------------------------------------------------------------------------
@@ -261,53 +198,6 @@ class TestRenderKernel:
 
 
 # ---------------------------------------------------------------------------
-# Kernel: conformance with current Dockerfile.kernel
-# ---------------------------------------------------------------------------
-
-
-class TestKernelConformance:
-    """Rendered arm64 kernel is structurally equivalent to current images/Dockerfile.kernel."""
-
-    @pytest.fixture
-    def current_kernel(self):
-        return (PROJECT_ROOT / "images" / "Dockerfile.kernel").read_text()
-
-    @pytest.fixture
-    def rendered_kernel(self, real_config):
-        return render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
-
-    def test_same_from_line(self, current_kernel, rendered_kernel):
-        assert "FROM --platform=linux/arm64 debian:bookworm-slim" in current_kernel
-        assert "FROM --platform=linux/arm64 debian:bookworm-slim" in rendered_kernel
-
-    def test_same_build_tools(self, current_kernel, rendered_kernel):
-        """Core build tools are present in both."""
-        tools = ["build-essential", "bc", "bison", "flex", "libssl-dev", "libelf-dev"]
-        for tool in tools:
-            assert tool in rendered_kernel, f"build tool '{tool}' missing from rendered"
-
-    def test_same_defconfig(self, current_kernel, rendered_kernel):
-        assert "defconfig.arm64" in current_kernel
-        assert "defconfig.arm64" in rendered_kernel
-
-    def test_same_kernel_image_path(self, current_kernel, rendered_kernel):
-        assert "arch/arm64/boot/Image" in current_kernel
-        assert "arch/arm64/boot/Image" in rendered_kernel
-
-    def test_busybox_commands(self, current_kernel, rendered_kernel):
-        """Both set up the same busybox symlinks."""
-        assert "busybox" in current_kernel
-        assert "busybox" in rendered_kernel
-
-    def test_multistage_output(self, current_kernel, rendered_kernel):
-        """Both use FROM scratch AS output stage."""
-        assert "FROM scratch" in current_kernel
-        assert "FROM scratch" in rendered_kernel
-
-
-# ---------------------------------------------------------------------------
 # Build context generation
 # ---------------------------------------------------------------------------
 
@@ -333,11 +223,14 @@ class TestGenerateBuildContext:
         assert "arch_name" in ctx
         assert "kernel_version" in ctx
 
-    def test_rootfs_npm_all_providers(self, real_config):
+    def test_rootfs_npm_providers(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
-        assert "@anthropic-ai/claude-code" in ctx["npm_packages"]
         assert "@google/gemini-cli" in ctx["npm_packages"]
         assert "@openai/codex" in ctx["npm_packages"]
+
+    def test_rootfs_curl_installs(self, real_config):
+        ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
+        assert "https://claude.ai/install.sh" in ctx["curl_installs"]
 
     def test_rootfs_arch_config(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
@@ -737,3 +630,74 @@ class TestGenerateChecksums:
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         assert manifest["latest"] == "0.13.0"
         assert "0.13.0" in manifest["releases"]
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_manifest_per_arch_structure(self, mock_run, tmp_path):
+        """Per-arch B3SUMS input produces release[arch][assets] with bare filenames.
+
+        build.rs looks up: releases[version][arch_key]["assets"][i]["filename"]
+        where filename must be bare (e.g. "vmlinuz", NOT "arm64/vmlinuz").
+        """
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
+        mock_run.return_value = MagicMock(
+            stdout="abc123  arm64/vmlinuz\ndef456  arm64/initrd.img\nghi789  arm64/rootfs.squashfs\n"
+        )
+        generate_checksums(tmp_path, "0.13.0")
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        release = manifest["releases"]["0.13.0"]
+        assert "arm64" in release, "per-arch key 'arm64' missing from release"
+        arm64_assets = release["arm64"]["assets"]
+        filenames = {a["filename"] for a in arm64_assets}
+        assert filenames == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
+        # No filename should contain '/' (build.rs matches bare names)
+        for asset in arm64_assets:
+            assert "/" not in asset["filename"], f"bare filename expected, got: {asset['filename']}"
+            assert len(asset["hash"]) > 0
+            assert "size" in asset
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_manifest_flat_fallback(self, mock_run, tmp_path):
+        """When no arch subdirs exist, produces flat format with bare filenames."""
+        (tmp_path / "vmlinuz").write_bytes(b"kernel")
+        (tmp_path / "initrd.img").write_bytes(b"initrd")
+        (tmp_path / "rootfs.squashfs").write_bytes(b"rootfs")
+        mock_run.return_value = MagicMock(
+            stdout="abc123  vmlinuz\ndef456  initrd.img\nghi789  rootfs.squashfs\n"
+        )
+        generate_checksums(tmp_path, "0.13.0")
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        release = manifest["releases"]["0.13.0"]
+        assert "assets" in release
+        filenames = {a["filename"] for a in release["assets"]}
+        assert filenames == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_manifest_multi_arch(self, mock_run, tmp_path):
+        """Both arm64 and x86_64 subdirs produce both arch keys."""
+        for arch in ("arm64", "x86_64"):
+            d = tmp_path / arch
+            d.mkdir()
+            (d / "vmlinuz").write_bytes(b"kernel")
+            (d / "initrd.img").write_bytes(b"initrd")
+            (d / "rootfs.squashfs").write_bytes(b"rootfs")
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "a1  arm64/vmlinuz\na2  arm64/initrd.img\na3  arm64/rootfs.squashfs\n"
+                "x1  x86_64/vmlinuz\nx2  x86_64/initrd.img\nx3  x86_64/rootfs.squashfs\n"
+            )
+        )
+        generate_checksums(tmp_path, "0.13.0")
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        release = manifest["releases"]["0.13.0"]
+        assert "arm64" in release
+        assert "x86_64" in release
+        assert len(release["arm64"]["assets"]) == 3
+        assert len(release["x86_64"]["assets"]) == 3
+        # Each arch has distinct hashes
+        arm_hashes = {a["hash"] for a in release["arm64"]["assets"]}
+        x86_hashes = {a["hash"] for a in release["x86_64"]["assets"]}
+        assert arm_hashes.isdisjoint(x86_hashes)

@@ -981,8 +981,9 @@ packages = ["numpy", "pandas", "internal-lib==1.2.3"]
         ]
         npm_block = "\n".join(npm_lines)
         # Default providers should NOT be in the npm install block
-        assert "@anthropic-ai/claude-code" not in npm_block
         assert "@openai/codex" not in npm_block
+        # Claude curl installer should not be present either
+        assert "claude.ai/install.sh" not in dockerfile
         # But custom provider should be
         assert "@corp/internal-llm-cli" in npm_block
 

@@ -71,9 +71,8 @@ allow_get = true
 allow_post = true
 
 [anthropic.install]
-manager = "npm"
-prefix = "/opt/ai-clis"
-packages = ["@anthropic-ai/claude-code"]
+manager = "curl"
+packages = ["https://claude.ai/install.sh"]
 
 [anthropic.files.settings_json]
 path = "/root/.claude/settings.json"
@@ -206,18 +205,22 @@ max_sessions = 100
 [environment.shell]
 term = "xterm-256color"
 home = "/root"
-path = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+path = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 [environment.shell.bashrc]
 path = "/root/.bashrc"
 content = '''
 PS1='\[\033[1;32m\]capsem\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
 alias pip='uv pip'
+alias claude='claude --dangerously-skip-permissions'
+alias gemini='gemini --yolo'
 '''
 
 [environment.tls]
 ca_bundle = "/etc/ssl/certs/ca-certificates.crt"
 ```
+
+The `PATH` is set by the host at boot via the settings registry -- do not set PATH in the bashrc (it creates duplicates and hides bugs). The aliases enable auto-approve modes for AI CLIs since the VM is already sandboxed.
 
 ## CLI Reference
 
@@ -303,6 +306,35 @@ domains = ["npm.internal.corp.com"]
 allow_get = true
 ```
 
+## Install Methods
+
+AI providers support two install methods via the `[provider.install]` section:
+
+### npm (default for most CLIs)
+
+```toml
+[provider.install]
+manager = "npm"
+prefix = "/opt/ai-clis"
+packages = ["@google/gemini-cli"]
+```
+
+All npm packages across providers are batched into a single `npm install -g --prefix /opt/ai-clis` command. The prefix directory is writable at runtime via the overlayfs upper layer, allowing CLIs to self-update.
+
+### curl (native binary installers)
+
+```toml
+[provider.install]
+manager = "curl"
+packages = ["https://claude.ai/install.sh"]
+```
+
+Each URL gets its own `RUN curl -fsSL <url> | bash` step. Binaries are automatically copied from `~/.local/bin/` to `/usr/local/bin/` (chmod 555) because `/root` is a tmpfs at runtime.
+
+:::caution[/root is ephemeral]
+Anything installed under `/root/` during the Docker build is hidden at runtime by the tmpfs overlay. If your installer puts binaries in `~/.local/bin/` or `~/.claude/bin/`, the template automatically copies them to `/usr/local/bin/`. If you add a custom curl-based installer, verify where it puts its binaries and ensure they're copied to a system path.
+:::
+
 ## Troubleshooting
 
 | Diagnostic | Cause | Fix |
@@ -312,3 +344,6 @@ allow_get = true
 | `warn[W001] no npm registry` | npm packages declared but no registry in web.toml | Add npm registry entry to security policy |
 | `warn[W005] API key in config` | Hardcoded key in TOML | Use `~/.capsem/user.toml` for personal keys |
 | Build fails: "container runtime not found" | No Docker or Podman | Install Docker or Podman |
+| Build fails: exit code 137 | Container runtime VM out of memory | Increase to 8GB: `podman machine set --memory 8192` or Docker Desktop Settings |
+| Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |
+| CLI not found at runtime | Installer put binary in `/root/` which is tmpfs | Copy binary to `/usr/local/bin/` in the Dockerfile template |
