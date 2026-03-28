@@ -612,28 +612,23 @@ class TestGetProjectVersion:
 
 
 class TestGenerateChecksums:
-    @patch("capsem.builder.docker.run_cmd")
-    def test_b3sum_and_manifest(self, mock_run, tmp_path):
+    def test_b3sum_and_manifest(self, tmp_path):
         # Create fake arch dirs with files
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
-        mock_run.return_value = MagicMock(
-            stdout="abc123  arm64/vmlinuz\ndef456  arm64/initrd.img\nghi789  arm64/rootfs.squashfs\n"
-        )
         generate_checksums(tmp_path, "0.13.0")
-        # b3sum was called
-        assert mock_run.called
+        # B3SUMS was written
+        assert (tmp_path / "B3SUMS").exists()
         # manifest.json was written
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         assert manifest["latest"] == "0.13.0"
         assert "0.13.0" in manifest["releases"]
 
-    @patch("capsem.builder.docker.run_cmd")
-    def test_manifest_per_arch_structure(self, mock_run, tmp_path):
-        """Per-arch B3SUMS input produces release[arch][assets] with bare filenames.
+    def test_manifest_per_arch_structure(self, tmp_path):
+        """Per-arch layout produces release[arch][assets] with bare filenames.
 
         build.rs looks up: releases[version][arch_key]["assets"][i]["filename"]
         where filename must be bare (e.g. "vmlinuz", NOT "arm64/vmlinuz").
@@ -643,9 +638,6 @@ class TestGenerateChecksums:
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
-        mock_run.return_value = MagicMock(
-            stdout="abc123  arm64/vmlinuz\ndef456  arm64/initrd.img\nghi789  arm64/rootfs.squashfs\n"
-        )
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         release = manifest["releases"]["0.13.0"]
@@ -656,18 +648,14 @@ class TestGenerateChecksums:
         # No filename should contain '/' (build.rs matches bare names)
         for asset in arm64_assets:
             assert "/" not in asset["filename"], f"bare filename expected, got: {asset['filename']}"
-            assert len(asset["hash"]) > 0
-            assert "size" in asset
+            assert len(asset["hash"]) == 64  # blake3 hex digest
+            assert asset["size"] > 0
 
-    @patch("capsem.builder.docker.run_cmd")
-    def test_manifest_flat_fallback(self, mock_run, tmp_path):
+    def test_manifest_flat_fallback(self, tmp_path):
         """When no arch subdirs exist, produces flat format with bare filenames."""
         (tmp_path / "vmlinuz").write_bytes(b"kernel")
         (tmp_path / "initrd.img").write_bytes(b"initrd")
         (tmp_path / "rootfs.squashfs").write_bytes(b"rootfs")
-        mock_run.return_value = MagicMock(
-            stdout="abc123  vmlinuz\ndef456  initrd.img\nghi789  rootfs.squashfs\n"
-        )
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         release = manifest["releases"]["0.13.0"]
@@ -675,21 +663,14 @@ class TestGenerateChecksums:
         filenames = {a["filename"] for a in release["assets"]}
         assert filenames == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
 
-    @patch("capsem.builder.docker.run_cmd")
-    def test_manifest_multi_arch(self, mock_run, tmp_path):
+    def test_manifest_multi_arch(self, tmp_path):
         """Both arm64 and x86_64 subdirs produce both arch keys."""
         for arch in ("arm64", "x86_64"):
             d = tmp_path / arch
             d.mkdir()
-            (d / "vmlinuz").write_bytes(b"kernel")
-            (d / "initrd.img").write_bytes(b"initrd")
-            (d / "rootfs.squashfs").write_bytes(b"rootfs")
-        mock_run.return_value = MagicMock(
-            stdout=(
-                "a1  arm64/vmlinuz\na2  arm64/initrd.img\na3  arm64/rootfs.squashfs\n"
-                "x1  x86_64/vmlinuz\nx2  x86_64/initrd.img\nx3  x86_64/rootfs.squashfs\n"
-            )
-        )
+            (d / "vmlinuz").write_bytes(f"kernel-{arch}".encode())
+            (d / "initrd.img").write_bytes(f"initrd-{arch}".encode())
+            (d / "rootfs.squashfs").write_bytes(f"rootfs-{arch}".encode())
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         release = manifest["releases"]["0.13.0"]

@@ -417,10 +417,20 @@ def extract_tool_versions(
     versions_path.write_text(result.stdout)
 
 
+def _blake3_hex(path: Path) -> str:
+    """Compute BLAKE3 hash of a file, returning the hex digest."""
+    import blake3
+    hasher = blake3.blake3()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def generate_checksums(output_dir: Path, version: str) -> Path:
     """Generate BLAKE3 checksums and manifest.json for all assets."""
     # Collect all asset files across arch subdirs
-    arch_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+    arch_dirs = [d for d in output_dir.iterdir() if d.is_dir() and d.name != "current"]
     all_files: list[str] = []
     for arch_dir in sorted(arch_dirs):
         arch_name = arch_dir.name
@@ -434,21 +444,22 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             if (output_dir / f).is_file():
                 all_files.append(f)
 
-    result = run_cmd(
-        ["b3sum"] + all_files,
-        cwd=output_dir, capture=True,
-    )
-    (output_dir / "B3SUMS").write_text(result.stdout)
+    # Compute BLAKE3 hashes using Python blake3 library.
+    b3sums_lines = []
+    hashes: dict[str, str] = {}
+    for filepath in all_files:
+        full_path = output_dir / filepath
+        b3hash = _blake3_hex(full_path)
+        hashes[filepath] = b3hash
+        b3sums_lines.append(f"{b3hash}  {filepath}")
+    (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
 
     # Build per-arch manifest
     releases: dict[str, Any] = {}
-    for line in result.stdout.strip().split("\n"):
-        parts = line.split(None, 1)
-        if len(parts) != 2:
-            continue
-        b3hash, filepath = parts[0], parts[1].strip()
+    for filepath in all_files:
         full_path = output_dir / filepath
-        size = full_path.stat().st_size if full_path.exists() else 0
+        b3hash = hashes[filepath]
+        size = full_path.stat().st_size
 
         if "/" in filepath:
             arch_name, filename = filepath.split("/", 1)
