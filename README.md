@@ -99,6 +99,17 @@ Requires Linux kernel 5.x+ with KVM support (`/dev/kvm`).
 
 ### Build from source
 
+**Prerequisites**: Rust (stable), just, Node.js 24+, pnpm, Python 3.11+, uv, and Docker or Podman (4GB+ RAM).
+See the [Development Guide](https://capsem.org/development/getting-started/) for detailed setup instructions.
+
+```sh
+bash scripts/bootstrap.sh  # check tools + install deps (first time)
+just build-assets          # build VM assets (~10 min, first time only)
+just run "echo hello"      # verify everything works
+```
+
+Or step by step:
+
 ```sh
 just doctor          # check prerequisites
 just build-assets    # build VM assets (~10 min, first time only)

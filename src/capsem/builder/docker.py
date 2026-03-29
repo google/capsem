@@ -482,7 +482,10 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     current_link = output_dir / "current"
     if arch_dirs:
         target = sorted(arch_dirs)[-1].name
-        current_link.unlink(missing_ok=True)
+        if current_link.is_symlink() or current_link.is_file():
+            current_link.unlink()
+        elif current_link.is_dir():
+            shutil.rmtree(current_link)
         current_link.symlink_to(target)
 
     return manifest_path

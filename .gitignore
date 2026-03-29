@@ -34,6 +34,9 @@ dist/*
 *_Store
 private/
 
+# Dev setup sentinel (written by just doctor)
+.dev-setup
+
 # Coverage output
 coverage/
 .coverage

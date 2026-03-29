@@ -215,8 +215,9 @@ jobs:
           path: assets/arm64/
 
       # Create assets/current symlink for Tauri resource bundling.
-      - name: Link assets/current
-        run: ln -s arm64 assets/current
+      # GitHub Actions artifacts don't preserve symlinks, so copy instead.
+      - name: Copy assets/current
+        run: cp -r assets/arm64 assets/current
 
       # Regenerate manifest for this arch.
       - uses: astral-sh/setup-uv@v5
@@ -314,8 +315,9 @@ jobs:
           path: assets/arm64/
 
       # Create assets/current symlink for Tauri resource bundling.
-      - name: Link assets/current
-        run: ln -s arm64 assets/current
+      # GitHub Actions artifacts don't preserve symlinks, so copy instead.
+      - name: Copy assets/current
+        run: cp -r assets/arm64 assets/current
 
       # Regenerate manifest for this arch.
       - uses: astral-sh/setup-uv@v5

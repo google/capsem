@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-03-28
+
+### Fixed
+- **KVM virtio_blk split-borrow** -- `queue_notify` uses `.take()` pattern to avoid split-borrow when processing read/write/get_id operations.
+- **CI release uses cp -r for assets/current** -- GitHub Actions artifacts strip symlinks, causing the `ln -s` approach to fail. Switched to `cp -r`.
+- **Builder checksums handle current/ as directory** -- `generate_checksums()` now removes `current/` whether it's a symlink or a directory (from a prior `cp -r`).
+- **Guest agent `libc::time_t` deprecation** -- replaced deprecated `libc::time_t` with `i64` in vsock_io timeout constant.
+
+### Added
+- **Developer getting-started documentation** -- full setup guide at capsem.org/development/getting-started/ covering prerequisites, container runtime setup, cross-compilation, and troubleshooting.
+- **Bootstrap script** -- `scripts/bootstrap.sh` checks all required tools, installs Python and frontend deps, and runs `just doctor`.
+- **`.dev-setup` sentinel** -- `just doctor` writes a `.dev-setup` file on success. All recipes (`run`, `test`, `dev`, `bench`) auto-run doctor if the sentinel is missing, preventing new developers from skipping setup.
+- **`uv` check in `just doctor`** -- doctor now validates that `uv` is installed (previously missing, causing silent `build-assets` failures).
+- **README prerequisites** -- "Build from source" section now lists required tools and links to the full development guide.
+- **`dev-start` skill** -- quick-start pointer skill for new developers.
+
 ## [0.14.1] - 2026-03-28
 
 ### Fixed

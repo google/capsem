@@ -275,7 +275,9 @@ impl VirtioDevice for VirtioBlockDevice {
             return;
         }
 
-        let queue = match self.queue.as_mut() {
+        // Take the queue out to avoid split-borrow: queue_notify needs &mut queue
+        // while process_read/write/get_id/write_status need &self/&mut self.
+        let mut queue = match self.queue.take() {
             Some(q) => q,
             None => return,
         };
@@ -337,6 +339,8 @@ impl VirtioDevice for VirtioBlockDevice {
             };
             queue.push_used(chain.head, used_len);
         }
+
+        self.queue = Some(queue);
     }
 }
 

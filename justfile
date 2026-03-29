@@ -2,14 +2,17 @@
 #
 # Dependency chains:
 #
-#   doctor          read-only check of all required tools (user-facing)
+#   _ensure-setup   checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
+#   doctor          read-only check of all required tools, writes .dev-setup (user-facing)
 #   _install-tools  auto-installs rust targets, components, cargo tools (internal)
 #   _check-assets   verifies VM assets exist, tells you to run build-assets if not
 #   audit           checks for known vulnerabilities in Rust + npm deps (gates all paths)
 #
-#   run             -> audit + _check-assets + _pack-initrd + _sign + _compile + _frontend
-#   test            -> audit + _install-tools
+#   run             -> audit(_ensure-setup) + _check-assets + _pack-initrd + _sign
+#   test            -> audit(_ensure-setup) + _install-tools
 #   build-assets    -> doctor + _install-tools + audit
+#   dev             -> _ensure-setup + _pnpm-install
+#   bench           -> _ensure-setup + _check-assets + _sign
 #   test-injection  -> _check-assets + _pack-initrd + _sign
 #   full-test       -> test + _check-assets + _pack-initrd + _sign
 #   install         -> doctor + full-test
@@ -28,7 +31,7 @@ assets_dir := "assets"
 entitlements := "entitlements.plist"
 
 # Run the app in development mode with hot-reloading
-dev: _pnpm-install
+dev: _ensure-setup _pnpm-install
     @echo "Stopping running instances..."
     -@pkill -x capsem 2>/dev/null || true
     -@pkill -x Capsem 2>/dev/null || true
@@ -78,7 +81,7 @@ build-rootfs arch="arm64":
     uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
 
 # Dependency audit: check for known vulnerabilities in Rust and npm deps
-audit: _install-tools _pnpm-install
+audit: _ensure-setup _install-tools _pnpm-install
     #!/bin/bash
     set -euo pipefail
     echo "=== Cargo audit ==="
@@ -142,7 +145,7 @@ test-injection: _check-assets _pack-initrd _sign
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
 
 # Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
-bench: _check-assets _sign
+bench: _ensure-setup _check-assets _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
 # Full validation (test + doctor + bench). Use `just run` for daily dev.
@@ -233,7 +236,7 @@ doctor: _pnpm-install
 
     echo ""
     echo "== System Tools =="
-    for tool in cargo rustup codesign pnpm node python3 sqlite3 git; do
+    for tool in cargo rustup codesign pnpm node python3 uv sqlite3 git; do
         if command -v "$tool" &>/dev/null; then
             pass "$tool"
         else
@@ -331,6 +334,7 @@ doctor: _pnpm-install
         exit 1
     fi
     echo "All good!"
+    touch .dev-setup
 
 # Clean build artifacts
 clean:
@@ -440,6 +444,15 @@ _clean-stale:
     find target -path "*/llvm-cov-target/debug/rootfs.*" -delete 2>/dev/null || true
 
 # --- Internal helpers (hidden from `just --list`) ---
+
+# Run doctor automatically on first use (creates .dev-setup sentinel)
+_ensure-setup:
+    #!/bin/bash
+    if [ ! -f .dev-setup ]; then
+        echo "First run detected -- running doctor..."
+        echo ""
+        just doctor
+    fi
 
 # Auto-install Rust targets, components, and cargo tools
 _install-tools:

@@ -31,7 +31,7 @@ pub struct SockaddrVm {
 /// I/O timeout for vsock read/write operations. If a single syscall blocks
 /// longer than this, it returns EAGAIN instead of hanging forever.
 /// 30s is generous -- vsock to hypervisor should drain in milliseconds.
-const IO_TIMEOUT_SECS: libc::time_t = 30;
+const IO_TIMEOUT_SECS: i64 = 30;
 
 /// Connect to a vsock port on the given CID.
 ///
