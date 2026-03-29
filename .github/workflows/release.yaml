@@ -85,6 +85,10 @@ jobs:
       - run: uv sync
       - uses: extractions/setup-just@v3
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
       - name: Build VM assets (kernel + rootfs)
         run: |
           just build-kernel ${{ matrix.arch }}

@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.5] - 2026-03-28
+## [0.14.6] - 2026-03-28
 
 ### Fixed
+- **CI build-assets restores Rust toolchain** -- v0.14.5 removed `dtolnay/rust-toolchain` when switching to just recipes, but `build-rootfs` cross-compiles the guest agent and needs the musl target installed.
 - **CI build-assets builds both kernel and rootfs** -- release workflow only built rootfs, missing vmlinuz and initrd.img. Now uses `just build-kernel` and `just build-rootfs` recipes instead of reimplementing build logic.
 - **CI assets/current ordering** -- moved `cp -r` after `generate_checksums` so Tauri's `build.rs` finds real files instead of a stripped symlink.
 
