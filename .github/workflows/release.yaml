@@ -276,6 +276,17 @@ jobs:
           mkdir -p "$RUNNER_TEMP/private_keys"
           echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
 
+      - name: Verify assets layout
+        run: |
+          echo "=== assets/ ==="
+          ls -la assets/
+          echo "=== assets/arm64/ ==="
+          ls -la assets/arm64/
+          echo "=== assets/current/ ==="
+          ls -la assets/current/
+          echo "=== assets/manifest.json ==="
+          cat assets/manifest.json | head -5
+
       - name: Build and sign app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -360,6 +371,17 @@ jobs:
 
       - name: Install cargo tools
         run: cargo install tauri-cli cargo-auditable --locked
+
+      - name: Verify assets layout
+        run: |
+          echo "=== assets/ ==="
+          ls -la assets/
+          echo "=== assets/arm64/ ==="
+          ls -la assets/arm64/
+          echo "=== assets/current/ ==="
+          ls -la assets/current/
+          echo "=== assets/manifest.json ==="
+          cat assets/manifest.json | head -5
 
       - name: Build app (deb + AppImage)
         run: |

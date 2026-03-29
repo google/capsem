@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-03-28
+
+### Fixed
+- **CI assets/current debug** -- added verify step before Tauri build to diagnose assets/current directory state.
+
 ## [0.14.3] - 2026-03-28
 
 ### Fixed
