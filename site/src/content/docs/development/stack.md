@@ -1,148 +1,75 @@
 ---
-title: Technology Stack
-description: What Capsem is built with and how the pieces fit together.
+title: Life of a Build
+description: What gets built, by what tools, and in what order -- from clone to running VM.
 sidebar:
   order: 5
 ---
 
-Capsem is a Rust + Tauri desktop app that sandboxes AI agents in air-gapped Linux VMs. The host manages the VM lifecycle, intercepts network traffic, and serves a web frontend. Guest binaries are cross-compiled from the same Rust workspace. A Python build system produces the VM images.
+When you run `just run`, Capsem cross-compiles guest binaries, repacks the initrd, builds the host app, codesigns it, and boots a VM -- all in ~10 seconds. This page explains what each stage produces and which tools do the work.
 
-## Architecture overview
+## The build pipeline
 
 ```mermaid
 flowchart TD
-    subgraph Host["Host (macOS / Linux)"]
-        APP["capsem-app\n(Tauri shell)"]
-        CORE["capsem-core\n(VM, proxy, MCP, policy)"]
-        FE["Frontend\n(Astro + Svelte)"]
-        APP --> CORE
-        APP --> FE
+    subgraph stage1["1. Guest binaries"]
+        CARGO_CROSS["cargo build --target\naarch64-unknown-linux-musl"]
+        AGENT["capsem-pty-agent"]
+        NETPROXY["capsem-net-proxy"]
+        MCP["capsem-mcp-server"]
+        CARGO_CROSS --> AGENT & NETPROXY & MCP
     end
 
-    subgraph VM["Guest VM (Linux)"]
-        INIT["capsem-init\n(PID 1)"]
-        AGENT["capsem-pty-agent\n(terminal bridge)"]
-        PROXY["capsem-net-proxy\n(HTTPS relay)"]
-        INIT --> AGENT
-        INIT --> PROXY
+    subgraph stage2["2. Initrd repack"]
+        INITRD_IN["initrd.img\n(from build-assets)"]
+        SCRIPTS["capsem-init + doctor\n+ bench + snapshots"]
+        REPACK["cpio + gzip repack"]
+        INITRD_IN --> REPACK
+        AGENT & NETPROXY & MCP --> REPACK
+        SCRIPTS --> REPACK
+        REPACK --> INITRD_OUT["initrd.img\n(repacked)"]
     end
 
-    CORE -- "vsock" --> VM
+    subgraph stage3["3. Host binary"]
+        PNPM["pnpm install"]
+        ASTRO["astro build\n(Astro + Svelte + Tailwind)"]
+        DIST["frontend/dist/\n(static HTML/JS/CSS)"]
+        CARGO_HOST["cargo build -p capsem\n(Tauri embeds frontend)"]
+        PNPM --> ASTRO --> DIST --> CARGO_HOST
+        CARGO_HOST --> SIGN["codesign\n(com.apple.security.virtualization)"]
+    end
 
-    subgraph Build["Build toolchain"]
+    subgraph stage0["0. VM images (first-time only)"]
+        TOML["guest/config/*.toml"]
         BUILDER["capsem-builder\n(Python CLI)"]
         DOCKER["Docker / Podman"]
-        BUILDER --> DOCKER
+        TOML --> BUILDER --> DOCKER
+        DOCKER --> VMLINUZ["vmlinuz"]
+        DOCKER --> ROOTFS["rootfs.squashfs"]
+        DOCKER --> INITRD_BASE["initrd.img (base)"]
     end
 
-    DOCKER -- "produces" --> VM
+    INITRD_BASE -.-> INITRD_IN
+
+    subgraph stage4["4. Boot"]
+        SIGN --> BOOT["capsem binary"]
+        INITRD_OUT --> BOOT
+        VMLINUZ --> BOOT
+        ROOTFS --> BOOT
+        BOOT --> VM["Linux VM running"]
+    end
 ```
 
-## Rust workspace
+## Stage 1: Guest binaries (cross-compilation)
 
-All Rust code lives in `crates/`. Business logic belongs in `capsem-core`; the other crates are thin shells.
+The guest agent crate (`crates/capsem-agent/`) produces three binaries that run inside the Linux VM. They are cross-compiled on the host using musl targets:
 
-| Crate | Role |
-|-------|------|
-| `capsem-core` | Shared library -- VM config, boot, vsock, MITM proxy, MCP gateway, network policy, telemetry |
-| `capsem-app` | Tauri 2.0 desktop binary -- IPC commands, CLI, state management |
-| `capsem-agent` | Guest binaries -- PTY agent, net proxy, MCP server (cross-compiled to Linux musl) |
-| `capsem-proto` | Shared protocol types between host and guest (control messages, MCP frames) |
-| `capsem-logger` | Session DB schema, async writer, event queries (SQLite) |
+| Binary | Purpose | Target |
+|--------|---------|--------|
+| `capsem-pty-agent` | Bridges terminal I/O over vsock | `aarch64-unknown-linux-musl` |
+| `capsem-net-proxy` | Relays HTTPS to host MITM proxy over vsock | `aarch64-unknown-linux-musl` |
+| `capsem-mcp-server` | MCP tool relay over vsock | `aarch64-unknown-linux-musl` |
 
-## Hypervisor
-
-| Platform | Backend | Notes |
-|----------|---------|-------|
-| macOS | [Apple Virtualization.framework](https://developer.apple.com/documentation/virtualization) | Requires macOS 13+, Apple Silicon. Binary must be codesigned with `com.apple.security.virtualization`. |
-| Linux | [KVM](https://www.linux-kvm.org) via [rust-vmm](https://github.com/rust-vmm) | Requires `/dev/kvm`. Embedded FUSE server for VirtioFS. |
-
-See [Hypervisor Architecture](/architecture/hypervisor/) for boot sequence, VirtioFS, and backend internals.
-
-## Frontend
-
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| [Astro](https://astro.build) | 5 | Static site generator, page routing |
-| [Svelte](https://svelte.dev) | 5 | Reactive UI components |
-| [Tailwind CSS](https://tailwindcss.com) | 4 | Utility-first styling |
-| [DaisyUI](https://daisyui.com) | 5 | Component library (themes, buttons, modals) |
-| [xterm.js](https://xtermjs.org) | 6 | Terminal emulator |
-| [LayerChart](https://layerchart.com) | 2 | Svelte chart library (D3-based) |
-
-Development commands:
-
-- `just dev` -- full Tauri app with hot-reload (frontend + Rust)
-- `just ui` -- frontend-only dev server (mock mode, no VM needed)
-
-## Guest VM
-
-The guest is a minimal Linux system built from Debian bookworm. It has no real NIC, no systemd, no sshd -- just the Capsem binaries.
-
-- **capsem-init** -- PID 1. Sets up air-gapped networking (dummy NIC, dnsmasq, iptables redirect), mounts overlayfs, launches daemons.
-- **capsem-pty-agent** -- Bridges PTY I/O over vsock to the host terminal.
-- **capsem-net-proxy** -- Relays HTTPS connections over vsock to the host MITM proxy.
-
-Guest binaries are cross-compiled to `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`, then injected into the initrd at build time. They are deployed read-only (chmod 555).
-
-## Build system
-
-[capsem-builder](https://capsem.org/architecture/build-system/) is a Python CLI that produces VM images from declarative TOML configs in `guest/config/`.
-
-| Component | Technology |
-|-----------|-----------|
-| CLI framework | [Click](https://click.palletsprojects.com) |
-| Config validation | [Pydantic](https://docs.pydantic.dev) |
-| Dockerfile generation | [Jinja2](https://jinja.palletsprojects.com) |
-| Image builds | Docker or Podman |
-
-```bash
-uv run capsem-builder build guest/ --arch arm64   # build rootfs + kernel
-uv run capsem-builder validate guest/              # lint configs
-uv run capsem-builder doctor guest/                # check prerequisites
-```
-
-### Container runtime setup
-
-The builder needs Docker or Podman to produce VM images.
-
-**macOS** -- Both Docker and Podman run inside a Linux VM. The default memory (2GB for Podman) is too small for the rootfs build. Minimum 4GB, recommended 8GB.
-
-Podman:
-```bash
-brew install podman
-podman machine init --memory 8192 --cpus 8
-podman machine start
-```
-
-To fix an existing machine:
-```bash
-podman machine stop
-podman machine set --memory 8192 --cpus 8
-podman machine start
-```
-
-Docker Desktop: Settings -> Resources -> set Memory to 8GB, CPUs to 8.
-
-**Linux** -- Containers run natively, no VM memory tuning needed.
-
-```bash
-# Debian/Ubuntu
-sudo apt install podman
-
-# Fedora/RHEL
-sudo dnf install podman
-```
-
-## Toolchain
-
-### Task runner
-
-[just](https://just.systems) is the single entry point for all workflows. See `just --list` for all targets.
-
-### Cross-compilation
-
-Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl` using `rust-lld` (from the `llvm-tools` rustup component). The linker config is in `.cargo/config.toml`:
+Cross-compilation uses `rust-lld` (from the `llvm-tools` rustup component). The linker config lives in `.cargo/config.toml`:
 
 ```toml
 [target.aarch64-unknown-linux-musl]
@@ -152,40 +79,124 @@ linker = "rust-lld"
 linker = "rust-lld"
 ```
 
-If you see linker errors like `ld: unknown options: --as-needed`, run:
+If you see `ld: unknown options: --as-needed`, run `rustup component add llvm-tools`.
+
+## Stage 2: Initrd repack
+
+The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. The `_pack-initrd` recipe:
+
+1. Extracts the base initrd (produced by `just build-assets`)
+2. Copies in the freshly cross-compiled guest binaries (chmod 555, read-only)
+3. Copies in shell scripts: `capsem-init` (PID 1), `capsem-doctor`, `capsem-bench`, `snapshots`
+4. Repacks with `cpio + gzip`
+5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
+
+This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
+
+## Stage 3: Host binary
+
+This stage has two parts: the frontend build and the Rust compilation.
+
+### Frontend (`pnpm build`)
+
+The UI lives in `frontend/` and is built by pnpm before Rust compilation starts. The build chain:
+
+1. **pnpm install** -- installs npm dependencies (Astro, Svelte, Tailwind, DaisyUI, xterm.js, LayerChart, sql.js, Tauri API bindings)
+2. **astro build** -- compiles `.astro` and `.svelte` files into static HTML/JS/CSS in `frontend/dist/`
+3. Tauri's build step copies `frontend/dist/` into the Rust binary as embedded assets
+
+The frontend stack:
+
+| Technology | Role |
+|------------|------|
+| [Astro 5](https://astro.build) | Static site generator -- page routing, builds the app shell |
+| [Svelte 5](https://svelte.dev) | Reactive components -- terminal view, stats charts, settings panels |
+| [Tailwind v4](https://tailwindcss.com) + [DaisyUI v5](https://daisyui.com) | Styling -- utility classes + themed component library |
+| [xterm.js 6](https://xtermjs.org) | Terminal emulator -- renders the in-VM shell |
+| [LayerChart 2](https://layerchart.com) | Charts -- session stats, cost tracking (D3-based Svelte library) |
+| [sql.js](https://sql.js.org) | SQLite in the browser -- queries session DBs client-side |
+
+For frontend iteration without booting a VM, use `just ui` (Astro dev server with mock data on port 5173). For the full Tauri app with hot-reload, use `just dev`.
+
+### Rust compilation (`cargo build`)
+
+The Rust workspace compiles into a single `capsem` binary:
+
+| Crate | Role |
+|-------|------|
+| `capsem-core` | All business logic: VM config, boot, vsock, MITM proxy, MCP gateway, network policy, telemetry |
+| `capsem-app` | Thin Tauri shell: IPC commands, CLI, state management |
+| `capsem-proto` | Shared protocol types between host and guest |
+| `capsem-logger` | Session DB schema and async writer (SQLite) |
+
+On macOS, the binary must be codesigned with the `com.apple.security.virtualization` entitlement or Virtualization.framework crashes. The justfile handles this automatically via the `_sign` recipe.
+
+## Stage 4: Boot
+
+The `capsem` binary loads three assets from `assets/{arch}/`:
+
+| Asset | Produced by | What it is |
+|-------|-------------|------------|
+| `vmlinuz` | `just build-assets` | Custom Linux kernel (no modules, no IP stack, 7MB) |
+| `initrd.img` | `just run` (repacked each time) | Guest binaries + init scripts |
+| `rootfs.squashfs` | `just build-assets` | Debian bookworm base + AI CLIs + tools |
+
+Boot sequence: kernel loads initrd into RAM, `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy. The host connects over vsock.
+
+## VM image builds (`just build-assets`)
+
+The slow path (~10 min, first-time only). The [capsem-builder](/architecture/build-system/) Python CLI reads TOML configs from `guest/config/` and produces kernel + rootfs via Docker/Podman.
 
 ```bash
-rustup component add llvm-tools
+uv run capsem-builder build guest/ --arch arm64    # build everything
+uv run capsem-builder validate guest/               # lint configs
+uv run capsem-builder doctor guest/                  # check prerequisites
 ```
 
-### Cargo tools
+### Container runtime
 
-| Tool | Purpose |
-|------|---------|
-| cargo-llvm-cov | Code coverage |
+The builder needs Docker or Podman.
+
+**macOS** -- Both run inside a Linux VM. The default memory (2GB for Podman) is too small. Minimum 4GB, recommended 8GB.
+
+```bash
+# Podman setup
+brew install podman
+podman machine init --memory 8192 --cpus 8
+podman machine start
+
+# Fix existing machine
+podman machine stop
+podman machine set --memory 8192 --cpus 8
+podman machine start
+```
+
+Docker Desktop: Settings -> Resources -> set Memory to 8GB, CPUs to 8.
+
+**Linux** -- Containers run natively, no memory tuning needed.
+
+```bash
+# Debian/Ubuntu
+sudo apt install podman
+
+# Fedora/RHEL
+sudo dnf install podman
+```
+
+## Tools summary
+
+Everything below is checked by `bootstrap.sh` and `just doctor`. You don't need to install these manually -- the bootstrap script tells you exactly what's missing.
+
+| Tool | What it does in the build |
+|------|--------------------------|
+| Rust (stable) | Compiles host + guest binaries |
+| `rust-lld` | Linker for musl cross-compilation |
+| just | Task runner -- single entry point for all workflows |
+| Node.js 24+ / pnpm | Builds the Astro + Svelte frontend |
+| Python 3.11+ / uv | Runs capsem-builder (image builds, schema generation) |
+| Docker or Podman | Container runtime for kernel + rootfs builds |
+| cargo-llvm-cov | Code coverage (`just test`) |
 | cargo-audit | Dependency vulnerability scanning |
 | cargo-tauri | Tauri CLI for app builds |
-| b3sum | BLAKE3 checksums for asset verification |
-| cargo-nextest | Test runner (used by `just test`) |
-
-`just doctor` checks all of these. `just _install-tools` auto-installs them.
-
-### Python
-
-Package management via [uv](https://docs.astral.sh/uv/). Dependencies in `pyproject.toml`. Run tools with `uv run`.
-
-### Frontend
-
-Node.js 24+ and [pnpm](https://pnpm.io) for the Astro/Svelte frontend in `frontend/`.
-
-## Testing
-
-Three tiers, each catching different classes of bugs:
-
-| Tier | Command | What it covers |
-|------|---------|----------------|
-| Unit + coverage | `just test` | Rust unit tests (llvm-cov), cross-compile check, frontend type check + build |
-| Smoke | `just run "capsem-doctor"` | Boots VM, runs in-VM diagnostics (VirtioFS, networking, binaries) |
-| Full | `just full-test` | All of the above + integration tests + benchmarks (3 VM boots) |
-
-See [capsem-doctor](/testing/capsem-doctor/) for what the in-VM diagnostics validate.
+| b3sum | BLAKE3 checksums for asset integrity |
+| codesign (macOS) | Signs binary with virtualization entitlement |

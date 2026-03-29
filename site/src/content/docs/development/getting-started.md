@@ -1,6 +1,6 @@
 ---
-title: Development Guide
-description: Clone, build, and run Capsem from source.
+title: Developer Quick Start
+description: Clone, bootstrap, and boot a Capsem VM in three commands.
 sidebar:
   order: 1
 ---
@@ -14,7 +14,7 @@ sh scripts/bootstrap.sh
 
 The bootstrap script detects your OS (macOS or Linux), checks every required tool, and prints platform-specific install commands for anything missing. Once all tools are present it installs Python and frontend dependencies and runs `just doctor` to validate the full environment.
 
-The only prerequisite is a POSIX shell. See [Technology Stack](./stack) for what gets installed and how the pieces fit together.
+The only prerequisite is a POSIX shell. See [Life of a Build](./stack) for what gets built by what and how the tools fit together.
 
 ## Build VM assets
 
@@ -22,7 +22,7 @@ The only prerequisite is a POSIX shell. See [Technology Stack](./stack) for what
 just build-assets
 ```
 
-This builds the Linux kernel and rootfs via Docker/Podman (~10 min on first run). Assets are gitignored and must be built locally. See [Technology Stack > Container runtime setup](./stack#container-runtime-setup) if you need to configure Docker or Podman.
+Builds the Linux kernel and rootfs via Docker/Podman (~10 min on first run). Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to configure Docker or Podman memory.
 
 ## Verify
 
@@ -30,7 +30,7 @@ This builds the Linux kernel and rootfs via Docker/Podman (~10 min on first run)
 just run "echo hello from capsem"
 ```
 
-If this prints "hello from capsem" and exits cleanly, you're set. The `run` recipe cross-compiles guest binaries, repacks the initrd, builds the host binary, codesigns it, and boots the VM.
+If this prints "hello from capsem" and exits cleanly, you're set. See [Life of a Build](./stack) for what `just run` does under the hood.
 
 ## Daily workflow
 
@@ -42,7 +42,11 @@ just dev              # Hot-reloading Tauri app (frontend + Rust)
 just ui               # Frontend-only dev server (mock mode, no VM)
 ```
 
-See `just --list` for all targets.
+See [Just Recipes](./just-recipes) for the complete reference and dependency chains.
+
+## Customizing the VM image
+
+To add packages, AI providers, or change security policy, edit the TOML configs in `guest/config/` and rebuild. See [Customizing VM Images](./custom-images) for the workflow.
 
 ## API keys (optional)
 
@@ -66,7 +70,7 @@ Install missing tools as indicated. Most are available via your system package m
 
 ### `just build-assets` fails with exit code 137
 
-The container runtime ran out of memory. See [Technology Stack > Container runtime setup](./stack#container-runtime-setup) for how to increase memory to 8GB.
+The container runtime ran out of memory. See [Life of a Build > Container runtime](./stack#container-runtime) for how to increase memory to 8GB.
 
 ### `just build-assets` fails with "Release file not valid yet"
 
