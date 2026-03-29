@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! Integration tests for VM lifecycle.
 //!
 //! These tests require:

@@ -68,6 +68,10 @@ Never dismiss a test failure as "pre-existing" or "unrelated." Every failure mus
 2. **Reproduce and diagnose first.** Understand *why* it fails before writing any fix. See the dev-debugging skill for the full methodology: reproduce with a test, diagnose root cause, then fix comprehensively.
 3. **Fix the code, not the test.** If the test is genuinely wrong (not the code), explain in detail why the test's expectation is incorrect before changing it.
 
+## Platform gating tests
+
+`cargo test --test platform_gating` scans all `.rs` files under `crates/` for macOS-only and Linux-only symbols (`libc::clonefile`, `AppleVzHypervisor`, `KvmHypervisor`, `FICLONE`, etc.) and verifies they appear inside `#[cfg(target_os = "...")]` blocks. This catches ungated platform APIs before they reach CI. Run this test when adding any platform-specific code.
+
 ## Testable design
 
 Extract logic into `capsem-core` -- never embed business logic in the app layer where it's coupled to Tauri. If you can't test something without booting a VM or launching the GUI, it belongs in core.
