@@ -16,9 +16,9 @@ just full-test                      # Full validation including benchmarks
 
 ## capsem-bench
 
-Python tool that runs inside the VM. Rich tables to stderr (human), structured JSON to stdout (machine).
+Python tool that runs inside the VM. Rich tables to stderr (human), structured JSON saved to `/tmp/capsem-benchmark.json` (machine).
 
-**Location:** `guest/artifacts/capsem-bench`
+**Location:** `guest/artifacts/capsem_bench/` (Python package, invoked via `capsem-bench` shell wrapper)
 
 ### Benchmark categories
 
@@ -91,10 +91,10 @@ Common causes:
 
 ### Adding a new benchmark
 
-1. Add a function in `guest/artifacts/capsem-bench` following the pattern: Rich table to stderr, return dict for JSON
-2. Add the mode name to `VALID_MODES` tuple
-3. Wire it into `main()` with the `if mode in ("name", "all"):` pattern
-4. Update this skill
+1. Create a new module in `guest/artifacts/capsem_bench/` (e.g., `mytest.py`) with a `mytest_bench()` function that returns a dict and prints a Rich table
+2. Add the mode name to `VALID_MODES` in `__main__.py`
+3. Wire it into `main()` with the `if mode in ("name", "all"):` pattern (lazy import)
+4. Update this skill and the benchmarking doc page
 
 ## Tests
 

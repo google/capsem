@@ -48,14 +48,17 @@ site/src/content/docs/
     virtualization.md     VM isolation guarantees
     build-verification.md Build reproducibility, checksums
     kernel-hardening.md   Custom kernel, allnoconfig, minimal attack surface
-  testing/
+  benchmarks/
+    results.md            Current performance results (boot, disk, CLI, HTTP, snapshots)
+  debugging/
     capsem-doctor.md      In-VM diagnostic suite
-    benchmarks.md         Performance benchmarks
+    troubleshooting.md    Common issues and solutions
   development/
+    benchmarking.md       How to run and extend capsem-bench
     getting-started.md    Dev environment setup (stub)
     skills.md             AI agent skills system
   releases/
-    0-8.md through 0-12.md   One page per minor version
+    0-8.md through 0-14.md   One page per minor version
 ```
 
 ## Sidebar

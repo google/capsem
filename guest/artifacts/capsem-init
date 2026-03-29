@@ -305,6 +305,11 @@ if [ -x /capsem-bench ]; then
     chmod 755 /newroot/usr/local/bin/capsem-bench
     echo "[capsem-init] capsem-bench deployed"
 fi
+if [ -d /capsem_bench ]; then
+    rm -rf /newroot/usr/local/lib/capsem_bench
+    cp -a /capsem_bench /newroot/usr/local/lib/capsem_bench
+    echo "[capsem-init] capsem_bench package deployed"
+fi
 if [ -x /snapshots ]; then
     cp /snapshots /newroot/usr/local/bin/snapshots
     chmod 755 /newroot/usr/local/bin/snapshots

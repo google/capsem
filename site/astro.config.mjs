@@ -36,8 +36,12 @@ export default defineConfig({
           autogenerate: { directory: 'security' },
         },
         {
-          label: 'Testing',
-          autogenerate: { directory: 'testing' },
+          label: 'Benchmarks',
+          autogenerate: { directory: 'benchmarks' },
+        },
+        {
+          label: 'Debugging',
+          autogenerate: { directory: 'debugging' },
         },
         {
           label: 'Development',

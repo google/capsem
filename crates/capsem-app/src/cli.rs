@@ -580,11 +580,20 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
                 warned_exec = false;
             }
             Ok(GuestToHost::BootTiming { ref stages }) => {
-                for s in stages {
-                    eprintln!("[capsem] boot timing: {} {}ms", s.name, s.duration_ms);
-                }
                 let total: u64 = stages.iter().map(|s| s.duration_ms).sum();
-                eprintln!("[capsem] boot timing total: {}ms", total);
+                // Find longest stage name for alignment
+                let max_name = stages.iter().map(|s| s.name.len()).max().unwrap_or(0);
+                let max_dur = stages.iter().map(|s| format!("{}", s.duration_ms).len()).max().unwrap_or(0);
+                eprintln!("[capsem] boot timing:");
+                for s in stages {
+                    let bar_len = if total > 0 { (s.duration_ms * 30 / total.max(1)) as usize } else { 0 };
+                    let bar: String = "#".repeat(bar_len);
+                    eprintln!("  {:>width_n$}  {:>width_d$}ms  {}",
+                        s.name, s.duration_ms, bar,
+                        width_n = max_name, width_d = max_dur);
+                }
+                eprintln!("  {:>width_n$}  {:>width_d$}ms",
+                    "total", total, width_n = max_name, width_d = max_dur);
                 last_msg_time = Instant::now();
                 warned_exec = false;
             }

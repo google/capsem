@@ -100,6 +100,7 @@ class TestRenderRootfs:
         assert "diagnostics/" in rendered_arm64
         assert "capsem-doctor" in rendered_arm64
         assert "capsem-bench" in rendered_arm64
+        assert "capsem_bench/" in rendered_arm64
 
     def test_node_version(self, rendered_arm64):
         assert "nvm install 24" in rendered_arm64
@@ -558,6 +559,8 @@ class TestPrepareBuildContext:
         assert (context_dir / "diagnostics").is_dir()
         assert (context_dir / "capsem-doctor").is_file()
         assert (context_dir / "capsem-bench").is_file()
+        assert (context_dir / "capsem_bench").is_dir()
+        assert (context_dir / "capsem_bench" / "__main__.py").is_file()
 
     def test_kernel_context_has_defconfig_and_init(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"

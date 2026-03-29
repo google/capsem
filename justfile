@@ -656,6 +656,9 @@ _pack-initrd:
     chmod 755 capsem-doctor
     cp "$ROOT/guest/artifacts/capsem-bench" capsem-bench
     chmod 755 capsem-bench
+    rm -rf capsem_bench
+    cp -r "$ROOT/guest/artifacts/capsem_bench" capsem_bench
+    find capsem_bench -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
     cp "$ROOT/guest/artifacts/snapshots" snapshots
     chmod 755 snapshots
     rm -rf diagnostics

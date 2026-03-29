@@ -76,9 +76,10 @@ RUN chmod 755 /usr/local/bin/capsem-doctor
 # Backward compat: capsem-test -> capsem-doctor
 RUN ln -sf capsem-doctor /usr/local/bin/capsem-test
 
-# Bench script (disk I/O + HTTP performance benchmarks)
+# Bench tool (disk I/O + HTTP performance benchmarks)
 COPY capsem-bench /usr/local/bin/capsem-bench
 RUN chmod 755 /usr/local/bin/capsem-bench
+COPY capsem_bench/ /usr/local/lib/capsem_bench/
 
 # Remove PEP 668 EXTERNALLY-MANAGED marker.
 # This is an ephemeral sandboxed VM -- the protection is unnecessary and blocks

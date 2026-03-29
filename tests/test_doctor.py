@@ -246,6 +246,9 @@ class TestCheckSourceFiles:
         ]:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()
+        bench_pkg = artifacts / "capsem_bench"
+        bench_pkg.mkdir()
+        (bench_pkg / "__main__.py").write_text("stub")
         (config / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is True
@@ -261,6 +264,9 @@ class TestCheckSourceFiles:
         ]:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()
+        bench_pkg = artifacts / "capsem_bench"
+        bench_pkg.mkdir()
+        (bench_pkg / "__main__.py").write_text("stub")
         (config / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
@@ -275,6 +281,9 @@ class TestCheckSourceFiles:
         ]:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()
+        bench_pkg = artifacts / "capsem_bench"
+        bench_pkg.mkdir()
+        (bench_pkg / "__main__.py").write_text("stub")
         # No config/capsem-ca.crt
         result = check_source_files(tmp_path)
         assert result.passed is False

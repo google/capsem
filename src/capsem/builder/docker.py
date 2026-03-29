@@ -533,6 +533,10 @@ def prepare_build_context(
             src = artifacts / name
             if src.is_file():
                 shutil.copy2(str(src), str(context_dir / name))
+        # capsem_bench package directory
+        bench_pkg = artifacts / "capsem_bench"
+        if bench_pkg.is_dir():
+            shutil.copytree(str(bench_pkg), str(context_dir / "capsem_bench"), dirs_exist_ok=True)
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 
