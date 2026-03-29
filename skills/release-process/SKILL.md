@@ -41,9 +41,20 @@ Triggered by `vX.Y.Z` tag push. Sequential jobs:
 | Job | Runner | Purpose |
 |-----|--------|---------|
 | `preflight` | macos-14 | Fail-fast: Apple cert import, Tauri key |
-| `build-assets` | ubuntu-24.04-arm | Kernel + rootfs via Docker |
+| `build-assets` (arm64 + x86_64) | ubuntu-24.04-arm, ubuntu-24.04 | Kernel + rootfs via Docker (parallel matrix) |
 | `test` | macos-14 | Unit tests, cross-compile, frontend build |
-| `build-app` | macos-14 | Tauri build, codesign, notarize, DMG, GitHub release |
+| `build-app-macos` | macos-14 | Tauri build, codesign, notarize, DMG |
+| `build-app-linux` | ubuntu-24.04-arm | Tauri build, deb + AppImage |
+| `create-release` | ubuntu-latest | GitHub release with all artifacts |
+
+### CI invariants (hard-won lessons)
+
+- **Use justfile recipes in CI.** `build-assets` must call `just build-kernel` and `just build-rootfs`, not reimplement the builder commands. Drift between the justfile and CI caused v0.14.2-v0.14.4 to ship without vmlinuz/initrd.img.
+- **Build both kernel and rootfs.** The builder defaults to `--template rootfs` only. The kernel template must be built explicitly.
+- **`assets/current` must be a real directory, not a symlink.** `generate_checksums()` creates a symlink, but GitHub Actions strips symlinks from artifacts. After calling `generate_checksums`, replace the symlink with `rm -rf assets/current && cp -r assets/arm64 assets/current`.
+- **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
+- **Verify assets before Tauri build.** The `Verify assets layout` step lists assets/arm64/ and assets/current/ to catch missing files early. Tauri's build.rs resolves `../../assets/current/vmlinuz` relative to `crates/capsem-app/`.
+- **`pyproject.toml` version must match.** Three files must be bumped in sync: `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just cut-release` handles this automatically.
 
 ## Full-test gates
 

@@ -7,15 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.4] - 2026-03-28
+## [0.14.5] - 2026-03-28
 
 ### Fixed
-- **CI assets/current debug** -- added verify step before Tauri build to diagnose assets/current directory state.
+- **CI build-assets builds both kernel and rootfs** -- release workflow only built rootfs, missing vmlinuz and initrd.img. Now uses `just build-kernel` and `just build-rootfs` recipes instead of reimplementing build logic.
+- **CI assets/current ordering** -- moved `cp -r` after `generate_checksums` so Tauri's `build.rs` finds real files instead of a stripped symlink.
 
-## [0.14.3] - 2026-03-28
-
-### Fixed
-- **CI assets/current ordering** -- `generate_checksums()` creates a symlink for `assets/current`, which the subsequent `cp -r` must replace with a real directory copy. Moved `cp -r` after manifest generation so Tauri's `build.rs` finds real files instead of a stripped symlink.
+### Improved
+- **`just doctor` codesigning diagnostics** -- new four-step Codesigning section checks Xcode CLTools, codesign binary, entitlements.plist, and runs a real test sign. Every `[FAIL]` line now includes a copy-pasteable fix command.
+- **`bootstrap.sh` platform checks** -- macOS: validates Xcode Command Line Tools. Linux: prints informational notice about which recipes work (test, build-assets, audit) vs require macOS (run, dev, bench).
+- **`_sign` recipe platform guard** -- fails immediately on Linux with actionable message instead of cryptic "codesign: command not found".
+- **`run_signed.sh` error surfacing** -- codesign failures now print to stderr with a hint to run `just doctor`, instead of silently logging to `target/build.log`.
+- **Developer getting-started docs** -- added platform requirements table, codesigning section with validation table, and codesign troubleshooting to the site.
 
 ## [0.14.2] - 2026-03-28
 

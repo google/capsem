@@ -1,6 +1,6 @@
 [project]
 name = "capsem"
-version = "0.14.4"
+version = "0.14.5"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",

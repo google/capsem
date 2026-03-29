@@ -18,6 +18,17 @@ log() {
     echo "[runner] $(date +%H:%M:%S) $*" >> "$BUILD_LOG"
 }
 
+die() {
+    echo "ERROR: $*" >&2
+    log "ERROR: $*"
+    exit 1
+}
+
+# Platform check
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    die "codesign requires macOS. VM features need macOS + Apple Silicon."
+fi
+
 # The first argument is the binary we need to sign and run.
 if [ -f "$1" ]; then
     binary="$1"
@@ -25,13 +36,13 @@ if [ -f "$1" ]; then
     # Apply entitlements. Ad-hoc signing (-) is sufficient for local dev.
     if [ -f "$ENTITLEMENTS" ]; then
         log "signing $binary with entitlements"
-        codesign --sign - --entitlements "$ENTITLEMENTS" --force "$binary" >> "$BUILD_LOG" 2>&1
+        if ! codesign --sign - --entitlements "$ENTITLEMENTS" --force "$binary" >> "$BUILD_LOG" 2>&1; then
+            die "codesign failed for $binary. Run 'just doctor' to diagnose signing issues."
+        fi
         # Force the OS to re-evaluate the binary signature/entitlements
         touch "$binary"
     else
-        log "WARNING: entitlements.plist not found at $ENTITLEMENTS, signing without it"
-        codesign --sign - --force "$binary" >> "$BUILD_LOG" 2>&1
-        touch "$binary"
+        die "entitlements.plist not found at $ENTITLEMENTS. Run 'just doctor' to diagnose."
     fi
 
     shift

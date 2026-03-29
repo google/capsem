@@ -113,6 +113,22 @@ else
     miss "docker/podman" "$(hint_for "docker/podman")"
 fi
 
+# --- macOS: Xcode Command Line Tools ---
+if [ "$OS" = "Darwin" ]; then
+    if xcode-select -p >/dev/null 2>&1; then
+        pass "Xcode Command Line Tools ($(xcode-select -p))"
+    else
+        miss "Xcode Command Line Tools" "xcode-select --install"
+    fi
+fi
+
+# --- Linux: VM feature notice ---
+if [ "$OS" = "Linux" ]; then
+    printf "\n"
+    printf "  [INFO] Capsem VM features (just run, just dev, just bench) require macOS.\n"
+    printf "         On Linux you can use: just test, just build-assets, just audit\n"
+fi
+
 echo ""
 printf "== Results: %d found, %d missing ==\n" "$PASS" "$FAIL"
 

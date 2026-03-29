@@ -143,9 +143,29 @@ This allows:
 
 ## Codesigning
 
-The app binary must be codesigned with `com.apple.security.virtualization` entitlement or Virtualization.framework calls crash. The justfile handles this automatically via `_sign` recipe. No manual setup needed for development.
+The app binary must be codesigned with `com.apple.security.virtualization` entitlement or
+Virtualization.framework calls crash. The justfile handles this automatically via `_sign` recipe.
+
+**Prerequisites** (macOS only):
+- Xcode Command Line Tools: `xcode-select --install`
+- `entitlements.plist` must exist in the repo root (checked into git)
+
+**Verification**: `just doctor` includes a signing test that compiles a tiny binary, signs it with
+the entitlements, and verifies the operation succeeds. Run `just doctor` after initial setup to
+confirm signing works.
+
+**Linux developers**: codesign is not available and not needed on Linux. VM features (`just run`,
+`just dev`, `just bench`) require macOS. You can use `just test`, `just build-assets`, and
+`just audit` on Linux.
 
 ## Troubleshooting
+
+### `just run` fails with codesign error
+- Run `just doctor` -- it will diagnose the specific signing issue
+- Ensure Xcode CLTools are installed: `xcode-select --install`
+- Check entitlements file exists: `cat entitlements.plist`
+- Try manual sign: `codesign --sign - --entitlements entitlements.plist --force target/debug/capsem`
+- Check SIP status: `csrutil status`
 
 ### `just doctor` fails
 Install missing tools as indicated. Most can be installed via `brew` or `cargo install`.
@@ -177,3 +197,13 @@ Run `just build-assets` first. Assets are gitignored and must be built locally.
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
 - Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.squashfs`
 - Try with debug logs: `RUST_LOG=capsem=debug just run`
+
+## Design rules for doctor and bootstrap
+
+When modifying `just doctor` or `scripts/bootstrap.sh`:
+
+- **Every `fail()` line must include a fix command.** Never just say "X not found" -- always append `-- install: <exact command>` or `-- run: <exact command>`. A developer should be able to copy-paste the fix directly from the output.
+- **Platform-gate macOS-only checks.** Codesigning, Xcode CLTools, and entitlements checks must be wrapped in `uname -s == Darwin` guards. On Linux, use `[SKIP]` (not `[FAIL]`) with a note about what works on Linux.
+- **Test, don't just check.** Verifying `codesign` exists is not enough -- the test-sign step compiles a tiny binary and actually signs it with entitlements. This catches broken CLTools installs, SIP issues, and entitlements XML corruption.
+- **Surface errors, don't swallow them.** `run_signed.sh` must print codesign failures to stderr, not just to `target/build.log`. If signing fails, tell the developer to run `just doctor`.
+- **Install hints must be platform-aware.** Use `brew` on macOS, `apt`/`dnf` on Linux. The `bootstrap.sh` `hint_for()` function and the doctor `tool_hint()` function both follow this pattern.

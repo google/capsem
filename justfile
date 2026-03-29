@@ -236,13 +236,73 @@ doctor: _pnpm-install
 
     echo ""
     echo "== System Tools =="
-    for tool in cargo rustup codesign pnpm node python3 uv sqlite3 git; do
+    tool_hint() {
+        case "$1" in
+            cargo)   echo "installed with rustup -- curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" ;;
+            rustup)  echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" ;;
+            pnpm)    echo "npm i -g pnpm" ;;
+            node)    echo "brew install node  (24+ required)" ;;
+            python3) echo "brew install python" ;;
+            uv)      echo "curl -LsSf https://astral.sh/uv/install.sh | sh" ;;
+            sqlite3) echo "brew install sqlite" ;;
+            git)     echo "brew install git" ;;
+        esac
+    }
+    for tool in cargo rustup pnpm node python3 uv sqlite3 git; do
         if command -v "$tool" &>/dev/null; then
             pass "$tool"
         else
-            fail "$tool not found"
+            fail "$tool not found -- install: $(tool_hint "$tool")"
         fi
     done
+
+    echo ""
+    echo "== Codesigning =="
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        # Check 1: Xcode Command Line Tools
+        if xcode-select -p &>/dev/null; then
+            pass "Xcode Command Line Tools ($(xcode-select -p))"
+        else
+            fail "Xcode Command Line Tools not installed -- run: xcode-select --install"
+        fi
+
+        # Check 2: codesign binary
+        if command -v codesign &>/dev/null; then
+            pass "codesign"
+        else
+            fail "codesign not found -- install Xcode Command Line Tools: xcode-select --install"
+        fi
+
+        # Check 3: entitlements.plist
+        if [[ -r "{{entitlements}}" ]]; then
+            pass "{{entitlements}} exists and is readable"
+        else
+            fail "{{entitlements}} missing or not readable -- run: git checkout {{entitlements}}"
+        fi
+
+        # Check 4: test sign (only if codesign and entitlements both exist)
+        if command -v codesign &>/dev/null && [[ -r "{{entitlements}}" ]]; then
+            SIGN_TEST=$(mktemp /tmp/capsem-sign-test.XXXXXX)
+            if cc -x c -o "$SIGN_TEST" - <<< 'int main(){return 0;}' 2>/dev/null; then
+                if codesign --sign - --entitlements "{{entitlements}}" --force "$SIGN_TEST" 2>/dev/null; then
+                    pass "test sign succeeded (ad-hoc + entitlements)"
+                else
+                    fail "test sign failed -- codesign could not sign a binary with {{entitlements}}"
+                    echo "         Try: codesign --sign - --entitlements {{entitlements}} --force /path/to/binary"
+                    echo "         Check SIP status: csrutil status"
+                fi
+            else
+                fail "test sign skipped -- cc could not compile a test binary -- reinstall: sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install"
+            fi
+            rm -f "$SIGN_TEST"
+        fi
+    else
+        echo "  [SKIP] codesign (macOS-only -- not needed on Linux)"
+        echo "  [SKIP] entitlements.plist (macOS-only)"
+        echo "  [SKIP] test sign (macOS-only)"
+        echo "  [INFO] Capsem VM features (run, dev, bench) require macOS with Apple Silicon."
+        echo "         On Linux you can use: just test, just build-assets, just audit"
+    fi
 
     echo ""
     echo "== Container Runtime =="
@@ -251,7 +311,11 @@ doctor: _pnpm-install
     elif command -v podman &>/dev/null; then
         pass "podman"
     else
-        fail "docker or podman -- brew install podman && podman machine init && podman machine start"
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            fail "docker or podman -- install: brew install podman && podman machine init --memory 8192 --cpus 8 && podman machine start"
+        else
+            fail "docker or podman -- install: sudo apt install podman  (or docker.io)"
+        fi
     fi
     # Check container runtime VM resources (macOS -- both podman and Docker run in a VM)
     if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -537,6 +601,25 @@ _compile: _frontend _clean-stale
     cargo build -p capsem
 
 _sign: _compile
+    #!/bin/bash
+    set -euo pipefail
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        echo ""
+        echo "ERROR: codesign requires macOS. Capsem VM features (run, dev, bench) need"
+        echo "       macOS with Apple Silicon and the Virtualization.framework."
+        echo ""
+        echo "On Linux you can use:"
+        echo "  just test          # unit tests + cross-compile + frontend check"
+        echo "  just build-assets  # build VM kernel + rootfs (needs Docker/Podman)"
+        echo "  just audit         # dependency vulnerability scan"
+        echo ""
+        exit 1
+    fi
+    if [[ ! -r "{{entitlements}}" ]]; then
+        echo "ERROR: {{entitlements}} not found or not readable."
+        echo "       This file should be checked into the repo. Try: git checkout {{entitlements}}"
+        exit 1
+    fi
     codesign --sign - --entitlements {{entitlements}} --force {{binary}}
 
 _pack-initrd:
