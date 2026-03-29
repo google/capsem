@@ -6,11 +6,15 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use capsem_core::{
-    AppleVzHypervisor, GuestToHost, Hypervisor, HostState, HostStateMachine, HostToGuest,
+    GuestToHost, Hypervisor, HostState, HostStateMachine, HostToGuest,
     VirtioFsShare, VmConfig, VmHandle, VsockConnection, decode_guest_msg, encode_host_msg,
     MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY,
     VSOCK_PORT_TERMINAL,
 };
+#[cfg(target_os = "macos")]
+use capsem_core::AppleVzHypervisor;
+#[cfg(target_os = "linux")]
+use capsem_core::KvmHypervisor;
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy;
 use capsem_core::net::policy_config;
@@ -137,7 +141,11 @@ pub(crate) fn boot_vm(
 
     let (vm, vsock_rx) = {
         let _span = debug_span!("hypervisor_boot").entered();
-        AppleVzHypervisor.boot(&config, &vsock_ports)
+        #[cfg(target_os = "macos")]
+        let result = AppleVzHypervisor.boot(&config, &vsock_ports);
+        #[cfg(target_os = "linux")]
+        let result = KvmHypervisor.boot(&config, &vsock_ports);
+        result
             .context("failed to boot VM")?
     };
 

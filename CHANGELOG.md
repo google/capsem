@@ -9,10 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Improved
 - **Boot timing display** -- formatted table with right-aligned columns and proportional bar chart instead of flat log lines.
+- **capsem-bench refactored to package** -- split 897-line single file into `capsem_bench/` Python package with per-category modules (disk, rootfs, startup, http_bench, throughput, snapshot). Shell wrapper at `capsem-bench` preserves the same CLI interface.
 - **capsem-bench JSON output** -- saved to `/tmp/capsem-benchmark.json` inside the VM instead of dumped to stdout.
 
 ### Docs
 - **Site restructuring** -- moved capsem-doctor to new top-level Debugging section (with troubleshooting guide), moved benchmarking methodology to Development, added top-level Benchmarks section with current performance results (boot time, disk I/O, CLI startup, HTTP, throughput, snapshots).
+
+## [0.14.8] - 2026-03-29
+
+### Fixed
+- **Linux build: gate all macOS-only APIs** -- `ApfsSnapshot` (`libc::clonefile`) and `AppleVzHypervisor` import in boot.rs were not `cfg`-gated, causing compile failures on Linux app builds. Boot now dispatches to `KvmHypervisor` on Linux.
 
 ## [0.14.7] - 2026-03-29
 
