@@ -219,6 +219,54 @@ def build(
 
 
 # ---------------------------------------------------------------------------
+# agent
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("guest_dir", default="guest", type=click.Path(exists=False))
+@click.option("--arch", default=None, help="Build for a single architecture only.")
+@click.option("--output", "output_dir", default="target/linux-agent", type=click.Path(),
+              help="Output directory for agent binaries.")
+def agent(
+    guest_dir: str,
+    arch: str | None,
+    output_dir: str,
+) -> None:
+    """Compile guest agent binaries (native or container-based)."""
+    path = Path(guest_dir)
+    if not path.is_dir():
+        click.echo(f"error: directory not found: {guest_dir}", err=True)
+        raise SystemExit(1)
+
+    config = load_guest_config(path)
+    repo_root = Path.cwd()
+
+    # Default to host architecture
+    import os
+    import sys
+
+    host_arch = "arm64" if os.uname().machine in ("arm64", "aarch64") else "x86_64"
+    arch_name = arch or host_arch
+
+    if arch_name not in config.build.architectures:
+        click.echo(f"error: architecture '{arch_name}' not in config", err=True)
+        raise SystemExit(1)
+
+    rust_target = config.build.architectures[arch_name].rust_target
+    out = Path(output_dir) / arch_name
+
+    from capsem.builder.docker import cross_compile_agent
+    try:
+        cross_compile_agent(rust_target, repo_root, out)
+    except Exception as e:
+        click.echo(f"error: {e}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Done! Agent binaries for {arch_name} are in {out}/")
+
+
+# ---------------------------------------------------------------------------
 # inspect
 # ---------------------------------------------------------------------------
 

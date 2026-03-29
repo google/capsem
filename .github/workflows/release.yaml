@@ -312,13 +312,20 @@ jobs:
 
   build-app-linux:
     needs: test
-    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v8
         with:
-          name: vm-assets-arm64
-          path: assets/arm64/
+          name: vm-assets-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/
 
       # Regenerate manifest for this arch (creates assets/current symlink).
       - uses: astral-sh/setup-uv@v5
@@ -337,12 +344,12 @@ jobs:
       - name: Copy assets/current
         run: |
           rm -rf assets/current
-          cp -r assets/arm64 assets/current
+          cp -r assets/${{ matrix.arch }} assets/current
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: build-app-linux
+          key: build-app-linux-${{ matrix.arch }}
 
       - name: Install Tauri system deps
         run: |
@@ -369,8 +376,8 @@ jobs:
         run: |
           echo "=== assets/ ==="
           ls -la assets/
-          echo "=== assets/arm64/ ==="
-          ls -la assets/arm64/
+          echo "=== assets/${{ matrix.arch }}/ ==="
+          ls -la assets/${{ matrix.arch }}/
           echo "=== assets/current/ ==="
           ls -la assets/current/
           echo "=== assets/manifest.json ==="
@@ -381,6 +388,13 @@ jobs:
           cd crates/capsem-app
           cargo tauri build
 
+      - name: Validate artifacts
+        run: |
+          echo "=== Validate deb ==="
+          dpkg-deb --info target/release/bundle/deb/*.deb
+          echo "=== Validate AppImage ==="
+          file target/release/bundle/appimage/*.AppImage 2>/dev/null || echo "No AppImage produced (may be expected on some arches)"
+
       - name: Collect Linux artifacts
         run: |
           mkdir -p release-artifacts
@@ -390,7 +404,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: release-linux
+          name: release-linux-${{ matrix.arch }}
           path: release-artifacts/
 
   create-release:
@@ -406,7 +420,11 @@ jobs:
           path: release-artifacts/
       - uses: actions/download-artifact@v8
         with:
-          name: release-linux
+          name: release-linux-arm64
+          path: release-artifacts/
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux-x86_64
           path: release-artifacts/
 
       # Download per-arch VM assets for the release.
@@ -469,11 +487,13 @@ jobs:
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
-      - name: Attest build provenance (DMG + rootfs per arch)
+      - name: Attest build provenance (DMG + deb + AppImage + rootfs per arch)
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             release-artifacts/*.dmg
+            release-artifacts/*.deb
+            release-artifacts/*.AppImage
             release-artifacts/arm64/rootfs.squashfs
             release-artifacts/x86_64/rootfs.squashfs
 
@@ -492,10 +512,17 @@ jobs:
           DMG_SIZE=$(du -h "$DMG" 2>/dev/null | cut -f1 || echo "N/A")
           ARM64_ROOTFS=$(du -h release-artifacts/arm64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
           X86_ROOTFS=$(du -h release-artifacts/x86_64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
-          DEB=$(ls -1 release-artifacts/*.deb 2>/dev/null | head -1)
-          DEB_NAME=$(basename "$DEB" 2>/dev/null || echo "N/A")
-          DEB_SIZE=$(du -h "$DEB" 2>/dev/null | cut -f1 || echo "N/A")
           SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
+
+          # Build artifact table rows for all debs and AppImages
+          LINUX_ROWS=""
+          for f in release-artifacts/*.deb release-artifacts/*.AppImage; do
+            [ -f "$f" ] || continue
+            NAME=$(basename "$f")
+            SIZE=$(du -h "$f" | cut -f1)
+            LINUX_ROWS="${LINUX_ROWS}| ${NAME} | ${SIZE} |
+          "
+          done
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Release $VERSION
@@ -505,8 +532,7 @@ jobs:
           | File | Size |
           |------|------|
           | $DMG_NAME | $DMG_SIZE |
-          | $DEB_NAME | $DEB_SIZE |
-          | rootfs.squashfs (arm64) | $ARM64_ROOTFS |
+          ${LINUX_ROWS}| rootfs.squashfs (arm64) | $ARM64_ROOTFS |
           | rootfs.squashfs (x86_64) | $X86_ROOTFS |
           | manifest.json | signed (minisign) |
           | capsem-sbom.spdx.json | $SBOM_PKGS packages |

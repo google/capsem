@@ -16,7 +16,8 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just ui` | Frontend-only dev server (mock mode, no VM) |
 | `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
 | `just run "CMD"` | Same but run CMD instead of interactive shell |
-| `just test` | Unit tests (llvm-cov) + cross-compile + frontend check |
+| `just test` | Unit tests (llvm-cov) + agent cross-compile + frontend check |
+| `just cross-compile [arch]` | Full Linux build in container (agent + deb + AppImage) |
 | `just full-test` | test + capsem-doctor + integration + bench (3x VM boot) |
 | `just build-assets` | Full VM asset rebuild via capsem-builder (kernel + rootfs) |
 | `just build-kernel [arch]` | Kernel only (default: arm64) |
@@ -90,4 +91,8 @@ uv run capsem-builder inspect guest/      # Show config summary
 
 ## Cross-compilation
 
-Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. Linker config is in `.cargo/config.toml` (uses `rust-lld`). Watch for platform-specific types -- e.g., `libc::ioctl` request param is `c_ulong` on macOS but `c_int` on Linux. Use `as _` to let the compiler infer.
+On macOS, agent binaries are compiled inside a Linux container (podman/docker) via `cross_compile_agent()` in `docker.py`. This avoids needing `rust-lld`, musl targets, or `llvm-tools` on the host. On Linux (CI), cargo builds natively.
+
+`just cross-compile [arch]` is a debug/verification tool that builds everything in a container: agent binaries, frontend, and the full Tauri app (deb + AppImage). It's not in the daily `just run` path -- `_pack-initrd` calls `cross_compile_agent()` directly for agent-only builds.
+
+Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts separately to prevent cache clobbering.

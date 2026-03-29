@@ -44,7 +44,7 @@ Triggered by `vX.Y.Z` tag push. Sequential jobs:
 | `build-assets` (arm64 + x86_64) | ubuntu-24.04-arm, ubuntu-24.04 | Kernel + rootfs via Docker (parallel matrix) |
 | `test` | macos-14 | Unit tests, cross-compile, frontend build |
 | `build-app-macos` | macos-14 | Tauri build, codesign, notarize, DMG |
-| `build-app-linux` | ubuntu-24.04-arm | Tauri build, deb + AppImage |
+| `build-app-linux` (arm64 + x86_64) | ubuntu-24.04-arm, ubuntu-24.04 | Tauri build, deb + AppImage (parallel matrix) |
 | `create-release` | ubuntu-latest | GitHub release with all artifacts |
 
 ### CI invariants (hard-won lessons)

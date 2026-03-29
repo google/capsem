@@ -16,6 +16,8 @@ import pytest
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import (
     GUEST_BINARIES,
+    container_compile_agent,
+    cross_compile_agent,
     generate_build_context,
     render_dockerfile,
 )
@@ -777,3 +779,141 @@ class TestGenerateChecksums:
         arm_hashes = {a["hash"] for a in release["arm64"]["assets"]}
         x86_hashes = {a["hash"] for a in release["x86_64"]["assets"]}
         assert arm_hashes.isdisjoint(x86_hashes)
+
+
+# ---------------------------------------------------------------------------
+# Build execution: agent compilation
+# ---------------------------------------------------------------------------
+
+
+class TestContainerCompileAgent:
+    """Tests for container_compile_agent() -- single-container build."""
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_arm64_uses_correct_platform_and_volumes(self, mock_detect, mock_run, tmp_path):
+        mock_detect.return_value = "docker"
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        output_dir = tmp_path / "output"
+
+        def side_effect(cmd, **kwargs):
+            # Simulate container creating binaries in bind-mounted output
+            for b in GUEST_BINARIES:
+                (output_dir / b).write_bytes(b"binary content")
+            return MagicMock(stdout="")
+
+        mock_run.side_effect = side_effect
+
+        binaries = container_compile_agent(
+            "aarch64-unknown-linux-musl", repo_root, output_dir,
+        )
+
+        assert len(binaries) == len(GUEST_BINARIES)
+        # Single container call (build + cp + file in one step)
+        assert mock_run.call_count == 1
+        cmd = mock_run.call_args_list[0][0][0]
+        assert "docker" in cmd
+        assert "--platform" in cmd
+        assert "linux/arm64" in cmd
+        # Per-arch target volume
+        assert "capsem-agent-target-arm64" in str(cmd)
+        # Cargo cache volumes
+        assert "capsem-cargo-registry" in str(cmd)
+        assert "capsem-cargo-git" in str(cmd)
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_x86_64_uses_correct_platform_and_volumes(self, mock_detect, mock_run, tmp_path):
+        mock_detect.return_value = "podman"
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        output_dir = tmp_path / "output"
+
+        def side_effect(cmd, **kwargs):
+            for b in GUEST_BINARIES:
+                (output_dir / b).write_bytes(b"binary content")
+            return MagicMock(stdout="")
+
+        mock_run.side_effect = side_effect
+
+        container_compile_agent("x86_64-unknown-linux-musl", repo_root, output_dir)
+
+        cmd = mock_run.call_args_list[0][0][0]
+        assert "podman" in cmd
+        assert "linux/amd64" in cmd
+        assert "capsem-agent-target-x86_64" in str(cmd)
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_missing_binary_raises(self, mock_detect, mock_run, tmp_path):
+        mock_detect.return_value = "docker"
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        output_dir = tmp_path / "output"
+        # Container runs but doesn't create binaries (simulates build failure)
+        mock_run.return_value = MagicMock(stdout="")
+
+        with pytest.raises(RuntimeError, match="Expected binary not found"):
+            container_compile_agent(
+                "aarch64-unknown-linux-musl", repo_root, output_dir,
+            )
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_empty_binary_raises(self, mock_detect, mock_run, tmp_path):
+        mock_detect.return_value = "docker"
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        output_dir = tmp_path / "output"
+
+        def side_effect(cmd, **kwargs):
+            for b in GUEST_BINARIES:
+                (output_dir / b).write_bytes(b"")  # empty
+            return MagicMock(stdout="")
+
+        mock_run.side_effect = side_effect
+
+        with pytest.raises(RuntimeError, match="Binary is empty"):
+            container_compile_agent(
+                "aarch64-unknown-linux-musl", repo_root, output_dir,
+            )
+
+
+class TestCrossCompileAgent:
+    """Tests for cross_compile_agent() -- delegates to container on macOS."""
+
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.container_compile_agent")
+    def test_delegates_to_container_on_darwin(self, mock_container, mock_sys, tmp_path):
+        mock_sys.platform = "darwin"
+        mock_container.return_value = []
+        cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, tmp_path / "out")
+        mock_container.assert_called_once_with(
+            "aarch64-unknown-linux-musl", tmp_path, tmp_path / "out",
+        )
+
+    @patch("capsem.builder.docker.container_compile_agent")
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.run_cmd")
+    def test_native_on_linux_skips_container(
+        self, mock_run, mock_sys, mock_container, tmp_path,
+    ):
+        mock_sys.platform = "linux"
+        mock_run.return_value = MagicMock(stdout="aarch64-unknown-linux-musl")
+
+        # Create dummy binaries for shutil.copy2
+        release_dir = tmp_path / "target" / "aarch64-unknown-linux-musl" / "release"
+        release_dir.mkdir(parents=True)
+        for b in GUEST_BINARIES:
+            (release_dir / b).write_bytes(b"dummy")
+
+        cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, tmp_path / "out")
+
+        # Container path was NOT taken
+        mock_container.assert_not_called()
+        # Cargo build was called directly
+        cargo_calls = [c for c in mock_run.call_args_list if "cargo" in c[0][0]]
+        assert len(cargo_calls) == 1
+        assert "build" in cargo_calls[0][0][0]
+        assert "--target" in cargo_calls[0][0][0]

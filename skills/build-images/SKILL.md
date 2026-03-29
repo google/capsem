@@ -224,11 +224,20 @@ packages = ["https://example.com/install.sh"]
 
 ## How to: Add a new guest binary
 
-Guest binaries are cross-compiled Rust crates from `crates/capsem-agent/`.
+Guest binaries are compiled from `crates/capsem-agent/`. On macOS, `cross_compile_agent()` delegates to `container_compile_agent()` which builds inside a Linux container (podman/docker). On Linux (CI), cargo builds natively.
 
 1. Add the binary target in `crates/capsem-agent/Cargo.toml`
 2. Add the binary name to `GUEST_BINARIES` list in `docker.py`
 3. The template already loops `{% for binary in guest_binaries %}` to COPY + chmod 555
+
+## Verifying Linux builds locally
+
+`just cross-compile [arch]` builds everything in a container: agent binaries, frontend, and the full Tauri app (deb + AppImage). Useful for catching linuxdeploy and system dep issues before CI.
+
+```bash
+just cross-compile           # Build for host arch (arm64 on Apple Silicon)
+just cross-compile x86_64    # Build x86_64 deb + AppImage
+```
 
 ## AI provider TOML schema
 
@@ -266,7 +275,7 @@ content = '{"key": "value"}'
 ## Build pipeline (what `build_image()` does)
 
 For rootfs:
-1. Cross-compile guest agent binaries (`cross_compile_agent`)
+1. Build guest agent binaries (`cross_compile_agent` -- on macOS delegates to `container_compile_agent` which builds inside a Linux container; on Linux compiles natively)
 2. Assemble build context (`prepare_build_context`) -- copies CA cert, shell configs, diagnostics, agent binaries
 3. Render Dockerfile from template
 4. `docker/podman build`

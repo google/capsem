@@ -106,10 +106,73 @@ update-deps: _pnpm-install
 
 # Unit tests + cross-compile check + frontend type-check + Python schema tests (no VM)
 test: _install-tools _clean-stale audit _pnpm-install _generate-settings
+    #!/bin/bash
+    set -euo pipefail
     cargo llvm-cov --workspace --no-cfg-coverage
-    cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
+    echo "=== Cross-compile agent ==="
+    uv run capsem-builder agent
     cd frontend && pnpm run check && pnpm run test && pnpm run build
+    cd ..
     uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+# Build the full Linux release in a container (agent + deb + AppImage).
+# Supports arm64 and x86_64. No host cross-compile toolchain needed.
+cross-compile arch="": _check-assets _generate-settings
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    # Default to host architecture
+    if [ -z "{{arch}}" ]; then
+        TARGET_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x86_64/')
+    else
+        TARGET_ARCH="{{arch}}"
+    fi
+    if [ "$TARGET_ARCH" != "arm64" ] && [ "$TARGET_ARCH" != "x86_64" ]; then
+        echo "ERROR: unsupported arch '$TARGET_ARCH' (arm64 or x86_64)"
+        exit 1
+    fi
+    PLATFORM="linux/arm64" && [ "$TARGET_ARCH" = "x86_64" ] && PLATFORM="linux/amd64"
+    if command -v podman &>/dev/null; then RUNTIME="podman"; else RUNTIME="docker"; fi
+    # Sync assets layout for Tauri build
+    rm -rf assets/current
+    if [ -d "assets/$TARGET_ARCH" ]; then cp -r "assets/$TARGET_ARCH" assets/current; fi
+    echo "=== Bundling Linux AppImage ($TARGET_ARCH via $RUNTIME) ==="
+    $RUNTIME run --rm \
+        --platform "$PLATFORM" \
+        -v "$ROOT:/src" \
+        -v capsem-cargo-registry:/usr/local/cargo/registry \
+        -v capsem-cargo-git:/usr/local/cargo/git \
+        -v capsem-cargo-bin:/usr/local/cargo/bin \
+        -v "capsem-agent-target-${TARGET_ARCH}:/src/target" \
+        -w /src \
+        rust:bookworm \
+        bash -c "apt-get update -qq && \
+               apt-get install -y -qq libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+                   xdg-utils musl-tools file curl wget >/dev/null 2>&1 && \
+               echo '--- Build agent binaries ---' && \
+               uv run capsem-builder agent --arch $TARGET_ARCH && \
+               echo '--- Build frontend ---' && \
+               curl -fsSL https://get.pnpm.io/install.sh | SHELL=bash bash - && \
+               export PATH=\"\$HOME/.local/share/pnpm:\$PATH\" && \
+               cd frontend && pnpm install && pnpm build && cd .. && \
+               echo '--- Build Tauri app (deb + AppImage) ---' && \
+               cargo install tauri-cli --locked && \
+               cd crates/capsem-app && cargo tauri build && cd ../.. && \
+               echo '--- Validate artifacts ---' && \
+               dpkg-deb --info target/release/bundle/deb/*.deb && \
+               file target/release/bundle/appimage/*.AppImage 2>/dev/null || true"
+    # Fix file ownership (container writes as root)
+    chown -R "$(id -u):$(id -g)" "$ROOT/target" "$ROOT/frontend/node_modules" 2>/dev/null || true
+    echo ""
+    echo "=== Artifacts ==="
+    ls -lh "$ROOT/target/linux-agent/$TARGET_ARCH/"
+    ls -lh "$ROOT/target/release/bundle/deb/"*.deb 2>/dev/null || true
+    ls -lh "$ROOT/target/release/bundle/appimage/"*.AppImage 2>/dev/null || true
+
+    echo "=== Artifacts ==="
+    ls -lh "$ROOT/target/linux-agent/$TARGET_ARCH/"
+    ls -lh "$ROOT/target/release/bundle/deb/"*.deb 2>/dev/null || true
+    ls -lh "$ROOT/target/release/bundle/appimage/"*.AppImage 2>/dev/null || true
 
 # Generate settings-schema.json, defaults.json, mcp-tools.json, and mock-data.generated.ts
 _generate-settings:
@@ -637,7 +700,15 @@ _pack-initrd:
         exit 1
     fi
     echo "=== Cross-compile agent ==="
-    cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent 2>&1 | tail -3
+    TARGET_ARCH="$arch" uv run python3 -c "
+    import os; from pathlib import Path
+    from capsem.builder.config import load_guest_config
+    from capsem.builder.docker import cross_compile_agent
+    arch = os.environ['TARGET_ARCH']
+    config = load_guest_config(Path('guest'))
+    rust_target = config.build.architectures[arch].rust_target
+    cross_compile_agent(rust_target, Path('.'), Path('target/linux-agent') / arch)
+    "
     echo ""
     echo "=== Repack initrd ==="
     WORKDIR=$(mktemp -d)
@@ -646,11 +717,13 @@ _pack-initrd:
     cp "$ROOT/guest/artifacts/capsem-init" init
     chmod 755 init
     rm -f capsem-pty-agent capsem-net-proxy capsem-mcp-server
-    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-pty-agent" capsem-pty-agent
+    # Use binaries produced by cross-compile
+    RELEASE_DIR="$ROOT/target/linux-agent/$arch"
+    cp "$RELEASE_DIR/capsem-pty-agent" capsem-pty-agent
     chmod 555 capsem-pty-agent
-    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-net-proxy" capsem-net-proxy
+    cp "$RELEASE_DIR/capsem-net-proxy" capsem-net-proxy
     chmod 555 capsem-net-proxy
-    cp "$ROOT/target/aarch64-unknown-linux-musl/release/capsem-mcp-server" capsem-mcp-server
+    cp "$RELEASE_DIR/capsem-mcp-server" capsem-mcp-server
     chmod 555 capsem-mcp-server
     cp "$ROOT/guest/artifacts/capsem-doctor" capsem-doctor
     chmod 755 capsem-doctor

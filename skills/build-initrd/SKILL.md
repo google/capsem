@@ -48,7 +48,7 @@ All guest binaries are deployed read-only:
 ## How initrd repack works
 
 The initrd is a gzip+cpio archive. `_pack-initrd` in the justfile:
-1. Cross-compiles Rust guest binaries for `aarch64-unknown-linux-musl`
+1. Builds Rust guest binaries via `cross_compile_agent()` (on macOS: container build; on Linux: native cargo) -- outputs to `target/linux-agent/{arch}/`
 2. Creates a temp directory with the binaries + init script + diagnostics
 3. Sets permissions (chmod 555 for binaries, 755 for init)
 4. Packs as cpio+gzip, writes to `assets/{arch}/initrd.img`

@@ -59,17 +59,19 @@ flowchart TD
     end
 ```
 
-## Stage 1: Guest binaries (cross-compilation)
+## Stage 1: Guest binaries (compilation)
 
-The guest agent crate (`crates/capsem-agent/`) produces three binaries that run inside the Linux VM. They are cross-compiled on the host using musl targets:
+The guest agent crate (`crates/capsem-agent/`) produces three binaries that run inside the Linux VM, statically linked with musl:
 
 | Binary | Purpose | Target |
 |--------|---------|--------|
-| `capsem-pty-agent` | Bridges terminal I/O over vsock | `aarch64-unknown-linux-musl` |
-| `capsem-net-proxy` | Relays HTTPS to host MITM proxy over vsock | `aarch64-unknown-linux-musl` |
-| `capsem-mcp-server` | MCP tool relay over vsock | `aarch64-unknown-linux-musl` |
+| `capsem-pty-agent` | Bridges terminal I/O over vsock | `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl` |
+| `capsem-net-proxy` | Relays HTTPS to host MITM proxy over vsock | same |
+| `capsem-mcp-server` | MCP tool relay over vsock | same |
 
-Cross-compilation uses `rust-lld` (from the `llvm-tools` rustup component). The linker config lives in `.cargo/config.toml`:
+On **macOS**, `cross_compile_agent()` delegates to `container_compile_agent()` which builds natively inside a Linux container (podman/docker). Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts. No host cross-compile toolchain needed.
+
+On **Linux** (CI), cargo builds directly with the musl target. The linker config in `.cargo/config.toml` uses `rust-lld`:
 
 ```toml
 [target.aarch64-unknown-linux-musl]
@@ -79,7 +81,14 @@ linker = "rust-lld"
 linker = "rust-lld"
 ```
 
-If you see `ld: unknown options: --as-needed`, run `rustup component add llvm-tools`.
+### Verifying the full Linux build locally
+
+`just cross-compile [arch]` builds everything in a container: agent binaries, frontend, and the full Tauri app (deb + AppImage). This catches linuxdeploy and system dep issues before CI.
+
+```bash
+just cross-compile           # Build for host arch (arm64 on Apple Silicon)
+just cross-compile x86_64    # Build x86_64 deb + AppImage
+```
 
 ## Stage 2: Initrd repack
 

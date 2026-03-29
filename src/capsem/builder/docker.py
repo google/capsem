@@ -390,12 +390,76 @@ def create_squashfs(
     ])
 
 
+def container_compile_agent(
+    rust_target: str,
+    repo_root: Path,
+    output_dir: Path,
+) -> list[Path]:
+    """Compile guest agent binaries inside a Linux container.
+
+    Used on macOS to avoid local cross-linker toolchain issues. Builds natively
+    inside a container with per-arch volume caching to prevent cache clobbering
+    between arm64 and x86_64 builds.
+    """
+    runtime = detect_runtime()
+    platform = "linux/arm64" if "aarch64" in rust_target else "linux/amd64"
+    arch_suffix = "arm64" if "aarch64" in rust_target else "x86_64"
+    target_volume = f"capsem-agent-target-{arch_suffix}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build cp + file validation commands from GUEST_BINARIES constant
+    cp_cmds = " && ".join(
+        f"cp target/{rust_target}/release/{b} /output/{b}"
+        for b in GUEST_BINARIES
+    )
+    file_cmds = " && ".join(f"file /output/{b}" for b in GUEST_BINARIES)
+
+    print(f"  Container build ({platform}) ...")
+    run_cmd([
+        runtime, "run", "--rm",
+        "--platform", platform,
+        "-v", f"{repo_root.resolve()}:/src:ro",
+        "-v", f"{output_dir.resolve()}:/output",
+        "-v", "capsem-cargo-registry:/usr/local/cargo/registry",
+        "-v", "capsem-cargo-git:/usr/local/cargo/git",
+        "-v", f"{target_volume}:/src/target",
+        "-w", "/src",
+        "rust:slim-bookworm", "bash", "-c",
+        f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
+        f"rustup target add {rust_target} && "
+        f"cargo build --release --target {rust_target} -p capsem-agent && "
+        f"{cp_cmds} && {file_cmds}",
+    ])
+
+    copied: list[Path] = []
+    for binary in GUEST_BINARIES:
+        dst = output_dir / binary
+        if not dst.exists():
+            raise RuntimeError(f"Expected binary not found after container build: {dst}")
+        if dst.stat().st_size == 0:
+            raise RuntimeError(f"Binary is empty: {dst}")
+        copied.append(dst)
+
+    return copied
+
+
 def cross_compile_agent(
     rust_target: str,
     repo_root: Path,
     output_dir: Path,
 ) -> list[Path]:
-    """Cross-compile guest agent binaries for a given Rust target."""
+    """Cross-compile guest agent binaries for a given Rust target.
+
+    On macOS, this delegates to container_compile_agent to avoid complex
+    local cross-linker setup for x86_64.
+    """
+    # Use container build on macOS for cross-arch or if specifically requested.
+    # For now, let's follow the plan and ensure it uses container on macOS.
+    if sys.platform == "darwin":
+        print(f"  macOS detected: using container-native build for {rust_target}")
+        return container_compile_agent(rust_target, repo_root, output_dir)
+
+    # Native cross-compile (Linux/CI)
     # Ensure target installed
     try:
         result = run_cmd(
@@ -630,8 +694,8 @@ def build_image(
     # Sync container VM clock with host to prevent apt date errors
     sync_container_clock(runtime)
 
-    # Doctor check: cross-compilation target
-    if template == "rootfs":
+    # Doctor check: cross-compilation target (skip on macOS -- container handles it)
+    if template == "rootfs" and sys.platform != "darwin":
         target_check = check_cross_target(arch.rust_target)
         if not target_check.passed:
             raise RuntimeError(

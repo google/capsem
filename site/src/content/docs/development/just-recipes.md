@@ -22,7 +22,7 @@ sidebar:
 
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
-| `just test` | Unit tests (llvm-cov) + cross-compile check + frontend check + Python schema tests | No |
+| `just test` | Unit tests (llvm-cov) + agent cross-compile + frontend check + Python schema tests | No |
 | `just run "capsem-doctor"` | In-VM diagnostic suite (VirtioFS, networking, binaries, permissions) | Yes |
 | `just full-test` | All of the above + injection test + integration test + benchmarks | Yes (3x) |
 | `just test-injection` | Boot VM with generated configs, verify all injection paths | Yes |
@@ -40,6 +40,7 @@ Three-tier testing policy:
 | `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker/Podman) | ~10 min |
 | `just build-kernel [arch]` | Kernel only (default: arm64) | ~5 min |
 | `just build-rootfs [arch]` | Rootfs only (default: arm64) | ~8 min |
+| `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
 | `just full-run "CMD"` | `build-assets` then `run` (full rebuild + boot) | ~10 min |
 
 You only need `just build-assets` on first setup or when `guest/config/` changes (new packages, rootfs changes). Day-to-day, `just run` repacks the initrd without rebuilding images.
