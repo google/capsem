@@ -10,26 +10,35 @@ The VM image is defined by TOML configs in `guest/config/`. To change what's ins
 ## The config directory
 
 ```
-guest/config/
-    build.toml              Build settings (base image, compression, kernel branch)
-    manifest.toml           Package metadata
-    ai/
-        anthropic.toml      Claude Code provider
-        google.toml         Gemini CLI provider
-        openai.toml         Codex provider
-    packages/
-        apt.toml            System packages (coreutils, git, curl, python3, ...)
-        python.toml         Python packages (numpy, requests, pytest, ...)
-    mcp/
-        capsem.toml         Built-in MCP server
-    security/
-        web.toml            Domain allow/block policy
-    vm/
-        resources.toml      CPU, RAM, disk limits
-        environment.toml    Shell config, bashrc, PATH, TLS
-    kernel/
-        defconfig.arm64     Kernel config (arm64)
-        defconfig.x86_64    Kernel config (x86_64)
+guest/
+    config/
+        build.toml              Build settings (base image, compression, kernel branch)
+        manifest.toml           Package metadata
+        ai/
+            anthropic.toml      Claude Code provider
+            google.toml         Gemini CLI provider
+            openai.toml         Codex provider
+        packages/
+            apt.toml            System packages (coreutils, git, curl, python3, ...)
+            python.toml         Python packages (numpy, requests, pytest, ...)
+        mcp/
+            capsem.toml         Built-in MCP server
+        security/
+            web.toml            Domain allow/block policy
+        vm/
+            resources.toml      CPU, RAM, disk limits
+            environment.toml    Shell config, bashrc, PATH, TLS
+        kernel/
+            defconfig.arm64     Kernel config (arm64)
+            defconfig.x86_64    Kernel config (x86_64)
+    artifacts/
+        banner.txt              Login banner (ASCII art shown at session start)
+        tips.txt                Random tips (one shown per login)
+        capsem-bashrc           Shell configuration (PS1, aliases, banner/tips display)
+        capsem-init             PID 1 init script
+        capsem-doctor           In-VM diagnostic suite
+        capsem-bench            In-VM benchmarks
+        diagnostics/            Test scripts for capsem-doctor
 ```
 
 ## Common changes
@@ -92,6 +101,21 @@ custom_allow = ["*.your-corp.com"]
 custom_block = ["*.banned-domain.com"]
 ```
 
+### Customize login tips
+
+Edit `guest/artifacts/tips.txt` -- one tip per line, `#` lines are ignored. A random tip is shown each time a user opens a session:
+
+```
+pip install and uv pip install work out of the box.
+npm install -g works -- packages go to your scratch disk.
+Run capsem-doctor to verify sandbox integrity.
+Your custom tip here.
+```
+
+### Customize the login banner
+
+Edit `guest/artifacts/banner.txt` -- shown at the top of every new session, before the AI tool status and tips.
+
 ### Change VM resources
 
 Edit `guest/config/vm/resources.toml`:
@@ -140,6 +164,9 @@ just run "capsem-doctor"
 | `vm/environment.toml` | No rebuild -- applied at boot via settings |
 | `kernel/defconfig.*` | `just build-kernel` |
 | `build.toml` | `just build-assets` (full rebuild) |
+| `guest/artifacts/tips.txt` | `just build-rootfs` (baked into rootfs) |
+| `guest/artifacts/banner.txt` | `just build-rootfs` (baked into rootfs) |
+| `guest/artifacts/capsem-bashrc` | `just build-rootfs` (baked into rootfs) |
 | `guest/artifacts/capsem-init` | `just run` (repacks initrd automatically) |
 
 Settings-only changes (security, resources, environment) take effect on the next `just run` without any rebuild -- capsem-builder generates `defaults.json` which the host reads at boot.
