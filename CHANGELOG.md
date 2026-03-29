@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.10] - 2026-03-29
+
 ### Fixed
+- **CI Linux build: install xdg-utils** -- Tauri's AppImage bundler requires `xdg-open`. Added `xdg-utils` to `apt-get install` in `build-app-linux`.
+- **Linux build: gate all macOS-only APIs** -- `ApfsSnapshot` (`libc::clonefile`), `AppleVzHypervisor` import in boot.rs, and `vm_integration.rs` tests were not `cfg`-gated, causing compile failures on Linux app builds. Boot now dispatches to `KvmHypervisor` on Linux.
 - **Builder: apt clock skew on macOS** -- Podman/Docker VM clock drift after sleep/wake caused `apt-get update` to reject release files as "not valid yet" (exit 100). Added `Acquire::Check-Date=false` to all apt-get calls in Dockerfile templates and squashfs creation. Also added `sync_container_clock()` to auto-sync the VM clock with the host before builds.
 
 ### Added
+- **Platform gating static analysis test** -- `cargo test --test platform_gating` scans all `.rs` files for ungated macOS-only and Linux-only symbols. Catches platform API issues before they reach CI.
 - **Builder doctor: container clock check** -- `capsem-builder doctor` now detects clock skew between host and container VM, reports direction and magnitude, and suggests a fix.
 
 ### Improved
@@ -20,15 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 - **Site restructuring** -- moved capsem-doctor to new top-level Debugging section (with troubleshooting guide), moved benchmarking methodology to Development, added top-level Benchmarks section with current performance results (boot time, disk I/O, CLI startup, HTTP, throughput, snapshots).
-
-## [0.14.10] - 2026-03-29
-
-### Fixed
-- **CI Linux build: install xdg-utils** -- Tauri's AppImage bundler requires `xdg-open`. Added `xdg-utils` to `apt-get install` in `build-app-linux`.
-- **Linux build: gate all macOS-only APIs** -- `ApfsSnapshot` (`libc::clonefile`), `AppleVzHypervisor` import in boot.rs, and `vm_integration.rs` tests were not `cfg`-gated, causing compile failures on Linux app builds. Boot now dispatches to `KvmHypervisor` on Linux.
-
-### Added
-- **Platform gating static analysis test** -- `cargo test --test platform_gating` scans all `.rs` files for ungated macOS-only and Linux-only symbols. Catches platform API issues before they reach CI.
 
 ## [0.14.8] - 2026-03-29
 
