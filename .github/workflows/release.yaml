@@ -214,12 +214,7 @@ jobs:
           name: vm-assets-arm64
           path: assets/arm64/
 
-      # Create assets/current symlink for Tauri resource bundling.
-      # GitHub Actions artifacts don't preserve symlinks, so copy instead.
-      - name: Copy assets/current
-        run: cp -r assets/arm64 assets/current
-
-      # Regenerate manifest for this arch.
+      # Regenerate manifest for this arch (creates assets/current symlink).
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - name: Generate manifest
@@ -230,6 +225,13 @@ jobs:
           from capsem.builder.docker import generate_checksums
           generate_checksums(Path('assets'), '$VERSION')
           "
+
+      # Replace symlink with real copy -- GitHub Actions strips symlinks
+      # and Tauri build.rs needs assets/current/ to exist as a real dir.
+      - name: Copy assets/current
+        run: |
+          rm -rf assets/current
+          cp -r assets/arm64 assets/current
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -314,12 +316,7 @@ jobs:
           name: vm-assets-arm64
           path: assets/arm64/
 
-      # Create assets/current symlink for Tauri resource bundling.
-      # GitHub Actions artifacts don't preserve symlinks, so copy instead.
-      - name: Copy assets/current
-        run: cp -r assets/arm64 assets/current
-
-      # Regenerate manifest for this arch.
+      # Regenerate manifest for this arch (creates assets/current symlink).
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - name: Generate manifest
@@ -330,6 +327,13 @@ jobs:
           from capsem.builder.docker import generate_checksums
           generate_checksums(Path('assets'), '$VERSION')
           "
+
+      # Replace symlink with real copy -- GitHub Actions strips symlinks
+      # and Tauri build.rs needs assets/current/ to exist as a real dir.
+      - name: Copy assets/current
+        run: |
+          rm -rf assets/current
+          cp -r assets/arm64 assets/current
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-03-28
+
+### Fixed
+- **CI assets/current ordering** -- `generate_checksums()` creates a symlink for `assets/current`, which the subsequent `cp -r` must replace with a real directory copy. Moved `cp -r` after manifest generation so Tauri's `build.rs` finds real files instead of a stripped symlink.
+
 ## [0.14.2] - 2026-03-28
 
 ### Fixed
