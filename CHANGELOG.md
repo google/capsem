@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+- **Boot timing display** -- formatted table with right-aligned columns and proportional bar chart instead of flat log lines.
+- **capsem-bench JSON output** -- saved to `/tmp/capsem-benchmark.json` inside the VM instead of dumped to stdout.
+
+### Docs
+- **Site restructuring** -- moved capsem-doctor to new top-level Debugging section (with troubleshooting guide), moved benchmarking methodology to Development, added top-level Benchmarks section with current performance results (boot time, disk I/O, CLI startup, HTTP, throughput, snapshots).
+
+## [0.14.7] - 2026-03-29
+
+### Fixed
+- **Linux build: gate `ApfsSnapshot` behind `cfg(target_os = "macos")`** -- `libc::clonefile` is macOS-only, causing compile failure on Linux app builds.
+
 ## [0.14.6] - 2026-03-28
 
 ### Fixed

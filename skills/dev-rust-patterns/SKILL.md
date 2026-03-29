@@ -141,6 +141,8 @@ struct FunctionCall {
 
 7. **Single-file CoW**: Added `clone_file()` helper that uses APFS clonefile on macOS and FICLONE on Linux for instant CoW copies. Used in snapshot compact (host-to-host). **Not safe for revert** (snapshot-to-VirtioFS-workspace) because APFS clonefile is metadata-only and VirtioFS may serve stale data to the guest. Revert must use `std::fs::copy` (byte copy) so the guest sees the new content immediately.
 
+8. **Platform-gate all macOS-only APIs**: Any code using macOS-only symbols (`libc::clonefile`, Apple framework bindings, etc.) must be wrapped in `#[cfg(target_os = "macos")]` -- both the struct/impl and the tests. The Linux app build (Tauri deb/AppImage) compiles the full workspace; ungated macOS symbols cause `cannot find function` errors on Linux CI. This burned v0.14.7: `ApfsSnapshot` used `libc::clonefile` without a cfg gate. Rule: when adding platform-specific code, gate the definition, the impl, and the tests.
+
 ## Async reference
 
 Read `references/rust-async-patterns.md` for comprehensive tokio patterns (tasks, channels, streams, error handling). From the community (6.4K installs).

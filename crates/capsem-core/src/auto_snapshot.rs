@@ -454,8 +454,10 @@ pub trait SnapshotBackend: Send + Sync {
 
 /// APFS clonefile backend (macOS). Instant copy-on-write via clonefile(2) syscall.
 /// Falls back to recursive copy on non-APFS filesystems.
+#[cfg(target_os = "macos")]
 pub struct ApfsSnapshot;
 
+#[cfg(target_os = "macos")]
 impl SnapshotBackend for ApfsSnapshot {
     fn snapshot(&self, source: &Path, dest: &Path) -> anyhow::Result<()> {
         use std::ffi::CString;
@@ -1214,6 +1216,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn apfs_snapshot_copies_files() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
@@ -1229,6 +1232,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn apfs_snapshot_empty_source() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
