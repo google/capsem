@@ -6,11 +6,13 @@ to produce VM boot assets. Supports multi-architecture output (arm64, x86_64).
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -186,6 +188,44 @@ def is_ci() -> bool:
     return bool(os.environ.get("GITHUB_ACTIONS"))
 
 
+# Maximum acceptable clock skew (seconds) between host and container VM.
+MAX_CLOCK_SKEW_SECONDS = 30
+
+
+def sync_container_clock(runtime: str) -> None:
+    """Sync container VM clock with host to prevent apt date validation errors.
+
+    On macOS, Podman and Docker Desktop run containers inside a Linux VM whose
+    clock can drift after host sleep/wake. When the VM clock falls behind,
+    Debian apt-get rejects release files as "not valid yet" (exit 100).
+
+    This sets the VM clock to the current host UTC time before builds.
+    Silently does nothing on native Linux (no VM layer) or on errors.
+    """
+    if sys.platform != "darwin":
+        return
+
+    now = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    try:
+        if runtime == "podman":
+            run_cmd(
+                ["podman", "machine", "ssh", "--", "sudo", "date", "-s", now],
+                capture=True, echo=False,
+            )
+        else:
+            # Docker Desktop: set clock via a privileged container
+            run_cmd(
+                ["docker", "run", "--rm", "--privileged",
+                 "alpine", "date", "-s", now],
+                capture=True, echo=False,
+            )
+    except Exception:
+        pass  # Best effort -- apt-get options are the fallback
+
+
 def resolve_kernel_version(branch: str = "6.6") -> str:
     """Fetch latest stable kernel version for an LTS branch from kernel.org."""
     try:
@@ -344,7 +384,7 @@ def create_squashfs(
         runtime, "run", "--rm",
         "-v", f"{abs_dir}:/assets",
         "debian:bookworm-slim", "bash", "-c",
-        f"apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y squashfs-tools zstd && "
+        f"apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && apt-get install -y squashfs-tools zstd && "
         f"mkdir /rootfs && tar xf /assets/{tar_name} -C /rootfs && "
         f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend",
     ])
@@ -586,6 +626,9 @@ def build_image(
     arch = config.build.architectures[arch_name]
     runtime = detect_runtime()
     ci = is_ci()
+
+    # Sync container VM clock with host to prevent apt date errors
+    sync_container_clock(runtime)
 
     # Doctor check: cross-compilation target
     if template == "rootfs":

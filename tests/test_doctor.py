@@ -13,8 +13,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from capsem.builder.doctor import (
+    MAX_CLOCK_SKEW_SECONDS,
     CheckResult,
     check_b3sum,
+    check_container_clock,
     check_container_runtime,
     check_cross_target,
     check_guest_config,
@@ -183,6 +185,82 @@ class TestCheckB3sum:
         result = check_b3sum()
         assert result.passed is False
         assert "cargo install b3sum" in result.fix
+
+
+# ---------------------------------------------------------------------------
+# Container clock check
+# ---------------------------------------------------------------------------
+
+
+class TestCheckContainerClock:
+    @patch("capsem.builder.doctor.sys")
+    def test_returns_none_on_linux(self, mock_sys):
+        mock_sys.platform = "linux"
+        assert check_container_clock() is None
+
+    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem.builder.doctor.sys")
+    def test_passes_when_clock_in_sync(self, mock_sys, mock_run, mock_which):
+        mock_sys.platform = "darwin"
+        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
+        # VM reports current host time (0s skew)
+        import time
+        mock_run.return_value = MagicMock(
+            stdout=str(int(time.time())), returncode=0,
+        )
+        result = check_container_clock()
+        assert result is not None
+        assert result.passed is True
+        assert "ok" in result.detail
+
+    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem.builder.doctor.sys")
+    def test_fails_when_clock_behind(self, mock_sys, mock_run, mock_which):
+        mock_sys.platform = "darwin"
+        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
+        # VM reports time 5 minutes behind host
+        import time
+        mock_run.return_value = MagicMock(
+            stdout=str(int(time.time()) - 300), returncode=0,
+        )
+        result = check_container_clock()
+        assert result is not None
+        assert result.passed is False
+        assert "behind" in result.detail
+
+    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem.builder.doctor.sys")
+    def test_fails_when_clock_ahead(self, mock_sys, mock_run, mock_which):
+        mock_sys.platform = "darwin"
+        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
+        # VM reports time 5 minutes ahead of host
+        import time
+        mock_run.return_value = MagicMock(
+            stdout=str(int(time.time()) + 300), returncode=0,
+        )
+        result = check_container_clock()
+        assert result is not None
+        assert result.passed is False
+        assert "ahead" in result.detail
+
+    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem.builder.doctor.sys")
+    def test_returns_none_when_no_runtime(self, mock_sys, mock_which):
+        mock_sys.platform = "darwin"
+        mock_which.return_value = None
+        assert check_container_clock() is None
+
+    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem.builder.doctor.sys")
+    def test_returns_none_on_command_failure(self, mock_sys, mock_run, mock_which):
+        mock_sys.platform = "darwin"
+        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
+        mock_run.return_value = MagicMock(stdout="", returncode=1)
+        assert check_container_clock() is None
 
 
 # ---------------------------------------------------------------------------

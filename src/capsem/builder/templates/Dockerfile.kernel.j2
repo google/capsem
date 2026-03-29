@@ -14,7 +14,7 @@ FROM --platform={{ arch.docker_platform }} {{ arch.base_image }} AS build
 ARG KERNEL_VERSION={{ kernel_version }}
 
 # Install build tools
-RUN apt-get -o Acquire::Check-Valid-Until=false update && \
+RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && \
     apt-get install -y --no-install-recommends \
         build-essential bc bison flex libssl-dev libelf-dev \
         wget ca-certificates xz-utils cpio \

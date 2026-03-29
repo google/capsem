@@ -8,7 +8,7 @@ FROM --platform={{ arch.docker_platform }} {{ arch.base_image }}
 
 # Core utilities and inspection tools
 # apt-get upgrade pulls latest security patches and package versions at build time.
-RUN apt-get -o Acquire::Check-Valid-Until=false update && \
+RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         {{ apt_packages | join(' \\\n        ') }} && \

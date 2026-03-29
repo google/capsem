@@ -8,6 +8,7 @@ run_all_checks() for the doctor CLI command.
 
 from __future__ import annotations
 
+import datetime
 import shutil
 import subprocess
 import sys
@@ -136,6 +137,63 @@ def _check_resources(
     if memory_mb < PODMAN_RECOMMENDED_MEMORY_MB:
         detail += f" (recommended {PODMAN_RECOMMENDED_MEMORY_MB}MB)"
     return CheckResult(name="container-resources", passed=True, detail=detail)
+
+
+# Maximum acceptable clock skew (seconds) between host and container VM.
+MAX_CLOCK_SKEW_SECONDS = 30
+
+
+def check_container_clock() -> CheckResult | None:
+    """Check if container VM clock is in sync with the host.
+
+    On macOS, Podman and Docker Desktop run containers in a Linux VM whose
+    clock can drift after sleep/wake. Skew beyond MAX_CLOCK_SKEW_SECONDS
+    causes apt-get to reject release files as "not valid yet".
+    Returns None on native Linux (no VM layer).
+    """
+    if sys.platform != "darwin":
+        return None
+
+    host_now = datetime.datetime.now(datetime.timezone.utc)
+
+    # Try podman first, then docker
+    for runtime, cmd in [
+        ("podman", ["podman", "machine", "ssh", "--", "date", "-u", "+%s"]),
+        ("docker", ["docker", "run", "--rm", "alpine", "date", "-u", "+%s"]),
+    ]:
+        if not shutil.which(runtime):
+            continue
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                continue
+            vm_epoch = int(result.stdout.strip())
+            host_epoch = int(host_now.timestamp())
+            skew = abs(host_epoch - vm_epoch)
+            if skew > MAX_CLOCK_SKEW_SECONDS:
+                direction = "behind" if vm_epoch < host_epoch else "ahead"
+                fix = (
+                    f"podman machine stop && podman machine start"
+                    if runtime == "podman"
+                    else "restart Docker Desktop"
+                )
+                return CheckResult(
+                    name="container-clock",
+                    passed=False,
+                    detail=f"{runtime} VM clock is {skew}s {direction} host",
+                    fix=fix,
+                )
+            return CheckResult(
+                name="container-clock",
+                passed=True,
+                detail=f"{runtime} VM clock skew: {skew}s (ok)",
+            )
+        except Exception:
+            continue
+
+    return None
 
 
 def check_rust_toolchain() -> CheckResult:
@@ -312,6 +370,9 @@ def run_all_checks(guest_dir: Path, repo_root: Path) -> list[CheckResult]:
     resources_check = check_container_resources()
     if resources_check is not None:
         results.append(resources_check)
+    clock_check = check_container_clock()
+    if clock_check is not None:
+        results.append(clock_check)
     results.append(check_rust_toolchain())
     results.append(check_cross_target("aarch64-unknown-linux-musl"))
     results.append(check_cross_target("x86_64-unknown-linux-musl"))
@@ -335,7 +396,7 @@ def format_results(results: list[CheckResult]) -> str:
     # Group by category based on check name
     categories: dict[str, list[CheckResult]] = {}
     for r in results:
-        if r.name in ("container-runtime", "container-resources"):
+        if r.name in ("container-runtime", "container-resources", "container-clock"):
             cat = "Container Runtime"
         elif r.name in ("rust-toolchain",) or r.name.startswith("target-"):
             cat = "Rust Toolchain"

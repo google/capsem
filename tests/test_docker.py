@@ -315,6 +315,7 @@ from capsem.builder.docker import (
     prepare_build_context,
     resolve_kernel_version,
     run_cmd,
+    sync_container_clock,
 )
 
 
@@ -415,6 +416,48 @@ class TestIsCi:
 
 
 # ---------------------------------------------------------------------------
+# Build execution: sync_container_clock
+# ---------------------------------------------------------------------------
+
+
+class TestSyncContainerClock:
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.run_cmd")
+    def test_podman_syncs_via_machine_ssh(self, mock_run, mock_sys):
+        mock_sys.platform = "darwin"
+        sync_container_clock("podman")
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:3] == ["podman", "machine", "ssh"]
+        assert "date" in cmd
+        assert "-s" in cmd
+
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.run_cmd")
+    def test_docker_syncs_via_privileged_container(self, mock_run, mock_sys):
+        mock_sys.platform = "darwin"
+        sync_container_clock("docker")
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "docker"
+        assert "--privileged" in cmd
+        assert "date" in cmd
+
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.run_cmd")
+    def test_noop_on_linux(self, mock_run, mock_sys):
+        mock_sys.platform = "linux"
+        sync_container_clock("podman")
+        mock_run.assert_not_called()
+
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.run_cmd")
+    def test_swallows_errors(self, mock_run, mock_sys):
+        mock_sys.platform = "darwin"
+        mock_run.side_effect = Exception("VM not running")
+        # Should not raise
+        sync_container_clock("podman")
+
+
+# ---------------------------------------------------------------------------
 # Build execution: docker_build
 # ---------------------------------------------------------------------------
 
@@ -505,6 +548,55 @@ class TestExportContainerFs:
 # ---------------------------------------------------------------------------
 # Build execution: squashfs
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Clock-skew resilience: apt-get must bypass both date checks
+# ---------------------------------------------------------------------------
+
+
+class TestAptClockSkewOptions:
+    """Every apt-get update must include both Check-Valid-Until=false and
+    Check-Date=false so builds survive Podman/Docker VM clock drift.
+
+    Regression test for: Podman VM clock behind real time causes
+    "Release file is not valid yet" errors even with Check-Valid-Until=false.
+    """
+
+    APT_CLOCK_SKEW_OPTIONS = [
+        "Acquire::Check-Valid-Until=false",
+        "Acquire::Check-Date=false",
+    ]
+
+    def test_rootfs_template_has_both_options(self, rendered_arm64):
+        for opt in self.APT_CLOCK_SKEW_OPTIONS:
+            assert opt in rendered_arm64, (
+                f"Dockerfile.rootfs.j2 missing apt option '{opt}' -- "
+                "builds will fail when container clock drifts"
+            )
+
+    def test_kernel_template_has_both_options(self, real_config):
+        rendered = render_dockerfile(
+            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
+        )
+        for opt in self.APT_CLOCK_SKEW_OPTIONS:
+            assert opt in rendered, (
+                f"Dockerfile.kernel.j2 missing apt option '{opt}' -- "
+                "builds will fail when container clock drifts"
+            )
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_create_squashfs_has_both_options(self, mock_run):
+        create_squashfs(
+            "podman", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
+            "zstd", 15,
+        )
+        cmd_str = " ".join(mock_run.call_args[0][0])
+        for opt in self.APT_CLOCK_SKEW_OPTIONS:
+            assert opt in cmd_str, (
+                f"create_squashfs() missing apt option '{opt}' -- "
+                "squashfs builds will fail when container clock drifts"
+            )
 
 
 class TestCreateSquashfs:

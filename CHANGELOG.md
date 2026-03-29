@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Builder: apt clock skew on macOS** -- Podman/Docker VM clock drift after sleep/wake caused `apt-get update` to reject release files as "not valid yet" (exit 100). Added `Acquire::Check-Date=false` to all apt-get calls in Dockerfile templates and squashfs creation. Also added `sync_container_clock()` to auto-sync the VM clock with the host before builds.
+
+### Added
+- **Builder doctor: container clock check** -- `capsem-builder doctor` now detects clock skew between host and container VM, reports direction and magnitude, and suggests a fix.
+
 ### Improved
 - **Boot timing display** -- formatted table with right-aligned columns and proportional bar chart instead of flat log lines.
 - **capsem-bench refactored to package** -- split 897-line single file into `capsem_bench/` Python package with per-category modules (disk, rootfs, startup, http_bench, throughput, snapshot). Shell wrapper at `capsem-bench` preserves the same CLI interface.
