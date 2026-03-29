@@ -384,6 +384,9 @@ jobs:
           cat assets/manifest.json | head -5
 
       - name: Build app (deb + AppImage)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd crates/capsem-app
           cargo tauri build
@@ -399,7 +402,11 @@ jobs:
         run: |
           mkdir -p release-artifacts
           cp target/release/bundle/deb/*.deb release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/deb/*.tar.gz release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/deb/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/appimage/*.AppImage release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/appimage/*.AppImage.tar.gz release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/appimage/*.AppImage.tar.gz.sig release-artifacts/ 2>/dev/null || true
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@v7

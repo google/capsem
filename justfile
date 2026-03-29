@@ -136,25 +136,34 @@ cross-compile arch="": _check-assets _generate-settings
     # Sync assets layout for Tauri build
     rm -rf assets/current
     if [ -d "assets/$TARGET_ARCH" ]; then cp -r "assets/$TARGET_ARCH" assets/current; fi
+    # Load Tauri signing key if available
+    TAURI_KEY=""
+    TAURI_PWD=""
+    if [ -f "$ROOT/private/tauri/capsem.key" ]; then
+        TAURI_KEY=$(cat "$ROOT/private/tauri/capsem.key")
+        TAURI_PWD=$(cat "$ROOT/private/tauri/password.txt")
+    fi
     echo "=== Bundling Linux AppImage ($TARGET_ARCH via $RUNTIME) ==="
     $RUNTIME run --rm \
         --platform "$PLATFORM" \
+        -e "TAURI_SIGNING_PRIVATE_KEY=$TAURI_KEY" \
+        -e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_PWD" \
+        -e "APPIMAGE_EXTRACT_AND_RUN=1" \
         -v "$ROOT:/src" \
-        -v capsem-cargo-registry:/usr/local/cargo/registry \
-        -v capsem-cargo-git:/usr/local/cargo/git \
-        -v capsem-cargo-bin:/usr/local/cargo/bin \
-        -v "capsem-agent-target-${TARGET_ARCH}:/src/target" \
         -w /src \
         rust:bookworm \
-        bash -c "apt-get update -qq && \
-               apt-get install -y -qq libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+        bash -c "apt-get -o Acquire::Check-Date=false update -qq && \
+               apt-get -o Acquire::Check-Date=false install -y -qq libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
                    xdg-utils musl-tools file curl wget >/dev/null 2>&1 && \
+               curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1 && \
+               apt-get -o Acquire::Check-Date=false install -y -qq nodejs >/dev/null 2>&1 && \
+               npm install -g pnpm@9 >/dev/null 2>&1 && \
                echo '--- Build agent binaries ---' && \
-               uv run capsem-builder agent --arch $TARGET_ARCH && \
+               cargo build --release -p capsem-agent && \
+               mkdir -p target/linux-agent/$TARGET_ARCH && \
+               cp target/release/capsem-pty-agent target/release/capsem-mcp-server target/release/capsem-net-proxy target/linux-agent/$TARGET_ARCH/ && \
                echo '--- Build frontend ---' && \
-               curl -fsSL https://get.pnpm.io/install.sh | SHELL=bash bash - && \
-               export PATH=\"\$HOME/.local/share/pnpm:\$PATH\" && \
-               cd frontend && pnpm install && pnpm build && cd .. && \
+               cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Build Tauri app (deb + AppImage) ---' && \
                cargo install tauri-cli --locked && \
                cd crates/capsem-app && cargo tauri build && cd ../.. && \
@@ -164,11 +173,6 @@ cross-compile arch="": _check-assets _generate-settings
     # Fix file ownership (container writes as root)
     chown -R "$(id -u):$(id -g)" "$ROOT/target" "$ROOT/frontend/node_modules" 2>/dev/null || true
     echo ""
-    echo "=== Artifacts ==="
-    ls -lh "$ROOT/target/linux-agent/$TARGET_ARCH/"
-    ls -lh "$ROOT/target/release/bundle/deb/"*.deb 2>/dev/null || true
-    ls -lh "$ROOT/target/release/bundle/appimage/"*.AppImage 2>/dev/null || true
-
     echo "=== Artifacts ==="
     ls -lh "$ROOT/target/linux-agent/$TARGET_ARCH/"
     ls -lh "$ROOT/target/release/bundle/deb/"*.deb 2>/dev/null || true

@@ -64,3 +64,4 @@ frontend/node_modules/
 site/dist/
 site/node_modules/
 site/.astro/
+.pnpm-store/

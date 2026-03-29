@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.11] - 2026-03-29
+
+### Fixed
+- **CI Linux build: add Tauri signing keys** -- `build-app-linux` was missing `TAURI_SIGNING_PRIVATE_KEY`, causing "public key found but no private key" failure. Also collect `.tar.gz` and `.sig` updater artifacts.
+
 ### Added
-- **`just cross-compile [arch]`** -- build agent binaries + full Linux app (deb + AppImage) inside a container. No host cross-compile toolchain needed. Supports arm64 and x86_64.
-- **Container-native agent compilation** -- on macOS, `cross_compile_agent()` delegates to `container_compile_agent()` which builds inside a Linux container with per-arch volume caching. Eliminates need for rust-lld, musl targets, and llvm-tools on the host.
+- **`just cross-compile [arch]`** -- build agent binaries + full Linux app (deb + AppImage) inside a container. No host cross-compile toolchain needed. Supports arm64 and x86_64. Clean build every run (no stale volumes).
+- **Container-native agent compilation** -- builds natively inside a Linux container, eliminating cross-compile cfg gating issues.
 - **Multi-arch Linux release** -- CI now builds deb + AppImage for both arm64 and x86_64 via matrix job. Artifacts validated with `dpkg-deb --info` and `file`.
 
 ## [0.14.10] - 2026-03-29
