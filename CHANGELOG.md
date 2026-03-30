@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.12] - 2026-03-29
+
+### Fixed
+- **Skip AppImage on arm64 Linux** -- linuxdeploy has no arm64 build. arm64 Linux (Chromebooks) now builds `.deb` only. x86_64 builds both deb + AppImage.
+
 ## [0.14.11] - 2026-03-29
 
 ### Fixed

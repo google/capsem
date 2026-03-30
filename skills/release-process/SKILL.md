@@ -55,6 +55,9 @@ Triggered by `vX.Y.Z` tag push. Sequential jobs:
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
 - **Verify assets before Tauri build.** The `Verify assets layout` step lists assets/arm64/ and assets/current/ to catch missing files early. Tauri's build.rs resolves `../../assets/current/vmlinuz` relative to `crates/capsem-app/`.
 - **`pyproject.toml` version must match.** Three files must be bumped in sync: `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just cut-release` handles this automatically.
+- **No AppImage on arm64.** linuxdeploy has no arm64 build. arm64 Linux (Chromebooks) ships `.deb` only. Use `cargo tauri build --bundles deb` on arm64, full bundles on x86_64.
+- **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure.
+- **Test CI with `just cross-compile` before tagging.** Builds the full Linux app in a container, matching CI. If it passes locally, CI should pass.
 
 ## Full-test gates
 

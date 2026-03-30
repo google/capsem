@@ -164,9 +164,11 @@ cross-compile arch="": _check-assets _generate-settings
                cp target/release/capsem-pty-agent target/release/capsem-mcp-server target/release/capsem-net-proxy target/linux-agent/$TARGET_ARCH/ && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
-               echo '--- Build Tauri app (deb + AppImage) ---' && \
+               echo '--- Build Tauri app ---' && \
                cargo install tauri-cli --locked && \
-               cd crates/capsem-app && cargo tauri build && cd ../.. && \
+               BUNDLES='deb,appimage' && \
+               [ '$TARGET_ARCH' = 'arm64' ] && BUNDLES='deb' ; \
+               cd crates/capsem-app && cargo tauri build --bundles \$BUNDLES && cd ../.. && \
                echo '--- Validate artifacts ---' && \
                dpkg-deb --info target/release/bundle/deb/*.deb && \
                file target/release/bundle/appimage/*.AppImage 2>/dev/null || true"

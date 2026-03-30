@@ -317,8 +317,10 @@ jobs:
         include:
           - arch: arm64
             runner: ubuntu-24.04-arm
+            bundles: deb
           - arch: x86_64
             runner: ubuntu-24.04
+            bundles: deb,appimage
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -383,13 +385,13 @@ jobs:
           echo "=== assets/manifest.json ==="
           cat assets/manifest.json | head -5
 
-      - name: Build app (deb + AppImage)
+      - name: Build app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd crates/capsem-app
-          cargo tauri build
+          cargo tauri build --bundles ${{ matrix.bundles }}
 
       - name: Validate artifacts
         run: |
