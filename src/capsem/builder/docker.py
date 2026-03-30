@@ -415,6 +415,9 @@ def container_compile_agent(
     file_cmds = " && ".join(f"ls -l /output/{b}" for b in GUEST_BINARIES)
 
     print(f"  Container build ({platform}) ...")
+    # Source is mounted :ro to protect the host. We symlink everything into
+    # a writable /build dir so cargo can generate Cargo.lock without modifying
+    # the host. The target dir and registry are persistent named volumes.
     run_cmd([
         runtime, "run", "--rm",
         "--platform", platform,
@@ -422,9 +425,10 @@ def container_compile_agent(
         "-v", f"{output_dir.resolve()}:/output",
         "-v", "capsem-cargo-registry:/usr/local/cargo/registry",
         "-v", "capsem-cargo-git:/usr/local/cargo/git",
-        "-v", f"{target_volume}:/src/target",
-        "-w", "/src",
+        "-v", f"{target_volume}:/build/target",
+        "-w", "/build",
         "rust:slim-bookworm", "bash", "-c",
+        f"for f in /src/*; do [ \"$(basename $f)\" != target ] && ln -s $f /build/; done && "
         f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
         f"rustup target add {rust_target} && "
         f"cargo build --release --target {rust_target} -p capsem-agent && "
