@@ -556,10 +556,13 @@ jobs:
             --notes "$NOTES"
 
           # Upload per-arch VM assets with arch prefix (both have vmlinuz, initrd.img, etc.)
+          # gh release upload uses the filename as the asset name, so we must
+          # rename files to ${arch}-${base} before uploading to avoid collisions.
           for arch in arm64 x86_64; do
             for f in release-artifacts/$arch/*; do
               [ -f "$f" ] || continue
               base=$(basename "$f")
-              gh release upload ${{ github.ref_name }} "$f#${arch}-${base}"
+              mv "$f" "release-artifacts/$arch/${arch}-${base}"
+              gh release upload ${{ github.ref_name }} "release-artifacts/$arch/${arch}-${base}"
             done
           done
