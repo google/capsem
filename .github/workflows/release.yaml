@@ -138,11 +138,17 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
 
+      - name: Create stub assets for Tauri build.rs
+        run: |
+          mkdir -p assets/current
+          touch assets/current/vmlinuz assets/current/initrd.img
+          echo '{"releases":{}}' > assets/manifest.json
+
       - name: Unit tests with coverage
         run: |
           cargo llvm-cov --workspace --no-cfg-coverage --codecov --output-path codecov.json 2>&1 | tee test-output.txt
           # Generate text summary for job report
-          cargo llvm-cov report --no-cfg-coverage --summary-only 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov report --summary-only 2>&1 | tee coverage-summary.txt
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
