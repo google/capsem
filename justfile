@@ -14,7 +14,8 @@
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
 #   test-injection  -> _check-assets + _pack-initrd + _sign
-#   full-test       -> test + _check-assets + _pack-initrd + _sign
+#   full-test       -> build-assets + test + _pack-initrd + _sign
+#   cut-release     -> full-test
 #   install         -> doctor + full-test
 #
 # First-time setup:
@@ -23,7 +24,7 @@
 #
 # Daily dev:          just run     (fast ~10s, auto-repacks initrd)
 # Before release:     just install (doctor + full-test -- all validation gates)
-# Releases:           just cut-release (bump, tag, push, CI builds + publishes)
+# Releases:           just cut-release (full-test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps (cargo update + pnpm update)
 
 binary := "target/debug/capsem"
@@ -195,8 +196,8 @@ _generate-settings:
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
-# Full validation: test + capsem-doctor + injection test + integration test + bench (boots VM)
-full-test: test _check-assets _pack-initrd _sign
+# Full validation: build-assets + test + capsem-doctor + injection test + integration test + bench (boots VM)
+full-test: build-assets test _pack-initrd _sign
     @echo ""
     @echo "=== capsem-doctor ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
@@ -265,8 +266,9 @@ release tag="":
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
 # Bump patch version, commit, tag, push, and wait for CI to publish.
-# Runs `just test` first (unit tests + audit + frontend check) to avoid burning tags.
-cut-release: test
+# Runs full-test first (build-assets + unit tests + capsem-doctor + integration +
+# bench) to avoid burning tags on issues only CI would catch.
+cut-release: full-test
     #!/usr/bin/env bash
     set -euo pipefail
     # Read current version from Cargo.toml

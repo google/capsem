@@ -9,9 +9,8 @@ description: Capsem release process, CI pipeline, Apple code signing, notarizati
 
 ```bash
 just doctor                    # Check tools
-just build-assets              # Rebuild VM assets if needed
 scripts/preflight.sh           # Validate Apple certs for CI
-just full-test                 # Unit + doctor + integration + bench
+just full-test                 # build-assets + unit tests + doctor + integration + bench
 ```
 
 ## Cutting a release
@@ -22,7 +21,7 @@ just full-test                 # Unit + doctor + integration + bench
 just cut-release
 ```
 
-Bumps patch version, stamps changelog, commits, tags, pushes, waits for CI.
+Runs `full-test` (which includes `build-assets`), then bumps patch version, stamps changelog, commits, tags, pushes, waits for CI. The full container build runs locally before any tag is created.
 
 ### Manual
 

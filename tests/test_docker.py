@@ -137,6 +137,187 @@ class TestRenderRootfs:
 # ---------------------------------------------------------------------------
 
 
+class TestRootfsLayerOrdering:
+    """Dockerfile layers must be in the correct order for the build to succeed.
+
+    Many CI failures trace back to ordering bugs: a binary referenced before
+    it's COPYed, PATH set before the install, CA cert patched before it exists.
+    These tests encode the required ordering as position checks on the rendered
+    Dockerfile so we catch them in unit tests, not 20 min into a CI run.
+    """
+
+    def _pos(self, text, needle, label=None):
+        """Return position of needle in text, with a clear assertion on miss."""
+        pos = text.find(needle)
+        assert pos != -1, f"Expected to find {label or repr(needle)} in Dockerfile"
+        return pos
+
+    def test_env_path_includes_npm_prefix(self, rendered_arm64):
+        """Regression: v0.14.18 -- /opt/ai-clis/bin not on PATH, gemini/codex
+        returned N/A, build-time validator rejected the rootfs."""
+        assert 'ENV PATH="/opt/ai-clis/bin:$PATH"' in rendered_arm64, (
+            "Dockerfile.rootfs.j2 must set ENV PATH to include /opt/ai-clis/bin "
+            "so version extraction can find npm-installed AI CLIs"
+        )
+
+    def test_env_path_after_npm_install(self, rendered_arm64):
+        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
+        path_pos = self._pos(rendered_arm64, 'ENV PATH="/opt/ai-clis/bin', "ENV PATH")
+        assert npm_pos < path_pos, "ENV PATH must come after npm install"
+
+    def test_ca_cert_before_certifi_patch(self, rendered_arm64):
+        """certifi patch appends our CA to certifi's bundle -- cert must exist first."""
+        copy_ca = self._pos(rendered_arm64, "COPY capsem-ca.crt", "COPY CA cert")
+        update_ca = self._pos(rendered_arm64, "update-ca-certificates", "update-ca-certificates")
+        certifi_patch = self._pos(rendered_arm64, "certifi.where()", "certifi patch")
+        assert copy_ca < update_ca < certifi_patch, (
+            "Order must be: COPY cert -> update-ca-certificates -> certifi patch"
+        )
+
+    def test_node_before_npm_install(self, rendered_arm64):
+        """npm install requires node to be installed first."""
+        node_pos = self._pos(rendered_arm64, "nvm install", "node install")
+        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
+        assert node_pos < npm_pos, "Node.js must be installed before npm install"
+
+    def test_guest_binaries_before_root_cleanup(self, rendered_arm64):
+        """Guest binaries are COPYed into /usr/local/bin -- must happen before
+        /root cleanup which wipes the build context landing area."""
+        binary_pos = self._pos(rendered_arm64, "COPY capsem-pty-agent", "guest binary")
+        cleanup_pos = self._pos(rendered_arm64, "rm -rf /root", "/root cleanup")
+        assert binary_pos < cleanup_pos, "Guest binaries must be COPYed before /root cleanup"
+
+    def test_curl_installs_after_root_cleanup(self, rendered_arm64):
+        """Curl-installed CLIs (claude) write to ~/.local/bin then copy to
+        /usr/local/bin. They must come after /root cleanup (mkdir -p /root)
+        so the installer has a writable home directory."""
+        if "curl -fsSL" not in rendered_arm64:
+            pytest.skip("No curl installs in config")
+        cleanup_pos = self._pos(rendered_arm64, "rm -rf /root && mkdir -p /root", "/root cleanup")
+        curl_pos = self._pos(rendered_arm64, "curl -fsSL", "curl install")
+        assert cleanup_pos < curl_pos, "Curl installs must come after /root cleanup"
+
+    def test_apt_https_switch_is_last(self, rendered_arm64):
+        """Switching apt to HTTPS must be the last step -- earlier RUN commands
+        need HTTP apt (ca-certificates not yet installed at the start)."""
+        https_pos = self._pos(rendered_arm64, "URIs: https://", "apt HTTPS switch")
+        # Nothing else should be installed after the HTTPS switch
+        last_run = rendered_arm64.rfind("RUN ")
+        https_run = rendered_arm64.rfind("RUN ", 0, https_pos + 1)
+        assert https_run == last_run, (
+            "apt HTTPS switch must be in the final RUN layer -- "
+            "no package installs should follow it"
+        )
+
+    def test_setuid_strip_after_all_installs(self, rendered_arm64):
+        """Setuid strip must come after all package installs so no new
+        setuid binaries sneak in after the strip."""
+        strip_pos = self._pos(rendered_arm64, "-4000", "setuid strip")
+        # Must be after npm, python, and guest binary installs
+        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
+        assert strip_pos > npm_pos, "setuid strip must come after npm install"
+        if "uv pip install --system" in rendered_arm64:
+            # Find the LAST uv pip install (python packages, not certifi)
+            last_pip = rendered_arm64.rfind("uv pip install --system --break-system-packages")
+            assert strip_pos > last_pip, "setuid strip must come after python packages"
+
+    def test_x86_64_has_same_ordering(self, rendered_arm64, rendered_x86):
+        """Both architectures must have the same layer ordering."""
+        key_markers = [
+            "apt-get",
+            "nvm install",
+            "npm install -g --prefix",
+            "ENV PATH",
+            "capsem-ca.crt",
+            "certifi",
+            "capsem-pty-agent",
+            "capsem-bashrc",
+            "EXTERNALLY-MANAGED",
+            "-4000",
+            "rm -rf /root",
+            "URIs: https://",
+        ]
+        arm64_order = [m for m in key_markers if m in rendered_arm64]
+        x86_order = [m for m in key_markers if m in rendered_x86]
+        assert arm64_order == x86_order, (
+            f"Layer ordering differs between arm64 and x86_64:\n"
+            f"  arm64:  {arm64_order}\n"
+            f"  x86_64: {x86_order}"
+        )
+
+
+class TestRootfsSecurityInvariants:
+    """Security-critical properties of the rootfs Dockerfile."""
+
+    def test_guest_binaries_chmod_555(self, rendered_arm64):
+        """All guest binaries must be read-only (chmod 555)."""
+        for binary in GUEST_BINARIES:
+            assert f"chmod 555 /usr/local/bin/{binary}" in rendered_arm64, (
+                f"Guest binary {binary} must be chmod 555 (read-only)"
+            )
+
+    def test_no_writable_guest_binaries(self, rendered_arm64):
+        """Guest binaries must never be chmod 755 or higher."""
+        for binary in GUEST_BINARIES:
+            assert f"chmod 755 /usr/local/bin/{binary}" not in rendered_arm64, (
+                f"Guest binary {binary} must not be writable (755) -- use 555"
+            )
+
+    def test_pep668_removed(self, rendered_arm64):
+        """PEP 668 marker must be removed so pip works in the ephemeral VM."""
+        assert "rm -f /usr/lib/python*/EXTERNALLY-MANAGED" in rendered_arm64
+
+    def test_setuid_bits_stripped(self, rendered_arm64):
+        """All setuid/setgid bits must be stripped -- VM runs as root."""
+        assert "perm -4000" in rendered_arm64
+        assert "perm -2000" in rendered_arm64
+        assert "chmod u-s,g-s" in rendered_arm64
+
+    def test_apt_sources_https(self, rendered_arm64):
+        """Runtime apt must use HTTPS -- VM blocks port 80."""
+        assert "URIs: https://" in rendered_arm64
+
+
+class TestRootfsVersionExtractability:
+    """Every tool with a version_command in config must be findable in the
+    built image. This class validates that the Dockerfile installs them
+    in locations that will be on PATH when extract_tool_versions runs."""
+
+    def test_all_ai_cli_install_prefixes_on_path(self, real_config, rendered_arm64):
+        """Every AI provider with an npm install prefix must have that
+        prefix's bin/ on ENV PATH in the Dockerfile."""
+        for provider in real_config.ai_providers.values():
+            if not (provider.enabled and provider.install):
+                continue
+            if provider.install.manager.value == "npm" and provider.install.prefix:
+                prefix_bin = f"{provider.install.prefix}/bin"
+                assert prefix_bin in rendered_arm64, (
+                    f"AI provider {provider.name} installs to {provider.install.prefix} "
+                    f"but {prefix_bin} is not on PATH in the Dockerfile"
+                )
+
+    def test_curl_installed_clis_copied_to_usr_local(self, real_config, rendered_arm64):
+        """Curl-installed CLIs write to ~/.local/bin which is tmpfs at runtime.
+        The Dockerfile must copy them to /usr/local/bin."""
+        has_curl = any(
+            p.enabled and p.install and p.install.manager.value == "curl"
+            for p in real_config.ai_providers.values()
+        )
+        if has_curl:
+            assert 'install -m 555 "$bin" /usr/local/bin/' in rendered_arm64, (
+                "Curl-installed CLIs must be copied to /usr/local/bin so they "
+                "survive boot (tmpfs wipes /root/.local/bin)"
+            )
+
+    def test_system_tools_on_default_path(self, real_config, rendered_arm64):
+        """System tools (node, npm, uv, git, etc.) must be symlinked or
+        installed into /usr/local/bin which is on the default PATH."""
+        # node/npm are symlinked by the nvm install step
+        assert "ln -sf" in rendered_arm64 and "node" in rendered_arm64
+        # uv is explicitly installed to /usr/local/bin
+        assert "install -m 555 /root/.local/bin/uv /usr/local/bin/uv" in rendered_arm64
+
+
 # ---------------------------------------------------------------------------
 # Kernel Dockerfile
 # ---------------------------------------------------------------------------

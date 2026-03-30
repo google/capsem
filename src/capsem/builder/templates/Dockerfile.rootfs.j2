@@ -36,6 +36,7 @@ RUN npm install -g --prefix {{ npm_prefix }} \
         {{ npm_packages | join(' \\\n        ') }} && \
     npm config set prefix {{ npm_prefix }} -g && \
     npm cache clean --force
+ENV PATH="{{ npm_prefix }}/bin:$PATH"
 {% endif %}
 
 # Install MITM CA certificate into system trust store
