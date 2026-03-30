@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **CI test job: create stub assets for Tauri build.rs** -- the parallelization commit removed asset downloads from test, but `cargo test --workspace` compiles capsem-app whose build.rs needs assets/manifest.json. Was masked by Rust cache until tauri.conf.json change invalidated it.
-- **CI create-release: make `latest.json` optional** -- Tauri only generates updater `latest.json` for AppImage bundles, not deb-only. The `gh release create` command now conditionally includes it.
+- **CI create-release cleanup** -- removed stale AppImage/updater references (latest.json merge, tar.gz/sig collection), fixed SBOM attestation to cover both DMG and deb, fixed test summary to parse `cargo llvm-cov` output format.
 
 ## [0.14.15] - 2026-03-30
 

@@ -147,8 +147,6 @@ jobs:
       - name: Unit tests with coverage
         run: |
           cargo llvm-cov --workspace --no-cfg-coverage --codecov --output-path codecov.json 2>&1 | tee test-output.txt
-          # Generate text summary for job report
-          cargo llvm-cov report --summary-only 2>&1 | tee coverage-summary.txt
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -160,12 +158,9 @@ jobs:
       - name: Test summary
         if: always()
         run: |
-          # Count test results from output
-          TESTS=$(grep -c '^\s*test .* ok$' test-output.txt 2>/dev/null || echo "?")
-          FAILED=$(grep -c '^\s*test .* FAILED$' test-output.txt 2>/dev/null || echo "0")
-
-          # Extract coverage percentage
-          COV=$(grep 'TOTAL' coverage-summary.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
+          # Parse "test result: ok. X passed; Y failed" lines from cargo output
+          TESTS=$(grep -oP '\d+ passed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          FAILED=$(grep -oP '\d+ failed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Test Results
@@ -174,8 +169,7 @@ jobs:
           |--------|--------|
           | Rust tests passed | $TESTS |
           | Rust tests failed | $FAILED |
-          | Line coverage | $COV |
-          | Frontend tests | 12 passed (vitest) |
+          | Frontend tests | vitest |
           | Audit | cargo audit + pnpm audit |
           EOF
 
@@ -285,9 +279,6 @@ jobs:
         run: |
           mkdir -p release-artifacts
           cp target/release/bundle/dmg/*.dmg release-artifacts/
-          cp target/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/macos/latest.json release-artifacts/latest-macos.json 2>/dev/null || true
           cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
 
@@ -387,10 +378,7 @@ jobs:
       - name: Collect Linux artifacts
         run: |
           mkdir -p release-artifacts
-          cp target/release/bundle/deb/*.deb release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/deb/*.tar.gz release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/deb/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
-          find target/release/bundle -name "latest.json" -exec cp {} release-artifacts/latest-linux-${{ matrix.arch }}.json \; 2>/dev/null || true
+          cp target/release/bundle/deb/*.deb release-artifacts/
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@v7
@@ -478,30 +466,6 @@ jobs:
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
-      - name: Merge updater latest.json (all platforms)
-        run: |
-          python3 -c "
-          import json, glob, sys
-
-          merged = None
-          for f in sorted(glob.glob('release-artifacts/latest-*.json')):
-              with open(f) as fh:
-                  data = json.load(fh)
-              print(f'  Merging {f}: {list(data.get(\"platforms\", {}).keys())}')
-              if merged is None:
-                  merged = data
-              else:
-                  merged['platforms'].update(data.get('platforms', {}))
-
-          if merged:
-              with open('release-artifacts/latest.json', 'w') as fh:
-                  json.dump(merged, fh, indent=2)
-              print(f'Merged latest.json: {list(merged[\"platforms\"].keys())}')
-          else:
-              print('WARNING: no latest-*.json files found, skipping merge')
-          "
-          rm -f release-artifacts/latest-*.json
-
       - name: Attest build provenance (DMG + deb + rootfs per arch)
         uses: actions/attest-build-provenance@v4
         with:
@@ -514,7 +478,9 @@ jobs:
       - name: Attest SBOM
         uses: actions/attest@v4
         with:
-          subject-path: release-artifacts/*.dmg
+          subject-path: |
+            release-artifacts/*.dmg
+            release-artifacts/*.deb
           predicate-type: https://spdx.dev/Document/v2.3
           predicate-path: release-artifacts/capsem-sbom.spdx.json
 
@@ -555,10 +521,9 @@ jobs:
 
           - Apple codesigned (Developer ID)
           - Notarization submitted (skip-stapling)
-          - SLSA build provenance attested (DMG + both rootfs)
-          - SBOM attested (SPDX 2.3)
+          - SLSA build provenance attested (DMG + deb + rootfs)
+          - SBOM attested (SPDX 2.3, DMG + deb)
           - Manifest signed (minisign)
-          - Tauri updater signed
           EOF
 
       - name: Create GitHub release
@@ -582,10 +547,10 @@ jobs:
             done < release-artifacts/arm64/tool-versions.txt
           fi
 
-          # Collect upload files -- some may not exist depending on bundle types
-          FILES=(release-artifacts/*.dmg release-artifacts/*.deb release-artifacts/arm64/* release-artifacts/x86_64/* release-artifacts/manifest.json release-artifacts/manifest.json.minisig release-artifacts/capsem-sbom.spdx.json)
-          [ -f release-artifacts/latest.json ] && FILES+=(release-artifacts/latest.json)
-
-          gh release create ${{ github.ref_name }} "${FILES[@]}" \
+          gh release create ${{ github.ref_name }} \
+            release-artifacts/*.dmg release-artifacts/*.deb \
+            release-artifacts/arm64/* release-artifacts/x86_64/* \
+            release-artifacts/manifest.json release-artifacts/manifest.json.minisig \
+            release-artifacts/capsem-sbom.spdx.json \
             --title "Capsem ${{ github.ref_name }}" \
             --notes "$NOTES"
