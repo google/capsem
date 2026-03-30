@@ -192,6 +192,54 @@ sudo apt install podman
 sudo dnf install podman
 ```
 
+## CI release pipeline
+
+When a `vX.Y.Z` tag is pushed, the release workflow runs. Jobs are parallelized to minimize wall-clock time (~18 min vs ~45 min sequential).
+
+```mermaid
+flowchart LR
+    PF["preflight\n(macos-14, 30s)"]
+    BA["build-assets\n(arm64 + x86_64\nubuntu, 10 min)"]
+    T["test\n(macos-14, 8 min)"]
+    BM["build-app-macos\n(macos-14, 15 min)"]
+    BL["build-app-linux\n(arm64 + x86_64\nubuntu, 10 min)"]
+    CR["create-release\n(ubuntu, 2 min)"]
+
+    PF --> BA & T
+    PF --> BM & BL
+    BA --> BM & BL
+    T --> CR
+    BM --> CR
+    BL --> CR
+```
+
+| Job | Runner | Produces |
+|-----|--------|----------|
+| `preflight` | macos-14 | Validates Apple cert, Tauri key, notarization creds |
+| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
+| `test` | macos-14 | Unit tests + coverage, frontend check, audit |
+| `build-app-macos` | macos-14 | DMG, codesigned + notarized, latest.json |
+| `build-app-linux` | ubuntu arm64 + x86_64 | deb (both arches), AppImage (x86_64 only), latest.json |
+| `create-release` | ubuntu | Merges latest.json, signs manifest, creates GitHub release |
+
+**Key design decisions:**
+- `test` runs in parallel with `build-assets` and app builds -- it gates `create-release` but doesn't block compilation
+- arm64 Linux produces `.deb` only -- linuxdeploy has no arm64 build
+- Each platform's `latest.json` is merged in `create-release` for the Tauri auto-updater
+
+### Local vs CI
+
+`just cross-compile` builds the Linux app inside a container and catches most issues, but the environments differ:
+
+| Aspect | Local (container) | CI (bare runner) |
+|--------|-------------------|------------------|
+| Base | `rust:bookworm` | `ubuntu-24.04` |
+| Node | nodesource script | `actions/setup-node` |
+| FUSE | available (podman VM) | not guaranteed |
+| Volumes | none (clean build) | none (fresh runner) |
+
+AppImage bundling that works locally can fail in CI due to FUSE differences. Always verify the first CI run after changing Linux packaging.
+
 ## Tools summary
 
 Everything below is checked by `bootstrap.sh` and `just doctor`. You don't need to install these manually -- the bootstrap script tells you exactly what's missing.

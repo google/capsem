@@ -100,35 +100,13 @@ jobs:
           path: assets/${{ matrix.arch }}/
 
   test:
-    needs: build-assets
+    needs: preflight
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v8
-        with:
-          name: vm-assets-arm64
-          path: assets/arm64/
-      - uses: actions/download-artifact@v8
-        with:
-          name: vm-assets-x86_64
-          path: assets/x86_64/
-
-      # Regenerate manifest.json from both arch dirs.
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync
-      - name: Generate unified manifest
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          uv run python3 -c "
-          from pathlib import Path
-          from capsem.builder.docker import generate_checksums
-          generate_checksums(Path('assets'), '$VERSION')
-          print('manifest.json generated for both architectures')
-          "
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-musl
           components: llvm-tools
 
       - uses: Swatinem/rust-cache@v2
@@ -170,10 +148,6 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
-      # Check-only -- actual cross-compile already ran in build-assets on Linux
-      - name: Cross-compile check (guest binaries)
-        run: cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
-
       - name: Test summary
         if: always()
         run: |
@@ -193,12 +167,11 @@ jobs:
           | Rust tests failed | $FAILED |
           | Line coverage | $COV |
           | Frontend tests | 12 passed (vitest) |
-          | Cross-compile | aarch64-unknown-linux-musl |
           | Audit | cargo audit + pnpm audit |
           EOF
 
   build-app-macos:
-    needs: test
+    needs: [preflight, build-assets]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -311,7 +284,7 @@ jobs:
           path: release-artifacts/
 
   build-app-linux:
-    needs: test
+    needs: [preflight, build-assets]
     strategy:
       matrix:
         include:
@@ -418,7 +391,7 @@ jobs:
           path: release-artifacts/
 
   create-release:
-    needs: [build-app-macos, build-app-linux]
+    needs: [test, build-app-macos, build-app-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

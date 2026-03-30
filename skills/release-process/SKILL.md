@@ -36,16 +36,24 @@ Never reuse or move a tag. Always increment the version number.
 
 ## CI pipeline (release.yaml)
 
-Triggered by `vX.Y.Z` tag push. Sequential jobs:
+Triggered by `vX.Y.Z` tag push. Parallelized pipeline (~18 min wall clock):
 
-| Job | Runner | Purpose |
-|-----|--------|---------|
-| `preflight` | macos-14 | Fail-fast: Apple cert import, Tauri key |
-| `build-assets` (arm64 + x86_64) | ubuntu-24.04-arm, ubuntu-24.04 | Kernel + rootfs via Docker (parallel matrix) |
-| `test` | macos-14 | Unit tests, cross-compile, frontend build |
-| `build-app-macos` | macos-14 | Tauri build, codesign, notarize, DMG |
-| `build-app-linux` (arm64 + x86_64) | ubuntu-24.04-arm, ubuntu-24.04 | Tauri build, deb + AppImage (parallel matrix) |
-| `create-release` | ubuntu-latest | GitHub release with all artifacts |
+```
+preflight (30s) ──> build-assets (arm64 + x86_64, 10 min) ──> build-app-macos (15 min) ──┐
+                └──> test (8 min) ─────────────────────────────────────────────────────────├──> create-release
+                └──────────────────> build-app-linux (arm64 + x86_64, 10 min) ────────────┘
+```
+
+| Job | Runner | Needs | Purpose |
+|-----|--------|-------|---------|
+| `preflight` | macos-14 | -- | Fail-fast: Apple cert, Tauri key, notarization |
+| `build-assets` | ubuntu arm64 + x86_64 | preflight | Kernel + rootfs via Docker |
+| `test` | macos-14 | preflight | Unit tests + coverage, frontend, audit |
+| `build-app-macos` | macos-14 | preflight, build-assets | Tauri build, codesign, notarize, DMG |
+| `build-app-linux` | ubuntu arm64 + x86_64 | preflight, build-assets | Tauri build, deb (+ AppImage on x86_64) |
+| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Merge latest.json, sign manifest, GitHub release |
+
+Test runs in parallel with builds. A test failure blocks `create-release` but doesn't delay compilation.
 
 ### CI invariants (hard-won lessons)
 

@@ -117,6 +117,14 @@ test: _install-tools _clean-stale audit _pnpm-install _generate-settings
 
 # Build the full Linux release in a container (agent + deb + AppImage).
 # Supports arm64 and x86_64. No host cross-compile toolchain needed.
+#
+# CI vs local divergences (keep in sync when changing either):
+#   - CI runs on bare ubuntu runners; this runs in a rust:bookworm container via podman
+#   - CI uses actions/setup-node + pnpm/action-setup; this uses nodesource + npm install -g pnpm
+#   - CI has no FUSE; podman VM does. AppImage bundling may differ.
+#   - arm64 = deb only (no linuxdeploy arm64 build); x86_64 = deb + appimage
+#   - Tauri signing keys: CI from secrets, local from private/tauri/
+#   - See: .github/workflows/release.yaml build-app-linux job
 cross-compile arch="": _check-assets _generate-settings
     #!/bin/bash
     set -euo pipefail
