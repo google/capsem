@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.18] - 2026-03-30
+
 ### Changed
 - **Config-driven tool version extraction** -- `extract_tool_versions()` now builds its shell script from TOML configs (`version_commands` fields) instead of a hardcoded tool list. Covers build tools (node, npm, uv, pip), apt packages (git, python3, gh, tmux, curl), Python packages (pytest, numpy, requests, pandas), and AI CLIs (claude, gemini, codex) with grouped output in tool-versions.txt. Build-time validation catches silent install failures (N/A) for enabled AI CLIs. New W013 diagnostic warns when an AI provider has a CLI but no `version_command`.
 
