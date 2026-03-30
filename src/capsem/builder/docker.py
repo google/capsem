@@ -407,12 +407,12 @@ def container_compile_agent(
     target_volume = f"capsem-agent-target-{arch_suffix}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build cp + file validation commands from GUEST_BINARIES constant
+    # Build cp + verification commands from GUEST_BINARIES constant
     cp_cmds = " && ".join(
         f"cp target/{rust_target}/release/{b} /output/{b}"
         for b in GUEST_BINARIES
     )
-    file_cmds = " && ".join(f"file /output/{b}" for b in GUEST_BINARIES)
+    file_cmds = " && ".join(f"ls -l /output/{b}" for b in GUEST_BINARIES)
 
     print(f"  Container build ({platform}) ...")
     run_cmd([

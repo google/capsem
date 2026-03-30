@@ -313,6 +313,14 @@ The resource check lives in `src/capsem/builder/doctor.py`:
 - `check_container_resources()` -- checks podman machine inspect or docker info
 - Thresholds: `PODMAN_MIN_MEMORY_MB = 4096`, `PODMAN_RECOMMENDED_MEMORY_MB = 8192`
 
+## Container image compatibility
+
+The container builds use `rust:slim-bookworm` -- a minimal Debian image. Many common utilities (`file`, `less`, `vim`, etc.) are NOT available. Any shell commands run inside the container must use only coreutils (`ls`, `cp`, `cat`, `test`, etc.) or tools explicitly installed via `apt-get` in the same `RUN` step.
+
+**Lesson learned**: using `file /output/binary` to verify compiled binaries failed because `file` is not in slim images. Replaced with `ls -l` which is always available and still confirms the copy succeeded. The real validation (existence + non-zero size) is done in Python after the container exits.
+
+**Rule**: never assume a command exists in a slim container image. Stick to coreutils or install what you need explicitly.
+
 ## Clock skew workaround
 
 All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift.
