@@ -97,4 +97,4 @@ Every HTTPS request is logged to a per-session SQLite database with full method,
 
 - [Kernel Hardening](/security/kernel-hardening/) -- how the VM kernel is locked down
 - [Network Isolation](/security/network-isolation/) -- air-gapped networking and the MITM proxy
-- [Capsem Doctor](/testing/capsem-doctor/) -- run diagnostics inside the VM
+- [Capsem Doctor](/debugging/capsem-doctor/) -- run diagnostics inside the VM
