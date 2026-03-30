@@ -301,7 +301,7 @@ jobs:
           cp target/release/bundle/dmg/*.dmg release-artifacts/
           cp target/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/macos/latest.json release-artifacts/ 2>/dev/null || true
+          cp target/release/bundle/macos/latest.json release-artifacts/latest-macos.json 2>/dev/null || true
           cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
 
@@ -409,6 +409,7 @@ jobs:
           cp target/release/bundle/appimage/*.AppImage release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/appimage/*.AppImage.tar.gz release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/appimage/*.AppImage.tar.gz.sig release-artifacts/ 2>/dev/null || true
+          find target/release/bundle -name "latest.json" -exec cp {} release-artifacts/latest-linux-${{ matrix.arch }}.json \; 2>/dev/null || true
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@v7
@@ -495,6 +496,30 @@ jobs:
           rm /tmp/manifest-sign.key
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+
+      - name: Merge updater latest.json (all platforms)
+        run: |
+          python3 -c "
+          import json, glob, sys
+
+          merged = None
+          for f in sorted(glob.glob('release-artifacts/latest-*.json')):
+              with open(f) as fh:
+                  data = json.load(fh)
+              print(f'  Merging {f}: {list(data.get(\"platforms\", {}).keys())}')
+              if merged is None:
+                  merged = data
+              else:
+                  merged['platforms'].update(data.get('platforms', {}))
+
+          if merged:
+              with open('release-artifacts/latest.json', 'w') as fh:
+                  json.dump(merged, fh, indent=2)
+              print(f'Merged latest.json: {list(merged[\"platforms\"].keys())}')
+          else:
+              print('WARNING: no latest-*.json files found, skipping merge')
+          "
+          rm -f release-artifacts/latest-*.json
 
       - name: Attest build provenance (DMG + deb + AppImage + rootfs per arch)
         uses: actions/attest-build-provenance@v4
