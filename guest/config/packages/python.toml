@@ -8,6 +8,12 @@ packages = [
     "pyyaml", "beautifulsoup4", "lxml", "tqdm", "rich", "fastmcp",
 ]
 
+[python.version_commands]
+pytest = 'python3 -c "import pytest; print(pytest.__version__)"'
+numpy = 'python3 -c "import numpy; print(numpy.__version__)"'
+requests = 'python3 -c "import requests; print(requests.__version__)"'
+pandas = 'python3 -c "import pandas; print(pandas.__version__)"'
+
 [python.network]
 name = "PyPI"
 domains = ["pypi.org", "files.pythonhosted.org"]

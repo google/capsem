@@ -13,6 +13,13 @@ packages = [
     "python3", "python3-pip", "python3-venv",
 ]
 
+[apt.version_commands]
+python3 = "python3 --version | awk '{print $2}'"
+git = "git --version | awk '{print $3}'"
+gh = "gh --version | head -1 | awk '{print $3}'"
+tmux = "tmux -V | awk '{print $2}'"
+curl = "curl --version | head -1 | awk '{print $2}'"
+
 [apt.network]
 name = "Debian"
 domains = ["deb.debian.org", "security.debian.org"]

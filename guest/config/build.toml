@@ -2,6 +2,12 @@
 compression = "zstd"
 compression_level = 15
 
+[build.version_commands]
+node = "node --version 2>&1 | tr -d v"
+npm = "npm --version 2>&1"
+uv = "uv --version 2>&1 | awk '{print $2}'"
+pip = "pip3 --version 2>&1 | awk '{print $2}'"
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"

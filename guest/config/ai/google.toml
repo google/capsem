@@ -7,6 +7,7 @@ enabled = true
 key = "gemini"
 name = "Gemini CLI"
 description = "Gemini CLI configuration files"
+version_command = "gemini --version 2>/dev/null | head -1"
 
 [google.api_key]
 name = "Google AI API Key"

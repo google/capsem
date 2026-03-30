@@ -10,7 +10,7 @@ Error code ranges:
   E200-E202: Cross-language conformance
   E300-E305: Artifact validation
   E400-E402: Docker validation
-  W001-W012: Warnings
+  W001-W013: Warnings
 """
 
 from __future__ import annotations
@@ -612,6 +612,23 @@ def _check_rust_targets(config: GuestImageConfig, diags: list[Diagnostic]) -> No
             ))
 
 
+def _check_ai_version_commands(
+    config: GuestImageConfig, diags: list[Diagnostic],
+) -> None:
+    """Emit W013 for enabled AI providers with cli but no version_command."""
+    for key, provider in config.ai_providers.items():
+        if provider.enabled and provider.cli and not provider.cli.version_command:
+            diags.append(Diagnostic(
+                code="W013",
+                severity=Severity.WARNING,
+                message=(
+                    f"AI provider '{key}' has cli but no version_command -- "
+                    "tool-versions.txt will not track this CLI"
+                ),
+                file=f"config/ai/{key}.toml",
+            ))
+
+
 def _contains_secret(text: str) -> bool:
     """Check if text contains patterns that look like real secrets."""
     for pat in _SECRET_PATTERNS:
@@ -697,5 +714,8 @@ def validate_guest(
 
     # W001-W006: Warnings
     _validate_warnings(config, diags)
+
+    # W013: AI providers missing version_command
+    _check_ai_version_commands(config, diags)
 
     return sorted(diags, key=lambda d: (d.severity.value, d.code))

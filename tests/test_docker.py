@@ -16,8 +16,10 @@ import pytest
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import (
     GUEST_BINARIES,
+    build_version_script,
     container_compile_agent,
     cross_compile_agent,
+    extract_tool_versions,
     generate_build_context,
     render_dockerfile,
 )
@@ -550,6 +552,122 @@ class TestExportContainerFs:
 # ---------------------------------------------------------------------------
 # Build execution: squashfs
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Build execution: version script generation
+# ---------------------------------------------------------------------------
+
+
+class TestBuildVersionScript:
+    """build_version_script() assembles a shell script from config."""
+
+    def test_real_config_has_all_sections(self, real_config):
+        script = build_version_script(real_config)
+        assert '# System' in script
+        assert '# Python' in script
+        assert '# AI CLIs' in script
+
+    def test_real_config_has_build_tools(self, real_config):
+        script = build_version_script(real_config)
+        assert 'node=' in script
+        assert 'npm=' in script
+        assert 'uv=' in script
+        assert 'pip=' in script
+
+    def test_real_config_has_apt_tools(self, real_config):
+        script = build_version_script(real_config)
+        assert 'git=' in script
+        assert 'python3=' in script
+        assert 'gh=' in script
+
+    def test_real_config_has_python_packages(self, real_config):
+        script = build_version_script(real_config)
+        assert 'pytest=' in script
+        assert 'numpy=' in script
+
+    def test_real_config_has_ai_clis(self, real_config):
+        script = build_version_script(real_config)
+        assert 'claude=' in script
+        assert 'gemini=' in script
+        assert 'codex=' in script
+
+    def test_empty_config_produces_empty_script(self):
+        from capsem.builder.models import BuildConfig, GuestImageConfig
+        config = GuestImageConfig(
+            build=BuildConfig(architectures={"arm64": real_arch()}),
+        )
+        script = build_version_script(config)
+        assert script == ""
+
+    def test_disabled_provider_excluded(self, real_config):
+        """Disabled AI providers are not included in the version script."""
+        from capsem.builder.models import GuestImageConfig
+        # Create config with all providers disabled
+        disabled_providers = {}
+        for key, prov in real_config.ai_providers.items():
+            disabled_providers[key] = prov.model_copy(update={"enabled": False})
+        config = real_config.model_copy(update={"ai_providers": disabled_providers})
+        script = build_version_script(config)
+        assert "# AI CLIs" not in script
+
+
+def real_arch():
+    """Minimal ArchConfig for test configs."""
+    from capsem.builder.models import ArchConfig
+    return ArchConfig(
+        docker_platform="linux/arm64",
+        rust_target="aarch64-unknown-linux-musl",
+        kernel_image="arch/arm64/boot/Image",
+        defconfig="kernel/defconfig.arm64",
+    )
+
+
+class TestExtractToolVersionsValidation:
+    """extract_tool_versions() validates AI CLI results."""
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_valid_output_passes(self, mock_run, real_config):
+        mock_run.return_value = MagicMock(stdout=(
+            "# System\n"
+            "node=24.1.0\nnpm=10.9.2\nuv=0.7.12\npip=24.0\n"
+            "python3=3.11.2\ngit=2.39.5\ngh=2.67.0\ntmux=3.4\ncurl=7.88.1\n"
+            "# Python\n"
+            "pytest=8.3.4\nnumpy=2.2.3\nrequests=2.32.3\npandas=2.2.3\n"
+            "# AI CLIs\n"
+            "claude=1.0.18\ngemini=0.3.0\ncodex=0.1.0\n"
+        ))
+        # Should not raise
+        extract_tool_versions(
+            "podman", "test-image", "linux/arm64",
+            Path("/tmp"), real_config,
+        )
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_na_ai_cli_raises(self, mock_run, real_config):
+        mock_run.return_value = MagicMock(stdout=(
+            "# System\n"
+            "node=24.1.0\n"
+            "# AI CLIs\n"
+            "claude=1.0.18\ngemini=N/A\ncodex=N/A\n"
+        ))
+        with pytest.raises(RuntimeError, match="gemini"):
+            extract_tool_versions(
+                "podman", "test-image", "linux/arm64",
+                Path("/tmp"), real_config,
+            )
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_validate_false_skips_check(self, mock_run, real_config):
+        mock_run.return_value = MagicMock(stdout=(
+            "# AI CLIs\n"
+            "claude=N/A\ngemini=N/A\ncodex=N/A\n"
+        ))
+        # Should not raise when validate=False
+        extract_tool_versions(
+            "podman", "test-image", "linux/arm64",
+            Path("/tmp"), real_config, validate=False,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from capsem.builder.models import (
     ApiKeyConfig,
     ArchConfig,
     BuildConfig,
+    CliToolConfig,
     Compression,
     FileConfig,
     GuestImageConfig,
@@ -206,6 +207,21 @@ class TestBuildConfig:
         c = BuildConfig.model_validate(data)
         assert b == c
 
+    def test_version_commands_default(self):
+        b = _build()
+        assert b.version_commands == {}
+
+    def test_version_commands(self):
+        b = _build(version_commands={"node": "node --version", "npm": "npm --version"})
+        assert b.version_commands["node"] == "node --version"
+        assert len(b.version_commands) == 2
+
+    def test_version_commands_roundtrip(self):
+        b = _build(version_commands={"uv": "uv --version"})
+        data = b.model_dump()
+        c = BuildConfig.model_validate(data)
+        assert b == c
+
 
 # ---------------------------------------------------------------------------
 # ApiKeyConfig
@@ -295,6 +311,36 @@ class TestFileConfig:
 
 
 # ---------------------------------------------------------------------------
+# CliToolConfig
+# ---------------------------------------------------------------------------
+
+
+class TestCliToolConfig:
+    def test_construction(self):
+        c = CliToolConfig(key="claude", name="Claude Code")
+        assert c.key == "claude"
+        assert c.name == "Claude Code"
+        assert c.description == ""
+        assert c.version_command is None
+
+    def test_with_version_command(self):
+        c = CliToolConfig(
+            key="claude", name="Claude Code",
+            version_command="claude --version 2>/dev/null | head -1",
+        )
+        assert c.version_command == "claude --version 2>/dev/null | head -1"
+
+    def test_roundtrip(self):
+        c = CliToolConfig(
+            key="gemini", name="Gemini CLI",
+            version_command="gemini --version",
+        )
+        data = c.model_dump()
+        d = CliToolConfig.model_validate(data)
+        assert c == d
+
+
+# ---------------------------------------------------------------------------
 # AiProviderConfig
 # ---------------------------------------------------------------------------
 
@@ -371,6 +417,29 @@ class TestPackageSetConfig:
             PackageSetConfig(
                 name="Bad", manager=PackageManager.APT,
                 install_cmd="", packages=["pkg"],
+            )
+
+    def test_version_commands_default(self):
+        ps = PackageSetConfig(
+            name="Test", manager=PackageManager.APT,
+            install_cmd="apt install", packages=["git"],
+        )
+        assert ps.version_commands == {}
+
+    def test_version_commands_valid(self):
+        ps = PackageSetConfig(
+            name="Test", manager=PackageManager.APT,
+            install_cmd="apt install", packages=["git", "curl"],
+            version_commands={"git": "git --version"},
+        )
+        assert ps.version_commands["git"] == "git --version"
+
+    def test_version_commands_unknown_key_rejected(self):
+        with pytest.raises(ValidationError, match="version_commands keys not in packages"):
+            PackageSetConfig(
+                name="Bad", manager=PackageManager.APT,
+                install_cmd="apt install", packages=["git"],
+                version_commands={"nonexistent": "echo 1"},
             )
 
     def test_roundtrip(self):

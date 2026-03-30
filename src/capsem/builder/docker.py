@@ -493,25 +493,87 @@ def cross_compile_agent(
     return copied
 
 
+def build_version_script(config: GuestImageConfig) -> str:
+    """Build a shell script that extracts tool versions from config.
+
+    Returns a bash script that prints grouped key=value lines to stdout.
+    The script is assembled from version_commands in build config, package
+    sets, and AI provider CLI configs.
+    """
+    lines: list[str] = []
+
+    # -- System: build-level tools (node, npm, uv, pip) + apt packages --
+    system_cmds: list[tuple[str, str]] = []
+    for key, cmd in config.build.version_commands.items():
+        system_cmds.append((key, cmd))
+    if "apt" in config.package_sets:
+        for key, cmd in config.package_sets["apt"].version_commands.items():
+            system_cmds.append((key, cmd))
+    if system_cmds:
+        lines.append('echo "# System";')
+        for key, cmd in system_cmds:
+            lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+
+    # -- Python packages --
+    if "python" in config.package_sets:
+        py_cmds = config.package_sets["python"].version_commands
+        if py_cmds:
+            lines.append('echo "# Python";')
+            for key, cmd in py_cmds.items():
+                lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+
+    # -- AI CLIs (listed separately) --
+    ai_cmds: list[tuple[str, str]] = []
+    for provider in config.ai_providers.values():
+        if provider.enabled and provider.cli and provider.cli.version_command:
+            ai_cmds.append((provider.cli.key, provider.cli.version_command))
+    if ai_cmds:
+        lines.append('echo "# AI CLIs";')
+        for key, cmd in ai_cmds:
+            lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+
+    return "\n".join(lines)
+
+
+def _validate_tool_versions(
+    content: str, config: GuestImageConfig,
+) -> None:
+    """Check that enabled AI provider CLIs did not return N/A."""
+    versions: dict[str, str] = {}
+    for line in content.splitlines():
+        if line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        versions[key.strip()] = val.strip()
+
+    failures: list[str] = []
+    for provider in config.ai_providers.values():
+        if provider.enabled and provider.cli and provider.cli.version_command:
+            key = provider.cli.key
+            val = versions.get(key, "")
+            if not val or val == "N/A":
+                failures.append(key)
+
+    if failures:
+        raise RuntimeError(
+            f"Enabled AI CLIs returned N/A or empty version: {', '.join(failures)}. "
+            "Check that the CLI installed correctly in the rootfs."
+        )
+
+
 def extract_tool_versions(
     runtime: str,
     image_tag: str,
     platform: str,
     output_dir: Path,
+    config: GuestImageConfig,
+    *,
+    validate: bool = True,
 ) -> None:
-    """Extract tool versions from rootfs image."""
-    version_script = (
-        "echo \"python=$(python3 --version 2>&1 | awk '{print $2}')\";"
-        "echo \"node=$(node --version 2>&1 | tr -d v)\";"
-        "echo \"npm=$(npm --version 2>&1)\";"
-        "echo \"uv=$(uv --version 2>&1 | awk '{print $2}')\";"
-        "echo \"pip=$(pip3 --version 2>&1 | awk '{print $2}')\";"
-        "echo \"git=$(git --version 2>&1 | awk '{print $3}')\";"
-        "for cli in claude gemini codex; do "
-        "  ver=$(command -v $cli >/dev/null 2>&1 && $cli --version 2>/dev/null | head -1 || echo 'N/A'); "
-        "  echo \"$cli=$ver\"; "
-        "done;"
-    )
+    """Extract tool versions from rootfs image using config-driven script."""
+    version_script = build_version_script(config)
+    if not version_script:
+        return
     result = run_cmd(
         [runtime, "run", "--rm", "--platform", platform,
          image_tag, "bash", "-c", version_script],
@@ -519,6 +581,8 @@ def extract_tool_versions(
     )
     versions_path = output_dir / "tool-versions.txt"
     versions_path.write_text(result.stdout)
+    if validate:
+        _validate_tool_versions(result.stdout, config)
 
 
 def _blake3_hex(path: Path) -> str:
@@ -765,7 +829,7 @@ def build_image(
             tar_path.unlink(missing_ok=True)
 
             print("Extracting tool versions...")
-            extract_tool_versions(runtime, tag, arch.docker_platform, arch_output)
+            extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
             remove_image(runtime, tag)
 
             print(f"  rootfs.squashfs: {squashfs_path}")

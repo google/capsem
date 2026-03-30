@@ -64,6 +64,7 @@ class BuildConfig(BaseModel):
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
     architectures: dict[str, ArchConfig]
+    version_commands: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _architectures_non_empty(self):
@@ -137,6 +138,7 @@ class CliToolConfig(BaseModel):
     key: str
     name: str
     description: str = ""
+    version_command: str | None = None
 
 
 class AiProviderConfig(BaseModel):
@@ -178,6 +180,7 @@ class PackageSetConfig(BaseModel):
     manager: PackageManager
     install_cmd: str
     packages: list[str]
+    version_commands: dict[str, str] = Field(default_factory=dict)
     network: PackageNetworkConfig | None = None
 
     @model_validator(mode="after")
@@ -186,6 +189,11 @@ class PackageSetConfig(BaseModel):
             raise ValueError("packages must have at least one entry")
         if not self.install_cmd:
             raise ValueError("install_cmd must not be empty")
+        bad = set(self.version_commands) - set(self.packages)
+        if bad:
+            raise ValueError(
+                f"version_commands keys not in packages: {sorted(bad)}"
+            )
         return self
 
 
