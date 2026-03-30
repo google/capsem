@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Container agent build: replace `file` with `ls -l`** -- `file` command is not available in `rust:slim-bookworm`. Binary verification now uses `ls -l` (coreutils); real validation (existence + non-zero size) is done in Python after the container exits.
+- **Broken capsem-doctor link in docs** -- getting-started page linked to `/testing/capsem-doctor/` (removed section) instead of `/debugging/capsem-doctor/`.
+- **Site description outdated** -- splash page and meta description now mention Linux (KVM) support added in v0.14.
+- **Security docs sidebar ordering** -- three security pages lacked `sidebar.order`, causing alphabetical sort instead of logical progression.
+- **`.dockerignore` untracked** -- Docker builds on CI or fresh clones were copying `target/`, `node_modules/`, `.venv/` into build context.
+
 ## [0.14.12] - 2026-03-29
 
 ### Fixed
