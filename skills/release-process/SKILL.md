@@ -57,6 +57,7 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
 
 ### CI invariants (hard-won lessons)
 
+- **Per-arch VM assets use arch-prefixed names on GitHub.** CI uploads with `gh release upload "$f#${arch}-${base}"`, renaming `vmlinuz` to `arm64-vmlinuz`, `rootfs.squashfs` to `arm64-rootfs.squashfs`, etc. The manifest keeps bare filenames in its per-arch structure; `AssetManager.arch_prefix` handles the URL translation at download time. If you change the upload naming, update `AssetManager.download_url()` in `asset_manager.rs`.
 - **Use justfile recipes in CI.** `build-assets` must call `just build-kernel` and `just build-rootfs`, not reimplement the builder commands. Drift between the justfile and CI caused v0.14.2-v0.14.4 to ship without vmlinuz/initrd.img.
 - **Build both kernel and rootfs.** The builder defaults to `--template rootfs` only. The kernel template must be built explicitly.
 - **`assets/current` must be a real directory, not a symlink.** `generate_checksums()` creates a symlink, but GitHub Actions strips symlinks from artifacts. After calling `generate_checksums`, replace the symlink with `rm -rf assets/current && cp -r assets/arm64 assets/current`.

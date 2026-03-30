@@ -59,7 +59,7 @@ Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_ma
 
 1. **Find assets dir**: env var -> .app bundle -> `./assets` -> `../../assets`. Checks `{dir}/{arch}/vmlinuz` first, then flat.
 2. **Find rootfs**: bundled -> `~/.capsem/assets/v{version}/` -> legacy flat
-3. **Download if missing**: manifest-driven download with BLAKE3 verification and HTTP resume
+3. **Download if missing**: manifest-driven download with BLAKE3 verification and HTTP resume. CI uploads per-arch assets with arch prefixes (`arm64-rootfs.squashfs`, `x86_64-vmlinuz`). The manifest keeps bare filenames; `AssetManager.arch_prefix` prepends `{arch}-` when constructing download URLs. Local storage uses bare filenames in `~/.capsem/assets/v{version}/`.
 4. **Hash check at boot**: `VmConfig::builder().build()` verifies BLAKE3 of kernel, initrd, rootfs against compile-time hashes. Mismatch prevents boot.
 
 ## Common Issues

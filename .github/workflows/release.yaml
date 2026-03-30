@@ -547,20 +547,19 @@ jobs:
             done < release-artifacts/arm64/tool-versions.txt
           fi
 
-          # Rename per-arch VM assets to avoid name collisions (both have vmlinuz, initrd.img, etc.)
-          for arch in arm64 x86_64; do
-            for f in release-artifacts/$arch/*; do
-              [ -f "$f" ] || continue
-              base=$(basename "$f")
-              mv "$f" "release-artifacts/${arch}-${base}"
-            done
-            rmdir "release-artifacts/$arch" 2>/dev/null || true
-          done
-
+          # Create release with platform-independent artifacts first
           gh release create ${{ github.ref_name }} \
             release-artifacts/*.dmg release-artifacts/*.deb \
-            release-artifacts/arm64-* release-artifacts/x86_64-* \
             release-artifacts/manifest.json release-artifacts/manifest.json.minisig \
             release-artifacts/capsem-sbom.spdx.json \
             --title "Capsem ${{ github.ref_name }}" \
             --notes "$NOTES"
+
+          # Upload per-arch VM assets with arch prefix (both have vmlinuz, initrd.img, etc.)
+          for arch in arm64 x86_64; do
+            for f in release-artifacts/$arch/*; do
+              [ -f "$f" ] || continue
+              base=$(basename "$f")
+              gh release upload ${{ github.ref_name }} "$f#${arch}-${base}"
+            done
+          done

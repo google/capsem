@@ -226,6 +226,9 @@ pub struct AssetManager {
     base_url: String,
     /// Parsed manifest entries for the target version.
     manifest: Vec<ManifestEntry>,
+    /// Architecture prefix for download URLs. When set, download URLs become
+    /// `{base_url}/{arch}-{filename}` to match CI's per-arch release uploads.
+    arch_prefix: Option<String>,
 }
 
 impl AssetManager {
@@ -244,6 +247,7 @@ impl AssetManager {
             assets_dir,
             base_url,
             manifest,
+            arch_prefix: None,
         })
     }
 
@@ -256,6 +260,7 @@ impl AssetManager {
         manifest: &Manifest,
         version: &str,
         assets_base_dir: PathBuf,
+        arch: Option<&str>,
     ) -> Result<Self> {
         validate_version(version)?;
         let entries = manifest
@@ -270,12 +275,22 @@ impl AssetManager {
             assets_dir,
             base_url,
             manifest: entries,
+            arch_prefix: arch.map(String::from),
         })
     }
 
     /// Return the assets directory path.
     pub fn assets_dir(&self) -> &Path {
         &self.assets_dir
+    }
+
+    /// Build the download URL for a given filename. When `arch_prefix` is set,
+    /// URLs use `{base_url}/{arch}-{filename}` to match CI's per-arch uploads.
+    fn download_url(&self, filename: &str) -> String {
+        match &self.arch_prefix {
+            Some(arch) => format!("{}/{}-{}", self.base_url, arch, filename),
+            None => format!("{}/{}", self.base_url, filename),
+        }
     }
 
     /// Check the status of a specific asset by filename.
@@ -306,7 +321,7 @@ impl AssetManager {
         }
 
         Ok(AssetStatus::NeedsDownload {
-            url: format!("{}/{}", self.base_url, filename),
+            url: self.download_url(filename),
             expected_hash: entry.hash.clone(),
             dest: local_path,
         })
@@ -346,7 +361,7 @@ impl AssetManager {
             .find(|e| e.filename == filename)
             .with_context(|| format!("{filename} not found in B3SUMS manifest"))?;
 
-        let url = format!("{}/{}", self.base_url, filename);
+        let url = self.download_url(filename);
         let dest = self.assets_dir.join(filename);
         let tmp = self.assets_dir.join(format!("{filename}.tmp"));
 
@@ -1124,7 +1139,7 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
     fn version_scoped_directory() {
         let dir = tempfile::tempdir().unwrap();
         let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
-        let mgr = AssetManager::from_manifest(&manifest, "0.9.0", dir.path().to_path_buf()).unwrap();
+        let mgr = AssetManager::from_manifest(&manifest, "0.9.0", dir.path().to_path_buf(), None).unwrap();
         assert!(mgr.assets_dir().ends_with("v0.9.0"));
     }
 
@@ -1132,7 +1147,7 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
     fn from_manifest_missing_version() {
         let dir = tempfile::tempdir().unwrap();
         let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
-        assert!(AssetManager::from_manifest(&manifest, "99.99.99", dir.path().to_path_buf()).is_err());
+        assert!(AssetManager::from_manifest(&manifest, "99.99.99", dir.path().to_path_buf(), None).is_err());
     }
 
     #[test]
@@ -1189,6 +1204,55 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
         assert_eq!(manifest.latest, "0.9.0");
         let r = manifest.release_for("0.9.0").unwrap();
         assert_eq!(r.assets[0].filename, "rootfs.squashfs");
+    }
+
+    // ---- arch-prefixed download URL tests ----
+
+    #[test]
+    fn check_asset_url_with_arch_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        let mgr = AssetManager::from_manifest(
+            &manifest, "0.9.0", dir.path().to_path_buf(), Some("arm64"),
+        ).unwrap();
+        match mgr.check_asset("rootfs.squashfs").unwrap() {
+            AssetStatus::NeedsDownload { url, dest, .. } => {
+                assert!(url.ends_with("/arm64-rootfs.squashfs"), "url should have arch prefix: {url}");
+                assert!(dest.ends_with("rootfs.squashfs"), "local path should be bare: {}", dest.display());
+            }
+            AssetStatus::Ready(_) => panic!("should need download"),
+        }
+    }
+
+    #[test]
+    fn check_asset_url_without_arch_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        let mgr = AssetManager::from_manifest(
+            &manifest, "0.9.0", dir.path().to_path_buf(), None,
+        ).unwrap();
+        match mgr.check_asset("rootfs.squashfs").unwrap() {
+            AssetStatus::NeedsDownload { url, .. } => {
+                assert!(url.ends_with("/rootfs.squashfs"), "url should be bare: {url}");
+                assert!(!url.contains("arm64-"), "url should not have arch prefix: {url}");
+            }
+            AssetStatus::Ready(_) => panic!("should need download"),
+        }
+    }
+
+    #[test]
+    fn download_url_with_x86_64_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
+        let mgr = AssetManager::from_manifest(
+            &manifest, "0.9.0", dir.path().to_path_buf(), Some("x86_64"),
+        ).unwrap();
+        match mgr.check_asset("rootfs.squashfs").unwrap() {
+            AssetStatus::NeedsDownload { url, .. } => {
+                assert!(url.ends_with("/x86_64-rootfs.squashfs"), "url should have x86_64 prefix: {url}");
+            }
+            AssetStatus::Ready(_) => panic!("should need download"),
+        }
     }
 
     // ---- cleanup_old_versions tests ----

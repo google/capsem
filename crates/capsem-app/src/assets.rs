@@ -175,7 +175,7 @@ pub(crate) fn create_asset_manager(bundled_assets: &Path) -> Result<AssetManager
         // Migrate flat layout if present.
         let _ = asset_manager::migrate_flat_layout(&download_dir, version);
 
-        return AssetManager::from_manifest(&manifest, version, download_dir);
+        return AssetManager::from_manifest(&manifest, version, download_dir, Some(host_arch()));
     }
 
     // Fall back to legacy B3SUMS (check both bundled dir and parent).

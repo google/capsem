@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Config-driven tool version extraction** -- `extract_tool_versions()` now builds its shell script from TOML configs (`version_commands` fields) instead of a hardcoded tool list. Covers build tools (node, npm, uv, pip), apt packages (git, python3, gh, tmux, curl), Python packages (pytest, numpy, requests, pandas), and AI CLIs (claude, gemini, codex) with grouped output in tool-versions.txt. Build-time validation catches silent install failures (N/A) for enabled AI CLIs. New W013 diagnostic warns when an AI provider has a CLI but no `version_command`.
 
+### Fixed
+- **VM asset download fails with arch-prefixed release names** -- CI uploads per-arch assets as `arm64-rootfs.squashfs` etc., but `AssetManager` constructed download URLs with bare filenames (`rootfs.squashfs`), causing 404s. Added `arch_prefix` to `AssetManager` so download URLs match the release naming convention. Local storage still uses bare filenames.
+
 ## [0.14.17] - 2026-03-30
 
 ## [0.14.16] - 2026-03-30
