@@ -582,6 +582,10 @@ jobs:
             done < release-artifacts/arm64/tool-versions.txt
           fi
 
-          gh release create ${{ github.ref_name }} release-artifacts/*.dmg release-artifacts/*.deb release-artifacts/arm64/* release-artifacts/x86_64/* release-artifacts/manifest.json release-artifacts/manifest.json.minisig release-artifacts/capsem-sbom.spdx.json release-artifacts/latest.json 2>/dev/null \
+          # Collect upload files -- some may not exist depending on bundle types
+          FILES=(release-artifacts/*.dmg release-artifacts/*.deb release-artifacts/arm64/* release-artifacts/x86_64/* release-artifacts/manifest.json release-artifacts/manifest.json.minisig release-artifacts/capsem-sbom.spdx.json)
+          [ -f release-artifacts/latest.json ] && FILES+=(release-artifacts/latest.json)
+
+          gh release create ${{ github.ref_name }} "${FILES[@]}" \
             --title "Capsem ${{ github.ref_name }}" \
             --notes "$NOTES"
