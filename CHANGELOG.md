@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`.cargo/config.toml` not tracked -- broke codesigning on fresh clones** -- `.gitignore` had a bare `config.toml` pattern (no leading `/`) which matched at any depth, silently ignoring `.cargo/config.toml`. On fresh clones the cargo runner config was missing, so `cargo run`/`cargo test` produced unsigned binaries that crash on Virtualization.framework calls. Fixed by anchoring the pattern to root (`/config.toml`) and tracking the file. Added `just doctor` and bootstrap checks for the cargo runner config.
+
 ## [0.14.20] - 2026-03-30
 
 ### Fixed

@@ -188,6 +188,12 @@ The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Unt
 ### `just run` fails with "assets not found"
 Run `just build-assets` first. Assets are gitignored and must be built locally.
 
+### `cargo run` or `cargo test` crashes with signing error
+- `.cargo/config.toml` must exist and be tracked in git -- it configures the custom runner (`scripts/run_signed.sh`) that signs binaries with Virtualization.framework entitlements before execution
+- If missing: `git checkout .cargo/config.toml`
+- The justfile `_sign` recipe signs separately, so `just run` works even without the cargo runner -- but direct `cargo run`/`cargo test` and IDE integrations will crash
+- **Lesson:** bare `.gitignore` patterns (no `/` prefix) match at any depth. Always anchor with `/` when you mean root-only (e.g., `/config.toml` not `config.toml`), or you risk silently ignoring files in subdirectories like `.cargo/`
+
 ### Cross-compile errors
 - Check `.cargo/config.toml` has linker config for musl targets
 - Run `rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl`

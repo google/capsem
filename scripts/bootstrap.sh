@@ -113,12 +113,19 @@ else
     miss "docker/podman" "$(hint_for "docker/podman")"
 fi
 
-# --- macOS: Xcode Command Line Tools ---
+# --- macOS: Xcode Command Line Tools + codesigning ---
 if [ "$OS" = "Darwin" ]; then
     if xcode-select -p >/dev/null 2>&1; then
         pass "Xcode Command Line Tools ($(xcode-select -p))"
     else
         miss "Xcode Command Line Tools" "xcode-select --install"
+    fi
+
+    # Cargo runner config (signs binaries with Virtualization entitlements)
+    if [ -f ".cargo/config.toml" ] && grep -q 'runner.*run_signed' .cargo/config.toml; then
+        pass ".cargo/config.toml (cargo runner)"
+    else
+        miss ".cargo/config.toml" "git checkout .cargo/config.toml"
     fi
 fi
 

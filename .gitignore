@@ -10,7 +10,7 @@ archive/
 .claude/projects/
 .claude/settings.local.json
 .pytest_cache
-config.toml
+/config.toml
 keys.json
 workdir/
 node_modules/

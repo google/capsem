@@ -355,7 +355,21 @@ doctor: _pnpm-install
             fail "{{entitlements}} missing or not readable -- run: git checkout {{entitlements}}"
         fi
 
-        # Check 4: test sign (only if codesign and entitlements both exist)
+        # Check 4: cargo runner config (.cargo/config.toml)
+        if [[ -f ".cargo/config.toml" ]] && grep -q 'runner.*run_signed' .cargo/config.toml; then
+            pass ".cargo/config.toml (cargo runner -> run_signed.sh)"
+        else
+            fail ".cargo/config.toml missing or misconfigured -- run: git checkout .cargo/config.toml"
+        fi
+
+        # Check 5: run_signed.sh exists and is executable
+        if [[ -x "scripts/run_signed.sh" ]]; then
+            pass "scripts/run_signed.sh"
+        else
+            fail "scripts/run_signed.sh missing or not executable -- run: git checkout scripts/run_signed.sh && chmod +x scripts/run_signed.sh"
+        fi
+
+        # Check 6: test sign (only if codesign and entitlements both exist)
         if command -v codesign &>/dev/null && [[ -r "{{entitlements}}" ]]; then
             SIGN_TEST=$(mktemp /tmp/capsem-sign-test.XXXXXX)
             if cc -x c -o "$SIGN_TEST" - <<< 'int main(){return 0;}' 2>/dev/null; then
