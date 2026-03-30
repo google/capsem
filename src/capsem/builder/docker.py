@@ -428,7 +428,7 @@ def container_compile_agent(
         "-v", f"{target_volume}:/build/target",
         "-w", "/build",
         "rust:slim-bookworm", "bash", "-c",
-        f"for f in /src/*; do [ \"$(basename $f)\" != target ] && ln -s $f /build/; done && "
+        f"for f in /src/*; do b=$(basename $f); [ $b != target ] && [ $b != Cargo.lock ] && ln -s $f /build/; done && "
         f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
         f"rustup target add {rust_target} && "
         f"cargo build --release --target {rust_target} -p capsem-agent && "
