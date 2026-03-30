@@ -159,8 +159,8 @@ jobs:
         if: always()
         run: |
           # Parse "test result: ok. X passed; Y failed" lines from cargo output
-          TESTS=$(grep -oP '\d+ passed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
-          FAILED=$(grep -oP '\d+ failed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          TESTS=$(grep -o '[0-9]* passed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          FAILED=$(grep -o '[0-9]* failed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Test Results
