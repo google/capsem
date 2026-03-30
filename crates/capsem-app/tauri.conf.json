@@ -26,7 +26,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "deb", "appimage"],
+    "targets": ["app", "dmg", "deb"],
     "createUpdaterArtifacts": true,
     "resources": {
       "../../assets/current/vmlinuz": "vmlinuz",

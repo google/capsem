@@ -151,12 +151,11 @@ cross-compile arch="": _check-assets _generate-settings
         TAURI_KEY=$(cat "$ROOT/private/tauri/capsem.key")
         TAURI_PWD=$(cat "$ROOT/private/tauri/password.txt")
     fi
-    echo "=== Bundling Linux AppImage ($TARGET_ARCH via $RUNTIME) ==="
+    echo "=== Building Linux deb ($TARGET_ARCH via $RUNTIME) ==="
     $RUNTIME run --rm \
         --platform "$PLATFORM" \
         -e "TAURI_SIGNING_PRIVATE_KEY=$TAURI_KEY" \
         -e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_PWD" \
-        -e "APPIMAGE_EXTRACT_AND_RUN=1" \
         -v "$ROOT:/src" \
         -w /src \
         rust:bookworm \
@@ -174,12 +173,9 @@ cross-compile arch="": _check-assets _generate-settings
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Build Tauri app ---' && \
                cargo install tauri-cli --locked && \
-               BUNDLES='deb,appimage' && \
-               [ '$TARGET_ARCH' = 'arm64' ] && BUNDLES='deb' ; \
-               cd crates/capsem-app && cargo tauri build --bundles \$BUNDLES && cd ../.. && \
+               cd crates/capsem-app && cargo tauri build --bundles deb && cd ../.. && \
                echo '--- Validate artifacts ---' && \
-               dpkg-deb --info target/release/bundle/deb/*.deb && \
-               file target/release/bundle/appimage/*.AppImage 2>/dev/null || true"
+               dpkg-deb --info target/release/bundle/deb/*.deb"
     # Fix file ownership (container writes as root)
     chown -R "$(id -u):$(id -g)" "$ROOT/target" "$ROOT/frontend/node_modules" 2>/dev/null || true
     echo ""

@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Pin Xcode 16.2 on macOS CI runners** -- Xcode 15.4's xcodebuild crashes with `Abort trap: 6` when Tauri tries to locate notarytool. Runner image update broke the default Xcode between v0.14.11 (passed) and v0.14.12 (failed). Explicitly selecting Xcode 16.2 prevents runner drift.
-- **AppImage builds on CI: install libfuse2 + set `APPIMAGE_EXTRACT_AND_RUN=1`** -- Ubuntu 24.04 ships FUSE3 but linuxdeploy is a FUSE2 AppImage. Install `libfuse2` for runtime support and set `APPIMAGE_EXTRACT_AND_RUN=1` as fallback. Root cause of every v0.14.x Linux build failure (14 consecutive failed releases).
+- **Drop AppImage from Linux releases** -- linuxdeploy cannot run on GitHub CI runners (Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` resolves it reliably). Linux ships `.deb` only on both arm64 and x86_64. Root cause of every v0.14.x Linux build failure (14 consecutive failed releases).
 - **Container agent build: replace `file` with `ls -l`** -- `file` command is not available in `rust:slim-bookworm`. Binary verification now uses `ls -l` (coreutils); real validation (existence + non-zero size) is done in Python after the container exits.
 - **Broken capsem-doctor link in docs** -- getting-started page linked to `/testing/capsem-doctor/` (removed section) instead of `/debugging/capsem-doctor/`.
 - **Site description outdated** -- splash page and meta description now mention Linux (KVM) support added in v0.14.

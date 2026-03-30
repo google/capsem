@@ -300,7 +300,7 @@ jobs:
             bundles: deb
           - arch: x86_64
             runner: ubuntu-24.04
-            bundles: deb,appimage
+            bundles: deb
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -336,7 +336,7 @@ jobs:
       - name: Install Tauri system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev xdg-utils libfuse2
+          sudo apt-get install -y libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev xdg-utils
 
       - uses: pnpm/action-setup@v5
         with:
@@ -369,7 +369,6 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           cd crates/capsem-app
           cargo tauri build --bundles ${{ matrix.bundles }}
@@ -378,8 +377,6 @@ jobs:
         run: |
           echo "=== Validate deb ==="
           dpkg-deb --info target/release/bundle/deb/*.deb
-          echo "=== Validate AppImage ==="
-          file target/release/bundle/appimage/*.AppImage 2>/dev/null || echo "No AppImage produced (may be expected on some arches)"
 
       - name: Collect Linux artifacts
         run: |
@@ -387,9 +384,6 @@ jobs:
           cp target/release/bundle/deb/*.deb release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/deb/*.tar.gz release-artifacts/ 2>/dev/null || true
           cp target/release/bundle/deb/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/appimage/*.AppImage release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/appimage/*.AppImage.tar.gz release-artifacts/ 2>/dev/null || true
-          cp target/release/bundle/appimage/*.AppImage.tar.gz.sig release-artifacts/ 2>/dev/null || true
           find target/release/bundle -name "latest.json" -exec cp {} release-artifacts/latest-linux-${{ matrix.arch }}.json \; 2>/dev/null || true
           ls -lh release-artifacts/
 
@@ -502,13 +496,12 @@ jobs:
           "
           rm -f release-artifacts/latest-*.json
 
-      - name: Attest build provenance (DMG + deb + AppImage + rootfs per arch)
+      - name: Attest build provenance (DMG + deb + rootfs per arch)
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             release-artifacts/*.dmg
             release-artifacts/*.deb
-            release-artifacts/*.AppImage
             release-artifacts/arm64/rootfs.squashfs
             release-artifacts/x86_64/rootfs.squashfs
 
@@ -529,9 +522,9 @@ jobs:
           X86_ROOTFS=$(du -h release-artifacts/x86_64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
           SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
 
-          # Build artifact table rows for all debs and AppImages
+          # Build artifact table rows for all debs
           LINUX_ROWS=""
-          for f in release-artifacts/*.deb release-artifacts/*.AppImage; do
+          for f in release-artifacts/*.deb; do
             [ -f "$f" ] || continue
             NAME=$(basename "$f")
             SIZE=$(du -h "$f" | cut -f1)
@@ -583,6 +576,6 @@ jobs:
             done < release-artifacts/arm64/tool-versions.txt
           fi
 
-          gh release create ${{ github.ref_name }} release-artifacts/*.dmg release-artifacts/*.deb release-artifacts/*.AppImage release-artifacts/arm64/* release-artifacts/x86_64/* release-artifacts/manifest.json release-artifacts/manifest.json.minisig release-artifacts/capsem-sbom.spdx.json release-artifacts/latest.json 2>/dev/null \
+          gh release create ${{ github.ref_name }} release-artifacts/*.dmg release-artifacts/*.deb release-artifacts/arm64/* release-artifacts/x86_64/* release-artifacts/manifest.json release-artifacts/manifest.json.minisig release-artifacts/capsem-sbom.spdx.json release-artifacts/latest.json 2>/dev/null \
             --title "Capsem ${{ github.ref_name }}" \
             --notes "$NOTES"
