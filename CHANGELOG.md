@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.19] - 2026-03-30
+
 ### Fixed
 - **AI CLI version check fails in CI** -- `extract_tool_versions()` runs `gemini --version` and `codex --version` inside the built rootfs image, but `/opt/ai-clis/bin` was not on the container PATH. Added `ENV PATH` to the Dockerfile template after npm CLI install so version extraction finds the binaries.
 - **`cut-release` skipped container build** -- `cut-release` depended on `just test` (unit tests only), so Dockerfile and rootfs issues were only caught by CI after tagging. Now `cut-release` depends on `full-test`, which depends on `build-assets`. The full chain (container build + unit tests + capsem-doctor + integration + bench) runs locally before any tag is created.
