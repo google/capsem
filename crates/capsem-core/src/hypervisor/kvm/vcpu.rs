@@ -12,6 +12,8 @@ use anyhow::Result;
 use tracing::{debug, info, warn};
 
 use super::mmio::MmioBus;
+#[cfg(target_arch = "x86_64")]
+use super::pio::PioBus;
 use super::sys::{VcpuExit, VcpuFd, KVM_SYSTEM_EVENT_SHUTDOWN, KVM_SYSTEM_EVENT_RESET};
 
 /// Spawn a vCPU run loop thread.
@@ -24,6 +26,8 @@ use super::sys::{VcpuExit, VcpuFd, KVM_SYSTEM_EVENT_SHUTDOWN, KVM_SYSTEM_EVENT_R
 pub(super) fn run_vcpu(
     vcpu: VcpuFd,
     mmio_bus: Arc<MmioBus>,
+    #[cfg(target_arch = "x86_64")]
+    pio_bus: Arc<PioBus>,
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<Result<()>> {
     let vcpu_id = vcpu.id();
@@ -32,7 +36,13 @@ pub(super) fn run_vcpu(
         .name(format!("kvm-vcpu-{vcpu_id}"))
         .spawn(move || {
             info!(vcpu_id, "vCPU thread started");
-            let result = vcpu_loop(&vcpu, &mmio_bus, &shutdown);
+            let result = vcpu_loop(
+                &vcpu,
+                &mmio_bus,
+                #[cfg(target_arch = "x86_64")]
+                &pio_bus,
+                &shutdown,
+            );
             info!(vcpu_id, "vCPU thread exiting");
             result
         })
@@ -42,6 +52,8 @@ pub(super) fn run_vcpu(
 fn vcpu_loop(
     vcpu: &VcpuFd,
     mmio_bus: &MmioBus,
+    #[cfg(target_arch = "x86_64")]
+    pio_bus: &PioBus,
     shutdown: &AtomicBool,
 ) -> Result<()> {
     loop {
@@ -63,6 +75,40 @@ fn vcpu_loop(
                     let data = &mut vcpu.mmio_data_mut()[..len as usize];
                     mmio_bus.read(addr, data);
                 }
+            }
+
+            #[cfg(target_arch = "x86_64")]
+            VcpuExit::Io { direction, port, size } => {
+                let io = vcpu.io_data();
+                if direction == 0 {
+                    // KVM_EXIT_IO_IN: read from device into kvm_run buffer
+                    let ptr = vcpu.io_data_mut(io.data_offset);
+                    let data = unsafe {
+                        std::slice::from_raw_parts_mut(ptr, size as usize)
+                    };
+                    pio_bus.read(port, data);
+                } else {
+                    // KVM_EXIT_IO_OUT: write from kvm_run buffer to device
+                    let ptr = vcpu.io_data_mut(io.data_offset);
+                    let data = unsafe {
+                        std::slice::from_raw_parts(ptr, size as usize)
+                    };
+                    pio_bus.write(port, data);
+                }
+            }
+
+            #[cfg(target_arch = "x86_64")]
+            VcpuExit::Hlt => {
+                info!("guest halted (HLT) on vCPU {}", vcpu.id());
+                shutdown.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+
+            #[cfg(target_arch = "x86_64")]
+            VcpuExit::Shutdown => {
+                warn!("guest triple-fault (shutdown) on vCPU {}", vcpu.id());
+                shutdown.store(true, Ordering::SeqCst);
+                return Ok(());
             }
 
             VcpuExit::SystemEvent { event_type } => {

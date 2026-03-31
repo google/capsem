@@ -394,7 +394,7 @@ mod tests {
     fn make_transport() -> (VirtioMmioTransport, std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::Arc<std::sync::atomic::AtomicU32>) {
         let mem = GuestMemory::new(4096).unwrap();
         let (dev, activated, notify_count) = DummyDevice::new();
-        let transport = VirtioMmioTransport::new(Box::new(dev), mem.clone_ref());
+        let transport = VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(super::memory::RAM_BASE));
         (transport, activated, notify_count)
     }
 

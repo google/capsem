@@ -48,22 +48,31 @@ pub(super) const KVM_IOEVENTFD: u64 = _iow(KVMIO, 0x79, 64); // sizeof kvm_ioeve
 
 // vCPU ioctls (on vCPU fd)
 pub(super) const KVM_RUN: u64 = _io(KVMIO, 0x80);
+
+// ---------------------------------------------------------------------------
+// ARM64-specific ioctl numbers
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_GET_ONE_REG: u64 = _iow(KVMIO, 0xAB, 16); // sizeof kvm_one_reg
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_SET_ONE_REG: u64 = _iow(KVMIO, 0xAC, 16);
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_ARM_VCPU_INIT: u64 = _iow(KVMIO, 0xAE, 36); // sizeof kvm_vcpu_init
-
-// VM ioctl for preferred target query
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_ARM_PREFERRED_TARGET: u64 = _ior(KVMIO, 0xAF, 36);
-
-// Device attribute ioctl
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_SET_DEVICE_ATTR: u64 = _iow(KVMIO, 0xE1, 24); // sizeof kvm_device_attr
 
 // ---------------------------------------------------------------------------
 // KVM capability IDs
 // ---------------------------------------------------------------------------
 
-pub(super) const KVM_CAP_ONE_REG: u32 = 70;
 pub(super) const KVM_CAP_IRQFD: u32 = 32;
+
+#[cfg(target_arch = "aarch64")]
+pub(super) const KVM_CAP_ONE_REG: u32 = 70;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_CAP_ARM_VM_IPA_SIZE: u32 = 165;
 
 // ---------------------------------------------------------------------------
@@ -80,15 +89,22 @@ pub(super) const KVM_SYSTEM_EVENT_SHUTDOWN: u32 = 1;
 pub(super) const KVM_SYSTEM_EVENT_RESET: u32 = 2;
 
 // ---------------------------------------------------------------------------
-// GIC constants
+// GIC constants (ARM64 only)
 // ---------------------------------------------------------------------------
 
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_DEV_TYPE_ARM_VGIC_V3: u32 = 5;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_DEV_ARM_VGIC_GRP_ADDR: u32 = 0;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_DEV_ARM_VGIC_GRP_NR_IRQS: u32 = 3;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_DEV_ARM_VGIC_GRP_CTRL: u32 = 4;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_VGIC_V3_ADDR_TYPE_DIST: u64 = 0;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_VGIC_V3_ADDR_TYPE_REDIST: u64 = 1;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_DEV_ARM_VGIC_CTRL_INIT: u64 = 0;
 
 // ---------------------------------------------------------------------------
@@ -145,27 +161,38 @@ pub(super) struct VhostMemoryRegion {
 }
 
 // ---------------------------------------------------------------------------
-// ARM64 register IDs
+// ARM64 register IDs (aarch64 only)
 // ---------------------------------------------------------------------------
 
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_REG_ARM64: u64 = 0x6000_0000_0000_0000;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_REG_SIZE_U64: u64 = 0x0030_0000_0000_0000;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_REG_ARM_CORE: u64 = 0x0000_0000_0010_0000;
 
 /// Build an ARM64 core register ID from a u32 offset into kvm_regs.
+#[cfg(target_arch = "aarch64")]
 pub(super) const fn arm64_core_reg(offset: u64) -> u64 {
     KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | offset
 }
 
 // X registers: each u64 is 2 u32 offsets apart
+#[cfg(target_arch = "aarch64")]
 pub(super) const REG_X0: u64 = arm64_core_reg(0x00);
+#[cfg(target_arch = "aarch64")]
 pub(super) const REG_X1: u64 = arm64_core_reg(0x02);
+#[cfg(target_arch = "aarch64")]
 pub(super) const REG_X2: u64 = arm64_core_reg(0x04);
+#[cfg(target_arch = "aarch64")]
 pub(super) const REG_X3: u64 = arm64_core_reg(0x06);
+#[cfg(target_arch = "aarch64")]
 pub(super) const REG_PC: u64 = arm64_core_reg(0x40);
+#[cfg(target_arch = "aarch64")]
 pub(super) const REG_PSTATE: u64 = arm64_core_reg(0x42);
 
 // PSTATE value for EL1h with DAIF masked
+#[cfg(target_arch = "aarch64")]
 pub(super) const PSTATE_EL1H_DAIF: u64 = 0x3C5;
 
 // ---------------------------------------------------------------------------
@@ -199,6 +226,7 @@ pub(super) struct KvmDeviceAttr {
     pub addr: u64,
 }
 
+#[cfg(target_arch = "aarch64")]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub(super) struct KvmOneReg {
@@ -206,6 +234,7 @@ pub(super) struct KvmOneReg {
     pub addr: u64,
 }
 
+#[cfg(target_arch = "aarch64")]
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub(super) struct KvmVcpuInit {
@@ -213,7 +242,9 @@ pub(super) struct KvmVcpuInit {
     pub features: [u32; 7],
 }
 
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_ARM_VCPU_POWER_OFF: u32 = 0;
+#[cfg(target_arch = "aarch64")]
 pub(super) const KVM_ARM_VCPU_PSCI_0_2: u32 = 2;
 
 #[repr(C)]
@@ -405,6 +436,7 @@ impl VmFd {
     }
 
     /// Query the preferred aarch64 CPU target.
+    #[cfg(target_arch = "aarch64")]
     pub fn preferred_target(&self) -> Result<KvmVcpuInit> {
         let mut init = KvmVcpuInit {
             target: 0,
@@ -427,6 +459,7 @@ impl VmFd {
     }
 
     /// Create an in-kernel GICv3 interrupt controller.
+    #[cfg(target_arch = "aarch64")]
     pub fn create_gic(&self, cpu_count: u32) -> Result<OwnedFd> {
         use super::memory::{GIC_DIST_BASE, GIC_REDIST_BASE};
 
@@ -514,6 +547,7 @@ impl VmFd {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 fn set_device_attr(dev_fd: RawFd, group: u32, attr: u64, addr: u64) -> Result<()> {
     let kda = KvmDeviceAttr {
         flags: 0,
@@ -560,6 +594,7 @@ impl VcpuFd {
     }
 
     /// Initialize the vCPU with the preferred target.
+    #[cfg(target_arch = "aarch64")]
     pub fn vcpu_init(&self, preferred: &KvmVcpuInit, power_off: bool) -> Result<()> {
         let mut init = preferred.clone();
         init.features[0] |= 1 << KVM_ARM_VCPU_PSCI_0_2;
@@ -583,6 +618,7 @@ impl VcpuFd {
     }
 
     /// Set a single register value.
+    #[cfg(target_arch = "aarch64")]
     pub fn set_one_reg(&self, reg_id: u64, value: u64) -> Result<()> {
         let mut val = value;
         let reg = KvmOneReg {
@@ -648,6 +684,21 @@ impl VcpuFd {
                     event_type: event.type_,
                 })
             }
+            #[cfg(target_arch = "x86_64")]
+            KVM_EXIT_IO => {
+                let io = unsafe {
+                    &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo)
+                };
+                Ok(VcpuExit::Io {
+                    direction: io.direction,
+                    port: io.port,
+                    size: io.size,
+                })
+            }
+            #[cfg(target_arch = "x86_64")]
+            KVM_EXIT_HLT => Ok(VcpuExit::Hlt),
+            #[cfg(target_arch = "x86_64")]
+            KVM_EXIT_SHUTDOWN => Ok(VcpuExit::Shutdown),
             KVM_EXIT_INTERNAL_ERROR => {
                 Ok(VcpuExit::InternalError)
             }
@@ -685,12 +736,345 @@ pub(super) enum VcpuExit {
         len: u32,
         is_write: bool,
     },
+    #[cfg(target_arch = "x86_64")]
+    Io {
+        direction: u8,
+        port: u16,
+        size: u8,
+    },
     SystemEvent {
         event_type: u32,
     },
+    #[cfg(target_arch = "x86_64")]
+    Hlt,
+    #[cfg(target_arch = "x86_64")]
+    Shutdown,
     InternalError,
     Interrupted,
     Unknown(u32),
+}
+
+// ---------------------------------------------------------------------------
+// x86_64-specific ioctl numbers
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_TSS_ADDR: u64 = _io(KVMIO, 0x47);
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_IDENTITY_MAP_ADDR: u64 = _iow(KVMIO, 0x48, 8);
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_CREATE_IRQCHIP: u64 = _io(KVMIO, 0x60);
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_CREATE_PIT2: u64 = _iow(KVMIO, 0x77, 68); // sizeof kvm_pit_config
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_REGS: u64 = _iow(KVMIO, 0x82, 144); // sizeof kvm_regs
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_SREGS: u64 = _iow(KVMIO, 0x84, 312); // sizeof kvm_sregs
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_SUPPORTED_CPUID: u64 = _iowr(KVMIO, 0x05, 8); // sizeof kvm_cpuid2 header
+
+// ---------------------------------------------------------------------------
+// x86_64 exit reasons
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_EXIT_IO: u32 = 2;
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_EXIT_HLT: u32 = 5;
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_EXIT_SHUTDOWN: u32 = 8;
+
+// ---------------------------------------------------------------------------
+// x86_64 repr(C) structs
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct KvmRegs {
+    pub rax: u64, pub rbx: u64, pub rcx: u64, pub rdx: u64,
+    pub rsi: u64, pub rdi: u64, pub rsp: u64, pub rbp: u64,
+    pub r8: u64,  pub r9: u64,  pub r10: u64, pub r11: u64,
+    pub r12: u64, pub r13: u64, pub r14: u64, pub r15: u64,
+    pub rip: u64,
+    pub rflags: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct KvmSegment {
+    pub base: u64,
+    pub limit: u32,
+    pub selector: u16,
+    pub type_: u8,
+    pub present: u8,
+    pub dpl: u8,
+    pub db: u8,
+    pub s: u8,
+    pub l: u8,
+    pub g: u8,
+    pub avl: u8,
+    pub unusable: u8,
+    pub padding: u8,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct KvmDtable {
+    pub base: u64,
+    pub limit: u16,
+    pub padding: [u16; 3],
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct KvmSregs {
+    pub cs: KvmSegment,
+    pub ds: KvmSegment,
+    pub es: KvmSegment,
+    pub fs: KvmSegment,
+    pub gs: KvmSegment,
+    pub ss: KvmSegment,
+    pub tr: KvmSegment,
+    pub ldt: KvmSegment,
+    pub gdt: KvmDtable,
+    pub idt: KvmDtable,
+    pub cr0: u64,
+    pub cr2: u64,
+    pub cr3: u64,
+    pub cr4: u64,
+    pub cr8: u64,
+    pub efer: u64,
+    pub apic_base: u64,
+    pub interrupt_bitmap: [u64; 4],
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub(super) struct KvmCpuidEntry2 {
+    pub function: u32,
+    pub index: u32,
+    pub flags: u32,
+    pub eax: u32,
+    pub ebx: u32,
+    pub ecx: u32,
+    pub edx: u32,
+    pub padding: [u32; 3],
+}
+
+/// Header for KVM_GET_SUPPORTED_CPUID / KVM_SET_CPUID2.
+/// Followed by `nent` KvmCpuidEntry2 structs.
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+pub(super) struct KvmCpuid2 {
+    pub nent: u32,
+    pub padding: u32,
+    pub entries: [KvmCpuidEntry2; 0], // flexible array
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct KvmPitConfig {
+    pub flags: u32,
+    pub pad: [u32; 15],
+}
+
+/// kvm_run IO exit data (at offset 32 in the kvm_run mmap'd region).
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub(super) struct KvmRunIo {
+    pub direction: u8,
+    pub size: u8,
+    pub port: u16,
+    pub count: u32,
+    pub data_offset: u64,
+}
+
+// ---------------------------------------------------------------------------
+// x86_64 VmFd methods
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+impl VmFd {
+    /// Set the TSS address (required before creating IRQCHIP on x86_64).
+    pub fn set_tss_addr(&self, addr: u64) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR as libc::c_ulong, addr)
+        };
+        if ret < 0 {
+            bail!("KVM_SET_TSS_ADDR failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Set the identity map address.
+    pub fn set_identity_map_addr(&self, addr: u64) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_IDENTITY_MAP_ADDR as libc::c_ulong,
+                &addr as *const u64 as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_IDENTITY_MAP_ADDR failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Create an in-kernel i8259 PIC + IOAPIC + LAPIC.
+    pub fn create_irqchip(&self) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_IRQCHIP as libc::c_ulong, 0u64)
+        };
+        if ret < 0 {
+            bail!("KVM_CREATE_IRQCHIP failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Create an in-kernel i8254 PIT.
+    pub fn create_pit2(&self) -> Result<()> {
+        let config = KvmPitConfig::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_CREATE_PIT2 as libc::c_ulong,
+                &config as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_CREATE_PIT2 failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Get CPUID entries supported by this KVM host.
+    pub fn get_supported_cpuid(&self) -> Result<Vec<KvmCpuidEntry2>> {
+        const MAX_ENTRIES: usize = 256;
+        let entry_size = std::mem::size_of::<KvmCpuidEntry2>();
+        let header_size = std::mem::size_of::<u32>() * 2; // nent + padding
+        let total_size = header_size + MAX_ENTRIES * entry_size;
+
+        let layout = std::alloc::Layout::from_size_align(total_size, 8)
+            .context("cpuid layout")?;
+        let buf = unsafe { std::alloc::alloc_zeroed(layout) };
+        if buf.is_null() {
+            bail!("failed to allocate CPUID buffer");
+        }
+
+        // Set nent to MAX_ENTRIES
+        unsafe { *(buf as *mut u32) = MAX_ENTRIES as u32; }
+
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_SUPPORTED_CPUID as libc::c_ulong,
+                buf as u64,
+            )
+        };
+        if ret < 0 {
+            unsafe { std::alloc::dealloc(buf, layout); }
+            bail!("KVM_GET_SUPPORTED_CPUID failed: {}", std::io::Error::last_os_error());
+        }
+
+        let nent = unsafe { *(buf as *const u32) } as usize;
+        let entries_ptr = unsafe { buf.add(header_size) as *const KvmCpuidEntry2 };
+        let entries = unsafe { std::slice::from_raw_parts(entries_ptr, nent) }.to_vec();
+        unsafe { std::alloc::dealloc(buf, layout); }
+        Ok(entries)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// x86_64 VcpuFd methods
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+impl VcpuFd {
+    /// Set general-purpose registers.
+    pub fn set_regs(&self, regs: &KvmRegs) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_REGS as libc::c_ulong,
+                regs as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_REGS failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Set special registers (segments, control registers, EFER).
+    pub fn set_sregs(&self, sregs: &KvmSregs) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_SREGS as libc::c_ulong,
+                sregs as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_SREGS failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Set CPUID entries for this vCPU.
+    pub fn set_cpuid2(&self, entries: &[KvmCpuidEntry2]) -> Result<()> {
+        let entry_size = std::mem::size_of::<KvmCpuidEntry2>();
+        let header_size = std::mem::size_of::<u32>() * 2;
+        let total_size = header_size + entries.len() * entry_size;
+
+        let layout = std::alloc::Layout::from_size_align(total_size, 8)
+            .context("cpuid layout")?;
+        let buf = unsafe { std::alloc::alloc_zeroed(layout) };
+        if buf.is_null() {
+            bail!("failed to allocate CPUID buffer");
+        }
+
+        unsafe {
+            *(buf as *mut u32) = entries.len() as u32;
+            let dst = buf.add(header_size) as *mut KvmCpuidEntry2;
+            std::ptr::copy_nonoverlapping(entries.as_ptr(), dst, entries.len());
+        }
+
+        // KVM_SET_CPUID2 uses the same ioctl number encoding as GET but with _IOW
+        const KVM_SET_CPUID2: u64 = _iow(KVMIO, 0x90, 8);
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_CPUID2 as libc::c_ulong,
+                buf as u64,
+            )
+        };
+        unsafe { std::alloc::dealloc(buf, layout); }
+        if ret < 0 {
+            bail!("KVM_SET_CPUID2 failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Get the IO exit data from the kvm_run mmap'd region.
+    pub fn io_data(&self) -> &KvmRunIo {
+        unsafe {
+            &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo)
+        }
+    }
+
+    /// Get a mutable pointer to the IO data buffer.
+    /// The data buffer is at the offset specified in KvmRunIo.data_offset.
+    pub fn io_data_mut(&self, data_offset: u64) -> *mut u8 {
+        unsafe { self.run.add(data_offset as usize) }
+    }
 }
 
 #[cfg(test)]
@@ -789,49 +1173,54 @@ mod tests {
             "KvmDeviceAttr"
         );
         assert_eq!(
-            std::mem::size_of::<KvmOneReg>(),
-            16,
-            "KvmOneReg"
-        );
-        assert_eq!(
             std::mem::size_of::<KvmIrqfd>(),
             32,
             "KvmIrqfd"
         );
     }
 
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn struct_sizes_aarch64() {
+        assert_eq!(
+            std::mem::size_of::<KvmOneReg>(),
+            16,
+            "KvmOneReg"
+        );
+    }
+
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn kvm_vcpu_init_size() {
-        // target (4) + features[7] (28) = 32... but kernel says 36?
-        // Actually the kernel pads to 36 bytes. Let's check.
-        // target: u32 = 4, features: [u32; 7] = 28 => total 32.
-        // Some kernel versions have additional padding. We use 32.
         let size = std::mem::size_of::<KvmVcpuInit>();
         assert!(size == 32, "KvmVcpuInit size is {size}, expected 32");
     }
 
     // -----------------------------------------------------------------------
-    // ARM64 register ID encoding
+    // ARM64 register ID encoding (aarch64 only)
     // -----------------------------------------------------------------------
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn reg_x0_encoding() {
         assert_eq!(REG_X0, 0x6030_0000_0010_0000);
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn reg_pc_encoding() {
         assert_eq!(REG_PC, 0x6030_0000_0010_0040);
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn reg_pstate_encoding() {
         assert_eq!(REG_PSTATE, 0x6030_0000_0010_0042);
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn reg_x_sequential() {
-        // X registers are 2 apart (each u64 = 2 u32 positions)
         assert_eq!(REG_X1 - REG_X0, 2);
         assert_eq!(REG_X2 - REG_X1, 2);
         assert_eq!(REG_X3 - REG_X2, 2);
@@ -868,6 +1257,7 @@ mod tests {
         assert_eq!(KVM_EXIT_SYSTEM_EVENT, 24);
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn gic_constants() {
         assert_eq!(KVM_DEV_TYPE_ARM_VGIC_V3, 5);
@@ -939,14 +1329,11 @@ mod tests {
         assert_eq!(std::mem::size_of::<VhostMemoryRegion>(), 32, "VhostMemoryRegion");
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn pstate_el1h_value() {
-        // Bits: M[4:0]=0b00101 (EL1h), D=1, A=1, I=1, F=1
-        // 0x3C5 = 0b0000_0011_1100_0101
         assert_eq!(PSTATE_EL1H_DAIF, 0x3C5);
-        // Check EL1h mode bits (lowest 5 bits = 0b00101 = 5)
         assert_eq!(PSTATE_EL1H_DAIF & 0x1F, 5);
-        // Check DAIF bits are set (bits 6-9)
         assert_ne!(PSTATE_EL1H_DAIF & (1 << 6), 0); // F
         assert_ne!(PSTATE_EL1H_DAIF & (1 << 7), 0); // I
         assert_ne!(PSTATE_EL1H_DAIF & (1 << 8), 0); // A
@@ -984,6 +1371,7 @@ mod tests {
         let _ = kvm;
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn kvm_check_one_reg_extension() {
         let Some(kvm) = require_kvm() else { return };
@@ -1013,6 +1401,7 @@ mod tests {
         assert!(vcpu.is_ok(), "create_vcpu failed: {:?}", vcpu.err());
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn kvm_preferred_target() {
         let Some(kvm) = require_kvm() else { return };
@@ -1021,6 +1410,7 @@ mod tests {
         assert!(target.is_ok(), "preferred_target failed: {:?}", target.err());
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn kvm_vcpu_init_succeeds() {
         let Some(kvm) = require_kvm() else { return };
@@ -1054,5 +1444,48 @@ mod tests {
         assert!(result.is_ok(), "set_user_memory_region failed: {:?}", result.err());
 
         unsafe { libc::munmap(ptr, page_size); }
+    }
+
+    // -----------------------------------------------------------------------
+    // x86_64 struct sizes
+    // -----------------------------------------------------------------------
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn struct_sizes_x86_64() {
+        assert_eq!(std::mem::size_of::<KvmRegs>(), 144, "KvmRegs");
+        assert_eq!(std::mem::size_of::<KvmSegment>(), 24, "KvmSegment");
+        assert_eq!(std::mem::size_of::<KvmDtable>(), 16, "KvmDtable");
+        assert_eq!(std::mem::size_of::<KvmSregs>(), 312, "KvmSregs");
+        assert_eq!(std::mem::size_of::<KvmPitConfig>(), 64, "KvmPitConfig");
+        assert_eq!(std::mem::size_of::<KvmCpuidEntry2>(), 40, "KvmCpuidEntry2");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_exit_reason_values() {
+        assert_eq!(KVM_EXIT_IO, 2);
+        assert_eq!(KVM_EXIT_HLT, 5);
+        assert_eq!(KVM_EXIT_SHUTDOWN, 8);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn kvm_x86_64_create_irqchip() {
+        let Some(kvm) = require_kvm() else { return };
+        let vm = kvm.create_vm().unwrap();
+        vm.set_tss_addr(0xFFFB_D000).unwrap();
+        vm.set_identity_map_addr(0xFFFB_C000).unwrap();
+        vm.create_irqchip().unwrap();
+        vm.create_pit2().unwrap();
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn kvm_x86_64_get_supported_cpuid() {
+        let Some(kvm) = require_kvm() else { return };
+        let vm = kvm.create_vm().unwrap();
+        let entries = vm.get_supported_cpuid().unwrap();
+        assert!(!entries.is_empty(), "should have CPUID entries");
     }
 }

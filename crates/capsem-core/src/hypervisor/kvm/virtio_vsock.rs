@@ -689,7 +689,7 @@ mod tests {
         dev.activated = true;
         // Second activate should be a no-op (no vhost_fd to fail on)
         let mem = super::super::memory::GuestMemory::new(4096).unwrap();
-        dev.activate(mem.clone_ref(), &[]);
+        dev.activate(mem.clone_ref(super::memory::RAM_BASE), &[]);
         assert!(dev.activated);
     }
 

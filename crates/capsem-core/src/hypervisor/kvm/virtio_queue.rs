@@ -267,7 +267,7 @@ mod tests {
     fn pop_empty_queue() {
         let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
         // avail_idx = 0 (no descriptors available)
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         assert!(q.pop().is_none());
@@ -289,7 +289,7 @@ mod tests {
         write_avail_ring_entry(&mem, avail_gpa, 0, 0); // ring[0] = desc 0
         write_avail_idx(&mem, avail_gpa, 1); // 1 descriptor available
 
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         let chain = q.pop().unwrap();
@@ -331,7 +331,7 @@ mod tests {
         write_avail_ring_entry(&mem, avail_gpa, 0, 0);
         write_avail_idx(&mem, avail_gpa, 1);
 
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         let chain = q.pop().unwrap();
@@ -358,7 +358,7 @@ mod tests {
         write_avail_ring_entry(&mem, avail_gpa, 1, 1);
         write_avail_idx(&mem, avail_gpa, 2);
 
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         let chain1 = q.pop().unwrap();
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn push_used_single() {
         let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         q.push_used(5, 1024);
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn push_used_multiple() {
         let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         q.push_used(0, 100);
@@ -431,7 +431,7 @@ mod tests {
         }
         write_avail_idx(&mem, avail_gpa, 4);
 
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, queue_size);
 
         // Pop all 4
@@ -460,7 +460,7 @@ mod tests {
         write_avail_ring_entry(&mem, avail_gpa, 0, 0);
         write_avail_idx(&mem, avail_gpa, 1);
 
-        let memref = mem.clone_ref();
+        let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         // Should terminate (cycle detection kicks in at queue_size iterations)

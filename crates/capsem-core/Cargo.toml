@@ -48,7 +48,6 @@ walkdir = "2"
 
 # Linux-only: KVM hypervisor backend
 [target.'cfg(target_os = "linux")'.dependencies]
-vm-memory = { version = "0.16", features = ["backend-mmap"] }
 vm-fdt = "0.3"
 
 # macOS-only: Apple Virtualization.framework bindings

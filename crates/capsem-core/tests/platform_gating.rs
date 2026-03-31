@@ -60,7 +60,7 @@ fn check_symbol_gated(
     module_gated_dirs: &[&str],
 ) -> Vec<String> {
     let mut violations = Vec::new();
-    let cfg_pattern = format!("cfg(target_os = \"{}\")", required_os);
+    let cfg_pattern = format!("target_os = \"{}\"", required_os);
 
     for file in files {
         // Skip files inside module-gated directories.

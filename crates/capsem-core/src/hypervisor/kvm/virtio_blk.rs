@@ -402,7 +402,7 @@ mod tests {
                 device_addr: RAM_BASE + USED_RING_OFFSET,
                 size: QUEUE_TEST_SIZE,
             };
-            dev.activate(mem.clone_ref(), &[queue_config]);
+            dev.activate(mem.clone_ref(RAM_BASE), &[queue_config]);
 
             Self { dev, mem }
         }

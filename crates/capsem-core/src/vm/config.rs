@@ -8,6 +8,16 @@ const MAX_CPU: u32 = 8;
 const MIN_RAM: u64 = 256 * 1024 * 1024; // 256 MB
 const MAX_RAM: u64 = 16 * 1024 * 1024 * 1024; // 16 GB
 
+/// Default kernel command line (arch-dependent console device).
+fn default_kernel_cmdline() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    { "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1" }
+    #[cfg(target_arch = "x86_64")]
+    { "console=ttyS0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1" }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    { "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1" }
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("cpu count {0} out of range [{MIN_CPU}, {MAX_CPU}]")]
@@ -89,7 +99,7 @@ impl Default for VmConfigBuilder {
             disk_path: None,
             scratch_disk_path: None,
             virtio_fs_shares: Vec::new(),
-            kernel_cmdline: "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1".to_string(),
+            kernel_cmdline: default_kernel_cmdline().to_string(),
             expected_kernel_hash: None,
             expected_initrd_hash: None,
             expected_disk_hash: None,
@@ -288,7 +298,7 @@ mod tests {
             .unwrap();
         assert_eq!(config.cpu_count, 4); // default
         assert_eq!(config.ram_bytes, 4 * 1024 * 1024 * 1024); // default 4GB
-        assert_eq!(config.kernel_cmdline, "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1");
+        assert_eq!(config.kernel_cmdline, default_kernel_cmdline());
         assert!(config.initrd_path.is_none());
         assert!(config.disk_path.is_none());
     }
@@ -555,7 +565,7 @@ mod tests {
         assert!(b.initrd_path.is_none());
         assert!(b.disk_path.is_none());
         assert!(b.scratch_disk_path.is_none());
-        assert_eq!(b.kernel_cmdline, "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1");
+        assert_eq!(b.kernel_cmdline, default_kernel_cmdline());
     }
 
     #[test]
