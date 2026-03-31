@@ -5,13 +5,13 @@ description: Install Capsem and boot your first sandboxed AI agent session.
 
 ## Requirements
 
-| | Minimum |
-|---|---|
-| **OS** | macOS 14 (Sonoma) or later |
-| **Hardware** | Apple Silicon (M1 or newer) |
-| **Disk** | ~2 GB for the app + VM assets |
+| | macOS | Linux |
+|---|---|---|
+| **OS** | macOS 14 (Sonoma) or later | Debian/Ubuntu (apt-based) |
+| **Hardware** | Apple Silicon (M1 or newer) | x86_64 or arm64, KVM capable |
+| **Disk** | ~2 GB for the app + VM assets | ~2 GB for the app + VM assets |
 
-Capsem uses Apple's Virtualization.framework, which is only available on Apple Silicon Macs running macOS 14+.
+macOS uses Apple's Virtualization.framework (Apple Silicon only). Linux uses KVM.
 
 ## Install
 
@@ -21,13 +21,16 @@ Capsem uses Apple's Virtualization.framework, which is only available on Apple S
 curl -fsSL https://capsem.org/install.sh | sh
 ```
 
-This downloads the latest signed and notarized `.dmg` from GitHub Releases, mounts it, and copies `Capsem.app` to `/Applications`.
+The script auto-detects your OS and architecture:
+- **macOS**: downloads the `.dmg`, mounts it, and copies `Capsem.app` to `/Applications`
+- **Linux**: downloads the `.deb` package and installs it via `apt`
 
 ### Manual download
 
 1. Go to the [latest release](https://github.com/google/capsem/releases/latest) on GitHub.
-2. Download the `.dmg` file.
-3. Open the DMG and drag **Capsem.app** to `/Applications`.
+2. Download the `.dmg` (macOS) or `.deb` (Linux) file for your architecture.
+3. macOS: open the DMG and drag **Capsem.app** to `/Applications`.
+4. Linux: `sudo apt install ./capsem_*.deb`
 
 ### Building from source
 

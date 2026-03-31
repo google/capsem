@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`install.sh` fails on Linux** -- the installer only supported macOS and rejected all other platforms. Added OS and architecture detection so the same one-liner (`curl ... | sh`) works on both macOS (arm64 .dmg) and Linux (x86_64/arm64 .deb via `apt install`). Refactored into testable shell functions with unit tests.
+
 ### Added
 - **x86_64 KVM backend** -- full KVM support for x86_64 Linux: bzImage boot protocol, identity-mapped page tables, GDT, IRQCHIP/PIT interrupt controller, CPUID passthrough, 16550 UART serial console (PIO), E820 memory map, virtio-mmio device discovery via kernel cmdline. The .deb now boots VMs on both aarch64 and x86_64.
 - **`.cargo/config.toml` not tracked -- broke codesigning on fresh clones** -- `.gitignore` had a bare `config.toml` pattern (no leading `/`) which matched at any depth, silently ignoring `.cargo/config.toml`. On fresh clones the cargo runner config was missing, so `cargo run`/`cargo test` produced unsigned binaries that crash on Virtualization.framework calls. Fixed by anchoring the pattern to root (`/config.toml`) and tracking the file. Added `just doctor` and bootstrap checks for the cargo runner config.
