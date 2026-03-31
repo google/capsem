@@ -10,6 +10,7 @@
 
 use std::io::Write;
 use std::os::unix::io::{FromRawFd, RawFd};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 
 use super::pio::PioDevice;
@@ -17,7 +18,12 @@ use super::pio::PioDevice;
 /// 16550 UART register offsets within the 8-byte I/O port range.
 const THR: u16 = 0; // Transmit Holding Register (write)
 const RBR: u16 = 0; // Receive Buffer Register (read)
+const DLL: u16 = 0; // Divisor Latch Low (when DLAB=1)
+const LCR: u16 = 3; // Line Control Register
 const LSR: u16 = 5; // Line Status Register
+
+/// LCR bits.
+const LCR_DLAB: u8 = 0x80; // Divisor Latch Access Bit
 
 /// LSR status bits.
 const LSR_DR: u8 = 0x01;   // Data Ready (input available)
@@ -29,6 +35,7 @@ pub(super) struct Serial16550 {
     tx: Mutex<std::fs::File>,
     // rx_fd for future input support (not used in initial implementation)
     _rx_fd: RawFd,
+    lcr: AtomicU8,
 }
 
 impl Serial16550 {
@@ -40,6 +47,7 @@ impl Serial16550 {
             // Safety: tx_fd is a valid pipe fd provided by the caller.
             tx: Mutex::new(unsafe { std::fs::File::from_raw_fd(tx_fd) }),
             _rx_fd: rx_fd,
+            lcr: AtomicU8::new(0),
         }
     }
 }
@@ -51,8 +59,12 @@ impl PioDevice for Serial16550 {
         }
         match port_offset {
             RBR => {
-                // No input buffered -- return 0
+                // If DLAB=1, this is DLL (Divisor Latch Low), return 0
+                // If DLAB=0, this is RBR. No input buffered, return 0
                 data[0] = 0;
+            }
+            LCR => {
+                data[0] = self.lcr.load(Ordering::Relaxed);
             }
             LSR => {
                 // Always report transmitter ready, no input data
@@ -71,13 +83,22 @@ impl PioDevice for Serial16550 {
         }
         match port_offset {
             THR => {
-                // Transmit the byte to the host pipe
-                if let Ok(mut tx) = self.tx.lock() {
-                    let _ = tx.write_all(&data[..1]);
+                let lcr = self.lcr.load(Ordering::Relaxed);
+                if lcr & LCR_DLAB != 0 {
+                    // DLAB is set, this is DLL (Divisor Latch Low)
+                    // We don't care about the baud rate, just ignore it.
+                } else {
+                    // DLAB is clear, this is THR (Transmit Holding Register)
+                    if let Ok(mut tx) = self.tx.lock() {
+                        let _ = tx.write_all(&data[..1]);
+                    }
                 }
             }
+            LCR => {
+                self.lcr.store(data[0], Ordering::Relaxed);
+            }
             _ => {
-                // Ignore writes to other registers (IER, FCR, LCR, MCR)
+                // Ignore writes to other registers (IER, FCR, MCR)
             }
         }
     }
@@ -123,6 +144,32 @@ mod tests {
     }
 
     #[test]
+    fn dlab_prevents_thr_writes() {
+        let (rx, tx) = make_pipe();
+        let uart = Serial16550::new(tx, rx);
+
+        // Enable DLAB
+        uart.write(LCR, &[LCR_DLAB]);
+
+        // This should write to DLL, not THR
+        uart.write(THR, &[0x01]);
+
+        // Disable DLAB
+        uart.write(LCR, &[0x03]); // 8n1
+
+        // This should write to THR
+        uart.write(THR, &[b'X']);
+
+        // Check that only 'X' was written
+        let mut buf = [0u8; 1];
+        let n = unsafe { libc::read(rx, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+        assert_eq!(n, 1);
+        assert_eq!(&buf, b"X");
+        
+        unsafe { libc::close(rx); }
+    }
+
+    #[test]
     fn rbr_returns_zero_when_empty() {
         let (rx, tx) = make_pipe();
         let uart = Serial16550::new(tx, rx);
@@ -137,7 +184,7 @@ mod tests {
         let (rx, tx) = make_pipe();
         let uart = Serial16550::new(tx, rx);
         let mut buf = [0xFFu8; 1];
-        uart.read(3, &mut buf); // MCR
+        uart.read(2, &mut buf); // FCR / IIR
         assert_eq!(buf[0], 0);
         unsafe { libc::close(rx); }
     }

@@ -80,21 +80,7 @@ fn vcpu_loop(
             #[cfg(target_arch = "x86_64")]
             VcpuExit::Io { direction, port, size } => {
                 let io = vcpu.io_data();
-                if direction == 0 {
-                    // KVM_EXIT_IO_IN: read from device into kvm_run buffer
-                    let ptr = vcpu.io_data_mut(io.data_offset);
-                    let data = unsafe {
-                        std::slice::from_raw_parts_mut(ptr, size as usize)
-                    };
-                    pio_bus.read(port, data);
-                } else {
-                    // KVM_EXIT_IO_OUT: write from kvm_run buffer to device
-                    let ptr = vcpu.io_data_mut(io.data_offset);
-                    let data = unsafe {
-                        std::slice::from_raw_parts(ptr, size as usize)
-                    };
-                    pio_bus.write(port, data);
-                }
+                dispatch_pio(pio_bus, direction, port, size, io.count, vcpu.io_data_mut(io.data_offset));
             }
 
             #[cfg(target_arch = "x86_64")]
@@ -141,6 +127,33 @@ fn vcpu_loop(
             VcpuExit::Unknown(reason) => {
                 warn!(vcpu_id = vcpu.id(), reason, "unexpected KVM exit");
             }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn dispatch_pio(
+    pio_bus: &PioBus,
+    direction: u8,
+    port: u16,
+    size: u8,
+    count: u32,
+    data_ptr: *mut u8,
+) {
+    let size_usize = size as usize;
+    if direction == 0 {
+        // KVM_EXIT_IO_IN
+        for i in 0..count as usize {
+            let offset = i * size_usize;
+            let data = unsafe { std::slice::from_raw_parts_mut(data_ptr.add(offset), size_usize) };
+            pio_bus.read(port, data);
+        }
+    } else {
+        // KVM_EXIT_IO_OUT
+        for i in 0..count as usize {
+            let offset = i * size_usize;
+            let data = unsafe { std::slice::from_raw_parts(data_ptr.add(offset), size_usize) };
+            pio_bus.write(port, data);
         }
     }
 }
@@ -223,5 +236,47 @@ mod tests {
 
         let iters = handle.join().unwrap();
         assert!(iters < 10000, "thread should have stopped, ran {iters} iterations");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct CountingPioDevice {
+        reads: AtomicU32,
+        writes: AtomicU32,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    impl CountingPioDevice {
+        fn new() -> Self {
+            Self {
+                reads: AtomicU32::new(0),
+                writes: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    impl super::super::pio::PioDevice for CountingPioDevice {
+        fn read(&self, _offset: u16, data: &mut [u8]) {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            data.fill(0);
+        }
+
+        fn write(&self, _offset: u16, _data: &[u8]) {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn dispatch_pio_respects_count() {
+        let bus = Arc::new(PioBus::new());
+        let dev = Arc::new(CountingPioDevice::new());
+        bus.register(0x3F8, 8, dev.clone()).unwrap();
+
+        let mut data = [0u8; 4]; // 4 bytes of data
+        // Simulate string I/O out: 4 bytes written 1 byte at a time
+        dispatch_pio(&bus, 1, 0x3F8, 1, 4, data.as_mut_ptr());
+
+        assert_eq!(dev.writes.load(Ordering::SeqCst), 4, "PIO dispatch ignored count > 1");
     }
 }

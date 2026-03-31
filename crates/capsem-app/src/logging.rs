@@ -130,13 +130,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         std::fs::write(dir.join("2020-01-01T00-00-00.jsonl"), "old").unwrap();
-        std::fs::write(dir.join("2026-03-24T10-05-32.jsonl"), "new").unwrap();
+        std::fs::write(dir.join("2026-03-31T10-05-32.jsonl"), "new").unwrap();
         std::fs::write(dir.join("2020-01-01T00-00-00.txt"), "keep").unwrap();
 
         cleanup_old_logs(&dir, 7);
 
         assert!(!dir.join("2020-01-01T00-00-00.jsonl").exists(), "old file should be deleted");
-        assert!(dir.join("2026-03-24T10-05-32.jsonl").exists(), "recent file should be kept");
+        assert!(dir.join("2026-03-31T10-05-32.jsonl").exists(), "recent file should be kept");
         assert!(dir.join("2020-01-01T00-00-00.txt").exists(), "non-jsonl should be kept");
 
         let _ = std::fs::remove_dir_all(&dir);

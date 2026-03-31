@@ -116,14 +116,40 @@ test: _install-tools _clean-stale audit _pnpm-install _generate-settings
     cd ..
     uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
-# Build the full Linux release in a container (agent + deb + AppImage).
+# Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
+# See docker/Dockerfile.host-builder for contents.
+build-host-image:
+    #!/bin/bash
+    set -euo pipefail
+    if command -v podman &>/dev/null; then RUNTIME="podman"; else RUNTIME="docker"; fi
+    echo "=== Building capsem-host-builder image ($RUNTIME) ==="
+    $RUNTIME build \
+        -t capsem-host-builder:latest \
+        -f docker/Dockerfile.host-builder \
+        docker/
+
+# Remove cross-compilation image and cached volumes.
+clean-host-image:
+    #!/bin/bash
+    set -euo pipefail
+    if command -v podman &>/dev/null; then RUNTIME="podman"; else RUNTIME="docker"; fi
+    $RUNTIME rmi capsem-host-builder:latest 2>/dev/null || true
+    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64; do
+        $RUNTIME volume rm "$vol" 2>/dev/null || true
+    done
+    echo "Cleaned host builder image and volumes."
+
+# Build the full Linux release in a container (agent + deb).
+# Uses the pre-built capsem-host-builder image (just build-host-image).
 # Supports arm64 and x86_64. No host cross-compile toolchain needed.
 #
+# Named volumes cache cargo registry and build artifacts between runs.
+# CARGO_TARGET_DIR=/cargo-target inside the container isolates Linux
+# build cache from host macOS target/ directory.
+#
 # CI vs local divergences (keep in sync when changing either):
-#   - CI runs on bare ubuntu runners; this runs in a rust:bookworm container via podman
-#   - CI uses actions/setup-node + pnpm/action-setup; this uses nodesource + npm install -g pnpm
-#   - CI has no FUSE; podman VM does. AppImage bundling may differ.
-#   - arm64 = deb only (no linuxdeploy arm64 build); x86_64 = deb + appimage
+#   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via podman/docker
+#   - arm64 = deb only; x86_64 = deb only (AppImage removed)
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
 cross-compile arch="": _check-assets _generate-settings
@@ -142,6 +168,31 @@ cross-compile arch="": _check-assets _generate-settings
     fi
     PLATFORM="linux/arm64" && [ "$TARGET_ARCH" = "x86_64" ] && PLATFORM="linux/amd64"
     if command -v podman &>/dev/null; then RUNTIME="podman"; else RUNTIME="docker"; fi
+    # Ensure build image exists
+    if ! $RUNTIME image inspect capsem-host-builder:latest &>/dev/null; then
+        echo "=== Build image not found, building... ==="
+        just build-host-image
+    fi
+    # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
+    if [[ "$(uname -s)" = "Darwin" ]]; then
+        NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        if [ "$RUNTIME" = "podman" ]; then
+            $RUNTIME machine ssh -- sudo date -s "$NOW" 2>/dev/null || true
+        else
+            $RUNTIME run --rm --privileged alpine date -s "$NOW" 2>/dev/null || true
+        fi
+        # Warn if container VM has insufficient RAM for emulated builds
+        if [ "$PLATFORM" != "linux/$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')" ]; then
+            MEM_MB=0
+            if [ "$RUNTIME" = "podman" ]; then
+                MEM_MB=$($RUNTIME machine inspect 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0].get('Resources',{}).get('Memory',0))" 2>/dev/null || echo 0)
+            fi
+            if [ "$MEM_MB" -gt 0 ] && [ "$MEM_MB" -lt 8192 ]; then
+                echo "WARNING: Container VM has ${MEM_MB}MB RAM. Cross-arch emulation needs >= 8GB."
+                echo "  fix: podman machine set --memory 12288 && podman machine stop && podman machine start"
+            fi
+        fi
+    fi
     # Sync assets layout for Tauri build
     rm -rf assets/current
     if [ -d "assets/$TARGET_ARCH" ]; then cp -r "assets/$TARGET_ARCH" assets/current; fi
@@ -153,37 +204,32 @@ cross-compile arch="": _check-assets _generate-settings
         TAURI_PWD=$(cat "$ROOT/private/tauri/password.txt")
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via $RUNTIME) ==="
+    mkdir -p "$ROOT/dist"
     $RUNTIME run --rm \
         --platform "$PLATFORM" \
         -e "TAURI_SIGNING_PRIVATE_KEY=$TAURI_KEY" \
         -e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_PWD" \
         -v "$ROOT:/src" \
+        -v "capsem-cargo-registry:/usr/local/cargo/registry" \
+        -v "capsem-cargo-git:/usr/local/cargo/git" \
+        -v "capsem-host-target-$TARGET_ARCH:/cargo-target" \
         -w /src \
-        rust:bookworm \
-        bash -c "apt-get -o Acquire::Check-Date=false update -qq && \
-               apt-get -o Acquire::Check-Date=false install -y -qq libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
-                   xdg-utils musl-tools file curl wget >/dev/null 2>&1 && \
-               curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1 && \
-               apt-get -o Acquire::Check-Date=false install -y -qq nodejs >/dev/null 2>&1 && \
-               npm install -g pnpm@9 >/dev/null 2>&1 && \
-               echo '--- Build agent binaries ---' && \
+        capsem-host-builder:latest \
+        bash -c "echo '--- Build agent binaries ---' && \
                cargo build --release -p capsem-agent && \
-               mkdir -p target/linux-agent/$TARGET_ARCH && \
-               cp target/release/capsem-pty-agent target/release/capsem-mcp-server target/release/capsem-net-proxy target/linux-agent/$TARGET_ARCH/ && \
+               mkdir -p /cargo-target/linux-agent/$TARGET_ARCH && \
+               cp /cargo-target/release/capsem-pty-agent /cargo-target/release/capsem-mcp-server /cargo-target/release/capsem-net-proxy /cargo-target/linux-agent/$TARGET_ARCH/ && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Build Tauri app ---' && \
-               cargo install tauri-cli --locked && \
                cd crates/capsem-app && cargo tauri build --bundles deb && cd ../.. && \
-               echo '--- Validate artifacts ---' && \
-               dpkg-deb --info target/release/bundle/deb/*.deb"
-    # Fix file ownership (container writes as root)
-    chown -R "$(id -u):$(id -g)" "$ROOT/target" "$ROOT/frontend/node_modules" 2>/dev/null || true
+               echo '--- Validate + copy artifacts ---' && \
+               dpkg-deb --info /cargo-target/release/bundle/deb/*.deb && \
+               cp /cargo-target/release/bundle/deb/*.deb /src/dist/ && \
+               cp /cargo-target/linux-agent/$TARGET_ARCH/* /src/dist/"
     echo ""
     echo "=== Artifacts ==="
-    ls -lh "$ROOT/target/linux-agent/$TARGET_ARCH/"
-    ls -lh "$ROOT/target/release/bundle/deb/"*.deb 2>/dev/null || true
-    ls -lh "$ROOT/target/release/bundle/appimage/"*.AppImage 2>/dev/null || true
+    ls -lh "$ROOT/dist/"
 
 # Generate settings-schema.json, defaults.json, mcp-tools.json, and mock-data.generated.ts
 _generate-settings:

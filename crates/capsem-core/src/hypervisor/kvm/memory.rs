@@ -102,9 +102,9 @@ pub(super) const PDPT_ADDR: u64 = 0xA000;
 #[cfg(target_arch = "x86_64")]
 pub(super) const PD_ADDR: u64 = 0xB000;
 
-/// Virtio MMIO base address (above 3.25 GiB, in 32-bit PCI hole area).
+/// Virtio MMIO base address (above 64 GiB, to avoid overlapping with RAM).
 #[cfg(target_arch = "x86_64")]
-pub(super) const VIRTIO_MMIO_BASE: u64 = 0xD000_0000;
+pub(super) const VIRTIO_MMIO_BASE: u64 = 0x10_0000_0000;
 
 /// First IRQ for virtio devices (above legacy ISA IRQs 0-4).
 #[cfg(target_arch = "x86_64")]
@@ -727,5 +727,26 @@ mod tests {
         assert_eq!(virtio_mmio_addr(1), VIRTIO_MMIO_BASE + 0x200);
         assert_eq!(virtio_mmio_irq(0), 5);
         assert_eq!(virtio_mmio_irq(1), 6);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_virtio_mmio_above_max_ram() {
+        let max_ram = 16 * 1024 * 1024 * 1024u64; // 16GB
+        assert!(VIRTIO_MMIO_BASE >= max_ram, "Virtio MMIO base {VIRTIO_MMIO_BASE:#x} overlaps with guest RAM");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_irq_base_above_legacy() {
+        assert!(VIRTIO_MMIO_IRQ_BASE > 4, "must not conflict with ISA IRQs 0-4");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn aarch64_gic_spi_range_valid() {
+        assert!(VIRTIO_MMIO_IRQ_BASE >= 32, "virtio IRQs must be in GIC SPI range (>=32)");
+        let max_irq = VIRTIO_MMIO_IRQ_BASE + VIRTIO_MMIO_MAX_DEVICES;
+        assert!(max_irq < 1020, "virtio IRQs must stay within GIC SPI range (<1020)");
     }
 }

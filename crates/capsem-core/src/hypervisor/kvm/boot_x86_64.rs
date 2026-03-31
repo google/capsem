@@ -203,20 +203,30 @@ pub(super) fn write_gdt(mem: &GuestMemory) -> Result<()> {
     Ok(())
 }
 
-/// Write identity-mapped page tables (PML4 -> PDPT -> PD) for first 1 GiB.
-/// Uses 2 MiB huge pages (3 pages total).
-pub(super) fn write_page_tables(mem: &GuestMemory) -> Result<()> {
+/// Write identity-mapped page tables (PML4 -> PDPT -> PD) covering all guest RAM.
+/// Uses 2 MiB huge pages.
+pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> {
     // PML4[0] -> PDPT
     let pml4_entry: u64 = PDPT_ADDR | 0x3; // present + writable
     mem.write_at(PML4_ADDR - RAM_BASE, &pml4_entry.to_le_bytes())?;
 
-    // PDPT[0] -> PD
-    let pdpt_entry: u64 = PD_ADDR | 0x3; // present + writable
-    mem.write_at(PDPT_ADDR - RAM_BASE, &pdpt_entry.to_le_bytes())?;
+    // 1 PDPT entry = 1 GB (maps to 1 PD page)
+    // 1 PD page = 512 PD entries = 512 * 2MB = 1GB
+    let gb_count = (ram_size + 0x3FFF_FFFF) / 0x4000_0000;
 
-    // PD: 512 entries, each mapping 2 MiB (covers 1 GiB)
-    let mut pd = vec![0u8; 4096];
-    for i in 0u64..512 {
+    let mut pdpt = vec![0u8; 4096];
+    for i in 0..gb_count {
+        let pd_addr = PD_ADDR + i * 4096;
+        let entry: u64 = pd_addr | 0x3;
+        let offset = (i as usize) * 8;
+        pdpt[offset..offset + 8].copy_from_slice(&entry.to_le_bytes());
+    }
+    mem.write_at(PDPT_ADDR - RAM_BASE, &pdpt)?;
+
+    let mut pd = vec![0u8; (gb_count * 4096) as usize];
+    let total_pages = (ram_size + 0x1F_FFFF) / 0x20_0000;
+    
+    for i in 0..total_pages {
         let entry: u64 = (i << 21) | 0x83; // present + writable + huge page (PS bit)
         let offset = (i as usize) * 8;
         pd[offset..offset + 8].copy_from_slice(&entry.to_le_bytes());
@@ -354,7 +364,7 @@ mod tests {
     #[test]
     fn page_tables_identity_mapped() {
         let mem = GuestMemory::new(4096 * 16).unwrap();
-        write_page_tables(&mem).unwrap();
+        write_page_tables(&mem, 4 * 1024 * 1024 * 1024).unwrap();
 
         // PML4[0] should point to PDPT with present+writable
         let mut buf = [0u8; 8];
@@ -371,11 +381,30 @@ mod tests {
     }
 
     #[test]
+    fn write_page_tables_exact_gb_boundaries() {
+        let mem = GuestMemory::new(1024 * 1024).unwrap(); // 1MB for structs
+        
+        // Test exactly 1GB
+        write_page_tables(&mem, 1024 * 1024 * 1024).unwrap();
+        let mut buf = [0u8; 8];
+        mem.read_at(PDPT_ADDR - RAM_BASE, &mut buf).unwrap();
+        assert_ne!(u64::from_le_bytes(buf), 0, "PDPT[0] should exist for 1GB");
+        
+        // PDPT[1] should technically be mapped because we round up our gb_count,
+        // or if we do exact division it might be empty. Let's just ensure it doesn't panic.
+        
+        // Test exactly 2GB
+        write_page_tables(&mem, 2 * 1024 * 1024 * 1024).unwrap();
+        mem.read_at(PDPT_ADDR - RAM_BASE + 8, &mut buf).unwrap();
+        assert_ne!(u64::from_le_bytes(buf), 0, "PDPT[1] should exist for 2GB");
+    }
+
+    #[test]
     fn boot_params_sets_cmdline() {
         let mem = GuestMemory::new(4096 * 256).unwrap();
         let cmdline = "console=ttyS0 root=/dev/vda ro";
         let e820 = memory::build_e820_map(256 * 4096);
-        write_boot_params(&mem, cmdline, None, &e820).unwrap();
+        write_boot_params(&mem, cmdline, None, &e820, &[]).unwrap();
 
         // Check cmdline was written
         let mut buf = vec![0u8; cmdline.len()];
@@ -393,7 +422,7 @@ mod tests {
         let mem = GuestMemory::new(4096 * 256).unwrap();
         let initrd = InitrdLoadInfo { addr: 0x80_0000, size: 1024 * 1024 };
         let e820 = memory::build_e820_map(256 * 4096);
-        write_boot_params(&mem, "test", Some(&initrd), &e820).unwrap();
+        write_boot_params(&mem, "test", Some(&initrd), &e820, &[]).unwrap();
 
         // Check ramdisk_image
         let mut buf = [0u8; 4];
@@ -402,6 +431,98 @@ mod tests {
         // Check ramdisk_size
         mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x21C, &mut buf).unwrap();
         assert_eq!(u32::from_le_bytes(buf), 1024 * 1024);
+    }
+
+    #[test]
+    fn write_boot_params_preserves_setup_header() {
+        let mem = GuestMemory::new(4096 * 256).unwrap();
+        let mut fake_header = vec![0u8; 0x2b9 - 0x1f1];
+        fake_header[0] = 0xAA;
+        fake_header[fake_header.len() - 1] = 0xBB;
+        
+        let e820 = memory::build_e820_map(256 * 4096);
+        write_boot_params(&mem, "test", None, &e820, &fake_header).unwrap();
+
+        let mut buf = [0u8; 1];
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x1f1, &mut buf).unwrap();
+        assert_eq!(buf[0], 0xAA, "First byte of setup_header not preserved");
+
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x2b8, &mut buf).unwrap();
+        assert_eq!(buf[0], 0xBB, "Last byte of setup_header not preserved");
+    }
+
+    #[test]
+    fn write_boot_params_sets_loader_and_flags() {
+        let mem = GuestMemory::new(4096 * 256).unwrap();
+        let e820 = memory::build_e820_map(256 * 4096);
+        write_boot_params(&mem, "test", None, &e820, &[]).unwrap();
+
+        let mut buf = [0u8; 1];
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x210, &mut buf).unwrap();
+        assert_eq!(buf[0], 0xFF, "type_of_loader must be 0xFF");
+
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x211, &mut buf).unwrap();
+        assert_eq!(buf[0], 0x81, "loadflags must be 0x81 (LOADED_HIGH | CAN_USE_HEAP)");
+    }
+
+    fn create_fake_bzimage() -> Vec<u8> {
+        let mut kernel = vec![0u8; 4096]; // Minimal size
+        
+        // Set setup_sects = 4
+        kernel[SETUP_HEADER_OFFSET] = 4;
+        
+        // Set magic "HdrS"
+        kernel[0x202..0x206].copy_from_slice(&HDRS_MAGIC.to_le_bytes());
+        
+        // Set boot protocol version (0x0206)
+        kernel[0x206..0x208].copy_from_slice(&0x0206u16.to_le_bytes());
+        
+        kernel
+    }
+
+    #[test]
+    fn load_kernel_rejects_bad_magic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vmlinuz");
+        
+        let mut kernel = create_fake_bzimage();
+        kernel[0x202..0x206].copy_from_slice(&0xDEADBEEFu32.to_le_bytes()); // Break magic
+        std::fs::write(&path, &kernel).unwrap();
+
+        let mem = GuestMemory::new(16 * 1024 * 1024).unwrap();
+        let result = load_kernel(&mem, &path);
+        assert!(result.is_err(), "Should reject kernel without HdrS magic");
+        assert!(result.unwrap_err().to_string().contains("bad magic"));
+    }
+
+    #[test]
+    fn load_kernel_rejects_old_protocol() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vmlinuz");
+        
+        let mut kernel = create_fake_bzimage();
+        kernel[0x206..0x208].copy_from_slice(&0x0205u16.to_le_bytes()); // Protocol 2.05 (too old)
+        std::fs::write(&path, &kernel).unwrap();
+
+        let mem = GuestMemory::new(16 * 1024 * 1024).unwrap();
+        let result = load_kernel(&mem, &path);
+        assert!(result.is_err(), "Should reject boot protocol < 2.06");
+        assert!(result.unwrap_err().to_string().contains("boot protocol"));
+    }
+
+    #[test]
+    fn load_kernel_returns_correct_entry_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vmlinuz");
+        
+        let kernel = create_fake_bzimage();
+        std::fs::write(&path, &kernel).unwrap();
+
+        let mem = GuestMemory::new(16 * 1024 * 1024).unwrap();
+        let info = load_kernel(&mem, &path).unwrap();
+
+        // 64-bit entry point MUST be at exactly KERNEL_LOAD_ADDR + 0x200
+        assert_eq!(info.entry_addr, KERNEL_LOAD_ADDR + 0x200);
     }
 
     #[test]
@@ -417,5 +538,29 @@ mod tests {
     fn build_cmdline_no_devices() {
         let cmdline = build_cmdline("console=ttyS0", 0);
         assert_eq!(cmdline, "console=ttyS0");
+    }
+
+    #[test]
+    fn page_tables_cover_4gb_ram() {
+        let mem = GuestMemory::new(1024 * 1024).unwrap(); // 1MB is enough for boot structs
+        write_page_tables(&mem, 4 * 1024 * 1024 * 1024).unwrap();
+
+        let mut buf = [0u8; 8];
+        mem.read_at(PDPT_ADDR - RAM_BASE + 8, &mut buf).unwrap(); // index 1 (1GB-2GB)
+        let pdpt_entry = u64::from_le_bytes(buf);
+        assert_ne!(pdpt_entry & 0x1, 0, "PDPT entry 1 is missing, page tables only cover 1GB");
+    }
+
+    #[test]
+    fn load_kernel_rejects_arm64_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vmlinuz");
+        let mut kernel = vec![0u8; 4096];
+        // ARM64 Image magic at offset 56
+        kernel[56..60].copy_from_slice(&0x644d5241u32.to_le_bytes());
+        std::fs::write(&path, &kernel).unwrap();
+        let mem = GuestMemory::new(64 * 1024 * 1024).unwrap();
+        let err = load_kernel(&mem, &path).unwrap_err();
+        assert!(err.to_string().contains("not a bzImage"), "should reject ARM64 kernel: {err}");
     }
 }

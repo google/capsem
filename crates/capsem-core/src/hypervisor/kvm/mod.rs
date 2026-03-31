@@ -95,7 +95,7 @@ impl Hypervisor for KvmHypervisor {
         let initrd_info = config
             .initrd_path
             .as_ref()
-            .map(|p| boot::load_initrd(&guest_mem, p, config.ram_bytes))
+            .map(|p| boot::load_initrd(&guest_mem, p, kernel_info.kernel_end))
             .transpose()?;
 
         #[cfg(target_arch = "x86_64")]
@@ -172,12 +172,13 @@ impl Hypervisor for KvmHypervisor {
             let e820 = memory::build_e820_map(config.ram_bytes);
 
             boot_x86_64::write_gdt(&guest_mem)?;
-            boot_x86_64::write_page_tables(&guest_mem)?;
+            boot_x86_64::write_page_tables(&guest_mem, config.ram_bytes)?;
             boot_x86_64::write_boot_params(
                 &guest_mem,
                 &cmdline,
                 initrd_info.as_ref(),
                 &e820,
+                &kernel_info.setup_header,
             )?;
             boot_x86_64::setup_cpuid(&vm, &vcpu_fds[0])?;
             boot_x86_64::setup_boot_regs(
@@ -212,7 +213,7 @@ impl Hypervisor for KvmHypervisor {
         let (console_device, serial_console) = virtio_console::VirtioConsoleDevice::new()?;
 
         #[cfg(target_arch = "x86_64")]
-        let serial_console = {
+        let (serial_console, uart_output_write, uart_input_read) = {
             // On x86_64, create separate pipes for the 16550 UART and use those
             // for the serial console (boot output goes through ttyS0, not hvc0).
             let (output_read, output_write) = {
@@ -225,10 +226,11 @@ impl Hypervisor for KvmHypervisor {
                 anyhow::ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe() failed");
                 (fds[0], fds[1])
             };
-            let uart_serial = serial::KvmSerialConsole::new(output_read, input_write);
-            // input_read is unused for now (host -> guest serial input)
-            let _ = input_read;
-            uart_serial
+            (
+                serial::KvmSerialConsole::new(output_read, input_write),
+                output_write,
+                input_read,
+            )
         };
 
         serial_console.spawn_reader();
@@ -248,14 +250,7 @@ impl Hypervisor for KvmHypervisor {
         #[cfg(target_arch = "x86_64")]
         let pio_bus = {
             let bus = Arc::new(pio::PioBus::new());
-            // The 16550 UART uses the output_write fd from above
-            let (uart_output_read, uart_output_write) = {
-                let mut fds = [0i32; 2];
-                anyhow::ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe() failed");
-                (fds[0], fds[1])
-            };
-            let _ = uart_output_read; // serial console reads from the other pipe pair above
-            let uart = serial_pio::Serial16550::new(uart_output_write, -1);
+            let uart = serial_pio::Serial16550::new(uart_output_write, uart_input_read);
             bus.register(0x3F8, 8, Arc::new(uart))?;
             bus
         };

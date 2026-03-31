@@ -282,6 +282,23 @@ pub(super) const KVM_RUN_EXIT_REASON_OFFSET: usize = 8;
 pub(super) const KVM_RUN_EXIT_DATA_OFFSET: usize = 32;
 
 // ---------------------------------------------------------------------------
+// Compile-time struct size assertions (wrong size = kernel ABI violation)
+// ---------------------------------------------------------------------------
+
+const _: () = {
+    assert!(std::mem::size_of::<KvmUserspaceMemoryRegion>() == 32);
+    assert!(std::mem::size_of::<KvmCreateDevice>() == 12);
+    assert!(std::mem::size_of::<KvmDeviceAttr>() == 24);
+    assert!(std::mem::size_of::<KvmIrqfd>() == 32);
+};
+
+#[cfg(target_arch = "aarch64")]
+const _: () = {
+    assert!(std::mem::size_of::<KvmOneReg>() == 16);
+    assert!(std::mem::size_of::<KvmVcpuInit>() == 32);
+};
+
+// ---------------------------------------------------------------------------
 // KvmFd: /dev/kvm file descriptor
 // ---------------------------------------------------------------------------
 
@@ -895,6 +912,16 @@ pub(super) struct KvmRunIo {
     pub count: u32,
     pub data_offset: u64,
 }
+
+#[cfg(target_arch = "x86_64")]
+const _: () = {
+    assert!(std::mem::size_of::<KvmRegs>() == 144);
+    assert!(std::mem::size_of::<KvmSregs>() == 312);
+    assert!(std::mem::size_of::<KvmSegment>() == 24);
+    assert!(std::mem::size_of::<KvmDtable>() == 16);
+    assert!(std::mem::size_of::<KvmPitConfig>() == 64);
+    assert!(std::mem::size_of::<KvmCpuidEntry2>() == 40);
+};
 
 // ---------------------------------------------------------------------------
 // x86_64 VmFd methods

@@ -94,6 +94,17 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
         bail!("kernel image is empty: {}", kernel_path.display());
     }
 
+    // Reject bzImage (x86_64) kernels -- HdrS magic at offset 0x202
+    if kernel_data.len() > 0x206 {
+        let hdrs = u32::from_le_bytes([
+            kernel_data[0x202], kernel_data[0x203],
+            kernel_data[0x204], kernel_data[0x205],
+        ]);
+        if hdrs == 0x5372_6448 {
+            bail!("kernel is a bzImage (x86_64) but this is an aarch64 host");
+        }
+    }
+
     let text_offset = parse_arm64_header(&kernel_data);
     let load_offset = text_offset; // offset within guest RAM
     let entry_addr = memory::RAM_BASE + text_offset;
@@ -125,7 +136,7 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
 pub(super) fn load_initrd(
     mem: &GuestMemory,
     initrd_path: &Path,
-    ram_size: u64,
+    kernel_end: u64,
 ) -> Result<InitrdLoadInfo> {
     let initrd_data = std::fs::read(initrd_path)
         .with_context(|| format!("reading initrd: {}", initrd_path.display()))?;
@@ -134,11 +145,12 @@ pub(super) fn load_initrd(
         bail!("initrd is empty: {}", initrd_path.display());
     }
 
+    let ram_size = mem.size();
     let ram_end = memory::RAM_BASE + ram_size;
     let initrd_start = memory::page_align_down(ram_end - initrd_data.len() as u64);
     let offset = initrd_start - memory::RAM_BASE;
 
-    if offset <= memory::KERNEL_TEXT_OFFSET {
+    if initrd_start < kernel_end {
         bail!(
             "initrd ({} bytes) too large to fit after kernel in {} bytes of RAM",
             initrd_data.len(),
@@ -346,6 +358,19 @@ mod tests {
         assert!(load_kernel(&mem, &kernel_path).is_err());
     }
 
+    #[test]
+    fn load_kernel_rejects_bzimage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vmlinuz");
+        let mut kernel = vec![0u8; 4096];
+        // bzImage HdrS magic at offset 0x202
+        kernel[0x202..0x206].copy_from_slice(&0x5372_6448u32.to_le_bytes());
+        std::fs::write(&path, &kernel).unwrap();
+        let mem = GuestMemory::new(64 * 1024 * 1024).unwrap();
+        let err = load_kernel(&mem, &path).unwrap_err();
+        assert!(err.to_string().contains("bzImage"), "should reject bzImage kernel: {err}");
+    }
+
     // -----------------------------------------------------------------------
     // Initrd loading
     // -----------------------------------------------------------------------
@@ -359,7 +384,8 @@ mod tests {
 
         let ram_size: u64 = 64 * 1024 * 1024; // 64MB
         let mem = GuestMemory::new(ram_size).unwrap();
-        let info = load_initrd(&mem, &initrd_path, ram_size).unwrap();
+        let kernel_end = memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET + 1024;
+        let info = load_initrd(&mem, &initrd_path, kernel_end).unwrap();
 
         // Should be page-aligned
         assert_eq!(info.guest_addr % memory::PAGE_SIZE, 0);
@@ -375,13 +401,34 @@ mod tests {
         std::fs::write(&initrd_path, b"").unwrap();
 
         let mem = GuestMemory::new(64 * 1024 * 1024).unwrap();
-        assert!(load_initrd(&mem, &initrd_path, 64 * 1024 * 1024).is_err());
+        let kernel_end = memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET;
+        assert!(load_initrd(&mem, &initrd_path, kernel_end).is_err());
     }
 
     #[test]
     fn load_initrd_nonexistent_fails() {
         let mem = GuestMemory::new(4096).unwrap();
-        assert!(load_initrd(&mem, Path::new("/nonexistent/initrd"), 4096).is_err());
+        let kernel_end = memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET;
+        assert!(load_initrd(&mem, Path::new("/nonexistent/initrd"), kernel_end).is_err());
+    }
+
+    #[test]
+    fn load_initrd_overlaps_kernel_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let initrd_path = dir.path().join("initrd.img");
+        let initrd_data = vec![0xAA; 32 * 1024 * 1024]; // 32MB initrd
+        std::fs::write(&initrd_path, &initrd_data).unwrap();
+
+        let ram_size: u64 = 64 * 1024 * 1024; // 64MB RAM
+        let mem = GuestMemory::new(ram_size).unwrap();
+        
+        // Push kernel_end to 40MB. Initrd needs 32MB, but we only have 64MB total. 
+        // 64MB - 32MB = 32MB available start. 32MB < 40MB (overlap).
+        let kernel_end = memory::RAM_BASE + 40 * 1024 * 1024;
+        let result = load_initrd(&mem, &initrd_path, kernel_end);
+        
+        assert!(result.is_err(), "Should reject initrd if it overlaps the kernel");
+        assert!(result.unwrap_err().to_string().contains("too large to fit"));
     }
 
     // -----------------------------------------------------------------------
@@ -411,6 +458,21 @@ mod tests {
 
         let kernel_end = memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET;
         assert!(load_fdt(&mem, &fdt_blob, kernel_end).is_err());
+    }
+
+    #[test]
+    fn load_fdt_exceeds_512mb_distance() {
+        // Create 2GB RAM so memory size itself doesn't cause failure
+        let ram_size: u64 = 2 * 1024 * 1024 * 1024;
+        let mem = GuestMemory::new(ram_size).unwrap();
+        let fdt_blob = vec![0xd0, 0x0d, 0xfe, 0xed, 0, 0, 0, 0]; // fake FDT
+        
+        // Push kernel_end beyond 512MB limit from kernel_entry (0x80000)
+        let kernel_end = memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET + 513 * 1024 * 1024;
+        let result = load_fdt(&mem, &fdt_blob, kernel_end);
+
+        assert!(result.is_err(), "Should reject FDT that is > 512MB away from kernel entry");
+        assert!(result.unwrap_err().to_string().contains("more than 512MB"));
     }
 
     // -----------------------------------------------------------------------
