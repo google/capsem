@@ -43,6 +43,7 @@ pub struct SnapshotSlot {
     pub origin: SnapshotOrigin,
     pub name: Option<String>,
     pub hash: Option<String>,
+    pub files_count: usize,
 }
 
 /// Dual-pool snapshot scheduler (auto ring buffer + manual named snapshots).
@@ -160,6 +161,13 @@ impl AutoSnapshotScheduler {
         clone_directory(&ws_src, &ws_dst)?;
         let clone_ws_ms = t0.elapsed().as_millis();
 
+        // Count files in workspace (lightweight metadata-only walk).
+        let files_count = walkdir::WalkDir::new(&ws_src)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .count();
+
         // Clone system image.
         let sys_src = self.system_dir();
         let sys_dst = slot_dir.join("system");
@@ -214,6 +222,7 @@ impl AutoSnapshotScheduler {
             origin,
             name,
             hash,
+            files_count,
         })
     }
 
@@ -232,6 +241,7 @@ impl AutoSnapshotScheduler {
                         origin: meta.origin,
                         name: meta.name,
                         hash: meta.hash,
+                        files_count: 0,
                     }));
                 }
             }
@@ -256,6 +266,7 @@ impl AutoSnapshotScheduler {
             origin: meta.origin,
             name: meta.name,
             hash: meta.hash,
+            files_count: 0,
         })
     }
 
@@ -420,6 +431,7 @@ impl AutoSnapshotScheduler {
             hash: Some(hash),
             timestamp: now,
             workspace_path: slot_dir.join("workspace"),
+            files_count: 0,
         })
     }
 }
@@ -698,6 +710,7 @@ mod tests {
         assert_eq!(slot.origin, SnapshotOrigin::Auto);
         assert!(slot.name.is_none());
         assert!(slot.hash.is_none()); // auto-snapshots skip hash for performance
+        assert_eq!(slot.files_count, 1); // hello.txt
         assert!(slot.workspace_path.join("hello.txt").exists());
         let content = std::fs::read_to_string(slot.workspace_path.join("hello.txt")).unwrap();
         assert_eq!(content, "world");
@@ -722,6 +735,34 @@ mod tests {
         assert_eq!(slot.name.as_deref(), Some("my_checkpoint"));
         assert!(slot.hash.is_some());
         assert!(!slot.hash.as_ref().unwrap().is_empty());
+        assert_eq!(slot.files_count, 1); // file.txt
+    }
+
+    #[test]
+    fn files_count_tracks_multiple_files() {
+        let (_tmp, session) = setup_session_dir();
+        let ws = session.join("workspace");
+        std::fs::write(ws.join("a.txt"), "a").unwrap();
+        std::fs::write(ws.join("b.txt"), "b").unwrap();
+        std::fs::create_dir_all(ws.join("sub")).unwrap();
+        std::fs::write(ws.join("sub/c.txt"), "c").unwrap();
+
+        let mut s = sched(&session);
+        let slot = s.take_snapshot().unwrap();
+        assert_eq!(slot.files_count, 3); // a.txt, b.txt, sub/c.txt
+
+        // Add a file and take another snapshot.
+        std::fs::write(ws.join("d.txt"), "d").unwrap();
+        let slot2 = s.take_snapshot().unwrap();
+        assert_eq!(slot2.files_count, 4);
+    }
+
+    #[test]
+    fn files_count_zero_for_empty_workspace() {
+        let (_tmp, session) = setup_session_dir();
+        let mut s = sched(&session);
+        let slot = s.take_snapshot().unwrap();
+        assert_eq!(slot.files_count, 0);
     }
 
     #[test]

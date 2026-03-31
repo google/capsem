@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
-use crate::events::{FileEvent, McpCall, ModelCall, NetEvent};
+use crate::events::{FileEvent, McpCall, ModelCall, NetEvent, SnapshotEvent};
 use crate::schema;
 
 /// Maximum bytes stored for any preview/content field (256 KB).
@@ -34,6 +34,7 @@ pub enum WriteOp {
     ModelCall(ModelCall),
     McpCall(McpCall),
     FileEvent(FileEvent),
+    SnapshotEvent(SnapshotEvent),
 }
 
 /// A dedicated writer thread that owns the SQLite connection.
@@ -178,6 +179,7 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::ModelCall(m) => insert_model_call(&tx, m)?,
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
             WriteOp::FileEvent(f) => insert_file_event(&tx, f)?,
+            WriteOp::SnapshotEvent(s) => insert_snapshot_event(&tx, s)?,
         }
     }
     tx.commit()
@@ -348,6 +350,27 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn insert_snapshot_event(conn: &Connection, event: &SnapshotEvent) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    conn.execute(
+        "INSERT INTO snapshot_events (
+            timestamp, slot, origin, name, files_count,
+            start_fs_event_id, stop_fs_event_id
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            timestamp,
+            event.slot as i64,
+            event.origin,
+            event.name,
+            event.files_count as i64,
+            event.start_fs_event_id,
+            event.stop_fs_event_id,
+        ],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +493,263 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn snapshot_event_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("snap.db");
+
+        {
+            let writer = DbWriter::open(&db_path, 64).unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            rt.block_on(async {
+                writer
+                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_700_000_000),
+                        slot: 3,
+                        origin: "auto".to_string(),
+                        name: None,
+                        files_count: 42,
+                        start_fs_event_id: 10,
+                        stop_fs_event_id: 25,
+                    }))
+                    .await;
+                writer
+                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_700_000_100),
+                        slot: 10,
+                        origin: "manual".to_string(),
+                        name: Some("checkpoint_1".to_string()),
+                        files_count: 55,
+                        start_fs_event_id: 25,
+                        stop_fs_event_id: 40,
+                    }))
+                    .await;
+            });
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM snapshot_events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let (slot, origin, name, files, start_id, stop_id): (i64, String, Option<String>, i64, i64, i64) = conn
+            .query_row(
+                "SELECT slot, origin, name, files_count, start_fs_event_id, stop_fs_event_id
+                 FROM snapshot_events ORDER BY id ASC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            )
+            .unwrap();
+        assert_eq!(slot, 3);
+        assert_eq!(origin, "auto");
+        assert!(name.is_none());
+        assert_eq!(files, 42);
+        assert_eq!(start_id, 10);
+        assert_eq!(stop_id, 25);
+
+        let (slot2, origin2, name2): (i64, String, Option<String>) = conn
+            .query_row(
+                "SELECT slot, origin, name FROM snapshot_events ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(slot2, 10);
+        assert_eq!(origin2, "manual");
+        assert_eq!(name2.as_deref(), Some("checkpoint_1"));
+    }
+
+    #[test]
+    fn snapshot_fs_events_cross_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cross.db");
+
+        {
+            let writer = DbWriter::open(&db_path, 64).unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            rt.block_on(async {
+                // Write some fs_events first.
+                for i in 0..5 {
+                    writer
+                        .write(WriteOp::FileEvent(crate::events::FileEvent {
+                            timestamp: std::time::SystemTime::now(),
+                            action: crate::events::FileAction::Created,
+                            path: format!("file_{i}.txt"),
+                            size: Some(100),
+                        }))
+                        .await;
+                }
+                for i in 5..8 {
+                    writer
+                        .write(WriteOp::FileEvent(crate::events::FileEvent {
+                            timestamp: std::time::SystemTime::now(),
+                            action: crate::events::FileAction::Modified,
+                            path: format!("file_{i}.txt"),
+                            size: Some(200),
+                        }))
+                        .await;
+                }
+                writer
+                    .write(WriteOp::FileEvent(crate::events::FileEvent {
+                        timestamp: std::time::SystemTime::now(),
+                        action: crate::events::FileAction::Deleted,
+                        path: "old.txt".to_string(),
+                        size: None,
+                    }))
+                    .await;
+
+                // Snapshot 1: covers fs_events 1..5 (5 created)
+                writer
+                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
+                        timestamp: std::time::SystemTime::now(),
+                        slot: 0,
+                        origin: "auto".to_string(),
+                        name: None,
+                        files_count: 5,
+                        start_fs_event_id: 0,
+                        stop_fs_event_id: 5,
+                    }))
+                    .await;
+
+                // Snapshot 2: covers fs_events 6..9 (3 modified + 1 deleted)
+                writer
+                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
+                        timestamp: std::time::SystemTime::now(),
+                        slot: 1,
+                        origin: "auto".to_string(),
+                        name: None,
+                        files_count: 8,
+                        start_fs_event_id: 5,
+                        stop_fs_event_id: 9,
+                    }))
+                    .await;
+            });
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+
+        // Verify snapshot 1 sees 5 created files.
+        let (created, modified, deleted): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    SUM(CASE WHEN action='created' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN action='modified' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN action='deleted' THEN 1 ELSE 0 END)
+                 FROM fs_events WHERE id > 0 AND id <= 5",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(created, 5);
+        assert_eq!(modified, 0);
+        assert_eq!(deleted, 0);
+
+        // Verify snapshot 2 sees 3 modified + 1 deleted.
+        let (created2, modified2, deleted2): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    SUM(CASE WHEN action='created' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN action='modified' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN action='deleted' THEN 1 ELSE 0 END)
+                 FROM fs_events WHERE id > 5 AND id <= 9",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(created2, 0);
+        assert_eq!(modified2, 3);
+        assert_eq!(deleted2, 1);
+    }
+
+    #[test]
+    fn snapshot_ring_buffer_dedup_query() {
+        // Tests the SQL pattern used by the frontend: MAX(id) GROUP BY slot
+        // ensures only the latest event per slot is returned when the ring
+        // buffer overwrites a slot.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("ring.db");
+
+        {
+            let writer = DbWriter::open(&db_path, 64).unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            rt.block_on(async {
+                // Slot 0, first pass.
+                writer
+                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1000),
+                        slot: 0,
+                        origin: "auto".to_string(),
+                        name: None,
+                        files_count: 5,
+                        start_fs_event_id: 0,
+                        stop_fs_event_id: 3,
+                    }))
+                    .await;
+                // Slot 1.
+                writer
+                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(2000),
+                        slot: 1,
+                        origin: "auto".to_string(),
+                        name: None,
+                        files_count: 8,
+                        start_fs_event_id: 3,
+                        stop_fs_event_id: 7,
+                    }))
+                    .await;
+                // Slot 0 again (ring buffer wrapped).
+                writer
+                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(3000),
+                        slot: 0,
+                        origin: "auto".to_string(),
+                        name: None,
+                        files_count: 12,
+                        start_fs_event_id: 7,
+                        stop_fs_event_id: 15,
+                    }))
+                    .await;
+            });
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+
+        // Total rows = 3 (all insertions).
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM snapshot_events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(total, 3);
+
+        // Dedup query: latest per slot. Should return 2 rows (slot 0 latest + slot 1).
+        let dedup: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM snapshot_events
+                 WHERE id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dedup, 2);
+
+        // Slot 0 should show files_count=12 (the newer entry), not 5.
+        let files: i64 = conn
+            .query_row(
+                "SELECT files_count FROM snapshot_events
+                 WHERE id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)
+                 AND slot = 0",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(files, 12);
     }
 }
 

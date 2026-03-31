@@ -87,6 +87,21 @@ pub struct FileEvent {
     pub size: Option<u64>,
 }
 
+/// A snapshot event (auto or manual) recorded for the stats UI.
+/// Each row is self-contained: the fs_event range (start_fs_event_id, stop_fs_event_id]
+/// lets the frontend compute per-snapshot file changes without directory walks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotEvent {
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    pub timestamp: SystemTime,
+    pub slot: usize,
+    pub origin: String,
+    pub name: Option<String>,
+    pub files_count: usize,
+    pub start_fs_event_id: i64,
+    pub stop_fs_event_id: i64,
+}
+
 /// A single network connection event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetEvent {

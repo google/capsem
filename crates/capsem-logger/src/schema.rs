@@ -123,6 +123,19 @@ pub const CREATE_SCHEMA: &str = "
         ON fs_events(timestamp);
     CREATE INDEX IF NOT EXISTS idx_fs_events_path
         ON fs_events(path);
+
+    CREATE TABLE IF NOT EXISTS snapshot_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        slot INTEGER NOT NULL,
+        origin TEXT NOT NULL,
+        name TEXT,
+        files_count INTEGER DEFAULT 0,
+        start_fs_event_id INTEGER DEFAULT 0,
+        stop_fs_event_id INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp
+        ON snapshot_events(timestamp);
 ";
 
 /// Create all tables and indexes on the given connection.
@@ -206,6 +219,20 @@ pub fn migrate(conn: &Connection) {
         );
         CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp ON fs_events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_fs_events_path ON fs_events(path);",
+    );
+    // Add snapshot_events table if not present (for DBs created before this feature).
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS snapshot_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            slot INTEGER NOT NULL,
+            origin TEXT NOT NULL,
+            name TEXT,
+            files_count INTEGER DEFAULT 0,
+            start_fs_event_id INTEGER DEFAULT 0,
+            stop_fs_event_id INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp ON snapshot_events(timestamp);",
     );
 }
 
@@ -400,5 +427,51 @@ mod tests {
             .unwrap();
         assert_eq!(sent, 1024);
         assert_eq!(recv, 2048);
+    }
+
+    #[test]
+    fn create_tables_includes_snapshot_events() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO snapshot_events (timestamp, slot, origin, name, files_count, start_fs_event_id, stop_fs_event_id)
+             VALUES ('2026-01-01T00:00:00Z', 0, 'auto', NULL, 14, 0, 5)",
+            [],
+        )
+        .unwrap();
+        let (slot, origin, files_count, start_id, stop_id): (i64, String, i64, i64, i64) = conn
+            .query_row(
+                "SELECT slot, origin, files_count, start_fs_event_id, stop_fs_event_id FROM snapshot_events",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(slot, 0);
+        assert_eq!(origin, "auto");
+        assert_eq!(files_count, 14);
+        assert_eq!(start_id, 0);
+        assert_eq!(stop_id, 5);
+    }
+
+    #[test]
+    fn migrate_snapshot_events_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        migrate(&conn);
+        conn.execute(
+            "INSERT INTO snapshot_events (timestamp, slot, origin, files_count, start_fs_event_id, stop_fs_event_id)
+             VALUES ('2026-01-01T00:00:00Z', 5, 'manual', 20, 10, 25)",
+            [],
+        )
+        .unwrap();
+        let origin: String = conn
+            .query_row(
+                "SELECT origin FROM snapshot_events WHERE slot = 5",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(origin, "manual");
     }
 }

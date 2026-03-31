@@ -5,7 +5,7 @@ pub mod schema;
 pub mod writer;
 
 pub use db::SessionDb;
-pub use events::{Decision, FileAction, FileEvent, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry};
+pub use events::{Decision, FileAction, FileEvent, McpCall, ModelCall, NetEvent, SnapshotEvent, ToolCallEntry, ToolResponseEntry};
 pub use reader::{
     validate_select_only, DbReader, DomainCount, FileEventStats, McpCallStats,
     McpServerCallCount, McpToolUsage, NetEventCounts, ProviderTokenUsage, SessionStats,

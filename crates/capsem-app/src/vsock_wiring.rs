@@ -213,10 +213,25 @@ pub(crate) async fn wire_auto_snapshots(
     );
     let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
 
+    // Take initial snapshot and log it to the session DB.
     {
         let mut s = scheduler.lock().await;
-        if let Err(e) = s.take_snapshot() {
-            warn!("failed to take initial snapshot: {e}");
+        match s.take_snapshot() {
+            Ok(slot) => {
+                let stop_id = query_max_fs_event_id(&config.db);
+                config.db.write(capsem_logger::WriteOp::SnapshotEvent(
+                    capsem_logger::SnapshotEvent {
+                        timestamp: slot.timestamp,
+                        slot: slot.slot,
+                        origin: "auto".into(),
+                        name: None,
+                        files_count: slot.files_count,
+                        start_fs_event_id: 0,
+                        stop_fs_event_id: stop_id,
+                    },
+                )).await;
+            }
+            Err(e) => warn!("failed to take initial snapshot: {e}"),
         }
     }
 
@@ -229,6 +244,17 @@ pub(crate) async fn wire_auto_snapshots(
     Some((scheduler, interval))
 }
 
+/// Query the current MAX(id) from fs_events, or 0 if empty/error.
+fn query_max_fs_event_id(db: &capsem_logger::DbWriter) -> i64 {
+    db.reader().ok()
+        .and_then(|r| r.query_raw("SELECT COALESCE(MAX(id),0) FROM fs_events").ok())
+        .and_then(|json| {
+            let parsed: serde_json::Value = serde_json::from_str(&json).ok()?;
+            parsed["rows"].get(0)?.get(0)?.as_i64()
+        })
+        .unwrap_or(0)
+}
+
 /// Spawn a periodic auto-snapshot timer that takes a snapshot every `interval`.
 ///
 /// Snapshot creation does blocking I/O (directory cloning, walkdir, blake3 hashing)
@@ -237,8 +263,13 @@ pub(crate) fn spawn_auto_snapshot_timer(
     rt: &tokio::runtime::Handle,
     scheduler: Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>,
     interval: Duration,
+    db: Arc<capsem_logger::DbWriter>,
 ) {
+    // Initialize the fs_event boundary from the DB.
+    let initial_stop = query_max_fs_event_id(&db);
+
     rt.spawn(async move {
+        let mut last_stop = initial_stop;
         let mut tick = tokio::time::interval(interval);
         tick.tick().await;
         loop {
@@ -252,7 +283,21 @@ pub(crate) fn spawn_auto_snapshot_timer(
                 })
             }).await;
             match result {
-                Ok(Ok(_)) => {}
+                Ok(Ok(slot)) => {
+                    let stop_id = query_max_fs_event_id(&db);
+                    db.write(capsem_logger::WriteOp::SnapshotEvent(
+                        capsem_logger::SnapshotEvent {
+                            timestamp: slot.timestamp,
+                            slot: slot.slot,
+                            origin: "auto".into(),
+                            name: None,
+                            files_count: slot.files_count,
+                            start_fs_event_id: last_stop,
+                            stop_fs_event_id: stop_id,
+                        },
+                    )).await;
+                    last_stop = stop_id;
+                }
                 Ok(Err(e)) => tracing::warn!("auto-snapshot failed: {e}"),
                 Err(e) => tracing::warn!("auto-snapshot task panicked: {e}"),
             }
@@ -409,8 +454,9 @@ pub(crate) async fn setup_vsock(
         let vm_id = state.active_session_id.lock().unwrap().clone();
         if let Some(session_dir) = vm_id.as_deref().and_then(session_dir_for) {
             if let Some((scheduler, interval)) = wire_auto_snapshots(config, &session_dir).await {
+                let db = Arc::clone(&config.db);
                 let handle = tokio::runtime::Handle::current();
-                spawn_auto_snapshot_timer(&handle, scheduler, interval);
+                spawn_auto_snapshot_timer(&handle, scheduler, interval, db);
             }
         }
     }

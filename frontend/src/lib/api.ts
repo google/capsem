@@ -287,20 +287,3 @@ export function callMcpTool(tool: string, args: Record<string, unknown> = {}): P
   return tauriInvoke<unknown>('call_mcp_tool', { tool, arguments: args });
 }
 
-export async function listSnapshots(): Promise<{
-  snapshots: {
-    checkpoint: string; slot: number; origin: string; name: string | null;
-    hash: string | null; age: string; files_count: number;
-    changes: { path: string; op: 'new' | 'modified' | 'deleted'; size?: number }[];
-  }[];
-  auto_max: number;
-  manual_max: number;
-  manual_available: number;
-}> {
-  const result = await callMcpTool('snapshots_list', { format: 'json' }) as { content: { text: string }[] };
-  return JSON.parse(result.content[0].text);
-}
-
-export async function deleteSnapshot(checkpoint: string): Promise<void> {
-  await callMcpTool('snapshots_delete', { checkpoint });
-}

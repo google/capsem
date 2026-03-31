@@ -28,6 +28,10 @@ export default defineConfig({
       sidebar: [
         { slug: 'getting-started' },
         {
+          label: 'Usage',
+          autogenerate: { directory: 'usage' },
+        },
+        {
           label: 'Architecture',
           autogenerate: { directory: 'architecture' },
         },

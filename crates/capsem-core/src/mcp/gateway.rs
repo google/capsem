@@ -248,6 +248,7 @@ async fn handle_json_rpc(
                     let tool_name = tool_name.to_string();
                     let req_id = req.id.clone();
                     let req_id_fallback = req.id.clone();
+                    let db = Arc::clone(&config.db);
                     let resp = tokio::task::spawn_blocking(move || {
                         let rt = tokio::runtime::Handle::current();
                         rt.block_on(async {
@@ -263,7 +264,36 @@ async fn handle_json_rpc(
                                     super::file_tools::handle_revert_file(&arguments, &sched, &ws, req_id)
                                 }
                                 "snapshots_create" => {
-                                    super::file_tools::handle_snapshot(&arguments, &mut sched, req_id)
+                                    let resp = super::file_tools::handle_snapshot(&arguments, &mut sched, req_id);
+                                    // Log manual snapshot to session DB for the stats UI.
+                                    if resp.error.is_none() {
+                                        if let Some(last_slot) = sched.list_snapshots().into_iter()
+                                            .filter(|s| s.origin == crate::auto_snapshot::SnapshotOrigin::Manual)
+                                            .max_by_key(|s| s.slot)
+                                        {
+                                            let stop_id = db.reader().ok()
+                                                .and_then(|r| r.query_raw("SELECT COALESCE(MAX(id),0) FROM fs_events").ok())
+                                                .and_then(|json| {
+                                                    let v: serde_json::Value = serde_json::from_str(&json).ok()?;
+                                                    v["rows"].get(0)?.get(0)?.as_i64()
+                                                })
+                                                .unwrap_or(0);
+                                            // start=0: manual snapshots span the full session so
+                                            // forked sessions inherit complete change history.
+                                            db.try_write(capsem_logger::WriteOp::SnapshotEvent(
+                                                capsem_logger::SnapshotEvent {
+                                                    timestamp: last_slot.timestamp,
+                                                    slot: last_slot.slot,
+                                                    origin: "manual".into(),
+                                                    name: last_slot.name.clone(),
+                                                    files_count: last_slot.files_count,
+                                                    start_fs_event_id: 0,
+                                                    stop_fs_event_id: stop_id,
+                                                },
+                                            ));
+                                        }
+                                    }
+                                    resp
                                 }
                                 "snapshots_delete" => {
                                     super::file_tools::handle_delete_snapshot(&arguments, &sched, req_id)

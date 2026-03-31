@@ -354,3 +354,33 @@ export const FILE_EVENTS_SEARCH_SQL = `
   WHERE path LIKE ?
   ORDER BY id DESC
 `;
+
+// -- Snapshots tab -----------------------------------------------------------
+
+export const SNAPSHOT_STATS_SQL = `
+  SELECT
+    COUNT(*) as total,
+    SUM(CASE WHEN origin = 'auto' THEN 1 ELSE 0 END) as auto_count,
+    SUM(CASE WHEN origin = 'manual' THEN 1 ELSE 0 END) as manual_count
+  FROM snapshot_events
+  WHERE id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)
+`;
+
+export const SNAPSHOT_LIST_SQL = `
+  SELECT s.id, s.timestamp, s.slot, s.origin, s.name, s.files_count,
+    s.start_fs_event_id, s.stop_fs_event_id,
+    (SELECT COUNT(*) FROM fs_events
+     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
+     AND action = 'created') as created,
+    (SELECT COUNT(*) FROM fs_events
+     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
+     AND action = 'modified') as modified,
+    (SELECT COUNT(*) FROM fs_events
+     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
+     AND action = 'deleted') as deleted
+  FROM snapshot_events s
+  WHERE s.id IN (
+    SELECT MAX(id) FROM snapshot_events GROUP BY slot
+  )
+  ORDER BY s.timestamp DESC
+`;
