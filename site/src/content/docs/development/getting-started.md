@@ -7,16 +7,23 @@ sidebar:
 
 ## Platform requirements
 
+### macOS
+
 | Requirement | Detail |
 |-------------|--------|
 | **macOS 13+** (Ventura) | Required for Virtualization.framework |
-| **Apple Silicon** (arm64) | Primary target. Intel Macs are not supported for VM features. |
+| **Apple Silicon** (arm64) | Intel Macs are not supported |
 | **Xcode Command Line Tools** | Provides `codesign`, `cc`, and system headers. Install: `xcode-select --install` |
 | **Docker or Podman** | Needed for `just build-assets` (kernel + rootfs builds) |
 
-:::note[Linux developers]
-You can build VM images (`just build-assets`), run tests (`just test`), and audit dependencies (`just audit`) on Linux. VM features (`just run`, `just dev`, `just bench`) require macOS with Apple Silicon.
-:::
+### Linux
+
+| Requirement | Detail |
+|-------------|--------|
+| **Debian/Ubuntu** | apt-based distro (for .deb install) |
+| **x86_64 or arm64** | Both architectures supported |
+| **KVM** | `/dev/kvm` must be accessible. Load `kvm-intel` or `kvm-amd` module. |
+| **Docker or Podman** | Needed for `just build-assets` (kernel + rootfs builds) |
 
 ## Clone and bootstrap
 
@@ -59,7 +66,7 @@ See [Just Recipes](./just-recipes) for the complete reference and dependency cha
 
 ## Codesigning
 
-The compiled binary must be codesigned with Apple's `com.apple.security.virtualization` entitlement or Virtualization.framework calls crash at runtime. The justfile handles this automatically -- every `just run` re-signs the binary before booting.
+On macOS, the compiled binary must be codesigned with Apple's `com.apple.security.virtualization` entitlement or Virtualization.framework calls crash at runtime. The justfile handles this automatically -- every `just run` re-signs the binary before booting. This is not required on Linux.
 
 **Prerequisites:**
 - Xcode Command Line Tools (`xcode-select --install`)

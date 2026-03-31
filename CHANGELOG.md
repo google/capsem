@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **`install.sh` fails on Linux** -- the installer only supported macOS and rejected all other platforms. Added OS and architecture detection so the same one-liner (`curl ... | sh`) works on both macOS (arm64 .dmg) and Linux (x86_64/arm64 .deb via `apt install`). Refactored into testable shell functions with unit tests.
+- **Site docs claim macOS-only** -- developer getting-started listed only macOS requirements, build-system table labeled arm64 as "Apple Virtualization.framework" only, and codesigning section didn't mention it's macOS-specific. Updated to reflect Linux/KVM support.
 
 ### Added
 - **x86_64 KVM backend** -- full KVM support for x86_64 Linux: bzImage boot protocol, identity-mapped page tables, GDT, IRQCHIP/PIT interrupt controller, CPUID passthrough, 16550 UART serial console (PIO), E820 memory map, virtio-mmio device discovery via kernel cmdline. The .deb now boots VMs on both aarch64 and x86_64.

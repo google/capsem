@@ -167,7 +167,7 @@ Two architectures are supported. Each is self-contained in `build.toml` and prod
 
 | Architecture | Hypervisor | Docker Platform | Rust Target | Kernel Image |
 |-------------|------------|-----------------|-------------|--------------|
-| arm64 | Apple Virtualization.framework | `linux/arm64` | `aarch64-unknown-linux-musl` | `arch/arm64/boot/Image` |
+| arm64 | Apple VZ (macOS) / KVM (Linux) | `linux/arm64` | `aarch64-unknown-linux-musl` | `arch/arm64/boot/Image` |
 | x86_64 | KVM | `linux/amd64` | `x86_64-unknown-linux-musl` | `arch/x86_64/boot/bzImage` |
 
 Output layout:

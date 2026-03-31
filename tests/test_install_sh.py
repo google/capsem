@@ -117,7 +117,7 @@ class TestDetectArch:
             'OS=darwin; uname() { echo "x86_64"; }; detect_arch'
         )
         assert r.returncode != 0
-        assert "Apple Silicon" in r.stderr
+        assert "macOS requires Apple Silicon" in r.stderr
 
     def test_linux_riscv_rejected(self):
         r = _source_and_run(

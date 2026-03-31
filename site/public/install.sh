@@ -30,7 +30,7 @@ detect_arch() {
             case "$_MACHINE" in
                 arm64) ARCH="arm64" ;;
                 *)
-                    echo "Error: Capsem requires Apple Silicon (arm64). Detected: $_MACHINE" >&2
+                    echo "Error: Capsem on macOS requires Apple Silicon (arm64). Detected: $_MACHINE" >&2
                     return 1
                     ;;
             esac
