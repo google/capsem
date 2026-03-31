@@ -4,6 +4,10 @@ import type { DownloadProgress } from '../types';
 
 class VmStore {
   vmState = $state('not created');
+  /** Error trigger from backend (e.g. assets_not_found, download_failed). */
+  errorTrigger = $state<string | null>(null);
+  /** Human-readable error message from backend. */
+  errorMessage = $state<string | null>(null);
   downloadProgress = $state<DownloadProgress | null>(null);
 
   statusColor = $derived(
@@ -28,6 +32,10 @@ class VmStore {
 
   isRunning = $derived(this.vmState === 'running');
   isDownloading = $derived(this.vmState === 'downloading');
+  isError = $derived(this.vmState === 'error');
+  isBooting = $derived(this.vmState === 'booting');
+  /** True when the VM is not yet ready -- downloading, booting, or errored. */
+  showBootScreen = $derived(this.vmState !== 'running' && this.vmState !== 'not created' && this.vmState !== 'stopped');
   terminalRenderer = $state<'webgl' | 'canvas' | ''>('');
 
   async init() {
@@ -36,8 +44,15 @@ class VmStore {
     } catch {
       this.vmState = 'error';
     }
-    onVmStateChanged((state) => {
-      this.vmState = state.toLowerCase();
+    onVmStateChanged((payload) => {
+      this.vmState = payload.state.toLowerCase();
+      if (payload.state.toLowerCase() === 'error') {
+        this.errorTrigger = payload.trigger ?? null;
+        this.errorMessage = payload.message ?? null;
+      } else {
+        this.errorTrigger = null;
+        this.errorMessage = null;
+      }
     });
     onDownloadProgress((progress) => {
       this.downloadProgress = progress;

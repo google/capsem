@@ -27,6 +27,7 @@
   const mcpCount = $derived(mcpStore.servers.filter((s) => !s.unsupported_stdio).length);
 
   const downloading = $derived(vmStore.isDownloading);
+  const errored = $derived(vmStore.isError);
 
   function finish() {
     wizardStore.finish();
@@ -81,10 +82,12 @@
     <button class="btn btn-ghost btn-sm" onclick={() => wizardStore.back()}>Back</button>
     <button
       class="btn bg-interactive text-white btn-sm"
-      disabled={downloading}
+      disabled={downloading || errored}
       onclick={finish}
     >
-      {#if downloading}
+      {#if errored}
+        Sandbox unavailable
+      {:else if downloading}
         <span class="loading loading-spinner loading-xs"></span>
         Finishing up download...
       {:else}

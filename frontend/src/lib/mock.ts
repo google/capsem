@@ -22,7 +22,7 @@ import type {
 export const isMock = typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__;
 
 // Callback stored from onVmStateChanged for download-complete transition.
-let mockVmStateCallback: ((state: string) => void) | null = null;
+let mockVmStateCallback: ((payload: { state: string; trigger?: string; message?: string }) => void) | null = null;
 
 // ---------------------------------------------------------------------------
 // Generated data (settings + MCP from TOML configs + Rust tool defs)
@@ -277,7 +277,7 @@ export const mockApi = {
 
   // Event listeners return no-op unsubscribers in mock mode
   onSerialOutput: async (_cb: (data: number[]) => void) => () => {},
-  onVmStateChanged: async (cb: (state: string) => void) => {
+  onVmStateChanged: async (cb: (payload: { state: string; trigger?: string; message?: string }) => void) => {
     mockVmStateCallback = cb;
     return () => { mockVmStateCallback = null; };
   },

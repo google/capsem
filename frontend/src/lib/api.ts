@@ -218,10 +218,11 @@ export function checkForAppUpdate(): Promise<UpdateInfo | null> {
 // Event listeners
 // ---------------------------------------------------------------------------
 
-/** vm-state-changed payload is { state: string, trigger: string }. */
-interface VmStateChangedPayload {
+/** vm-state-changed payload is { state: string, trigger?: string, message?: string }. */
+export interface VmStateChangedPayload {
   state: string;
-  trigger: string;
+  trigger?: string;
+  message?: string;
 }
 
 export function onSerialOutput(
@@ -232,12 +233,10 @@ export function onSerialOutput(
 }
 
 export function onVmStateChanged(
-  callback: (state: string) => void,
+  callback: (payload: VmStateChangedPayload) => void,
 ): Promise<UnlistenFn> {
   if (isMock) return mockApi.onVmStateChanged(callback);
-  return tauriListen<VmStateChangedPayload>('vm-state-changed', (payload) =>
-    callback(payload.state),
-  );
+  return tauriListen<VmStateChangedPayload>('vm-state-changed', callback);
 }
 
 export function onTerminalSourceChanged(

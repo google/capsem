@@ -57,7 +57,7 @@
     <div class="flex flex-1 flex-col min-w-0">
       <!-- Content area: terminal is always mounted, hidden with visibility to avoid refit flash -->
       <div class="flex-1 min-h-0 relative">
-        {#if vmStore.isDownloading}
+        {#if vmStore.showBootScreen}
           <BootScreen />
         {:else}
           <div

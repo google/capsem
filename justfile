@@ -290,8 +290,10 @@ cut-release: full-test
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
     # Stamp changelog: [Unreleased] -> [NEW] - TODAY
     sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
+    # Extract latest release notes for the frontend boot screen
+    uv run python3 scripts/extract-release-notes.py
     # Commit, tag, push
-    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md
+    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md LATEST_RELEASE.md
     git commit -m "release: v${NEW}"
     git tag "$TAG"
     git push origin main "$TAG"

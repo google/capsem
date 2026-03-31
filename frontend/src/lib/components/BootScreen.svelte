@@ -5,6 +5,8 @@
   import { html as releaseHtml, version as releaseVersion } from 'virtual:release-notes';
 
   const downloading = $derived(vmStore.isDownloading);
+  const booting = $derived(vmStore.isBooting);
+  const errored = $derived(vmStore.isError);
   const ready = $derived(vmStore.isRunning);
 
   let progress = $derived(vmStore.downloadProgress);
@@ -21,6 +23,13 @@
   function go() {
     sidebarStore.setView('terminal');
   }
+
+  const ERROR_HINTS: Record<string, string> = {
+    assets_not_found: 'VM assets not found. Run "just build-assets" to build them.',
+    asset_init_failed: 'Could not initialize the asset manager. Check that manifest.json exists in the assets directory.',
+    manifest_error: 'The rootfs entry is missing from the asset manifest. Try rebuilding with "just build-assets".',
+    download_failed: 'Failed to download the VM image. Check your internet connection and try restarting.',
+  };
 </script>
 
 <div class="flex items-center justify-center h-full bg-base-100">
@@ -31,7 +40,9 @@
       <h1 class="text-3xl font-semibold text-base-content">Capsem</h1>
       {#if releaseVersion}
         <p class="text-sm text-base-content/50">
-          {#if downloading}
+          {#if errored}
+            v{releaseVersion}
+          {:else if downloading}
             Updating to v{releaseVersion}...
           {:else if ready}
             v{releaseVersion} ready
@@ -42,8 +53,28 @@
       {/if}
     </div>
 
+    <!-- Error state -->
+    {#if errored}
+      <div class="w-full max-w-md space-y-3">
+        <div class="alert border border-denied/30 bg-denied/10">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 text-denied" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          <div class="space-y-1">
+            <p class="text-sm font-medium text-denied">Failed to start sandbox</p>
+            {#if vmStore.errorTrigger && ERROR_HINTS[vmStore.errorTrigger]}
+              <p class="text-xs text-base-content/60">{ERROR_HINTS[vmStore.errorTrigger]}</p>
+            {:else if vmStore.errorMessage}
+              <p class="text-xs text-base-content/60">{vmStore.errorMessage}</p>
+            {:else}
+              <p class="text-xs text-base-content/60">An unexpected error occurred. Check the logs for details.</p>
+            {/if}
+          </div>
+        </div>
+      </div>
+
     <!-- Download progress -->
-    {#if downloading}
+    {:else if downloading}
       <div class="w-full max-w-md space-y-1">
         <progress
           class="progress progress-info w-full"
@@ -59,6 +90,8 @@
           {/if}
         </p>
       </div>
+
+    <!-- Booting -->
     {:else if !ready}
       <div class="flex items-center gap-2 text-sm text-base-content/50">
         <span class="loading loading-spinner loading-sm"></span>
@@ -92,7 +125,9 @@
         disabled={!ready}
         onclick={go}
       >
-        {#if downloading}
+        {#if errored}
+          Sandbox unavailable
+        {:else if downloading}
           <span class="loading loading-spinner loading-xs"></span>
           Downloading...
         {:else if !ready}

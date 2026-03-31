@@ -27,6 +27,7 @@
   // Show download bar whenever we have progress data that hasn't finished yet.
   // Also show while vmState is 'downloading' (before first progress event).
   const showDownloadBar = $derived(vmStore.isDownloading || (progress !== null && pct < 100));
+  const errored = $derived(vmStore.isError);
 </script>
 
 <div class="flex h-full flex-col">
@@ -62,8 +63,17 @@
     </div>
   </div>
 
-  <!-- Download progress bar (pinned bottom) -->
-  {#if showDownloadBar}
+  <!-- Status bar (pinned bottom) -->
+  {#if errored}
+    <div
+      class="flex h-10 items-center gap-3 border-t border-denied/30 bg-denied/10 px-4 text-xs text-denied"
+    >
+      <span>Failed to start sandbox</span>
+      {#if vmStore.errorMessage}
+        <span class="text-base-content/50 truncate">{vmStore.errorMessage}</span>
+      {/if}
+    </div>
+  {:else if showDownloadBar}
     <div
       class="flex h-10 items-center gap-3 border-t border-base-300 bg-base-200 px-4 text-xs text-base-content/60"
     >
