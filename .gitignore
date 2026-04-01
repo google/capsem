@@ -9,6 +9,7 @@ archive/
 .vscode
 .claude/projects/
 .claude/settings.local.json
+.claude/worktrees/
 .pytest_cache
 /config.toml
 keys.json

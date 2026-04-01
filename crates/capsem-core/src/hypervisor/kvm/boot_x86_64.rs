@@ -30,6 +30,9 @@ const MIN_BOOT_PROTOCOL: u16 = 0x0206;
 pub(super) struct KernelLoadInfo {
     pub entry_addr: u64,
     pub kernel_end: u64,
+    /// Raw setup header bytes (offsets 0x1F1..0x2B9 of the bzImage).
+    /// Preserved into boot_params so the kernel sees its own header fields.
+    pub setup_header: Vec<u8>,
 }
 
 /// Initrd load info returned after loading.
@@ -89,9 +92,25 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
     }
     mem.write_at(load_offset, protected_mode)?;
 
+    // Extract setup header bytes (0x1F1..0x2B9) for boot_params preservation.
+    // The kernel reads fields from its own setup header at boot; we must copy
+    // them into boot_params so fields like vid_mode, heap_end_ptr, etc. survive.
+    const SETUP_HEADER_START: usize = 0x1F1;
+    const SETUP_HEADER_END: usize = 0x2B9;
+    let setup_header = if kernel_data.len() >= SETUP_HEADER_END {
+        kernel_data[SETUP_HEADER_START..SETUP_HEADER_END].to_vec()
+    } else if kernel_data.len() > SETUP_HEADER_START {
+        kernel_data[SETUP_HEADER_START..].to_vec()
+    } else {
+        Vec::new()
+    };
+
     Ok(KernelLoadInfo {
-        entry_addr: KERNEL_LOAD_ADDR,
+        // 64-bit entry point: startup_64 is at offset 0x200 from the
+        // protected-mode kernel start (Linux boot protocol >= 2.06).
+        entry_addr: KERNEL_LOAD_ADDR + 0x200,
         kernel_end: KERNEL_LOAD_ADDR + kernel_size,
+        setup_header,
     })
 }
 
@@ -127,11 +146,16 @@ pub(super) fn load_initrd(
 // ---------------------------------------------------------------------------
 
 /// Write the boot_params zero page and kernel cmdline into guest memory.
+///
+/// `setup_header` contains the raw bytes from the bzImage at offsets
+/// 0x1F1..0x2B9. These are copied first, then our bootloader fields
+/// (type_of_loader, loadflags, cmd_line_ptr, etc.) are overlaid on top.
 pub(super) fn write_boot_params(
     mem: &GuestMemory,
     cmdline: &str,
     initrd: Option<&InitrdLoadInfo>,
     e820_entries: &[memory::E820Entry],
+    setup_header: &[u8],
 ) -> Result<()> {
     let cmdline_bytes = cmdline.as_bytes();
     if cmdline_bytes.len() as u64 >= CMDLINE_MAX_SIZE {
@@ -147,7 +171,15 @@ pub(super) fn write_boot_params(
     // Build boot_params (zero page) -- 4096 bytes, mostly zeros
     let mut params = vec![0u8; 4096];
 
-    // Copy from setup_header: we need to set several fields.
+    // Preserve original setup_header from the bzImage so the kernel sees
+    // its own vid_mode, heap_end_ptr, and other self-describing fields.
+    if !setup_header.is_empty() {
+        let dest = 0x1F1;
+        let len = setup_header.len().min(4096 - dest);
+        params[dest..dest + len].copy_from_slice(&setup_header[..len]);
+    }
+
+    // Overlay our bootloader fields on top of the preserved header.
     // type_of_loader at offset 0x210
     params[0x210] = 0xFF;
 
@@ -523,6 +555,11 @@ mod tests {
 
         // 64-bit entry point MUST be at exactly KERNEL_LOAD_ADDR + 0x200
         assert_eq!(info.entry_addr, KERNEL_LOAD_ADDR + 0x200);
+
+        // setup_header should be extracted (0x1F1..0x2B9 = 200 bytes)
+        assert_eq!(info.setup_header.len(), 0x2B9 - 0x1F1);
+        // First byte is setup_sects (we set it to 4)
+        assert_eq!(info.setup_header[0], 4);
     }
 
     #[test]

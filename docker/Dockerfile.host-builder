@@ -1,0 +1,119 @@
+# Purpose-built build environment for cross-compiling the Capsem host
+# binary (Tauri 2.0 desktop app) targeting Linux x86_64 and arm64.
+#
+# Runs natively on the host arch. Cross-compilation uses multiarch
+# system libraries + Rust --target (no QEMU emulation needed).
+#
+# Usage:
+#   just build-host-image          # build the image (native arch)
+#   just cross-compile [arch]      # build Capsem for target arch
+#
+# Layer strategy: system deps + cross-libs (rare) -> Node/pnpm (quarterly) ->
+# Rust toolchain + cargo tools (monthly) -> Python/uv (rare) -> cargo config.
+# Source is volume-mounted at runtime, never COPYed.
+#
+# NOTE: -dev packages for native and foreign arch conflict (headers overlap).
+# We install native -dev first, then swap in foreign -dev for cross builds.
+# The justfile recipe handles this swap at container runtime.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ---- Multiarch apt sources ----
+# Ubuntu arm64 uses ports.ubuntu.com; amd64 uses archive.ubuntu.com.
+# We need both repos scoped to their architectures.
+COPY sources-multiarch.sh /tmp/
+RUN bash /tmp/sources-multiarch.sh && rm /tmp/sources-multiarch.sh
+
+# ---- Native build tools + cross-compilation toolchains ----
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    file \
+    curl \
+    wget \
+    ca-certificates \
+    git \
+    musl-tools \
+    xdg-utils \
+    # Cross-compilation toolchains (both directions)
+    gcc-x86-64-linux-gnu \
+    g++-x86-64-linux-gnu \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- Native-arch Tauri dev libraries ----
+# These are the -dev packages for the image's native architecture.
+# For cross-compilation, the recipe swaps these for the target arch
+# at container runtime (see swap-dev-libs.sh).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl-dev \
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- Helper script to swap -dev libs for cross-compilation ----
+COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs
+RUN chmod +x /usr/local/bin/swap-dev-libs
+
+# ---- Node.js 24 + pnpm 10 ----
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g pnpm@10 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- Rust stable toolchain ----
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH="/usr/local/cargo/bin:$PATH"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal \
+    && rustup target add \
+        aarch64-unknown-linux-gnu \
+        x86_64-unknown-linux-gnu \
+        aarch64-unknown-linux-musl \
+        x86_64-unknown-linux-musl \
+    && rustup component add llvm-tools \
+    && cargo install tauri-cli cargo-auditable --locked \
+    && rm -rf /usr/local/cargo/registry/cache /usr/local/cargo/registry/src
+
+# ---- Python 3 + uv (for capsem-builder scripts) ----
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh \
+    && install -m 555 /root/.local/bin/uv /usr/local/bin/uv \
+    && install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
+
+# ---- Cargo cross-compilation config ----
+ENV CARGO_TARGET_DIR=/cargo-target
+ENV PKG_CONFIG_ALLOW_CROSS=1
+
+RUN mkdir -p /usr/local/cargo \
+    && cat > /usr/local/cargo/config.toml << 'CARGO_EOF'
+[target.x86_64-unknown-linux-gnu]
+linker = "x86_64-linux-gnu-gcc"
+
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+CARGO_EOF
+
+# ---- Extension point: macOS cross-compilation (future) ----
+# To add osxcross for macOS targets:
+#   1. Add build arg: ARG ENABLE_MACOS=0
+#   2. Conditionally install osxcross + macOS SDK
+#   3. Add Rust targets: x86_64-apple-darwin, aarch64-apple-darwin
+#   4. Configure linker in cargo config above
+# Note: codesigning + notarization must happen outside the container.
+
+WORKDIR /src

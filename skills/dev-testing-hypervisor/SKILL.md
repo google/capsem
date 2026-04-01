@@ -51,6 +51,15 @@ These test the full boot path: config validation, device setup, serial output, v
 - Tests capsem-core, capsem-logger, capsem-proto (KVM backend compiles + tests)
 - Verifies /dev/kvm is available (fails CI if KVM tests were silently skipped)
 
+## x86_64 KVM boot: known pitfalls
+
+The x86_64 KVM backend boots bzImage kernels in 64-bit long mode. Key invariants:
+
+- **Entry point is `KERNEL_LOAD_ADDR + 0x200`** (startup_64), not `KERNEL_LOAD_ADDR` (startup_32). Setting the wrong entry point causes a silent hang -- the vCPU executes 32-bit code in 64-bit mode.
+- **setup_header must be preserved.** The bzImage setup header (bytes 0x1F1..0x2B9) must be extracted from the raw kernel and copied into boot_params. The kernel reads fields (vid_mode, heap_end_ptr, etc.) from this header at boot.
+- **`#[cfg(target_arch = "x86_64")]` hides x86 bugs on macOS.** All KVM x86_64 code is behind cfg gates, so it never compiles on macOS (aarch64). Bugs in the x86_64 code path are invisible during macOS development. Always check that the x86_64 CI job passes.
+- **VmConfig validates kernel architecture.** `VmConfigBuilder::build()` reads kernel magic bytes and rejects wrong-arch kernels (bzImage on aarch64, ARM64 Image on x86_64) with `ConfigError::ArchMismatch` instead of silently hanging.
+
 ## What to test when changing hypervisor code
 
 | Change | Tests to run |
@@ -59,6 +68,7 @@ These test the full boot path: config validation, device setup, serial output, v
 | VM config / boot | `cargo test -p capsem-core` + `just run` (verify boot succeeds) |
 | Vsock / serial | `cargo test -p capsem-core` + `just run "echo ok"` (verify I/O works) |
 | KVM device model | `cargo test -p capsem-core` (Linux CI validates) |
+| KVM x86_64 boot | `cargo test -p capsem-core boot_x86_64` (struct tests run on macOS; full boot needs x86_64 Linux CI) |
 | Hypervisor traits | `cargo test -p capsem-core` on both macOS and Linux CI |
 
 ## Rust async reference

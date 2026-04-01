@@ -40,6 +40,8 @@ pub enum ConfigError {
     InvalidVirtioFsTag(String),
     #[error("duplicate VirtioFS tag: {0:?}")]
     DuplicateVirtioFsTag(String),
+    #[error("kernel architecture mismatch: {0}")]
+    ArchMismatch(String),
 }
 
 /// A VirtioFS shared directory to expose to the guest via virtio-fs.
@@ -172,6 +174,52 @@ impl VmConfigBuilder {
         self
     }
 
+    /// Reject kernels built for the wrong CPU architecture.
+    /// Reads the first 1024 bytes and checks for architecture-specific magic.
+    fn validate_kernel_arch(path: &Path) -> Result<(), ConfigError> {
+        use std::io::Read;
+
+        let mut file = std::fs::File::open(path).map_err(ConfigError::Io)?;
+        let mut header = [0u8; 1024];
+        let n = file.read(&mut header).map_err(ConfigError::Io)?;
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            // Reject x86_64 bzImage: "HdrS" magic at offset 0x202
+            if n > 0x206 {
+                let magic = u32::from_le_bytes([
+                    header[0x202], header[0x203], header[0x204], header[0x205],
+                ]);
+                if magic == 0x5372_6448 {
+                    return Err(ConfigError::ArchMismatch(format!(
+                        "{} is an x86_64 bzImage but this host is aarch64",
+                        path.display()
+                    )));
+                }
+            }
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Reject ARM64 Image: magic 0x644d5241 ("ARM\x64") at offset 56
+            if n > 60 {
+                let magic = u32::from_le_bytes([
+                    header[56], header[57], header[58], header[59],
+                ]);
+                if magic == 0x644d_5241 {
+                    return Err(ConfigError::ArchMismatch(format!(
+                        "{} is an ARM64 Image but this host is x86_64",
+                        path.display()
+                    )));
+                }
+            }
+        }
+
+        // Suppress unused-variable warnings on other architectures
+        let _ = n;
+        Ok(())
+    }
+
     fn verify_hash(path: &Path, expected_hash: &str) -> Result<(), ConfigError> {
         let _span = debug_span!("verify_hash", path = %path.display()).entered();
         use std::fs::File;
@@ -212,6 +260,7 @@ impl VmConfigBuilder {
         if !kernel_path.exists() {
             return Err(ConfigError::MissingKernel(kernel_path.clone()));
         }
+        Self::validate_kernel_arch(&kernel_path)?;
         if let Some(ref expected) = self.expected_kernel_hash {
             Self::verify_hash(&kernel_path, expected)?;
         }
@@ -465,6 +514,48 @@ mod tests {
             .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("/nonexistent/vmlinuz"), "error should contain path: {msg}");
+    }
+
+    // --- kernel arch validation tests ---
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn rejects_x86_64_bzimage_on_aarch64() {
+        let dir = std::env::temp_dir().join("capsem-test-arch");
+        std::fs::create_dir_all(&dir).unwrap();
+        let kernel = dir.join("vmlinuz-bzimage");
+        let mut data = vec![0u8; 4096];
+        // bzImage "HdrS" magic at offset 0x202
+        data[0x202..0x206].copy_from_slice(&0x5372_6448u32.to_le_bytes());
+        std::fs::write(&kernel, &data).unwrap();
+        let err = VmConfig::builder().kernel_path(&kernel).build();
+        assert!(matches!(err, Err(ConfigError::ArchMismatch(_))));
+        let msg = err.unwrap_err().to_string();
+        assert!(msg.contains("x86_64"), "error should mention x86_64: {msg}");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn rejects_arm64_image_on_x86_64() {
+        let dir = std::env::temp_dir().join("capsem-test-arch");
+        std::fs::create_dir_all(&dir).unwrap();
+        let kernel = dir.join("vmlinuz-arm64");
+        let mut data = vec![0u8; 4096];
+        // ARM64 Image magic at offset 56
+        data[56..60].copy_from_slice(&0x644d_5241u32.to_le_bytes());
+        std::fs::write(&kernel, &data).unwrap();
+        let err = VmConfig::builder().kernel_path(&kernel).build();
+        assert!(matches!(err, Err(ConfigError::ArchMismatch(_))));
+        let msg = err.unwrap_err().to_string();
+        assert!(msg.contains("ARM64"), "error should mention ARM64: {msg}");
+    }
+
+    #[test]
+    fn accepts_correct_arch_kernel() {
+        // A kernel with no recognized wrong-arch magic should pass validation.
+        let kernel = temp_file("vmlinuz-correct-arch");
+        let config = VmConfig::builder().kernel_path(&kernel).build();
+        assert!(config.is_ok());
     }
 
     // --- initrd path tests ---
