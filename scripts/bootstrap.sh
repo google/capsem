@@ -138,8 +138,8 @@ fi
 # --- Linux: VM feature notice ---
 if [ "$OS" = "Linux" ]; then
     printf "\n"
-    printf "  [INFO] Capsem VM features (just run, just dev, just bench) require macOS.\n"
-    printf "         On Linux you can use: just test, just build-assets, just audit\n"
+    printf "  [INFO] Linux uses KVM for VM features. Ensure /dev/kvm is accessible.\n"
+    printf "         macOS uses Apple Virtualization.framework (codesigning required).\n"
 fi
 
 echo ""

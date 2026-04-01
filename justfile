@@ -432,11 +432,9 @@ doctor: _pnpm-install
             rm -f "$SIGN_TEST"
         fi
     else
-        echo "  [SKIP] codesign (macOS-only -- not needed on Linux)"
+        echo "  [SKIP] codesign (macOS-only -- Linux uses KVM, no signing needed)"
         echo "  [SKIP] entitlements.plist (macOS-only)"
         echo "  [SKIP] test sign (macOS-only)"
-        echo "  [INFO] Capsem VM features (run, dev, bench) require macOS with Apple Silicon."
-        echo "         On Linux you can use: just test, just build-assets, just audit"
     fi
 
     echo ""
@@ -731,7 +729,7 @@ _check-assets:
     if [ ${#missing[@]} -gt 0 ]; then
         echo "ERROR: Missing VM assets in $dir/: ${missing[*]}"
         echo ""
-        echo "Run 'just build-assets' to build them (requires docker via Colima on macOS)."
+        echo "Run 'just build-assets' to build them (requires docker)."
         exit 1
     fi
 
@@ -748,16 +746,8 @@ _sign: _compile
     #!/bin/bash
     set -euo pipefail
     if [[ "$(uname -s)" != "Darwin" ]]; then
-        echo ""
-        echo "ERROR: codesign requires macOS. Capsem VM features (run, dev, bench) need"
-        echo "       macOS with Apple Silicon and the Virtualization.framework."
-        echo ""
-        echo "On Linux you can use:"
-        echo "  just test          # unit tests + cross-compile + frontend check"
-        echo "  just build-assets  # build VM kernel + rootfs (needs Docker/Podman)"
-        echo "  just audit         # dependency vulnerability scan"
-        echo ""
-        exit 1
+        echo "  [skip] codesign (Linux -- not needed, using KVM)"
+        exit 0
     fi
     if [[ ! -r "{{entitlements}}" ]]; then
         echo "ERROR: {{entitlements}} not found or not readable."
