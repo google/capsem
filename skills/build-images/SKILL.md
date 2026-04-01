@@ -7,7 +7,7 @@ description: Building Capsem VM images with capsem-builder. Use when working wit
 
 ## Overview
 
-capsem-builder is a config-driven build system. It reads TOML configs from `guest/config/`, renders Jinja2 Dockerfile templates, and builds kernel + rootfs via Docker/Podman. Assets output to `assets/{arch}/`.
+capsem-builder is a config-driven build system. It reads TOML configs from `guest/config/`, renders Jinja2 Dockerfile templates, and builds kernel + rootfs via Docker. Assets output to `assets/{arch}/`.
 
 ## Guest config layout
 
@@ -224,7 +224,7 @@ packages = ["https://example.com/install.sh"]
 
 ## How to: Add a new guest binary
 
-Guest binaries are compiled from `crates/capsem-agent/`. On macOS, `cross_compile_agent()` delegates to `container_compile_agent()` which builds inside a Linux container (podman/docker). On Linux (CI), cargo builds natively.
+Guest binaries are compiled from `crates/capsem-agent/`. On macOS, `cross_compile_agent()` delegates to `container_compile_agent()` which builds inside a Linux container (docker). On Linux (CI), cargo builds natively.
 
 1. Add the binary target in `crates/capsem-agent/Cargo.toml`
 2. Add the binary name to `GUEST_BINARIES` list in `docker.py`
@@ -278,7 +278,7 @@ For rootfs:
 1. Build guest agent binaries (`cross_compile_agent` -- on macOS delegates to `container_compile_agent` which builds inside a Linux container; on Linux compiles natively)
 2. Assemble build context (`prepare_build_context`) -- copies CA cert, shell configs, diagnostics, agent binaries
 3. Render Dockerfile from template
-4. `docker/podman build`
+4. `docker build`
 5. Export container filesystem as tar
 6. Create squashfs from tar (`create_squashfs` -- runs mksquashfs in a container)
 7. Extract tool versions (`extract_tool_versions`)
@@ -288,30 +288,31 @@ For kernel:
 1. Resolve latest kernel version from kernel.org
 2. Assemble build context (defconfig, capsem-init)
 3. Render Dockerfile from template
-4. `docker/podman build`
+4. `docker build`
 5. Extract vmlinuz + initrd.img from image
 6. Clean up
 
 ## Container runtime requirements
 
-On macOS, both Docker and Podman run inside a Linux VM with limited resources.
+On macOS, Docker runs inside a Colima VM with limited resources.
 The rootfs build runs apt, npm, and curl-based CLI installers concurrently --
-the default 2GB RAM allocation causes OOM kills (exit code 137).
+the default RAM allocation may cause OOM kills (exit code 137).
 
 **Minimum**: 4GB RAM. **Recommended**: 8GB RAM, 8 CPUs.
 
 ```bash
-# Podman
-podman machine stop && podman machine set --memory 8192 --cpus 8 && podman machine start
+# Colima (macOS)
+colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
 
-# Docker Desktop: Settings -> Resources -> Memory -> 8GB
+# Linux: Docker runs natively, no memory tuning needed
+# sudo apt install docker.io
 ```
 
 `just doctor` and `capsem-builder doctor` both check these resources automatically.
 
 The resource check lives in `src/capsem/builder/doctor.py`:
-- `check_container_resources()` -- checks podman machine inspect or docker info
-- Thresholds: `PODMAN_MIN_MEMORY_MB = 4096`, `PODMAN_RECOMMENDED_MEMORY_MB = 8192`
+- `check_container_resources()` -- checks docker info
+- Thresholds: `DOCKER_MIN_MEMORY_MB = 4096`, `DOCKER_RECOMMENDED_MEMORY_MB = 8192`
 
 ## Container image compatibility
 
@@ -325,7 +326,7 @@ The container builds use `rust:slim-bookworm` -- a minimal Debian image. Many co
 
 All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift.
 Without this, apt rejects Release files whose timestamp is in the future relative to the VM's clock.
-This is a persistent issue with Podman's libkrun backend on macOS.
+This can occur with any container VM backend on macOS.
 
 Files affected:
 - `Dockerfile.kernel.j2` (line 11)

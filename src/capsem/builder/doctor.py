@@ -39,85 +39,72 @@ class CheckResult:
 
 
 def check_container_runtime() -> CheckResult:
-    """Check for podman or docker on PATH (podman preferred)."""
-    for name in ("podman", "docker"):
-        path = shutil.which(name)
-        if path:
-            try:
-                result = subprocess.run(
-                    [name, "--version"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                version = result.stdout.strip()
-                return CheckResult(
-                    name="container-runtime",
-                    passed=True,
-                    detail=version,
-                )
-            except Exception:
-                return CheckResult(
-                    name="container-runtime",
-                    passed=True,
-                    detail=f"{name} (version unknown)",
-                )
+    """Check for docker on PATH."""
+    if shutil.which("docker"):
+        try:
+            result = subprocess.run(
+                ["docker", "--version"],
+                capture_output=True, text=True, timeout=10,
+            )
+            version = result.stdout.strip()
+            return CheckResult(
+                name="container-runtime",
+                passed=True,
+                detail=version,
+            )
+        except Exception:
+            return CheckResult(
+                name="container-runtime",
+                passed=True,
+                detail="docker (version unknown)",
+            )
     is_mac = sys.platform == "darwin"
-    fix = "brew install podman" if is_mac else "apt install podman  # or: apt install docker.io"
+    fix = (
+        "brew install colima docker && colima start --vm-type vz --vz-rosetta"
+        if is_mac
+        else "sudo apt install docker.io"
+    )
     return CheckResult(
         name="container-runtime",
         passed=False,
-        detail="neither podman nor docker found on PATH",
+        detail="docker not found on PATH",
         fix=fix,
     )
 
 
-# Minimum memory (MB) for the podman VM to build images reliably.
+# Minimum memory (MB) for the container VM to build images reliably.
 # The rootfs build runs apt, npm, and curl installers concurrently inside the
 # container -- 2 GB is not enough (OOM-killed exit 137 on Claude installer).
-PODMAN_MIN_MEMORY_MB = 4096
-PODMAN_RECOMMENDED_MEMORY_MB = 8192
+CONTAINER_MIN_MEMORY_MB = 4096
+CONTAINER_RECOMMENDED_MEMORY_MB = 8192
 
 
 def check_container_resources() -> CheckResult | None:
     """Check container runtime VM has enough memory and CPUs.
 
-    Checks podman machine (macOS/Windows) or Docker Desktop resource limits.
-    Returns None on native Linux or if resources can't be determined.
+    On macOS, Colima runs containers in a Linux VM whose resources can be
+    queried via docker info. Returns None on native Linux or if resources
+    can't be determined.
     """
     import json as _json
 
-    # Podman machine (macOS/Windows)
-    if shutil.which("podman") and sys.platform in ("darwin", "win32"):
-        try:
-            result = subprocess.run(
-                ["podman", "machine", "inspect"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                data = _json.loads(result.stdout)
-                resources = data[0].get("Resources", {})
-                memory_mb = resources.get("Memory", 0)
-                cpus = resources.get("CPUs", 0)
-                return _check_resources("podman VM", memory_mb, cpus,
-                    fix=f"podman machine stop && podman machine set --memory {PODMAN_RECOMMENDED_MEMORY_MB} && podman machine start")
-        except Exception:
-            pass
+    if not shutil.which("docker") or sys.platform not in ("darwin", "win32"):
+        return None
 
-    # Docker Desktop (macOS/Windows) -- uses docker info to read resource limits
-    if shutil.which("docker") and sys.platform in ("darwin", "win32"):
-        try:
-            result = subprocess.run(
-                ["docker", "info", "--format", "{{json .}}"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                data = _json.loads(result.stdout)
-                memory_bytes = data.get("MemTotal", 0)
-                cpus = data.get("NCPU", 0)
-                memory_mb = memory_bytes // (1024 * 1024)
-                return _check_resources("Docker Desktop", memory_mb, cpus,
-                    fix="Docker Desktop -> Settings -> Resources -> increase Memory to 8GB")
-        except Exception:
-            pass
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{json .}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            data = _json.loads(result.stdout)
+            memory_bytes = data.get("MemTotal", 0)
+            cpus = data.get("NCPU", 0)
+            memory_mb = memory_bytes // (1024 * 1024)
+            return _check_resources("Colima", memory_mb, cpus,
+                fix=f"colima stop && colima start --memory 8 --cpu 8")
+    except Exception:
+        pass
 
     return None
 
@@ -126,16 +113,16 @@ def _check_resources(
     runtime_label: str, memory_mb: int, cpus: int, fix: str,
 ) -> CheckResult:
     """Evaluate container runtime resources against thresholds."""
-    if memory_mb < PODMAN_MIN_MEMORY_MB:
+    if memory_mb < CONTAINER_MIN_MEMORY_MB:
         return CheckResult(
             name="container-resources",
             passed=False,
-            detail=f"{runtime_label}: {memory_mb}MB RAM, {cpus} CPUs (minimum {PODMAN_MIN_MEMORY_MB}MB)",
+            detail=f"{runtime_label}: {memory_mb}MB RAM, {cpus} CPUs (minimum {CONTAINER_MIN_MEMORY_MB}MB)",
             fix=fix,
         )
     detail = f"{runtime_label}: {memory_mb}MB RAM, {cpus} CPUs"
-    if memory_mb < PODMAN_RECOMMENDED_MEMORY_MB:
-        detail += f" (recommended {PODMAN_RECOMMENDED_MEMORY_MB}MB)"
+    if memory_mb < CONTAINER_RECOMMENDED_MEMORY_MB:
+        detail += f" (recommended {CONTAINER_RECOMMENDED_MEMORY_MB}MB)"
     return CheckResult(name="container-resources", passed=True, detail=detail)
 
 
@@ -146,54 +133,44 @@ MAX_CLOCK_SKEW_SECONDS = 30
 def check_container_clock() -> CheckResult | None:
     """Check if container VM clock is in sync with the host.
 
-    On macOS, Podman and Docker Desktop run containers in a Linux VM whose
-    clock can drift after sleep/wake. Skew beyond MAX_CLOCK_SKEW_SECONDS
-    causes apt-get to reject release files as "not valid yet".
+    On macOS, Colima runs containers in a Linux VM whose clock can drift
+    after sleep/wake. Skew beyond MAX_CLOCK_SKEW_SECONDS causes apt-get
+    to reject release files as "not valid yet".
     Returns None on native Linux (no VM layer).
     """
     if sys.platform != "darwin":
         return None
 
+    if not shutil.which("docker"):
+        return None
+
     host_now = datetime.datetime.now(datetime.timezone.utc)
 
-    # Try podman first, then docker
-    for runtime, cmd in [
-        ("podman", ["podman", "machine", "ssh", "--", "date", "-u", "+%s"]),
-        ("docker", ["docker", "run", "--rm", "alpine", "date", "-u", "+%s"]),
-    ]:
-        if not shutil.which(runtime):
-            continue
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=15,
-            )
-            if result.returncode != 0:
-                continue
-            vm_epoch = int(result.stdout.strip())
-            host_epoch = int(host_now.timestamp())
-            skew = abs(host_epoch - vm_epoch)
-            if skew > MAX_CLOCK_SKEW_SECONDS:
-                direction = "behind" if vm_epoch < host_epoch else "ahead"
-                fix = (
-                    f"podman machine stop && podman machine start"
-                    if runtime == "podman"
-                    else "restart Docker Desktop"
-                )
-                return CheckResult(
-                    name="container-clock",
-                    passed=False,
-                    detail=f"{runtime} VM clock is {skew}s {direction} host",
-                    fix=fix,
-                )
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "alpine", "date", "-u", "+%s"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return None
+        vm_epoch = int(result.stdout.strip())
+        host_epoch = int(host_now.timestamp())
+        skew = abs(host_epoch - vm_epoch)
+        if skew > MAX_CLOCK_SKEW_SECONDS:
+            direction = "behind" if vm_epoch < host_epoch else "ahead"
             return CheckResult(
                 name="container-clock",
-                passed=True,
-                detail=f"{runtime} VM clock skew: {skew}s (ok)",
+                passed=False,
+                detail=f"Colima VM clock is {skew}s {direction} host",
+                fix="colima restart",
             )
-        except Exception:
-            continue
-
-    return None
+        return CheckResult(
+            name="container-clock",
+            passed=True,
+            detail=f"Colima VM clock skew: {skew}s (ok)",
+        )
+    except Exception:
+        return None
 
 
 def check_rust_toolchain() -> CheckResult:

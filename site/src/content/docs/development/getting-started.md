@@ -14,7 +14,7 @@ sidebar:
 | **macOS 13+** (Ventura) | Required for Virtualization.framework |
 | **Apple Silicon** (arm64) | Intel Macs are not supported |
 | **Xcode Command Line Tools** | Provides `codesign`, `cc`, and system headers. Install: `xcode-select --install` |
-| **Docker or Podman** | Needed for `just build-assets` (kernel + rootfs builds) |
+| **Docker (via Colima on macOS)** | Needed for `just build-assets` (kernel + rootfs builds) |
 
 ### Linux
 
@@ -23,7 +23,7 @@ sidebar:
 | **Debian/Ubuntu** | apt-based distro (for .deb install) |
 | **x86_64 or arm64** | Both architectures supported |
 | **KVM** | `/dev/kvm` must be accessible. Load `kvm-intel` or `kvm-amd` module. |
-| **Docker or Podman** | Needed for `just build-assets` (kernel + rootfs builds) |
+| **Docker** | Needed for `just build-assets` (kernel + rootfs builds) |
 
 ## Clone and bootstrap
 
@@ -42,7 +42,7 @@ The only prerequisite is a POSIX shell. See [Life of a Build](./stack) for what 
 just build-assets
 ```
 
-Builds the Linux kernel and rootfs via Docker/Podman (~10 min on first run). Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to configure Docker or Podman memory.
+Builds the Linux kernel and rootfs via Docker (~10 min on first run). Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to configure Colima resources.
 
 ## Verify
 
@@ -125,8 +125,8 @@ The container runtime ran out of memory. See [Life of a Build > Container runtim
 ### `just build-assets` fails with "Release file not valid yet"
 
 The container VM's clock has drifted:
-- Podman: `podman machine stop && podman machine start`
-- Docker: restart Docker Desktop
+- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8`
+- Docker Desktop: restart Docker Desktop
 
 ### `just run` fails with "assets not found"
 

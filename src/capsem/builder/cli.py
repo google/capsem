@@ -183,7 +183,7 @@ def build(
             click.echo(f"error: {e}", err=True)
             raise SystemExit(1)
 
-        click.echo(f"Using container runtime: {runtime}")
+        click.echo(f"Using container runtime: docker")
         out = Path(output_dir)
 
         try:

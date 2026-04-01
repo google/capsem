@@ -6,7 +6,7 @@ Native macOS app that sandboxes AI agents in Linux VMs using Apple's Virtualizat
 
 ```bash
 just doctor        # Check tools (first time)
-just build-assets  # Build kernel + rootfs (first time, needs docker/podman)
+just build-assets  # Build kernel + rootfs (first time, needs docker via Colima on macOS)
 just run           # Build + boot VM (~10s)
 just test          # Unit tests + cross-compile + frontend check
 ```

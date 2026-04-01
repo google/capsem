@@ -173,13 +173,10 @@ def run_cmd(
 
 
 def detect_runtime() -> str:
-    """Detect container runtime, raising with fix guidance if missing."""
+    """Validate docker is available, raising with fix guidance if missing."""
     result = check_container_runtime()
     if not result.passed:
         raise RuntimeError(f"{result.name}: {result.detail}\n  fix: {result.fix}")
-    detail = result.detail.lower()
-    if "podman" in detail:
-        return "podman"
     return "docker"
 
 
@@ -192,12 +189,12 @@ def is_ci() -> bool:
 MAX_CLOCK_SKEW_SECONDS = 30
 
 
-def sync_container_clock(runtime: str) -> None:
+def sync_container_clock() -> None:
     """Sync container VM clock with host to prevent apt date validation errors.
 
-    On macOS, Podman and Docker Desktop run containers inside a Linux VM whose
-    clock can drift after host sleep/wake. When the VM clock falls behind,
-    Debian apt-get rejects release files as "not valid yet" (exit 100).
+    On macOS, Colima runs containers inside a Linux VM whose clock can drift
+    after host sleep/wake. When the VM clock falls behind, Debian apt-get
+    rejects release files as "not valid yet" (exit 100).
 
     This sets the VM clock to the current host UTC time before builds.
     Silently does nothing on native Linux (no VM layer) or on errors.
@@ -210,18 +207,11 @@ def sync_container_clock(runtime: str) -> None:
     )
 
     try:
-        if runtime == "podman":
-            run_cmd(
-                ["podman", "machine", "ssh", "--", "sudo", "date", "-s", now],
-                capture=True, echo=False,
-            )
-        else:
-            # Docker Desktop: set clock via a privileged container
-            run_cmd(
-                ["docker", "run", "--rm", "--privileged",
-                 "alpine", "date", "-s", now],
-                capture=True, echo=False,
-            )
+        run_cmd(
+            ["docker", "run", "--rm", "--privileged",
+             "alpine", "date", "-s", now],
+            capture=True, echo=False,
+        )
     except Exception:
         pass  # Best effort -- apt-get options are the fallback
 
@@ -298,7 +288,7 @@ def docker_build(
     for k, v in (build_args or {}).items():
         args_flags.extend(["--build-arg", f"{k}={v}"])
 
-    if ci_cache and runtime == "docker":
+    if ci_cache:
         run_cmd([
             "docker", "buildx", "build",
             "--platform", platform,
@@ -760,7 +750,7 @@ def build_image(
     ci = is_ci()
 
     # Sync container VM clock with host to prevent apt date errors
-    sync_container_clock(runtime)
+    sync_container_clock()
 
     # Doctor check: cross-compilation target (skip on macOS -- container handles it)
     if template == "rootfs" and sys.platform != "darwin":

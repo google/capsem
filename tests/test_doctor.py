@@ -17,6 +17,7 @@ from capsem.builder.doctor import (
     CheckResult,
     check_b3sum,
     check_container_clock,
+    check_container_resources,
     check_container_runtime,
     check_cross_target,
     check_guest_config,
@@ -64,17 +65,6 @@ class TestCheckResult:
 class TestCheckContainerRuntime:
     @patch("capsem.builder.doctor.shutil.which")
     @patch("capsem.builder.doctor.subprocess.run")
-    def test_podman_found(self, mock_run, mock_which):
-        mock_which.side_effect = lambda name: "/usr/local/bin/podman" if name == "podman" else None
-        mock_run.return_value = MagicMock(
-            stdout="podman version 5.3.1\n", returncode=0
-        )
-        result = check_container_runtime()
-        assert result.passed is True
-        assert "podman" in result.detail.lower()
-
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
     def test_docker_found(self, mock_run, mock_which):
         mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
         mock_run.return_value = MagicMock(
@@ -85,22 +75,12 @@ class TestCheckContainerRuntime:
         assert "docker" in result.detail.lower()
 
     @patch("capsem.builder.doctor.shutil.which")
-    def test_neither_found(self, mock_which):
+    def test_not_found(self, mock_which):
         mock_which.return_value = None
         result = check_container_runtime()
         assert result.passed is False
         assert result.fix is not None
-        assert "podman" in result.fix.lower() or "docker" in result.fix.lower()
-
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
-    def test_podman_preferred_over_docker(self, mock_run, mock_which):
-        """When both are available, podman is preferred."""
-        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
-        mock_run.return_value = MagicMock(stdout="podman version 5.3.1\n", returncode=0)
-        result = check_container_runtime()
-        assert result.passed is True
-        assert "podman" in result.detail.lower()
+        assert "docker" in result.fix.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -203,8 +183,7 @@ class TestCheckContainerClock:
     @patch("capsem.builder.doctor.sys")
     def test_passes_when_clock_in_sync(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
-        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
-        # VM reports current host time (0s skew)
+        mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
         import time
         mock_run.return_value = MagicMock(
             stdout=str(int(time.time())), returncode=0,
@@ -219,8 +198,7 @@ class TestCheckContainerClock:
     @patch("capsem.builder.doctor.sys")
     def test_fails_when_clock_behind(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
-        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
-        # VM reports time 5 minutes behind host
+        mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
         import time
         mock_run.return_value = MagicMock(
             stdout=str(int(time.time()) - 300), returncode=0,
@@ -235,8 +213,7 @@ class TestCheckContainerClock:
     @patch("capsem.builder.doctor.sys")
     def test_fails_when_clock_ahead(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
-        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
-        # VM reports time 5 minutes ahead of host
+        mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
         import time
         mock_run.return_value = MagicMock(
             stdout=str(int(time.time()) + 300), returncode=0,
@@ -248,7 +225,7 @@ class TestCheckContainerClock:
 
     @patch("capsem.builder.doctor.shutil.which")
     @patch("capsem.builder.doctor.sys")
-    def test_returns_none_when_no_runtime(self, mock_sys, mock_which):
+    def test_returns_none_when_no_docker(self, mock_sys, mock_which):
         mock_sys.platform = "darwin"
         mock_which.return_value = None
         assert check_container_clock() is None
@@ -258,7 +235,7 @@ class TestCheckContainerClock:
     @patch("capsem.builder.doctor.sys")
     def test_returns_none_on_command_failure(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
-        mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
+        mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
         mock_run.return_value = MagicMock(stdout="", returncode=1)
         assert check_container_clock() is None
 
@@ -375,30 +352,38 @@ class TestCheckSourceFiles:
 
 class TestRunAllChecks:
     @patch("capsem.builder.doctor.check_container_runtime")
+    @patch("capsem.builder.doctor.check_container_resources")
+    @patch("capsem.builder.doctor.check_container_clock")
     @patch("capsem.builder.doctor.check_rust_toolchain")
     @patch("capsem.builder.doctor.check_cross_target")
     @patch("capsem.builder.doctor.check_b3sum")
     @patch("capsem.builder.doctor.check_guest_config")
     @patch("capsem.builder.doctor.check_source_files")
     def test_composes_all(
-        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust, mock_runtime
+        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust,
+        mock_clock, mock_resources, mock_runtime,
     ):
         for mock in [mock_src, mock_guest, mock_b3, mock_rust, mock_runtime]:
             mock.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_cross.return_value = CheckResult(name="x", passed=True, detail="ok")
+        mock_resources.return_value = None
+        mock_clock.return_value = None
         results = run_all_checks(Path("guest"), Path("."))
         # At minimum: runtime + rust + arm64 target + x86_64 target + b3sum + config + source
         assert len(results) >= 7
         assert all(r.passed for r in results)
 
     @patch("capsem.builder.doctor.check_container_runtime")
+    @patch("capsem.builder.doctor.check_container_resources")
+    @patch("capsem.builder.doctor.check_container_clock")
     @patch("capsem.builder.doctor.check_rust_toolchain")
     @patch("capsem.builder.doctor.check_cross_target")
     @patch("capsem.builder.doctor.check_b3sum")
     @patch("capsem.builder.doctor.check_guest_config")
     @patch("capsem.builder.doctor.check_source_files")
     def test_counts_failures(
-        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust, mock_runtime
+        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust,
+        mock_clock, mock_resources, mock_runtime,
     ):
         mock_runtime.return_value = CheckResult(
             name="container-runtime", passed=False, detail="missing", fix="install"
@@ -406,6 +391,8 @@ class TestRunAllChecks:
         for mock in [mock_src, mock_guest, mock_b3, mock_rust]:
             mock.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_cross.return_value = CheckResult(name="x", passed=True, detail="ok")
+        mock_resources.return_value = None
+        mock_clock.return_value = None
         results = run_all_checks(Path("guest"), Path("."))
         failures = [r for r in results if not r.passed]
         assert len(failures) >= 1

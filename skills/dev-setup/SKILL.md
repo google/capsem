@@ -1,6 +1,6 @@
 ---
 name: dev-setup
-description: Setting up a Capsem development environment from scratch. Use when onboarding a new developer, setting up a new machine, or troubleshooting environment issues. Covers prerequisites, first-time setup, tool installation, VM asset builds, container runtime configuration (podman/Docker memory and CPU requirements), and verification steps.
+description: Setting up a Capsem development environment from scratch. Use when onboarding a new developer, setting up a new machine, or troubleshooting environment issues. Covers prerequisites, first-time setup, tool installation, VM asset builds, container runtime configuration (Colima/Docker memory and CPU requirements), and verification steps.
 ---
 
 # Developer Setup
@@ -9,7 +9,7 @@ description: Setting up a Capsem development environment from scratch. Use when 
 
 - **macOS 13+** (Ventura or later) -- required for Virtualization.framework
 - **Apple Silicon** (arm64) -- primary target. Intel Macs are not supported for VM features.
-- **Docker or Podman** -- needed for `just build-assets` (kernel + rootfs builds)
+- **Docker (via Colima on macOS)** -- needed for `just build-assets` (kernel + rootfs builds)
 
 ## Required tools
 
@@ -22,7 +22,7 @@ Run `just doctor` to check all of these:
 | pnpm | Frontend package manager | `npm i -g pnpm` |
 | Node.js 24+ | Frontend build | `nvm` or `brew install node` |
 | uv | Python package manager | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Docker/Podman | VM image builds | Docker Desktop or `brew install podman` |
+| Docker (via Colima on macOS) | VM image builds | `brew install colima docker` (macOS) or `sudo apt install docker.io` (Linux) |
 
 Rust targets (auto-installed by `just test`):
 - `aarch64-unknown-linux-musl` -- guest binaries (arm64)
@@ -34,31 +34,32 @@ Cargo tools (auto-installed by `just test`):
 
 ## Container runtime setup
 
-On macOS, both Docker and Podman run inside a Linux VM. The default memory allocation (2GB for Podman) is too small -- the rootfs build runs apt installs, npm installs, and curl-based CLI installers concurrently, which can OOM-kill the build (exit code 137).
+On macOS, Docker runs inside a Colima VM. The default memory allocation may be too small -- the rootfs build runs apt installs, npm installs, and curl-based CLI installers concurrently, which can OOM-kill the build (exit code 137).
 
 **Minimum**: 4GB RAM. **Recommended**: 8GB RAM, 8 CPUs.
 
-### Podman
+### Colima (macOS)
 
 ```bash
 # First-time setup
-brew install podman
-podman machine init
-podman machine set --memory 8192 --cpus 8
-podman machine start
+brew install colima docker
+colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
 
-# Fix existing machine
-podman machine stop
-podman machine set --memory 8192 --cpus 8
-podman machine start
+# Restart with new resources
+colima stop
+colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
 
 # Verify
-podman machine inspect | python3 -c "import sys,json; r=json.load(sys.stdin)[0]['Resources']; print(f'Memory: {r[\"Memory\"]}MB, CPUs: {r[\"CPUs\"]}')"
+docker info | grep -E 'Total Memory|CPUs'
 ```
 
-### Docker Desktop
+### Linux
 
-Docker Desktop -> Settings -> Resources -> set Memory to 8GB, CPUs to 8.
+Docker runs natively on Linux -- no Colima or memory tuning needed.
+
+```bash
+sudo apt install docker.io
+```
 
 `just doctor` checks these resources automatically and fails if below minimum.
 
@@ -172,16 +173,16 @@ Install missing tools as indicated. Most can be installed via `brew` or `cargo i
 
 ### `just build-assets` fails with exit code 137
 The container runtime VM ran out of memory. Increase to 8GB:
-- Podman: `podman machine stop && podman machine set --memory 8192 && podman machine start`
-- Docker: Docker Desktop -> Settings -> Resources -> Memory -> 8GB
+- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8`
+- Linux: Docker runs natively, no memory tuning needed
 
 ### `just build-assets` fails with "Release file not valid yet"
 The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Until=false` to work around this, but if you see this error on an old builder version:
-- Podman: `podman machine stop && podman machine start` (resets clock)
-- Docker: restart Docker Desktop
+- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8` (resets clock)
+- Docker Desktop: restart Docker Desktop
 
 ### `just build-assets` fails (other)
-- Check Docker/Podman is running: `docker info` or `podman info`
+- Check Docker is running: `docker info`
 - Check guest config is valid: `uv run capsem-builder validate guest/`
 - On first run, Docker image pulls can be slow
 
@@ -199,9 +200,20 @@ Run `just build-assets` first. Assets are gitignored and must be built locally.
 - Run `rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl`
 - Platform-specific type issues: use `as _` for libc calls (see `/dev-rust-patterns`)
 
+### Docker credential helper error (`docker-credential-osxkeychain not found`)
+When Colima is installed standalone (without Docker Desktop), `~/.docker/config.json` may reference a credential helper that doesn't exist. The symptom is `docker run` failing to pull images with `exec: "docker-credential-osxkeychain": executable file not found`.
+
+Fix: set `credsStore` to empty string in `~/.docker/config.json`:
+```json
+{ "credsStore": "" }
+```
+
+`just doctor` checks for this under "Container Runtime" and will flag the mismatch.
+
 ### VM boot hangs
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
 - Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.squashfs`
+- Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just run`
 
 ## Design rules for doctor and bootstrap

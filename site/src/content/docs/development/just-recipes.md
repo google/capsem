@@ -37,7 +37,7 @@ Three-tier testing policy:
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker/Podman) | ~10 min |
+| `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker) | ~10 min |
 | `just build-kernel [arch]` | Kernel only (default: arm64) | ~5 min |
 | `just build-rootfs [arch]` | Rootfs only (default: arm64) | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
@@ -76,7 +76,7 @@ You only need `just build-assets` on first setup or when `guest/config/` changes
 | Recipe | What it does |
 |--------|-------------|
 | `just clean` | Remove Rust + frontend build artifacts |
-| `just clean-all` | Deep clean: build artifacts + container images + podman cache |
+| `just clean-all` | Deep clean: build artifacts + container images + docker cache |
 
 ## Dependency chains
 

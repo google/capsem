@@ -28,7 +28,7 @@ flowchart TD
   end
 
   subgraph Output["Build Outputs"]
-    Docker["Docker / Podman Build"]
+    Docker["Docker Build"]
     Assets["assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.squashfs"]
     JSON["config/defaults.json\n(consumed by Rust)"]
     BOM["manifest.json\n+ B3SUMS"]
@@ -198,7 +198,7 @@ flowchart TD
   Arches --> Cross["Cross-compile guest binaries\n(cargo build --target)"]
   Cross --> Render["Render Dockerfile.rootfs.j2"]
   Render --> Context["Assemble build context\n(CA cert, bashrc, diagnostics, binaries)"]
-  Context --> Build["Docker/Podman build"]
+  Context --> Build["Docker build"]
   Build --> Export["Export container filesystem"]
   Export --> Squash["mksquashfs (zstd compression)"]
   Squash --> Versions["Extract tool versions"]
@@ -217,15 +217,15 @@ flowchart TD
 
 Key implementation details:
 
-- **Container runtime auto-detection.** Docker or Podman, whichever is available.
+- **Container runtime auto-detection.** Docker CLI.
 - **CI cache integration.** Docker buildx with GitHub Actions cache (`type=gha`) when `GITHUB_ACTIONS` is set.
 - **Kernel version resolution.** Fetches the latest stable version for the configured LTS branch from `kernel.org/releases.json`, falls back to a hardcoded version on network failure.
 - **Cross-compilation.** Guest agent binaries are cross-compiled with `cargo build --target {rust_target}` using `rust-lld` as the linker (configured in `.cargo/config.toml`).
-- **Clock skew resilience.** All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift (common with Podman's libkrun backend on macOS).
+- **Clock skew resilience.** All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift.
 
 ## Container Runtime Requirements
 
-On macOS, both Docker and Podman run inside a Linux VM with limited resources. The rootfs build runs apt, npm, and curl-based CLI installers concurrently, requiring substantial memory.
+On macOS, Docker runs inside a Colima VM with limited resources. The rootfs build runs apt, npm, and curl-based CLI installers concurrently, requiring substantial memory.
 
 | Threshold | RAM | Notes |
 |-----------|-----|-------|
@@ -234,12 +234,12 @@ On macOS, both Docker and Podman run inside a Linux VM with limited resources. T
 | **CI (GitHub Actions)** | 7 GB | Standard runner allocation |
 
 ```bash
-# Podman: configure VM resources
-podman machine stop
-podman machine set --memory 8192 --cpus 8
-podman machine start
+# Colima (macOS): configure VM resources
+colima stop
+colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
 
-# Docker Desktop: Settings -> Resources -> Memory -> 8 GB
+# Linux: Docker runs natively, no memory tuning needed
+# sudo apt install docker.io
 ```
 
 `just doctor` and `capsem-builder doctor` both check these resources automatically and fail if below minimum.

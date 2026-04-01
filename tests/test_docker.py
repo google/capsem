@@ -564,14 +564,6 @@ class TestResolveKernelVersion:
 
 class TestDetectRuntime:
     @patch("capsem.builder.docker.check_container_runtime")
-    def test_podman_found(self, mock_check):
-        from capsem.builder.doctor import CheckResult
-        mock_check.return_value = CheckResult(
-            name="container-runtime", passed=True, detail="podman version 5.3.1"
-        )
-        assert detect_runtime() == "podman"
-
-    @patch("capsem.builder.docker.check_container_runtime")
     def test_docker_found(self, mock_check):
         from capsem.builder.doctor import CheckResult
         mock_check.return_value = CheckResult(
@@ -580,11 +572,11 @@ class TestDetectRuntime:
         assert detect_runtime() == "docker"
 
     @patch("capsem.builder.docker.check_container_runtime")
-    def test_neither_raises(self, mock_check):
+    def test_not_found_raises(self, mock_check):
         from capsem.builder.doctor import CheckResult
         mock_check.return_value = CheckResult(
             name="container-runtime", passed=False,
-            detail="not found", fix="install podman",
+            detail="docker not found", fix="brew install colima docker",
         )
         with pytest.raises(RuntimeError, match="container-runtime"):
             detect_runtime()
@@ -608,19 +600,9 @@ class TestIsCi:
 class TestSyncContainerClock:
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
-    def test_podman_syncs_via_machine_ssh(self, mock_run, mock_sys):
+    def test_syncs_via_privileged_container(self, mock_run, mock_sys):
         mock_sys.platform = "darwin"
-        sync_container_clock("podman")
-        cmd = mock_run.call_args[0][0]
-        assert cmd[:3] == ["podman", "machine", "ssh"]
-        assert "date" in cmd
-        assert "-s" in cmd
-
-    @patch("capsem.builder.docker.sys")
-    @patch("capsem.builder.docker.run_cmd")
-    def test_docker_syncs_via_privileged_container(self, mock_run, mock_sys):
-        mock_sys.platform = "darwin"
-        sync_container_clock("docker")
+        sync_container_clock()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "docker"
         assert "--privileged" in cmd
@@ -630,7 +612,7 @@ class TestSyncContainerClock:
     @patch("capsem.builder.docker.run_cmd")
     def test_noop_on_linux(self, mock_run, mock_sys):
         mock_sys.platform = "linux"
-        sync_container_clock("podman")
+        sync_container_clock()
         mock_run.assert_not_called()
 
     @patch("capsem.builder.docker.sys")
@@ -639,7 +621,7 @@ class TestSyncContainerClock:
         mock_sys.platform = "darwin"
         mock_run.side_effect = Exception("VM not running")
         # Should not raise
-        sync_container_clock("podman")
+        sync_container_clock()
 
 
 # ---------------------------------------------------------------------------
@@ -651,11 +633,11 @@ class TestDockerBuild:
     @patch("capsem.builder.docker.run_cmd")
     def test_regular_build(self, mock_run):
         docker_build(
-            runtime="podman", tag="test-image", dockerfile_path="/tmp/Dockerfile",
+            runtime="docker", tag="test-image", dockerfile_path="/tmp/Dockerfile",
             context_dir="/tmp/ctx", platform="linux/arm64",
         )
         cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "podman"
+        assert cmd[0] == "docker"
         assert "build" in cmd
         assert "--platform" in cmd
         assert "linux/arm64" in cmd
@@ -673,17 +655,6 @@ class TestDockerBuild:
         assert "--cache-from" in cmd
         assert "--cache-to" in cmd
         assert "--load" in cmd
-
-    @patch("capsem.builder.docker.run_cmd")
-    def test_podman_no_buildx(self, mock_run):
-        docker_build(
-            runtime="podman", tag="test-image", dockerfile_path="/tmp/Dockerfile",
-            context_dir="/tmp/ctx", platform="linux/arm64", ci_cache=True,
-        )
-        cmd = mock_run.call_args[0][0]
-        # Podman ignores ci_cache, uses plain build
-        assert cmd[0] == "podman"
-        assert "buildx" not in cmd
 
     @patch("capsem.builder.docker.run_cmd")
     def test_build_args(self, mock_run):
@@ -708,7 +679,7 @@ class TestExtractKernelAssets:
     def test_create_cp_rm_sequence(self, mock_run):
         mock_run.return_value = MagicMock(stdout="container123\n")
         out = Path("/tmp/test-assets")
-        extract_kernel_assets("podman", "kernel-img", "linux/arm64", out)
+        extract_kernel_assets("docker", "kernel-img", "linux/arm64", out)
         calls = mock_run.call_args_list
         # create, cp vmlinuz, cp initrd, rm
         assert len(calls) == 4
@@ -820,7 +791,7 @@ class TestExtractToolVersionsValidation:
         ))
         # Should not raise
         extract_tool_versions(
-            "podman", "test-image", "linux/arm64",
+            "docker", "test-image", "linux/arm64",
             Path("/tmp"), real_config,
         )
 
@@ -834,7 +805,7 @@ class TestExtractToolVersionsValidation:
         ))
         with pytest.raises(RuntimeError, match="gemini"):
             extract_tool_versions(
-                "podman", "test-image", "linux/arm64",
+                "docker", "test-image", "linux/arm64",
                 Path("/tmp"), real_config,
             )
 
@@ -846,7 +817,7 @@ class TestExtractToolVersionsValidation:
         ))
         # Should not raise when validate=False
         extract_tool_versions(
-            "podman", "test-image", "linux/arm64",
+            "docker", "test-image", "linux/arm64",
             Path("/tmp"), real_config, validate=False,
         )
 
@@ -858,9 +829,9 @@ class TestExtractToolVersionsValidation:
 
 class TestAptClockSkewOptions:
     """Every apt-get update must include both Check-Valid-Until=false and
-    Check-Date=false so builds survive Podman/Docker VM clock drift.
+    Check-Date=false so builds survive Colima VM clock drift.
 
-    Regression test for: Podman VM clock behind real time causes
+    Regression test for: container VM clock behind real time causes
     "Release file is not valid yet" errors even with Check-Valid-Until=false.
     """
 
@@ -889,7 +860,7 @@ class TestAptClockSkewOptions:
     @patch("capsem.builder.docker.run_cmd")
     def test_create_squashfs_has_both_options(self, mock_run):
         create_squashfs(
-            "podman", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
+            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
             "zstd", 15,
         )
         cmd_str = " ".join(mock_run.call_args[0][0])
@@ -904,7 +875,7 @@ class TestCreateSquashfs:
     @patch("capsem.builder.docker.run_cmd")
     def test_zstd_compression(self, mock_run):
         create_squashfs(
-            "podman", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
+            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
             "zstd", 15,
         )
         cmd = mock_run.call_args[0][0]
@@ -1124,7 +1095,7 @@ class TestContainerCompileAgent:
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
     def test_x86_64_uses_correct_platform_and_volumes(self, mock_detect, mock_run, tmp_path):
-        mock_detect.return_value = "podman"
+        mock_detect.return_value = "docker"
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
         output_dir = tmp_path / "output"
@@ -1139,7 +1110,7 @@ class TestContainerCompileAgent:
         container_compile_agent("x86_64-unknown-linux-musl", repo_root, output_dir)
 
         cmd = mock_run.call_args_list[0][0][0]
-        assert "podman" in cmd
+        assert "docker" in cmd
         assert "linux/amd64" in cmd
         assert "capsem-agent-target-x86_64" in str(cmd)
 

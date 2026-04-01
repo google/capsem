@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Container runtime: Podman replaced with Colima + Docker CLI** -- macOS now uses Colima (Apple Virtualization.framework with Rosetta) instead of Podman (libkrun). Rosetta gives near-native x86_64 container performance on Apple Silicon, making cross-arch kernel and rootfs builds much faster. All podman-specific code paths removed; standardized on `docker` CLI everywhere. Linux continues to use native Docker. Updated bootstrap, doctor, justfile, and all documentation.
+
 ### Fixed
+- **x86_64 KVM boot broken: compile errors + wrong entry point** -- commit f68bc9f added references to `kernel_info.setup_header` and a 5th `write_boot_params` parameter but forgot to add the field/parameter (invisible on macOS due to `#[cfg]` gates). Also, the 64-bit entry point was `KERNEL_LOAD_ADDR` instead of `KERNEL_LOAD_ADDR + 0x200` (`startup_64`), causing the vCPU to execute 32-bit code in long mode and hang. Fixed by adding setup_header to `KernelLoadInfo`, preserving bzImage setup header bytes into boot_params, and correcting the entry point.
+- **No kernel arch validation in VmConfig** -- loading a wrong-architecture kernel (e.g., x86_64 bzImage on aarch64) silently hung the VM. Added `validate_kernel_arch` in `VmConfigBuilder::build()` that checks kernel magic bytes and fails fast with a clear error message.
 - **`install.sh` fails on Linux** -- the installer only supported macOS and rejected all other platforms. Added OS and architecture detection so the same one-liner (`curl ... | sh`) works on both macOS (arm64 .dmg) and Linux (x86_64/arm64 .deb via `apt install`). Refactored into testable shell functions with unit tests.
 - **Site docs claim macOS-only** -- developer getting-started listed only macOS requirements, build-system table labeled arm64 as "Apple Virtualization.framework" only, and codesigning section didn't mention it's macOS-specific. Updated to reflect Linux/KVM support.
 

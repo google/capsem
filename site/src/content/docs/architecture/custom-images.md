@@ -343,7 +343,7 @@ Anything installed under `/root/` during the Docker build is hidden at runtime b
 | `error[E304] defconfig missing` | Kernel config for declared arch doesn't exist | Add `config/kernel/defconfig.{arch}` |
 | `warn[W001] no npm registry` | npm packages declared but no registry in web.toml | Add npm registry entry to security policy |
 | `warn[W005] API key in config` | Hardcoded key in TOML | Use `~/.capsem/user.toml` for personal keys |
-| Build fails: "container runtime not found" | No Docker or Podman | Install Docker or Podman |
-| Build fails: exit code 137 | Container runtime VM out of memory | Increase to 8GB: `podman machine set --memory 8192` or Docker Desktop Settings |
+| Build fails: "container runtime not found" | No Docker | Install Docker (`brew install colima docker` on macOS, `sudo apt install docker.io` on Linux) |
+| Build fails: exit code 137 | Container runtime VM out of memory | Increase to 8GB: `colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8` |
 | Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |
 | CLI not found at runtime | Installer put binary in `/root/` which is tmpfs | Copy binary to `/usr/local/bin/` in the Dockerfile template |

@@ -20,7 +20,7 @@
 #
 # First-time setup:
 #   just doctor       (shows what's missing)
-#   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker/podman)
+#   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker via Colima on macOS)
 #
 # Daily dev:          just run     (fast ~10s, auto-repacks initrd)
 # Before release:     just install (doctor + full-test -- all validation gates)
@@ -121,9 +121,8 @@ test: _install-tools _clean-stale audit _pnpm-install _generate-settings
 build-host-image:
     #!/bin/bash
     set -euo pipefail
-    if command -v podman &>/dev/null; then RUNTIME="podman"; else RUNTIME="docker"; fi
-    echo "=== Building capsem-host-builder image ($RUNTIME) ==="
-    $RUNTIME build \
+    echo "=== Building capsem-host-builder image ==="
+    docker build \
         -t capsem-host-builder:latest \
         -f docker/Dockerfile.host-builder \
         docker/
@@ -132,24 +131,23 @@ build-host-image:
 clean-host-image:
     #!/bin/bash
     set -euo pipefail
-    if command -v podman &>/dev/null; then RUNTIME="podman"; else RUNTIME="docker"; fi
-    $RUNTIME rmi capsem-host-builder:latest 2>/dev/null || true
+    docker rmi capsem-host-builder:latest 2>/dev/null || true
     for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64; do
-        $RUNTIME volume rm "$vol" 2>/dev/null || true
+        docker volume rm "$vol" 2>/dev/null || true
     done
     echo "Cleaned host builder image and volumes."
 
 # Build the full Linux release in a container (agent + deb).
 # Uses the pre-built capsem-host-builder image (just build-host-image).
-# Supports arm64 and x86_64. No host cross-compile toolchain needed.
+# Supports arm64 and x86_64 via native cross-compilation (no QEMU).
 #
-# Named volumes cache cargo registry and build artifacts between runs.
-# CARGO_TARGET_DIR=/cargo-target inside the container isolates Linux
-# build cache from host macOS target/ directory.
+# The image runs natively on the host arch and cross-compiles via
+# Rust --target + multiarch system libs. Named volumes cache cargo
+# registry and build artifacts between runs. CARGO_TARGET_DIR=/cargo-target
+# inside the container isolates from host macOS target/ directory.
 #
 # CI vs local divergences (keep in sync when changing either):
-#   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via podman/docker
-#   - arm64 = deb only; x86_64 = deb only (AppImage removed)
+#   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
 cross-compile arch="": _check-assets _generate-settings
@@ -166,33 +164,29 @@ cross-compile arch="": _check-assets _generate-settings
         echo "ERROR: unsupported arch '$TARGET_ARCH' (arm64 or x86_64)"
         exit 1
     fi
-    PLATFORM="linux/arm64" && [ "$TARGET_ARCH" = "x86_64" ] && PLATFORM="linux/amd64"
-    if command -v podman &>/dev/null; then RUNTIME="podman"; else RUNTIME="docker"; fi
     # Ensure build image exists
-    if ! $RUNTIME image inspect capsem-host-builder:latest &>/dev/null; then
+    if ! docker image inspect capsem-host-builder:latest &>/dev/null; then
         echo "=== Build image not found, building... ==="
         just build-host-image
     fi
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
         NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        if [ "$RUNTIME" = "podman" ]; then
-            $RUNTIME machine ssh -- sudo date -s "$NOW" 2>/dev/null || true
-        else
-            $RUNTIME run --rm --privileged alpine date -s "$NOW" 2>/dev/null || true
-        fi
-        # Warn if container VM has insufficient RAM for emulated builds
-        if [ "$PLATFORM" != "linux/$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')" ]; then
-            MEM_MB=0
-            if [ "$RUNTIME" = "podman" ]; then
-                MEM_MB=$($RUNTIME machine inspect 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0].get('Resources',{}).get('Memory',0))" 2>/dev/null || echo 0)
-            fi
-            if [ "$MEM_MB" -gt 0 ] && [ "$MEM_MB" -lt 8192 ]; then
-                echo "WARNING: Container VM has ${MEM_MB}MB RAM. Cross-arch emulation needs >= 8GB."
-                echo "  fix: podman machine set --memory 12288 && podman machine stop && podman machine start"
-            fi
-        fi
+        docker run --rm --privileged alpine date -s "$NOW" 2>/dev/null || true
     fi
+    # Map target arch to Rust triple, dpkg arch, and pkg-config paths
+    case "$TARGET_ARCH" in
+        x86_64)
+            RUST_TARGET="x86_64-unknown-linux-gnu"
+            DPKG_ARCH="amd64"
+            PKG_CONFIG_PATH_CROSS="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+            ;;
+        arm64)
+            RUST_TARGET="aarch64-unknown-linux-gnu"
+            DPKG_ARCH="arm64"
+            PKG_CONFIG_PATH_CROSS="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+            ;;
+    esac
     # Sync assets layout for Tauri build
     rm -rf assets/current
     if [ -d "assets/$TARGET_ARCH" ]; then cp -r "assets/$TARGET_ARCH" assets/current; fi
@@ -203,30 +197,34 @@ cross-compile arch="": _check-assets _generate-settings
         TAURI_KEY=$(cat "$ROOT/private/tauri/capsem.key")
         TAURI_PWD=$(cat "$ROOT/private/tauri/password.txt")
     fi
-    echo "=== Building Linux deb ($TARGET_ARCH via $RUNTIME) ==="
+    echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
-    $RUNTIME run --rm \
-        --platform "$PLATFORM" \
+    docker run --rm \
         -e "TAURI_SIGNING_PRIVATE_KEY=$TAURI_KEY" \
         -e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_PWD" \
+        -e "TARGET_ARCH=$TARGET_ARCH" \
+        -e "RUST_TARGET=$RUST_TARGET" \
+        -e "DPKG_ARCH=$DPKG_ARCH" \
+        -e "PKG_CONFIG_PATH=$PKG_CONFIG_PATH_CROSS" \
         -v "$ROOT:/src" \
         -v "capsem-cargo-registry:/usr/local/cargo/registry" \
         -v "capsem-cargo-git:/usr/local/cargo/git" \
         -v "capsem-host-target-$TARGET_ARCH:/cargo-target" \
         -w /src \
         capsem-host-builder:latest \
-        bash -c "echo '--- Build agent binaries ---' && \
-               cargo build --release -p capsem-agent && \
-               mkdir -p /cargo-target/linux-agent/$TARGET_ARCH && \
-               cp /cargo-target/release/capsem-pty-agent /cargo-target/release/capsem-mcp-server /cargo-target/release/capsem-net-proxy /cargo-target/linux-agent/$TARGET_ARCH/ && \
+        bash -c "swap-dev-libs \$DPKG_ARCH && \
+               echo '--- Build agent binaries ---' && \
+               cargo build --release --target \$RUST_TARGET -p capsem-agent && \
+               mkdir -p /cargo-target/linux-agent/\$TARGET_ARCH && \
+               cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/linux-agent/\$TARGET_ARCH/ && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Build Tauri app ---' && \
-               cd crates/capsem-app && cargo tauri build --bundles deb && cd ../.. && \
+               cd crates/capsem-app && cargo tauri build --target \$RUST_TARGET --bundles deb && cd ../.. && \
                echo '--- Validate + copy artifacts ---' && \
-               dpkg-deb --info /cargo-target/release/bundle/deb/*.deb && \
-               cp /cargo-target/release/bundle/deb/*.deb /src/dist/ && \
-               cp /cargo-target/linux-agent/$TARGET_ARCH/* /src/dist/"
+               dpkg-deb --info /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb && \
+               cp /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb /src/dist/ && \
+               cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/"
     echo ""
     echo "=== Artifacts ==="
     ls -lh "$ROOT/dist/"
@@ -444,39 +442,51 @@ doctor: _pnpm-install
     echo ""
     echo "== Container Runtime =="
     if command -v docker &>/dev/null; then
-        pass "docker"
-    elif command -v podman &>/dev/null; then
-        pass "podman"
+        pass "docker ($(docker --version 2>/dev/null | head -1))"
     else
         if [[ "$(uname -s)" == "Darwin" ]]; then
-            fail "docker or podman -- install: brew install podman && podman machine init --memory 8192 --cpus 8 && podman machine start"
+            fail "docker -- install: brew install colima docker && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
         else
-            fail "docker or podman -- install: sudo apt install podman  (or docker.io)"
+            fail "docker -- install: sudo apt install docker.io"
         fi
     fi
-    # Check container runtime VM resources (macOS -- both podman and Docker run in a VM)
+    # Check Colima is running on macOS
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        mem_mb=0; cpus=0; runtime_label=""
-        if command -v podman &>/dev/null; then
-            mem_mb=$(podman machine inspect 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0].get('Resources',{}).get('Memory',0))" 2>/dev/null || echo 0)
-            cpus=$(podman machine inspect 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0].get('Resources',{}).get('CPUs',0))" 2>/dev/null || echo 0)
-            runtime_label="podman VM"
-        elif command -v docker &>/dev/null; then
+        if command -v colima &>/dev/null; then
+            if colima status 2>&1 | grep -qi "running"; then
+                pass "colima (running)"
+            else
+                fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
+            fi
+        else
+            fail "colima not found -- install: brew install colima"
+        fi
+        # Check container VM resources
+        if command -v docker &>/dev/null; then
             mem_mb=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('MemTotal',0) // 1024 // 1024)" 2>/dev/null || echo 0)
             cpus=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('NCPU',0))" 2>/dev/null || echo 0)
-            runtime_label="Docker Desktop"
-        fi
-        if [[ "$mem_mb" -gt 0 ]]; then
-            if [[ "$mem_mb" -lt 4096 ]]; then
-                if [[ "$runtime_label" == "podman VM" ]]; then
-                    fail "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs (minimum 4096MB) -- fix: podman machine stop && podman machine set --memory 8192 && podman machine start"
+            if [[ "$mem_mb" -gt 0 ]]; then
+                if [[ "$mem_mb" -lt 4096 ]]; then
+                    fail "Colima: ${mem_mb}MB RAM, ${cpus} CPUs (minimum 4096MB) -- fix: colima stop && colima start --memory 8 --cpu 8"
+                elif [[ "$mem_mb" -lt 8192 ]]; then
+                    pass "Colima: ${mem_mb}MB RAM, ${cpus} CPUs (recommended 8192MB)"
                 else
-                    fail "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs (minimum 4096MB) -- fix: Docker Desktop -> Settings -> Resources -> increase Memory to 8GB"
+                    pass "Colima: ${mem_mb}MB RAM, ${cpus} CPUs"
                 fi
-            elif [[ "$mem_mb" -lt 8192 ]]; then
-                pass "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs (recommended 8192MB)"
+            fi
+        fi
+        # Check Docker credential helper config
+        if [[ -f "$HOME/.docker/config.json" ]]; then
+            creds_store=$(python3 -c "import json; c=json.load(open('$HOME/.docker/config.json')); print(c.get('credsStore',''))" 2>/dev/null || echo "")
+            if [[ -n "$creds_store" ]]; then
+                helper="docker-credential-$creds_store"
+                if command -v "$helper" &>/dev/null; then
+                    pass "Docker credential helper ($helper)"
+                else
+                    fail "Docker config references '$helper' but it is not installed -- fix: set credsStore to \"\" in ~/.docker/config.json"
+                fi
             else
-                pass "${runtime_label}: ${mem_mb}MB RAM, ${cpus} CPUs"
+                pass "Docker credential config (no external helper)"
             fi
         fi
     fi
@@ -542,7 +552,7 @@ clean:
     cargo clean
     cd frontend && rm -rf dist node_modules
 
-# Deep clean: build artifacts + container images + podman cache
+# Deep clean: build artifacts + container images + docker cache
 clean-all: clean
     #!/bin/bash
     set -euo pipefail
@@ -551,10 +561,7 @@ clean-all: clean
     find target -name "rootfs.squashfs" -delete 2>/dev/null || true
     rm -rf target/llvm-cov-target
     # Prune container images
-    if command -v podman &>/dev/null; then
-        echo "Pruning podman images..."
-        podman system prune -af
-    elif command -v docker &>/dev/null; then
+    if command -v docker &>/dev/null; then
         echo "Pruning docker images..."
         docker system prune -af
     fi
@@ -724,7 +731,7 @@ _check-assets:
     if [ ${#missing[@]} -gt 0 ]; then
         echo "ERROR: Missing VM assets in $dir/: ${missing[*]}"
         echo ""
-        echo "Run 'just build-assets' to build them (requires docker or podman)."
+        echo "Run 'just build-assets' to build them (requires docker via Colima on macOS)."
         exit 1
     fi
 

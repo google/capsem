@@ -69,7 +69,7 @@ When debugging build issues, check `target/build.log` first. When writing new bu
 
 ```bash
 just doctor        # Verify tools
-just build-assets  # Build kernel + rootfs (~10 min, needs docker/podman)
+just build-assets  # Build kernel + rootfs (~10 min, needs docker)
 just run           # Boot the VM
 ```
 
@@ -91,7 +91,7 @@ uv run capsem-builder inspect guest/      # Show config summary
 
 ## Cross-compilation
 
-On macOS, agent binaries are compiled inside a Linux container (podman/docker) via `cross_compile_agent()` in `docker.py`. This avoids needing `rust-lld`, musl targets, or `llvm-tools` on the host. On Linux (CI), cargo builds natively.
+On macOS, agent binaries are compiled inside a Linux container (docker) via `cross_compile_agent()` in `docker.py`. This avoids needing `rust-lld`, musl targets, or `llvm-tools` on the host. On Linux (CI), cargo builds natively.
 
 `just cross-compile [arch]` is a debug/verification tool that builds everything in a container: agent binaries, frontend, and the full Tauri app (deb + AppImage). It's not in the daily `just run` path -- `_pack-initrd` calls `cross_compile_agent()` directly for agent-only builds.
 

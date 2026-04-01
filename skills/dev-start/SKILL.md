@@ -10,13 +10,13 @@ description: Quick-start guide for new Capsem developers. Use when someone asks 
 ```bash
 git clone <repo> && cd capsem
 bash scripts/bootstrap.sh      # checks tools, installs deps, runs doctor
-just build-assets               # builds kernel + rootfs (~10 min, needs Docker/Podman)
+just build-assets               # builds kernel + rootfs (~10 min, needs Docker)
 just run "echo hello"           # verify VM boots
 ```
 
 ## What bootstrap.sh does
 
-1. Checks all required tools: Rust, just, Node 24+, pnpm, Python 3.11+, uv, Docker/Podman
+1. Checks all required tools: Rust, just, Node 24+, pnpm, Python 3.11+, uv, Docker
 2. Prints install commands for anything missing
 3. Runs `uv sync` (Python deps) and `pnpm install` (frontend deps)
 4. Runs `just doctor` (writes `.dev-setup` sentinel)
@@ -33,4 +33,4 @@ All just recipes (`run`, `test`, `dev`, etc.) check for `.dev-setup` and auto-ru
 
 ## Container runtime
 
-Docker or Podman with 4GB+ RAM (8GB recommended). On macOS both run inside a Linux VM -- the default 2GB is too small. See `/dev-setup` for configuration.
+Docker (via Colima on macOS) with 4GB+ RAM (8GB recommended). On Linux, Docker runs natively. See `/dev-setup` for configuration.

@@ -71,16 +71,16 @@ hint_for() {
                     esac ;;
                 *)  echo "install git from https://git-scm.com" ;;
             esac ;;
-        docker/podman)
+        docker)
             case "$OS" in
-                Darwin) echo "brew install podman && podman machine init --memory 8192 --cpus 8 && podman machine start" ;;
+                Darwin) echo "brew install colima docker && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8" ;;
                 Linux)
                     case "$PKG" in
-                        apt) echo "sudo apt install podman  (or: sudo apt install docker.io)" ;;
-                        dnf) echo "sudo dnf install podman  (or: sudo dnf install docker)" ;;
-                        *)   echo "install podman or docker for your distribution" ;;
+                        apt) echo "sudo apt install docker.io" ;;
+                        dnf) echo "sudo dnf install docker" ;;
+                        *)   echo "install docker for your distribution" ;;
                     esac ;;
-                *)  echo "install podman or docker" ;;
+                *)  echo "install docker" ;;
             esac ;;
     esac
 }
@@ -104,13 +104,19 @@ for tool in rustup cargo just node pnpm python3 uv git; do
     fi
 done
 
-# Container runtime (docker or podman)
+# Container runtime
 if command -v docker >/dev/null 2>&1; then
     pass "docker"
-elif command -v podman >/dev/null 2>&1; then
-    pass "podman"
 else
-    miss "docker/podman" "$(hint_for "docker/podman")"
+    miss "docker" "$(hint_for "docker")"
+fi
+# Colima (macOS only -- manages the container VM)
+if [ "$OS" = "Darwin" ]; then
+    if command -v colima >/dev/null 2>&1; then
+        pass "colima"
+    else
+        miss "colima" "brew install colima && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
+    fi
 fi
 
 # --- macOS: Xcode Command Line Tools + codesigning ---
@@ -165,6 +171,6 @@ echo ""
 echo "========================"
 echo "Bootstrap complete. Next steps:"
 echo ""
-echo "  just build-assets    # Build VM kernel + rootfs (~10 min, needs Docker/Podman)"
+echo "  just build-assets    # Build VM kernel + rootfs (~10 min, needs Docker via Colima on macOS)"
 echo "  just run \"echo hi\"   # Verify VM boots"
 echo ""

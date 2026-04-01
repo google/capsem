@@ -41,7 +41,7 @@ flowchart TD
     subgraph stage0["0. VM images (first-time only)"]
         TOML["guest/config/*.toml"]
         BUILDER["capsem-builder\n(Python CLI)"]
-        DOCKER["Docker / Podman"]
+        DOCKER["Docker (via Colima)"]
         TOML --> BUILDER --> DOCKER
         DOCKER --> VMLINUZ["vmlinuz"]
         DOCKER --> ROOTFS["rootfs.squashfs"]
@@ -69,7 +69,7 @@ The guest agent crate (`crates/capsem-agent/`) produces three binaries that run 
 | `capsem-net-proxy` | Relays HTTPS to host MITM proxy over vsock | same |
 | `capsem-mcp-server` | MCP tool relay over vsock | same |
 
-On **macOS**, `cross_compile_agent()` delegates to `container_compile_agent()` which builds natively inside a Linux container (podman/docker). Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts. No host cross-compile toolchain needed.
+On **macOS**, `cross_compile_agent()` delegates to `container_compile_agent()` which builds natively inside a Linux container (docker). Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts. No host cross-compile toolchain needed.
 
 On **Linux** (CI), cargo builds directly with the musl target. The linker config in `.cargo/config.toml` uses `rust-lld`:
 
@@ -154,7 +154,7 @@ Boot sequence: kernel loads initrd into RAM, `capsem-init` (PID 1) sets up overl
 
 ## VM image builds (`just build-assets`)
 
-The slow path (~10 min, first-time only). The [capsem-builder](/architecture/build-system/) Python CLI reads TOML configs from `guest/config/` and produces kernel + rootfs via Docker/Podman.
+The slow path (~10 min, first-time only). The [capsem-builder](/architecture/build-system/) Python CLI reads TOML configs from `guest/config/` and produces kernel + rootfs via Docker.
 
 ```bash
 uv run capsem-builder build guest/ --arch arm64    # build everything
@@ -164,32 +164,21 @@ uv run capsem-builder doctor guest/                  # check prerequisites
 
 ### Container runtime
 
-The builder needs Docker or Podman.
+The builder needs Docker.
 
-**macOS** -- Both run inside a Linux VM. The default memory (2GB for Podman) is too small. Minimum 4GB, recommended 8GB.
+**macOS** -- Docker runs inside a Colima VM. Minimum 4GB RAM, recommended 8GB.
 
 ```bash
-# Podman setup
-brew install podman
-podman machine init --memory 8192 --cpus 8
-podman machine start
-
-# Fix existing machine
-podman machine stop
-podman machine set --memory 8192 --cpus 8
-podman machine start
+# Colima setup (recommended on macOS)
+brew install colima docker
+colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
 ```
 
-Docker Desktop: Settings -> Resources -> set Memory to 8GB, CPUs to 8.
-
-**Linux** -- Containers run natively, no memory tuning needed.
+**Linux** -- Docker runs natively, no memory tuning needed.
 
 ```bash
 # Debian/Ubuntu
-sudo apt install podman
-
-# Fedora/RHEL
-sudo dnf install podman
+sudo apt install docker.io
 ```
 
 ## CI release pipeline
@@ -235,7 +224,7 @@ flowchart LR
 |--------|-------------------|------------------|
 | Base | `rust:bookworm` | `ubuntu-24.04` |
 | Node | nodesource script | `actions/setup-node` |
-| FUSE | available (podman VM) | not guaranteed |
+| FUSE | available (Colima VM) | not guaranteed |
 | Volumes | none (clean build) | none (fresh runner) |
 
 AppImage bundling that works locally can fail in CI due to FUSE differences. Always verify the first CI run after changing Linux packaging.
@@ -251,7 +240,7 @@ Everything below is checked by `bootstrap.sh` and `just doctor`. You don't need 
 | just | Task runner -- single entry point for all workflows |
 | Node.js 24+ / pnpm | Builds the Astro + Svelte frontend |
 | Python 3.11+ / uv | Runs capsem-builder (image builds, schema generation) |
-| Docker or Podman | Container runtime for kernel + rootfs builds |
+| Docker (via Colima on macOS) | Container runtime for kernel + rootfs builds |
 | cargo-llvm-cov | Code coverage (`just test`) |
 | cargo-audit | Dependency vulnerability scanning |
 | cargo-tauri | Tauri CLI for app builds |

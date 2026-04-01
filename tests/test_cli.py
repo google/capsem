@@ -849,7 +849,7 @@ class TestBuildNewFlags:
         assert result.exit_code == 0
 
     def test_build_no_runtime_shows_fix(self, tmp_path):
-        """Without docker/podman, build should show fix guidance."""
+        """Without docker, build should show fix guidance."""
         from unittest.mock import patch
 
         from capsem.builder.doctor import CheckResult
@@ -859,11 +859,11 @@ class TestBuildNewFlags:
         with patch("capsem.builder.docker.check_container_runtime") as mock:
             mock.return_value = CheckResult(
                 name="container-runtime", passed=False,
-                detail="not found", fix="brew install podman",
+                detail="docker not found", fix="brew install colima docker",
             )
             result = runner.invoke(cli, ["build", str(guest)])
         assert result.exit_code != 0
-        assert "container-runtime" in result.output or "podman" in result.output
+        assert "container-runtime" in result.output or "docker" in result.output
 
 
 # ---------------------------------------------------------------------------
