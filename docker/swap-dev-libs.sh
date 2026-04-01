@@ -37,7 +37,7 @@ for pkg in "${DEV_PACKAGES[@]}"; do
 done
 
 apt-get update -qq
-apt-get install -y --no-install-recommends "${FOREIGN_PKGS[@]}"
+apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" "${FOREIGN_PKGS[@]}"
 rm -rf /var/lib/apt/lists/*
 
 echo "Installed ${TARGET_ARCH} -dev libraries."

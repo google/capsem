@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-04-01
+
+### Fixed
+- **x86_64 Linux build fails: aarch64 boot module not cfg-gated** -- `mod boot` (ARM64 kernel loading, FDT, register setup) was included unconditionally, causing 14 compile errors on x86_64 (`set_one_reg`, `REG_PC`, `KERNEL_TEXT_OFFSET` not found). Gated with `#[cfg(target_arch = "aarch64")]`.
+- **Cross-compile linker error on arm64 hosts** -- building `capsem-agent` for `x86_64-unknown-linux-gnu` inside the Docker container used the native `cc` (arm64) which doesn't understand `-m64`. Added `x86_64-linux-gnu-gcc` and `aarch64-linux-gnu-gcc` cross-linker entries to `.cargo/config.toml`.
+- **Multiarch dpkg conflict in cross-compile Docker image** -- `libpango1.0-dev` arm64-to-amd64 swap failed on shared `.gir` file. Added `--force-overwrite` to `swap-dev-libs.sh`.
+
+### Changed
+- **`build-assets` builds both arm64 and x86_64** -- previously only built for the native architecture, so cross-compile for the other arch always failed locally due to missing VM assets.
+- **`full-test` includes `cross-compile`** -- catches platform-gating errors before tagging instead of discovering them in CI.
+
 ## [0.15.0] - 2026-04-01
 
 ### Added

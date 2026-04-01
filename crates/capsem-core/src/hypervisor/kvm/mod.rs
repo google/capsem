@@ -7,6 +7,7 @@ mod sys;
 mod memory;
 #[cfg(target_arch = "aarch64")]
 mod fdt;
+#[cfg(target_arch = "aarch64")]
 mod boot;
 #[cfg(target_arch = "x86_64")]
 mod boot_x86_64;

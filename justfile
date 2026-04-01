@@ -14,7 +14,7 @@
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
 #   test-injection  -> _check-assets + _pack-initrd + _sign
-#   full-test       -> build-assets + test + _pack-initrd + _sign
+#   full-test       -> build-assets + test + cross-compile + _pack-initrd + _sign
 #   cut-release     -> full-test
 #   install         -> doctor + full-test
 #
@@ -60,16 +60,17 @@ run *CMD: audit _check-assets _generate-settings _pack-initrd _sign
 build-assets: doctor _install-tools audit
     #!/bin/bash
     set -euo pipefail
-    arch=$(uname -m | sed 's/aarch64/arm64/')
     echo "=== Cleaning old assets ==="
     rm -rf "{{assets_dir}}/arm64" "{{assets_dir}}/x86_64"
     rm -f "{{assets_dir}}/manifest.json" "{{assets_dir}}/B3SUMS"
-    echo "=== Building kernel for $arch ==="
-    uv run capsem-builder build guest/ --arch "$arch" --template kernel --output "{{assets_dir}}/"
-    echo ""
-    echo "=== Building rootfs for $arch ==="
-    uv run capsem-builder build guest/ --arch "$arch" --template rootfs --output "{{assets_dir}}/"
-    echo ""
+    for arch in arm64 x86_64; do
+        echo "=== Building kernel for $arch ==="
+        uv run capsem-builder build guest/ --arch "$arch" --template kernel --output "{{assets_dir}}/"
+        echo ""
+        echo "=== Building rootfs for $arch ==="
+        uv run capsem-builder build guest/ --arch "$arch" --template rootfs --output "{{assets_dir}}/"
+        echo ""
+    done
     echo "=== Generating checksums ==="
     uv run python3 -c 'from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path(".")); generate_checksums(Path("{{assets_dir}}"), v); print(f"manifest.json generated (v{v})")'
 
@@ -240,8 +241,8 @@ _generate-settings:
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
-# Full validation: build-assets + test + capsem-doctor + injection test + integration test + bench (boots VM)
-full-test: build-assets test _pack-initrd _sign
+# Full validation: build-assets + test + cross-compile + capsem-doctor + integration test + bench (boots VM)
+full-test: build-assets test cross-compile _pack-initrd _sign
     @echo ""
     @echo "=== capsem-doctor ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
@@ -310,8 +311,8 @@ release tag="":
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
 # Bump patch version, commit, tag, push, and wait for CI to publish.
-# Runs full-test first (build-assets + unit tests + capsem-doctor + integration +
-# bench) to avoid burning tags on issues only CI would catch.
+# Runs full-test first (build-assets + unit tests + cross-compile + capsem-doctor +
+# integration + bench) to avoid burning tags on issues only CI would catch.
 cut-release: full-test
     #!/usr/bin/env bash
     set -euo pipefail

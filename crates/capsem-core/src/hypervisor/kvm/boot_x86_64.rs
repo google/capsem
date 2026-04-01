@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use super::memory::{
     self, GuestMemory, BOOT_PARAMS_ADDR, CMDLINE_ADDR, CMDLINE_MAX_SIZE,
     GDT_ADDR, KERNEL_LOAD_ADDR, PD_ADDR, PDPT_ADDR, PML4_ADDR,
-    RAM_BASE, page_align_up,
+    RAM_BASE,
 };
 use super::sys;
 
