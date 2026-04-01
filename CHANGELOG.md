@@ -7,25 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **Container runtime: Podman replaced with Colima + Docker CLI** -- macOS now uses Colima (Apple Virtualization.framework with Rosetta) instead of Podman (libkrun). Rosetta gives near-native x86_64 container performance on Apple Silicon, making cross-arch kernel and rootfs builds much faster. All podman-specific code paths removed; standardized on `docker` CLI everywhere. Linux continues to use native Docker. Updated bootstrap, doctor, justfile, and all documentation.
-
-### Fixed
-- **`just run` blocked on Linux** -- the `_sign` recipe hard-exited on non-macOS, preventing `just run`, `just bench`, and `just full-test` from working on Linux with KVM. Now skips codesigning on Linux (KVM doesn't need it). Updated doctor and bootstrap messages to reflect Linux KVM support.
-- **x86_64 KVM boot broken: compile errors + wrong entry point** -- commit f68bc9f added references to `kernel_info.setup_header` and a 5th `write_boot_params` parameter but forgot to add the field/parameter (invisible on macOS due to `#[cfg]` gates). Also, the 64-bit entry point was `KERNEL_LOAD_ADDR` instead of `KERNEL_LOAD_ADDR + 0x200` (`startup_64`), causing the vCPU to execute 32-bit code in long mode and hang. Fixed by adding setup_header to `KernelLoadInfo`, preserving bzImage setup header bytes into boot_params, and correcting the entry point.
-- **No kernel arch validation in VmConfig** -- loading a wrong-architecture kernel (e.g., x86_64 bzImage on aarch64) silently hung the VM. Added `validate_kernel_arch` in `VmConfigBuilder::build()` that checks kernel magic bytes and fails fast with a clear error message.
-- **`install.sh` fails on Linux** -- the installer only supported macOS and rejected all other platforms. Added OS and architecture detection so the same one-liner (`curl ... | sh`) works on both macOS (arm64 .dmg) and Linux (x86_64/arm64 .deb via `apt install`). Refactored into testable shell functions with unit tests.
-- **Site docs claim macOS-only** -- developer getting-started listed only macOS requirements, build-system table labeled arm64 as "Apple Virtualization.framework" only, and codesigning section didn't mention it's macOS-specific. Updated to reflect Linux/KVM support.
+## [0.15.0] - 2026-04-01
 
 ### Added
-- **Cross-compile Docker image** -- purpose-built `capsem-host-builder` image (Ubuntu 24.04) with all Tauri build deps pre-baked (system libs, Node.js 24, pnpm 10, Rust stable, cargo tools, uv). Replaces the old `rust:bookworm` ad-hoc install approach. Named volumes cache cargo registry and per-arch build artifacts between runs. `CARGO_TARGET_DIR=/cargo-target` isolates Linux build cache from macOS. New recipes: `just build-host-image`, `just clean-host-image`. Includes container VM memory check for cross-arch emulation.
 - **x86_64 KVM backend** -- full KVM support for x86_64 Linux: bzImage boot protocol, identity-mapped page tables, GDT, IRQCHIP/PIT interrupt controller, CPUID passthrough, 16550 UART serial console (PIO), E820 memory map, virtio-mmio device discovery via kernel cmdline. The .deb now boots VMs on both aarch64 and x86_64.
-- **x86_64 release boot test** -- release pipeline now boot-tests the x86_64 .deb with capsem-doctor before publishing. Installs the .deb, enables KVM, boots a VM, and runs diagnostics. Prevents shipping broken packages.
-- **Compile-time KVM struct size assertions** -- wrong struct sizes cause silent kernel ABI violations. Added `const _` assertions for all KVM ioctl structs (both aarch64 and x86_64) that fail at compile time, not runtime.
+- **Cross-compile Docker image** -- purpose-built `capsem-host-builder` image (Ubuntu 24.04) with all Tauri build deps pre-baked (system libs, Node.js 24, pnpm 10, Rust stable, cargo tools, uv). Replaces the old `rust:bookworm` ad-hoc install approach. Named volumes cache cargo registry and per-arch build artifacts between runs. New recipes: `just build-host-image`, `just clean-host-image`.
+- **x86_64 release boot test** -- release pipeline now boot-tests the x86_64 .deb with capsem-doctor before publishing.
+- **Compile-time KVM struct size assertions** -- `const _` assertions for all KVM ioctl structs (both aarch64 and x86_64) that fail at compile time, not runtime.
 - **Kernel arch-mismatch detection** -- x86_64 boot rejects ARM64 Image kernels, aarch64 boot rejects bzImage kernels, with clear error messages instead of cryptic crashes.
-- **`.cargo/config.toml` not tracked -- broke codesigning on fresh clones** -- `.gitignore` had a bare `config.toml` pattern (no leading `/`) which matched at any depth, silently ignoring `.cargo/config.toml`. On fresh clones the cargo runner config was missing, so `cargo run`/`cargo test` produced unsigned binaries that crash on Virtualization.framework calls. Fixed by anchoring the pattern to root (`/config.toml`) and tracking the file. Added `just doctor` and bootstrap checks for the cargo runner config.
-- **Boot screen showed "No release notes available"** -- the Vite plugin looked for `site/src/pages/news/*.md` which never existed (site uses Starlight). Replaced with `LATEST_RELEASE.md` generated by `cut-release` from CHANGELOG.md.
-- **No error screen when VM assets fail** -- asset resolution errors (missing assets, download failure, manifest errors) left the user staring at an empty terminal. Added proper error state to the boot screen with trigger-specific messages and disabled the wizard "Let's Go" button during errors.
+
+### Changed
+- **Container runtime: Podman replaced with Colima + Docker CLI** -- macOS now uses Colima (Apple Virtualization.framework with Rosetta) instead of Podman (libkrun). Rosetta gives near-native x86_64 container performance on Apple Silicon, making cross-arch kernel and rootfs builds much faster. All podman-specific code paths removed; standardized on `docker` CLI everywhere.
+
+### Fixed
+- **`just run` blocked on Linux** -- the `_sign` recipe hard-exited on non-macOS, preventing `just run`, `just bench`, and `just full-test` from working on Linux with KVM. Now skips codesigning on Linux.
+- **x86_64 KVM boot broken: wrong entry point + missing setup header** -- the 64-bit entry point was `KERNEL_LOAD_ADDR` instead of `KERNEL_LOAD_ADDR + 0x200` (`startup_64`), causing the vCPU to execute 32-bit code in long mode and hang. Fixed by preserving bzImage setup header into boot_params and correcting the entry point.
+- **`install.sh` fails on Linux** -- added OS and architecture detection so the same one-liner works on both macOS (arm64 .dmg) and Linux (x86_64/arm64 .deb via `apt install`).
+- **Site docs claim macOS-only** -- updated to reflect Linux/KVM support.
+- **`.cargo/config.toml` not tracked** -- broke codesigning on fresh clones. Fixed by anchoring the gitignore pattern to root.
+- **Boot screen showed "No release notes available"** -- replaced Vite plugin path with `LATEST_RELEASE.md` generated by `cut-release`.
+- **No error screen when VM assets fail** -- added proper error state to the boot screen with trigger-specific messages.
 
 ## [0.14.20] - 2026-03-30
 
