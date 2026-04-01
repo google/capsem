@@ -200,7 +200,13 @@ cross-compile arch="": _check-assets _generate-settings
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
+    # KVM boot test: pass /dev/kvm if available (Linux host) or skip (macOS)
+    KVM_FLAG=""
+    if [ -e /dev/kvm ]; then
+        KVM_FLAG="--device /dev/kvm"
+    fi
     docker run --rm \
+        $KVM_FLAG \
         -e "TAURI_SIGNING_PRIVATE_KEY=$TAURI_KEY" \
         -e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_PWD" \
         -e "TARGET_ARCH=$TARGET_ARCH" \
@@ -222,10 +228,18 @@ cross-compile arch="": _check-assets _generate-settings
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Build Tauri app ---' && \
                cd crates/capsem-app && cargo tauri build --target \$RUST_TARGET --bundles deb && cd ../.. && \
-               echo '--- Validate + copy artifacts ---' && \
+               echo '--- Validate artifacts ---' && \
                dpkg-deb --info /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb && \
                cp /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb /src/dist/ && \
-               cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/"
+               cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/ && \
+               echo '--- Boot test ---' && \
+               if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
+                   echo 'KVM available + native arch: running boot test' && \
+                   dpkg -i /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb 2>/dev/null || apt-get install -f -y && \
+                   timeout 120 capsem run 'capsem-doctor'; \
+               else \
+                   echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
+               fi"
     echo ""
     echo "=== Artifacts ==="
     ls -lh "$ROOT/dist/"

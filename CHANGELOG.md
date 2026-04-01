@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-04-02
+
+### Fixed
+- **x86_64 boot test fails on CI: KVM_CREATE_PIT2 unsupported** -- GitHub Actions runners use restricted KVM that doesn't support the legacy i8254 PIT timer. Made PIT creation optional with a warning; when unavailable, `no_timer_check` is appended to the kernel cmdline so Linux uses alternative timer sources.
+- **`cross-compile` missing boot test** -- CI installs the `.deb` and boot-tests with capsem-doctor but `cross-compile` didn't. Added boot test step that runs when `/dev/kvm` is available and the target matches the native arch; skips on macOS or cross-arch builds.
+- **`cross-compile` missing GNU cross-linker config** -- `.cargo/config.toml` only had musl linker entries. Added `x86_64-linux-gnu-gcc` and `aarch64-linux-gnu-gcc` for GNU targets used by the Tauri app build.
+
 ## [0.15.1] - 2026-04-01
 
 ### Fixed

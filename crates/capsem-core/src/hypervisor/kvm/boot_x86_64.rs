@@ -363,8 +363,12 @@ pub(super) fn setup_cpuid(vm: &sys::VmFd, vcpu: &sys::VcpuFd) -> Result<()> {
 pub(super) fn build_cmdline(
     base_cmdline: &str,
     virtio_device_count: u32,
+    has_pit: bool,
 ) -> String {
     let mut cmdline = base_cmdline.to_string();
+    if !has_pit {
+        cmdline.push_str(" no_timer_check");
+    }
     for slot in 0..virtio_device_count {
         let addr = memory::virtio_mmio_addr(slot);
         let irq = memory::virtio_mmio_irq(slot);
@@ -564,17 +568,25 @@ mod tests {
 
     #[test]
     fn build_cmdline_appends_virtio_devices() {
-        let cmdline = build_cmdline("console=ttyS0", 2);
+        let cmdline = build_cmdline("console=ttyS0", 2, true);
         assert!(cmdline.starts_with("console=ttyS0"));
         assert!(cmdline.contains("virtio_mmio.device="));
         // Should have 2 device descriptors
         assert_eq!(cmdline.matches("virtio_mmio.device=").count(), 2);
+        assert!(!cmdline.contains("no_timer_check"));
     }
 
     #[test]
     fn build_cmdline_no_devices() {
-        let cmdline = build_cmdline("console=ttyS0", 0);
+        let cmdline = build_cmdline("console=ttyS0", 0, true);
         assert_eq!(cmdline, "console=ttyS0");
+    }
+
+    #[test]
+    fn build_cmdline_no_pit() {
+        let cmdline = build_cmdline("console=ttyS0", 1, false);
+        assert!(cmdline.contains("no_timer_check"));
+        assert!(cmdline.contains("virtio_mmio.device="));
     }
 
     #[test]

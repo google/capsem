@@ -68,12 +68,18 @@ impl Hypervisor for KvmHypervisor {
 
         // -- Arch-specific: interrupt controller --------------------------
         #[cfg(target_arch = "x86_64")]
-        {
+        let has_pit = {
             vm.set_tss_addr(0xFFFB_D000)?;
             vm.set_identity_map_addr(0xFFFB_C000)?;
             vm.create_irqchip()?;
-            vm.create_pit2()?;
-        }
+            match vm.create_pit2() {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!("KVM_CREATE_PIT2 unavailable ({}), booting without PIT", e);
+                    false
+                }
+            }
+        };
 
         // Create vCPUs (must happen before GIC init on aarch64)
         let mut vcpu_fds = Vec::new();
@@ -169,6 +175,7 @@ impl Hypervisor for KvmHypervisor {
             let cmdline = boot_x86_64::build_cmdline(
                 &config.kernel_cmdline,
                 device_count,
+                has_pit,
             );
             let e820 = memory::build_e820_map(config.ram_bytes);
 
