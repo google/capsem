@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-04-02
+
+### Fixed
+- **x86_64 CI boot test fails on restricted KVM** -- GitHub Actions runners expose `/dev/kvm` but lack full VM support (no CPUID, no PIT). The boot test now probes KVM capability before attempting a VM boot and skips gracefully with a warning annotation when the runner's KVM is insufficient.
+
 ## [0.15.2] - 2026-04-02
 
 ### Fixed

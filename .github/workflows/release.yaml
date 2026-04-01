@@ -383,8 +383,27 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
-          sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
-          xvfb-run timeout 120 capsem run "capsem-doctor"
+          # Probe KVM capability: nested/restricted KVM may lack CPUID support
+          # which makes full VM boot impossible. Skip gracefully.
+          if python3 -c "
+          import fcntl, os, struct, array
+          kvm = os.open('/dev/kvm', os.O_RDWR)
+          vm = fcntl.ioctl(kvm, 0xAE01)  # KVM_CREATE_VM
+          buf = struct.pack('II', 256, 0) + b'\x00' * (256 * 40)
+          try:
+              fcntl.ioctl(vm, 0xC008AE05, buf, True)  # KVM_GET_SUPPORTED_CPUID
+              print('KVM supports CPUID -- boot test will run')
+          except OSError as e:
+              print(f'KVM lacks CPUID support ({e}) -- skipping boot test')
+              os._exit(1)
+          finally:
+              os.close(vm); os.close(kvm)
+          "; then
+            sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
+            xvfb-run timeout 120 capsem run "capsem-doctor"
+          else
+            echo "::warning::Skipping x86_64 boot test -- KVM on this runner lacks full VM support"
+          fi
 
       - name: Collect Linux artifacts
         run: |
