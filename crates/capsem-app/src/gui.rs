@@ -262,7 +262,12 @@ pub(crate) fn gui_boot_vm(
         }
         Err(e) => {
             error!("[boot-audit] VM boot failed: {e:#}");
+            #[cfg(target_os = "macos")]
             info!("continuing without VM (unsigned binary or missing entitlement)");
+            #[cfg(target_os = "linux")]
+            info!("VM boot failed -- check KVM support: /dev/kvm permissions, nested KVM, kernel modules");
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            info!("VM boot failed");
             let _ = handle.emit("vm-state-changed", serde_json::json!({
                 "state": "Error",
                 "trigger": "boot_failed",

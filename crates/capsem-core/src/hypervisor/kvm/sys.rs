@@ -69,6 +69,8 @@ pub(super) const KVM_SET_DEVICE_ATTR: u64 = _iow(KVMIO, 0xE1, 24); // sizeof kvm
 // ---------------------------------------------------------------------------
 
 pub(super) const KVM_CAP_IRQFD: u32 = 32;
+pub(super) const KVM_CAP_NR_VCPUS: u32 = 9;
+pub(super) const KVM_CAP_MAX_VCPUS: u32 = 66;
 
 #[cfg(target_arch = "aarch64")]
 pub(super) const KVM_CAP_ONE_REG: u32 = 70;
@@ -310,14 +312,26 @@ pub(super) struct KvmFd {
 impl KvmFd {
     /// Open `/dev/kvm` and verify API version.
     pub fn open() -> Result<Self> {
+        if !std::path::Path::new("/dev/kvm").exists() {
+            bail!(
+                "/dev/kvm not found. KVM is required for VM boot on Linux. \
+                 Check: (1) CPU supports virtualization (VT-x/AMD-V), \
+                 (2) it is enabled in BIOS/UEFI, \
+                 (3) kvm module is loaded (`sudo modprobe kvm_intel` or `kvm_amd`)"
+            );
+        }
         let raw = unsafe {
             libc::open(b"/dev/kvm\0".as_ptr() as *const libc::c_char, libc::O_RDWR | libc::O_CLOEXEC)
         };
         if raw < 0 {
-            bail!(
-                "/dev/kvm: {}",
-                std::io::Error::last_os_error()
-            );
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EACCES) {
+                bail!(
+                    "/dev/kvm: permission denied. Add your user to the 'kvm' group: \
+                     sudo usermod -aG kvm $USER (then log out and back in)"
+                );
+            }
+            bail!("/dev/kvm: {err}");
         }
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
         let kvm = Self { fd };
@@ -325,6 +339,15 @@ impl KvmFd {
         let version = kvm.ioctl(KVM_GET_API_VERSION, 0)?;
         if version != 12 {
             bail!("KVM API version {version}, expected 12");
+        }
+
+        // Log KVM capabilities for diagnostics
+        tracing::info!("KVM API version {version}");
+        if let Ok(nr) = kvm.check_extension(KVM_CAP_NR_VCPUS) {
+            tracing::debug!("KVM_CAP_NR_VCPUS = {nr}");
+        }
+        if let Ok(max) = kvm.check_extension(KVM_CAP_MAX_VCPUS) {
+            tracing::debug!("KVM_CAP_MAX_VCPUS = {max}");
         }
 
         Ok(kvm)
@@ -419,10 +442,17 @@ impl VmFd {
             )
         };
         if raw < 0 {
-            bail!(
-                "KVM_CREATE_VCPU({id}) failed: {}",
-                std::io::Error::last_os_error()
-            );
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EEXIST) {
+                bail!(
+                    "KVM_CREATE_VCPU({id}) failed: vCPU already exists (EEXIST). \
+                     This typically indicates a restricted or nested KVM environment \
+                     (e.g., cloud workstation, CI runner) where the hypervisor \
+                     pre-creates vCPU state. Capsem requires unrestricted KVM access. \
+                     Debug: run `python3 scripts/kvm-diagnostic.py` for detailed probing."
+                );
+            }
+            bail!("KVM_CREATE_VCPU({id}) failed: {err}");
         }
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
 

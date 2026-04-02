@@ -81,10 +81,26 @@ impl Hypervisor for KvmHypervisor {
             }
         };
 
+        // Pre-flight: on restricted/nested KVM, CPUID may be unsupported.
+        // Same probe used in CI (.github/workflows/release.yaml).
+        #[cfg(target_arch = "x86_64")]
+        if let Err(e) = vm.get_supported_cpuid() {
+            tracing::warn!("KVM CPUID probe failed: {e:#}");
+            tracing::warn!("This indicates restricted/nested KVM -- vCPU creation will likely fail");
+        }
+
         // Create vCPUs (must happen before GIC init on aarch64)
         let mut vcpu_fds = Vec::new();
         for i in 0..config.cpu_count {
-            vcpu_fds.push(vm.create_vcpu(i)?);
+            match vm.create_vcpu(i) {
+                Ok(vcpu) => vcpu_fds.push(vcpu),
+                Err(e) => {
+                    // On failure, run diagnostic probes to help debug restricted KVM
+                    #[cfg(target_arch = "x86_64")]
+                    run_kvm_diagnostics(&kvm);
+                    return Err(e);
+                }
+            }
         }
 
         #[cfg(target_arch = "aarch64")]
@@ -414,6 +430,82 @@ impl VmHandle for KvmHandle {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Run diagnostic probes when vCPU creation fails.
+/// Logs results at ERROR level so they appear in the output without RUST_LOG=debug.
+#[cfg(target_arch = "x86_64")]
+fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
+    tracing::error!("--- KVM diagnostic probes (vCPU creation failed) ---");
+
+    // Probe 1: kernel info
+    if let Ok(uname) = nix_uname() {
+        tracing::error!("kernel: {} ({})", uname.release, uname.machine);
+    }
+
+    // Probe 2: check nested KVM
+    for path in &[
+        "/sys/module/kvm_intel/parameters/nested",
+        "/sys/module/kvm_amd/parameters/nested",
+    ] {
+        if let Ok(val) = std::fs::read_to_string(path) {
+            tracing::error!("nested KVM ({path}): {}", val.trim());
+        }
+    }
+
+    // Probe 3: capabilities
+    if let Ok(nr) = kvm.check_extension(sys::KVM_CAP_NR_VCPUS) {
+        tracing::error!("KVM_CAP_NR_VCPUS = {nr}");
+    }
+    if let Ok(max) = kvm.check_extension(sys::KVM_CAP_MAX_VCPUS) {
+        tracing::error!("KVM_CAP_MAX_VCPUS = {max}");
+    }
+
+    // Probe 4: create a fresh VM and try vcpu WITHOUT irqchip
+    tracing::error!("probe: creating fresh VM without IRQCHIP...");
+    match kvm.create_vm() {
+        Ok(probe_vm) => {
+            match probe_vm.create_vcpu(0) {
+                Ok(_vcpu) => {
+                    tracing::error!("probe: vCPU(0) succeeds WITHOUT IRQCHIP -- IRQCHIP causes the conflict");
+                }
+                Err(e) => {
+                    tracing::error!("probe: vCPU(0) fails even WITHOUT IRQCHIP: {e:#}");
+                    tracing::error!("probe: this KVM environment cannot create vCPUs at all");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("probe: fresh VM creation failed: {e:#}");
+        }
+    }
+
+    tracing::error!("--- end KVM diagnostics ---");
+    tracing::error!(
+        "For detailed probing, run: python3 scripts/kvm-diagnostic.py"
+    );
+}
+
+/// Minimal uname wrapper for diagnostics.
+#[cfg(target_arch = "x86_64")]
+fn nix_uname() -> std::io::Result<UnameInfo> {
+    let mut buf: libc::utsname = unsafe { std::mem::zeroed() };
+    if unsafe { libc::uname(&mut buf) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let release = unsafe { std::ffi::CStr::from_ptr(buf.release.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    let machine = unsafe { std::ffi::CStr::from_ptr(buf.machine.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    Ok(UnameInfo { release, machine })
+}
+
+#[cfg(target_arch = "x86_64")]
+struct UnameInfo {
+    release: String,
+    machine: String,
 }
 
 #[cfg(test)]
