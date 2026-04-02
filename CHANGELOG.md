@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`just clean` reports freed space** -- shows per-directory sizes before deletion and total freed at the end. Also cleans `tmp/` and `coverage/` directories.
+- **`just clean-all` prunes docker volumes** -- adds `--volumes` to docker prune for full reclaim.
+- **Automatic incremental cache trimming** -- `_clean-stale` now checks if `target/` exceeds 20 GB and auto-removes incremental compilation caches (`target/debug/incremental`, `target/release/incremental`, `target/llvm-cov-target`). Prevents unbounded growth that caused 113 GB bloat.
+- **`_clean-stale` wired into all build paths** -- added to `build-assets` and `cross-compile` dependency chains (was already in `test` and `_compile`).
+
 ### Fixed
 - **Snapshots tab shows nothing during long sessions** -- the tab called `callMcpTool('snapshots_list')` once on mount, never refreshed, and failed silently if the MCP gateway wasn't wired yet. Replaced with SQL queries against a new `snapshot_events` table in `session.db`, consistent with all other stats tabs. Each snapshot event stores a self-contained `(start_fs_event_id, stop_fs_event_id]` range for efficient per-snapshot change counts via `fs_events` cross-reference.
 

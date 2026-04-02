@@ -10,7 +10,7 @@
 #
 #   run             -> audit(_ensure-setup) + _check-assets + _pack-initrd + _sign
 #   test            -> audit(_ensure-setup) + _install-tools
-#   build-assets    -> doctor + _install-tools + audit
+#   build-assets    -> doctor + _install-tools + _clean-stale + audit
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
 #   test-injection  -> _check-assets + _pack-initrd + _sign
@@ -26,6 +26,8 @@
 # Before release:     just install (doctor + full-test -- all validation gates)
 # Releases:           just cut-release (full-test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps (cargo update + pnpm update)
+# Disk cleanup:       just clean   (nuke target/ + frontend build, ~100 GB)
+#                     just clean-all (clean + docker prune)
 
 binary := "target/debug/capsem"
 assets_dir := "assets"
@@ -57,9 +59,11 @@ run *CMD: audit _check-assets _generate-settings _pack-initrd _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
 
 # Full VM asset rebuild (kernel, initrd, rootfs) via capsem-builder
-build-assets: doctor _install-tools audit
+build-assets: _install-tools _clean-stale audit
     #!/bin/bash
     set -euo pipefail
+    # Run doctor but skip the asset check since we are about to rebuild them
+    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
     echo "=== Cleaning old assets ==="
     rm -rf "{{assets_dir}}/arm64" "{{assets_dir}}/x86_64"
     rm -f "{{assets_dir}}/manifest.json" "{{assets_dir}}/B3SUMS"
@@ -151,7 +155,7 @@ clean-host-image:
 #   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
-cross-compile arch="": _check-assets _generate-settings
+cross-compile arch="": _clean-stale _check-assets _generate-settings
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
@@ -236,7 +240,7 @@ cross-compile arch="": _check-assets _generate-settings
                if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
                    echo 'KVM available + native arch: running boot test' && \
                    dpkg -i /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb 2>/dev/null || apt-get install -f -y && \
-                   timeout 120 capsem run 'capsem-doctor'; \
+                   timeout 120 python3 scripts/doctor_session_test.py --binary capsem --assets assets; \
                else \
                    echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
                fi"
@@ -255,14 +259,20 @@ _generate-settings:
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
-# Full validation: build-assets + test + cross-compile + capsem-doctor + integration test + bench (boots VM)
-full-test: build-assets test cross-compile _pack-initrd _sign
+# Fast end-to-end: unit tests + repack initrd + sign + capsem-doctor (verifies host-guest bridge)
+smoke-test: test _pack-initrd _sign
     @echo ""
-    @echo "=== capsem-doctor ==="
+    @echo "=== capsem-doctor (smoke) ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
     @echo ""
     @echo "=== Doctor session validation ==="
     python3 scripts/doctor_session_test.py --binary {{binary}} --assets {{assets_dir}}
+
+# Alias for smoke-test
+smoke: smoke-test
+
+# Full validation: build-assets + smoke-test + cross-compile + integration test + bench
+full-test: build-assets smoke-test cross-compile
     @echo ""
     @echo "=== Injection test ==="
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
@@ -382,13 +392,59 @@ doctor: _pnpm-install
             uv)      echo "curl -LsSf https://astral.sh/uv/install.sh | sh" ;;
             sqlite3) echo "brew install sqlite" ;;
             git)     echo "brew install git" ;;
+            b3sum)   echo "cargo install b3sum --locked" ;;
         esac
     }
-    for tool in cargo rustup pnpm node python3 uv sqlite3 git; do
+    for tool in cargo rustup pnpm node python3 uv sqlite3 git b3sum; do
         if command -v "$tool" &>/dev/null; then
             pass "$tool"
         else
             fail "$tool not found -- install: $(tool_hint "$tool")"
+        fi
+    done
+
+    echo ""
+    echo "== VM Assets =="
+    arch=$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/')
+    if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
+        ASSETS="{{assets_dir}}"
+        if [ -f "$ASSETS/manifest.json" ]; then
+            # Version check
+            CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            MANIFEST_VERSION=$(grep '"latest":' "$ASSETS/manifest.json" | sed 's/.*: "\(.*\)".*/\1/')
+            if [ "$CARGO_VERSION" == "$MANIFEST_VERSION" ]; then
+                pass "assets version ($MANIFEST_VERSION) matches Cargo.toml"
+            else
+                fail "assets version mismatch: Cargo.toml=$CARGO_VERSION, manifest.json=$MANIFEST_VERSION -- run: just build-assets"
+            fi
+            
+            # Integrity check (B3SUMS)
+            if command -v b3sum &>/dev/null && [ -f "$ASSETS/B3SUMS" ]; then
+                if (cd "$ASSETS" && b3sum --check B3SUMS >/dev/null 2>&1); then
+                    pass "asset integrity (B3SUMS match)"
+                else
+                    fail "asset integrity check failed -- run: just build-assets"
+                fi
+            fi
+        else
+            fail "manifest.json missing in $ASSETS -- run: just build-assets"
+        fi
+    else
+        echo "  [SKIP] VM Assets (CAPSEM_SKIP_ASSET_CHECK set)"
+    fi
+
+    echo ""
+    echo "== Guest Binaries =="
+    RELEASE_DIR="target/linux-agent/$arch"
+    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
+        if [ -f "$RELEASE_DIR/$b" ]; then
+            if file "$RELEASE_DIR/$b" | grep -E -q "ELF 64-bit LSB|ELF 64-bit MSB"; then
+                pass "$b (Linux ELF)"
+            else
+                fail "$b found but is not Linux ELF -- run: just _pack-initrd"
+            fi
+        else
+            fail "$b missing -- run: just _pack-initrd"
         fi
     done
 
@@ -560,23 +616,54 @@ doctor: _pnpm-install
     echo "All good!"
     touch .dev-setup
 
-# Clean build artifacts
+# Clean all build artifacts and report freed space
 clean:
-    cargo clean
-    cd frontend && rm -rf dist node_modules
+    #!/bin/bash
+    set -euo pipefail
+    BEFORE=$(du -sk . 2>/dev/null | cut -f1)
+    echo "=== Cleaning Capsem build artifacts ==="
+    # Rust build artifacts (the big one)
+    if [ -d target ]; then
+        TARGET_SIZE=$(du -sh target 2>/dev/null | cut -f1)
+        echo "  target/          ${TARGET_SIZE}"
+        cargo clean
+    fi
+    # Frontend build artifacts
+    for dir in frontend/dist frontend/node_modules; do
+        if [ -d "$dir" ]; then
+            DIR_SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
+            echo "  ${dir}/  ${DIR_SIZE}"
+            rm -rf "$dir"
+        fi
+    done
+    # Temp and coverage dirs
+    for dir in tmp coverage; do
+        if [ -d "$dir" ]; then
+            DIR_SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
+            echo "  ${dir}/          ${DIR_SIZE}"
+            rm -rf "$dir"
+        fi
+    done
+    # Report
+    AFTER=$(du -sk . 2>/dev/null | cut -f1)
+    FREED_KB=$((BEFORE - AFTER))
+    if [ "$FREED_KB" -gt 1048576 ]; then
+        echo ""
+        echo "Freed $((FREED_KB / 1048576)) GB"
+    elif [ "$FREED_KB" -gt 1024 ]; then
+        echo ""
+        echo "Freed $((FREED_KB / 1024)) MB"
+    fi
 
-# Deep clean: build artifacts + container images + docker cache
+# Deep clean: build artifacts + container images + docker volumes
 clean-all: clean
     #!/bin/bash
     set -euo pipefail
-    # Remove stale rootfs files from target dirs
-    find target -name "rootfs.img" -delete 2>/dev/null || true
-    find target -name "rootfs.squashfs" -delete 2>/dev/null || true
-    rm -rf target/llvm-cov-target
-    # Prune container images
+    # Prune docker: stopped containers, unused images, build cache, volumes
     if command -v docker &>/dev/null; then
-        echo "Pruning docker images..."
-        docker system prune -af
+        echo ""
+        echo "=== Docker cleanup ==="
+        docker system prune -af --volumes
     fi
 
 # Inspect session DB integrity and event summary (latest by default)
@@ -656,13 +743,23 @@ update-prices:
         -o config/genai-prices.json
     @echo "Updated config/genai-prices.json"
 
-# Remove stale rootfs copies from target dirs (fast, harmless)
+# Remove stale rootfs copies and trim bloated incremental caches
 _clean-stale:
     #!/bin/bash
+    # Stale rootfs copies
     find target -path "*/debug/rootfs.*" -delete 2>/dev/null || true
     find target -path "*/release/rootfs.*" -delete 2>/dev/null || true
     find target -path "*/_up_" -type d -exec rm -rf {} + 2>/dev/null || true
     find target -path "*/llvm-cov-target/debug/rootfs.*" -delete 2>/dev/null || true
+    # Trim incremental caches if target/ exceeds 20 GB (prevents unbounded growth)
+    if [ -d target ]; then
+        TARGET_KB=$(du -sk target 2>/dev/null | cut -f1)
+        THRESHOLD=$((20 * 1024 * 1024))  # 20 GB in KB
+        if [ "$TARGET_KB" -gt "$THRESHOLD" ]; then
+            echo "target/ is $((TARGET_KB / 1024 / 1024)) GB (threshold: 20 GB) -- trimming incremental caches"
+            rm -rf target/debug/incremental target/release/incremental target/llvm-cov-target 2>/dev/null || true
+        fi
+    fi
 
 # --- Internal helpers (hidden from `just --list`) ---
 
@@ -786,15 +883,7 @@ _pack-initrd:
         exit 1
     fi
     echo "=== Cross-compile agent ==="
-    TARGET_ARCH="$arch" uv run python3 -c "
-    import os; from pathlib import Path
-    from capsem.builder.config import load_guest_config
-    from capsem.builder.docker import cross_compile_agent
-    arch = os.environ['TARGET_ARCH']
-    config = load_guest_config(Path('guest'))
-    rust_target = config.build.architectures[arch].rust_target
-    cross_compile_agent(rust_target, Path('.'), Path('target/linux-agent') / arch)
-    "
+    uv run capsem-builder agent --arch "$arch"
     echo ""
     echo "=== Repack initrd ==="
     WORKDIR=$(mktemp -d)
@@ -802,15 +891,17 @@ _pack-initrd:
     gzip -dc "$INITRD" | cpio -id 2>/dev/null
     cp "$ROOT/guest/artifacts/capsem-init" init
     chmod 755 init
-    rm -f capsem-pty-agent capsem-net-proxy capsem-mcp-server
-    # Use binaries produced by cross-compile
+    # Verify binaries exist before repacking
     RELEASE_DIR="$ROOT/target/linux-agent/$arch"
-    cp "$RELEASE_DIR/capsem-pty-agent" capsem-pty-agent
-    chmod 555 capsem-pty-agent
-    cp "$RELEASE_DIR/capsem-net-proxy" capsem-net-proxy
-    chmod 555 capsem-net-proxy
-    cp "$RELEASE_DIR/capsem-mcp-server" capsem-mcp-server
-    chmod 555 capsem-mcp-server
+    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
+        if [ ! -f "$RELEASE_DIR/$b" ]; then
+            echo "ERROR: $b missing from $RELEASE_DIR"
+            exit 1
+        fi
+        rm -f "$b"
+        cp "$RELEASE_DIR/$b" .
+        chmod 555 "$b"
+    done
     cp "$ROOT/guest/artifacts/capsem-doctor" capsem-doctor
     chmod 755 capsem-doctor
     cp "$ROOT/guest/artifacts/capsem-bench" capsem-bench
