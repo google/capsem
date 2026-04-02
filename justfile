@@ -371,6 +371,10 @@ cut-release: full-test
 
 # Check that all required dev tools and dependencies are installed
 doctor: _pnpm-install
+    scripts/doctor-common.sh
+
+# Legacy doctor (replaced by scripts/doctor-common.sh)
+_doctor-legacy: _pnpm-install
     #!/bin/bash
     set -euo pipefail
     PASS=0; FAIL=0
