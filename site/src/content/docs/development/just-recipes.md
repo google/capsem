@@ -61,7 +61,8 @@ You only need `just build-assets` on first setup or when `guest/config/` changes
 | `just audit` | Check for known vulnerabilities in Rust + npm deps |
 | `just update-deps` | `cargo update` + `pnpm update` to latest compatible versions |
 | `just update-prices` | Refresh model pricing JSON from upstream |
-| `just doctor` | Check all required tools are installed, write `.dev-setup` sentinel |
+| `just doctor` | Check tools, colored output, structured recap (exits 1 if failures) |
+| `just doctor-fix` | Doctor + auto-fix all fixable issues in dependency order |
 
 ## Release
 

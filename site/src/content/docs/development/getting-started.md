@@ -32,7 +32,7 @@ git clone https://github.com/google/capsem.git && cd capsem
 sh scripts/bootstrap.sh
 ```
 
-The bootstrap script detects your OS (macOS or Linux), checks every required tool, and prints platform-specific install commands for anything missing. On macOS it also verifies Xcode Command Line Tools are installed. Once all tools are present it installs Python and frontend dependencies and runs `just doctor` to validate the full environment.
+The bootstrap script checks bare-minimum tools (bash, git, curl, rustup, just), installs Python and frontend dependencies, then runs `just doctor --fix` to validate the full environment and auto-fix any fixable issues (missing Rust targets, cargo tools, config files).
 
 The only prerequisite is a POSIX shell. See [Life of a Build](./stack) for what gets built by what and how the tools fit together.
 
@@ -72,13 +72,15 @@ On macOS, the compiled binary must be codesigned with Apple's `com.apple.securit
 - Xcode Command Line Tools (`xcode-select --install`)
 - `entitlements.plist` in the repo root (checked into git)
 
-**Validation:** `just doctor` runs a four-step codesigning check:
+**Validation:** `just doctor` runs a six-step codesigning check (macOS only):
 
 | Check | What it validates | Fix if it fails |
 |-------|-------------------|-----------------|
 | Xcode CLTools | `xcode-select -p` returns a path | `xcode-select --install` |
 | `codesign` binary | The tool exists in PATH | Install Xcode CLTools (see above) |
-| `entitlements.plist` | The file exists and is readable | `git checkout entitlements.plist` |
+| `entitlements.plist` | The file exists and is readable | `just doctor-fix` (auto-restores from git) |
+| `.cargo/config.toml` | Cargo runner configured | `just doctor-fix` (auto-restores from git) |
+| `run_signed.sh` | Script exists and is executable | `just doctor-fix` (auto-restores from git) |
 | Test sign | Compiles a tiny binary + signs it with entitlements | See [troubleshooting](#codesign-fails) below |
 
 No Apple Developer ID certificate is needed for local development -- ad-hoc signing (`--sign -`) is sufficient.
@@ -105,7 +107,7 @@ api_key = "AIza..."
 
 ### `just doctor` fails
 
-Install missing tools as indicated -- every `[FAIL]` line includes the fix command. Run `just _install-tools` to auto-install Rust components and cargo tools.
+Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (Rust targets, cargo tools, config files, build assets, guest binaries). Non-fixable issues (system tools like node, docker) show platform-specific install hints.
 
 ### Codesign fails
 
