@@ -170,9 +170,10 @@ pub(crate) fn gui_boot_vm(
                     if let Some(ref config) = mcp_config {
                         let config = Arc::clone(config);
                         let dir = dir.clone();
+                        let db = Arc::clone(&gui_session_db);
                         tauri::async_runtime::spawn(async move {
                             if let Some((scheduler, interval)) = wire_auto_snapshots(&config, &dir).await {
-                                spawn_auto_snapshot_timer(&tokio::runtime::Handle::current(), scheduler, interval);
+                                spawn_auto_snapshot_timer(&tokio::runtime::Handle::current(), scheduler, interval, db);
                             }
                         });
                     }

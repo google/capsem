@@ -458,7 +458,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             // Wire auto-snapshot scheduler into MCP config.
             if let Some(ref config) = mcp_config {
                 if let Some((scheduler, interval)) = rt.block_on(wire_auto_snapshots(config, dir)) {
-                    spawn_auto_snapshot_timer(rt.handle(), scheduler, interval);
+                    spawn_auto_snapshot_timer(rt.handle(), scheduler, interval, Arc::clone(&session_db));
                 }
             }
 
