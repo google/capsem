@@ -1,0 +1,22 @@
+[package]
+name = "capsem-service"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+capsem-core = { path = "../capsem-core" }
+capsem-logger = { path = "../capsem-logger" }
+capsem-proto = { path = "../capsem-proto" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+tokio-unix-ipc.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+nix = { version = "0.29", features = ["process", "signal", "term"] }
+axum.workspace = true
+tower-http = { version = "0.6", features = ["trace"] }

@@ -218,15 +218,15 @@ pub(crate) fn gui_boot_vm(
                 let app_state = handle.state::<AppState>();
                 let mut vms = app_state.vms.lock().unwrap();
                 vms.insert(session_id.to_string(), VmInstance {
-                    _vm: vm,
+                    vm,
                     serial_input_fd: input_fd,
                     vsock_terminal_fd: None,
                     vsock_control_fd: None,
                     net_state,
                     mcp_state: mcp_config.clone(),
                     state_machine: sm,
-                    _scratch_disk_path: scratch_path,
-                    _fs_monitor: fs_monitor,
+                    scratch_disk_path: scratch_path,
+                    fs_monitor,
                 });
             }
 

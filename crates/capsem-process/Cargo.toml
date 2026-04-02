@@ -1,0 +1,18 @@
+[package]
+name = "capsem-process"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+capsem-core = { path = "../capsem-core" }
+capsem-logger = { path = "../capsem-logger" }
+capsem-proto = { path = "../capsem-proto" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+tokio-unix-ipc.workspace = true
+futures.workspace = true

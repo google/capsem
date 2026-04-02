@@ -22,6 +22,9 @@ pub use host_state::{
     HostState, HostStateMachine, StateMachine, Transition, validate_guest_msg, validate_host_msg,
 };
 pub use vm::config::{VirtioFsShare, VmConfig};
+pub use vm::registry::{SandboxInstance, SandboxNetworkState};
+pub use vm::terminal::TerminalOutputQueue;
+pub use vm::boot::{boot_vm, send_boot_config, read_control_msg, write_control_msg, create_net_state};
 pub use vm::VmState;
 pub use vm::vsock::{
     self, CoalesceBuffer, VSOCK_PORT_CONTROL,

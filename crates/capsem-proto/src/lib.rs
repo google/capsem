@@ -10,6 +10,8 @@
 //! `HostToGuest`. This is enforced at the type level by having separate
 //! encode/decode function pairs.
 
+pub mod ipc;
+
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 

@@ -1,6 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["crates/capsem-proto", "crates/capsem-core", "crates/capsem-app", "crates/capsem-agent", "crates/capsem-logger"]
+members = [
+    "crates/capsem-proto",
+    "crates/capsem-core",
+    "crates/capsem-app",
+    "crates/capsem-agent",
+    "crates/capsem-logger",
+    "crates/capsem-process",
+    "crates/capsem-service",
+    "crates/capsem",
+]
 
 [workspace.package]
 version = "0.16.1"
@@ -47,8 +56,11 @@ http = "1"
 axum = "0.8"
 reqwest = { version = "0.13", features = ["stream", "json", "query", "rustls"], default-features = false }
 futures = "0.3"
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 tokio-util = { version = "0.7", features = ["io"] }
 base64 = "0.22"
+bytes = "1"
 regex = "1"
+clap = { version = "4", features = ["derive"] }
+tokio-unix-ipc = "0.4"
