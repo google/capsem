@@ -81,7 +81,7 @@ check_platform() {
     if xcode-select -p &>/dev/null; then
         pass "Xcode Command Line Tools ($(xcode-select -p))"
     else
-        fixable "xcode-select --install" "Xcode Command Line Tools not installed"
+        fail "Xcode Command Line Tools not installed -- run: xcode-select --install"
     fi
 
     if command -v codesign &>/dev/null; then
@@ -93,21 +93,21 @@ check_platform() {
     if [[ -r "$ENTITLEMENTS" ]]; then
         pass "$ENTITLEMENTS"
     else
-        fixable "git checkout $ENTITLEMENTS" "$ENTITLEMENTS missing"
+        fixable entitlements "$ENTITLEMENTS missing"
     fi
 
     if [[ -f ".cargo/config.toml" ]] && grep -q 'runner.*run_signed' .cargo/config.toml; then
         pass ".cargo/config.toml (cargo runner)"
     else
-        fixable "git checkout .cargo/config.toml" ".cargo/config.toml missing or misconfigured"
+        fixable cargo-config ".cargo/config.toml missing or misconfigured"
     fi
 
     if [[ -x "scripts/run_signed.sh" ]]; then
         pass "scripts/run_signed.sh"
     elif [[ -f "scripts/run_signed.sh" ]]; then
-        fixable "chmod +x scripts/run_signed.sh" "scripts/run_signed.sh not executable"
+        fixable run-signed-chmod "scripts/run_signed.sh not executable"
     else
-        fixable "git checkout scripts/run_signed.sh && chmod +x scripts/run_signed.sh" "scripts/run_signed.sh missing"
+        fixable run-signed "scripts/run_signed.sh missing"
     fi
 
     # Test sign
