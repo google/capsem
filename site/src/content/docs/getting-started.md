@@ -38,16 +38,24 @@ See the [Development Guide](/development/getting-started/) for instructions on c
 
 ## First session
 
-Launch Capsem from `/Applications` or the command line:
+Launch Capsem from your application menu or the command line:
 
 ```sh
+# macOS
 open /Applications/Capsem.app
+
+# Linux
+capsem
 ```
 
 Or use CLI mode directly:
 
 ```sh
+# macOS
 /Applications/Capsem.app/Contents/MacOS/capsem
+
+# Linux
+capsem
 ```
 
 On first launch, Capsem boots a lightweight Linux VM with an air-gapped network. You get a terminal inside the sandbox with Python 3, Node.js, git, and 30+ packages pre-installed.
