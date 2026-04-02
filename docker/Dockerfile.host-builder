@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     musl-tools \
     xdg-utils \
+    sqlite3 \
     # Cross-compilation toolchains (both directions)
     gcc-x86-64-linux-gnu \
     g++-x86-64-linux-gnu \

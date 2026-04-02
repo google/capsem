@@ -110,6 +110,16 @@ if command -v docker >/dev/null 2>&1; then
 else
     miss "docker" "$(hint_for "docker")"
 fi
+# Docker BuildKit (buildx) -- required for cross-arch container builds
+if docker buildx version >/dev/null 2>&1; then
+    pass "docker buildx"
+else
+    if [ "$OS" = "Darwin" ]; then
+        miss "docker buildx" "brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx"
+    else
+        miss "docker buildx" "sudo apt install docker-buildx-plugin"
+    fi
+fi
 # Colima (macOS only -- manages the container VM)
 if [ "$OS" = "Darwin" ]; then
     if command -v colima >/dev/null 2>&1; then

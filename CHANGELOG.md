@@ -7,14 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-02
+
 ### Added
 - **`just clean` reports freed space** -- shows per-directory sizes before deletion and total freed at the end. Also cleans `tmp/` and `coverage/` directories.
 - **`just clean-all` prunes docker volumes** -- adds `--volumes` to docker prune for full reclaim.
 - **Automatic incremental cache trimming** -- `_clean-stale` now checks if `target/` exceeds 20 GB and auto-removes incremental compilation caches (`target/debug/incremental`, `target/release/incremental`, `target/llvm-cov-target`). Prevents unbounded growth that caused 113 GB bloat.
 - **`_clean-stale` wired into all build paths** -- added to `build-assets` and `cross-compile` dependency chains (was already in `test` and `_compile`).
+- **Revert telemetry** -- `snapshots_revert` now logs a `restored` file event to the session DB, including the source checkpoint (e.g., `"src/main.py (from cp-3)"`). New `FileAction::Restored` variant in capsem-logger, `FileEventStats.restored` counter in reader queries.
+- **Boot audit logging** -- comprehensive `[boot-audit]` tracing throughout the GUI and CLI boot paths (main.rs, gui.rs, boot.rs, cli.rs, session_mgmt.rs). Every step from session cleanup through hypervisor boot is timestamped, making hangs immediately diagnosable.
+- **Doctor: VM asset and guest binary checks** -- `just doctor` now validates asset manifest version, B3SUM integrity, and guest binary presence/format.
+- **Smoke test recipe** -- `just smoke-test` (alias `just smoke`) runs unit tests + repack + sign + capsem-doctor as a fast end-to-end validation without full asset rebuild.
+- **Doctor: Docker BuildKit (buildx) and Colima Rosetta checks** -- `just doctor` now validates that buildx is installed and Colima has Rosetta enabled for cross-arch container builds.
 
 ### Fixed
+- **Cross-arch Docker builds fail on macOS** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, causing arm64 layers to be reused for x86_64 builds. Fixed by requiring Docker BuildKit (buildx), which properly includes platform in cache keys. Added buildx to `just doctor` and `scripts/bootstrap.sh`.
 - **Snapshots tab shows nothing during long sessions** -- the tab called `callMcpTool('snapshots_list')` once on mount, never refreshed, and failed silently if the MCP gateway wasn't wired yet. Replaced with SQL queries against a new `snapshot_events` table in `session.db`, consistent with all other stats tabs. Each snapshot event stores a self-contained `(start_fs_event_id, stop_fs_event_id]` range for efficient per-snapshot change counts via `fs_events` cross-reference.
+- **Symlink loop hangs app on startup** -- `disk_usage_bytes()` used `is_dir()` / `metadata()` which follow symlinks. A `.venv/lib64 -> lib` relative symlink in session workspaces caused infinite recursion, hanging the app at boot. Fixed to use `symlink_metadata()` throughout. Added regression tests for symlink loops, absolute escapes, and real session timing.
+- **Wizard flashes briefly on app launch** -- the setup wizard appeared for one frame before settings finished loading. Added `!settingsStore.loading` guard to prevent the wizard from rendering until settings are fully resolved.
+- **KVM boot path compile errors** -- `vm/boot.rs` referenced `rootfs_path()` and `virtiofs_share()` methods that were renamed. Fixed to use `disk_path()` and `virtio_fs_share()`.
+- **capsem-cli missing `mut`** -- `socket.read(&resp_buf)` needed `&mut resp_buf`.
+
+### Security
+- **Symlink sandbox escape (documented)** -- guest agents can create symlinks through VirtioFS that point to arbitrary host paths (e.g., `host_root -> /`). Host-side code that follows these symlinks escapes the sandbox. `disk_usage_bytes` is fixed; 6 other code paths identified and documented in `tmp/bugs/symlink_escape.md` for hardening.
 
 ## [0.15.3] - 2026-04-02
 

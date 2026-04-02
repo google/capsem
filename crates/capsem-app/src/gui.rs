@@ -73,14 +73,16 @@ pub(crate) fn gui_boot_vm(
     cpu_count: u32,
     ram_bytes: u64,
 ) {
+    info!("[boot-audit] gui_boot_vm: calling boot_vm");
     match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), &virtiofs_shares, cpu_count, ram_bytes) {
         Ok((vm, vsock_rx, sm)) => {
-            info!("VM booted successfully");
+            info!("[boot-audit] boot_vm returned OK");
 
             let rx = vm.serial().subscribe();
             let input_fd = vm.serial().input_fd();
 
             // Open session DB (independently of MITM proxy state).
+            info!("[boot-audit] opening session DB");
             let gui_session_db = match open_session_db(session_id) {
                 Ok(db) => db,
                 Err(e) => {
@@ -88,22 +90,29 @@ pub(crate) fn gui_boot_vm(
                     return;
                 }
             };
+            info!("[boot-audit] session DB opened");
 
             // Create per-VM network state (CA + policy for MITM proxy).
+            info!("[boot-audit] creating net state (MITM CA + policy)");
             let net_state = match create_net_state(session_id, Arc::clone(&gui_session_db)) {
-                Ok(ns) => Some(ns),
+                Ok(ns) => {
+                    info!("[boot-audit] net state created");
+                    Some(ns)
+                }
                 Err(e) => {
-                    warn!("MITM proxy disabled: {e:#}");
+                    warn!("[boot-audit] MITM proxy disabled: {e:#}");
                     None
                 }
             };
 
             // Create MCP gateway config for vsock:5003 using MergedPolicies.
+            info!("[boot-audit] loading MCP policies");
             let gui_policies = policy_config::MergedPolicies::from_disk();
             let (gui_user_sf, gui_corp_sf) = policy_config::load_settings_files();
             let gui_user_mcp = gui_user_sf.mcp.clone().unwrap_or_default();
             let gui_corp_mcp = gui_corp_sf.mcp.clone().unwrap_or_default();
             let mcp_servers = capsem_core::mcp::build_server_list(&gui_user_mcp, &gui_corp_mcp);
+            info!("[boot-audit] building MCP gateway config ({} servers)", mcp_servers.len());
             let mcp_config: Option<Arc<McpGatewayConfig>> = {
                 let http_client = reqwest::Client::builder()
                     .user_agent("capsem-mcp/0.8")
@@ -121,6 +130,7 @@ pub(crate) fn gui_boot_vm(
                     workspace_dir: session_dir_for(session_id).map(|d| d.join("workspace")),
                 }))
             };
+            info!("[boot-audit] MCP gateway config built");
 
             // Store MCP config on AppState for Tauri commands (call_mcp_tool).
             if let Some(ref config) = mcp_config {
@@ -129,16 +139,19 @@ pub(crate) fn gui_boot_vm(
             }
 
             // Initialize MCP servers in background (non-blocking in GUI mode).
+            info!("[boot-audit] spawning MCP server init (background)");
             if let Some(ref config) = mcp_config {
                 let config = Arc::clone(config);
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {
+                    info!("[boot-audit] MCP server init task started");
                     let mut mgr = config.server_manager.lock().await;
                     if let Err(e) = mgr.initialize_all().await {
                         tracing::error!("MCP server initialization failed: {e:#}");
                         let _ = h.emit("mcp-init-failed", format!("{e:#}"));
                         return;
                     }
+                    info!("[boot-audit] MCP servers initialized");
                     // Tool cache pinning (detect rug pulls).
                     let cache = capsem_core::mcp::load_tool_cache();
                     let changes = capsem_core::mcp::detect_pin_changes(mgr.tool_catalog(), &cache);
@@ -159,12 +172,14 @@ pub(crate) fn gui_boot_vm(
                     if let Err(e) = capsem_core::mcp::save_tool_cache(&new_cache) {
                         tracing::warn!("failed to save MCP tool cache: {e}");
                     }
+                    info!("[boot-audit] MCP tool cache updated");
                 });
             }
 
             // Start auto-snapshot scheduler and file monitor in VirtioFS mode.
             let mut fs_monitor: Option<capsem_core::fs_monitor::FsMonitor> = None;
             if !virtiofs_shares.is_empty() {
+                info!("[boot-audit] VirtioFS mode: setting up snapshots + file monitor");
                 if let Some(ref dir) = session_dir_for(session_id) {
                     // Wire auto-snapshot scheduler into MCP config.
                     if let Some(ref config) = mcp_config {
@@ -186,11 +201,11 @@ pub(crate) fn gui_boot_vm(
                         Arc::clone(&gui_session_db),
                     ) {
                         Ok(monitor) => {
-                            info!("host file monitor started");
+                            info!("[boot-audit] host file monitor started");
                             Some(monitor)
                         }
                         Err(e) => {
-                            warn!("failed to start host file monitor: {e}");
+                            warn!("[boot-audit] failed to start host file monitor: {e}");
                             None
                         }
                     };
@@ -198,6 +213,7 @@ pub(crate) fn gui_boot_vm(
             }
 
             // Store VM state.
+            info!("[boot-audit] storing VM instance in app state");
             {
                 let app_state = handle.state::<AppState>();
                 let mut vms = app_state.vms.lock().unwrap();
@@ -221,6 +237,7 @@ pub(crate) fn gui_boot_vm(
             }
 
             // Serial forwarding for boot logs (aborted once vsock connects).
+            info!("[boot-audit] starting serial forwarding");
             let serial_output = {
                 let app_state = handle.state::<AppState>();
                 Arc::clone(&app_state.terminal_output)
@@ -230,6 +247,7 @@ pub(crate) fn gui_boot_vm(
             );
 
             // Spawn vsock connection handler.
+            info!("[boot-audit] spawning vsock handler");
             let h = handle.clone();
             tauri::async_runtime::spawn(
                 setup_vsock(h.clone(), vsock_rx, serial_task),
@@ -240,9 +258,10 @@ pub(crate) fn gui_boot_vm(
                 "state": "Booting",
                 "trigger": "vm_started",
             }));
+            info!("[boot-audit] gui_boot_vm complete, VM is booting");
         }
         Err(e) => {
-            error!("VM boot failed: {e:#}");
+            error!("[boot-audit] VM boot failed: {e:#}");
             info!("continuing without VM (unsigned binary or missing entitlement)");
             let _ = handle.emit("vm-state-changed", serde_json::json!({
                 "state": "Error",

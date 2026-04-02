@@ -31,6 +31,7 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
         None => return,
     };
 
+    info!("[boot-audit] cleanup: deleting stale scratch.img files");
     // Delete leftover scratch.img files from all session dirs.
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
@@ -47,6 +48,7 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
     }
 
     // Mark stale "running" sessions as "crashed" in main.db.
+    info!("[boot-audit] cleanup: marking stale running sessions as crashed");
     match index.mark_running_as_crashed() {
         Ok(0) => {}
         Ok(n) => info!(count = n, "marked stale sessions as crashed"),
@@ -55,7 +57,9 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
 
     // Backfill: for crashed sessions with zero stats but a session.db on disk,
     // retroactively populate the summary tables.
+    info!("[boot-audit] cleanup: backfilling session summaries");
     if let Ok(sessions) = index.recent(1000) {
+        let mut backfill_count = 0u32;
         for rec in &sessions {
             if rec.status != "crashed" && rec.status != "stopped" {
                 continue;
@@ -81,13 +85,18 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
                         );
                     }
                 }
-                info!(id = %rec.id, "backfilled session summary");
+                backfill_count += 1;
             }
+        }
+        if backfill_count > 0 {
+            info!("[boot-audit] cleanup: backfilled {backfill_count} sessions");
         }
     }
 
     // Vacuum recovery: compress any stopped/crashed sessions not yet vacuumed.
+    info!("[boot-audit] cleanup: vacuum recovery");
     if let Ok(unvacuumed) = index.unvacuumed_sessions() {
+        info!("[boot-audit] cleanup: {} unvacuumed sessions", unvacuumed.len());
         for rec in &unvacuumed {
             let session_dir = base.join(&rec.id);
             let has_db = session_dir.join("session.db").exists();
@@ -98,12 +107,14 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
                 let _ = index.mark_vacuumed(&rec.id, 0, &session::now_iso());
                 continue;
             }
+            info!("[boot-audit] cleanup: vacuuming session {}", rec.id);
             vacuum_session(&rec.id, index, &session_dir);
         }
     }
 
     // Content-aware culling: empty test sessions terminated first,
     // content sessions protected up to min_content_sessions.
+    info!("[boot-audit] cleanup: loading retention settings");
     let settings = policy_config::load_merged_settings();
     let retention_days = settings.iter()
         .find(|s| s.id == "vm.resources.retention_days")
@@ -126,11 +137,13 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(365) as u32;
 
+    info!("[boot-audit] cleanup: age culling (retention_days={retention_days})");
     if let Ok(n) = index.terminate_older_than_days_content_aware(retention_days, min_content_sessions) {
         if n > 0 {
             info!(count = n, "terminated old sessions (>{retention_days} days, protecting {min_content_sessions} content sessions)");
         }
     }
+    info!("[boot-audit] cleanup: count culling (max={max_sessions})");
     if let Ok(n) = index.terminate_excess_sessions_content_aware(max_sessions, min_content_sessions) {
         if n > 0 {
             info!(count = n, "terminated excess sessions (cap {max_sessions}, protecting {min_content_sessions} content sessions)");
@@ -138,8 +151,10 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
     }
 
     // Disk-based culling.
+    info!("[boot-audit] cleanup: disk culling (max_gb={max_disk_gb})");
     let max_disk_bytes = max_disk_gb * 1024 * 1024 * 1024;
     let mut usage = session::disk_usage_bytes(&base);
+    info!("[boot-audit] cleanup: current disk usage={} bytes", usage);
     if usage > max_disk_bytes {
         if let Ok(stopped) = index.stopped_sessions_oldest_first() {
             for rec in stopped {
@@ -162,6 +177,7 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
     }
 
     // Delete disk artifacts for terminated sessions that still have directories.
+    info!("[boot-audit] cleanup: deleting terminated session dirs");
     if let Ok(terminated) = index.sessions_by_status("terminated") {
         for rec in &terminated {
             let dir = base.join(&rec.id);
@@ -172,6 +188,7 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
     }
 
     // Purge old terminated records from main.db.
+    info!("[boot-audit] cleanup: purging old terminated records");
     if let Ok(n) = index.purge_terminated_older_than_days(terminated_retention_days) {
         if n > 0 {
             info!(count = n, "purged terminated records (>{terminated_retention_days} days)");
@@ -179,6 +196,7 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
     }
 
     // Remove orphan session dirs that no longer have a DB record.
+    info!("[boot-audit] cleanup: removing orphan session dirs");
     if let Ok(entries) = std::fs::read_dir(&base) {
         let known_ids: std::collections::HashSet<String> = index
             .recent(10_000)
@@ -209,7 +227,9 @@ pub(crate) fn cleanup_stale_sessions(index: &SessionIndex) {
     }
 
     // Checkpoint main.db after all cleanup.
+    info!("[boot-audit] cleanup: checkpointing main.db");
     let _ = index.checkpoint();
+    info!("[boot-audit] cleanup: complete");
 }
 
 /// Vacuum and compress a session DB, updating the index on success.

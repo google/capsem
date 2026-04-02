@@ -47,6 +47,9 @@ pub fn vacuum_and_compress_session_db(session_dir: &Path) -> anyhow::Result<u64>
 }
 
 /// Calculate total disk usage in bytes for all session directories under the given base path.
+///
+/// Uses `symlink_metadata` to avoid following symlinks, which prevents infinite
+/// recursion from symlink loops (e.g. `.venv/lib64 -> lib`).
 pub fn disk_usage_bytes(sessions_base: &Path) -> u64 {
     let entries = match std::fs::read_dir(sessions_base) {
         Ok(e) => e,
@@ -55,10 +58,14 @@ pub fn disk_usage_bytes(sessions_base: &Path) -> u64 {
     let mut total = 0u64;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
             total += dir_size(&path);
-        } else if path.is_file() {
-            total += path.metadata().map(|m| m.len()).unwrap_or(0);
+        } else {
+            total += meta.len();
         }
     }
     total
@@ -72,10 +79,14 @@ fn dir_size(path: &Path) -> u64 {
     let mut total = 0u64;
     for entry in entries.flatten() {
         let p = entry.path();
-        if p.is_dir() {
+        let meta = match std::fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
             total += dir_size(&p);
-        } else if p.is_file() {
-            total += p.metadata().map(|m| m.len()).unwrap_or(0);
+        } else {
+            total += meta.len();
         }
     }
     total

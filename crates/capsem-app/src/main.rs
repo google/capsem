@@ -132,8 +132,11 @@ fn main() {
     info!("starting capsem");
 
     // Clean up stale sessions from previous runs.
+    info!("[boot-audit] cleaning stale sessions");
     session_mgmt::cleanup_stale_sessions(&session_index);
+    info!("[boot-audit] stale sessions cleaned");
 
+    info!("[boot-audit] building tauri app");
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -141,7 +144,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(state::AppState::new(session_index, Some(log_handle)))
         .setup(|app| {
-            info!("tauri setup hook running");
+            info!("[boot-audit] tauri setup hook entered");
 
             // Inject Tauri event emitter into the log layer.
             {
@@ -153,15 +156,18 @@ fn main() {
                     });
                 }
             }
+            info!("[boot-audit] log emitter injected");
 
             // Check for updates before booting the VM.
             let auto_update = {
+                info!("[boot-audit] loading settings for auto-update check");
                 let settings = policy_config::load_merged_settings();
                 settings.iter()
                     .find(|s| s.id == "app.auto_update")
                     .and_then(|s| s.effective_value.as_bool())
                     .unwrap_or(true)
             };
+            info!("[boot-audit] auto_update={auto_update}");
             if auto_update {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -169,6 +175,7 @@ fn main() {
                 });
             }
 
+            info!("[boot-audit] resolving assets directory");
             let assets = match assets::resolve_assets_dir() {
                 Ok(a) => a,
                 Err(e) => {
@@ -187,17 +194,21 @@ fn main() {
                 }
             };
 
-            info!("assets directory: {}", assets.display());
+            info!("[boot-audit] assets directory: {}", assets.display());
 
             // Generate unique session ID for this boot.
             let gui_session_id = session::generate_session_id();
-            info!(session_id = %gui_session_id, "starting new session");
+            info!("[boot-audit] session_id={gui_session_id}");
 
             // Create session directory with VirtioFS overlay for GUI mode.
+            info!("[boot-audit] loading VM settings");
             let vm_settings = policy_config::load_merged_vm_settings();
             let cpu_count = vm_settings.cpu_count.unwrap_or(4);
             let ram_gb = vm_settings.ram_gb.unwrap_or(4);
             let ram_bytes: u64 = ram_gb as u64 * 1024 * 1024 * 1024;
+            info!("[boot-audit] VM config: cpu={cpu_count} ram_gb={ram_gb}");
+
+            info!("[boot-audit] creating session directory");
             let gui_session_dir = session_mgmt::session_dir_for(&gui_session_id);
             let gui_virtiofs_shares: Vec<VirtioFsShare> = gui_session_dir
                 .as_ref()
@@ -207,7 +218,7 @@ fn main() {
                         warn!("failed to create VirtioFS session dir: {e}");
                         return None;
                     }
-                    info!("created VirtioFS session dir");
+                    info!("[boot-audit] VirtioFS session dir created at {}", d.display());
                     Some(vec![VirtioFsShare {
                         tag: "capsem".to_string(),
                         host_path: d.clone(),
@@ -227,6 +238,7 @@ fn main() {
             }
 
             // Record session in main.db.
+            info!("[boot-audit] recording session in index");
             {
                 let app_state = app.state::<state::AppState>();
                 let idx = app_state.session_index.lock().unwrap();
@@ -260,13 +272,16 @@ fn main() {
                 // Set active session ID.
                 *app_state.active_session_id.lock().unwrap() = Some(gui_session_id.clone());
             }
+            info!("[boot-audit] session recorded");
 
             // Resolve rootfs: check bundled assets dir, then ~/.capsem/assets/.
+            info!("[boot-audit] resolving rootfs");
             let rootfs_path = assets::resolve_rootfs(&assets);
+            info!("[boot-audit] rootfs resolved: {}", rootfs_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".to_string()));
 
             if rootfs_path.is_some() {
                 // Rootfs available -- boot immediately on main thread.
-                info!("rootfs available, booting VM on main thread");
+                info!("[boot-audit] rootfs available, calling gui_boot_vm");
                 {
                     let app_state = app.state::<state::AppState>();
                     *app_state.app_status.lock().unwrap() = VmState::Booting.to_string();
@@ -275,9 +290,10 @@ fn main() {
                     app.handle(), &assets, rootfs_path.as_deref(),
                     &gui_session_id, None, gui_virtiofs_shares.clone(), cpu_count, ram_bytes,
                 );
+                info!("[boot-audit] gui_boot_vm returned");
             } else {
                 // Rootfs not found -- download it first.
-                info!("rootfs not found, initiating download");
+                info!("[boot-audit] rootfs not found, initiating download");
                 {
                     let app_state = app.state::<state::AppState>();
                     *app_state.app_status.lock().unwrap() = VmState::Downloading.to_string();
@@ -378,6 +394,7 @@ fn main() {
                 });
             }
 
+            info!("[boot-audit] tauri setup hook complete");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

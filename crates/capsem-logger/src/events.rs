@@ -53,6 +53,7 @@ pub enum FileAction {
     Created,
     Modified,
     Deleted,
+    Restored,
 }
 
 impl FileAction {
@@ -61,6 +62,7 @@ impl FileAction {
             FileAction::Created => "created",
             FileAction::Modified => "modified",
             FileAction::Deleted => "deleted",
+            FileAction::Restored => "restored",
         }
     }
 
@@ -69,6 +71,7 @@ impl FileAction {
             "created" => FileAction::Created,
             "modified" => FileAction::Modified,
             "deleted" => FileAction::Deleted,
+            "restored" => FileAction::Restored,
             other => {
                 tracing::warn!(value = other, "unknown file action string in DB, treating as Modified");
                 FileAction::Modified

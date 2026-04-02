@@ -44,6 +44,7 @@ pub async fn call_mcp_tool(
         }
     }
 
+    let db = std::sync::Arc::clone(&config.db);
     let resp = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
@@ -53,7 +54,7 @@ pub async fn call_mcp_tool(
                 "snapshots_changes" => file_tools::handle_list_changed_files(&arguments, &sched, &ws, None),
                 "snapshots_create" => file_tools::handle_snapshot(&arguments, &mut sched, None),
                 "snapshots_delete" => file_tools::handle_delete_snapshot(&arguments, &sched, None),
-                "snapshots_revert" => file_tools::handle_revert_file(&arguments, &sched, &ws, None),
+                "snapshots_revert" => file_tools::handle_revert_file(&arguments, &sched, &ws, None, Some(&db)),
                 "snapshots_history" => file_tools::handle_snapshots_history(&arguments, &sched, &ws, None),
                 "snapshots_compact" => file_tools::handle_snapshots_compact(&arguments, &mut sched, None),
                 _ => unreachable!("is_file_tool check above"),

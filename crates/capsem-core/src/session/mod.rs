@@ -391,6 +391,109 @@ mod tests {
         assert!(usage >= 4096, "usage={usage}");
     }
 
+    #[test]
+    fn disk_usage_bytes_real_sessions_timing() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let sessions_dir = std::path::PathBuf::from(&home).join(".capsem").join("sessions");
+        if !sessions_dir.exists() {
+            eprintln!("skipping: no ~/.capsem/sessions/ directory");
+            return;
+        }
+
+        let count = std::fs::read_dir(&sessions_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .count();
+        eprintln!("session dirs: {count}");
+
+        let start = std::time::Instant::now();
+        let usage = disk_usage_bytes(&sessions_dir);
+        let elapsed = start.elapsed();
+
+        eprintln!("disk_usage_bytes: {usage} bytes ({:.1} MB) in {elapsed:?}", usage as f64 / 1_048_576.0);
+        assert!(elapsed < std::time::Duration::from_secs(5),
+            "disk_usage_bytes took {elapsed:?} -- way too slow for {count} dirs");
+    }
+
+    /// Symlink loop must not cause infinite recursion or hang.
+    /// Regression test for the bug where .venv/lib64 -> lib caused
+    /// disk_usage_bytes to recurse forever.
+    #[test]
+    fn disk_usage_bytes_symlink_loop_terminates() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("20260402-100000-loop");
+        let venv = session.join(".venv");
+        std::fs::create_dir_all(&venv).ok();
+        std::fs::create_dir_all(venv.join("lib")).ok();
+        std::fs::write(venv.join("lib").join("foo.py"), vec![0u8; 1024]).ok();
+        // Create the loop: lib64 -> lib
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("lib", venv.join("lib64")).unwrap();
+
+        let start = std::time::Instant::now();
+        let usage = disk_usage_bytes(dir.path());
+        let elapsed = start.elapsed();
+
+        // Must complete in under 1 second (was infinite before fix).
+        assert!(elapsed < std::time::Duration::from_secs(1),
+            "disk_usage_bytes hung on symlink loop: {elapsed:?}");
+        // Should only count the real file once, not follow the loop.
+        assert!(usage >= 1024, "usage={usage} -- should count the real file");
+        // Should NOT double-count via the symlink.
+        assert!(usage < 4096, "usage={usage} -- double-counted through symlink loop");
+    }
+
+    /// Absolute symlinks pointing outside the session dir must not be followed.
+    /// Regression test for the host_root -> / sandbox escape.
+    #[test]
+    fn disk_usage_bytes_absolute_symlink_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("20260402-100000-escape");
+        std::fs::create_dir_all(&session).ok();
+        std::fs::write(session.join("real.txt"), vec![0u8; 512]).ok();
+        // Symlink pointing to /usr (large directory on any system).
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/usr", session.join("escape")).unwrap();
+
+        let start = std::time::Instant::now();
+        let usage = disk_usage_bytes(dir.path());
+        let elapsed = start.elapsed();
+
+        // Must complete instantly -- not walking /usr.
+        assert!(elapsed < std::time::Duration::from_secs(1),
+            "disk_usage_bytes followed symlink to /usr: {elapsed:?}");
+        // Should count real.txt (512 bytes) + the symlink itself (a few bytes).
+        // Must NOT include the size of /usr (gigabytes).
+        assert!(usage < 10_000, "usage={usage} -- followed absolute symlink outside sandbox");
+        assert!(usage >= 512, "usage={usage} -- should count the real file");
+    }
+
+    /// Symlink to a file outside the session must count the symlink size, not the target.
+    #[test]
+    fn disk_usage_bytes_file_symlink_counts_link_not_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("20260402-100000-file");
+        std::fs::create_dir_all(&session).ok();
+        // /usr/bin/python3 is a large binary. The symlink itself is ~20 bytes.
+        #[cfg(unix)]
+        {
+            let target = std::path::Path::new("/usr/bin/python3");
+            if !target.exists() {
+                eprintln!("skipping: /usr/bin/python3 not found");
+                return;
+            }
+            let target_size = std::fs::metadata(target).unwrap().len();
+            std::os::unix::fs::symlink(target, session.join("python")).unwrap();
+
+            let usage = disk_usage_bytes(dir.path());
+            // Symlink itself is just a few bytes (the path string).
+            // Must NOT be the size of the python3 binary.
+            assert!(usage < target_size,
+                "usage={usage} target_size={target_size} -- followed symlink to python3 binary");
+        }
+    }
+
     // -- epoch_to_iso --
 
     #[test]

@@ -64,7 +64,7 @@ snapshots revert src/main.py            # from newest snapshot containing the fi
 snapshots revert src/main.py cp-3       # from a specific checkpoint
 ```
 
-If the file existed in the snapshot, it is restored. If it didn't exist (was created after the snapshot), it is deleted from the workspace.
+If the file existed in the snapshot, it is restored. If it didn't exist (was created after the snapshot), it is deleted from the workspace. Every revert is logged as a `restored` file event in the session database, including which checkpoint was used.
 
 ## Viewing file history
 

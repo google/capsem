@@ -132,6 +132,7 @@ pub struct FileEventStats {
     pub created: u64,
     pub modified: u64,
     pub deleted: u64,
+    pub restored: u64,
 }
 
 /// Aggregate MCP call statistics.
@@ -1053,7 +1054,8 @@ impl DbReader {
                 COUNT(*),
                 COALESCE(SUM(CASE WHEN action = 'created' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN action = 'modified' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN action = 'deleted' THEN 1 ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN action = 'deleted' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN action = 'restored' THEN 1 ELSE 0 END), 0)
              FROM fs_events",
             [],
             |row| {
@@ -1062,6 +1064,7 @@ impl DbReader {
                     created: row.get::<_, i64>(1)? as u64,
                     modified: row.get::<_, i64>(2)? as u64,
                     deleted: row.get::<_, i64>(3)? as u64,
+                    restored: row.get::<_, i64>(4)? as u64,
                 })
             },
         )

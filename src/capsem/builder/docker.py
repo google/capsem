@@ -767,7 +767,12 @@ def build_image(
     template_name = f"Dockerfile.{template}.j2"
     tag = f"capsem-{template}-{arch_name}"
 
-    with tempfile.TemporaryDirectory(prefix="capsem-build-") as tmpdir:
+    # Use a temporary directory inside the project root's target/ folder.
+    # On macOS, system temp dirs (/var/folders) are often not mountable by Docker/Colima.
+    build_tmp = repo_root / "target" / "tmp"
+    build_tmp.mkdir(parents=True, exist_ok=True)
+    
+    with tempfile.TemporaryDirectory(prefix=f"capsem-build-{template}-", dir=build_tmp) as tmpdir:
         context_dir = Path(tmpdir)
 
         if template == "kernel":

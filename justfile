@@ -519,6 +519,16 @@ doctor: _pnpm-install
             fail "docker -- install: sudo apt install docker.io"
         fi
     fi
+    # Check Docker BuildKit (buildx) -- required for cross-arch builds
+    if docker buildx version &>/dev/null; then
+        pass "docker buildx ($(docker buildx version 2>/dev/null | head -1))"
+    else
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            fail "docker buildx -- install: brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx"
+        else
+            fail "docker buildx -- install: sudo apt install docker-buildx-plugin"
+        fi
+    fi
     # Check Colima is running on macOS
     if [[ "$(uname -s)" == "Darwin" ]]; then
         if command -v colima &>/dev/null; then
@@ -526,6 +536,17 @@ doctor: _pnpm-install
                 pass "colima (running)"
             else
                 fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
+            fi
+            # Check Colima has Rosetta enabled (required for x86_64 container builds)
+            COLIMA_YAML="$HOME/.colima/default/colima.yaml"
+            if [[ -f "$COLIMA_YAML" ]]; then
+                if grep -q 'rosetta: true' "$COLIMA_YAML" && grep -q 'vmType: vz' "$COLIMA_YAML"; then
+                    pass "colima rosetta (enabled, vz)"
+                else
+                    fail "colima rosetta not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
+                fi
+            else
+                fail "colima config not found at $COLIMA_YAML"
             fi
         else
             fail "colima not found -- install: brew install colima"

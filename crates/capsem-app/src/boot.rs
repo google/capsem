@@ -75,6 +75,8 @@ pub(crate) fn boot_vm(
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
 
+    info!("[boot-audit] boot_vm: cpu={cpu_count} ram_bytes={ram_bytes} virtiofs_shares={}", virtiofs_shares.len());
+
     // In VirtioFS mode, append storage flag to kernel cmdline.
     let effective_cmdline = if virtiofs_shares.is_empty() {
         cmdline.to_string()
@@ -84,21 +86,31 @@ pub(crate) fn boot_vm(
 
     let config = {
         let _span = debug_span!("config_build").entered();
+        info!("[boot-audit] building VmConfig");
+
+        let kernel_path = assets.join("vmlinuz");
+        info!("[boot-audit] kernel: {} (exists={})", kernel_path.display(), kernel_path.exists());
+
         let mut builder = VmConfig::builder()
             .cpu_count(cpu_count)
             .ram_bytes(ram_bytes)
-            .kernel_path(assets.join("vmlinuz"))
+            .kernel_path(kernel_path)
             .kernel_cmdline(&effective_cmdline);
 
         if let Some(hash) = option_env!("VMLINUZ_HASH") {
+            info!("[boot-audit] kernel hash verification enabled");
             builder = builder.expected_kernel_hash(hash);
         }
 
-        if assets.join("initrd.img").exists() {
-            builder = builder.initrd_path(assets.join("initrd.img"));
+        let initrd_path = assets.join("initrd.img");
+        if initrd_path.exists() {
+            info!("[boot-audit] initrd: {} (exists=true)", initrd_path.display());
+            builder = builder.initrd_path(initrd_path);
             if let Some(hash) = option_env!("INITRD_HASH") {
                 builder = builder.expected_initrd_hash(hash);
             }
+        } else {
+            info!("[boot-audit] initrd: {} (exists=false)", initrd_path.display());
         }
 
         // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
@@ -111,17 +123,22 @@ pub(crate) fn boot_vm(
             });
 
         if let Some(ref rootfs) = rootfs_path {
+            info!("[boot-audit] rootfs: {} (exists={})", rootfs.display(), rootfs.exists());
             builder = builder.disk_path(rootfs);
             if let Some(hash) = option_env!("ROOTFS_HASH") {
                 builder = builder.expected_disk_hash(hash);
             }
+        } else {
+            info!("[boot-audit] rootfs: none");
         }
 
         if let Some(scratch) = scratch_disk_path {
+            info!("[boot-audit] scratch disk: {}", scratch.display());
             builder = builder.scratch_disk_path(scratch);
         }
 
         for share in virtiofs_shares {
+            info!("[boot-audit] VirtioFS share: tag={} path={}", share.tag, share.host_path.display());
             builder = builder.virtio_fs_share(
                 &share.tag,
                 &share.host_path,
@@ -129,8 +146,10 @@ pub(crate) fn boot_vm(
             );
         }
 
+        info!("[boot-audit] calling VmConfig::build()");
         builder.build().context("failed to build VmConfig")?
     };
+    info!("[boot-audit] VmConfig built successfully");
 
     let vsock_ports = [
         VSOCK_PORT_CONTROL,
@@ -139,6 +158,7 @@ pub(crate) fn boot_vm(
         VSOCK_PORT_MCP_GATEWAY,
     ];
 
+    info!("[boot-audit] calling hypervisor boot");
     let (vm, vsock_rx) = {
         let _span = debug_span!("hypervisor_boot").entered();
         #[cfg(target_os = "macos")]
@@ -148,6 +168,7 @@ pub(crate) fn boot_vm(
         result
             .context("failed to boot VM")?
     };
+    info!("[boot-audit] hypervisor boot returned OK");
 
     sm.transition(HostState::Booting, "vm_started")?;
 

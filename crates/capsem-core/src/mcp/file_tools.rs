@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use serde_json::Value;
@@ -539,6 +540,7 @@ pub fn handle_revert_file(
     scheduler: &AutoSnapshotScheduler,
     workspace_root: &Path,
     request_id: Option<Value>,
+    db: Option<&Arc<capsem_logger::DbWriter>>,
 ) -> JsonRpcResponse {
     let raw_path = match arguments.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
@@ -672,6 +674,26 @@ pub fn handle_revert_file(
                 );
             }
         }
+    }
+
+    // Log the revert as a file event in the session DB.
+    if let Some(db) = db {
+        let file_action = if action == "restored" {
+            capsem_logger::FileAction::Restored
+        } else {
+            capsem_logger::FileAction::Deleted
+        };
+        let size = if action == "restored" {
+            std::fs::symlink_metadata(&current_file).ok().map(|m| m.len())
+        } else {
+            None
+        };
+        db.try_write(capsem_logger::WriteOp::FileEvent(capsem_logger::FileEvent {
+            timestamp: SystemTime::now(),
+            action: file_action,
+            path: format!("{} (from {})", path_str, cp_str_owned),
+            size,
+        }));
     }
 
     JsonRpcResponse::ok(
@@ -1248,6 +1270,7 @@ mod tests {
             &sched,
             &session.join("workspace"),
             Some(serde_json::json!(1)),
+            None,
         );
 
         // Verify success with action and checkpoint fields.
@@ -1280,6 +1303,7 @@ mod tests {
             &sched,
             &session.join("workspace"),
             Some(serde_json::json!(1)),
+            None,
         );
 
         assert!(resp.error.is_none());
@@ -1303,6 +1327,7 @@ mod tests {
             &sched,
             &session.join("workspace"),
             Some(serde_json::json!(1)),
+            None,
         );
         assert!(resp.error.is_some());
     }
@@ -1318,6 +1343,7 @@ mod tests {
             &sched,
             &session.join("workspace"),
             Some(serde_json::json!(1)),
+            None,
         );
         assert!(resp.error.is_some());
     }
@@ -1332,6 +1358,7 @@ mod tests {
             &sched,
             &session.join("workspace"),
             Some(serde_json::json!(1)),
+            None,
         );
         assert!(resp.error.is_some());
     }
@@ -1361,7 +1388,7 @@ mod tests {
 
         // Revert to version 1 (cp-0)
         let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
         assert!(resp.error.is_none(), "revert to cp-0 failed: {:?}", resp.error);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "version ONE");
         let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
@@ -1371,13 +1398,13 @@ mod tests {
 
         // Revert to version 2 (cp-1)
         let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-1"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
         assert!(resp.error.is_none(), "revert to cp-1 failed: {:?}", resp.error);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "version TWO -- longer content here");
 
         // Revert to version 3 (cp-2)
         let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-2"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
         assert!(resp.error.is_none(), "revert to cp-2 failed: {:?}", resp.error);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "version THREE!!!");
     }
@@ -1403,7 +1430,7 @@ mod tests {
 
         // Recover
         let args = serde_json::json!({"path": "precious.txt", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
         assert!(resp.error.is_none());
 
         // Verify exact content
@@ -1534,7 +1561,7 @@ mod tests {
 
         // Revert without specifying checkpoint -- should pick cp-1 (newest).
         let args = serde_json::json!({"path": "auto.txt"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
         assert!(resp.error.is_none(), "auto-select revert failed: {:?}", resp.error);
 
         let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
@@ -1558,7 +1585,7 @@ mod tests {
         std::fs::write(ws.join("orphan.txt"), "data").unwrap();
 
         let args = serde_json::json!({"path": "orphan.txt"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)));
+        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
         assert!(resp.error.is_some());
         let err_msg = &resp.error.unwrap().message;
         assert!(err_msg.contains("no snapshot contains this file"), "unexpected error: {err_msg}");

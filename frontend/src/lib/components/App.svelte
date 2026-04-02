@@ -18,7 +18,7 @@
   let checkedFirstRun = $state(false);
 
   const showWizard = $derived(
-    !wizardStore.completed && ((checkedFirstRun && settingsStore.needsSetup) || wizardStore.forceRerun)
+    !wizardStore.completed && !settingsStore.loading && ((checkedFirstRun && settingsStore.needsSetup) || wizardStore.forceRerun)
   );
 
   onMount(() => {

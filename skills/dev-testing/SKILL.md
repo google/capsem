@@ -12,10 +12,12 @@ Three tiers, fast to thorough. Every change must pass all three before it ships.
 | Tier | Command | What | VM? |
 |------|---------|------|-----|
 | Fast | `just test` | Unit tests (llvm-cov) + cross-compile agent + frontend check + build | No |
-| Smoke | `just run "capsem-doctor"` | Boot VM, run full diagnostic suite (~10s) | Yes |
-| Full | `just full-test` | test + doctor + integration test + bench (3x boot) | Yes |
+| Smoke | `just smoke` | test + repack + sign + boot + session DB validation (~30s) | Yes |
+| Full | `just full-test` | smoke + build-assets + cross-compile + integration + bench | Yes |
 
-Why all three matter: `just test` catches logic bugs and type errors without a VM. `just run "capsem-doctor"` catches sandbox and network regressions that only manifest inside the guest. `just full-test` catches telemetry pipeline and performance regressions. Skipping the smoke tier is how bugs ship -- unit tests pass but the VM sandbox behaves differently.
+Why all three matter: `just test` catches logic bugs and type errors without a VM. `just smoke` (runs `scripts/doctor_session_test.py`) catches sandbox, network, and telemetry regressions that only manifest inside the guest, without the 10-minute overhead of a full image build. `just full-test` catches fresh image build, packaging, and performance regressions.
+
+Skipping the smoke tier is how bugs ship -- unit tests pass but the VM sandbox behaves differently or telemetry is broken.
 
 ## TDD workflow
 

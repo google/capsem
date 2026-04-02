@@ -95,14 +95,19 @@ pub(crate) fn parse_env_args(args: &[String]) -> (Vec<(String, String)>, Vec<Str
 ///   does not pump `CFRunLoop`.
 /// - Requires manual polling loops for control messages.
 pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index: &SessionIndex, log_handle: Option<&capsem_core::log_layer::LogHandle>) -> Result<()> {
+    info!("[boot-audit] CLI mode: command={command:?}");
+
     // Tokio runtime for async MITM proxy handlers.
+    info!("[boot-audit] creating tokio runtime");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .context("failed to create tokio runtime")?;
 
+    info!("[boot-audit] resolving assets directory");
     let assets = resolve_assets_dir()?;
+    info!("[boot-audit] assets: {}", assets.display());
 
     // Resolve rootfs: check bundled assets first, then ~/.capsem/assets/.
     // If missing, download it before booting.
@@ -130,6 +135,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
 
     // Generate unique session ID.
     let cli_session_id = session::generate_session_id();
+    info!("[boot-audit] session_id={cli_session_id}");
     eprintln!("[capsem] session: {cli_session_id}");
 
     // Create session directory with VirtioFS overlay.
@@ -196,6 +202,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         warn!("failed to record session: {e}");
     }
 
+    info!("[boot-audit] calling boot_vm");
     let (vm, mut vsock_rx, mut sm) = boot_vm(
         &assets,
         rootfs_path.as_deref(),
@@ -206,12 +213,16 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         ram_bytes,
     )?;
 
+    info!("[boot-audit] boot_vm returned OK");
     let mut rx = vm.serial().subscribe();
 
     // Open session DB (hard fail -- needed by file monitor, MCP, telemetry).
+    info!("[boot-audit] opening session DB");
     let session_db = open_session_db(&cli_session_id)?;
+    info!("[boot-audit] session DB opened");
 
     // Create per-VM network state for MITM proxy.
+    info!("[boot-audit] creating net state");
     let net_state = match create_net_state(&cli_session_id, Arc::clone(&session_db)) {
         Ok(ns) => Some(ns),
         Err(e) => {
@@ -231,6 +242,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
     });
 
     // Create MCP gateway config for vsock:5003 using pre-built policies.
+    info!("[boot-audit] building MCP gateway config");
     let (user_sf, corp_sf) = policy_config::load_settings_files();
     let user_mcp = user_sf.mcp.clone().unwrap_or_default();
     let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
@@ -253,7 +265,10 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         }))
     };
 
+    info!("[boot-audit] MCP gateway config built");
+
     // Initialize MCP servers and run tool pinning (blocking in CLI mode).
+    info!("[boot-audit] initializing MCP servers (blocking)");
     if let Some(ref config) = mcp_config {
         let config = Arc::clone(config);
         rt.block_on(async {
@@ -284,6 +299,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         });
     }
 
+    info!("[boot-audit] MCP init done, starting serial reader");
     // Print serial boot logs to stderr in a background thread.
     std::thread::spawn(move || {
         loop {
@@ -298,6 +314,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         }
     });
 
+    info!("[boot-audit] waiting for vsock connections");
     // Accept vsock connections with CFRunLoop pumping.
     // The VZ framework delivers connections via ObjC callbacks that require
     // CFRunLoop to be running on the main thread.

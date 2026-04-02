@@ -261,7 +261,7 @@ async fn handle_json_rpc(
                                     super::file_tools::handle_list_snapshots(&arguments, &sched, &ws, req_id)
                                 }
                                 "snapshots_revert" => {
-                                    super::file_tools::handle_revert_file(&arguments, &sched, &ws, req_id)
+                                    super::file_tools::handle_revert_file(&arguments, &sched, &ws, req_id, Some(&db))
                                 }
                                 "snapshots_create" => {
                                     let resp = super::file_tools::handle_snapshot(&arguments, &mut sched, req_id);

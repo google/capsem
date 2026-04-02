@@ -16,6 +16,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just ui` | Frontend-only dev server (mock mode, no VM) |
 | `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
 | `just run "CMD"` | Same but run CMD instead of interactive shell |
+| `just smoke` | test + repack + sign + boot + session DB validation (~30s) |
 | `just test` | Unit tests (llvm-cov) + agent cross-compile + frontend check |
 | `just cross-compile [arch]` | Full Linux build in container (agent + deb + AppImage) |
 | `just full-test` | test + capsem-doctor + integration + bench (3x VM boot) |
@@ -37,10 +38,10 @@ All workflows use `just` (not make). The justfile is the single entry point.
 
 | What changed | Command |
 |-------------|---------|
-| Rust host code | `just run` or `just test` |
-| Guest binary (agent, net-proxy, mcp-server) | `just run` (auto-repacks initrd) |
-| `capsem-init` | `just run` (auto-repacks initrd) |
-| In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just run "capsem-doctor"` |
+| Rust host code | `just smoke` (E2E) or `just test` (unit) |
+| Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks) |
+| `capsem-init` | `just smoke` (auto-repacks) |
+| In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just smoke` |
 | Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just run` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
 | Telemetry pipelines | `just run "<cmd>"` then `just inspect-session` |
