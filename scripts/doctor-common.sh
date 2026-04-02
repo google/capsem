@@ -250,15 +250,7 @@ if [[ ${#FIX_CMDS[@]} -gt 0 ]]; then
     done
     echo ""
 
-    _do_fix="n"
     if [[ "${1:-}" == "--fix" ]]; then
-        _do_fix="y"
-    elif [[ -t 0 ]]; then
-        echo -ne "Fix now? [y/N] "
-        read -r _do_fix
-    fi
-
-    if [[ "$_do_fix" == "y" || "$_do_fix" == "Y" ]]; then
         echo ""
         for i in "${!FIX_CMDS[@]}"; do
             echo -e "${BOLD}Fixing:${NC} ${FIX_LABELS[$i]}"
@@ -273,6 +265,9 @@ if [[ ${#FIX_CMDS[@]} -gt 0 ]]; then
         echo -e "${BOLD}Re-running doctor to verify...${NC}"
         echo ""
         exec "$0"
+    else
+        echo ""
+        echo -e "Run ${BOLD}just doctor-fix${NC} to auto-fix these issues."
     fi
 fi
 

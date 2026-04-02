@@ -373,6 +373,10 @@ cut-release: full-test
 doctor: _pnpm-install
     scripts/doctor-common.sh
 
+# Doctor + auto-fix all fixable issues
+doctor-fix: _pnpm-install
+    scripts/doctor-common.sh --fix
+
 # Legacy doctor (replaced by scripts/doctor-common.sh)
 _doctor-legacy: _pnpm-install
     #!/bin/bash
