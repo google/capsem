@@ -16,115 +16,15 @@
   <a href="https://github.com/google/capsem/blob/main/LICENSE"><img src="https://img.shields.io/github/license/google/capsem" alt="License" /></a>
 </p>
 
-> **Disclaimer**: This project is not an official Google project. It is not supported by Google and Google specifically disclaims all warranties as to its quality, merchantability, or fitness for a particular purpose.
-
-## Features
-
-- **Hardware VM isolation** -- Each agent runs in its own VM via Apple Virtualization.framework (macOS) or KVM (Linux). Stage 2 page tables, no shared memory, no container escapes.
-- **Air-gapped networking** -- No NIC exists in the VM. All HTTPS traffic is intercepted by a transparent MITM proxy with per-domain allow/block policy and full request/response telemetry.
-- **Hardened kernel** -- Custom-compiled Linux kernel: no loadable modules, no IP stack, KASLR, stack protector, FORTIFY_SOURCE. 7MB vs 30MB stock Debian.
-- **HTTPS inspection** -- TLS termination with per-domain minted certificates. Every API call is logged: provider, model, tokens, cost, tool calls, trace linking.
-- **MCP tool gateway** -- Routes MCP tool calls from AI agents through a policy engine. Built-in tools (`fetch_http`, `grep_http`, `http_headers`) and external MCP server passthrough.
-- **Workspace snapshots** -- Rolling auto-snapshots via APFS clonefile. Create, list, diff, revert, compact snapshots from MCP tools or the in-VM `snapshots` CLI.
-- **Per-session telemetry** -- SQLite database per session: network events, model calls (with token counts and cost), tool calls, MCP calls, file events. Queryable from the UI.
-- **Security presets** -- Medium/High security profiles. Corporate lockdown via `/etc/capsem/corp.toml` (MDM-distributed). Per-domain HTTP method+path rules.
-- **AI agent support** -- Claude Code, Gemini CLI, and Codex run in yolo mode by default. The VM is the security boundary, not the agent's permission system.
-- **Boot in ~2 seconds** -- Squashfs rootfs + VirtioFS overlay + initrd-bundled agent binaries. No disk formatting, no package installs.
-
-## How it works
-
-```mermaid
-sequenceDiagram
-    participant D as Developer
-    participant C as Capsem (macOS)
-    participant VM as Linux VM
-
-    D->>C: capsem run "task"
-    C->>VM: Boot VM (Virtualization.framework)
-    C->>VM: vsock:5001 terminal I/O
-    C->>VM: vsock:5002 HTTPS MITM proxy
-    C->>VM: vsock:5003 MCP gateway
-
-    Note over VM: AI agent runs in sandbox
-
-    VM->>C: HTTPS requests (intercepted)
-    C->>C: Inspect, log, apply policy
-    C-->>VM: Forward to upstream (if allowed)
-
-    VM->>C: MCP tool calls
-    C->>C: Policy check + route
-    C-->>VM: Tool results
-
-    C->>C: Auto-snapshot workspace (APFS clonefile)
-    C->>C: Record telemetry to session.db
-
-    VM->>C: Terminal output (vsock:5001)
-    C->>D: Display in UI / terminal
-```
-
-1. Capsem boots a Linux VM with a hardened kernel and read-only rootfs
-2. The AI agent (Claude, Gemini, Codex) starts in `/root` with full filesystem access
-3. All HTTPS traffic is intercepted -- API calls are parsed for model, tokens, cost, and tool usage
-4. MCP tool calls are routed through a policy engine with built-in and external tool support
-5. Workspace snapshots are taken automatically every 5 minutes (APFS clonefile, zero-copy)
-6. The session database records everything for the telemetry UI
-
 ## Install
 
-### macOS
-
-**Download the DMG** from the [latest release](https://github.com/google/capsem/releases/latest), open it, and drag Capsem.app to Applications.
-
-Or with Homebrew (coming soon):
-
 ```sh
-brew install --cask capsem
+curl -fsSL https://capsem.org/install.sh | sh
 ```
 
-Requires macOS 13+ on Apple Silicon.
+Pre-built binaries (DMG, .deb, .AppImage) are also available from the [latest release](https://github.com/google/capsem/releases/latest). See the [Getting Started](https://capsem.org/getting-started/) guide for details.
 
-### Linux
-
-Download the `.deb` or `.AppImage` from the [latest release](https://github.com/google/capsem/releases/latest).
-
-```sh
-# Debian/Ubuntu
-sudo dpkg -i capsem_*.deb
-
-# Or run directly
-chmod +x Capsem*.AppImage && ./Capsem*.AppImage
-```
-
-Requires Linux kernel 5.x+ with KVM support (`/dev/kvm`).
-
-### Build from source
-
-**Prerequisites**: Rust (stable), just, Node.js 24+, pnpm, Python 3.11+, uv, and Docker or Podman (4GB+ RAM).
-See the [Development Guide](https://capsem.org/development/getting-started/) for detailed setup instructions.
-
-```sh
-bash scripts/bootstrap.sh  # check tools + install deps (first time)
-just build-assets          # build VM assets (~10 min, first time only)
-just run "echo hello"      # verify everything works
-```
-
-Or step by step:
-
-```sh
-just doctor          # check prerequisites
-just build-assets    # build VM assets (~10 min, first time only)
-just install         # test + build + codesign + install
-```
-
-## Usage
-
-### GUI
-
-```sh
-open /Applications/Capsem.app
-```
-
-### CLI
+## Quick start
 
 ```sh
 capsem uname -a
@@ -132,79 +32,22 @@ capsem echo hello
 capsem 'ls -la /proc/cpuinfo'
 ```
 
-## Architecture
-
-```
-crates/capsem-core/    VM library (config, boot, vsock, MITM proxy, MCP gateway, hypervisor)
-crates/capsem-app/     Tauri binary (GUI, CLI, IPC commands)
-crates/capsem-agent/   Guest binaries (PTY agent, net proxy, MCP relay)
-crates/capsem-logger/  Telemetry DB (writer, reader, schema)
-crates/capsem-proto/   Wire protocol (vsock message encoding)
-frontend/              Astro 5 + Svelte 5 + Tailwind v4 + DaisyUI v5
-src/capsem/builder/    capsem-builder CLI (config-driven image builder)
-guest/config/          Guest image configuration (TOML configs)
-guest/artifacts/       Guest scripts and diagnostics (capsem-init, tests)
-```
-
-## Development
-
-```sh
-just dev             # hot-reloading Tauri app (frontend + Rust)
-just ui              # frontend-only dev server (mock mode, no VM)
-just run             # cross-compile + repack + build + sign + boot (~10s)
-just test            # unit tests + cross-compile + frontend check
-just full-test       # test + capsem-doctor + integration + bench
-```
-
-See `just --list` for all targets.
-
-## Testing
-
-| Layer | Command | What it tests |
-|-------|---------|---------------|
-| Unit | `cargo test --workspace` | 1,500+ Rust tests across all crates |
-| Frontend | `cd frontend && pnpm run test` | Svelte component + store tests |
-| In-VM | `just run "capsem-doctor"` | 284 sandbox/network/runtime diagnostics inside the VM |
-| Integration | `just full-test` | End-to-end: boot VM, exercise all telemetry pipelines, verify DBs |
-
-## Security
-
-Capsem assumes the AI agent is adversarial. The sandbox is hardened at every layer:
-
-| Layer | Protection |
-|-------|-----------|
-| Hardware | Apple Silicon Stage 2 page tables (macOS) / KVM with VT-x (Linux), no shared memory |
-| Kernel | Custom-compiled, `CONFIG_MODULES=n`, `CONFIG_INET=n`, KASLR |
-| Network | No NIC. DNS/HTTP/IP physically impossible. MITM proxy on vsock only. |
-| Filesystem | Read-only squashfs rootfs. Only `/root`, `/tmp`, `/run` writable. |
-| Boot integrity | BLAKE3 hashes of kernel/initrd/rootfs compiled into the binary |
-| Processes | PID 1 is our init. No systemd, no cron, no sshd. |
-| Agent binaries | Deployed read-only (chmod 555), verified at boot |
-
-Full threat model: [Security Overview](https://capsem.org/security/overview/)
-
-## Tech stack
-
-- [Rust](https://www.rust-lang.org) -- VM library, MITM proxy, MCP gateway, guest agents
-- [Tauri 2.0](https://tauri.app) -- Desktop app framework
-- [Apple Virtualization.framework](https://developer.apple.com/documentation/virtualization) -- macOS hypervisor
-- [KVM](https://www.linux-kvm.org) / [rust-vmm](https://github.com/rust-vmm) -- Linux hypervisor
-- [Astro 5](https://astro.build) + [Svelte 5](https://svelte.dev) -- Frontend
-- [Tailwind v4](https://tailwindcss.com) + [DaisyUI v5](https://daisyui.com) -- Design system
-- [rustls](https://github.com/rustls/rustls) + [hyper](https://hyper.rs) -- TLS termination and HTTP inspection
-- [SQLite](https://sqlite.org) -- Per-session telemetry storage
-- [capsem-builder](https://capsem.org/architecture/build-system/) -- Config-driven guest image builder (Python/Pydantic)
-
 ## Documentation
 
-Full documentation at [capsem.org](https://capsem.org).
+Full documentation at **[capsem.org](https://capsem.org)**.
 
-- [Getting Started](https://capsem.org/getting-started/) -- install and boot your first session
-- [Architecture](https://capsem.org/architecture/hypervisor/) -- hypervisor, build system, asset pipeline, settings
-- [Security](https://capsem.org/security/overview/) -- threat model, isolation layers, network policy
-- [Testing](https://capsem.org/testing/capsem-doctor/) -- in-VM diagnostics and benchmarks
-- [Custom Images](https://capsem.org/architecture/custom-images/) -- build your own guest images
-- [Development](https://capsem.org/development/getting-started/) -- contributing and dev environment
+| Topic | Link |
+|-------|------|
+| Getting Started | [capsem.org/getting-started](https://capsem.org/getting-started/) |
+| Architecture | [capsem.org/architecture/hypervisor](https://capsem.org/architecture/hypervisor/) |
+| Security | [capsem.org/security/overview](https://capsem.org/security/overview/) |
+| Custom Images | [capsem.org/architecture/custom-images](https://capsem.org/architecture/custom-images/) |
+| Snapshots | [capsem.org/usage/snapshots](https://capsem.org/usage/snapshots/) |
+| Benchmarks | [capsem.org/benchmarks/results](https://capsem.org/benchmarks/results/) |
+| Troubleshooting | [capsem.org/debugging/troubleshooting](https://capsem.org/debugging/troubleshooting/) |
+| Development | [capsem.org/development/getting-started](https://capsem.org/development/getting-started/) |
+| Just Recipes | [capsem.org/development/just-recipes](https://capsem.org/development/just-recipes/) |
+| Release Notes | [capsem.org/releases](https://capsem.org/releases/0-15/) |
 
 ## Disclaimer
 
