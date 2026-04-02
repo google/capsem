@@ -55,9 +55,9 @@ _reg run-signed-chmod "chmod +x scripts/run_signed.sh" \
                       "Make scripts/run_signed.sh executable"
 _reg pnpm-install     "cd frontend && pnpm install --frozen-lockfile" \
                       "Install frontend deps"
-_reg build-assets     "CAPSEM_SKIP_ASSET_CHECK=1 just build-assets" \
+_reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets" \
                       "Build VM assets (kernel + rootfs)"
-_reg pack-initrd      "CAPSEM_SKIP_ASSET_CHECK=1 just _pack-initrd" \
+_reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _pack-initrd" \
                       "Cross-compile guest binaries + repack initrd"
 
 need_fix() {
@@ -222,19 +222,23 @@ else
 fi
 
 section "Guest Binaries"
-arch=$(uname -m | sed 's/aarch64/arm64/')
-release_dir="target/linux-agent/$arch"
-for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
-    if [[ -f "$release_dir/$b" ]]; then
-        if file "$release_dir/$b" 2>/dev/null | grep -E -q "ELF 64-bit"; then
-            pass "$b (Linux ELF)"
+if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
+    arch=$(uname -m | sed 's/aarch64/arm64/')
+    release_dir="target/linux-agent/$arch"
+    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
+        if [[ -f "$release_dir/$b" ]]; then
+            if file "$release_dir/$b" 2>/dev/null | grep -E -q "ELF 64-bit"; then
+                pass "$b (Linux ELF)"
+            else
+                fixable pack-initrd "$b found but not Linux ELF"
+            fi
         else
-            fixable pack-initrd "$b found but not Linux ELF"
+            fixable pack-initrd "$b missing"
         fi
-    else
-        fixable pack-initrd "$b missing"
-    fi
-done
+    done
+else
+    skip "Guest Binaries (CAPSEM_SKIP_ASSET_CHECK set)"
+fi
 
 section "Release Tools"
 for tool in gh openssl minisign cargo-sbom; do
