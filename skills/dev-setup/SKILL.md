@@ -23,14 +23,17 @@ Run `just doctor` to check all of these:
 | Node.js 24+ | Frontend build | `nvm` or `brew install node` |
 | uv | Python package manager | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Docker (via Colima on macOS) | VM image builds | `brew install colima docker` (macOS) or `sudo apt install docker.io` (Linux) |
+| Docker BuildKit (buildx) | Cross-arch container builds | `brew install docker-buildx` (macOS) or `sudo apt install docker-buildx-plugin` (Linux) |
 
-Rust targets (auto-installed by `just test`):
+Rust targets (auto-installed by `just doctor-fix`):
 - `aarch64-unknown-linux-musl` -- guest binaries (arm64)
 - `x86_64-unknown-linux-musl` -- guest binaries (x86_64)
 
-Cargo tools (auto-installed by `just test`):
-- `cargo-nextest` -- test runner
+Cargo tools (auto-installed by `just doctor-fix`):
 - `cargo-llvm-cov` -- coverage
+- `cargo-audit` -- vulnerability scanner
+- `cargo-tauri` -- Tauri CLI
+- `b3sum` -- BLAKE3 checksums
 
 ## Container runtime setup
 
@@ -69,23 +72,26 @@ sudo apt install docker.io
 # 1. Clone and enter
 git clone <repo> && cd capsem
 
-# 2. Check tools
-just doctor
+# 2. Bootstrap (installs deps + runs doctor with auto-fix)
+sh scripts/bootstrap.sh
 
-# 3. Install frontend deps
-cd frontend && pnpm install && cd ..
-
-# 4. Install Python deps
-uv sync
-
-# 5. Build VM assets (kernel + rootfs, ~10 min, needs Docker)
+# 3. Build VM assets (kernel + rootfs, ~10 min, needs Docker)
 just build-assets
 
-# 6. Boot the VM to verify everything works
+# 4. Boot the VM to verify everything works
 just run "echo hello from capsem"
 ```
 
-If step 6 prints "hello from capsem" and exits cleanly, you're set.
+Or step by step:
+
+```bash
+just doctor          # Check tools (colored output, structured recap)
+just doctor-fix      # Auto-fix missing targets, cargo tools, config files
+just build-assets    # Build kernel + rootfs (~10 min)
+just run "echo hi"   # Verify VM boots
+```
+
+If step 4 prints "hello from capsem" and exits cleanly, you're set.
 
 ## Daily workflow
 
@@ -169,7 +175,7 @@ confirm signing works.
 - Check SIP status: `csrutil status`
 
 ### `just doctor` fails
-Install missing tools as indicated. Most can be installed via `brew` or `cargo install`.
+Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (rustup targets before cargo tools before build-assets before pack-initrd). Non-fixable issues show install hints.
 
 ### `just build-assets` fails with exit code 137
 The container runtime VM ran out of memory. Increase to 8GB:
@@ -216,12 +222,36 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just run`
 
-## Design rules for doctor and bootstrap
+## Doctor architecture
 
-When modifying `just doctor` or `scripts/bootstrap.sh`:
+The doctor system is three bash scripts:
 
-- **Every `fail()` line must include a fix command.** Never just say "X not found" -- always append `-- install: <exact command>` or `-- run: <exact command>`. A developer should be able to copy-paste the fix directly from the output.
-- **Platform-gate macOS-only checks.** Codesigning, Xcode CLTools, and entitlements checks must be wrapped in `uname -s == Darwin` guards. On Linux, use `[SKIP]` (not `[FAIL]`) with a note about what works on Linux.
-- **Test, don't just check.** Verifying `codesign` exists is not enough -- the test-sign step compiles a tiny binary and actually signs it with entitlements. This catches broken CLTools installs, SIP issues, and entitlements XML corruption.
-- **Surface errors, don't swallow them.** `run_signed.sh` must print codesign failures to stderr, not just to `target/build.log`. If signing fails, tell the developer to run `just doctor`.
-- **Install hints must be platform-aware.** Use `brew` on macOS, `apt`/`dnf` on Linux. The `bootstrap.sh` `hint_for()` function and the doctor `tool_hint()` function both follow this pattern.
+```
+scripts/
+  doctor-common.sh    # Entry point, cross-platform checks, fix registry, recap
+  doctor-macos.sh     # macOS: Colima, Rosetta, codesigning, brew hints
+  doctor-linux.sh     # Linux: KVM, apt/dnf hints
+```
+
+`just doctor` calls `doctor-common.sh`. `just doctor-fix` calls `doctor-common.sh --fix`.
+
+### Fix registry
+
+All fixable issues use an **ordered fix registry** defined at the top of `doctor-common.sh`. Each entry has an ID, command, and description. Checks call `fixable <id> <label>` to mark a fix as needed. Fixes run in registry order (dependency order), deduped by design.
+
+Registry order (each depends on the ones above it):
+1. `rustup-targets` -- cross-compile targets
+2. `llvm-tools` -- rust-lld linker
+3. `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` -- cargo tools
+4. `entitlements`, `cargo-config`, `run-signed` -- git checkout config files
+5. `pnpm-install` -- frontend deps
+6. `build-assets` -- VM kernel + rootfs (needs docker)
+7. `pack-initrd` -- guest binaries (needs assets)
+
+### Design rules
+
+- **Fixable checks use `fixable <id> <label>`**, not raw `fail()`. This registers the fix in the ordered registry.
+- **Non-fixable checks use `fail()` with an install hint.** System tools (node, docker, etc.) can't be auto-installed safely.
+- **Platform-specific checks live in `doctor-macos.sh` / `doctor-linux.sh`.** Each defines `check_platform()` and `tool_hint()`.
+- **Test, don't just check.** The codesigning section compiles and signs a test binary. `docker buildx version` tests functionality, not just file existence.
+- **Bootstrap calls doctor.** `scripts/bootstrap.sh` checks bare minimums (bash, git, curl, rustup, just), installs Python/frontend deps, then runs `doctor-common.sh --fix`.

@@ -11,7 +11,8 @@ All workflows use `just` (not make). The justfile is the single entry point.
 
 | Command | What it does |
 |---------|-------------|
-| `just doctor` | Check all required tools are installed |
+| `just doctor` | Check all required tools, colored output, structured recap |
+| `just doctor-fix` | Doctor + auto-fix all fixable issues in dependency order |
 | `just dev` | Hot-reload app (frontend + Rust, full Tauri) |
 | `just ui` | Frontend-only dev server (mock mode, no VM) |
 | `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
@@ -69,9 +70,16 @@ When debugging build issues, check `target/build.log` first. When writing new bu
 ## First-time setup
 
 ```bash
-just doctor        # Verify tools
+just doctor        # Check tools (colored output, shows fixable issues)
+just doctor-fix    # Auto-fix missing targets, cargo tools, config files
 just build-assets  # Build kernel + rootfs (~10 min, needs docker)
 just run           # Boot the VM
+```
+
+Or use bootstrap which does all of this:
+
+```bash
+sh scripts/bootstrap.sh   # Installs deps + runs doctor --fix
 ```
 
 ## Daily dev
