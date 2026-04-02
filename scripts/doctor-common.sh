@@ -55,9 +55,9 @@ _reg run-signed-chmod "chmod +x scripts/run_signed.sh" \
                       "Make scripts/run_signed.sh executable"
 _reg pnpm-install     "cd frontend && pnpm install --frozen-lockfile" \
                       "Install frontend deps"
-_reg build-assets     "just build-assets" \
+_reg build-assets     "CAPSEM_SKIP_ASSET_CHECK=1 just build-assets" \
                       "Build VM assets (kernel + rootfs)"
-_reg pack-initrd      "just _pack-initrd" \
+_reg pack-initrd      "CAPSEM_SKIP_ASSET_CHECK=1 just _pack-initrd" \
                       "Cross-compile guest binaries + repack initrd"
 
 need_fix() {
@@ -307,7 +307,8 @@ if [[ "$_needed_count" -gt 0 ]]; then
                 if eval "${FIX_CMDS[$i]}"; then
                     echo -e "  ${GREEN}done${NC}"
                 else
-                    echo -e "  ${RED}failed${NC}"
+                    echo -e "  ${RED}failed -- stopping (later fixes depend on this)${NC}"
+                    exit 1
                 fi
                 echo ""
             fi
