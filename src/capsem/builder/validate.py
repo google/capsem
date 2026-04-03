@@ -341,7 +341,17 @@ def _validate_artifacts(
     artifacts_dir: Path,
     diags: list[Diagnostic],
 ) -> None:
-    """Check required artifacts exist, emit E301/E302."""
+    """Check required artifacts exist, emit E301/E302.
+
+    Uses the canonical lists from docker.py so there is one place to add
+    a new artifact.
+    """
+    from capsem.builder.docker import (
+        ROOTFS_SCRIPTS,
+        ROOTFS_SCRIPT_DIRS,
+        ROOTFS_SUPPORT_FILES,
+    )
+
     # E301: CA certificate
     ca_cert = artifacts_dir / "capsem-ca.crt"
     if not ca_cert.exists():
@@ -352,9 +362,9 @@ def _validate_artifacts(
             file=str(ca_cert),
         ))
 
-    # E302: Required artifacts
-    required = ["capsem-init", "capsem-bashrc"]
-    for name in required:
+    # E302: Required files (single source of truth from docker.py)
+    required_files = ["capsem-init"] + list(ROOTFS_SUPPORT_FILES) + list(ROOTFS_SCRIPTS)
+    for name in required_files:
         path = artifacts_dir / name
         if not path.exists():
             diags.append(Diagnostic(
@@ -364,15 +374,16 @@ def _validate_artifacts(
                 file=str(path),
             ))
 
-    # Diagnostics directory
-    diag_dir = artifacts_dir / "diagnostics"
-    if not diag_dir.is_dir():
-        diags.append(Diagnostic(
-            code="E302",
-            severity=Severity.ERROR,
-            message="Missing diagnostics directory",
-            file=str(diag_dir),
-        ))
+    # Required directories
+    for name in ROOTFS_SCRIPT_DIRS:
+        path = artifacts_dir / name
+        if not path.is_dir():
+            diags.append(Diagnostic(
+                code="E302",
+                severity=Severity.ERROR,
+                message=f"Missing required directory: {name}",
+                file=str(path),
+            ))
 
 
 def _validate_warnings(

@@ -105,6 +105,23 @@ class TestRenderRootfs:
         assert "capsem-doctor" in rendered_arm64
         assert "capsem-bench" in rendered_arm64
         assert "capsem_bench/" in rendered_arm64
+        assert "COPY snapshots /usr/local/bin/snapshots" in rendered_arm64
+
+    def test_rootfs_includes_all_required_artifacts(self, rendered_arm64):
+        """Every ROOTFS_SCRIPTS/ROOTFS_SCRIPT_DIRS entry must have a COPY line.
+
+        This prevents future omissions -- adding a tool to the constant without
+        adding it to the template will fail this test.
+        """
+        from capsem.builder.docker import ROOTFS_SCRIPTS, ROOTFS_SCRIPT_DIRS
+        for artifact in ROOTFS_SCRIPTS:
+            assert f"COPY {artifact}" in rendered_arm64, (
+                f"{artifact} missing from rootfs Dockerfile"
+            )
+        for d in ROOTFS_SCRIPT_DIRS:
+            assert f"COPY {d}/" in rendered_arm64, (
+                f"{d}/ missing from rootfs Dockerfile"
+            )
 
     def test_node_version(self, rendered_arm64):
         assert "nvm install 24" in rendered_arm64
@@ -925,6 +942,8 @@ class TestPrepareBuildContext:
         assert (context_dir / "capsem-bench").is_file()
         assert (context_dir / "capsem_bench").is_dir()
         assert (context_dir / "capsem_bench" / "__main__.py").is_file()
+        # Snapshot CLI must be in rootfs context
+        assert (context_dir / "snapshots").is_file()
 
     def test_kernel_context_has_defconfig_and_init(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"

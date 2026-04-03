@@ -938,8 +938,9 @@ _pack-initrd:
     rm -rf capsem_bench
     cp -r "$ROOT/guest/artifacts/capsem_bench" capsem_bench
     find capsem_bench -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+    rm -f snapshots
     cp "$ROOT/guest/artifacts/snapshots" snapshots
-    chmod 755 snapshots
+    chmod 555 snapshots
     rm -rf diagnostics
     cp -r "$ROOT/guest/artifacts/diagnostics" diagnostics
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"

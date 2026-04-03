@@ -74,15 +74,21 @@ GUEST_BINARY_PATHS = [
     "/run/capsem-pty-agent",
     "/usr/local/bin/capsem-net-proxy",
     "/run/capsem-net-proxy",
+    "/run/capsem-mcp-server",
+    "/usr/local/bin/snapshots",
 ]
 
 
 @pytest.fixture(params=GUEST_BINARY_PATHS)
 def guest_binary(request):
-    """Yield each guest binary path that exists on this guest."""
+    """Yield each guest binary path that exists on this guest.
+
+    Fails (not skips) if missing -- every binary in GUEST_BINARY_PATHS must
+    be present in a correctly built VM image.
+    """
     path = request.param
     if not os.path.isfile(path):
-        pytest.skip(f"{path} not present")
+        pytest.fail(f"required guest binary not found: {path}")
     return path
 
 

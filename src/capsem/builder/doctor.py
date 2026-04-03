@@ -297,18 +297,30 @@ def check_guest_config(guest_dir: Path) -> CheckResult:
 
 
 def check_source_files(repo_root: Path) -> CheckResult:
-    """Check that required source files exist for build context assembly."""
-    required = {
-        "guest/artifacts/capsem-init": repo_root / "guest" / "artifacts" / "capsem-init",
-        "guest/artifacts/capsem-bashrc": repo_root / "guest" / "artifacts" / "capsem-bashrc",
-        "guest/artifacts/banner.txt": repo_root / "guest" / "artifacts" / "banner.txt",
-        "guest/artifacts/tips.txt": repo_root / "guest" / "artifacts" / "tips.txt",
-        "guest/artifacts/capsem-doctor": repo_root / "guest" / "artifacts" / "capsem-doctor",
-        "guest/artifacts/capsem-bench": repo_root / "guest" / "artifacts" / "capsem-bench",
-        "guest/artifacts/capsem_bench/": repo_root / "guest" / "artifacts" / "capsem_bench",
-        "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
+    """Check that required source files exist for build context assembly.
+
+    Uses the canonical artifact lists from docker.py (ROOTFS_SCRIPTS,
+    ROOTFS_SCRIPT_DIRS, ROOTFS_SUPPORT_FILES) so there is exactly one
+    place to add a new artifact.
+    """
+    from capsem.builder.docker import (
+        ROOTFS_SCRIPTS,
+        ROOTFS_SCRIPT_DIRS,
+        ROOTFS_SUPPORT_FILES,
+    )
+
+    artifacts = repo_root / "guest" / "artifacts"
+    required: dict[str, Path] = {
+        # capsem-init is always required (kernel template uses it too)
+        "guest/artifacts/capsem-init": artifacts / "capsem-init",
         "config/capsem-ca.crt": repo_root / "config" / "capsem-ca.crt",
     }
+    for name in ROOTFS_SUPPORT_FILES:
+        required[f"guest/artifacts/{name}"] = artifacts / name
+    for name in ROOTFS_SCRIPTS:
+        required[f"guest/artifacts/{name}"] = artifacts / name
+    for name in ROOTFS_SCRIPT_DIRS:
+        required[f"guest/artifacts/{name}/"] = artifacts / name
 
     missing = []
     for label, path in required.items():

@@ -260,6 +260,17 @@ jobs:
           echo "=== assets/manifest.json ==="
           cat assets/manifest.json | head -5
 
+      - name: Validate source artifacts (pre-build gate)
+        run: |
+          uv run python3 -c "
+          from capsem.builder.doctor import check_source_files
+          from pathlib import Path
+          result = check_source_files(Path('.'))
+          if not result.passed:
+              raise SystemExit(f'Source file check failed: {result.detail}')
+          print(f'OK: {result.detail}')
+          "
+
       - name: Build and sign app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -361,6 +372,37 @@ jobs:
           ls -la assets/current/
           echo "=== assets/manifest.json ==="
           cat assets/manifest.json | head -5
+
+      - name: Validate source artifacts (pre-build gate)
+        run: |
+          uv run python3 -c "
+          from capsem.builder.doctor import check_source_files
+          from pathlib import Path
+          result = check_source_files(Path('.'))
+          if not result.passed:
+              raise SystemExit(f'Source file check failed: {result.detail}')
+          print(f'OK: {result.detail}')
+          "
+
+      - name: Validate rootfs contains all required binaries
+        run: |
+          ROOTFS="assets/${{ matrix.arch }}/rootfs.squashfs"
+          MOUNT=$(mktemp -d)
+          sudo mount -t squashfs -o loop,ro "$ROOTFS" "$MOUNT"
+          MISSING=""
+          for bin in capsem-pty-agent capsem-net-proxy capsem-mcp-server \
+                     capsem-doctor capsem-bench snapshots; do
+            if [ ! -f "$MOUNT/usr/local/bin/$bin" ]; then
+              MISSING="$MISSING $bin"
+            fi
+          done
+          sudo umount "$MOUNT"
+          rmdir "$MOUNT"
+          if [ -n "$MISSING" ]; then
+            echo "::error::rootfs is missing required binaries:$MISSING"
+            exit 1
+          fi
+          echo "All required binaries present in rootfs"
 
       - name: Build app
         env:

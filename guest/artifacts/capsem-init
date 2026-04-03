@@ -312,7 +312,7 @@ if [ -d /capsem_bench ]; then
 fi
 if [ -x /snapshots ]; then
     cp /snapshots /newroot/usr/local/bin/snapshots
-    chmod 755 /newroot/usr/local/bin/snapshots
+    chmod 555 /newroot/usr/local/bin/snapshots
     echo "[capsem-init] snapshots deployed"
 fi
 if [ -d /diagnostics ]; then
