@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-04-03
+
 ### Fixed
 - **`snapshots` tool missing from release VM images** -- the `snapshots` CLI was only injected via `just _pack-initrd` (local dev), which is not run during CI release builds. Added `snapshots` to the rootfs Dockerfile so it ships with every release. Also fixed `snapshots` permissions from 755 to 555 (matching guest binary security invariant).
 
