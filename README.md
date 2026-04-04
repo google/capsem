@@ -6,7 +6,7 @@
 
 <p align="center">
   Sandbox AI coding agents in hardware-isolated Linux VMs on macOS and Linux.<br/>
-  Full network control, HTTPS inspection, MCP tool routing, and per-session telemetry.
+  Full network control, HTTPS inspection, MCP tool routing, headless browser automation, and per-session telemetry.
 </p>
 
 <p align="center">

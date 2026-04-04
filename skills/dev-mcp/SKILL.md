@@ -12,7 +12,7 @@ The MCP gateway bridges AI agents in the guest VM to external MCP servers on the
 ```
 Guest (Claude/Gemini) -> capsem-mcp-server (stdin/stdout relay)
   -> vsock:5003 -> MCP Gateway (capsem-core)
-  -> Policy check -> Route to: builtin tools | external MCP servers (via rmcp)
+  -> Policy check -> Route to: builtin tools | browser tools | external MCP servers (via rmcp)
   -> Telemetry -> session.db mcp_calls table
 ```
 
@@ -82,6 +82,11 @@ Decisions: `Allow`, `Warn` (log + continue), `Block` (error -32600).
 
 All use namespace prefix `builtin` (e.g., `builtin__http_get`).
 
+### Browser tools (headless browser automation)
+`browser_navigate`, `browser_click`, `browser_type`, `browser_screenshot`, `browser_evaluate`, `browser_get_text`, `browser_fill_form`, `browser_get_content`, `browser_close`
+
+See `/dev-browser` skill for full browser tools documentation.
+
 ## Key source files
 
 | File | Purpose |
@@ -90,6 +95,8 @@ All use namespace prefix `builtin` (e.g., `builtin__http_get`).
 | `crates/capsem-core/src/mcp/types.rs` | JsonRpcRequest/Response, McpToolDef, annotations |
 | `crates/capsem-core/src/mcp/server_manager.rs` | rmcp client pool, tool routing, catalog |
 | `crates/capsem-core/src/mcp/policy.rs` | Tool/server allow/warn/block decisions |
+| `crates/capsem-core/src/mcp/browser_tools.rs` | Browser tool definitions, session manager, handlers |
+| `crates/capsem-core/src/mcp/builtin_tools.rs` | HTTP tool implementations |
 | `crates/capsem-core/src/mcp/mod.rs` | Tool cache, server detection, collision detection |
 | `crates/capsem-agent/src/main.rs` | capsem-mcp-server binary (stdin/stdout relay) |
 

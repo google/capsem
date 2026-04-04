@@ -21,6 +21,7 @@ use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceReq
 
 use crate::net::domain_policy::DomainPolicy;
 
+use super::browser_tools;
 use super::builtin_tools;
 use super::policy::{McpPolicy, ToolDecision};
 use super::server_manager::McpServerManager;
@@ -41,9 +42,12 @@ pub struct McpGatewayConfig {
     /// HTTP client for built-in tools.
     pub http_client: reqwest::Client,
     /// Auto-snapshot scheduler for file tools (VirtioFS mode only).
-    pub auto_snapshots: Option<Arc<tokio::sync::Mutex<crate::auto_snapshot::AutoSnapshotScheduler>>>,
+    pub auto_snapshots:
+        Option<Arc<tokio::sync::Mutex<crate::auto_snapshot::AutoSnapshotScheduler>>>,
     /// Workspace directory for file tools (VirtioFS mode only).
     pub workspace_dir: Option<std::path::PathBuf>,
+    /// Browser manager for headless browser tools.
+    pub browser_manager: Option<Arc<browser_tools::BrowserManager>>,
 }
 
 /// Serve a single MCP session over a vsock connection.
@@ -145,8 +149,8 @@ async fn serve_mcp_session_inner(fd: RawFd, config: &McpGatewayConfig) -> Result
         log_mcp_call(config, &request, &response, &process_name, duration_ms).await;
 
         // Send NDJSON response line
-        let mut resp_line = serde_json::to_vec(&response)
-            .context("failed to serialize JSON-RPC response")?;
+        let mut resp_line =
+            serde_json::to_vec(&response).context("failed to serialize JSON-RPC response")?;
         resp_line.push(b'\n');
         write_half.write_all(&resp_line).await?;
     }
@@ -161,32 +165,34 @@ async fn handle_json_rpc(
     _process_name: &str,
 ) -> Option<JsonRpcResponse> {
     match req.method.as_str() {
-        "initialize" => {
-            Some(JsonRpcResponse::ok(
-                req.id.clone(),
-                serde_json::json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {},
-                        "resources": {},
-                        "prompts": {}
-                    },
-                    "serverInfo": {
-                        "name": "capsem-mcp-gateway",
-                        "version": env!("CARGO_PKG_VERSION")
-                    }
-                }),
-            ))
-        }
+        "initialize" => Some(JsonRpcResponse::ok(
+            req.id.clone(),
+            serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {}
+                },
+                "serverInfo": {
+                    "name": "capsem-mcp-gateway",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }),
+        )),
 
         // Notifications have no id and expect no response.
         "notifications/initialized" => None,
 
         "tools/list" => {
-            // Prepend built-in tools (HTTP + file) before external server tools.
+            // Prepend built-in tools (HTTP + file + browser) before external server tools.
             let mut builtin = builtin_tools::builtin_tool_defs();
             if config.workspace_dir.is_some() {
                 builtin.extend(super::file_tools::file_tool_defs());
+            }
+            // Add browser tools if browser manager is available
+            if config.browser_manager.is_some() {
+                builtin.extend(browser_tools::browser_tool_defs());
             }
             let mgr = config.server_manager.lock().await;
             let tools: Vec<serde_json::Value> = builtin
@@ -204,7 +210,10 @@ async fn handle_json_rpc(
                     tool
                 })
                 .collect();
-            Some(JsonRpcResponse::ok(req.id.clone(), serde_json::json!({"tools": tools})))
+            Some(JsonRpcResponse::ok(
+                req.id.clone(),
+                serde_json::json!({"tools": tools}),
+            ))
         }
 
         "tools/call" => {
@@ -215,7 +224,11 @@ async fn handle_json_rpc(
                 .unwrap_or("");
 
             if tool_name.is_empty() {
-                return Some(JsonRpcResponse::err(req.id.clone(), -32602, "missing tool name"));
+                return Some(JsonRpcResponse::err(
+                    req.id.clone(),
+                    -32602,
+                    "missing tool name",
+                ));
             }
 
             let arguments = params
@@ -227,7 +240,9 @@ async fn handle_json_rpc(
             // File tools do blocking I/O (directory cloning, walkdir, blake3 hashing,
             // subprocess execution) so they MUST run off the tokio worker threads.
             if super::file_tools::is_file_tool(tool_name) {
-                if let (Some(ref sched), Some(ref ws)) = (&config.auto_snapshots, &config.workspace_dir) {
+                if let (Some(ref sched), Some(ref ws)) =
+                    (&config.auto_snapshots, &config.workspace_dir)
+                {
                     let decision = policy.evaluate("builtin", Some(tool_name));
                     match decision {
                         ToolDecision::Block => {
@@ -255,26 +270,47 @@ async fn handle_json_rpc(
                             let mut sched = sched.lock().await;
                             match tool_name.as_str() {
                                 "snapshots_changes" => {
-                                    super::file_tools::handle_list_changed_files(&arguments, &sched, &ws, req_id)
+                                    super::file_tools::handle_list_changed_files(
+                                        &arguments, &sched, &ws, req_id,
+                                    )
                                 }
-                                "snapshots_list" => {
-                                    super::file_tools::handle_list_snapshots(&arguments, &sched, &ws, req_id)
-                                }
-                                "snapshots_revert" => {
-                                    super::file_tools::handle_revert_file(&arguments, &sched, &ws, req_id, Some(&db))
-                                }
+                                "snapshots_list" => super::file_tools::handle_list_snapshots(
+                                    &arguments, &sched, &ws, req_id,
+                                ),
+                                "snapshots_revert" => super::file_tools::handle_revert_file(
+                                    &arguments,
+                                    &sched,
+                                    &ws,
+                                    req_id,
+                                    Some(&db),
+                                ),
                                 "snapshots_create" => {
-                                    let resp = super::file_tools::handle_snapshot(&arguments, &mut sched, req_id);
+                                    let resp = super::file_tools::handle_snapshot(
+                                        &arguments, &mut sched, req_id,
+                                    );
                                     // Log manual snapshot to session DB for the stats UI.
                                     if resp.error.is_none() {
-                                        if let Some(last_slot) = sched.list_snapshots().into_iter()
-                                            .filter(|s| s.origin == crate::auto_snapshot::SnapshotOrigin::Manual)
+                                        if let Some(last_slot) = sched
+                                            .list_snapshots()
+                                            .into_iter()
+                                            .filter(|s| {
+                                                s.origin
+                                                    == crate::auto_snapshot::SnapshotOrigin::Manual
+                                            })
                                             .max_by_key(|s| s.slot)
                                         {
-                                            let stop_id = db.reader().ok()
-                                                .and_then(|r| r.query_raw("SELECT COALESCE(MAX(id),0) FROM fs_events").ok())
+                                            let stop_id = db
+                                                .reader()
+                                                .ok()
+                                                .and_then(|r| {
+                                                    r.query_raw(
+                                                        "SELECT COALESCE(MAX(id),0) FROM fs_events",
+                                                    )
+                                                    .ok()
+                                                })
                                                 .and_then(|json| {
-                                                    let v: serde_json::Value = serde_json::from_str(&json).ok()?;
+                                                    let v: serde_json::Value =
+                                                        serde_json::from_str(&json).ok()?;
                                                     v["rows"].get(0)?.get(0)?.as_i64()
                                                 })
                                                 .unwrap_or(0);
@@ -295,20 +331,30 @@ async fn handle_json_rpc(
                                     }
                                     resp
                                 }
-                                "snapshots_delete" => {
-                                    super::file_tools::handle_delete_snapshot(&arguments, &sched, req_id)
-                                }
-                                "snapshots_history" => {
-                                    super::file_tools::handle_snapshots_history(&arguments, &sched, &ws, req_id)
-                                }
-                                "snapshots_compact" => {
-                                    super::file_tools::handle_snapshots_compact(&arguments, &mut sched, req_id)
-                                }
-                                _ => JsonRpcResponse::err(req_id, -32602, format!("unknown file tool: {tool_name}")),
+                                "snapshots_delete" => super::file_tools::handle_delete_snapshot(
+                                    &arguments, &sched, req_id,
+                                ),
+                                "snapshots_history" => super::file_tools::handle_snapshots_history(
+                                    &arguments, &sched, &ws, req_id,
+                                ),
+                                "snapshots_compact" => super::file_tools::handle_snapshots_compact(
+                                    &arguments, &mut sched, req_id,
+                                ),
+                                _ => JsonRpcResponse::err(
+                                    req_id,
+                                    -32602,
+                                    format!("unknown file tool: {tool_name}"),
+                                ),
                             }
                         })
-                    }).await.unwrap_or_else(|e| {
-                        JsonRpcResponse::err(req_id_fallback, -32603, format!("file tool task failed: {e}"))
+                    })
+                    .await
+                    .unwrap_or_else(|e| {
+                        JsonRpcResponse::err(
+                            req_id_fallback,
+                            -32603,
+                            format!("file tool task failed: {e}"),
+                        )
                     });
                     return Some(resp);
                 } else {
@@ -338,19 +384,43 @@ async fn handle_json_rpc(
                 }
 
                 let dp = config.domain_policy.read().unwrap().clone();
-                return Some(builtin_tools::call_builtin_tool(
-                    tool_name,
-                    &arguments,
-                    &config.http_client,
-                    &dp,
-                    req.id.clone(),
-                    &config.db,
-                ).await);
+                return Some(
+                    builtin_tools::call_builtin_tool(
+                        tool_name,
+                        &arguments,
+                        &config.http_client,
+                        &dp,
+                        req.id.clone(),
+                        &config.db,
+                    )
+                    .await,
+                );
+            }
+
+            // Route browser tools (if browser manager is available).
+            if browser_tools::is_browser_tool(tool_name) {
+                if let Some(ref browser_mgr) = config.browser_manager {
+                    return Some(
+                        browser_tools::call_browser_tool(
+                            tool_name,
+                            &arguments,
+                            browser_mgr,
+                            req.id.clone(),
+                            &config.db,
+                        )
+                        .await,
+                    );
+                } else {
+                    return Some(JsonRpcResponse::err(
+                        req.id.clone(),
+                        -32603,
+                        "browser tools unavailable (browser manager not initialized)",
+                    ));
+                }
             }
 
             // External server tools: parse namespace prefix.
-            let (server_name, _local_name) = parse_namespaced(tool_name)
-                .unwrap_or(("", tool_name));
+            let (server_name, _local_name) = parse_namespaced(tool_name).unwrap_or(("", tool_name));
 
             let decision = policy.evaluate(server_name, Some(tool_name));
             match decision {
@@ -372,9 +442,13 @@ async fn handle_json_rpc(
                 let mgr = config.server_manager.lock().await;
                 match mgr.lookup_tool_peer(tool_name) {
                     Ok(p) => p,
-                    Err(e) => return Some(JsonRpcResponse::err(
-                        req.id.clone(), -32603, format!("tool call failed: {e}"),
-                    )),
+                    Err(e) => {
+                        return Some(JsonRpcResponse::err(
+                            req.id.clone(),
+                            -32603,
+                            format!("tool call failed: {e}"),
+                        ))
+                    }
                 }
             };
 
@@ -389,12 +463,14 @@ async fn handle_json_rpc(
 
             match peer.call_tool(params).await {
                 Ok(result) => {
-                    let result_json = serde_json::to_value(&result)
-                        .unwrap_or(serde_json::json!({}));
+                    let result_json =
+                        serde_json::to_value(&result).unwrap_or(serde_json::json!({}));
                     Some(JsonRpcResponse::ok(req.id.clone(), result_json))
                 }
                 Err(e) => Some(JsonRpcResponse::err(
-                    req.id.clone(), -32603, format!("tool call failed: {e}"),
+                    req.id.clone(),
+                    -32603,
+                    format!("tool call failed: {e}"),
                 )),
             }
         }
@@ -413,7 +489,10 @@ async fn handle_json_rpc(
                     })
                 })
                 .collect();
-            Some(JsonRpcResponse::ok(req.id.clone(), serde_json::json!({"resources": resources})))
+            Some(JsonRpcResponse::ok(
+                req.id.clone(),
+                serde_json::json!({"resources": resources}),
+            ))
         }
 
         "resources/read" => {
@@ -425,28 +504,38 @@ async fn handle_json_rpc(
                 .unwrap_or("");
 
             if uri.is_empty() {
-                return Some(JsonRpcResponse::err(req.id.clone(), -32602, "missing resource URI"));
+                return Some(JsonRpcResponse::err(
+                    req.id.clone(),
+                    -32602,
+                    "missing resource URI",
+                ));
             }
 
             let (peer, original_uri) = {
                 let mgr = config.server_manager.lock().await;
                 match mgr.lookup_resource_peer(uri) {
                     Ok(p) => p,
-                    Err(e) => return Some(JsonRpcResponse::err(
-                        req.id.clone(), -32603, format!("resource read failed: {e}"),
-                    )),
+                    Err(e) => {
+                        return Some(JsonRpcResponse::err(
+                            req.id.clone(),
+                            -32603,
+                            format!("resource read failed: {e}"),
+                        ))
+                    }
                 }
             };
 
             let params = ReadResourceRequestParams::new(original_uri.clone());
             Some(match peer.read_resource(params).await {
                 Ok(result) => {
-                    let result_json = serde_json::to_value(&result)
-                        .unwrap_or(serde_json::json!({}));
+                    let result_json =
+                        serde_json::to_value(&result).unwrap_or(serde_json::json!({}));
                     JsonRpcResponse::ok(req.id.clone(), result_json)
                 }
                 Err(e) => JsonRpcResponse::err(
-                    req.id.clone(), -32603, format!("resource read failed: {e}"),
+                    req.id.clone(),
+                    -32603,
+                    format!("resource read failed: {e}"),
                 ),
             })
         }
@@ -464,7 +553,10 @@ async fn handle_json_rpc(
                     })
                 })
                 .collect();
-            Some(JsonRpcResponse::ok(req.id.clone(), serde_json::json!({"prompts": prompts})))
+            Some(JsonRpcResponse::ok(
+                req.id.clone(),
+                serde_json::json!({"prompts": prompts}),
+            ))
         }
 
         "prompts/get" => {
@@ -475,7 +567,11 @@ async fn handle_json_rpc(
                 .unwrap_or("");
 
             if prompt_name.is_empty() {
-                return Some(JsonRpcResponse::err(req.id.clone(), -32602, "missing prompt name"));
+                return Some(JsonRpcResponse::err(
+                    req.id.clone(),
+                    -32602,
+                    "missing prompt name",
+                ));
             }
 
             let arguments = params
@@ -487,9 +583,13 @@ async fn handle_json_rpc(
                 let mgr = config.server_manager.lock().await;
                 match mgr.lookup_prompt_peer(prompt_name) {
                     Ok(p) => p,
-                    Err(e) => return Some(JsonRpcResponse::err(
-                        req.id.clone(), -32603, format!("prompt get failed: {e}"),
-                    )),
+                    Err(e) => {
+                        return Some(JsonRpcResponse::err(
+                            req.id.clone(),
+                            -32603,
+                            format!("prompt get failed: {e}"),
+                        ))
+                    }
                 }
             };
 
@@ -502,17 +602,21 @@ async fn handle_json_rpc(
 
             Some(match peer.get_prompt(params).await {
                 Ok(result) => {
-                    let result_json = serde_json::to_value(&result)
-                        .unwrap_or(serde_json::json!({}));
+                    let result_json =
+                        serde_json::to_value(&result).unwrap_or(serde_json::json!({}));
                     JsonRpcResponse::ok(req.id.clone(), result_json)
                 }
-                Err(e) => JsonRpcResponse::err(
-                    req.id.clone(), -32603, format!("prompt get failed: {e}"),
-                ),
+                Err(e) => {
+                    JsonRpcResponse::err(req.id.clone(), -32603, format!("prompt get failed: {e}"))
+                }
             })
         }
 
-        _ => Some(JsonRpcResponse::err(req.id.clone(), -32601, format!("method not found: {}", req.method))),
+        _ => Some(JsonRpcResponse::err(
+            req.id.clone(),
+            -32601,
+            format!("method not found: {}", req.method),
+        )),
     }
 }
 
@@ -531,7 +635,10 @@ async fn log_mcp_call(
         .and_then(|n| n.as_str());
 
     let server_name = match tool_name {
-        Some(t) if builtin_tools::is_builtin_tool(t) || super::file_tools::is_file_tool(t) => "builtin",
+        Some(t) if builtin_tools::is_builtin_tool(t) || super::file_tools::is_file_tool(t) => {
+            "builtin"
+        }
+        Some(t) if browser_tools::is_browser_tool(t) => "browser",
         Some(t) => parse_namespaced(t).map(|(s, _)| s).unwrap_or("gateway"),
         None => "gateway",
     };
@@ -582,7 +689,11 @@ async fn log_mcp_call(
         server_name: server_name.to_string(),
         method: req.method.clone(),
         tool_name: tool_name.map(String::from),
-        request_id: req.id.as_ref().and_then(|v| v.as_u64()).map(|n| n.to_string()),
+        request_id: req
+            .id
+            .as_ref()
+            .and_then(|v| v.as_u64())
+            .map(|n| n.to_string()),
         request_preview: req_preview,
         response_preview: resp_preview,
         decision: decision.to_string(),
@@ -609,12 +720,13 @@ mod tests {
         });
         McpGatewayConfig {
             server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
-            db,
+            db: Arc::clone(&db),
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
             http_client: reqwest::Client::new(),
             auto_snapshots: None,
             workspace_dir: None,
+            browser_manager: None,
         }
     }
 
@@ -668,7 +780,10 @@ mod tests {
         let config = test_config(&rt);
         let policy = McpPolicy::new();
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        assert!(resp.is_none(), "notifications should not produce a response");
+        assert!(
+            resp.is_none(),
+            "notifications should not produce a response"
+        );
     }
 
     #[test]
@@ -718,7 +833,12 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("blocked by policy"));
+        assert!(resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("blocked by policy"));
     }
 
     #[test]
@@ -742,7 +862,10 @@ mod tests {
         assert!(resp.error.is_none()); // tool errors use isError in result
         let result = resp.result.unwrap();
         assert_eq!(result["isError"], true);
-        assert!(result["content"][0]["text"].as_str().unwrap().contains("blocked"));
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("blocked"));
     }
 
     #[test]
@@ -782,12 +905,32 @@ mod tests {
                 panic!("tool '{}' missing annotations", tool["name"]);
             });
             let obj = ann.as_object().unwrap();
-            assert!(obj.contains_key("readOnlyHint"), "missing readOnlyHint in {}", tool["name"]);
-            assert!(obj.contains_key("destructiveHint"), "missing destructiveHint in {}", tool["name"]);
-            assert!(obj.contains_key("idempotentHint"), "missing idempotentHint in {}", tool["name"]);
-            assert!(obj.contains_key("openWorldHint"), "missing openWorldHint in {}", tool["name"]);
+            assert!(
+                obj.contains_key("readOnlyHint"),
+                "missing readOnlyHint in {}",
+                tool["name"]
+            );
+            assert!(
+                obj.contains_key("destructiveHint"),
+                "missing destructiveHint in {}",
+                tool["name"]
+            );
+            assert!(
+                obj.contains_key("idempotentHint"),
+                "missing idempotentHint in {}",
+                tool["name"]
+            );
+            assert!(
+                obj.contains_key("openWorldHint"),
+                "missing openWorldHint in {}",
+                tool["name"]
+            );
             // Must NOT have snake_case keys (wire format violation)
-            assert!(!obj.contains_key("read_only_hint"), "snake_case key in wire format: {}", tool["name"]);
+            assert!(
+                !obj.contains_key("read_only_hint"),
+                "snake_case key in wire format: {}",
+                tool["name"]
+            );
         }
     }
 
@@ -809,10 +952,26 @@ mod tests {
         // All 3 builtins are read-only, non-destructive, idempotent, open-world
         for tool in &tools {
             let ann = tool.get("annotations").unwrap();
-            assert_eq!(ann["readOnlyHint"], true, "{} should be read-only", tool["name"]);
-            assert_eq!(ann["destructiveHint"], false, "{} should not be destructive", tool["name"]);
-            assert_eq!(ann["idempotentHint"], true, "{} should be idempotent", tool["name"]);
-            assert_eq!(ann["openWorldHint"], true, "{} should be open-world", tool["name"]);
+            assert_eq!(
+                ann["readOnlyHint"], true,
+                "{} should be read-only",
+                tool["name"]
+            );
+            assert_eq!(
+                ann["destructiveHint"], false,
+                "{} should not be destructive",
+                tool["name"]
+            );
+            assert_eq!(
+                ann["idempotentHint"], true,
+                "{} should be idempotent",
+                tool["name"]
+            );
+            assert_eq!(
+                ann["openWorldHint"], true,
+                "{} should be open-world",
+                tool["name"]
+            );
         }
     }
 
@@ -842,7 +1001,12 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("missing tool name"));
+        assert!(resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("missing tool name"));
     }
 
     #[test]
@@ -860,7 +1024,12 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("missing tool name"));
+        assert!(resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("missing tool name"));
     }
 
     #[test]
@@ -878,7 +1047,12 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("missing tool name"));
+        assert!(resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("missing tool name"));
     }
 
     #[test]
@@ -924,7 +1098,10 @@ mod tests {
         let resp = resp.unwrap();
         // Should fail -- "fake" server doesn't exist, so it's an error,
         // NOT routed to the builtin handler.
-        assert!(resp.error.is_some(), "fake__fetch_http must not route to builtin");
+        assert!(
+            resp.error.is_some(),
+            "fake__fetch_http must not route to builtin"
+        );
     }
 
     #[test]
@@ -950,7 +1127,12 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("blocked by policy"));
+        assert!(resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("blocked by policy"));
     }
 
     #[test]
@@ -975,7 +1157,12 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("blocked by policy"));
+        assert!(resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("blocked by policy"));
     }
 
     #[test]
@@ -993,7 +1180,10 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_none());
-        let resources = resp.result.unwrap()["resources"].as_array().unwrap().clone();
+        let resources = resp.result.unwrap()["resources"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert!(resources.is_empty());
     }
 
@@ -1012,7 +1202,12 @@ mod tests {
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
         assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("missing resource URI"));
+        assert!(resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("missing resource URI"));
     }
 
     #[test]
@@ -1055,7 +1250,10 @@ mod tests {
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for file_tool in super::super::file_tools::FILE_TOOL_NAMES {
-            assert!(!names.contains(file_tool), "file tool {file_tool} should not appear without VirtioFS");
+            assert!(
+                !names.contains(file_tool),
+                "file tool {file_tool} should not appear without VirtioFS"
+            );
         }
     }
 
@@ -1091,7 +1289,10 @@ mod tests {
         assert_eq!(tools.len(), 10);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for file_tool in super::super::file_tools::FILE_TOOL_NAMES {
-            assert!(names.contains(file_tool), "file tool {file_tool} missing from tools/list");
+            assert!(
+                names.contains(file_tool),
+                "file tool {file_tool} missing from tools/list"
+            );
         }
     }
 
@@ -1138,7 +1339,11 @@ mod tests {
         let policy = McpPolicy::new();
         let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
         let resp = resp.unwrap();
-        assert!(resp.error.is_none(), "snapshot should succeed: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "snapshot should succeed: {:?}",
+            resp.error
+        );
     }
 
     #[test]
@@ -1167,7 +1372,9 @@ mod tests {
     }
 
     /// Test config with auto-snapshots enabled (VirtioFS mode).
-    fn test_config_with_snapshots(rt: &tokio::runtime::Runtime) -> (McpGatewayConfig, tempfile::TempDir) {
+    fn test_config_with_snapshots(
+        rt: &tokio::runtime::Runtime,
+    ) -> (McpGatewayConfig, tempfile::TempDir) {
         use crate::auto_snapshot::AutoSnapshotScheduler;
 
         let dir = tempfile::tempdir().unwrap();
@@ -1179,9 +1386,8 @@ mod tests {
         // Write a file so snapshots have content.
         std::fs::write(session.join("workspace/test.txt"), "hello").unwrap();
 
-        let scheduler = AutoSnapshotScheduler::new(
-            session.clone(), 3, 4, std::time::Duration::from_secs(300),
-        );
+        let scheduler =
+            AutoSnapshotScheduler::new(session.clone(), 3, 4, std::time::Duration::from_secs(300));
 
         let db = rt.block_on(async {
             let path = session.join("test.db");
@@ -1196,6 +1402,7 @@ mod tests {
             http_client: reqwest::Client::new(),
             auto_snapshots: Some(Arc::new(tokio::sync::Mutex::new(scheduler))),
             workspace_dir: Some(session.join("workspace")),
+            browser_manager: None,
         };
         (config, dir)
     }
@@ -1225,12 +1432,18 @@ mod tests {
             tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 handle_json_rpc(&req, &config, &policy, "test"),
-            ).await
+            )
+            .await
         });
 
-        let resp = resp.expect("snapshot_create timed out -- possible deadlock")
+        let resp = resp
+            .expect("snapshot_create timed out -- possible deadlock")
             .expect("should return Some for tools/call");
-        assert!(resp.error.is_none(), "snapshot_create should succeed: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "snapshot_create should succeed: {:?}",
+            resp.error
+        );
 
         let result = resp.result.unwrap();
         let text = result["content"][0]["text"].as_str().unwrap();
@@ -1273,12 +1486,16 @@ mod tests {
             tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 handle_json_rpc(&list_req, &config, &policy, "test"),
-            ).await
+            )
+            .await
         });
         let resp = resp.expect("snapshots_list timed out").unwrap();
         assert!(resp.error.is_none());
 
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let data: serde_json::Value = serde_json::from_str(&text)
             .expect("snapshots_list must return valid JSON when format=json");
         assert!(data["snapshots"].as_array().unwrap().len() >= 1);
