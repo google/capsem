@@ -178,6 +178,8 @@ struct IdParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct CreateParams {
+    /// Name for the VM. Named VMs are persistent ("if you name it, you keep it").
+    /// If omitted, creates a temporary VM.
     name: Option<String>,
     #[serde(rename = "ramMb")]
     #[schemars(rename = "ramMb")]
@@ -186,6 +188,35 @@ struct CreateParams {
     #[schemars(rename = "cpuCount")]
     cpu_count: Option<u32>,
     version: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct NameParams {
+    /// Name of the persistent VM
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct PersistParams {
+    /// ID of the running ephemeral VM
+    id: String,
+    /// Name to assign (makes it persistent)
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct PurgeParams {
+    /// Set to true to also destroy persistent VMs
+    #[serde(default)]
+    all: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct RunParams {
+    /// Shell command to execute
+    command: String,
+    /// Timeout in seconds (default 60)
+    timeout: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -230,7 +261,7 @@ struct InspectParams {
 
 #[tool_router]
 impl CapsemHandler {
-    #[tool(name = "capsem_list", description = "List all VMs with their ID, status, RAM, CPUs, and version")]
+    #[tool(name = "capsem_list", description = "List all VMs (running and stopped persistent) with ID, status, persistence, RAM, CPUs, and version")]
     async fn list(&self) -> Result<String, String> {
         match self.client.request::<Value, Value>("GET", "/list", None).await {
             Ok(val) => {
@@ -286,14 +317,15 @@ impl CapsemHandler {
         Ok(buf)
     }
 
-    #[tool(name = "capsem_create", description = "Provision a new VM. Returns VM ID. Defaults: 2048 MB RAM, 2 CPUs")]
+    #[tool(name = "capsem_create", description = "Create a new VM. Named VMs are persistent. Returns VM ID. Defaults: 2048 MB RAM, 2 CPUs. If name already exists, returns error -- use capsem_resume instead")]
     async fn create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, String> {
         info!(?params, "capsem_create tool called");
-        // Map camelCase MCP params to internal service snake_case
+        let persistent = params.name.is_some();
         let body = json!({
             "name": params.name,
             "ram_mb": params.ram_mb.unwrap_or(2048),
             "cpus": params.cpu_count.unwrap_or(2),
+            "persistent": persistent,
         });
         match self.client.request::<Value, Value>("POST", "/provision", Some(body)).await {
             Ok(val) => {
@@ -309,7 +341,7 @@ impl CapsemHandler {
         }
     }
 
-    #[tool(name = "capsem_info", description = "Get VM details: ID, PID, status, RAM, CPUs, version")]
+    #[tool(name = "capsem_info", description = "Get VM details: ID, PID, status, persistent, RAM, CPUs, version")]
     async fn info(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         match self.client.request::<Value, Value>("GET", &format!("/info/{}", params.id), None).await {
             Ok(val) => {
@@ -383,9 +415,80 @@ impl CapsemHandler {
         }
     }
 
-    #[tool(name = "capsem_delete", description = "Delete a VM. Sends SIGTERM then SIGKILL, cleans up session files")]
+    #[tool(name = "capsem_delete", description = "Delete a VM permanently. Destroys all state including persistent data")]
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         match self.client.request::<Value, Value>("DELETE", &format!("/delete/{}", params.id), None).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_stop", description = "Stop a VM. Persistent VMs preserve their state; ephemeral VMs are destroyed")]
+    async fn stop(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
+        match self.client.request::<Value, Value>("POST", &format!("/stop/{}", params.id), Some(json!({}))).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_resume", description = "Resume a stopped persistent VM or get ID of a running one. Returns VM ID")]
+    async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
+        match self.client.request::<Value, Value>("POST", &format!("/resume/{}", params.name), Some(json!({}))).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_persist", description = "Convert a running ephemeral VM to a persistent named VM")]
+    async fn persist(&self, Parameters(params): Parameters<PersistParams>) -> Result<String, String> {
+        let body = json!({ "name": params.name });
+        match self.client.request::<Value, Value>("POST", &format!("/persist/{}", params.id), Some(body)).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_purge", description = "Kill all temporary VMs. Set all=true to also destroy persistent VMs")]
+    async fn purge(&self, Parameters(params): Parameters<PurgeParams>) -> Result<String, String> {
+        let body = json!({ "all": params.all.unwrap_or(false) });
+        match self.client.request::<Value, Value>("POST", "/purge", Some(body)).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_run", description = "Run a command in a fresh temporary VM. VM is auto-provisioned and destroyed. Returns stdout, stderr, exit_code")]
+    async fn run(&self, Parameters(params): Parameters<RunParams>) -> Result<String, String> {
+        let body = json!({
+            "command": params.command,
+            "timeout_secs": params.timeout.unwrap_or(60),
+        });
+        match self.client.request::<Value, Value>("POST", "/run", Some(body)).await {
             Ok(val) => {
                 if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
                     return Err(err.to_string());
@@ -792,7 +895,8 @@ mod tests {
         let expected = [
             "capsem_list", "capsem_create", "capsem_info", "capsem_exec",
             "capsem_read_file", "capsem_write_file", "capsem_inspect_schema",
-            "capsem_inspect", "capsem_delete", "capsem_vm_logs",
+            "capsem_inspect", "capsem_delete", "capsem_stop", "capsem_resume",
+            "capsem_persist", "capsem_purge", "capsem_run", "capsem_vm_logs",
             "capsem_service_logs",
         ];
         for name in &expected {

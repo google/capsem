@@ -22,10 +22,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start a new VM sandbox
-    Start {
-        /// Name of the sandbox
-        #[arg(long)]
+    /// Create a new VM sandbox. VMs are temporary by default; use -n <name> to persist.
+    #[command(alias = "start")]
+    Create {
+        /// Name for the VM (makes it persistent -- "if you name it, you keep it")
+        #[arg(short = 'n', long)]
         name: Option<String>,
         /// RAM in GB
         #[arg(long, default_value_t = 4)]
@@ -33,21 +34,27 @@ enum Commands {
         /// CPU cores
         #[arg(long, default_value_t = 4)]
         cpu: u32,
-        /// Automatically remove the VM when its process exits
-        #[arg(long, default_value_t = false)]
-        rm: bool,
     },
-    /// Stop a running sandbox
+    /// Resume a stopped persistent VM or attach to a running one
+    #[command(alias = "attach")]
+    Resume {
+        /// Name of the persistent VM
+        name: String,
+    },
+    /// Stop a running sandbox. Persistent VMs preserve state; ephemeral VMs are destroyed.
     Stop {
         /// ID or name of the sandbox
         id: String,
     },
-    /// Connect to a sandbox's shell
+    /// Open a shell. No args = temporary VM (destroyed on exit). With ID/name = attach to existing.
     Shell {
-        /// ID or name of the sandbox
-        id: String,
+        /// Find by name (for persistent VMs)
+        #[arg(short = 'n', long)]
+        name: Option<String>,
+        /// ID of the sandbox (positional)
+        id: Option<String>,
     },
-    /// List all running sandboxes
+    /// List all sandboxes (running + stopped persistent)
     #[command(alias = "ls")]
     List,
     /// Get status of a sandbox
@@ -62,11 +69,32 @@ enum Commands {
         /// Command to execute
         command: String,
     },
-    /// Delete a sandbox completely
+    /// Run a command in a fresh temporary VM and return output (VM is destroyed after)
+    Run {
+        /// Command to execute
+        command: String,
+        /// Timeout in seconds (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+    },
+    /// Delete a sandbox completely (destroys all state)
     #[command(alias = "rm")]
     Delete {
         /// ID or name of the sandbox
         id: String,
+    },
+    /// Convert a running ephemeral VM to a persistent named VM
+    Persist {
+        /// ID of the running ephemeral VM
+        id: String,
+        /// Name to assign
+        name: String,
+    },
+    /// Kill all temporary VMs. Use --all to also destroy persistent VMs.
+    Purge {
+        /// Also destroy persistent VMs (requires confirmation)
+        #[arg(long, default_value_t = false)]
+        all: bool,
     },
     /// Get detailed information about a sandbox
     Info {
@@ -87,7 +115,8 @@ struct ProvisionRequest {
     name: Option<String>,
     ram_mb: u64,
     cpus: u32,
-    auto_remove: bool,
+    #[serde(default)]
+    persistent: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -100,11 +129,36 @@ struct SandboxInfo {
     id: String,
     pid: u32,
     status: String,
+    #[serde(default)]
+    persistent: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ListResponse {
     sandboxes: Vec<SandboxInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct PersistRequest {
+    name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct RunRequest {
+    command: String,
+    timeout_secs: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct PurgeRequest {
+    all: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct PurgeResponse {
+    purged: u32,
+    persistent_purged: u32,
+    ephemeral_purged: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -227,7 +281,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
     use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
     use std::sync::Arc;
-    use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg};
+    use nix::sys::termios::{tcgetattr, tcsetattr, SetArg};
     
     let sock_path = run_dir.join("instances").join(format!("{}.sock", id));
     if !sock_path.exists() {
@@ -247,6 +301,22 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     let stdin_fd = std::io::stdin().as_raw_fd();
     let is_tty = nix::unistd::isatty(stdin_fd).unwrap_or(false);
 
+    let get_terminal_size = || -> Option<(u16, u16)> {
+        let mut ws: nix::libc::winsize = unsafe { std::mem::zeroed() };
+        if unsafe { nix::libc::ioctl(stdin_fd, nix::libc::TIOCGWINSZ, &mut ws) } == 0 {
+            Some((ws.ws_col, ws.ws_row))
+        } else {
+            None
+        }
+    };
+
+    // Send initial window size
+    if is_tty {
+        if let Some((cols, rows)) = get_terminal_size() {
+            let _ = tx.send(ServiceToProcess::TerminalResize { cols, rows }).await;
+        }
+    }
+
     struct RawModeGuard {
         fd: std::os::unix::io::RawFd,
         original: Option<nix::sys::termios::Termios>,
@@ -265,7 +335,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         let orig = tcgetattr(borrowed_fd).ok();
         if let Some(ref o) = orig {
             let mut raw_termios = o.clone();
-            raw_termios.local_flags.remove(LocalFlags::ICANON | LocalFlags::ECHO | LocalFlags::ISIG);
+            nix::sys::termios::cfmakeraw(&mut raw_termios);
             let _ = tcsetattr(borrowed_fd, SetArg::TCSANOW, &raw_termios);
         }
         orig
@@ -301,9 +371,18 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         }
     });
 
+    let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
+
     // Read from stdin and send over IPC
     loop {
         tokio::select! {
+            _ = sigwinch.recv() => {
+                if is_tty {
+                    if let Some((cols, rows)) = get_terminal_size() {
+                        let _ = tx.send(ServiceToProcess::TerminalResize { cols, rows }).await;
+                    }
+                }
+            }
             res = stdin.read(&mut buf) => {
                 match res {
                     Ok(0) => break, // EOF
@@ -339,53 +418,77 @@ async fn main() -> Result<()> {
     let client = UdsClient::new(uds_path);
 
     match &cli.command {
-        Commands::Start { name, ram, cpu, rm } => {
+        Commands::Create { name, ram, cpu } => {
+            let persistent = name.is_some();
             let req = ProvisionRequest {
-            name: name.clone(),
-            ram_mb: ram * 1024,
-            cpus: *cpu,
-            auto_remove: *rm,
-        };
+                name: name.clone(),
+                ram_mb: ram * 1024,
+                cpus: *cpu,
+                persistent,
+            };
 
-        let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
-        let info = resp.into_result()?;
-        println!("Sandbox started with ID: {}", info.id);
+            let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
+            let info = resp.into_result()?;
 
-        // Wait for the socket to appear before returning
-        let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
-        print!("Waiting for socket...");
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        for _ in 0..50 {
-            if socket_path.exists() {
-                println!(" ready.");
-                break;
+            if persistent {
+                println!("{} (persistent)", info.id);
+            } else {
+                println!("{}", info.id);
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            print!(".");
-            std::io::stdout().flush()?;
         }
-        if !socket_path.exists() {
-            println!("\nWarning: socket not found after 5s.");
+        Commands::Resume { name } => {
+            let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
+            let info = resp.into_result()?;
+            println!("{}", info.id);
         }
-    }
         Commands::Stop { id } => {
             println!("Stopping sandbox: {}", id);
-            let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/delete/{}", id)).await?;
+            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", id), &serde_json::json!({})).await?;
             resp.into_result()?;
             println!("Sandbox stopped.");
         }
-        Commands::Shell { id } => {
-            run_shell(id, &run_dir).await?;
+        Commands::Shell { name, id } => {
+            let target = name.as_ref().or(id.as_ref());
+            match target {
+                Some(t) => {
+                    // Attach to existing VM
+                    run_shell(t, &run_dir).await?;
+                }
+                None => {
+                    // No args: create ephemeral VM, attach, destroy on exit
+                    println!("[!] Temporary VM. Use `capsem create -n <name>` for persistent.");
+                    let req = ProvisionRequest {
+                        name: None,
+                        ram_mb: 4 * 1024,
+                        cpus: 4,
+                        persistent: false,
+                    };
+                    let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
+                    let info = resp.into_result()?;
+
+                    let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
+                    for _ in 0..50 {
+                        if socket_path.exists() { break; }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+
+                    let shell_result = run_shell(&info.id, &run_dir).await;
+                    // Ephemeral: auto-destroy on disconnect
+                    let _: Result<ApiResponse<serde_json::Value>, _> = client.delete(&format!("/delete/{}", info.id)).await;
+                    shell_result?;
+                }
+            }
         }
         Commands::List => {
             let resp: ListResponse = client.get("/list").await?;
             if resp.sandboxes.is_empty() {
-                println!("No running sandboxes.");
+                println!("No sandboxes.");
             } else {
-                println!("{:<20} {:<10} {:<10}", "ID", "PID", "STATUS");
+                println!("{:<20} {:<10} {:<10} {:<10}", "ID", "STATUS", "PERSIST", "PID");
                 for s in resp.sandboxes {
-                    println!("{:<20} {:<10} {:<10}", s.id, s.pid, s.status);
+                    let persist = if s.persistent { "yes" } else { "-" };
+                    let pid_str = if s.pid > 0 { s.pid.to_string() } else { "-".to_string() };
+                    println!("{:<20} {:<10} {:<10} {:<10}", s.id, s.status, persist, pid_str);
                 }
             }
         }
@@ -395,13 +498,29 @@ async fn main() -> Result<()> {
             println!("ID: {}", info.id);
             println!("PID: {}", info.pid);
             println!("Status: {}", info.status);
+            println!("Persistent: {}", info.persistent);
         }
         Commands::Exec { id, command } => {
             let req = ExecRequest {
                 command: command.clone(),
-                timeout_secs: 30, // Default timeout
+                timeout_secs: 30,
             };
             let resp: ApiResponse<ExecResponse> = client.post(&format!("/exec/{}", id), req).await?;
+            let resp = resp.into_result()?;
+            if !resp.stdout.is_empty() {
+                print!("{}", resp.stdout);
+            }
+            if !resp.stderr.is_empty() {
+                eprint!("{}", resp.stderr);
+            }
+            std::process::exit(resp.exit_code);
+        }
+        Commands::Run { command, timeout } => {
+            let req = RunRequest {
+                command: command.clone(),
+                timeout_secs: *timeout,
+            };
+            let resp: ApiResponse<ExecResponse> = client.post("/run", &req).await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);
@@ -417,6 +536,40 @@ async fn main() -> Result<()> {
             resp.into_result()?;
             println!("Sandbox deleted.");
         }
+        Commands::Persist { id, name } => {
+            let req = PersistRequest { name: name.clone() };
+            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/persist/{}", id), &req).await?;
+            resp.into_result()?;
+            println!("[*] VM \"{}\" is now persistent as \"{}\"", id, name);
+        }
+        Commands::Purge { all } => {
+            if *all {
+                // Confirmation prompt
+                use std::io::Write;
+                let resp: ListResponse = client.get("/list").await?;
+                let persistent_count = resp.sandboxes.iter().filter(|s| s.persistent).count();
+                let ephemeral_count = resp.sandboxes.iter().filter(|s| !s.persistent).count();
+                print!("[!] This will destroy {} persistent VMs and {} temporary VMs. Continue? [y/N] ",
+                    persistent_count, ephemeral_count);
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+
+            let req = PurgeRequest { all: *all };
+            let resp: ApiResponse<PurgeResponse> = client.post("/purge", &req).await?;
+            let result = resp.into_result()?;
+            if *all {
+                println!("[*] Purged {} VMs ({} persistent, {} temporary).",
+                    result.purged, result.persistent_purged, result.ephemeral_purged);
+            } else {
+                println!("[*] Purged {} temporary VMs.", result.ephemeral_purged);
+            }
+        }
         Commands::Info { id } => {
             let resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", id)).await?;
             let info = resp.into_result()?;
@@ -426,12 +579,12 @@ async fn main() -> Result<()> {
         Commands::Logs { id } => {
             let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", id)).await?;
             let logs = resp.into_result()?;
-            
+
             if let Some(process_logs) = logs.process_logs {
                 println!("--- Process Logs ({}) ---", id);
                 println!("{}", process_logs);
             }
-            
+
             if let Some(serial_logs) = logs.serial_logs {
                 println!("--- Serial Logs ({}) ---", id);
                 println!("{}", serial_logs);
@@ -442,27 +595,25 @@ async fn main() -> Result<()> {
         }
         Commands::Doctor => {
             println!("Running capsem-doctor...");
-            
-            // 1. Start a temporary VM
+
             let name = format!("doctor-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             let req = ProvisionRequest {
                 name: Some(name.clone()),
                 ram_mb: 2048,
                 cpus: 2,
-                auto_remove: true,
+                persistent: false,
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let vm_id = resp.into_result()?.id;
             println!("Spawned temporary VM: {}", vm_id);
-            
-            // 2. Exec capsem-doctor
+
             let exec_req = ExecRequest {
                 command: "capsem-doctor --json".to_string(),
                 timeout_secs: 60,
             };
             let exec_resp: ApiResponse<ExecResponse> = client.post(&format!("/exec/{}", vm_id), exec_req).await?;
             let exec_resp = exec_resp.into_result()?;
-            
+
             println!("\n=== Doctor Results ===");
             if !exec_resp.stdout.is_empty() {
                 println!("{}", exec_resp.stdout);
@@ -471,13 +622,12 @@ async fn main() -> Result<()> {
                 eprintln!("{}", exec_resp.stderr);
             }
             println!("Exit code: {}", exec_resp.exit_code);
-            
-            // 3. Delete VM
+
             println!("\nCleaning up...");
             let delete_resp: ApiResponse<serde_json::Value> = client.delete(&format!("/delete/{}", vm_id)).await?;
             delete_resp.into_result()?;
             println!("Doctor VM destroyed.");
-            
+
             if exec_resp.exit_code != 0 {
                 std::process::exit(exec_resp.exit_code);
             }
@@ -497,28 +647,67 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn parse_start() {
-        let cli = Cli::parse_from(["capsem", "start", "--name", "my-vm"]);
+    fn parse_create_with_name() {
+        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
         match cli.command {
-            Commands::Start { name, ram, cpu, rm } => {
+            Commands::Create { name, ram, cpu } => {
                 assert_eq!(name, Some("my-vm".into()));
-                assert_eq!(ram, 4); // default
-                assert_eq!(cpu, 4); // default
-                assert_eq!(rm, false); // default
+                assert_eq!(ram, 4);
+                assert_eq!(cpu, 4);
             }
-            _ => panic!("expected Start"),
+            _ => panic!("expected Create"),
         }
     }
 
     #[test]
-    fn parse_start_with_resources() {
-        let cli = Cli::parse_from(["capsem", "start", "--ram", "8", "--cpu", "2"]);
+    fn parse_create_ephemeral() {
+        let cli = Cli::parse_from(["capsem", "create"]);
         match cli.command {
-            Commands::Start { ram, cpu, .. } => {
+            Commands::Create { name, .. } => {
+                assert_eq!(name, None);
+            }
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn parse_start_alias_for_create() {
+        let cli = Cli::parse_from(["capsem", "start", "-n", "dev"]);
+        match cli.command {
+            Commands::Create { name, .. } => {
+                assert_eq!(name, Some("dev".into()));
+            }
+            _ => panic!("expected Create via start alias"),
+        }
+    }
+
+    #[test]
+    fn parse_create_with_resources() {
+        let cli = Cli::parse_from(["capsem", "create", "--ram", "8", "--cpu", "2"]);
+        match cli.command {
+            Commands::Create { ram, cpu, .. } => {
                 assert_eq!(ram, 8);
                 assert_eq!(cpu, 2);
             }
-            _ => panic!("expected Start"),
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn parse_resume() {
+        let cli = Cli::parse_from(["capsem", "resume", "mydev"]);
+        match cli.command {
+            Commands::Resume { name } => assert_eq!(name, "mydev"),
+            _ => panic!("expected Resume"),
+        }
+    }
+
+    #[test]
+    fn parse_attach_alias_for_resume() {
+        let cli = Cli::parse_from(["capsem", "attach", "mydev"]);
+        match cli.command {
+            Commands::Resume { name } => assert_eq!(name, "mydev"),
+            _ => panic!("expected Resume via attach alias"),
         }
     }
 
@@ -532,11 +721,93 @@ mod tests {
     }
 
     #[test]
-    fn parse_shell() {
+    fn parse_shell_positional() {
         let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
         match cli.command {
-            Commands::Shell { id } => assert_eq!(id, "my-vm"),
+            Commands::Shell { id, name } => {
+                assert_eq!(id, Some("my-vm".into()));
+                assert_eq!(name, None);
+            }
             _ => panic!("expected Shell"),
+        }
+    }
+
+    #[test]
+    fn parse_shell_by_name() {
+        let cli = Cli::parse_from(["capsem", "shell", "-n", "mydev"]);
+        match cli.command {
+            Commands::Shell { name, id } => {
+                assert_eq!(name, Some("mydev".into()));
+                assert_eq!(id, None);
+            }
+            _ => panic!("expected Shell"),
+        }
+    }
+
+    #[test]
+    fn parse_shell_bare() {
+        // Bare `capsem shell` = temp VM + auto-destroy
+        let cli = Cli::parse_from(["capsem", "shell"]);
+        match cli.command {
+            Commands::Shell { name, id } => {
+                assert_eq!(name, None);
+                assert_eq!(id, None);
+            }
+            _ => panic!("expected Shell"),
+        }
+    }
+
+    #[test]
+    fn parse_persist() {
+        let cli = Cli::parse_from(["capsem", "persist", "vm-123", "mydev"]);
+        match cli.command {
+            Commands::Persist { id, name } => {
+                assert_eq!(id, "vm-123");
+                assert_eq!(name, "mydev");
+            }
+            _ => panic!("expected Persist"),
+        }
+    }
+
+    #[test]
+    fn parse_purge() {
+        let cli = Cli::parse_from(["capsem", "purge"]);
+        match cli.command {
+            Commands::Purge { all } => assert!(!all),
+            _ => panic!("expected Purge"),
+        }
+    }
+
+    #[test]
+    fn parse_purge_all() {
+        let cli = Cli::parse_from(["capsem", "purge", "--all"]);
+        match cli.command {
+            Commands::Purge { all } => assert!(all),
+            _ => panic!("expected Purge --all"),
+        }
+    }
+
+    #[test]
+    fn parse_run() {
+        let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
+        match cli.command {
+            Commands::Run { command, timeout } => {
+                assert_eq!(command, "echo hello");
+                assert_eq!(timeout, 60); // default
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn parse_run_with_timeout() {
+        let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
+        match cli.command {
+            Commands::Run { command, timeout } => {
+                assert_eq!(command, "ls -la");
+                assert_eq!(timeout, 120);
+            }
+            _ => panic!("expected Run"),
         }
     }
 
@@ -583,11 +854,12 @@ mod tests {
 
     #[test]
     fn provision_request_serde() {
-        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 4096, cpus: 4, auto_remove: false };
+        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 4096, cpus: 4, persistent: true };
         let json = serde_json::to_string(&req).unwrap();
         let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req2.name, Some("test".into()));
         assert_eq!(req2.ram_mb, 4096);
+        assert!(req2.persistent);
     }
 
     #[test]
@@ -602,13 +874,17 @@ mod tests {
     fn list_response_with_entries() {
         let resp = ListResponse {
             sandboxes: vec![
-                SandboxInfo { id: "vm-1".into(), pid: 100, status: "Running".into() },
+                SandboxInfo { id: "vm-1".into(), pid: 100, status: "Running".into(), persistent: false },
+                SandboxInfo { id: "mydev".into(), pid: 0, status: "Stopped".into(), persistent: true },
             ],
         };
         let json = serde_json::to_string(&resp).unwrap();
         let resp2: ListResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp2.sandboxes.len(), 1);
+        assert_eq!(resp2.sandboxes.len(), 2);
         assert_eq!(resp2.sandboxes[0].id, "vm-1");
+        assert!(!resp2.sandboxes[0].persistent);
+        assert_eq!(resp2.sandboxes[1].id, "mydev");
+        assert!(resp2.sandboxes[1].persistent);
     }
 
     // -----------------------------------------------------------------------

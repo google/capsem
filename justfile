@@ -55,21 +55,11 @@ dev-frontend: _pnpm-install
 
 # Full rebuild + boot temporary VM via service daemon
 full-run: build-assets run-service
-    #!/bin/bash
-    set -euo pipefail
-    name="tmp-$(date +%s)"
-    {{cli_binary}} start --rm --name "$name"
-    echo "Connecting shell (Ctrl+] to disconnect)..."
-    {{cli_binary}} shell "$name"
+    {{cli_binary}} shell
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
 run: audit _check-assets _pack-initrd run-service
-    #!/bin/bash
-    set -euo pipefail
-    name="tmp-$(date +%s)"
-    {{cli_binary}} start --rm --name "$name"
-    echo "Connecting shell (Ctrl+] to disconnect)..."
-    {{cli_binary}} shell "$name"
+    {{cli_binary}} shell
 
 # Start capsem-service daemon in the background (idempotent)
 run-service: _check-assets _pack-initrd
@@ -110,20 +100,12 @@ run-service: _check-assets _pack-initrd
 
 # Shell into a temporary VM (auto-deleted on exit)
 shell: run-service
-    #!/bin/bash
-    set -euo pipefail
-    name="tmp-$(date +%s)"
-    {{cli_binary}} start --rm --name "$name"
-    {{cli_binary}} shell "$name"
+    {{cli_binary}} shell
 
-# Execute a command in a temporary VM (auto-deleted on exit)
+# Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
 exec +CMD: run-service
-    #!/bin/bash
-    set -euo pipefail
-    name="tmp-$(date +%s)"
-    {{cli_binary}} start --rm --name "$name"
-    {{cli_binary}} exec "$name" {{CMD}}
+    {{cli_binary}} run {{CMD}}
 
 # Run capsem-doctor (creates temp VM, tears down automatically)
 run-doctor: run-service

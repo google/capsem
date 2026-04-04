@@ -18,20 +18,29 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 
 | Tool | Parameters | What it does |
 |------|-----------|-------------|
-| `capsem_create` | name?, ramMb?, cpuCount? | Boot a fresh VM (~10s). Returns VM id. |
-| `capsem_list` | -- | List all running VMs |
-| `capsem_info` | id | VM config, status, PID |
+| `capsem_create` | name?, ramMb?, cpuCount? | Boot a fresh VM (~10s). Named VMs are persistent. Returns VM id. |
+| `capsem_run` | command, timeout? | One-shot: boot temp VM, exec command, destroy, return output |
+| `capsem_list` | -- | List all VMs (running + stopped persistent) |
+| `capsem_info` | id | VM config, status, persistent, PID |
 | `capsem_exec` | id, command | Run command in guest, get stdout/stderr/exit_code |
+| `capsem_stop` | id | Stop VM (persistent: preserve state; ephemeral: destroy) |
+| `capsem_resume` | name | Resume a stopped persistent VM |
+| `capsem_persist` | id, name | Convert running ephemeral VM to persistent |
+| `capsem_purge` | all? | Kill all temp VMs (all=true includes persistent) |
 | `capsem_read_file` | id, path | Read file content from guest |
 | `capsem_write_file` | id, path, content | Write file into guest |
 | `capsem_inspect_schema` | -- | session.db CREATE TABLE statements |
 | `capsem_inspect` | id, sql | Raw SQL against session.db |
-| `capsem_delete` | id | Stop VM, wipe session |
+| `capsem_delete` | id | Destroy VM and wipe all state |
 
 ### Debug workflow
 
 ```
-1. capsem_create        -- boot a fresh sandbox
+-- Quick one-shot (no VM management needed):
+capsem_run { command: "capsem-doctor -k net" }
+
+-- Iterative debugging (long-lived VM):
+1. capsem_create        -- boot a fresh sandbox (add name for persistence)
 2. capsem_exec          -- run the thing you want to test
 3. capsem_read_file     -- check config, logs, state
 4. capsem_inspect       -- query telemetry tables

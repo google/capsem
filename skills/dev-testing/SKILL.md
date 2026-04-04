@@ -91,18 +91,26 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 
 | Tool | What it does |
 |------|-------------|
-| `capsem_create` | Spin up a fresh VM (returns VM id) |
-| `capsem_exec` | Run a command inside the guest |
+| `capsem_create` | Spin up a fresh VM (returns VM id). Named VMs are persistent. |
+| `capsem_run` | One-shot: boot temp VM, exec command, destroy, return output |
+| `capsem_exec` | Run a command inside a running guest |
+| `capsem_stop` | Stop VM (persistent: preserve state; ephemeral: destroy) |
+| `capsem_resume` | Resume a stopped persistent VM |
 | `capsem_read_file` | Read a file from the guest filesystem |
 | `capsem_write_file` | Write a file into the guest |
 | `capsem_inspect_schema` | Get session.db table schema |
 | `capsem_inspect` | Run SQL against session.db (telemetry) |
-| `capsem_list` | Show all running VMs |
-| `capsem_info` | VM details (config, status, PID) |
-| `capsem_delete` | Tear down VM and wipe session |
+| `capsem_list` | Show all VMs (running + stopped persistent) |
+| `capsem_info` | VM details (config, status, persistent, PID) |
+| `capsem_delete` | Destroy VM and wipe all state |
+| `capsem_persist` | Convert running ephemeral VM to persistent |
+| `capsem_purge` | Kill all temp VMs (all=true includes persistent) |
 
 ### Debug workflow
 
+**Quick one-shot** (no VM management): `capsem_run` with the command you want to test.
+
+**Iterative debugging** (long-lived VM):
 1. **Create**: `capsem_create` -- boots a fresh VM in ~10s
 2. **Test**: `capsem_exec` with the command you want to verify (e.g., `capsem-doctor -k net`, `cat /etc/resolv.conf`, `curl https://example.com`)
 3. **Inspect**: `capsem_read_file` to check config files, logs; `capsem_inspect` to query telemetry tables
@@ -113,7 +121,7 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 
 | Scenario | Use |
 |----------|-----|
-| Quick check: "does this command work in the guest?" | `capsem_exec` |
+| Quick check: "does this command work in the guest?" | `capsem_run` |
 | Read a guest file to understand state | `capsem_read_file` |
 | Verify telemetry was recorded correctly | `capsem_inspect` with SQL query |
 | Full regression suite | `just test` |

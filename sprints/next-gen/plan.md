@@ -321,7 +321,7 @@ Linux suspend/resume (~11-15 engineering days). Implement snapshot/restore direc
 - [ ] **MCP tools**: `get_tray_status`, `tray_action`, `set_tray_badge`
 - **Verify**: Menu bar visible, auto-start survives logout, bell triggers notification
 
-### Sprint 10: MITM SSH + IDE
+### Sprint 10: MITM SSH + IDE + File Transfer
 
 - [ ] Guest openssh-server in rootfs, capsem-ssh-bridge binary (vsock:5006 -> localhost:22, inbound only)
 - [ ] `russh` SSH server in daemon (port 2222, configurable)
@@ -329,9 +329,10 @@ Linux suspend/resume (~11-15 engineering days). Implement snapshot/restore direc
 - [ ] SSH MITM: terminate, inspect, policy, log telemetry
 - [ ] SSH session recording (`ssh_events` table, terminal I/O, commands, file transfers)
 - [ ] `capsem ssh-config [<id>]`
+- [ ] `capsem cp` -- bidirectional file copy via SCP over SSH (Docker `cp` equivalent). Handles binary safely, path validation on both sides. MCP tool: `capsem_cp`.
 - [ ] VS Code extension skeleton (Start/Stop/Connect/Open Terminal)
 - [ ] Security: inbound-only, no SSH client keys in guest
-- **Verify**: `ssh dev@localhost:2222` works, VS Code Remote opens, SSH commands logged
+- **Verify**: `ssh dev@localhost:2222` works, VS Code Remote opens, SSH commands logged, `capsem cp` round-trips binary files
 
 ### Sprint 11: Frontend foundation (tab shell + Preline)
 

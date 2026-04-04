@@ -79,7 +79,9 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 
 ### Ephemeral VM model
 
-**VirtioFS mode** (default): fresh workspace + sparse rootfs.img per session. Never make the overlay upper persistent.
+**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- workspace and rootfs overlay survive stops. `capsem create` is always detached; `capsem shell` is the interactive entry point (`capsem shell` with no args = temp VM + auto-destroy on exit).
+
+**VirtioFS mode** (default): fresh workspace + sparse rootfs.img per session. Persistent VMs store their session in `~/.capsem/run/persistent/`.
 
 **Block mode** (legacy): `mke2fs` unconditional at boot. Overlay upper is always tmpfs.
 

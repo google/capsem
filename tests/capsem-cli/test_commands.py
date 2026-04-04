@@ -1,4 +1,4 @@
-"""CLI command integration tests: start, list, exec, info, status, delete."""
+"""CLI command integration tests: create, list, exec, info, status, delete, run, resume, persist, purge."""
 
 import uuid
 
@@ -25,26 +25,23 @@ def run_cli(*args, uds_path=None, timeout=60):
 pytestmark = pytest.mark.integration
 
 
-class TestStart:
+def _provision_vm(uds_path, name, persistent=False):
+    """Provision a VM via the service API (non-blocking, for test setup)."""
+    from helpers.uds_client import UdsHttpClient
+    client = UdsHttpClient(uds_path)
+    body = {"name": name, "ram_mb": 2048, "cpus": 2}
+    if persistent:
+        body["persistent"] = True
+    return client.post("/provision", body)
 
-    def test_start_with_name(self, uds_path):
-        name = f"ex1-{uuid.uuid4().hex[:4]}"
-        stdout, stderr, rc = run_cli("start", "--name", name, uds_path=uds_path)
-        assert rc == 0, f"start failed: {stderr}"
-        assert name in stdout or "ID" in stdout
-        run_cli("delete", name, uds_path=uds_path)
 
-    def test_start_without_name(self, uds_path):
-        stdout, stderr, rc = run_cli("start", uds_path=uds_path)
-        assert rc == 0, f"start failed: {stderr}"
-        # Extract the ID from output (e.g. "Sandbox started with ID: vm-xxx")
-        for line in stdout.splitlines():
-            if "ID:" in line or "id:" in line.lower():
-                vm_id = line.split(":")[-1].strip()
-                break
-        else:
-            pytest.fail(f"Could not extract VM ID from output: {stdout}")
-        run_cli("delete", vm_id, uds_path=uds_path)
+class TestRun:
+
+    def test_run_returns_output(self, uds_path):
+        """capsem run executes in a fresh temp VM and returns output."""
+        stdout, stderr, rc = run_cli("run", "echo cli-run-works", uds_path=uds_path)
+        assert rc == 0, f"run failed: {stderr}"
+        assert "cli-run-works" in stdout
 
 
 class TestList:
@@ -56,7 +53,7 @@ class TestList:
 
     def test_list_shows_created_vm(self, uds_path):
         name = f"lsi-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         try:
             stdout, _, rc = run_cli("list", uds_path=uds_path)
             assert rc == 0
@@ -69,9 +66,8 @@ class TestExec:
 
     def test_exec_echo(self, uds_path):
         name = f"ex1-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         try:
-            # Wait for VM to be ready (exec via service client)
             from helpers.uds_client import UdsHttpClient
             client = UdsHttpClient(uds_path)
             assert wait_exec_ready(client, name), f"VM {name} never exec-ready"
@@ -84,7 +80,7 @@ class TestExec:
 
     def test_exec_nonzero_exit(self, uds_path):
         name = f"ex1-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         try:
             from helpers.uds_client import UdsHttpClient
             client = UdsHttpClient(uds_path)
@@ -100,7 +96,7 @@ class TestInfo:
 
     def test_info_json(self, uds_path):
         name = f"ex1-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         try:
             stdout, stderr, rc = run_cli("info", name, uds_path=uds_path)
             assert rc == 0, f"info failed: {stderr}"
@@ -113,7 +109,7 @@ class TestStatus:
 
     def test_status_shows_running(self, uds_path):
         name = f"st-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         try:
             stdout, stderr, rc = run_cli("status", name, uds_path=uds_path)
             assert rc == 0, f"status failed: {stderr}"
@@ -126,7 +122,7 @@ class TestDelete:
 
     def test_delete(self, uds_path):
         name = f"ex1-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         stdout, stderr, rc = run_cli("delete", name, uds_path=uds_path)
         assert rc == 0, f"delete failed: {stderr}"
         # Verify gone from list
@@ -138,40 +134,12 @@ class TestDelete:
         assert rc != 0
 
 
-class TestRmFlag:
-
-    def test_start_with_rm_flag(self, uds_path):
-        """capsem start --rm provisions successfully."""
-        name = f"ex1-{uuid.uuid4().hex[:4]}"
-        stdout, stderr, rc = run_cli("start", "--rm", "--name", name, uds_path=uds_path)
-        assert rc == 0, f"start --rm failed: {stderr}"
-        assert name in stdout or "ID" in stdout
-        # Cleanup (--rm only auto-removes on process exit, not immediately)
-        run_cli("delete", name, uds_path=uds_path)
-
-    def test_start_rm_then_exec(self, uds_path):
-        """VM created with --rm is fully usable for exec."""
-        name = f"rmex-{uuid.uuid4().hex[:4]}"
-        stdout, stderr, rc = run_cli("start", "--rm", "--name", name, uds_path=uds_path)
-        assert rc == 0, f"start --rm failed: {stderr}"
-        try:
-            from helpers.uds_client import UdsHttpClient
-            client = UdsHttpClient(uds_path)
-            assert wait_exec_ready(client, name), f"VM {name} never exec-ready"
-
-            stdout, stderr, rc = run_cli("exec", name, "echo rm-works", uds_path=uds_path)
-            assert rc == 0, f"exec failed: {stderr}"
-            assert "rm-works" in stdout
-        finally:
-            run_cli("delete", name, uds_path=uds_path)
-
-
 class TestAliases:
 
     def test_rm_alias(self, uds_path):
         """capsem rm <id> deletes a VM (alias for delete)."""
         name = f"rmal-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         stdout, stderr, rc = run_cli("rm", name, uds_path=uds_path)
         assert rc == 0, f"rm alias failed: {stderr}"
         list_out, _, _ = run_cli("list", uds_path=uds_path)
@@ -180,7 +148,7 @@ class TestAliases:
     def test_ls_alias(self, uds_path):
         """capsem ls returns same data as capsem list."""
         name = f"lsal-{uuid.uuid4().hex[:4]}"
-        run_cli("start", "--name", name, uds_path=uds_path)
+        _provision_vm(uds_path, name)
         try:
             list_out, _, list_rc = run_cli("list", uds_path=uds_path)
             ls_out, _, ls_rc = run_cli("ls", uds_path=uds_path)
@@ -190,6 +158,63 @@ class TestAliases:
             assert name in ls_out
         finally:
             run_cli("delete", name, uds_path=uds_path)
+
+
+class TestStop:
+
+    def test_stop_via_cli(self, uds_path):
+        """capsem stop routes to the stop endpoint."""
+        name = f"stp-{uuid.uuid4().hex[:4]}"
+        _provision_vm(uds_path, name)
+        stdout, stderr, rc = run_cli("stop", name, uds_path=uds_path)
+        assert rc == 0, f"stop failed: {stderr}"
+        assert "stopped" in stdout.lower() or "Stopped" in stdout
+
+
+class TestPurge:
+
+    def test_purge_via_cli(self, uds_path):
+        """capsem purge kills temporary VMs."""
+        name = f"prg-{uuid.uuid4().hex[:4]}"
+        _provision_vm(uds_path, name)
+        stdout, stderr, rc = run_cli("purge", uds_path=uds_path)
+        assert rc == 0, f"purge failed: {stderr}"
+        assert "Purged" in stdout or "purged" in stdout.lower()
+
+    def test_purge_all_requires_confirmation(self, uds_path):
+        """capsem purge --all must prompt and abort on 'n'."""
+        name = f"prc-{uuid.uuid4().hex[:4]}"
+        _provision_vm(uds_path, name, persistent=True)
+        # Pipe "n" to stdin -- should abort without destroying
+        cmd = [str(CLI_BINARY), "--uds-path", str(uds_path), "purge", "--all"]
+        result = subprocess.run(cmd, input="n\n", capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, f"purge --all with 'n' failed: {result.stderr}"
+        assert "Aborted" in result.stdout, (
+            f"purge --all should print 'Aborted' when user says no, got: {result.stdout}"
+        )
+        # VM should still exist
+        from helpers.uds_client import UdsHttpClient
+        client = UdsHttpClient(uds_path)
+        listing = client.get("/list")
+        ids = [s["id"] for s in listing["sandboxes"]]
+        assert name in ids, f"Persistent VM {name} was destroyed despite user saying 'n'"
+        # Cleanup
+        client.delete(f"/delete/{name}")
+
+    def test_purge_all_confirmed_destroys(self, uds_path):
+        """capsem purge --all with 'y' should destroy persistent VMs."""
+        name = f"pry-{uuid.uuid4().hex[:4]}"
+        _provision_vm(uds_path, name, persistent=True)
+        cmd = [str(CLI_BINARY), "--uds-path", str(uds_path), "purge", "--all"]
+        result = subprocess.run(cmd, input="y\n", capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, f"purge --all with 'y' failed: {result.stderr}"
+        assert "Purged" in result.stdout
+        # VM should be gone
+        from helpers.uds_client import UdsHttpClient
+        client = UdsHttpClient(uds_path)
+        listing = client.get("/list")
+        ids = [s["id"] for s in listing["sandboxes"]]
+        assert name not in ids, f"Persistent VM {name} survived purge --all with 'y'"
 
 
 class TestErrors:

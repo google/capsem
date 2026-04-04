@@ -12,7 +12,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Host-side:**
 - **capsem-service** (daemon): always-running background service. Axum HTTP server over Unix Domain Socket (`~/.capsem/run/service.sock`). Manages VM lifecycle, routes API calls to per-VM processes.
 - **capsem-process** (per-VM): one process per sandbox. Boots the VM, bridges vsock connections (terminal + control), manages structured jobs (exec, file I/O) via a job store.
-- **capsem** (CLI): user-facing CLI (`capsem start`, `capsem list`, `capsem shell`). Talks to capsem-service over UDS HTTP. Shell subcommand connects directly to capsem-process UDS for raw terminal I/O.
+- **capsem** (CLI): user-facing CLI. **Everything is ephemeral unless asked otherwise.** `capsem shell` (no args) = temp VM + auto-destroy on exit. `capsem create -n <name>` = persistent VM (detached). `capsem create` (no name) = ephemeral VM (detached). `capsem shell <id>` = attach to existing. Talks to capsem-service over UDS HTTP.
 - **capsem-mcp** (MCP server): stdio-based MCP server for AI agents (Claude Code, Gemini CLI). Bridges MCP tool calls to capsem-service HTTP API.
 - **capsem-app** (Tauri GUI): optional GUI shell with xterm.js frontend.
 
@@ -44,19 +44,24 @@ User     -> capsem CLI          -> HTTP over UDS -> capsem-service (daemon)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/provision` | Create a new sandbox VM |
-| GET | `/list` | List all active sandboxes |
-| GET | `/info/{id}` | Sandbox details (config, status) |
+| POST | `/provision` | Create a new sandbox VM (set `persistent: true` for named VMs) |
+| GET | `/list` | List all sandboxes (running + stopped persistent) |
+| GET | `/info/{id}` | Sandbox details (config, status, persistent) |
 | POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
+| POST | `/run` | One-shot: provision temp VM, exec command, destroy, return output |
+| POST | `/stop/{id}` | Stop VM (persistent: preserve state; ephemeral: destroy) |
+| POST | `/resume/{name}` | Resume a stopped persistent VM |
+| POST | `/persist/{id}` | Convert running ephemeral VM to persistent |
+| POST | `/purge` | Kill all temp VMs (set `all: true` to include persistent) |
 | POST | `/write_file/{id}` | Write file to guest |
 | GET | `/read_file/{id}?path=...` | Read file from guest |
 | GET | `/logs/{id}` | Serial/boot logs |
 | POST | `/inspect/{id}` | Raw SQL query against session.db |
-| DELETE | `/delete/{id}` | Stop VM and wipe session |
+| DELETE | `/delete/{id}` | Destroy VM and wipe all state |
 
 ### MCP tools (capsem-mcp)
 
-`capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`, `capsem_read_file`, `capsem_write_file`, `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`.
+`capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`, `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`.
 
 ## Host-guest communication
 
@@ -126,7 +131,7 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Block mode**: `mke2fs` runs unconditionally at boot. Overlay upper is always tmpfs.
 
-Never make the overlay upper layer persistent. To add packages: edit guest config and `just build-assets`.
+**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. Persistent VM data lives in `~/.capsem/run/persistent/`. Never make the overlay upper layer persistent for ephemeral VMs. To add packages: edit guest config and `just build-assets`.
 
 ## Key source files
 

@@ -98,6 +98,6 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP).
 
 - Guest VM is air-gapped. No real NIC, no real DNS, no direct internet.
 - Guest binaries are read-only (chmod 555). Rootfs mounted read-only.
-- Sessions are ephemeral by default (fresh workspace + rootfs per session).
+- **Everything is ephemeral unless asked otherwise.** VMs are temporary by default (destroyed on exit). Only named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. `capsem create` is always detached; `capsem shell` is the interactive entry point (bare `capsem shell` = temp VM + auto-destroy).
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - `capsem-core` owns all business logic. App crate and agent crate are thin shells.

@@ -15,6 +15,7 @@ use tokio::net::UnixListener;
 use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
 use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use tower_http::trace::TraceLayer;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 mod api;
@@ -29,17 +30,103 @@ struct Args {
     #[arg(long)] assets_dir: Option<PathBuf>,
 }
 
+// ---------------------------------------------------------------------------
+// Persistent VM registry (JSON-backed)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct PersistentVmEntry {
+    name: String,
+    ram_mb: u64,
+    cpus: u32,
+    base_version: String,
+    created_at: String,
+    session_dir: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct PersistentRegistryData {
+    vms: HashMap<String, PersistentVmEntry>,
+}
+
+struct PersistentRegistry {
+    path: PathBuf,
+    data: PersistentRegistryData,
+}
+
+impl PersistentRegistry {
+    fn load(path: PathBuf) -> Self {
+        let data = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Self { path, data }
+    }
+
+    fn save(&self) -> Result<()> {
+        let json = serde_json::to_string_pretty(&self.data)?;
+        std::fs::write(&self.path, json)?;
+        Ok(())
+    }
+
+    fn register(&mut self, entry: PersistentVmEntry) -> Result<()> {
+        if self.data.vms.contains_key(&entry.name) {
+            return Err(anyhow!("persistent VM \"{}\" already exists. Use resume to reconnect.", entry.name));
+        }
+        self.data.vms.insert(entry.name.clone(), entry);
+        self.save()
+    }
+
+    fn unregister(&mut self, name: &str) -> Result<()> {
+        self.data.vms.remove(name);
+        self.save()
+    }
+
+    fn get(&self, name: &str) -> Option<&PersistentVmEntry> {
+        self.data.vms.get(name)
+    }
+
+    fn list(&self) -> impl Iterator<Item = &PersistentVmEntry> {
+        self.data.vms.values()
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.data.vms.contains_key(name)
+    }
+}
+
+/// Validate that a persistent VM name is safe for use as a directory name.
+fn validate_vm_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(anyhow!("VM name cannot be empty"));
+    }
+    if name.len() > 64 {
+        return Err(anyhow!("VM name too long (max 64 characters)"));
+    }
+    if !name.chars().next().unwrap().is_ascii_alphanumeric() {
+        return Err(anyhow!("VM name must start with a letter or digit"));
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(anyhow!("VM name must contain only letters, digits, hyphens, and underscores"));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Service state
+// ---------------------------------------------------------------------------
+
 struct ServiceState {
     /// Map of instance ID to Process Info
     instances: Mutex<HashMap<String, InstanceInfo>>,
+    /// Registry of persistent (named) VMs
+    persistent_registry: Mutex<PersistentRegistry>,
     process_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
     job_counter: AtomicU64,
-    /// Multi-version asset manager (currently unused in simplistic endpoints, keeping for future-proofing but suppressing warning)
     #[allow(dead_code)]
     asset_manager: Arc<capsem_core::asset_manager::AssetManager>,
-    /// Current workspace version
     current_version: String,
 }
 
@@ -52,10 +139,9 @@ struct InstanceInfo {
     cpus: u32,
     #[allow(dead_code)]
     start_time: std::time::Instant,
-    /// Base version of assets used for this VM
     base_version: String,
-    /// Whether to remove session files when the process exits
-    auto_remove: bool,
+    /// Whether this is a persistent (named) VM
+    persistent: bool,
 }
 
 impl ServiceState {
@@ -67,18 +153,20 @@ impl ServiceState {
         let mut instances = self.instances.lock().unwrap();
         let mut dead_ids = Vec::new();
         for (id, info) in instances.iter() {
-            // Use kill(0) to check if process exists. It returns Ok(()) if it does.
             let res = unsafe { nix::libc::kill(info.pid as i32, 0) };
             if res != 0 {
-                // If it returns -1 and errno is ESRCH (No such process), it's dead.
                 dead_ids.push(id.clone());
             }
         }
         for id in dead_ids {
             info!(id, "removing stale instance record");
             if let Some(info) = instances.remove(&id) {
-                if info.auto_remove {
-                    info!(id, "auto-removing session files");
+                if info.persistent {
+                    // Persistent VMs: preserve session dir, just clean up socket
+                    info!(id, "persistent VM process died, preserving session dir");
+                } else {
+                    // Ephemeral VMs: clean up everything
+                    info!(id, "ephemeral VM process died, removing session files");
                     let _ = std::fs::remove_dir_all(&info.session_dir);
                 }
                 let _ = std::fs::remove_file(&info.uds_path);
@@ -86,19 +174,26 @@ impl ServiceState {
         }
     }
 
-    fn provision_sandbox(&self, id: &str, ram_mb: u64, cpus: u32, version_override: Option<String>, auto_remove: bool) -> Result<()> {
+    fn provision_sandbox(&self, id: &str, ram_mb: u64, cpus: u32, version_override: Option<String>, persistent: bool) -> Result<()> {
         self.cleanup_stale_instances();
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
 
-        // Resource limit validation (fallback reasonable defaults if not statically enforced by UI/config)
-        // Ensure values are within safe boundaries: 1-8 CPUs, 256MB-16GB RAM.
         if cpus < 1 || cpus > 8 {
             return Err(anyhow!("cpus must be between 1 and 8"));
         }
         if ram_mb < 256 || ram_mb > 16384 {
             return Err(anyhow!("ram_mb must be between 256 and 16384"));
+        }
+
+        // Persistent VMs: validate name and reject duplicates
+        if persistent {
+            validate_vm_name(id)?;
+            let registry = self.persistent_registry.lock().unwrap();
+            if registry.contains(id) {
+                return Err(anyhow!("persistent VM \"{}\" already exists. Use `capsem resume {}` to reconnect.", id, id));
+            }
         }
 
         {
@@ -110,14 +205,13 @@ impl ServiceState {
                 return Err(anyhow!("maximum number of concurrent VMs reached ({})", max_concurrent_vms));
             }
         }
-        
+
         let version = version_override.unwrap_or_else(|| self.current_version.clone());
-        
-        info!(id, version, "provision_sandbox called");
-        
+
+        info!(id, version, persistent, "provision_sandbox called");
+
         let uds_path = self.run_dir.join("instances").join(format!("{}.sock", id));
 
-        // sun_path max: 104 bytes on macOS, 108 on Linux (both include null terminator).
         const SUN_PATH_MAX: usize = if cfg!(target_os = "macos") { 104 } else { 108 };
         let path_len = uds_path.as_os_str().len();
         if path_len >= SUN_PATH_MAX {
@@ -127,40 +221,21 @@ impl ServiceState {
             ));
         }
 
-        let session_dir = self.run_dir.join("sessions").join(id);
-        
+        // Persistent VMs go in persistent/, ephemeral in sessions/
+        let session_dir = if persistent {
+            self.run_dir.join("persistent").join(id)
+        } else {
+            self.run_dir.join("sessions").join(id)
+        };
+
         info!(uds_path = %uds_path.display(), "using uds_path");
         info!(session_dir = %session_dir.display(), "using session_dir");
 
         let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
         let _ = std::fs::create_dir_all(&session_dir);
 
-        // Assets are resolved per-version from ~/.capsem/assets/v{version}/
-        let v_assets_dir = self.assets_dir.join(format!("v{}", version));
-        info!(v_assets_dir = %v_assets_dir.display(), exists = v_assets_dir.exists(), "checking v_assets_dir");
-
-        let mut assets_to_use = if v_assets_dir.exists() {
-            v_assets_dir
-        } else {
-            info!(assets_dir = %self.assets_dir.display(), "falling back to assets_dir");
-            self.assets_dir.clone()
-        };
-
-        // If rootfs doesn't exist in assets_to_use, check if it's arch-prefixed (e.g. assets/arm64)
-        info!(check_rootfs = %assets_to_use.join("rootfs.squashfs").display(), "checking rootfs existence");
-        if !assets_to_use.join("rootfs.squashfs").exists() {
-            let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
-            let arch_dir = assets_to_use.join(arch);
-            info!(arch_dir = %arch_dir.display(), "checking arch_dir for rootfs");
-            if arch_dir.join("rootfs.squashfs").exists() {
-                info!(arch_dir = %arch_dir.display(), "found arch-specific assets");
-                assets_to_use = arch_dir;
-            }
-        }
-
+        let assets_to_use = self.resolve_assets_dir(&version)?;
         let rootfs = assets_to_use.join("rootfs.squashfs");
-        info!(final_rootfs = %rootfs.display(), exists = rootfs.exists(), "final rootfs check");
-        
         if !rootfs.exists() {
             let entries = std::fs::read_dir(&assets_to_use)
                 .map(|d| d.map(|e| e.unwrap().file_name()).collect::<Vec<_>>())
@@ -209,6 +284,19 @@ impl ServiceState {
             info!(id_clone, "capsem-process exited, reaping complete");
         });
 
+        // Register persistent VM in the registry
+        if persistent {
+            let mut registry = self.persistent_registry.lock().unwrap();
+            registry.register(PersistentVmEntry {
+                name: id.to_string(),
+                ram_mb,
+                cpus,
+                base_version: version.clone(),
+                created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+                session_dir: session_dir.clone(),
+            })?;
+        }
+
         let mut instances = self.instances.lock().unwrap();
         instances.insert(id.to_string(), InstanceInfo {
             id: id.to_string(),
@@ -219,10 +307,118 @@ impl ServiceState {
             cpus,
             start_time: std::time::Instant::now(),
             base_version: version,
-            auto_remove,
+            persistent,
         });
 
         Ok(())
+    }
+
+    /// Resume a stopped persistent VM by re-spawning capsem-process against its
+    /// existing session directory.
+    fn resume_sandbox(&self, name: &str, ram_mb_override: Option<u64>, cpus_override: Option<u32>) -> Result<String> {
+        self.cleanup_stale_instances();
+
+        // Check if already running
+        {
+            let instances = self.instances.lock().unwrap();
+            if instances.contains_key(name) {
+                return Ok(name.to_string()); // Already running, just return ID
+            }
+        }
+
+        let entry = {
+            let registry = self.persistent_registry.lock().unwrap();
+            registry.get(name).cloned().ok_or_else(|| anyhow!("no persistent VM named \"{}\"", name))?
+        };
+
+        if !entry.session_dir.exists() {
+            return Err(anyhow!("session directory for \"{}\" is missing", name));
+        }
+
+        let ram_mb = ram_mb_override.unwrap_or(entry.ram_mb);
+        let cpus = cpus_override.unwrap_or(entry.cpus);
+        let version = entry.base_version.clone();
+
+        info!(name, version, "resume_sandbox: re-spawning process");
+
+        let uds_path = self.run_dir.join("instances").join(format!("{}.sock", name));
+        let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
+
+        let assets_to_use = self.resolve_assets_dir(&version)?;
+        let rootfs = assets_to_use.join("rootfs.squashfs");
+        if !rootfs.exists() {
+            return Err(anyhow!("rootfs.squashfs not found in {}", assets_to_use.display()));
+        }
+
+        let process_log_path = entry.session_dir.join("process.log");
+        let process_log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&process_log_path)
+            .context("failed to open process.log")?;
+
+        let mut child_cmd = tokio::process::Command::new(&self.process_binary);
+        if !self.process_binary.exists() {
+            child_cmd = tokio::process::Command::new("target/debug/capsem-process");
+        }
+
+        let mut child = child_cmd
+            .env("RUST_LOG", "debug")
+            .arg("--id").arg(name)
+            .arg("--assets-dir").arg(&assets_to_use)
+            .arg("--rootfs").arg(&rootfs)
+            .arg("--session-dir").arg(&entry.session_dir)
+            .arg("--cpus").arg(cpus.to_string())
+            .arg("--ram-mb").arg(ram_mb.to_string())
+            .arg("--uds-path").arg(&uds_path)
+            .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
+            .stderr(std::process::Stdio::from(process_log_file))
+            .spawn()
+            .context("failed to spawn capsem-process")?;
+
+        let pid = child.id().unwrap_or(0);
+        info!(name, pid, "capsem-process resumed");
+
+        let name_clone = name.to_string();
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+            info!(name_clone, "resumed capsem-process exited");
+        });
+
+        let mut instances = self.instances.lock().unwrap();
+        instances.insert(name.to_string(), InstanceInfo {
+            id: name.to_string(),
+            pid,
+            uds_path,
+            session_dir: entry.session_dir,
+            ram_mb,
+            cpus,
+            start_time: std::time::Instant::now(),
+            base_version: version,
+            persistent: true,
+        });
+
+        Ok(name.to_string())
+    }
+
+    /// Resolve versioned assets directory.
+    fn resolve_assets_dir(&self, version: &str) -> Result<PathBuf> {
+        let v_assets_dir = self.assets_dir.join(format!("v{}", version));
+        let mut assets_to_use = if v_assets_dir.exists() {
+            v_assets_dir
+        } else {
+            self.assets_dir.clone()
+        };
+
+        if !assets_to_use.join("rootfs.squashfs").exists() {
+            let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+            let arch_dir = assets_to_use.join(arch);
+            if arch_dir.join("rootfs.squashfs").exists() {
+                assets_to_use = arch_dir;
+            }
+        }
+
+        Ok(assets_to_use)
     }
 }
 
@@ -250,7 +446,7 @@ async fn handle_provision(
         format!("vm-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
     });
 
-    match state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), payload.auto_remove) {
+    match state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), payload.persistent) {
         Ok(_) => Ok(Json(ProvisionResponse { id })),
         Err(e) => {
             error!(id, "provision failed: {e}");
@@ -268,15 +464,43 @@ async fn handle_list(
     State(state): State<Arc<ServiceState>>,
 ) -> Json<ListResponse> {
     state.cleanup_stale_instances();
-    let instances = state.instances.lock().unwrap();
-    let sandboxes = instances.values().map(|i| SandboxInfo {
-        id: i.id.clone(),
-        pid: i.pid,
-        status: "Running".to_string(), 
-        ram_mb: Some(i.ram_mb),
-        cpus: Some(i.cpus),
-        version: Some(i.base_version.clone()),
-    }).collect();
+
+    let mut sandboxes: Vec<SandboxInfo> = Vec::new();
+
+    // Running instances
+    {
+        let instances = state.instances.lock().unwrap();
+        for i in instances.values() {
+            sandboxes.push(SandboxInfo {
+                id: i.id.clone(),
+                pid: i.pid,
+                status: "Running".to_string(),
+                persistent: i.persistent,
+                ram_mb: Some(i.ram_mb),
+                cpus: Some(i.cpus),
+                version: Some(i.base_version.clone()),
+            });
+        }
+    }
+
+    // Stopped persistent VMs (not in instances map)
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        let instances = state.instances.lock().unwrap();
+        for entry in registry.list() {
+            if !instances.contains_key(&entry.name) {
+                sandboxes.push(SandboxInfo {
+                    id: entry.name.clone(),
+                    pid: 0,
+                    status: "Stopped".to_string(),
+                    persistent: true,
+                    ram_mb: Some(entry.ram_mb),
+                    cpus: Some(entry.cpus),
+                    version: Some(entry.base_version.clone()),
+                });
+            }
+        }
+    }
 
     Json(ListResponse { sandboxes })
 }
@@ -286,17 +510,40 @@ async fn handle_info(
     Path(id): Path<String>,
 ) -> Result<Json<SandboxInfo>, AppError> {
     state.cleanup_stale_instances();
-    let instances = state.instances.lock().unwrap();
-    let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-    
-    Ok(Json(SandboxInfo {
-        id: i.id.clone(),
-        pid: i.pid,
-        status: "Running".to_string(),
-        ram_mb: Some(i.ram_mb),
-        cpus: Some(i.cpus),
-        version: Some(i.base_version.clone()),
-    }))
+
+    // Check running instances first
+    {
+        let instances = state.instances.lock().unwrap();
+        if let Some(i) = instances.get(&id) {
+            return Ok(Json(SandboxInfo {
+                id: i.id.clone(),
+                pid: i.pid,
+                status: "Running".to_string(),
+                persistent: i.persistent,
+                ram_mb: Some(i.ram_mb),
+                cpus: Some(i.cpus),
+                version: Some(i.base_version.clone()),
+            }));
+        }
+    }
+
+    // Check stopped persistent VMs
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        if let Some(entry) = registry.get(&id) {
+            return Ok(Json(SandboxInfo {
+                id: entry.name.clone(),
+                pid: 0,
+                status: "Stopped".to_string(),
+                persistent: true,
+                ram_mb: Some(entry.ram_mb),
+                cpus: Some(entry.cpus),
+                version: Some(entry.base_version.clone()),
+            }));
+        }
+    }
+
+    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
 }
 
 async fn handle_logs(
@@ -489,17 +736,14 @@ async fn handle_inspect(
     ))
 }
 
-async fn handle_delete(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let (uds_path, session_dir, pid) = {
+/// Shutdown a running VM process by ID. Returns (session_dir, persistent) if found.
+async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf, bool)> {
+    let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        (i.uds_path.clone(), i.session_dir.clone(), i.pid)
+        let i = instances.get(id)?;
+        (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent)
     };
 
-    // Shutdown the process before removing from the map.
     let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
     if let Ok(stream) = stream_res {
         if let Ok(std_stream) = stream.into_std() {
@@ -511,19 +755,257 @@ async fn handle_delete(
         let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
     }
 
-    // Give it a brief moment to write its DBs before deleting its files
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
     if pid > 0 {
         let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
     }
 
-    // Now remove from map and clean up.
-    state.instances.lock().unwrap().remove(&id);
-    let _ = std::fs::remove_dir_all(&session_dir);
+    state.instances.lock().unwrap().remove(id);
     let _ = std::fs::remove_file(&uds_path);
 
+    Some((session_dir, persistent))
+}
+
+async fn handle_stop(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if let Some((session_dir, persistent)) = shutdown_vm_process(&state, &id).await {
+        if !persistent {
+            // Ephemeral VMs: destroy session dir on stop
+            let _ = std::fs::remove_dir_all(&session_dir);
+        }
+        Ok(Json(json!({ "success": true, "persistent": persistent })))
+    } else {
+        Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    }
+}
+
+async fn handle_delete(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Try to shut down if running
+    let session_dir = if let Some((session_dir, _)) = shutdown_vm_process(&state, &id).await {
+        session_dir
+    } else {
+        // Not running -- check persistent registry for stopped VM
+        let registry = state.persistent_registry.lock().unwrap();
+        if let Some(entry) = registry.get(&id) {
+            entry.session_dir.clone()
+        } else {
+            return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")));
+        }
+    };
+
+    // Unregister from persistent registry if applicable
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        if registry.contains(&id) {
+            let _ = registry.unregister(&id);
+        }
+    }
+
+    // Always destroy session dir on delete
+    let _ = std::fs::remove_dir_all(&session_dir);
+
     Ok(Json(json!({ "success": true })))
+}
+
+async fn handle_resume(
+    State(state): State<Arc<ServiceState>>,
+    Path(name): Path<String>,
+) -> Result<Json<ProvisionResponse>, AppError> {
+    match state.resume_sandbox(&name, None, None) {
+        Ok(id) => Ok(Json(ProvisionResponse { id })),
+        Err(e) => {
+            error!(name, "resume failed: {e}");
+            Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("resume failed: {e}")))
+        }
+    }
+}
+
+async fn handle_persist(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<PersistRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let name = &payload.name;
+    validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    // Check name is not taken
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        if registry.contains(name) {
+            return Err(AppError(StatusCode::CONFLICT, format!("persistent VM \"{}\" already exists", name)));
+        }
+    }
+
+    // Find the running ephemeral instance
+    let (old_session_dir, ram_mb, cpus, base_version) = {
+        let instances = state.instances.lock().unwrap();
+        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        if i.persistent {
+            return Err(AppError(StatusCode::BAD_REQUEST, format!("VM \"{}\" is already persistent", id)));
+        }
+        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone())
+    };
+
+    // Move session dir to persistent location
+    let new_session_dir = state.run_dir.join("persistent").join(name);
+    let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
+    std::fs::rename(&old_session_dir, &new_session_dir)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to move session dir: {e}")))?;
+
+    // Register in persistent registry
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry.register(PersistentVmEntry {
+            name: name.clone(),
+            ram_mb,
+            cpus,
+            base_version: base_version.clone(),
+            created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+            session_dir: new_session_dir.clone(),
+        }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    // Update instance info in-place
+    {
+        let mut instances = state.instances.lock().unwrap();
+        if let Some(info) = instances.remove(&id) {
+            instances.insert(name.clone(), InstanceInfo {
+                id: name.clone(),
+                pid: info.pid,
+                uds_path: info.uds_path,
+                session_dir: new_session_dir,
+                ram_mb: info.ram_mb,
+                cpus: info.cpus,
+                start_time: info.start_time,
+                base_version: info.base_version,
+                persistent: true,
+            });
+        }
+    }
+
+    Ok(Json(json!({ "success": true, "name": name })))
+}
+
+async fn handle_purge(
+    State(state): State<Arc<ServiceState>>,
+    Json(payload): Json<PurgeRequest>,
+) -> Result<Json<PurgeResponse>, AppError> {
+    state.cleanup_stale_instances();
+
+    let mut ephemeral_purged: u32 = 0;
+    let mut persistent_purged: u32 = 0;
+
+    // Collect VMs to purge
+    let to_purge: Vec<(String, bool)> = {
+        let instances = state.instances.lock().unwrap();
+        instances.values()
+            .filter(|i| !i.persistent || payload.all)
+            .map(|i| (i.id.clone(), i.persistent))
+            .collect()
+    };
+
+    for (id, persistent) in &to_purge {
+        if let Some((session_dir, _)) = shutdown_vm_process(&state, id).await {
+            if *persistent {
+                let mut registry = state.persistent_registry.lock().unwrap();
+                let _ = registry.unregister(id);
+            }
+            let _ = std::fs::remove_dir_all(&session_dir);
+            if *persistent { persistent_purged += 1; } else { ephemeral_purged += 1; }
+        }
+    }
+
+    // If --all, also purge stopped persistent VMs
+    if payload.all {
+        let stopped_names: Vec<String> = {
+            let registry = state.persistent_registry.lock().unwrap();
+            let instances = state.instances.lock().unwrap();
+            registry.list()
+                .filter(|e| !instances.contains_key(&e.name))
+                .map(|e| e.name.clone())
+                .collect()
+        };
+        for name in &stopped_names {
+            let session_dir = {
+                let registry = state.persistent_registry.lock().unwrap();
+                registry.get(name).map(|e| e.session_dir.clone())
+            };
+            if let Some(dir) = session_dir {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+            let mut registry = state.persistent_registry.lock().unwrap();
+            let _ = registry.unregister(name);
+            persistent_purged += 1;
+        }
+    }
+
+    let purged = ephemeral_purged + persistent_purged;
+    Ok(Json(PurgeResponse { purged, persistent_purged, ephemeral_purged }))
+}
+
+/// One-shot exec: provision a temp VM, run a command, return output, destroy VM.
+async fn handle_run(
+    State(state): State<Arc<ServiceState>>,
+    Json(payload): Json<RunRequest>,
+) -> Result<Json<ExecResponse>, AppError> {
+    let id = format!("run-{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+
+    // 1. Provision ephemeral VM
+    state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), false)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
+
+    // 2. Wait for VM socket to appear
+    let uds_path = state.run_dir.join("instances").join(format!("{}.sock", id));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if uds_path.exists() {
+            // Try a ping to confirm the VM is ready
+            if let Ok(ProcessToService::Pong) = send_ipc_command(&uds_path, ServiceToProcess::Ping, 5).await {
+                break;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            // Cleanup on timeout
+            let _ = shutdown_vm_process(&state, &id).await;
+            let session_dir = state.run_dir.join("sessions").join(&id);
+            let _ = std::fs::remove_dir_all(&session_dir);
+            return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "VM did not become ready within 30s".into()));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    // 3. Execute command
+    let job_id = state.next_job_id();
+    let exec_result = send_ipc_command(
+        &uds_path,
+        ServiceToProcess::Exec { id: job_id, command: payload.command },
+        payload.timeout_secs,
+    ).await;
+
+    // 4. Tear down VM regardless of exec outcome
+    let _ = shutdown_vm_process(&state, &id).await;
+    let session_dir = state.run_dir.join("sessions").join(&id);
+    let _ = std::fs::remove_dir_all(&session_dir);
+
+    // 5. Return result
+    match exec_result {
+        Ok(ProcessToService::ExecResult { stdout, stderr, exit_code, .. }) => {
+            Ok(Json(ExecResponse {
+                stdout: String::from_utf8_lossy(&stdout).to_string(),
+                stderr: String::from_utf8_lossy(&stderr).to_string(),
+                exit_code,
+            }))
+        }
+        Ok(_) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response".into())),
+        Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
+    }
 }
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
@@ -558,8 +1040,10 @@ async fn main() -> Result<()> {
 
     let instances_dir = run_dir.join("instances");
     let sessions_dir = run_dir.join("sessions");
+    let persistent_dir = run_dir.join("persistent");
     let _ = std::fs::create_dir_all(&instances_dir);
     let _ = std::fs::create_dir_all(&sessions_dir);
+    let _ = std::fs::create_dir_all(&persistent_dir);
 
     let service_sock = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
     if service_sock.exists() {
@@ -590,8 +1074,13 @@ async fn main() -> Result<()> {
         &manifest, &current_version, assets_base_dir.clone(), Some(arch)
     )?;
 
+    let registry_path = run_dir.join("persistent_registry.json");
+    let persistent_registry = PersistentRegistry::load(registry_path);
+    info!(persistent_vms = persistent_registry.data.vms.len(), "loaded persistent VM registry");
+
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        persistent_registry: Mutex::new(persistent_registry),
         process_binary,
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
@@ -622,7 +1111,12 @@ async fn main() -> Result<()> {
         .route("/exec/{id}", post(handle_exec))
         .route("/write_file/{id}", post(handle_write_file))
         .route("/read_file/{id}", post(handle_read_file))
+        .route("/stop/{id}", post(handle_stop))
         .route("/delete/{id}", delete(handle_delete))
+        .route("/resume/{name}", post(handle_resume))
+        .route("/persist/{id}", post(handle_persist))
+        .route("/purge", post(handle_purge))
+        .route("/run", post(handle_run))
         .route("/reload-config", post(handle_reload_config))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -650,8 +1144,10 @@ mod tests {
         let am = capsem_core::asset_manager::AssetManager::from_manifest(
             &manifest, "0.0.0", PathBuf::from("/tmp/capsem-test-assets"), None
         ).unwrap();
+        let registry_path = PathBuf::from("/tmp/capsem-test-svc/persistent_registry.json");
         ServiceState {
             instances: Mutex::new(HashMap::new()),
+            persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
             process_binary: PathBuf::from("/nonexistent/capsem-process"),
             assets_dir: PathBuf::from("/nonexistent/assets"),
             run_dir: PathBuf::from("/tmp/capsem-test-svc"),
@@ -673,7 +1169,7 @@ mod tests {
                 cpus: 2,
                 start_time: std::time::Instant::now(),
                 base_version: "0.0.0".into(),
-                auto_remove: false,
+                persistent: false,
             },
         );
     }
@@ -955,5 +1451,161 @@ mod tests {
             let msg = e.to_string();
             assert!(!msg.contains("socket path"), "normal name should not hit path limit: {msg}");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // VM name validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_vm_name_valid() {
+        assert!(validate_vm_name("mydev").is_ok());
+        assert!(validate_vm_name("my-dev").is_ok());
+        assert!(validate_vm_name("my_dev").is_ok());
+        assert!(validate_vm_name("dev123").is_ok());
+        assert!(validate_vm_name("a").is_ok());
+    }
+
+    #[test]
+    fn validate_vm_name_empty() {
+        assert!(validate_vm_name("").is_err());
+    }
+
+    #[test]
+    fn validate_vm_name_path_separator() {
+        assert!(validate_vm_name("../escape").is_err());
+        assert!(validate_vm_name("foo/bar").is_err());
+    }
+
+    #[test]
+    fn validate_vm_name_starts_with_hyphen() {
+        assert!(validate_vm_name("-bad").is_err());
+    }
+
+    #[test]
+    fn validate_vm_name_spaces() {
+        assert!(validate_vm_name("has space").is_err());
+    }
+
+    #[test]
+    fn validate_vm_name_too_long() {
+        assert!(validate_vm_name(&"a".repeat(65)).is_err());
+        assert!(validate_vm_name(&"a".repeat(64)).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // PersistentRegistry
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn persistent_registry_roundtrip() {
+        let dir = std::env::temp_dir().join("capsem-test-registry");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_registry.json");
+        let _ = std::fs::remove_file(&path);
+
+        let mut registry = PersistentRegistry::load(path.clone());
+        assert_eq!(registry.data.vms.len(), 0);
+
+        registry.register(PersistentVmEntry {
+            name: "mydev".into(),
+            ram_mb: 4096,
+            cpus: 4,
+            base_version: "0.1.0".into(),
+            created_at: "12345".into(),
+            session_dir: dir.join("mydev"),
+        }).unwrap();
+
+        assert!(registry.contains("mydev"));
+        assert_eq!(registry.get("mydev").unwrap().ram_mb, 4096);
+
+        // Reload from disk
+        let registry2 = PersistentRegistry::load(path.clone());
+        assert!(registry2.contains("mydev"));
+        assert_eq!(registry2.get("mydev").unwrap().cpus, 4);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persistent_registry_rejects_duplicate() {
+        let dir = std::env::temp_dir().join("capsem-test-registry-dup");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_registry.json");
+        let _ = std::fs::remove_file(&path);
+
+        let mut registry = PersistentRegistry::load(path);
+        let entry = PersistentVmEntry {
+            name: "dup".into(),
+            ram_mb: 2048,
+            cpus: 2,
+            base_version: "0.1.0".into(),
+            created_at: "12345".into(),
+            session_dir: dir.join("dup"),
+        };
+        registry.register(entry.clone()).unwrap();
+        let err = registry.register(entry).unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persistent_registry_unregister() {
+        let dir = std::env::temp_dir().join("capsem-test-registry-unreg");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_registry.json");
+        let _ = std::fs::remove_file(&path);
+
+        let mut registry = PersistentRegistry::load(path);
+        registry.register(PersistentVmEntry {
+            name: "tmp".into(),
+            ram_mb: 2048,
+            cpus: 2,
+            base_version: "0.1.0".into(),
+            created_at: "12345".into(),
+            session_dir: dir.join("tmp"),
+        }).unwrap();
+        assert!(registry.contains("tmp"));
+        registry.unregister("tmp").unwrap();
+        assert!(!registry.contains("tmp"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // Provision rejects duplicate persistent VM
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn provision_persistent_rejects_duplicate_name() {
+        let state = make_test_state();
+        // Pre-register a persistent VM directly in the registry data
+        {
+            let mut reg = state.persistent_registry.lock().unwrap();
+            reg.data.vms.insert("taken".into(), PersistentVmEntry {
+                name: "taken".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: PathBuf::from("/tmp/taken"),
+            });
+        }
+        let result = state.provision_sandbox("taken", 2048, 2, None, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("already exists"), "expected duplicate error, got: {err}");
+        assert!(err.contains("resume"), "should suggest resume, got: {err}");
+    }
+
+    #[test]
+    fn provision_persistent_validates_name() {
+        let state = make_test_state();
+        let result = state.provision_sandbox("../evil", 2048, 2, None, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must start with") || err.contains("must contain only"),
+            "expected name validation error, got: {err}");
     }
 }

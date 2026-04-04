@@ -790,17 +790,17 @@ async fn setup_vsock(
     for conn in deferred_conns {
         match conn.port {
             capsem_core::VSOCK_PORT_SNI_PROXY => {
-                let fd = conn.fd;
                 let config = Arc::clone(&mitm_config);
                 tokio::spawn(async move {
-                    capsem_core::net::mitm_proxy::handle_connection(fd, config).await;
+                    capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
+                    drop(conn); // Hold conn alive
                 });
             }
             capsem_core::VSOCK_PORT_MCP_GATEWAY => {
-                let fd = conn.fd;
                 let mcp = Arc::clone(&mcp_config);
                 tokio::spawn(async move {
-                    capsem_core::mcp::gateway::serve_mcp_session(fd, mcp).await;
+                    capsem_core::mcp::gateway::serve_mcp_session(conn.fd, mcp).await;
+                    drop(conn); // Hold conn alive
                 });
             }
             _ => {}
@@ -814,17 +814,17 @@ async fn setup_vsock(
             if let Some(conn) = vsock_rx.recv().await {
                 match conn.port {
                     capsem_core::VSOCK_PORT_SNI_PROXY => {
-                        let fd = conn.fd;
                         let config = Arc::clone(&mitm_config_loop);
                         tokio::spawn(async move {
-                            capsem_core::net::mitm_proxy::handle_connection(fd, config).await;
+                            capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
+                            drop(conn); // Hold conn alive
                         });
                     }
                     capsem_core::VSOCK_PORT_MCP_GATEWAY => {
-                        let fd = conn.fd;
                         let mcp = Arc::clone(&mcp_config_loop);
                         tokio::spawn(async move {
-                            capsem_core::mcp::gateway::serve_mcp_session(fd, mcp).await;
+                            capsem_core::mcp::gateway::serve_mcp_session(conn.fd, mcp).await;
+                            drop(conn); // Hold conn alive
                         });
                     }
                     _ => {}
@@ -927,6 +927,7 @@ async fn setup_vsock(
         while let Some(msg) = ctrl_rx.blocking_recv() {
             match msg {
                 ServiceToProcess::TerminalInput { data } => { let _ = term_f_write.write_all(&data); let _ = term_f_write.flush(); }
+                ServiceToProcess::TerminalResize { cols, rows } => { let _ = ctrl_cmd_tx.send(HostToGuest::Resize { cols, rows }); }
                 ServiceToProcess::Exec { id, command } => { let _ = ctrl_cmd_tx.send(HostToGuest::Exec { id, command }); }
                 ServiceToProcess::WriteFile { id, path, data } => { let _ = ctrl_cmd_tx.send(HostToGuest::FileWrite { id, path, data, mode: 0o644 }); }
                 ServiceToProcess::ReadFile { id, path } => { let _ = ctrl_cmd_tx.send(HostToGuest::FileRead { id, path }); }

@@ -67,7 +67,12 @@ async fn serve_mcp_session_inner(fd: RawFd, config: &McpGatewayConfig) -> Result
         libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
     }
 
-    let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    // Safely duplicate the file descriptor so we don't take ownership of the original,
+    // preventing a double-close IO safety violation when the framework drops the connection.
+    let vsock_stream = std::mem::ManuallyDrop::new(unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) });
+    let std_stream = vsock_stream.try_clone()
+        .context("failed to dup vsock fd")?;
+
     let tokio_stream = tokio::net::UnixStream::from_std(std_stream)
         .context("failed to create async vsock stream")?;
     let (read_half, mut write_half) = tokio_stream.into_split();

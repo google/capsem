@@ -35,7 +35,7 @@ Restructured 2026-04-03 after codebase audit. S1 consolidates all foundation wor
 
 | Sprint | Name | Status | Depends On |
 |--------|------|--------|-----------|
-| S10 | MITM SSH + guest SSH server | Not started | S4 |
+| S10 | MITM SSH + IDE + file transfer (cp) | Not started | S4 |
 | S11 | IDE integration | Not started | S10 |
 
 ## Phase F: Menu Bar + Auto-start

@@ -38,21 +38,25 @@ class TestProvision:
         )
 
 
-class TestAutoRemove:
+class TestPersistence:
 
-    def test_provision_with_auto_remove(self, fresh_vm):
-        name = vm_name("autorm")
-        # fresh_vm doesn't support auto_remove, so call directly
-        # but still need cleanup -- use fresh_vm for that
-        name, resp = fresh_vm("autorm")
-        # The fixture handles cleanup
-
-    def test_provision_default_auto_remove_false(self, fresh_vm, client):
-        name, resp = fresh_vm("defarm")
+    def test_provision_persistent(self, fresh_vm, client):
+        name, resp = fresh_vm("persist")
         assert resp is not None
         info = client.get(f"/info/{name}")
         assert info is not None
         assert info["id"] == name
+
+    def test_provision_default_not_persistent(self, client):
+        resp = client.post("/provision", {"ram_mb": 2048, "cpus": 2})
+        assert resp is not None
+        vm_id = resp.get("id")
+        assert vm_id
+        info = client.get(f"/info/{vm_id}")
+        assert info is not None
+        # Default VMs are ephemeral (not persistent)
+        assert info.get("persistent", False) is False
+        client.delete(f"/delete/{vm_id}")
 
 
 class TestList:
