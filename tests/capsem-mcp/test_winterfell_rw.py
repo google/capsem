@@ -24,14 +24,18 @@ def content_text(result):
 
 
 def wait_ready(session, vm_name, timeout=30):
-    """Poll until VM responds to read_file (no exec dependency)."""
+    """Poll until VM responds to write_file+read_file roundtrip (no exec dependency)."""
+    probe_path = "/tmp/.capsem-ready-probe"
     for _ in range(timeout):
         try:
+            session.call_tool("capsem_write_file", {
+                "id": vm_name, "path": probe_path, "content": "ready",
+            })
             res = session.call_tool("capsem_read_file", {
-                "id": vm_name, "path": "/etc/hostname",
+                "id": vm_name, "path": probe_path,
             })
             data = parse_content(res)
-            if data.get("content"):
+            if data.get("content") == "ready":
                 return True
         except (AssertionError, KeyError, json.JSONDecodeError):
             pass

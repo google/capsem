@@ -854,6 +854,10 @@ async fn setup_vsock(
                     match msg {
                         GuestToHost::ExecDone { id, exit_code } => {
                             info!(id, exit_code, "Received ExecDone from guest");
+                            // Wait for terminal data to drain from vsock:5001.
+                            // ExecDone arrives on vsock:5000 (control) which may
+                            // outpace the terminal data on vsock:5001.
+                            std::thread::sleep(std::time::Duration::from_millis(50));
                             let stdout = {
                                 let active = js.active_exec.lock().unwrap();
                                 if let Some((active_id, captured)) = active.as_ref() {

@@ -114,10 +114,10 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
 
     # Format if unformatted (first boot). Uses mke2fs from the squashfs rootfs
     # since busybox doesn't include it. Bind-mount /dev so chroot can see loop devices.
-    if ! blkid "$LOOP_DEV" 2>/dev/null | grep -q ext4; then
+    if ! blkid -p "$LOOP_DEV" 2>/dev/null | grep -q ext4; then
         echo "[capsem-init] formatting system image..."
         mount --bind /dev /mnt/a/dev
-        chroot /mnt/a /usr/sbin/mke2fs -t ext4 -m 0 -O ^has_journal \
+        chroot /mnt/a /usr/sbin/mke2fs -F -t ext4 -m 0 -O ^has_journal \
             -E lazy_itable_init=1 -L system -q "$LOOP_DEV" 2>&1
         umount /mnt/a/dev
         echo "[capsem-init] system image formatted"
