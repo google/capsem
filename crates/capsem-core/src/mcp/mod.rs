@@ -1,3 +1,4 @@
+pub mod browser_tools;
 pub mod builtin_tools;
 pub mod file_tools;
 pub mod gateway;
@@ -183,10 +184,7 @@ pub fn compute_tool_hash(tool: &McpToolDef) -> String {
 }
 
 /// Detect changes between newly discovered tools and the cache.
-pub fn detect_pin_changes(
-    new_tools: &[McpToolDef],
-    cache: &[ToolCacheEntry],
-) -> Vec<PinChange> {
+pub fn detect_pin_changes(new_tools: &[McpToolDef], cache: &[ToolCacheEntry]) -> Vec<PinChange> {
     let mut changes = Vec::new();
     let cache_map: HashMap<&str, &ToolCacheEntry> = cache
         .iter()
@@ -241,7 +239,12 @@ pub fn detect_name_collisions(tools: &[McpToolDef]) -> Vec<(String, Vec<String>)
     by_name
         .into_iter()
         .filter(|(_, servers)| servers.len() > 1)
-        .map(|(name, servers)| (name.to_string(), servers.into_iter().map(String::from).collect()))
+        .map(|(name, servers)| {
+            (
+                name.to_string(),
+                servers.into_iter().map(String::from).collect(),
+            )
+        })
         .collect()
 }
 
@@ -254,13 +257,10 @@ fn tool_cache_path() -> Option<std::path::PathBuf> {
 pub fn save_tool_cache(entries: &[ToolCacheEntry]) -> Result<(), String> {
     let path = tool_cache_path().ok_or("HOME not set")?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
     }
-    let json = serde_json::to_string_pretty(entries)
-        .map_err(|e| format!("serialize: {e}"))?;
-    std::fs::write(&path, json)
-        .map_err(|e| format!("write: {e}"))
+    let json = serde_json::to_string_pretty(entries).map_err(|e| format!("serialize: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("write: {e}"))
 }
 
 /// Load tool cache from disk. Returns empty vec if file missing.
@@ -279,7 +279,10 @@ pub fn load_tool_cache() -> Vec<ToolCacheEntry> {
 }
 
 /// Build cache entries from current tool catalog.
-pub fn build_cache_entries(tools: &[McpToolDef], existing: &[ToolCacheEntry]) -> Vec<ToolCacheEntry> {
+pub fn build_cache_entries(
+    tools: &[McpToolDef],
+    existing: &[ToolCacheEntry],
+) -> Vec<ToolCacheEntry> {
     let now = humantime::format_rfc3339(std::time::SystemTime::now()).to_string();
     let existing_map: HashMap<&str, &ToolCacheEntry> = existing
         .iter()
@@ -298,12 +301,20 @@ pub fn build_cache_entries(tools: &[McpToolDef], existing: &[ToolCacheEntry]) ->
                 server_name: tool.server_name.clone(),
                 annotations: tool.annotations.clone(),
                 pin_hash: hash.clone(),
-                first_seen: prev.map(|p| p.first_seen.clone()).unwrap_or_else(|| now.clone()),
+                first_seen: prev
+                    .map(|p| p.first_seen.clone())
+                    .unwrap_or_else(|| now.clone()),
                 last_seen: now.clone(),
-                approved: prev.map(|p| {
-                    // Stay approved only if hash hasn't changed
-                    if p.pin_hash == hash { p.approved } else { false }
-                }).unwrap_or(false),
+                approved: prev
+                    .map(|p| {
+                        // Stay approved only if hash hasn't changed
+                        if p.pin_hash == hash {
+                            p.approved
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false),
             }
         })
         .collect()
@@ -382,7 +393,10 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
                 format!("{} {}", command, args.join(" "))
             };
 
-            debug!(name, source, command, "detected stdio MCP server (unsupported)");
+            debug!(
+                name,
+                source, command, "detected stdio MCP server (unsupported)"
+            );
             defs.push(McpServerDef {
                 name: name.clone(),
                 url: display_command,
@@ -401,8 +415,8 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use crate::mcp::policy::{McpManualServer, McpUserConfig};
+    use std::io::Write;
 
     fn make_tool(ns_name: &str, orig_name: &str, server: &str, desc: Option<&str>) -> McpToolDef {
         McpToolDef {
@@ -438,7 +452,8 @@ mod tests {
     fn compute_tool_hash_changes_on_schema() {
         let mut tool = make_tool("github__search", "search", "github", Some("Search"));
         let h1 = compute_tool_hash(&tool);
-        tool.input_schema = serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}}});
+        tool.input_schema =
+            serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}}});
         let h2 = compute_tool_hash(&tool);
         assert_ne!(h1, h2);
     }
@@ -446,9 +461,15 @@ mod tests {
     #[test]
     fn compute_tool_hash_changes_on_annotations() {
         let mut tool = make_tool("github__search", "search", "github", Some("Search"));
-        tool.annotations = Some(ToolAnnotations { read_only_hint: true, ..Default::default() });
+        tool.annotations = Some(ToolAnnotations {
+            read_only_hint: true,
+            ..Default::default()
+        });
         let h1 = compute_tool_hash(&tool);
-        tool.annotations = Some(ToolAnnotations { read_only_hint: false, ..Default::default() });
+        tool.annotations = Some(ToolAnnotations {
+            read_only_hint: false,
+            ..Default::default()
+        });
         let h2 = compute_tool_hash(&tool);
         assert_ne!(h1, h2);
     }
@@ -476,7 +497,12 @@ mod tests {
 
     #[test]
     fn detect_pin_changes_description_changed() {
-        let tool = make_tool("github__search", "search", "github", Some("New description"));
+        let tool = make_tool(
+            "github__search",
+            "search",
+            "github",
+            Some("New description"),
+        );
         let cache = vec![ToolCacheEntry {
             namespaced_name: "github__search".into(),
             original_name: "search".into(),
@@ -529,7 +555,12 @@ mod tests {
             description: Some("Search repos".into()),
             server_name: "github".into(),
             annotations: None,
-            pin_hash: compute_tool_hash(&make_tool("github__search", "search", "github", Some("Search repos"))),
+            pin_hash: compute_tool_hash(&make_tool(
+                "github__search",
+                "search",
+                "github",
+                Some("Search repos"),
+            )),
             first_seen: "2025-01-01".into(),
             last_seen: "2025-01-01".into(),
             approved: true,
@@ -563,15 +594,24 @@ mod tests {
     #[test]
     fn rug_pull_annotation_flip() {
         let mut tool = make_tool("github__delete", "delete", "github", Some("Delete"));
-        tool.annotations = Some(ToolAnnotations { read_only_hint: false, ..Default::default() });
+        tool.annotations = Some(ToolAnnotations {
+            read_only_hint: false,
+            ..Default::default()
+        });
         let mut original = make_tool("github__delete", "delete", "github", Some("Delete"));
-        original.annotations = Some(ToolAnnotations { read_only_hint: true, ..Default::default() });
+        original.annotations = Some(ToolAnnotations {
+            read_only_hint: true,
+            ..Default::default()
+        });
         let cache = vec![ToolCacheEntry {
             namespaced_name: "github__delete".into(),
             original_name: "delete".into(),
             description: Some("Delete".into()),
             server_name: "github".into(),
-            annotations: Some(ToolAnnotations { read_only_hint: true, ..Default::default() }),
+            annotations: Some(ToolAnnotations {
+                read_only_hint: true,
+                ..Default::default()
+            }),
             pin_hash: compute_tool_hash(&original),
             first_seen: "2025-01-01".into(),
             last_seen: "2025-01-01".into(),
@@ -647,7 +687,9 @@ mod tests {
         };
         let corp = McpUserConfig::default();
         let list = build_server_list(&user, &corp);
-        assert!(list.iter().any(|s| s.name == "myserver" && s.source == "manual"));
+        assert!(list
+            .iter()
+            .any(|s| s.name == "myserver" && s.source == "manual"));
     }
 
     #[test]
@@ -664,7 +706,9 @@ mod tests {
             ..Default::default()
         };
         let list = build_server_list(&user, &corp);
-        assert!(list.iter().any(|s| s.name == "corp-server" && s.source == "corp"));
+        assert!(list
+            .iter()
+            .any(|s| s.name == "corp-server" && s.source == "corp"));
     }
 
     #[test]
@@ -814,11 +858,7 @@ mod tests {
     fn parse_server_without_url_or_command_skipped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(
-            &path,
-            r#"{"mcpServers": {"bad": {"name": "bad"}}}"#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{"mcpServers": {"bad": {"name": "bad"}}}"#).unwrap();
         let defs = parse_mcp_servers_from_file(&path, "test").unwrap();
         assert_eq!(defs.len(), 0);
     }
@@ -862,10 +902,9 @@ mod tests {
         let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
         assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-        let template = std::fs::read_to_string(
-            root.join("src/capsem/builder/templates/Dockerfile.rootfs.j2"),
-        )
-        .expect("cannot read Dockerfile.rootfs.j2");
+        let template =
+            std::fs::read_to_string(root.join("src/capsem/builder/templates/Dockerfile.rootfs.j2"))
+                .expect("cannot read Dockerfile.rootfs.j2");
 
         // The Jinja template uses a loop over guest_binaries to COPY each binary.
         // Verify the loop pattern exists -- the Python build context test
@@ -897,8 +936,8 @@ mod tests {
         let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
         assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-        let justfile = std::fs::read_to_string(root.join("justfile"))
-            .expect("cannot read justfile");
+        let justfile =
+            std::fs::read_to_string(root.join("justfile")).expect("cannot read justfile");
 
         // Extract the _pack-initrd recipe section (from "_pack-initrd:" to next recipe)
         let start = justfile
