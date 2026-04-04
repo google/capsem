@@ -61,7 +61,7 @@ User     -> capsem CLI          -> HTTP over UDS -> capsem-service (daemon)
 
 ### MCP tools (capsem-mcp)
 
-`capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`, `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`.
+17 tools: `capsem_create` (env param for guest injection), `capsem_list`, `capsem_info`, `capsem_exec` (timeout param), `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_vm_logs` (grep + tail), `capsem_service_logs` (grep + tail), `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`, `capsem_version`.
 
 ## Host-guest communication
 
