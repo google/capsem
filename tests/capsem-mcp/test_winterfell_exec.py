@@ -37,7 +37,7 @@ def wait_ready(session, vm_name, timeout=30):
 
 def test_winterfell_exec(mcp_session):
     name = f"wf-ex-{uuid.uuid4().hex[:4]}"
-    message = "winter is coming"
+    message = "the north remembers"
     path = "/root/stark_words.txt"
 
     # 1. Create persistent VM
@@ -56,7 +56,7 @@ def test_winterfell_exec(mcp_session):
         # 3. Wait for exec-ready
         assert wait_ready(mcp_session, name), f"{name} never exec-ready"
 
-        # 4. Write "winter is coming" via exec
+        # 4. Write "the north remembers" via exec
         res = mcp_session.call_tool("capsem_exec", {
             "id": name,
             "command": f"echo '{message}' > {path}",

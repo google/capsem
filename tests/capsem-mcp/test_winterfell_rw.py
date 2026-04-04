@@ -1,6 +1,6 @@
 """Winterfell persistence test: write_file / read_file path.
 
-The full "winter is coming" lifecycle via MCP tools:
+The full "the north remembers" lifecycle via MCP tools:
   create -> list -> write_file -> read_file -> stop ->
   list (stopped) -> resume -> read_file (survives) ->
   delete -> list (gone) -> resume (fails)
@@ -45,7 +45,7 @@ def wait_ready(session, vm_name, timeout=30):
 
 def test_winterfell_rw(mcp_session):
     name = f"wf-rw-{uuid.uuid4().hex[:4]}"
-    message = "winter is coming"
+    message = "the north remembers"
     path = "/root/stark_words.txt"
 
     # 1. Create persistent VM
@@ -64,7 +64,7 @@ def test_winterfell_rw(mcp_session):
         # 3. Wait for exec-ready
         assert wait_ready(mcp_session, name), f"{name} never exec-ready"
 
-        # 4. Write "winter is coming"
+        # 4. Write "the north remembers"
         res = mcp_session.call_tool("capsem_write_file", {
             "id": name, "path": path, "content": message,
         })
