@@ -7,3 +7,6 @@ edition = "2021"
 serde = { workspace = true }
 rmp-serde = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

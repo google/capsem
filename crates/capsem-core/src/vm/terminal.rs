@@ -1,9 +1,12 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 
+/// Maximum bytes to coalesce in a single batch (1MB).
+const DEFAULT_MAX_COALESCE_BYTES: usize = 1024 * 1024;
+
 /// Max queued output chunks before dropping to prevent OOM when the consumer
 /// stops polling. Each chunk is typically a few KB from the coalesce buffer.
-const TERMINAL_QUEUE_CAPACITY: usize = 64;
+const TERMINAL_QUEUE_CAPACITY: usize = 1024;
 
 /// Lock-free-ish queue for terminal output data.
 ///
@@ -35,21 +38,46 @@ impl TerminalOutputQueue {
         if queue.len() >= TERMINAL_QUEUE_CAPACITY {
             // Backpressure: drop oldest to make room.
             queue.pop_front();
+            tracing::warn!("TerminalOutputQueue capacity reached, dropped oldest chunk");
         }
         queue.push_back(bytes);
         drop(queue);
         self.notify.notify_one();
     }
 
-    /// Async poll for the next chunk. Returns `None` when the queue is closed
-    /// and drained.
+    /// Async poll for the next chunk. Aggressively coalesces up to ~1MB of data
+    /// from the queue into a single byte vector to minimize IPC/syscall overhead.
+    /// Returns `None` when the queue is closed and drained.
     pub async fn poll(&self) -> Option<Vec<u8>> {
         loop {
             // Try to pop a chunk under the lock.
             {
                 let mut queue = self.data.lock().unwrap();
-                if let Some(chunk) = queue.pop_front() {
-                    return Some(chunk);
+                if let Some(mut coalesced) = queue.pop_front() {
+                    let mut count = 1;
+                    
+                    // Keep draining the queue into our coalesced buffer until we hit 1MB
+                    while coalesced.len() < DEFAULT_MAX_COALESCE_BYTES {
+                        if let Some(next) = queue.front() {
+                            if coalesced.len() + next.len() > DEFAULT_MAX_COALESCE_BYTES {
+                                break; // Adding this chunk would exceed our max batch size
+                            }
+                            coalesced.extend_from_slice(&queue.pop_front().unwrap());
+                            count += 1;
+                        } else {
+                            break; // Queue empty
+                        }
+                    }
+
+                    if count > 1 {
+                        tracing::debug!(
+                            "Sender side coalesced {} terminal chunks into {} bytes before IPC transfer",
+                            count,
+                            coalesced.len()
+                        );
+                    }
+                    
+                    return Some(coalesced);
                 }
                 // Queue is empty. If closed, we're done.
                 if self.closed.load(Ordering::Acquire) {

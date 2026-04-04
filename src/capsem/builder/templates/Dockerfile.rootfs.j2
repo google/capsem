@@ -82,6 +82,10 @@ COPY capsem-bench /usr/local/bin/capsem-bench
 RUN chmod 755 /usr/local/bin/capsem-bench
 COPY capsem_bench/ /usr/local/lib/capsem_bench/
 
+# Snapshot management CLI
+COPY snapshots /usr/local/bin/snapshots
+RUN chmod 755 /usr/local/bin/snapshots
+
 # Remove PEP 668 EXTERNALLY-MANAGED marker.
 # This is an ephemeral sandboxed VM -- the protection is unnecessary and blocks
 # pip install with a confusing error.  A pre-activated venv handles writes

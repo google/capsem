@@ -112,7 +112,12 @@ impl AsyncWrite for AsyncVsock {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
+        let ret = unsafe { libc::shutdown(self.fd, libc::SHUT_WR) };
+        if ret == 0 {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Ready(Err(io::Error::last_os_error()))
+        }
     }
 }
 
@@ -346,4 +351,36 @@ mod tests {
         tokio::io::AsyncReadExt::read_exact(&mut vb, &mut buf).await.unwrap();
         assert_eq!(&buf, b"ping");
     }
+
+    #[tokio::test]
+    async fn async_vsock_large_transfer() {
+        let (a, b) = UnixStream::pair().unwrap();
+        let fd_a = a.into_raw_fd();
+        let fd_b = b.into_raw_fd();
+
+        let mut va = AsyncVsock::new(fd_a).unwrap();
+        let mut vb = AsyncVsock::new(fd_b).unwrap();
+
+        let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
+        let data_clone = data.clone();
+        
+        let (write_res, read_res) = tokio::join!(
+            async {
+                let r = tokio::io::AsyncWriteExt::write_all(&mut va, &data_clone).await;
+                tokio::io::AsyncWriteExt::shutdown(&mut va).await.unwrap();
+                r
+            },
+            async {
+                let mut received = Vec::new();
+                let r = tokio::io::AsyncReadExt::read_to_end(&mut vb, &mut received).await;
+                (r, received)
+            }
+        );
+
+        write_res.unwrap();
+        let (_, received) = read_res;
+        assert_eq!(received.len(), 65536);
+        assert_eq!(received, data);
+    }
+
 }

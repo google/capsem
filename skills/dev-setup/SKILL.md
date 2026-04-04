@@ -105,7 +105,7 @@ just dev              # Full Tauri app with hot-reload
 
 See `/dev-just` for the complete recipe reference.
 
-## API keys (optional, needed for full-test)
+## API keys (optional, needed for integration tests)
 
 Create `~/.capsem/user.toml`:
 ```toml
@@ -116,7 +116,7 @@ api_key = "sk-ant-..."
 api_key = "AIza..."
 ```
 
-Needed for: `just full-test` (integration test exercises real AI API calls), interactive AI sessions inside the VM.
+Needed for: `just test` (integration tests exercise real AI API calls), interactive AI sessions inside the VM.
 
 ## Claude Code permissions
 

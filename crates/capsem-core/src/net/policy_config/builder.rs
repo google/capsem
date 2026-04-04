@@ -565,10 +565,17 @@ pub fn settings_to_vm_settings(resolved: &[ResolvedSetting]) -> VmSettings {
         .and_then(|s| s.effective_value.as_number())
         .map(|n| n as u32);
 
+    let max_concurrent_vms = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.max_concurrent_vms")
+        .and_then(|s| s.effective_value.as_number())
+        .map(|n| n as u32);
+
     VmSettings {
         cpu_count: Some(cpu_count.unwrap_or(4)),
         scratch_disk_size_gb: Some(scratch_disk_size_gb.unwrap_or(16)),
         ram_gb: Some(ram_gb.unwrap_or(4)),
+        max_concurrent_vms: Some(max_concurrent_vms.unwrap_or(10)),
     }
 }
 
@@ -799,4 +806,234 @@ pub fn load_merged_vm_settings() -> VmSettings {
 pub fn load_merged_settings() -> Vec<ResolvedSetting> {
     let (user, corp) = load_settings_files();
     resolve_settings(&user, &corp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::domain_policy::Action;
+
+    fn make_setting(id: &str, typ: SettingType, value: SettingValue) -> ResolvedSetting {
+        ResolvedSetting {
+            id: id.to_string(),
+            category: "test".into(),
+            name: id.to_string(),
+            description: "".into(),
+            setting_type: typ,
+            default_value: value.clone(),
+            effective_value: value,
+            source: PolicySource::Default,
+            modified: None,
+            corp_locked: false,
+            enabled_by: None,
+            enabled: true,
+            metadata: SettingMetadata::default(),
+            collapsed: false,
+            history: vec![],
+        }
+    }
+
+    fn make_bool_setting(id: &str, value: bool, domains: Vec<String>) -> ResolvedSetting {
+        let mut s = make_setting(id, SettingType::Bool, SettingValue::Bool(value));
+        s.metadata.domains = domains;
+        s
+    }
+
+    fn make_text_setting(id: &str, value: &str) -> ResolvedSetting {
+        make_setting(id, SettingType::Text, SettingValue::Text(value.to_string()))
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_domain_list
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_domain_list_basic() {
+        let result = parse_domain_list("foo.com, bar.com, baz.com");
+        assert_eq!(result, vec!["foo.com", "bar.com", "baz.com"]);
+    }
+
+    #[test]
+    fn parse_domain_list_trims_whitespace() {
+        let result = parse_domain_list("  foo.com  ,  bar.com  ");
+        assert_eq!(result, vec!["foo.com", "bar.com"]);
+    }
+
+    #[test]
+    fn parse_domain_list_empty_string() {
+        let result = parse_domain_list("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_domain_list_skips_empty_entries() {
+        let result = parse_domain_list("foo.com,,bar.com,,");
+        assert_eq!(result, vec!["foo.com", "bar.com"]);
+    }
+
+    #[test]
+    fn parse_domain_list_single() {
+        let result = parse_domain_list("single.com");
+        assert_eq!(result, vec!["single.com"]);
+    }
+
+    #[test]
+    fn parse_domain_list_wildcards() {
+        let result = parse_domain_list("*.example.com, api.test.com");
+        assert_eq!(result, vec!["*.example.com", "api.test.com"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // corp_blocked_matches
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn corp_blocked_exact_match() {
+        let blocked = vec!["evil.com".to_string()];
+        assert!(corp_blocked_matches("evil.com", &blocked));
+        assert!(!corp_blocked_matches("good.com", &blocked));
+    }
+
+    #[test]
+    fn corp_blocked_wildcard_match() {
+        let blocked = vec!["*.evil.com".to_string()];
+        assert!(corp_blocked_matches("sub.evil.com", &blocked));
+        assert!(corp_blocked_matches("deep.sub.evil.com", &blocked));
+        assert!(corp_blocked_matches("evil.com", &blocked)); // bare domain matches *.
+        assert!(!corp_blocked_matches("notevil.com", &blocked));
+    }
+
+    #[test]
+    fn corp_blocked_case_insensitive() {
+        let blocked = vec!["Evil.Com".to_string()];
+        assert!(corp_blocked_matches("evil.com", &blocked));
+        assert!(corp_blocked_matches("EVIL.COM", &blocked));
+    }
+
+    #[test]
+    fn corp_blocked_empty_list() {
+        let blocked: Vec<String> = vec![];
+        assert!(!corp_blocked_matches("anything.com", &blocked));
+    }
+
+    #[test]
+    fn corp_blocked_multiple_patterns() {
+        let blocked = vec![
+            "evil.com".to_string(),
+            "*.bad.org".to_string(),
+        ];
+        assert!(corp_blocked_matches("evil.com", &blocked));
+        assert!(corp_blocked_matches("sub.bad.org", &blocked));
+        assert!(!corp_blocked_matches("good.com", &blocked));
+    }
+
+    // -----------------------------------------------------------------------
+    // settings_to_domain_policy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn domain_policy_empty_settings() {
+        let policy = settings_to_domain_policy(&[]);
+        // Empty settings: no allow_read, no allow_write -> default deny
+        assert_eq!(policy.evaluate("example.com").0, Action::Deny);
+    }
+
+    #[test]
+    fn domain_policy_allow_read_default_allow() {
+        let settings = vec![
+            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(true)),
+        ];
+        let policy = settings_to_domain_policy(&settings);
+        assert_eq!(policy.evaluate("unknown.com").0, Action::Allow);
+    }
+
+    #[test]
+    fn domain_policy_bool_toggle_adds_domains() {
+        let settings = vec![
+            make_bool_setting("ai.anthropic.allow", true, vec!["api.anthropic.com".into()]),
+            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(false)),
+        ];
+        let policy = settings_to_domain_policy(&settings);
+        assert_eq!(policy.evaluate("api.anthropic.com").0, Action::Allow);
+    }
+
+    #[test]
+    fn domain_policy_bool_toggle_off_blocks_domains() {
+        let settings = vec![
+            make_bool_setting("ai.anthropic.allow", false, vec!["api.anthropic.com".into()]),
+            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(false)),
+        ];
+        let policy = settings_to_domain_policy(&settings);
+        assert_eq!(policy.evaluate("api.anthropic.com").0, Action::Deny);
+    }
+
+    #[test]
+    fn domain_policy_custom_block_beats_allow() {
+        let settings = vec![
+            make_setting("security.web.custom_allow", SettingType::Text, SettingValue::Text("example.com".into())),
+            make_setting("security.web.custom_block", SettingType::Text, SettingValue::Text("example.com".into())),
+            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(true)),
+        ];
+        let policy = settings_to_domain_policy(&settings);
+        assert_eq!(policy.evaluate("example.com").0, Action::Deny);
+    }
+
+    #[test]
+    fn domain_policy_custom_allow_works() {
+        let settings = vec![
+            make_setting("security.web.custom_allow", SettingType::Text, SettingValue::Text("allowed.com".into())),
+            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(false)),
+        ];
+        let policy = settings_to_domain_policy(&settings);
+        assert_eq!(policy.evaluate("allowed.com").0, Action::Allow);
+    }
+
+    #[test]
+    fn domain_policy_corp_locked_off_blocks_union() {
+        let mut toggle = make_bool_setting("test.provider.allow", false, vec![]);
+        toggle.corp_locked = true;
+
+        let mut domains = make_text_setting("test.provider.domains", "");
+        domains.effective_value = SettingValue::Text("user-added.com".into());
+        domains.default_value = SettingValue::Text("default.com".into());
+
+        let settings = vec![toggle, domains];
+        let policy = settings_to_domain_policy(&settings);
+        assert_eq!(policy.evaluate("default.com").0, Action::Deny);
+        assert_eq!(policy.evaluate("user-added.com").0, Action::Deny);
+    }
+
+    // -----------------------------------------------------------------------
+    // settings_to_http_policy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn http_policy_empty_settings() {
+        let policy = settings_to_http_policy(&[]);
+        assert!(!policy.log_bodies);
+    }
+
+    #[test]
+    fn http_policy_log_bodies_setting() {
+        let settings = vec![
+            make_setting("vm.resources.log_bodies", SettingType::Bool, SettingValue::Bool(true)),
+        ];
+        let policy = settings_to_http_policy(&settings);
+        assert!(policy.log_bodies);
+    }
+
+    #[test]
+    fn http_policy_max_body_capture_default() {
+        let policy = settings_to_http_policy(&[]);
+        assert_eq!(policy.max_body_capture, 4096);
+    }
+
+    #[test]
+    fn http_policy_max_body_capture_custom() {
+        let settings = vec![
+            make_setting("vm.resources.max_body_capture", SettingType::Number, SettingValue::Number(8192)),
+        ];
+        let policy = settings_to_http_policy(&settings);
+        assert_eq!(policy.max_body_capture, 8192);
+    }
 }

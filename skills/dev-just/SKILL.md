@@ -18,9 +18,8 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
 | `just run "CMD"` | Same but run CMD instead of interactive shell |
 | `just smoke` | test + repack + sign + boot + session DB validation (~30s) |
-| `just test` | Unit tests (llvm-cov) + agent cross-compile + frontend check |
+| `just test` | ALL tests: unit (warnings-as-errors) + cross-compile + frontend + all integration + injection + bench |
 | `just cross-compile [arch]` | Full Linux build in container (agent + deb + AppImage) |
-| `just full-test` | test + capsem-doctor + integration + bench (3x VM boot) |
 | `just build-assets` | Full VM asset rebuild via capsem-builder (kernel + rootfs) |
 | `just build-kernel [arch]` | Kernel only (default: arm64) |
 | `just build-rootfs [arch]` | Rootfs only (default: arm64) |
@@ -31,9 +30,32 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just query-session "SQL" <id>` | Run SQL against specific session DB |
 | `just update-fixture <path>` | Copy + scrub real session DB as test fixture |
 | `just update-prices` | Refresh model pricing JSON |
-| `just install` | doctor + full-test + release .app + sign + /Applications |
+| `just install` | doctor + test + release .app + sign + /Applications |
 | `just cut-release` | Bump version, stamp changelog, tag, push, wait for CI |
 | `just clean` | Remove all build artifacts |
+| **Integration test recipes** | |
+| `just test-service` | Service HTTP API tests (provision, exec, logs, delete) |
+| `just test-cli` | CLI integration tests via subprocess |
+| `just test-mcp` | MCP black-box tests |
+| `just test-session` | Session.db telemetry tests |
+| `just test-snapshots` | Snapshot lifecycle tests |
+| `just test-isolation` | Multi-VM isolation tests |
+| `just test-security` | Security invariant tests |
+| `just test-config` | Config obedience tests |
+| `just test-bootstrap` | Setup/install flow tests (no VM) |
+| `just test-stress` | 5-VM concurrency + rapid create/delete |
+| `just test-build-chain` | Build chain E2E: cargo build -> codesign -> pack -> manifest -> boot |
+| `just test-guest` | Guest validation: network, services, filesystem, env |
+| `just test-cleanup` | VM cleanup: process killed, socket removed, no zombies |
+| `just test-codesign` | Codesigning strict: all binaries signed (FAIL not skip) |
+| `just test-serial` | Serial console logs + boot timing < 30s |
+| `just test-session-lifecycle` | Session.db lifecycle: exists, schema, events, survives shutdown |
+| `just test-config-runtime` | Config applied in guest: CPU, RAM, blocked domains |
+| `just test-recipes` | Just recipe smoke tests (no VM) |
+| `just test-recovery` | Recovery: stale sockets, orphaned processes, double service |
+| `just test-rootfs` | Rootfs artifact validation (no VM) |
+| `just test-session-exhaustive` | Exhaustive per-table session.db data + FK validation |
+| `just test-vm` | All VM-requiring Phase 3 tests combined |
 
 ## When to use which
 
@@ -46,17 +68,31 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just run` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
 | Telemetry pipelines | `just run "<cmd>"` then `just inspect-session` |
-| Pre-release | `just full-test` |
+| Service HTTP API | `just test-service` |
+| CLI subcommands | `just test-cli` |
+| MCP server/gateway | `just test-mcp` |
+| Session.db schema or writer | `just test-session` + `just test-session-lifecycle` + `just test-session-exhaustive` |
+| VM lifecycle (create/delete) | `just test-cleanup` + `just test-recovery` |
+| Network policy or proxy | `just test-guest` + `just test-config-runtime` |
+| Codesigning or entitlements | `just test-codesign` |
+| Build pipeline | `just test-build-chain` |
+| Rootfs artifacts | `just test-rootfs` |
+| Just recipes | `just test-recipes` |
+| Pre-release | `just test` |
 | Ship | `just cut-release` |
 
 ## Dependency chains
 
 ```
 run            -> audit + _check-assets + _generate-settings + _pack-initrd -> _sign -> _compile -> _frontend
-test           -> audit + _install-tools + _generate-settings
-full-test      -> test + _check-assets + _pack-initrd + _sign
+test           -> audit + _install-tools + _generate-settings + _check-assets + _pack-initrd
+                  (Rust warnings-as-errors + llvm-cov + cross-compile + frontend + ALL Python tests
+                   + injection + integration + benchmarks)
+test-vm        -> test-build-chain + test-guest + test-cleanup + test-codesign + test-serial
+                  + test-session-lifecycle + test-config-runtime + test-recovery
 build-assets   -> doctor + _install-tools + audit (capsem-builder: kernel + rootfs)
-install        -> doctor + full-test
+install        -> doctor + test
+cut-release    -> test
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).

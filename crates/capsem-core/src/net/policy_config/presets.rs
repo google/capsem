@@ -124,3 +124,71 @@ pub fn apply_preset_to(
     write_settings_file(user_path, &file)?;
     Ok(skipped)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn security_presets_load_without_panic() {
+        let presets = security_presets();
+        assert!(!presets.is_empty());
+    }
+
+    #[test]
+    fn security_presets_have_unique_ids() {
+        let presets = security_presets();
+        let ids: Vec<&str> = presets.iter().map(|p| p.id.as_str()).collect();
+        let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), unique.len(), "Duplicate preset IDs");
+    }
+
+    #[test]
+    fn security_presets_have_names_and_descriptions() {
+        for preset in security_presets() {
+            assert!(!preset.name.is_empty(), "Preset {} has empty name", preset.id);
+            assert!(!preset.description.is_empty(), "Preset {} has empty description", preset.id);
+        }
+    }
+
+    #[test]
+    fn security_presets_have_settings() {
+        for preset in security_presets() {
+            assert!(!preset.settings.is_empty(), "Preset {} has no settings", preset.id);
+        }
+    }
+
+    #[test]
+    fn medium_and_high_presets_exist() {
+        let presets = security_presets();
+        assert!(presets.iter().any(|p| p.id == "medium"));
+        assert!(presets.iter().any(|p| p.id == "high"));
+    }
+
+    #[test]
+    fn apply_preset_unknown_id_fails() {
+        let tmp_user = std::env::temp_dir().join("capsem-test-preset-user.toml");
+        let tmp_corp = std::env::temp_dir().join("capsem-test-preset-corp.toml");
+        std::fs::write(&tmp_user, "").unwrap();
+        std::fs::write(&tmp_corp, "").unwrap();
+        let result = apply_preset_to("nonexistent", &tmp_user, &tmp_corp);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown preset"));
+        std::fs::remove_file(&tmp_user).ok();
+        std::fs::remove_file(&tmp_corp).ok();
+    }
+
+    #[test]
+    fn apply_preset_writes_settings() {
+        let tmp_user = std::env::temp_dir().join("capsem-test-preset-apply.toml");
+        let tmp_corp = std::env::temp_dir().join("capsem-test-preset-corp2.toml");
+        std::fs::write(&tmp_user, "").unwrap();
+        std::fs::write(&tmp_corp, "").unwrap();
+        let result = apply_preset_to("medium", &tmp_user, &tmp_corp);
+        assert!(result.is_ok());
+        let loaded = super::super::loader::load_settings_file(&tmp_user).unwrap();
+        assert!(!loaded.settings.is_empty());
+        std::fs::remove_file(&tmp_user).ok();
+        std::fs::remove_file(&tmp_corp).ok();
+    }
+}

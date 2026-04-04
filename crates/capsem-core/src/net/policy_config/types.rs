@@ -450,4 +450,5 @@ pub struct VmSettings {
     pub cpu_count: Option<u32>,
     pub scratch_disk_size_gb: Option<u32>,
     pub ram_gb: Option<u32>,
+    pub max_concurrent_vms: Option<u32>,
 }

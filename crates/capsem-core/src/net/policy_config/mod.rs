@@ -2032,6 +2032,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         // Each file as a FileWrite message
         for f in gc.files.unwrap_or_default() {
             let msg = capsem_proto::HostToGuest::FileWrite {
+                id: 1,
                 path: f.path.clone(),
                 data: f.content.into_bytes(),
                 mode: f.mode,

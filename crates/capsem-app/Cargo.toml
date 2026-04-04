@@ -1,7 +1,11 @@
 [package]
-name = "capsem"
+name = "capsem-ui"
 version.workspace = true
 edition = "2021"
+
+[[bin]]
+name = "capsem-ui"
+path = "src/main.rs"
 
 [dependencies]
 capsem-core = { path = "../capsem-core" }

@@ -712,12 +712,74 @@ class TestE302:
         diags = validate_guest(guest_valid, artifacts_dir=artifacts)
         assert _has_code(diags, "E302")
 
+    def test_missing_snapshots(self, guest_valid):
+        artifacts = guest_valid / "artifacts"
+        artifacts.mkdir()
+        (artifacts / "capsem-ca.crt").write_text("cert")
+        (artifacts / "capsem-init").write_text("#!/bin/sh")
+        (artifacts / "capsem-bashrc").write_text("PS1='$ '")
+        (artifacts / "capsem-doctor").write_text("#!/bin/sh")
+        (artifacts / "capsem-bench").write_text("#!/bin/sh")
+        diags_dir = artifacts / "diagnostics"
+        diags_dir.mkdir()
+        (diags_dir / "conftest.py").write_text("# test")
+        diags = validate_guest(guest_valid, artifacts_dir=artifacts)
+        e302s = [d for d in diags if d.code == "E302"]
+        assert any("snapshots" in d.message for d in e302s)
+
+    def test_missing_capsem_doctor(self, guest_valid):
+        artifacts = guest_valid / "artifacts"
+        artifacts.mkdir()
+        (artifacts / "capsem-ca.crt").write_text("cert")
+        (artifacts / "capsem-init").write_text("#!/bin/sh")
+        (artifacts / "capsem-bashrc").write_text("PS1='$ '")
+        (artifacts / "capsem-bench").write_text("#!/bin/sh")
+        (artifacts / "snapshots").write_text("#!/usr/bin/env python3")
+        diags_dir = artifacts / "diagnostics"
+        diags_dir.mkdir()
+        (diags_dir / "conftest.py").write_text("# test")
+        diags = validate_guest(guest_valid, artifacts_dir=artifacts)
+        e302s = [d for d in diags if d.code == "E302"]
+        assert any("capsem-doctor" in d.message for d in e302s)
+
+    def test_missing_capsem_bench(self, guest_valid):
+        artifacts = guest_valid / "artifacts"
+        artifacts.mkdir()
+        (artifacts / "capsem-ca.crt").write_text("cert")
+        (artifacts / "capsem-init").write_text("#!/bin/sh")
+        (artifacts / "capsem-bashrc").write_text("PS1='$ '")
+        (artifacts / "capsem-doctor").write_text("#!/bin/sh")
+        (artifacts / "snapshots").write_text("#!/usr/bin/env python3")
+        diags_dir = artifacts / "diagnostics"
+        diags_dir.mkdir()
+        (diags_dir / "conftest.py").write_text("# test")
+        diags = validate_guest(guest_valid, artifacts_dir=artifacts)
+        e302s = [d for d in diags if d.code == "E302"]
+        assert any("capsem-bench" in d.message for d in e302s)
+
+    def test_missing_diagnostics_dir(self, guest_valid):
+        artifacts = guest_valid / "artifacts"
+        artifacts.mkdir()
+        (artifacts / "capsem-ca.crt").write_text("cert")
+        (artifacts / "capsem-init").write_text("#!/bin/sh")
+        (artifacts / "capsem-bashrc").write_text("PS1='$ '")
+        (artifacts / "capsem-doctor").write_text("#!/bin/sh")
+        (artifacts / "capsem-bench").write_text("#!/bin/sh")
+        (artifacts / "snapshots").write_text("#!/usr/bin/env python3")
+        # No diagnostics/ dir
+        diags = validate_guest(guest_valid, artifacts_dir=artifacts)
+        e302s = [d for d in diags if d.code == "E302"]
+        assert any("diagnostics" in d.message for d in e302s)
+
     def test_all_artifacts_present(self, guest_valid):
         artifacts = guest_valid / "artifacts"
         artifacts.mkdir()
         (artifacts / "capsem-ca.crt").write_text("cert")
         (artifacts / "capsem-init").write_text("#!/bin/sh")
         (artifacts / "capsem-bashrc").write_text("PS1='$ '")
+        (artifacts / "capsem-doctor").write_text("#!/bin/sh")
+        (artifacts / "capsem-bench").write_text("#!/bin/sh")
+        (artifacts / "snapshots").write_text("#!/usr/bin/env python3")
         diags_dir = artifacts / "diagnostics"
         diags_dir.mkdir()
         (diags_dir / "conftest.py").write_text("# test")

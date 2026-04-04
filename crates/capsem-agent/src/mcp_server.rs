@@ -183,4 +183,63 @@ mod tests {
         unsafe { nix::libc::close(fd); }
         // If we got here without panic/hang, the test passes.
     }
+
+    #[test]
+    fn meta_line_with_special_characters() {
+        let name = "claude/code-v4.0";
+        let meta = format!("\0CAPSEM_META:{}\n", name);
+        assert!(meta.contains("claude/code-v4.0"));
+    }
+
+    #[test]
+    fn meta_line_empty_process_name() {
+        let meta = format!("\0CAPSEM_META:{}\n", "");
+        assert_eq!(meta, "\0CAPSEM_META:\n");
+    }
+
+    #[test]
+    fn meta_line_very_long_process_name() {
+        let name = "a".repeat(1000);
+        let meta = format!("\0CAPSEM_META:{}\n", name);
+        assert_eq!(meta.len(), 1000 + "\0CAPSEM_META:\n".len());
+    }
+
+    #[test]
+    fn write_then_read_binary_data() {
+        let (writer, reader) = UnixStream::pair().unwrap();
+        let writer_fd = writer.into_raw_fd();
+
+        // Write binary data that looks like NDJSON but with binary payloads
+        let binary_line = b"{\"data\":\"\\x00\\xff\"}\n";
+        write_all_fd(writer_fd, binary_line).expect("write binary");
+        unsafe { nix::libc::close(writer_fd); }
+
+        let file = unsafe { std::fs::File::from_raw_fd(reader.into_raw_fd()) };
+        let buf = io::BufReader::new(file);
+        let lines: Vec<String> = buf.lines().map(|l| l.unwrap()).collect();
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn large_json_line_preserved() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        let (writer, reader) = UnixStream::pair().unwrap();
+        let writer_fd = writer.into_raw_fd();
+
+        let large_content = "x".repeat(100_000);
+        let line = format!("{{\"content\":\"{}\"}}\n", large_content);
+        
+        std::thread::spawn(move || {
+            write_all_fd(writer_fd, line.as_bytes()).expect("write large");
+            unsafe { nix::libc::close(writer_fd); }
+        });
+
+        let file = unsafe { std::fs::File::from_raw_fd(reader.into_raw_fd()) };
+        let buf = std::io::BufReader::new(file);
+        use std::io::BufRead;
+        let lines: Vec<String> = buf.lines().map(|l| l.unwrap()).collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].len() > 100_000);
+    }
 }

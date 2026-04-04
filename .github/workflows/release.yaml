@@ -138,6 +138,9 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
 
+      - name: Warnings-as-errors for service crates
+        run: RUSTFLAGS="-D warnings" cargo build -p capsem-service -p capsem-process
+
       - name: Create stub assets for Tauri build.rs
         run: |
           mkdir -p assets/current
@@ -260,6 +263,17 @@ jobs:
           echo "=== assets/manifest.json ==="
           cat assets/manifest.json | head -5
 
+      - name: Validate build context completeness
+        run: |
+          uv run python3 -c "
+          from capsem.builder.doctor import check_source_files
+          from pathlib import Path
+          result = check_source_files(Path('.'))
+          if not result.passed:
+              raise SystemExit(f'Source file check failed: {result.detail}')
+          print(f'OK: {result.detail}')
+          "
+
       - name: Build and sign app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -361,6 +375,29 @@ jobs:
           ls -la assets/current/
           echo "=== assets/manifest.json ==="
           cat assets/manifest.json | head -5
+
+      - name: Validate rootfs contains all required artifacts
+        run: |
+          ROOTFS="assets/${{ matrix.arch }}/rootfs.squashfs"
+          if [ ! -f "$ROOTFS" ]; then
+            echo "::error::rootfs.squashfs not found at $ROOTFS"
+            exit 1
+          fi
+          MOUNT=$(mktemp -d)
+          sudo mount -t squashfs -o loop,ro "$ROOTFS" "$MOUNT"
+          MISSING=""
+          for bin in capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-doctor capsem-bench snapshots; do
+            if [ ! -f "$MOUNT/usr/local/bin/$bin" ]; then
+              MISSING="$MISSING $bin"
+            fi
+          done
+          sudo umount "$MOUNT"
+          rmdir "$MOUNT"
+          if [ -n "$MISSING" ]; then
+            echo "::error::rootfs is missing required binaries:$MISSING"
+            exit 1
+          fi
+          echo "All required binaries present in rootfs"
 
       - name: Build app
         env:

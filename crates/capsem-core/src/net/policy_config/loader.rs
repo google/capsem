@@ -184,6 +184,16 @@ fn parse_mcp_section(toml_str: &str, source: PolicySource) -> Vec<McpServerDef> 
     };
     let mut servers = Vec::new();
     for (key, val) in mcp_table {
+        // Skip global config keys that aren't server definitions
+        if key == "global_policy" 
+            || key == "default_tool_permission" 
+            || key == "health_check_interval_secs"
+            || key == "server_enabled"
+            || key == "tool_permissions"
+        {
+            continue;
+        }
+
         let toml_str = match toml::to_string(val) {
             Ok(s) => s,
             Err(_) => continue,
@@ -226,6 +236,16 @@ fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServer
     };
     let mut servers = Vec::new();
     for (key, val) in mcp_obj {
+        // Skip global config keys that aren't server definitions
+        if key == "global_policy" 
+            || key == "default_tool_permission" 
+            || key == "health_check_interval_secs"
+            || key == "server_enabled"
+            || key == "tool_permissions"
+        {
+            continue;
+        }
+
         let server: McpServerToml = match serde_json::from_value(val.clone()) {
             Ok(s) => s,
             Err(e) => {
@@ -396,4 +416,110 @@ pub fn validate_setting_value(id: &str, value: &SettingValue) -> Result<(), Stri
         return Ok(());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_settings_file_missing_returns_default() {
+        let result = load_settings_file(Path::new("/nonexistent/path/settings.toml"));
+        assert!(result.is_ok());
+        let file = result.unwrap();
+        assert!(file.settings.is_empty());
+    }
+
+    #[test]
+    fn load_settings_file_invalid_toml() {
+        let tmp = std::env::temp_dir().join("capsem-test-invalid.toml");
+        std::fs::write(&tmp, "this is not valid { toml !!!").unwrap();
+        let result = load_settings_file(&tmp);
+        assert!(result.is_err());
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn load_settings_file_empty_file() {
+        let tmp = std::env::temp_dir().join("capsem-test-empty.toml");
+        std::fs::write(&tmp, "").unwrap();
+        let result = load_settings_file(&tmp);
+        assert!(result.is_ok());
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn write_then_load_roundtrip() {
+        let tmp = std::env::temp_dir().join("capsem-test-roundtrip.toml");
+        let mut file = SettingsFile::default();
+        file.settings.insert("test.key".into(), crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Text("hello".into()),
+            modified: "2024-01-01T00:00:00Z".into(),
+        });
+        write_settings_file(&tmp, &file).unwrap();
+        let loaded = load_settings_file(&tmp).unwrap();
+        assert!(loaded.settings.contains_key("test.key"));
+        let val = &loaded.settings["test.key"].value;
+        assert_eq!(val.as_text(), Some("hello"));
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn migrate_setting_ids_renames_old_keys() {
+        let mut file = SettingsFile::default();
+        file.settings.insert("web.defaults.allow_read".into(), crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Bool(true),
+            modified: "2024-01-01".into(),
+        });
+        migrate_setting_ids(&mut file);
+        assert!(!file.settings.contains_key("web.defaults.allow_read"));
+        assert!(file.settings.contains_key("security.web.allow_read"));
+    }
+
+    #[test]
+    fn migrate_setting_ids_does_not_clobber_new() {
+        let mut file = SettingsFile::default();
+        // Both old and new key exist -- new key should be preserved
+        file.settings.insert("web.defaults.allow_read".into(), crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Bool(false),
+            modified: "old".into(),
+        });
+        file.settings.insert("security.web.allow_read".into(), crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Bool(true),
+            modified: "new".into(),
+        });
+        migrate_setting_ids(&mut file);
+        // New key retains its value
+        let val = file.settings["security.web.allow_read"].value.as_bool().unwrap();
+        assert!(val); // true from the new key, not false from old
+    }
+
+    #[test]
+    fn can_write_corp_settings_always_false() {
+        assert!(!can_write_corp_settings());
+    }
+
+    #[test]
+    fn user_config_path_override_via_env() {
+        // Test the resolution logic
+        std::env::set_var("CAPSEM_USER_CONFIG", "/tmp/custom-user.toml");
+        let path = user_config_path();
+        assert_eq!(path, Some(std::path::PathBuf::from("/tmp/custom-user.toml")));
+        std::env::remove_var("CAPSEM_USER_CONFIG");
+    }
+
+    #[test]
+    fn corp_config_path_override_via_env() {
+        std::env::set_var("CAPSEM_CORP_CONFIG", "/tmp/custom-corp.toml");
+        let path = corp_config_path();
+        assert_eq!(path, std::path::PathBuf::from("/tmp/custom-corp.toml"));
+        std::env::remove_var("CAPSEM_CORP_CONFIG");
+    }
+
+    #[test]
+    fn corp_config_path_default() {
+        std::env::remove_var("CAPSEM_CORP_CONFIG");
+        let path = corp_config_path();
+        assert_eq!(path, std::path::PathBuf::from("/etc/capsem/corp.toml"));
+    }
 }

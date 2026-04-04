@@ -10,7 +10,7 @@ description: Capsem release process, CI pipeline, Apple code signing, notarizati
 ```bash
 just doctor                    # Check tools
 scripts/preflight.sh           # Validate Apple certs for CI
-just full-test                 # build-assets + unit tests + doctor + integration + bench
+just test                      # ALL tests: unit + integration + cross-compile + bench
 ```
 
 ## Cutting a release
@@ -21,14 +21,14 @@ just full-test                 # build-assets + unit tests + doctor + integratio
 just cut-release
 ```
 
-Runs `full-test` (which includes `build-assets`), then bumps patch version, stamps changelog, commits, tags, pushes, waits for CI. The full container build runs locally before any tag is created.
+Runs `test` (all tests including integration, cross-compile, benchmarks), then bumps patch version, stamps changelog, commits, tags, pushes, waits for CI.
 
 ### Manual
 
 1. Bump version in both `Cargo.toml` (workspace) and `crates/capsem-app/tauri.conf.json`
 2. Move `[Unreleased]` changelog items into `[X.Y.Z] - YYYY-MM-DD`
 3. Create/update release page at `site/src/content/docs/releases/<major>-<minor>.md`
-4. `scripts/preflight.sh` then `just full-test`
+4. `scripts/preflight.sh` then `just test`
 5. Commit, tag `vX.Y.Z`, push both
 
 Never reuse or move a tag. Always increment the version number.

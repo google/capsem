@@ -12,10 +12,10 @@ Every non-trivial task follows this workflow. No shortcuts.
 Create a sprint directory and write the plan before touching code:
 
 ```bash
-mkdir -p tmp/<sprint-name>
+mkdir -p sprints/<sprint-name>
 ```
 
-Write `tmp/<sprint-name>/plan.md`:
+Write `sprints/<sprint-name>/plan.md`:
 - What we're building and why
 - Key decisions and trade-offs
 - Files to create/modify
@@ -26,7 +26,7 @@ The plan is a living document. Update it as the sprint evolves -- crossed-out it
 
 ## 2. Track
 
-Create `tmp/<sprint-name>/tracker.md` as a checklist:
+Create `sprints/<sprint-name>/tracker.md` as a checklist:
 
 ```markdown
 # Sprint: <name>
@@ -86,13 +86,12 @@ Do not batch changelog entries at the end. Each commit carries its own entry.
 Every sprint ends with testing. No exceptions.
 
 ```bash
-just test                           # Unit + cross-compile + frontend (fast)
+just test                           # ALL tests: unit + integration + cross-compile + frontend + bench
 just run "capsem-doctor"            # VM smoke test
 ```
 
-If the sprint touched telemetry, network, or MCP:
+If the sprint touched telemetry:
 ```bash
-just full-test                      # Full validation (3x VM boot)
 just inspect-session                # Verify telemetry after a real session
 ```
 
@@ -100,20 +99,41 @@ If tests fail, fix them before considering the sprint done. See `/dev-debugging`
 
 ## 7. Clean up
 
-- Remove or archive `tmp/<sprint-name>/` (it's gitignored)
 - Verify no debug prints, TODO comments, or temporary hacks remain
 - Run `/simplify` if significant code was written
 
 ## Sprint artifacts
 
 ```
-tmp/<sprint-name>/
+sprints/<sprint-name>/
   plan.md           What we're building, key decisions
   tracker.md        Checklist + notes
   changelog.md      Draft changelog entries (optional, can go straight to CHANGELOG.md)
 ```
 
-The `tmp/` directory is gitignored. Sprint artifacts are ephemeral -- they inform the work but don't ship.
+The `sprints/` directory is git-tracked. Sprint plans and trackers are committed alongside the code they describe.
+
+## Meta sprints (sub-sprints)
+
+Large efforts use a meta sprint with sub-sprints. The meta sprint has a `MASTER.md` that tracks overall status, and each sub-sprint gets its own file:
+
+```
+sprints/<meta-name>/
+  MASTER.md                 Overall status table, phase groupings, just recipes
+  T0-infrastructure.md      Sub-sprint 0
+  T1-service-unit-tests.md  Sub-sprint 1
+  T2-process-unit-tests.md  Sub-sprint 2
+  ...
+  implementation-tasks.md   What code must change for tests to pass (optional)
+  tracker.md                Active execution tracker (current sub-sprint progress)
+```
+
+`MASTER.md` is the entry point. It contains:
+- A status table with every sub-sprint, its status (Done / In Progress / Not Started), test count, and dependencies
+- Phase groupings (Foundation, Integration, E2E, etc.)
+- Relevant just recipes
+
+When executing a meta sprint, create a `tracker.md` for the active work. Update `MASTER.md` status as sub-sprints complete.
 
 ## Anti-patterns
 

@@ -212,7 +212,7 @@ fn main() {
                 eprintln!("[capsem-agent] SetEnv {key}");
                 boot_env.push((key, value));
             }
-            Ok(HostToGuest::FileWrite { path, data, mode }) => {
+            Ok(HostToGuest::FileWrite { id: _, path, data, mode }) => {
                 // Validate file path (defense-in-depth).
                 if let Err(e) = validate_file_path(&path) {
                     blog_line(&mut blog, &format!("FileWrite rejected: {e}"));
@@ -254,6 +254,12 @@ fn main() {
                     data.len(),
                 ));
                 eprintln!("[capsem-agent] wrote {path} ({} bytes)", data.len());
+            }
+            Ok(HostToGuest::FileRead { .. }) => {
+                eprintln!("[capsem-agent] ignoring FileRead during boot");
+            }
+            Ok(HostToGuest::FileDelete { .. }) => {
+                eprintln!("[capsem-agent] ignoring FileDelete during boot");
             }
             Ok(HostToGuest::BootConfigDone) => {
                 blog_line(&mut blog, &format!(
@@ -646,11 +652,8 @@ fn control_loop(
                     libc::tcsetattr(master_fd, libc::TCSANOW, &termios);
                 }
 
-                // Inject command into PTY with sentinel.
-                // Use printf so the sentinel only appears in evaluated output,
-                // not in the PTY echo of the command text.
                 let injection = format!(
-                    "bash -c '{}' ; printf '\\033_CAPSEM_EXIT:{}:%d\\033\\\\' $?\n",
+                    "bash -c '{}' 2>&1 ; printf '\\033_CAPSEM_EXIT:{}:%d\\033\\\\' $?\n",
                     command.replace('\'', "'\\''"),
                     id,
                 );
@@ -688,6 +691,52 @@ fn control_loop(
                         eprintln!("[capsem-agent] exec_done channel closed");
                         break;
                     }
+                }
+            }
+            Ok(HostToGuest::FileWrite { id, path, data, mode }) => {
+                eprintln!("[capsem-agent] FileWrite {path} ({} bytes)", data.len());
+                let res = if let Err(e) = std::fs::write(&path, &data) {
+                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("failed to write {path}: {e}") })
+                } else {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
+                    }
+                    send_guest_msg(control_fd, &GuestToHost::FileOpDone { id })
+                };
+                if let Err(e) = res {
+                    eprintln!("[capsem-agent] failed to send FileWrite response: {e}");
+                    break;
+                }
+            }
+            Ok(HostToGuest::FileRead { id, path }) => {
+                eprintln!("[capsem-agent] FileRead {path}");
+                let res = if let Err(e) = validate_file_path(&path) {
+                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("FileRead rejected: {e}") })
+                } else {
+                    match std::fs::read(&path) {
+                        Ok(data) => send_guest_msg(control_fd, &GuestToHost::FileContent { id, path, data }),
+                        Err(e) => send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("failed to read {path}: {e}") }),
+                    }
+                };
+                if let Err(e) = res {
+                    eprintln!("[capsem-agent] failed to send FileRead response: {e}");
+                    break;
+                }
+            }
+            Ok(HostToGuest::FileDelete { id, path }) => {
+                eprintln!("[capsem-agent] FileDelete {path}");
+                let res = if let Err(e) = validate_file_path(&path) {
+                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("FileDelete rejected: {e}") })
+                } else if let Err(e) = std::fs::remove_file(&path) {
+                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("failed to delete {path}: {e}") })
+                } else {
+                    send_guest_msg(control_fd, &GuestToHost::FileOpDone { id })
+                };
+                if let Err(e) = res {
+                    eprintln!("[capsem-agent] failed to send FileDelete response: {e}");
+                    break;
                 }
             }
             Ok(msg) => {
@@ -796,6 +845,7 @@ mod tests {
     fn boot_handshake_file_write_roundtrip() {
         let (read_fd, write_fd) = make_pipe();
         let msg = HostToGuest::FileWrite {
+            id: 1,
             path: "/root/.gemini/settings.json".into(),
             data: b"{}".to_vec(),
             mode: 0o644,
@@ -804,7 +854,8 @@ mod tests {
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
         match decoded {
-            HostToGuest::FileWrite { path, data, mode } => {
+            HostToGuest::FileWrite { id, path, data, mode } => {
+                assert_eq!(id, 1);
                 assert_eq!(path, "/root/.gemini/settings.json");
                 assert_eq!(data, b"{}");
                 assert_eq!(mode, 0o644);

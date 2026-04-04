@@ -297,7 +297,7 @@ class TestCheckSourceFiles:
         # Create all required files
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
-            "capsem-doctor", "capsem-bench",
+            "capsem-doctor", "capsem-bench", "snapshots",
         ]:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()
@@ -315,7 +315,7 @@ class TestCheckSourceFiles:
         config.mkdir()
         for name in [
             "capsem-bashrc", "banner.txt", "tips.txt",
-            "capsem-doctor", "capsem-bench",
+            "capsem-doctor", "capsem-bench", "snapshots",
         ]:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()
@@ -327,12 +327,78 @@ class TestCheckSourceFiles:
         assert result.passed is False
         assert "capsem-init" in result.detail
 
+    def test_missing_snapshots(self, tmp_path):
+        artifacts = tmp_path / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
+        config = tmp_path / "config"
+        config.mkdir()
+        for name in [
+            "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
+            "capsem-doctor", "capsem-bench",
+        ]:
+            (artifacts / name).write_text("stub")
+        (artifacts / "diagnostics").mkdir()
+        bench_pkg = artifacts / "capsem_bench"
+        bench_pkg.mkdir()
+        (bench_pkg / "__main__.py").write_text("stub")
+        (config / "capsem-ca.crt").write_text("stub cert")
+        result = check_source_files(tmp_path)
+        assert result.passed is False
+        assert "snapshots" in result.detail
+
+    def test_missing_diagnostics_dir(self, tmp_path):
+        artifacts = tmp_path / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
+        config = tmp_path / "config"
+        config.mkdir()
+        for name in [
+            "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
+            "capsem-doctor", "capsem-bench", "snapshots",
+        ]:
+            (artifacts / name).write_text("stub")
+        # No diagnostics/ dir
+        bench_pkg = artifacts / "capsem_bench"
+        bench_pkg.mkdir()
+        (bench_pkg / "__main__.py").write_text("stub")
+        (config / "capsem-ca.crt").write_text("stub cert")
+        result = check_source_files(tmp_path)
+        assert result.passed is False
+        assert "diagnostics" in result.detail
+
+    def test_missing_bench_pkg_dir(self, tmp_path):
+        artifacts = tmp_path / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
+        config = tmp_path / "config"
+        config.mkdir()
+        for name in [
+            "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
+            "capsem-doctor", "capsem-bench", "snapshots",
+        ]:
+            (artifacts / name).write_text("stub")
+        (artifacts / "diagnostics").mkdir()
+        # No capsem_bench/ dir
+        (config / "capsem-ca.crt").write_text("stub cert")
+        result = check_source_files(tmp_path)
+        assert result.passed is False
+        assert "capsem_bench" in result.detail
+
+    def test_all_missing_reports_all_names(self, tmp_path):
+        artifacts = tmp_path / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
+        # Nothing created -- all required files missing
+        result = check_source_files(tmp_path)
+        assert result.passed is False
+        for name in ["capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
+                      "capsem-doctor", "capsem-bench", "snapshots",
+                      "diagnostics", "capsem_bench", "capsem-ca.crt"]:
+            assert name in result.detail, f"{name} not reported as missing"
+
     def test_missing_ca_cert(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
-            "capsem-doctor", "capsem-bench",
+            "capsem-doctor", "capsem-bench", "snapshots",
         ]:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()

@@ -8,55 +8,126 @@
 #   _check-assets   verifies VM assets exist, tells you to run build-assets if not
 #   audit           checks for known vulnerabilities in Rust + npm deps (gates all paths)
 #
-#   run             -> audit(_ensure-setup) + _check-assets + _pack-initrd + _sign
-#   test            -> audit(_ensure-setup) + _install-tools
+#   run             -> audit + _check-assets + _pack-initrd + run-service
+#   test            -> audit + _install-tools + _check-assets + _pack-initrd (ALL tests: unit + integration + VM)
 #   build-assets    -> doctor + _install-tools + _clean-stale + audit
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
 #   test-injection  -> _check-assets + _pack-initrd + _sign
-#   full-test       -> build-assets + test + cross-compile + _pack-initrd + _sign
-#   cut-release     -> full-test
-#   install         -> doctor + full-test
+#   test-mcp        -> _check-assets + _pack-initrd (MCP integration tests, boots VMs)
+#   test-service    -> _check-assets + _pack-initrd (service HTTP API tests)
+#   test-cli        -> _check-assets + _pack-initrd (CLI integration tests)
+#   cut-release     -> test
+#   install         -> doctor + test
+#
+# Service daemon:
+#   run-service     -> _check-assets + _pack-initrd (start daemon, idempotent)
+#   run-doctor      -> run-service + capsem doctor
+#   ui              -> run-service + cargo tauri dev (GUI with hot-reload)
+#   smoke-test-svc  -> _check-assets + _pack-initrd + doctor + MCP + service integration
 #
 # First-time setup:
 #   just doctor       (shows what's missing)
 #   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker via Colima on macOS)
 #
-# Daily dev:          just run     (fast ~10s, auto-repacks initrd)
-# Before release:     just install (doctor + full-test -- all validation gates)
-# Releases:           just cut-release (full-test + bump, tag, push, CI)
+# Daily dev:          just run     (service daemon + temp VM + shell, ~10s)
+#                     just ui      (service + Tauri GUI with hot-reload)
+# Before release:     just install (doctor + test -- all validation gates)
+# Releases:           just cut-release (test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps (cargo update + pnpm update)
 # Disk cleanup:       just clean   (nuke target/ + frontend build, ~100 GB)
 #                     just clean-all (clean + docker prune)
 
 binary := "target/debug/capsem"
+cli_binary := "target/debug/capsem"
+service_binary := "target/debug/capsem-service"
+process_binary := "target/debug/capsem-process"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
 
-# Run the app in development mode with hot-reloading
-dev: _ensure-setup _pnpm-install
-    @echo "Stopping running instances..."
-    -@pkill -x capsem 2>/dev/null || true
-    -@pkill -x Capsem 2>/dev/null || true
+# Start service daemon + Tauri GUI with hot-reloading
+ui: _ensure-setup _pnpm-install run-service
     CAPSEM_ASSETS_DIR={{assets_dir}} cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
-ui: _pnpm-install
+dev-frontend: _pnpm-install
     cd frontend && pnpm run dev
 
-# Full rebuild + boot VM (build-assets then run)
-full-run *CMD: build-assets _generate-settings _pack-initrd _sign
+# Full rebuild + boot temporary VM via service daemon
+full-run: build-assets run-service
     #!/bin/bash
     set -euo pipefail
-    pkill -x capsem 2>/dev/null || true
-    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
+    name="tmp-$(date +%s)"
+    {{cli_binary}} start --rm --name "$name"
+    echo "Connecting shell (Ctrl+] to disconnect)..."
+    {{cli_binary}} shell "$name"
 
-# Pack + boot VM (interactive or with command, ~10s)
-run *CMD: audit _check-assets _generate-settings _pack-initrd _sign
+# Start service daemon + boot temporary VM + shell (~10s after first build)
+run: audit _check-assets _pack-initrd run-service
     #!/bin/bash
     set -euo pipefail
-    pkill -x capsem 2>/dev/null || true
-    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} {{CMD}}
+    name="tmp-$(date +%s)"
+    {{cli_binary}} start --rm --name "$name"
+    echo "Connecting shell (Ctrl+] to disconnect)..."
+    {{cli_binary}} shell "$name"
+
+# Start capsem-service daemon in the background (idempotent)
+run-service: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process -p capsem
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force {{process_binary}}
+        codesign --sign - --entitlements {{entitlements}} --force {{service_binary}}
+    fi
+    # Check if already running
+    if pgrep -f "capsem-service.*--foreground" >/dev/null 2>&1; then
+        echo "capsem-service already running ($(pgrep -f 'capsem-service.*--foreground'))"
+        exit 0
+    fi
+    arch=$(uname -m)
+    [[ "$arch" == "arm64" ]] || arch="x86_64"
+    mkdir -p ~/.capsem/run
+    echo "Starting capsem-service..."
+    RUST_LOG=capsem=debug {{service_binary}} \
+        --assets-dir {{assets_dir}}/$arch \
+        --process-binary {{process_binary}} \
+        --foreground &
+    SVC_PID=$!
+    # Wait for service to accept connections (not just socket file existing)
+    for i in $(seq 1 30); do
+        if [ -S ~/.capsem/run/service.sock ]; then
+            if curl -s --unix-socket ~/.capsem/run/service.sock --max-time 2 http://localhost/list >/dev/null 2>&1; then
+                echo "capsem-service running (PID $SVC_PID)"
+                exit 0
+            fi
+        fi
+        sleep 0.5
+    done
+    echo "ERROR: capsem-service did not accept connections within 15s"
+    kill $SVC_PID 2>/dev/null
+    exit 1
+
+# Shell into a temporary VM (auto-deleted on exit)
+shell: run-service
+    #!/bin/bash
+    set -euo pipefail
+    name="tmp-$(date +%s)"
+    {{cli_binary}} start --rm --name "$name"
+    {{cli_binary}} shell "$name"
+
+# Execute a command in a temporary VM (auto-deleted on exit)
+# Usage: just exec "echo hello"   or   just exec "ls -la"
+exec +CMD: run-service
+    #!/bin/bash
+    set -euo pipefail
+    name="tmp-$(date +%s)"
+    {{cli_binary}} start --rm --name "$name"
+    {{cli_binary}} exec "$name" {{CMD}}
+
+# Run capsem-doctor (creates temp VM, tears down automatically)
+run-doctor: run-service
+    {{cli_binary}} doctor
 
 # Full VM asset rebuild (kernel, initrd, rootfs) via capsem-builder
 build-assets: _install-tools _clean-stale audit
@@ -110,16 +181,43 @@ update-deps: _pnpm-install
     echo ""
     echo "Done. Run 'just audit' to verify, then 'just test' to confirm nothing broke."
 
-# Unit tests + cross-compile check + frontend type-check + Python schema tests (no VM)
-test: _install-tools _clean-stale audit _pnpm-install _generate-settings
+# Run ALL tests: Rust (warnings=errors for service crates) + cross-compile + frontend + all Python integration
+test: _install-tools _clean-stale audit _pnpm-install _generate-settings _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
+
+    echo "=== Rust: warnings-as-errors for service crates (check only, no codegen) ==="
+    RUSTFLAGS="-D warnings" cargo check -p capsem-service -p capsem-process
+
+    echo "=== Rust: test suite with coverage (compiles + runs all tests) ==="
     cargo llvm-cov --workspace --no-cfg-coverage
+
     echo "=== Cross-compile agent ==="
     uv run capsem-builder agent
+
+    echo "=== Frontend ==="
     cd frontend && pnpm run check && pnpm run test && pnpm run build
     cd ..
-    uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+    echo "=== Sign binaries for integration tests ==="
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-mcp
+    fi
+
+    echo "=== Python: ALL tests (no marker exclusions) ==="
+    uv run python -m pytest tests/ -v --tb=short --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+    echo "=== Injection test ==="
+    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
+
+    echo "=== Integration test ==="
+    python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
+
+    echo "=== Benchmarks ==="
+    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 # See docker/Dockerfile.host-builder for contents.
@@ -137,7 +235,7 @@ clean-host-image:
     #!/bin/bash
     set -euo pipefail
     docker rmi capsem-host-builder:latest 2>/dev/null || true
-    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64; do
+    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup-arm64 capsem-rustup-x86_64; do
         docker volume rm "$vol" 2>/dev/null || true
     done
     echo "Cleaned host builder image and volumes."
@@ -260,28 +358,286 @@ _generate-settings:
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
 # Fast end-to-end: unit tests + repack initrd + sign + capsem-doctor (verifies host-guest bridge)
-smoke-test: test _pack-initrd _sign
-    @echo ""
-    @echo "=== capsem-doctor (smoke) ==="
-    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-doctor"
-    @echo ""
-    @echo "=== Doctor session validation ==="
-    python3 scripts/doctor_session_test.py --binary {{binary}} --assets {{assets_dir}}
+smoke-test: smoke-test-svc
+    @echo "Smoke test passed"
 
 # Alias for smoke-test
 smoke: smoke-test
 
-# Full validation: build-assets + smoke-test + cross-compile + integration test + bench
-full-test: build-assets smoke-test cross-compile
-    @echo ""
-    @echo "=== Injection test ==="
-    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
-    @echo ""
-    @echo "=== Integration test ==="
-    python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
-    @echo ""
-    @echo "=== Benchmarks ==="
-    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
+# Smoke test via service daemon (new stack -- does not use capsem-app)
+smoke-test-svc: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Building service stack ==="
+    cargo build -p capsem-service -p capsem-process -p capsem
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force {{process_binary}}
+    fi
+    echo ""
+    echo "=== capsem-doctor via service daemon ==="
+    just run-doctor
+    echo ""
+    echo "=== MCP black-box tests ==="
+    uv run python -m pytest tests/capsem-mcp/ -m mcp -v --tb=short
+    echo ""
+    echo "=== Service integration tests ==="
+    uv run python -m pytest tests/capsem-service/ -m integration -v --tb=short
+
+
+# E2E tests: real CLI binary, real service, real VMs -- tests the actual user path
+test-e2e: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Building all binaries ==="
+    cargo build -p capsem-service -p capsem-process -p capsem -p capsem-mcp
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-mcp
+    fi
+    echo "=== E2E tests ==="
+    uv run python -m pytest tests/capsem-e2e/ -m e2e -v --tb=short
+
+# MCP black-box integration tests (boots real VMs, exercises full AI-client -> VM path)
+test-mcp: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Building MCP stack ==="
+    cargo build -p capsem-service -p capsem-mcp -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo "=== Signing capsem-process (Virtualization entitlement) ==="
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo ""
+    echo "=== MCP black-box tests ==="
+    uv run python -m pytest tests/capsem-mcp/ -m mcp -v --tb=short
+
+# Service HTTP API integration tests (boots real VMs, direct UDS)
+test-service: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Building service stack ==="
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Service integration tests ==="
+    uv run python -m pytest tests/capsem-service/ -m integration -v --tb=short
+
+# CLI integration tests (needs service + VM)
+test-cli: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Building CLI + service ==="
+    cargo build -p capsem-service -p capsem-process -p capsem
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== CLI integration tests ==="
+    uv run python -m pytest tests/capsem-cli/ -m integration -v --tb=short
+
+# Session.db telemetry verification (boots VM, runs workload, queries DB)
+test-session: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Session DB tests ==="
+    uv run python -m pytest tests/capsem-session/ -m session -v --tb=short
+
+# Snapshot lifecycle tests
+test-snapshots: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Snapshot tests ==="
+    uv run python -m pytest tests/capsem-snapshots/ -m snapshot -v --tb=short
+
+# Multi-VM isolation tests
+test-isolation: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Isolation tests ==="
+    uv run python -m pytest tests/capsem-isolation/ -m isolation -v --tb=short
+
+# Security invariant tests
+test-security: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Security tests ==="
+    uv run python -m pytest tests/capsem-security/ -m security -v --tb=short
+
+# Config obedience tests
+test-config: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Config tests ==="
+    uv run python -m pytest tests/capsem-config/ -m config -v --tb=short
+
+# Bootstrap and install flow tests (no VM needed)
+test-bootstrap:
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Bootstrap tests ==="
+    uv run python -m pytest tests/capsem-bootstrap/ -m bootstrap -v --tb=short
+
+# Stress and load tests
+test-stress: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Stress tests ==="
+    uv run python -m pytest tests/capsem-stress/ -m stress -v --tb=short
+
+# Build chain E2E tests (cargo build -> codesign -> pack -> manifest -> boot)
+test-build-chain: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process -p capsem -p capsem-mcp
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
+    fi
+    echo "=== Build chain tests ==="
+    uv run python -m pytest tests/capsem-build-chain/ -m build_chain -v --tb=short
+
+# Guest validation tests (network, services, filesystem, env)
+test-guest: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Guest validation tests ==="
+    uv run python -m pytest tests/capsem-guest/ -m guest -v --tb=short
+
+# VM cleanup verification tests
+test-cleanup: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Cleanup tests ==="
+    uv run python -m pytest tests/capsem-cleanup/ -m cleanup -v --tb=short
+
+# Codesigning strict tests (FAIL not skip)
+test-codesign: _check-assets
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process -p capsem -p capsem-mcp
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-mcp
+    fi
+    echo "=== Codesign tests ==="
+    uv run python -m pytest tests/capsem-codesign/ -m codesign -v --tb=short
+
+# Serial console and boot timing tests
+test-serial: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Serial console tests ==="
+    uv run python -m pytest tests/capsem-serial/ -m serial -v --tb=short
+
+# Session.db lifecycle tests
+test-session-lifecycle: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Session lifecycle tests ==="
+    uv run python -m pytest tests/capsem-session-lifecycle/ -m session_lifecycle -v --tb=short
+
+# Config runtime tests (CPU, RAM, blocked domains)
+test-config-runtime: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Config runtime tests ==="
+    uv run python -m pytest tests/capsem-config-runtime/ -m config_runtime -v --tb=short
+
+# Just recipe smoke tests
+test-recipes:
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Recipe smoke tests ==="
+    uv run python -m pytest tests/capsem-recipes/ -m recipe -v --tb=short
+
+# Recovery and crash-resilience tests
+test-recovery: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Recovery tests ==="
+    uv run python -m pytest tests/capsem-recovery/ -m recovery -v --tb=short
+
+# Rootfs artifact validation tests (no VM needed)
+test-rootfs:
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Rootfs artifact tests ==="
+    uv run python -m pytest tests/capsem-rootfs-artifacts/ -m rootfs -v --tb=short
+
+# Exhaustive per-table session.db tests
+test-session-exhaustive: _check-assets _pack-initrd
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-service -p capsem-process
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
+    fi
+    echo "=== Session DB exhaustive tests ==="
+    uv run python -m pytest tests/capsem-session-exhaustive/ -m session_exhaustive -v --tb=short
+
+# VM tests: build chain, guest, cleanup, serial, session lifecycle, codesign, config runtime, recovery
+test-vm: test-build-chain test-guest test-cleanup test-codesign test-serial test-session-lifecycle test-config-runtime test-recovery
+    @echo "=== VM tests complete ==="
+
+# Local HTML coverage report across all Rust crates
+coverage:
+    #!/bin/bash
+    set -euo pipefail
+    cargo llvm-cov --workspace --no-cfg-coverage --html
+    echo "Coverage report: target/llvm-cov/html/index.html"
+    open target/llvm-cov/html/index.html 2>/dev/null || true
 
 # End-to-end injection test: boot VM with generated configs, verify all injection paths
 test-injection: _check-assets _pack-initrd _sign
@@ -292,7 +648,7 @@ bench: _ensure-setup _check-assets _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
 # Full validation (test + doctor + bench). Use `just run` for daily dev.
-install: doctor full-test
+install: doctor test
     @echo ""
     @echo "All gates passed. Use 'just run' to boot the VM."
 
@@ -335,9 +691,8 @@ release tag="":
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
 # Bump patch version, commit, tag, push, and wait for CI to publish.
-# Runs full-test first (build-assets + unit tests + cross-compile + capsem-doctor +
-# integration + bench) to avoid burning tags on issues only CI would catch.
-cut-release: full-test
+# Runs test first (all validation gates) to avoid burning tags on issues only CI would catch.
+cut-release: test
     #!/usr/bin/env bash
     set -euo pipefail
     # Read current version from Cargo.toml
@@ -376,274 +731,6 @@ doctor: _pnpm-install
 # Doctor + auto-fix all fixable issues
 doctor-fix: _pnpm-install
     scripts/doctor-common.sh --fix
-
-# Legacy doctor (replaced by scripts/doctor-common.sh)
-_doctor-legacy: _pnpm-install
-    #!/bin/bash
-    set -euo pipefail
-    PASS=0; FAIL=0
-    pass() { echo "  [PASS] $1"; PASS=$((PASS + 1)); }
-    fail() { echo "  [FAIL] $1"; FAIL=$((FAIL + 1)); }
-
-    echo "Capsem Doctor"
-    echo "============="
-
-    echo ""
-    echo "== System Tools =="
-    tool_hint() {
-        case "$1" in
-            cargo)   echo "installed with rustup -- curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" ;;
-            rustup)  echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" ;;
-            pnpm)    echo "npm i -g pnpm" ;;
-            node)    echo "brew install node  (24+ required)" ;;
-            python3) echo "brew install python" ;;
-            uv)      echo "curl -LsSf https://astral.sh/uv/install.sh | sh" ;;
-            sqlite3) echo "brew install sqlite" ;;
-            git)     echo "brew install git" ;;
-            b3sum)   echo "cargo install b3sum --locked" ;;
-        esac
-    }
-    for tool in cargo rustup pnpm node python3 uv sqlite3 git b3sum; do
-        if command -v "$tool" &>/dev/null; then
-            pass "$tool"
-        else
-            fail "$tool not found -- install: $(tool_hint "$tool")"
-        fi
-    done
-
-    echo ""
-    echo "== VM Assets =="
-    arch=$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/')
-    if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
-        ASSETS="{{assets_dir}}"
-        if [ -f "$ASSETS/manifest.json" ]; then
-            # Version check
-            CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-            MANIFEST_VERSION=$(grep '"latest":' "$ASSETS/manifest.json" | sed 's/.*: "\(.*\)".*/\1/')
-            if [ "$CARGO_VERSION" == "$MANIFEST_VERSION" ]; then
-                pass "assets version ($MANIFEST_VERSION) matches Cargo.toml"
-            else
-                fail "assets version mismatch: Cargo.toml=$CARGO_VERSION, manifest.json=$MANIFEST_VERSION -- run: just build-assets"
-            fi
-            
-            # Integrity check (B3SUMS)
-            if command -v b3sum &>/dev/null && [ -f "$ASSETS/B3SUMS" ]; then
-                if (cd "$ASSETS" && b3sum --check B3SUMS >/dev/null 2>&1); then
-                    pass "asset integrity (B3SUMS match)"
-                else
-                    fail "asset integrity check failed -- run: just build-assets"
-                fi
-            fi
-        else
-            fail "manifest.json missing in $ASSETS -- run: just build-assets"
-        fi
-    else
-        echo "  [SKIP] VM Assets (CAPSEM_SKIP_ASSET_CHECK set)"
-    fi
-
-    echo ""
-    echo "== Guest Binaries =="
-    RELEASE_DIR="target/linux-agent/$arch"
-    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
-        if [ -f "$RELEASE_DIR/$b" ]; then
-            if file "$RELEASE_DIR/$b" | grep -E -q "ELF 64-bit LSB|ELF 64-bit MSB"; then
-                pass "$b (Linux ELF)"
-            else
-                fail "$b found but is not Linux ELF -- run: just _pack-initrd"
-            fi
-        else
-            fail "$b missing -- run: just _pack-initrd"
-        fi
-    done
-
-    echo ""
-    echo "== Codesigning =="
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        # Check 1: Xcode Command Line Tools
-        if xcode-select -p &>/dev/null; then
-            pass "Xcode Command Line Tools ($(xcode-select -p))"
-        else
-            fail "Xcode Command Line Tools not installed -- run: xcode-select --install"
-        fi
-
-        # Check 2: codesign binary
-        if command -v codesign &>/dev/null; then
-            pass "codesign"
-        else
-            fail "codesign not found -- install Xcode Command Line Tools: xcode-select --install"
-        fi
-
-        # Check 3: entitlements.plist
-        if [[ -r "{{entitlements}}" ]]; then
-            pass "{{entitlements}} exists and is readable"
-        else
-            fail "{{entitlements}} missing or not readable -- run: git checkout {{entitlements}}"
-        fi
-
-        # Check 4: cargo runner config (.cargo/config.toml)
-        if [[ -f ".cargo/config.toml" ]] && grep -q 'runner.*run_signed' .cargo/config.toml; then
-            pass ".cargo/config.toml (cargo runner -> run_signed.sh)"
-        else
-            fail ".cargo/config.toml missing or misconfigured -- run: git checkout .cargo/config.toml"
-        fi
-
-        # Check 5: run_signed.sh exists and is executable
-        if [[ -x "scripts/run_signed.sh" ]]; then
-            pass "scripts/run_signed.sh"
-        else
-            fail "scripts/run_signed.sh missing or not executable -- run: git checkout scripts/run_signed.sh && chmod +x scripts/run_signed.sh"
-        fi
-
-        # Check 6: test sign (only if codesign and entitlements both exist)
-        if command -v codesign &>/dev/null && [[ -r "{{entitlements}}" ]]; then
-            SIGN_TEST=$(mktemp /tmp/capsem-sign-test.XXXXXX)
-            if cc -x c -o "$SIGN_TEST" - <<< 'int main(){return 0;}' 2>/dev/null; then
-                if codesign --sign - --entitlements "{{entitlements}}" --force "$SIGN_TEST" 2>/dev/null; then
-                    pass "test sign succeeded (ad-hoc + entitlements)"
-                else
-                    fail "test sign failed -- codesign could not sign a binary with {{entitlements}}"
-                    echo "         Try: codesign --sign - --entitlements {{entitlements}} --force /path/to/binary"
-                    echo "         Check SIP status: csrutil status"
-                fi
-            else
-                fail "test sign skipped -- cc could not compile a test binary -- reinstall: sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install"
-            fi
-            rm -f "$SIGN_TEST"
-        fi
-    else
-        echo "  [SKIP] codesign (macOS-only -- Linux uses KVM, no signing needed)"
-        echo "  [SKIP] entitlements.plist (macOS-only)"
-        echo "  [SKIP] test sign (macOS-only)"
-    fi
-
-    echo ""
-    echo "== Container Runtime =="
-    if command -v docker &>/dev/null; then
-        pass "docker ($(docker --version 2>/dev/null | head -1))"
-    else
-        if [[ "$(uname -s)" == "Darwin" ]]; then
-            fail "docker -- install: brew install colima docker && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
-        else
-            fail "docker -- install: sudo apt install docker.io"
-        fi
-    fi
-    # Check Docker BuildKit (buildx) -- required for cross-arch builds
-    if docker buildx version &>/dev/null; then
-        pass "docker buildx ($(docker buildx version 2>/dev/null | head -1))"
-    else
-        if [[ "$(uname -s)" == "Darwin" ]]; then
-            fail "docker buildx -- install: brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx"
-        else
-            fail "docker buildx -- install: sudo apt install docker-buildx-plugin"
-        fi
-    fi
-    # Check Colima is running on macOS
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        if command -v colima &>/dev/null; then
-            if colima status 2>&1 | grep -qi "running"; then
-                pass "colima (running)"
-            else
-                fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
-            fi
-            # Check Colima has Rosetta enabled (required for x86_64 container builds)
-            COLIMA_YAML="$HOME/.colima/default/colima.yaml"
-            if [[ -f "$COLIMA_YAML" ]]; then
-                if grep -q 'rosetta: true' "$COLIMA_YAML" && grep -q 'vmType: vz' "$COLIMA_YAML"; then
-                    pass "colima rosetta (enabled, vz)"
-                else
-                    fail "colima rosetta not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
-                fi
-            else
-                fail "colima config not found at $COLIMA_YAML"
-            fi
-        else
-            fail "colima not found -- install: brew install colima"
-        fi
-        # Check container VM resources
-        if command -v docker &>/dev/null; then
-            mem_mb=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('MemTotal',0) // 1024 // 1024)" 2>/dev/null || echo 0)
-            cpus=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('NCPU',0))" 2>/dev/null || echo 0)
-            if [[ "$mem_mb" -gt 0 ]]; then
-                if [[ "$mem_mb" -lt 4096 ]]; then
-                    fail "Colima: ${mem_mb}MB RAM, ${cpus} CPUs (minimum 4096MB) -- fix: colima stop && colima start --memory 8 --cpu 8"
-                elif [[ "$mem_mb" -lt 8192 ]]; then
-                    pass "Colima: ${mem_mb}MB RAM, ${cpus} CPUs (recommended 8192MB)"
-                else
-                    pass "Colima: ${mem_mb}MB RAM, ${cpus} CPUs"
-                fi
-            fi
-        fi
-        # Check Docker credential helper config
-        if [[ -f "$HOME/.docker/config.json" ]]; then
-            creds_store=$(python3 -c "import json; c=json.load(open('$HOME/.docker/config.json')); print(c.get('credsStore',''))" 2>/dev/null || echo "")
-            if [[ -n "$creds_store" ]]; then
-                helper="docker-credential-$creds_store"
-                if command -v "$helper" &>/dev/null; then
-                    pass "Docker credential helper ($helper)"
-                else
-                    fail "Docker config references '$helper' but it is not installed -- fix: set credsStore to \"\" in ~/.docker/config.json"
-                fi
-            else
-                pass "Docker credential config (no external helper)"
-            fi
-        fi
-    fi
-
-    echo ""
-    echo "== Rust Toolchain =="
-    if rustup target list --installed 2>/dev/null | grep -q aarch64-unknown-linux-musl; then
-        pass "target: aarch64-unknown-linux-musl"
-    else
-        fail "target: aarch64-unknown-linux-musl -- run: rustup target add aarch64-unknown-linux-musl"
-    fi
-    if rustup target list --installed 2>/dev/null | grep -q x86_64-unknown-linux-musl; then
-        pass "target: x86_64-unknown-linux-musl"
-    else
-        fail "target: x86_64-unknown-linux-musl -- run: rustup target add x86_64-unknown-linux-musl"
-    fi
-    if rustup component list --installed 2>/dev/null | grep -q llvm-tools; then
-        pass "component: llvm-tools (provides rust-lld)"
-    else
-        fail "component: llvm-tools -- run: rustup component add llvm-tools"
-    fi
-
-    echo ""
-    echo "== Cargo Tools =="
-    for tool in cargo-llvm-cov cargo-audit b3sum cargo-tauri; do
-        if command -v "$tool" &>/dev/null; then
-            pass "$tool"
-        else
-            fail "$tool -- run: cargo install ${tool/cargo-/}"
-        fi
-    done
-
-    echo ""
-    echo "== Release Tools =="
-    for tool in gh openssl minisign; do
-        if command -v "$tool" &>/dev/null; then
-            pass "$tool"
-        else
-            echo "  [SKIP] $tool -- brew install $tool (only needed for releases)"
-        fi
-    done
-    for tool in cargo-sbom; do
-        if command -v "$tool" &>/dev/null; then
-            pass "$tool"
-        else
-            echo "  [SKIP] $tool -- cargo install $tool (only needed for releases)"
-        fi
-    done
-
-    echo ""
-    echo "============="
-    echo "Results: $PASS passed, $FAIL failed"
-    if [ "$FAIL" -gt 0 ]; then
-        echo ""
-        echo "Install missing tools, or run: just _install-tools (auto-installs Rust components + cargo tools)"
-        exit 1
-    fi
-    echo "All good!"
-    touch .dev-setup
 
 # Clean all build artifacts and report freed space
 clean:
@@ -698,6 +785,25 @@ clean-all: clean
 # Inspect session DB integrity and event summary (latest by default)
 inspect-session *args='':
     python3 scripts/check_session.py {{args}}
+
+# View capsem-service logs
+logs:
+    tail -f ~/.capsem/run/service.log
+
+# View logs for a specific sandbox (process + serial)
+sandbox-logs id:
+    {{cli_binary}} logs {{id}}
+
+# View logs for the latest sandbox
+last-logs:
+    #!/bin/bash
+    set -euo pipefail
+    ID=$({{cli_binary}} ls | grep -v "ID" | head -1 | awk '{print $1}')
+    if [ -n "$ID" ]; then
+        {{cli_binary}} logs "$ID"
+    else
+        echo "No running sandboxes found."
+    fi
 
 # List recent sessions with event counts per table
 list-sessions *args='':

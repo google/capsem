@@ -25,6 +25,29 @@ default = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
+    "integration: Service/CLI integration tests (require capsem-service + VM)",
+    "session: Session.db telemetry tests (require capsem-service + VM + workload)",
+    "snapshot: Snapshot lifecycle tests (require capsem-service + VM)",
+    "isolation: Multi-VM isolation tests (require capsem-service + 2+ VMs)",
+    "security: Security invariant tests (require capsem-service + VM)",
+    "config: Config obedience tests (require capsem-service + VM)",
+    "bootstrap: Setup/install flow tests (no VM needed)",
+    "stress: Load and edge case tests (require capsem-service + VMs)",
+    "build_chain: Build chain E2E tests (cargo build -> codesign -> pack -> boot)",
+    "guest: Guest validation tests (network, services, filesystem, env)",
+    "cleanup: VM cleanup verification tests (process, socket, session dir)",
+    "codesign: Codesigning strict tests (FAIL not skip when unsigned)",
+    "serial: Serial console and boot timing tests",
+    "session_lifecycle: Session.db lifecycle tests (exists, schema, events, shutdown)",
+    "config_runtime: Config runtime tests (CPU, RAM, blocked domains in guest)",
+    "recipe: Just recipe smoke tests (run-service, doctor, build)",
+    "recovery: Recovery and crash-resilience tests (stale state, orphans)",
+    "rootfs: Rootfs artifact validation tests (no VM needed)",
+    "session_exhaustive: Exhaustive per-table session.db data validation",
+    "e2e: End-to-end tests via real CLI binary (the actual user path)",
+]
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-cov>=6.0"]

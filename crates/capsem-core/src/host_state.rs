@@ -473,6 +473,7 @@ mod tests {
     #[test]
     fn file_write_in_handshaking_and_running() {
         let msg = HostToGuest::FileWrite {
+            id: 1,
             path: "/root/.gemini/settings.json".into(),
             data: b"{}".to_vec(),
             mode: 0o644,

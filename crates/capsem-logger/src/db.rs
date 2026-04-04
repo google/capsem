@@ -233,6 +233,62 @@ mod tests {
         std::fs::remove_file(&p).ok();
     }
 
+    #[test]
+    fn reader_on_nonexistent_path_fails() {
+        let result = DbReader::open(Path::new("/nonexistent/db.sqlite"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn writer_creates_wal_mode() {
+        let p = temp_db_path("wal-mode");
+        let _writer = DbWriter::open(&p, 16).unwrap();
+        drop(_writer);
+
+        // WAL files should have been created (or checkpoint cleared them)
+        let conn = rusqlite::Connection::open(&p).unwrap();
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode, "wal");
+
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[tokio::test]
+    async fn concurrent_writes_dont_corrupt() {
+        let p = temp_db_path("concurrent");
+        let writer = DbWriter::open(&p, 64).unwrap();
+
+        for i in 0..50 {
+            let domain = format!("domain-{}.com", i);
+            writer.write(crate::WriteOp::NetEvent(
+                make_net_event(&domain, if i % 2 == 0 { Decision::Allowed } else { Decision::Denied })
+            )).await;
+        }
+        drop(writer);
+
+        let reader = DbReader::open(&p).unwrap();
+        let counts = reader.net_event_counts().unwrap();
+        assert_eq!(counts.total, 50);
+        assert_eq!(counts.allowed, 25);
+        assert_eq!(counts.denied, 25);
+
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn query_raw_returns_json() {
+        let p = temp_db_path("query-raw");
+        let _writer = DbWriter::open(&p, 16).unwrap();
+        drop(_writer);
+
+        let reader = DbReader::open(&p).unwrap();
+        let json = reader.query_raw("SELECT COUNT(*) as cnt FROM net_events").unwrap();
+        assert!(json.contains("cnt"));
+        assert!(json.contains("0"));
+
+        std::fs::remove_file(&p).ok();
+    }
+
     #[tokio::test]
     async fn wal_survives_close_reopen() {
         let p = temp_db_path("wal-reopen");

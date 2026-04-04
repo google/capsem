@@ -807,6 +807,16 @@ default = 4
 min = 1
 max = 8
 
+[settings.vm.resources.max_concurrent_vms]
+name = "Max concurrent VMs"
+description = "Maximum number of sandbox VMs that can be running simultaneously."
+type = "number"
+default = 10
+
+[settings.vm.resources.max_concurrent_vms.meta]
+min = 1
+max = 20
+
 [settings.vm.resources.ram_gb]
 name = "RAM"
 description = "Amount of RAM allocated to the VM in GB."
@@ -916,6 +926,13 @@ max = 32
 [mcp.capsem]
 name = "Capsem"
 description = "Built-in Capsem MCP server for file and snapshot tools"
+transport = "stdio"
+command = "/run/capsem-mcp-server"
+builtin = true
+
+[mcp.capsem-host]
+name = "Capsem Host"
+description = "Control sandboxes from within a guest AI agent."
 transport = "stdio"
 command = "/run/capsem-mcp-server"
 builtin = true

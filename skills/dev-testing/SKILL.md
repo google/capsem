@@ -9,15 +9,12 @@ description: Capsem testing policy and workflow. Use whenever running tests, wri
 
 Three tiers, fast to thorough. Every change must pass all three before it ships.
 
-| Tier | Command | What | VM? |
-|------|---------|------|-----|
-| Fast | `just test` | Unit tests (llvm-cov) + cross-compile agent + frontend check + build | No |
-| Smoke | `just smoke` | test + repack + sign + boot + session DB validation (~30s) | Yes |
-| Full | `just full-test` | smoke + build-assets + cross-compile + integration + bench | Yes |
+| Command | What | VM? |
+|---------|------|-----|
+| `just test` | Everything: unit tests (llvm-cov, warnings-as-errors for service crates) + cross-compile + frontend + all Python integration tests + injection + benchmarks | Yes |
+| `just smoke` | Quick end-to-end: repack + sign + boot + capsem-doctor + MCP + service integration (~30s) | Yes |
 
-Why all three matter: `just test` catches logic bugs and type errors without a VM. `just smoke` (runs `scripts/doctor_session_test.py`) catches sandbox, network, and telemetry regressions that only manifest inside the guest, without the 10-minute overhead of a full image build. `just full-test` catches fresh image build, packaging, and performance regressions.
-
-Skipping the smoke tier is how bugs ship -- unit tests pass but the VM sandbox behaves differently or telemetry is broken.
+`just test` is the single source of truth. There is no "fast" tier that skips integration tests -- that's how the "Connection refused" bug shipped while tests said green. Individual `test-*` recipes exist for targeted debugging but `just test` is the gate.
 
 ## TDD workflow
 
@@ -47,13 +44,99 @@ Stress-test boundary conditions. Write tests for the attacks you'd attempt yours
 - In-VM diagnostics: `guest/artifacts/diagnostics/test_*.py` (see dev-testing-vm)
 - Hypervisor: KVM + Apple VZ tests (see dev-testing-hypervisor)
 - Frontend: `frontend/src/lib/__tests__/` (see dev-testing-frontend)
-- Python (builder): `tests/`
+- Python (builder): `tests/test_*.py`
+- Python integration (service daemon): `tests/capsem-*/` directories, each with its own conftest.py and pytest marker
+
+## Integration test suites
+
+All Python integration tests live under `tests/capsem-*/` and use pytest markers. Each suite has a dedicated `just` recipe.
+
+| Suite | Directory | Marker | VM? | What it tests |
+|-------|-----------|--------|-----|---------------|
+| Service API | `capsem-service/` | `integration` | Yes | HTTP endpoints: provision, list, info, exec, logs, file I/O, delete |
+| CLI | `capsem-cli/` | `integration` | Yes | CLI subcommands via subprocess |
+| MCP | `capsem-mcp/` | `mcp` | Yes | MCP server black-box (stdio, tool routing) |
+| Session DB | `capsem-session/` | `session` | Yes | Telemetry: net/model/tool/mcp/fs/snapshot events |
+| Snapshots | `capsem-snapshots/` | `snapshot` | Yes | Auto/manual snapshots, revert |
+| Isolation | `capsem-isolation/` | `isolation` | Yes | Multi-VM filesystem + network isolation |
+| Security | `capsem-security/` | `security` | Yes | Binary perms, codesigning, asset integrity, env blocklist |
+| Config | `capsem-config/` | `config` | Yes | Limits, resource bounds, hot-reload |
+| Bootstrap | `capsem-bootstrap/` | `bootstrap` | No | Setup flow, dev tools, asset checks |
+| Stress | `capsem-stress/` | `stress` | Yes | 5 concurrent VMs, rapid create/delete |
+| Build chain | `capsem-build-chain/` | `build_chain` | Yes | cargo build -> codesign -> pack -> manifest -> boot |
+| Guest | `capsem-guest/` | `guest` | Yes | Network, services, filesystem, env inside guest |
+| Cleanup | `capsem-cleanup/` | `cleanup` | Yes | Process killed, socket removed, session dir removed |
+| Codesign | `capsem-codesign/` | `codesign` | No | All binaries signed, entitlements present (FAIL not skip) |
+| Serial | `capsem-serial/` | `serial` | Yes | Console logs, boot timing < 30s |
+| Session lifecycle | `capsem-session-lifecycle/` | `session_lifecycle` | Yes | DB exists, schema, events, survives shutdown |
+| Config runtime | `capsem-config-runtime/` | `config_runtime` | Yes | CPU/RAM applied in guest, blocked domains |
+| Recipes | `capsem-recipes/` | `recipe` | No | just run-service, just doctor, cargo build |
+| Recovery | `capsem-recovery/` | `recovery` | Yes | Stale socket/instances, orphaned process, double service |
+| Rootfs artifacts | `capsem-rootfs-artifacts/` | `rootfs` | No | Artifact files, build context, doctor consistency |
+| Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
+
+Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test` runs everything.
 
 ## Coverage
 
 - Rust: `cargo llvm-cov` via `just test`
 - Python: `--cov-fail-under=90`
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
+
+## Fast debug with capsem MCP tools
+
+When the capsem MCP server is configured, Claude Code has direct VM control via MCP tools -- no shell commands or just recipes needed. This is the fastest way to test changes interactively because you stay in the conversation loop: create a VM, run commands, inspect results, fix code, repeat.
+
+### The tools
+
+| Tool | What it does |
+|------|-------------|
+| `capsem_create` | Spin up a fresh VM (returns VM id) |
+| `capsem_exec` | Run a command inside the guest |
+| `capsem_read_file` | Read a file from the guest filesystem |
+| `capsem_write_file` | Write a file into the guest |
+| `capsem_inspect_schema` | Get session.db table schema |
+| `capsem_inspect` | Run SQL against session.db (telemetry) |
+| `capsem_list` | Show all running VMs |
+| `capsem_info` | VM details (config, status, PID) |
+| `capsem_delete` | Tear down VM and wipe session |
+
+### Debug workflow
+
+1. **Create**: `capsem_create` -- boots a fresh VM in ~10s
+2. **Test**: `capsem_exec` with the command you want to verify (e.g., `capsem-doctor -k net`, `cat /etc/resolv.conf`, `curl https://example.com`)
+3. **Inspect**: `capsem_read_file` to check config files, logs; `capsem_inspect` to query telemetry tables
+4. **Iterate**: fix code on host, rebuild (`just build`), create a new VM to test again
+5. **Cleanup**: `capsem_delete` when done
+
+### When to use MCP tools vs just recipes
+
+| Scenario | Use |
+|----------|-----|
+| Quick check: "does this command work in the guest?" | `capsem_exec` |
+| Read a guest file to understand state | `capsem_read_file` |
+| Verify telemetry was recorded correctly | `capsem_inspect` with SQL query |
+| Full regression suite | `just test` |
+| Build + boot + validate in one shot | `just smoke` |
+| Benchmark performance | `just bench` |
+
+MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
+
+### Common debug queries
+
+```sql
+-- Check network events for a domain
+SELECT * FROM net_events WHERE domain LIKE '%example%' ORDER BY timestamp DESC LIMIT 10;
+
+-- Verify MCP tool calls were logged
+SELECT server_name, tool_name, decision, duration_ms FROM mcp_calls ORDER BY timestamp DESC;
+
+-- Check model API calls
+SELECT provider, model, status_code, duration_ms FROM model_calls ORDER BY timestamp DESC;
+
+-- File system events
+SELECT operation, path, success FROM fs_events ORDER BY timestamp DESC LIMIT 20;
+```
 
 ## End-to-end validation is not optional
 

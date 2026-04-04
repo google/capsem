@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::os::unix::io::RawFd;
 
 /// Messages sent from capsem-service to capsem-process over the per-VM Unix Domain Socket.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceToProcess {
     /// Ping the process to check if it's alive and responsive.
     Ping,
@@ -12,15 +11,309 @@ pub enum ServiceToProcess {
     TerminalResize { cols: u16, rows: u16 },
     /// Request the process to gracefully shut down the VM.
     Shutdown,
+    /// Execute a command and wait for completion (structured).
+    Exec { id: u64, command: String },
+    /// Write a file to the guest.
+    WriteFile { id: u64, path: String, data: Vec<u8> },
+    /// Read a file from the guest.
+    ReadFile { id: u64, path: String },
+    /// Request the process to reload its configuration from disk.
+    ReloadConfig,
+    /// Start streaming terminal output to this IPC connection.
+    StartTerminalStream,
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ProcessToService {
     /// Response to Ping.
     Pong,
     /// Output bytes from the guest PTY.
     TerminalOutput { data: Vec<u8> },
     /// State change notification (e.g. Booting -> Running).
-    StateChanged { state: String, trigger: String },
+    StateChanged { id: String, state: String, trigger: String },
+    /// Result of an Exec command.
+    ExecResult { id: u64, stdout: Vec<u8>, stderr: Vec<u8>, exit_code: i32 },
+    /// Result of a WriteFile operation.
+    WriteFileResult { id: u64, success: bool, error: Option<String> },
+    /// Result of a ReadFile operation.
+    ReadFileResult { id: u64, data: Option<Vec<u8>>, error: Option<String> },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // ServiceToProcess serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ping_roundtrip() {
+        let msg = ServiceToProcess::Ping;
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(msg2, ServiceToProcess::Ping));
+    }
+
+    #[test]
+    fn terminal_input_roundtrip() {
+        let msg = ServiceToProcess::TerminalInput { data: vec![0x41, 0x42, 0x0a] };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::TerminalInput { data } => assert_eq!(data, vec![0x41, 0x42, 0x0a]),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn terminal_resize_roundtrip() {
+        let msg = ServiceToProcess::TerminalResize { cols: 120, rows: 40 };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::TerminalResize { cols, rows } => {
+                assert_eq!(cols, 120);
+                assert_eq!(rows, 40);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn shutdown_roundtrip() {
+        let msg = ServiceToProcess::Shutdown;
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(msg2, ServiceToProcess::Shutdown));
+    }
+
+    #[test]
+    fn exec_roundtrip() {
+        let msg = ServiceToProcess::Exec { id: 42, command: "echo hi".into() };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::Exec { id, command } => {
+                assert_eq!(id, 42);
+                assert_eq!(command, "echo hi");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn write_file_roundtrip() {
+        let msg = ServiceToProcess::WriteFile {
+            id: 7,
+            path: "/tmp/test.txt".into(),
+            data: b"hello".to_vec(),
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::WriteFile { id, path, data } => {
+                assert_eq!(id, 7);
+                assert_eq!(path, "/tmp/test.txt");
+                assert_eq!(data, b"hello");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn read_file_roundtrip() {
+        let msg = ServiceToProcess::ReadFile { id: 99, path: "/etc/hostname".into() };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::ReadFile { id, path } => {
+                assert_eq!(id, 99);
+                assert_eq!(path, "/etc/hostname");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ProcessToService serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pong_roundtrip() {
+        let msg = ProcessToService::Pong;
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(msg2, ProcessToService::Pong));
+    }
+
+    #[test]
+    fn terminal_output_roundtrip() {
+        let msg = ProcessToService::TerminalOutput { data: vec![0x68, 0x69] };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::TerminalOutput { data } => assert_eq!(data, vec![0x68, 0x69]),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn state_changed_roundtrip() {
+        let msg = ProcessToService::StateChanged {
+            id: "vm-1".into(),
+            state: "Running".into(),
+            trigger: "booted".into(),
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::StateChanged { id, state, trigger } => {
+                assert_eq!(id, "vm-1");
+                assert_eq!(state, "Running");
+                assert_eq!(trigger, "booted");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn exec_result_roundtrip() {
+        let msg = ProcessToService::ExecResult {
+            id: 42,
+            stdout: b"hello\n".to_vec(),
+            stderr: b"".to_vec(),
+            exit_code: 0,
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::ExecResult { id, stdout, stderr, exit_code } => {
+                assert_eq!(id, 42);
+                assert_eq!(stdout, b"hello\n");
+                assert!(stderr.is_empty());
+                assert_eq!(exit_code, 0);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn exec_result_nonzero_exit() {
+        let msg = ProcessToService::ExecResult {
+            id: 1, stdout: vec![], stderr: b"not found\n".to_vec(), exit_code: 127,
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::ExecResult { exit_code, stderr, .. } => {
+                assert_eq!(exit_code, 127);
+                assert_eq!(stderr, b"not found\n");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn write_file_result_success() {
+        let msg = ProcessToService::WriteFileResult { id: 5, success: true, error: None };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::WriteFileResult { id, success, error } => {
+                assert_eq!(id, 5);
+                assert!(success);
+                assert!(error.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn write_file_result_failure() {
+        let msg = ProcessToService::WriteFileResult {
+            id: 5, success: false, error: Some("permission denied".into()),
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::WriteFileResult { success, error, .. } => {
+                assert!(!success);
+                assert_eq!(error.unwrap(), "permission denied");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn read_file_result_success() {
+        let msg = ProcessToService::ReadFileResult {
+            id: 10, data: Some(b"file contents".to_vec()), error: None,
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::ReadFileResult { data, error, .. } => {
+                assert_eq!(data.unwrap(), b"file contents");
+                assert!(error.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn read_file_result_not_found() {
+        let msg = ProcessToService::ReadFileResult {
+            id: 10, data: None, error: Some("file not found".into()),
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::ReadFileResult { data, error, .. } => {
+                assert!(data.is_none());
+                assert_eq!(error.unwrap(), "file not found");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Job ID correlation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn job_ids_are_distinct() {
+        let exec = ServiceToProcess::Exec { id: 1, command: "a".into() };
+        let write = ServiceToProcess::WriteFile { id: 2, path: "/x".into(), data: vec![] };
+        let read = ServiceToProcess::ReadFile { id: 3, path: "/y".into() };
+
+        // Verify each preserves its own ID through serde
+        let e: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&exec).unwrap()).unwrap();
+        let w: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&write).unwrap()).unwrap();
+        let r: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&read).unwrap()).unwrap();
+
+        match (e, w, r) {
+            (ServiceToProcess::Exec { id: e_id, .. },
+             ServiceToProcess::WriteFile { id: w_id, .. },
+             ServiceToProcess::ReadFile { id: r_id, .. }) => {
+                assert_eq!(e_id, 1);
+                assert_eq!(w_id, 2);
+                assert_eq!(r_id, 3);
+            }
+            _ => panic!("wrong variants"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ReloadConfig
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reload_config_roundtrip() {
+        let msg = ServiceToProcess::ReloadConfig;
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(msg2, ServiceToProcess::ReloadConfig));
+    }
 }

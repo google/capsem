@@ -274,8 +274,8 @@ mod tests {
         let (client, _server) = UnixStream::pair().unwrap();
         let fd = client.into_raw_fd();
 
-        // Set a 1-second send timeout so the test doesn't wait 30s.
-        let tv = libc::timeval { tv_sec: 1, tv_usec: 0 };
+        // Set a 200ms send timeout so the test doesn't wait 30s.
+        let tv = libc::timeval { tv_sec: 0, tv_usec: 200_000 };
         unsafe {
             libc::setsockopt(
                 fd, libc::SOL_SOCKET, libc::SO_SNDTIMEO,

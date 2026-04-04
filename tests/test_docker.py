@@ -16,6 +16,7 @@ import pytest
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import (
     GUEST_BINARIES,
+    ROOTFS_ARTIFACTS,
     build_version_script,
     container_compile_agent,
     cross_compile_agent,
@@ -105,6 +106,14 @@ class TestRenderRootfs:
         assert "capsem-doctor" in rendered_arm64
         assert "capsem-bench" in rendered_arm64
         assert "capsem_bench/" in rendered_arm64
+        assert "snapshots" in rendered_arm64
+
+    def test_rootfs_includes_all_artifacts(self, rendered_arm64):
+        """Every ROOTFS_ARTIFACTS entry must appear as a COPY line."""
+        for artifact in ROOTFS_ARTIFACTS:
+            assert f"COPY {artifact}" in rendered_arm64, (
+                f"{artifact} missing from rootfs Dockerfile"
+            )
 
     def test_node_version(self, rendered_arm64):
         assert "nvm install 24" in rendered_arm64
@@ -923,6 +932,7 @@ class TestPrepareBuildContext:
         assert (context_dir / "diagnostics").is_dir()
         assert (context_dir / "capsem-doctor").is_file()
         assert (context_dir / "capsem-bench").is_file()
+        assert (context_dir / "snapshots").is_file()
         assert (context_dir / "capsem_bench").is_dir()
         assert (context_dir / "capsem_bench" / "__main__.py").is_file()
 
@@ -1147,6 +1157,165 @@ class TestContainerCompileAgent:
         with pytest.raises(RuntimeError, match="Binary is empty"):
             container_compile_agent(
                 "aarch64-unknown-linux-musl", repo_root, output_dir,
+            )
+
+
+class TestContainerCompileAgentShellScript:
+    """Verify the shell script passed to bash -c in container builds.
+
+    The script symlinks most of /src into /build but must exclude certain
+    dirs (target, Cargo.lock, crates) and handle crates via cp -r instead.
+    Regression: symlinked crates broke workspace resolution inside the container.
+    """
+
+    def _extract_shell_script(self, mock_run, tmp_path):
+        """Run container_compile_agent and return the bash -c script string."""
+        mock_run.side_effect = lambda cmd, **kw: [
+            (tmp_path / "output" / b).write_bytes(b"elf")
+            for b in GUEST_BINARIES
+        ] or MagicMock(stdout="")
+        container_compile_agent(
+            "aarch64-unknown-linux-musl",
+            tmp_path / "repo",
+            tmp_path / "output",
+        )
+        cmd = mock_run.call_args[0][0]
+        return cmd[-1]  # bash -c argument is the last element
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    def test_shell_excludes_crates_from_symlinks(self, _det, mock_run, tmp_path):
+        (tmp_path / "repo").mkdir()
+        script = self._extract_shell_script(mock_run, tmp_path)
+        assert "[ $b != crates ]" in script
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    def test_shell_copies_crates_with_cp(self, _det, mock_run, tmp_path):
+        (tmp_path / "repo").mkdir()
+        script = self._extract_shell_script(mock_run, tmp_path)
+        assert "cp -r /src/crates /build/crates" in script
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    def test_shell_excludes_target_from_symlinks(self, _det, mock_run, tmp_path):
+        (tmp_path / "repo").mkdir()
+        script = self._extract_shell_script(mock_run, tmp_path)
+        assert "[ $b != target ]" in script
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    def test_shell_excludes_cargo_lock_from_symlinks(self, _det, mock_run, tmp_path):
+        (tmp_path / "repo").mkdir()
+        script = self._extract_shell_script(mock_run, tmp_path)
+        assert "[ $b != Cargo.lock ]" in script
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    def test_shell_copies_all_binaries_to_output(self, _det, mock_run, tmp_path):
+        (tmp_path / "repo").mkdir()
+        script = self._extract_shell_script(mock_run, tmp_path)
+        for binary in GUEST_BINARIES:
+            assert f"cp target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}" in script
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    def test_shell_lists_all_binaries_for_verification(self, _det, mock_run, tmp_path):
+        (tmp_path / "repo").mkdir()
+        script = self._extract_shell_script(mock_run, tmp_path)
+        for binary in GUEST_BINARIES:
+            assert f"ls -l /output/{binary}" in script
+
+    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    def test_shell_builds_capsem_agent_package(self, _det, mock_run, tmp_path):
+        (tmp_path / "repo").mkdir()
+        script = self._extract_shell_script(mock_run, tmp_path)
+        assert "cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent" in script
+
+
+class TestPrepareBuildContextArtifacts:
+    """Tests for rootfs artifact handling in prepare_build_context.
+
+    Verifies that ROOTFS_ARTIFACTS entries are copied when present and
+    silently skipped when missing, and that directory artifacts (diagnostics,
+    capsem_bench) behave the same way.
+    """
+
+    @pytest.fixture
+    def fake_repo(self, tmp_path):
+        """Build a minimal fake repo root with all rootfs build context files."""
+        repo = tmp_path / "repo"
+        artifacts = repo / "guest" / "artifacts"
+        artifacts.mkdir(parents=True)
+        config = repo / "config"
+        config.mkdir()
+        (config / "capsem-ca.crt").write_text("fake cert")
+        for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
+            (artifacts / name).write_text(f"content of {name}")
+        for name in ROOTFS_ARTIFACTS:
+            (artifacts / name).write_text(f"content of {name}")
+        diag = artifacts / "diagnostics"
+        diag.mkdir()
+        (diag / "conftest.py").write_text("# diag conf")
+        (diag / "test_sandbox.py").write_text("# diag test")
+        bench = artifacts / "capsem_bench"
+        bench.mkdir()
+        (bench / "__main__.py").write_text("# bench main")
+        (bench / "disk.py").write_text("# disk bench")
+        return repo
+
+    def test_missing_rootfs_artifact_silently_skipped(self, real_config, fake_repo, tmp_path):
+        # Remove one ROOTFS_ARTIFACT from fake repo
+        (fake_repo / "guest" / "artifacts" / "snapshots").unlink()
+        ctx = tmp_path / "ctx"
+        ctx.mkdir()
+        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        assert not (ctx / "snapshots").exists()
+        # Other artifacts still copied
+        assert (ctx / "capsem-doctor").is_file()
+        assert (ctx / "capsem-bench").is_file()
+
+    def test_all_rootfs_artifacts_copied_when_present(self, real_config, fake_repo, tmp_path):
+        ctx = tmp_path / "ctx"
+        ctx.mkdir()
+        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        for name in ROOTFS_ARTIFACTS:
+            assert (ctx / name).is_file(), f"{name} not copied to build context"
+
+    def test_missing_diagnostics_dir_no_crash(self, real_config, fake_repo, tmp_path):
+        shutil.rmtree(fake_repo / "guest" / "artifacts" / "diagnostics")
+        ctx = tmp_path / "ctx"
+        ctx.mkdir()
+        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        assert not (ctx / "diagnostics").exists()
+
+    def test_missing_bench_pkg_dir_no_crash(self, real_config, fake_repo, tmp_path):
+        shutil.rmtree(fake_repo / "guest" / "artifacts" / "capsem_bench")
+        ctx = tmp_path / "ctx"
+        ctx.mkdir()
+        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        assert not (ctx / "capsem_bench").exists()
+
+
+class TestRootfsArtifactConstants:
+    """Consistency checks for ROOTFS_ARTIFACTS and ROOTFS_ARTIFACT_DIRS."""
+
+    def test_rootfs_artifacts_no_duplicates(self):
+        assert len(ROOTFS_ARTIFACTS) == len(set(ROOTFS_ARTIFACTS))
+
+    def test_rootfs_artifact_dirs_no_duplicates(self):
+        from capsem.builder.docker import ROOTFS_ARTIFACT_DIRS
+        assert len(ROOTFS_ARTIFACT_DIRS) == len(set(ROOTFS_ARTIFACT_DIRS))
+
+    def test_all_rootfs_artifacts_have_copy_in_template(self, rendered_arm64):
+        """Every ROOTFS_ARTIFACTS entry must have a COPY and a chmod line."""
+        for artifact in ROOTFS_ARTIFACTS:
+            assert f"COPY {artifact} " in rendered_arm64, (
+                f"{artifact} missing COPY line in Dockerfile.rootfs.j2"
+            )
+            assert f"chmod" in rendered_arm64 and artifact in rendered_arm64, (
+                f"{artifact} missing chmod line in Dockerfile.rootfs.j2"
             )
 
 

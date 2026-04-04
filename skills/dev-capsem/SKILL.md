@@ -5,19 +5,23 @@ description: Capsem project overview and navigation. Use when you need to unders
 
 # Capsem
 
-Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework (with KVM for Linux). Built with Rust, Tauri 2.0, and Astro.
+Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework (with KVM for Linux). Runs as a daemon service (like Docker). Built with Rust and Astro.
 
 ## Crate map
 
 | Crate | What | Key modules |
 |-------|------|-------------|
 | `capsem-core` | Shared library. All business logic lives here. | `vm/` (machine, config, vsock, serial), `net/` (MITM proxy, policy, CA, SSE), `mcp/` (gateway, tools, policy), `hypervisor/` (Apple VZ, KVM) |
-| `capsem-app` | Thin Tauri shell. IPC commands, state, CLI. No business logic. | `commands.rs`, `state.rs`, `cli.rs` |
-| `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay) |
+| `capsem-service` | Daemon service. Axum HTTP over UDS, VM lifecycle. | `main.rs` (routes, IPC), `api.rs` (request/response types) |
+| `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
+| `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (start, list, shell, status) |
+| `capsem-mcp` | MCP server for AI agents. Stdio, bridges to service. | `main.rs` (rmcp handler, UDS client) |
+| `capsem-app` | Optional Tauri GUI shell. IPC commands, state. | `commands.rs`, `state.rs`, `cli.rs` |
+| `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent + file I/O), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay) |
 | `capsem-logger` | Session DB schema, queries, async writer. | `schema.rs`, `writer.rs`, `events.rs` |
-| `capsem-proto` | Shared protocol types between host and guest. | Control messages, MCP frames |
+| `capsem-proto` | Shared protocol types. | `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost) |
 
-Rule: if logic could be reused or tested without Tauri/VM, it belongs in `capsem-core`.
+Rule: if logic could be reused or tested without a specific crate, it belongs in `capsem-core`.
 
 ## Directory map
 
@@ -75,9 +79,11 @@ When working on a specific area, consult the relevant skill:
 ## Communication paths
 
 ```
-Frontend (xterm.js) <-> Tauri IPC <-> vsock <-> Guest PTY agent <-> bash
-Guest HTTPS        <-> iptables   <-> vsock:5002 <-> Host MITM proxy <-> upstream
-Guest MCP          <-> vsock:5003 <-> Host MCP gateway <-> external MCP servers
+AI Agent  -> capsem-mcp (stdio) -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
+User CLI  -> capsem (HTTP/UDS)  -> capsem-service -> capsem-process -> vsock -> guest
+Tauri GUI -> Tauri IPC          -> capsem-core -> vsock -> guest
+Guest HTTPS -> iptables -> vsock:5002 -> Host MITM proxy -> upstream
+Guest MCP   -> vsock:5003 -> Host MCP gateway -> external MCP servers
 ```
 
 Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP).

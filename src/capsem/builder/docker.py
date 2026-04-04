@@ -32,6 +32,10 @@ GUEST_BINARIES = [
     "capsem-mcp-server",
 ]
 
+# Scripts/tools that must be in rootfs build context (not cross-compiled Rust).
+ROOTFS_ARTIFACTS = ["capsem-doctor", "capsem-bench", "snapshots"]
+ROOTFS_ARTIFACT_DIRS = ["capsem_bench", "diagnostics"]
+
 
 def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
@@ -408,6 +412,7 @@ def container_compile_agent(
     # Source is mounted :ro to protect the host. We symlink everything into
     # a writable /build dir so cargo can generate Cargo.lock without modifying
     # the host. The target dir and registry are persistent named volumes.
+    rustup_volume = f"capsem-rustup-{arch_suffix}"
     run_cmd([
         runtime, "run", "--rm",
         "--platform", platform,
@@ -415,14 +420,17 @@ def container_compile_agent(
         "-v", f"{output_dir.resolve()}:/output",
         "-v", "capsem-cargo-registry:/usr/local/cargo/registry",
         "-v", "capsem-cargo-git:/usr/local/cargo/git",
+        "-v", f"{rustup_volume}:/usr/local/rustup",
         "-v", f"{target_volume}:/build/target",
         "-w", "/build",
         "rust:slim-bookworm", "bash", "-c",
-        f"for f in /src/*; do b=$(basename $f); [ $b != target ] && [ $b != Cargo.lock ] && ln -s $f /build/; done && "
+        f"for f in /src/*; do b=$(basename $f); [ $b != target ] && [ $b != Cargo.lock ] && [ $b != crates ] && ln -s $f /build/; done && "
+        f"cp -r /src/crates /build/crates && "
         f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
         f"rustup target add {rust_target} && "
         f"cargo build --release --target {rust_target} -p capsem-agent && "
-        f"{cp_cmds} && {file_cmds}",
+        f"rm -f /output/capsem-pty-agent /output/capsem-net-proxy /output/capsem-mcp-server && "
+        f"{cp_cmds} && chmod 555 /output/capsem-pty-agent /output/capsem-net-proxy /output/capsem-mcp-server && {file_cmds}",
     ])
 
     copied: list[Path] = []
@@ -690,8 +698,8 @@ def prepare_build_context(
         diag_dst = context_dir / "diagnostics"
         if diag_src.is_dir():
             shutil.copytree(str(diag_src), str(diag_dst), dirs_exist_ok=True)
-        # Doctor + bench scripts
-        for name in ("capsem-doctor", "capsem-bench"):
+        # Rootfs artifact scripts (doctor, bench, snapshots, etc.)
+        for name in ROOTFS_ARTIFACTS:
             src = artifacts / name
             if src.is_file():
                 shutil.copy2(str(src), str(context_dir / name))

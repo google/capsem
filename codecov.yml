@@ -126,6 +126,35 @@ component_management:
       paths:
         - crates/capsem-app/src/**
 
+    # Service daemon: HTTP-over-UDS API, instance lifecycle,
+    # per-VM process management.
+    - component_id: service
+      name: Service
+      paths:
+        - crates/capsem-service/src/**
+        - crates/capsem-process/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # CLI client: start, stop, exec, shell, list, status, delete.
+    - component_id: cli
+      name: CLI
+      paths:
+        - crates/capsem/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # MCP server: AI agent tool gateway over stdio JSON-RPC.
+    - component_id: mcp-server
+      name: MCP Server
+      paths:
+        - crates/capsem-mcp/src/**
+      statuses:
+        - type: project
+          target: 80%
+
     # Frontend: Astro + Svelte components, views, stores.
     # Populated when vitest coverage is added to pipeline.
     - component_id: ui

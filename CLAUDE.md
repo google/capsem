@@ -1,6 +1,6 @@
 # Capsem
 
-Native macOS app that sandboxes AI agents in Linux VMs using Apple's Virtualization.framework. Built with Rust, Tauri 2.0, and Astro.
+Sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework. Runs as a daemon service (like Docker). Built with Rust and Astro.
 
 ## Quick Start
 
@@ -17,8 +17,14 @@ See `/dev-just` for the full recipe reference and dependency chains.
 
 ```
 crates/capsem-core/       VM library (config, boot, serial, vsock, machine)
-crates/capsem-app/        Tauri binary (GUI, CLI, commands, state)
+crates/capsem-service/    Daemon service (axum HTTP over UDS, VM lifecycle)
+crates/capsem-process/    Per-VM process (boots VM, bridges vsock, job store)
+crates/capsem/            CLI client (start, list, shell, status)
+crates/capsem-mcp/        MCP server for AI agents (stdio, bridges to service)
+crates/capsem-app/        Tauri binary (GUI, commands, state)
 crates/capsem-agent/      Guest PTY agent (vsock bridge, cross-compiled)
+crates/capsem-proto/      Shared protocol types (host-guest, service-process IPC)
+crates/capsem-logger/     Session DB schema, queries, async writer
 frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + Preline
 site/                     Product website (Astro Starlight)
 src/capsem/builder/       capsem-builder CLI (config-driven image builder)
@@ -51,7 +57,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Overview | `/dev-capsem` | Orienting on any task, finding which skill to use |
 | Rust patterns | `/dev-rust-patterns` | Writing any Rust code in capsem-core/app/agent |
 | MITM proxy | `/dev-mitm-proxy` | TLS, HTTP inspection, SSE parsing, ai_traffic |
-| MCP gateway | `/dev-mcp` | MCP tool routing, policy, built-in tools |
+| MCP | `/dev-mcp` | capsem-mcp server, MCP gateway, tool routing |
 | Testing | `/dev-testing` | Running or writing tests, TDD, coverage |
 | VM testing | `/dev-testing-vm` | In-VM diagnostics, capsem-doctor, session DB |
 | Frontend | `/frontend-design` | UI components, Svelte, Tailwind, Preline |
@@ -60,13 +66,13 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Just recipes | `/dev-just` | Which just command to run for a given task |
 | Debugging | `/dev-debugging` | Bug investigation, reproduce-first workflow |
 | Release | `/release-process` | CI, signing, notarization, changelog |
-| Architecture | `/site-architecture` | System design, Tauri, vsock, key files |
+| Architecture | `/site-architecture` | System design, service architecture, vsock, key files |
 
 ## Code Style
 
 - **Reuse over reinvention.** Check `capsem-core` first. Extend existing abstractions.
 - **Minimize code.** Delete dead code, inline single-use helpers. Every line must earn its place.
-- **`capsem-core` is the shared library.** App crate is a thin Tauri shell. Agent crate is a thin guest binary. Business logic lives in core.
+- **`capsem-core` is the shared library.** Service, process, CLI, and agent crates are thin shells. Business logic lives in core.
 - **One way to do things.** Don't introduce a second pattern when one exists.
 
 ## Invariants (do not break)

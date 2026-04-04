@@ -1,0 +1,24 @@
+[package]
+name = "capsem-mcp"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+capsem-core = { path = "../capsem-core" }
+capsem-logger = { path = "../capsem-logger" }
+capsem-proto = { path = "../capsem-proto" }
+rmcp = { workspace = true, features = ["transport-io"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+http = "1"
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+async-trait = "0.1.89"

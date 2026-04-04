@@ -11,7 +11,7 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 just bench                          # Run all benchmarks in VM (~2 min)
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
-just full-test                      # Full validation including benchmarks
+just test                           # Full validation including benchmarks
 ```
 
 ## capsem-bench
@@ -100,4 +100,4 @@ Common causes:
 
 - In-VM benchmark test: `just run "capsem-bench all"`
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
-- Full run: `just bench` or `just full-test`
+- Full run: `just bench` or `just test`
