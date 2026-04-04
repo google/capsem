@@ -217,6 +217,77 @@ class TestPurge:
         assert name not in ids, f"Persistent VM {name} survived purge --all with 'y'"
 
 
+class TestListQuiet:
+
+    def test_list_quiet(self, uds_path):
+        """capsem list -q prints only IDs, one per line."""
+        name = f"lsq-{uuid.uuid4().hex[:4]}"
+        _provision_vm(uds_path, name)
+        try:
+            stdout, _, rc = run_cli("list", "-q", uds_path=uds_path)
+            assert rc == 0
+            # Should contain the VM name as a line, no header
+            assert name in stdout
+            assert "STATUS" not in stdout  # no table header
+        finally:
+            run_cli("delete", name, uds_path=uds_path)
+
+    def test_list_quiet_long_flag(self, uds_path):
+        """capsem list --quiet works same as -q."""
+        stdout, _, rc = run_cli("list", "--quiet", uds_path=uds_path)
+        assert rc == 0
+        assert "STATUS" not in stdout
+
+
+class TestExecTimeout:
+
+    def test_exec_with_custom_timeout(self, uds_path):
+        """capsem exec --timeout passes timeout to service."""
+        name = f"eto-{uuid.uuid4().hex[:4]}"
+        _provision_vm(uds_path, name)
+        try:
+            from helpers.uds_client import UdsHttpClient
+            client = UdsHttpClient(uds_path)
+            assert wait_exec_ready(client, name)
+
+            stdout, stderr, rc = run_cli("exec", "--timeout", "60", name, "echo timeout-works", uds_path=uds_path)
+            assert rc == 0, f"exec with timeout failed: {stderr}"
+            assert "timeout-works" in stdout
+        finally:
+            run_cli("delete", name, uds_path=uds_path)
+
+
+class TestVersion:
+
+    def test_version_prints_version(self, uds_path):
+        """capsem version prints a version string."""
+        stdout, _, rc = run_cli("version", uds_path=uds_path)
+        assert rc == 0
+        assert "capsem" in stdout.lower()
+
+
+class TestEnv:
+
+    def test_create_with_env(self, uds_path):
+        """capsem create -e FOO=bar injects env into guest."""
+        name = f"env-{uuid.uuid4().hex[:4]}"
+        # Use the service API directly to provision with env
+        from helpers.uds_client import UdsHttpClient
+        client = UdsHttpClient(uds_path)
+        resp = client.post("/provision", {
+            "name": name, "ram_mb": 2048, "cpus": 2,
+            "persistent": True, "env": {"CAPSEM_TEST_VAR": "hello_from_host"}
+        })
+        assert resp is not None, "provision with env failed"
+        try:
+            assert wait_exec_ready(client, name)
+            stdout, stderr, rc = run_cli("exec", name, "echo $CAPSEM_TEST_VAR", uds_path=uds_path)
+            assert rc == 0, f"exec failed: {stderr}"
+            assert "hello_from_host" in stdout, f"env var not visible in guest: {stdout}"
+        finally:
+            run_cli("delete", name, uds_path=uds_path)
+
+
 class TestErrors:
 
     def test_no_service(self):
