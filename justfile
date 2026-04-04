@@ -42,8 +42,66 @@ binary := "target/debug/capsem"
 cli_binary := "target/debug/capsem"
 service_binary := "target/debug/capsem-service"
 process_binary := "target/debug/capsem-process"
+mcp_binary := "target/debug/capsem-mcp"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp"
+
+# Compile all host binaries
+_build-host:
+    cargo build {{host_crates}}
+
+# Codesign all host binaries (macOS only, needed for Virtualization.framework)
+_sign: _build-host
+    #!/bin/bash
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        for bin in {{host_binaries}}; do
+            codesign --sign - --entitlements {{entitlements}} --force "$bin"
+        done
+    fi
+
+# Ensure capsem-service daemon is running with the current binary.
+# Always kills any existing instance and relaunches fresh.
+_ensure-service: _sign
+    #!/bin/bash
+    set -euo pipefail
+    arch=$(uname -m)
+    [[ "$arch" == "arm64" ]] || arch="x86_64"
+    mkdir -p ~/.capsem/run
+    PIDFILE=~/.capsem/run/service.pid
+    # Kill existing service if any
+    if [[ -f "$PIDFILE" ]]; then
+        OLD_PID=$(cat "$PIDFILE")
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+            echo "Stopping capsem-service (PID $OLD_PID)..."
+            kill "$OLD_PID" 2>/dev/null || true
+            sleep 1
+        fi
+        rm -f "$PIDFILE"
+    fi
+    rm -f ~/.capsem/run/service.sock
+    echo "Starting capsem-service..."
+    RUST_LOG=capsem=debug {{service_binary}} \
+        --assets-dir {{assets_dir}}/$arch \
+        --process-binary {{process_binary}} \
+        --foreground &
+    SVC_PID=$!
+    echo "$SVC_PID" > "$PIDFILE"
+    for i in $(seq 1 30); do
+        if [ -S ~/.capsem/run/service.sock ] && curl -s --unix-socket ~/.capsem/run/service.sock --max-time 2 http://localhost/list >/dev/null 2>&1; then
+            echo "capsem-service running (PID $SVC_PID)"
+            exit 0
+        fi
+        sleep 0.5
+    done
+    echo "ERROR: capsem-service did not start within 15s"
+    kill $SVC_PID 2>/dev/null
+    rm -f "$PIDFILE"
+    exit 1
+
+# Build all host binaries, sign, restart service if stale
+build: _sign _ensure-service
 
 # Start service daemon + Tauri GUI with hot-reloading
 ui: _ensure-setup _pnpm-install run-service
@@ -61,42 +119,8 @@ full-run: build-assets run-service
 run: audit _check-assets _pack-initrd run-service
     {{cli_binary}} shell
 
-# Start capsem-service daemon in the background (idempotent)
-run-service: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process -p capsem
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force {{process_binary}}
-        codesign --sign - --entitlements {{entitlements}} --force {{service_binary}}
-    fi
-    # Check if already running
-    if pgrep -f "capsem-service.*--foreground" >/dev/null 2>&1; then
-        echo "capsem-service already running ($(pgrep -f 'capsem-service.*--foreground'))"
-        exit 0
-    fi
-    arch=$(uname -m)
-    [[ "$arch" == "arm64" ]] || arch="x86_64"
-    mkdir -p ~/.capsem/run
-    echo "Starting capsem-service..."
-    RUST_LOG=capsem=debug {{service_binary}} \
-        --assets-dir {{assets_dir}}/$arch \
-        --process-binary {{process_binary}} \
-        --foreground &
-    SVC_PID=$!
-    # Wait for service to accept connections (not just socket file existing)
-    for i in $(seq 1 30); do
-        if [ -S ~/.capsem/run/service.sock ]; then
-            if curl -s --unix-socket ~/.capsem/run/service.sock --max-time 2 http://localhost/list >/dev/null 2>&1; then
-                echo "capsem-service running (PID $SVC_PID)"
-                exit 0
-            fi
-        fi
-        sleep 0.5
-    done
-    echo "ERROR: capsem-service did not accept connections within 15s"
-    kill $SVC_PID 2>/dev/null
-    exit 1
+# Start capsem-service daemon (builds, signs, launches or reuses running instance)
+run-service: _check-assets _pack-initrd _ensure-service
 
 # Shell into a temporary VM (auto-deleted on exit)
 shell: run-service
@@ -111,33 +135,31 @@ exec +CMD: run-service
 run-doctor: run-service
     {{cli_binary}} doctor
 
-# Full VM asset rebuild (kernel, initrd, rootfs) via capsem-builder
-build-assets: _install-tools _clean-stale audit
+# VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch to build one.
+build-assets arch="": _install-tools _clean-stale audit
     #!/bin/bash
     set -euo pipefail
-    # Run doctor but skip the asset check since we are about to rebuild them
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
-    echo "=== Cleaning old assets ==="
-    rm -rf "{{assets_dir}}/arm64" "{{assets_dir}}/x86_64"
-    rm -f "{{assets_dir}}/manifest.json" "{{assets_dir}}/B3SUMS"
-    for arch in arm64 x86_64; do
-        echo "=== Building kernel for $arch ==="
-        uv run capsem-builder build guest/ --arch "$arch" --template kernel --output "{{assets_dir}}/"
+    if [[ -n "{{arch}}" ]]; then
+        arches=("{{arch}}")
+        echo "=== Cleaning assets for {{arch}} ==="
+        rm -rf "{{assets_dir}}/{{arch}}"
+    else
+        arches=(arm64 x86_64)
+        echo "=== Cleaning all assets ==="
+        rm -rf "{{assets_dir}}/arm64" "{{assets_dir}}/x86_64"
+        rm -f "{{assets_dir}}/manifest.json" "{{assets_dir}}/B3SUMS"
+    fi
+    for a in "${arches[@]}"; do
+        echo "=== Building kernel for $a ==="
+        uv run capsem-builder build guest/ --arch "$a" --template kernel --output "{{assets_dir}}/"
         echo ""
-        echo "=== Building rootfs for $arch ==="
-        uv run capsem-builder build guest/ --arch "$arch" --template rootfs --output "{{assets_dir}}/"
+        echo "=== Building rootfs for $a ==="
+        uv run capsem-builder build guest/ --arch "$a" --template rootfs --output "{{assets_dir}}/"
         echo ""
     done
     echo "=== Generating checksums ==="
     uv run python3 -c 'from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path(".")); generate_checksums(Path("{{assets_dir}}"), v); print(f"manifest.json generated (v{v})")'
-
-# Build kernel only
-build-kernel arch="arm64":
-    uv run capsem-builder build guest/ --arch {{arch}} --template kernel --output {{assets_dir}}/
-
-# Build rootfs only
-build-rootfs arch="arm64":
-    uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
 
 # Dependency audit: check for known vulnerabilities in Rust and npm deps
 audit: _ensure-setup _install-tools _pnpm-install
@@ -182,12 +204,7 @@ test: _install-tools _clean-stale audit _pnpm-install _generate-settings _check-
     cd ..
 
     echo "=== Sign binaries for integration tests ==="
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-mcp
-    fi
+    just _sign
 
     echo "=== Python: ALL tests (no marker exclusions) ==="
     uv run python -m pytest tests/ -v --tb=short --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
@@ -213,7 +230,7 @@ build-host-image:
         docker/
 
 # Remove cross-compilation image and cached volumes.
-clean-host-image:
+_clean-host-image:
     #!/bin/bash
     set -euo pipefail
     docker rmi capsem-host-builder:latest 2>/dev/null || true
@@ -339,279 +356,17 @@ _generate-settings:
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
-# Fast end-to-end: unit tests + repack initrd + sign + capsem-doctor (verifies host-guest bridge)
-smoke-test: smoke-test-svc
-    @echo "Smoke test passed"
-
-# Alias for smoke-test
-smoke: smoke-test
-
-# Smoke test via service daemon (new stack -- does not use capsem-app)
-smoke-test-svc: _check-assets _pack-initrd
+# Quick validation: build, sign, doctor, MCP + service + CLI integration tests
+smoke: _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
-    echo "=== Building service stack ==="
-    cargo build -p capsem-service -p capsem-process -p capsem
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force {{process_binary}}
-    fi
-    echo ""
-    echo "=== capsem-doctor via service daemon ==="
+    echo "=== capsem-doctor ==="
     just run-doctor
     echo ""
-    echo "=== MCP black-box tests ==="
-    uv run python -m pytest tests/capsem-mcp/ -m mcp -v --tb=short
+    echo "=== Integration tests (MCP + service + CLI) ==="
+    uv run python -m pytest tests/capsem-mcp/ tests/capsem-service/ tests/capsem-cli/ -v --tb=short
     echo ""
-    echo "=== Service integration tests ==="
-    uv run python -m pytest tests/capsem-service/ -m integration -v --tb=short
-
-
-# E2E tests: real CLI binary, real service, real VMs -- tests the actual user path
-test-e2e: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Building all binaries ==="
-    cargo build -p capsem-service -p capsem-process -p capsem -p capsem-mcp
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-mcp
-    fi
-    echo "=== E2E tests ==="
-    uv run python -m pytest tests/capsem-e2e/ -m e2e -v --tb=short
-
-# MCP black-box integration tests (boots real VMs, exercises full AI-client -> VM path)
-test-mcp: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Building MCP stack ==="
-    cargo build -p capsem-service -p capsem-mcp -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        echo "=== Signing capsem-process (Virtualization entitlement) ==="
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo ""
-    echo "=== MCP black-box tests ==="
-    uv run python -m pytest tests/capsem-mcp/ -m mcp -v --tb=short
-
-# Service HTTP API integration tests (boots real VMs, direct UDS)
-test-service: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Building service stack ==="
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Service integration tests ==="
-    uv run python -m pytest tests/capsem-service/ -m integration -v --tb=short
-
-# CLI integration tests (needs service + VM)
-test-cli: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Building CLI + service ==="
-    cargo build -p capsem-service -p capsem-process -p capsem
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== CLI integration tests ==="
-    uv run python -m pytest tests/capsem-cli/ -m integration -v --tb=short
-
-# Session.db telemetry verification (boots VM, runs workload, queries DB)
-test-session: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Session DB tests ==="
-    uv run python -m pytest tests/capsem-session/ -m session -v --tb=short
-
-# Snapshot lifecycle tests
-test-snapshots: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Snapshot tests ==="
-    uv run python -m pytest tests/capsem-snapshots/ -m snapshot -v --tb=short
-
-# Multi-VM isolation tests
-test-isolation: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Isolation tests ==="
-    uv run python -m pytest tests/capsem-isolation/ -m isolation -v --tb=short
-
-# Security invariant tests
-test-security: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Security tests ==="
-    uv run python -m pytest tests/capsem-security/ -m security -v --tb=short
-
-# Config obedience tests
-test-config: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Config tests ==="
-    uv run python -m pytest tests/capsem-config/ -m config -v --tb=short
-
-# Bootstrap and install flow tests (no VM needed)
-test-bootstrap:
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Bootstrap tests ==="
-    uv run python -m pytest tests/capsem-bootstrap/ -m bootstrap -v --tb=short
-
-# Stress and load tests
-test-stress: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Stress tests ==="
-    uv run python -m pytest tests/capsem-stress/ -m stress -v --tb=short
-
-# Build chain E2E tests (cargo build -> codesign -> pack -> manifest -> boot)
-test-build-chain: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process -p capsem -p capsem-mcp
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
-    fi
-    echo "=== Build chain tests ==="
-    uv run python -m pytest tests/capsem-build-chain/ -m build_chain -v --tb=short
-
-# Guest validation tests (network, services, filesystem, env)
-test-guest: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Guest validation tests ==="
-    uv run python -m pytest tests/capsem-guest/ -m guest -v --tb=short
-
-# VM cleanup verification tests
-test-cleanup: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Cleanup tests ==="
-    uv run python -m pytest tests/capsem-cleanup/ -m cleanup -v --tb=short
-
-# Codesigning strict tests (FAIL not skip)
-test-codesign: _check-assets
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process -p capsem -p capsem-mcp
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-service
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-mcp
-    fi
-    echo "=== Codesign tests ==="
-    uv run python -m pytest tests/capsem-codesign/ -m codesign -v --tb=short
-
-# Serial console and boot timing tests
-test-serial: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Serial console tests ==="
-    uv run python -m pytest tests/capsem-serial/ -m serial -v --tb=short
-
-# Session.db lifecycle tests
-test-session-lifecycle: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Session lifecycle tests ==="
-    uv run python -m pytest tests/capsem-session-lifecycle/ -m session_lifecycle -v --tb=short
-
-# Config runtime tests (CPU, RAM, blocked domains)
-test-config-runtime: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Config runtime tests ==="
-    uv run python -m pytest tests/capsem-config-runtime/ -m config_runtime -v --tb=short
-
-# Just recipe smoke tests
-test-recipes:
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Recipe smoke tests ==="
-    uv run python -m pytest tests/capsem-recipes/ -m recipe -v --tb=short
-
-# Recovery and crash-resilience tests
-test-recovery: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Recovery tests ==="
-    uv run python -m pytest tests/capsem-recovery/ -m recovery -v --tb=short
-
-# Rootfs artifact validation tests (no VM needed)
-test-rootfs:
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Rootfs artifact tests ==="
-    uv run python -m pytest tests/capsem-rootfs-artifacts/ -m rootfs -v --tb=short
-
-# Exhaustive per-table session.db tests
-test-session-exhaustive: _check-assets _pack-initrd
-    #!/bin/bash
-    set -euo pipefail
-    cargo build -p capsem-service -p capsem-process
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        codesign --sign - --entitlements {{entitlements}} --force target/debug/capsem-process
-    fi
-    echo "=== Session DB exhaustive tests ==="
-    uv run python -m pytest tests/capsem-session-exhaustive/ -m session_exhaustive -v --tb=short
-
-# VM tests: build chain, guest, cleanup, serial, session lifecycle, codesign, config runtime, recovery
-test-vm: test-build-chain test-guest test-cleanup test-codesign test-serial test-session-lifecycle test-config-runtime test-recovery
-    @echo "=== VM tests complete ==="
+    echo "Smoke test passed"
 
 # Local HTML coverage report across all Rust crates
 coverage:
@@ -715,34 +470,32 @@ doctor-fix: _pnpm-install
     scripts/doctor-common.sh --fix
 
 # Clean all build artifacts and report freed space
-clean:
+# Clean build artifacts. Pass "all" to also prune docker images/volumes.
+clean all="":
     #!/bin/bash
     set -euo pipefail
     BEFORE=$(du -sk . 2>/dev/null | cut -f1)
     echo "=== Cleaning Capsem build artifacts ==="
-    # Rust build artifacts (the big one)
     if [ -d target ]; then
         TARGET_SIZE=$(du -sh target 2>/dev/null | cut -f1)
         echo "  target/          ${TARGET_SIZE}"
         cargo clean
     fi
-    # Frontend build artifacts
-    for dir in frontend/dist frontend/node_modules; do
+    for dir in frontend/dist frontend/node_modules tmp coverage; do
         if [ -d "$dir" ]; then
             DIR_SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
             echo "  ${dir}/  ${DIR_SIZE}"
             rm -rf "$dir"
         fi
     done
-    # Temp and coverage dirs
-    for dir in tmp coverage; do
-        if [ -d "$dir" ]; then
-            DIR_SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
-            echo "  ${dir}/          ${DIR_SIZE}"
-            rm -rf "$dir"
+    if [[ "{{all}}" == "all" ]]; then
+        just _clean-host-image
+        if command -v docker &>/dev/null; then
+            echo ""
+            echo "=== Docker cleanup ==="
+            docker system prune -af --volumes
         fi
-    done
-    # Report
+    fi
     AFTER=$(du -sk . 2>/dev/null | cut -f1)
     FREED_KB=$((BEFORE - AFTER))
     if [ "$FREED_KB" -gt 1048576 ]; then
@@ -751,17 +504,6 @@ clean:
     elif [ "$FREED_KB" -gt 1024 ]; then
         echo ""
         echo "Freed $((FREED_KB / 1024)) MB"
-    fi
-
-# Deep clean: build artifacts + container images + docker volumes
-clean-all: clean
-    #!/bin/bash
-    set -euo pipefail
-    # Prune docker: stopped containers, unused images, build cache, volumes
-    if command -v docker &>/dev/null; then
-        echo ""
-        echo "=== Docker cleanup ==="
-        docker system prune -af --volumes
     fi
 
 # Inspect session DB integrity and event summary (latest by default)
@@ -971,7 +713,7 @@ _frontend: _pnpm-install
 _compile: _frontend _clean-stale
     cargo build -p capsem
 
-_sign: _compile
+_sign-release: _compile
     #!/bin/bash
     set -euo pipefail
     if [[ "$(uname -s)" != "Darwin" ]]; then
