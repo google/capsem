@@ -38,6 +38,26 @@ fn build_exec_body(params: &ExecParams) -> Value {
     })
 }
 
+/// Return the last N lines of text.
+fn tail_lines(text: &str, n: u64) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let n = n as usize;
+    if lines.len() <= n {
+        text.to_string()
+    } else {
+        lines[lines.len() - n..].join("\n")
+    }
+}
+
+/// Apply tail to log-valued string fields in a JSON object.
+fn tail_log_fields(val: &mut Value, n: u64) {
+    for key in ["logs", "serial_logs", "process_logs"] {
+        if let Some(Value::String(s)) = val.get_mut(key) {
+            *s = tail_lines(s, n);
+        }
+    }
+}
+
 /// Apply grep filtering to log-valued fields in a JSON object.
 fn grep_log_fields(val: &mut Value, pattern: &str) {
     for key in ["logs", "serial_logs", "process_logs"] {
@@ -188,6 +208,8 @@ struct CreateParams {
     #[schemars(rename = "cpuCount")]
     cpu_count: Option<u32>,
     version: Option<String>,
+    /// Environment variables to inject into the guest (e.g. {"API_KEY": "sk-..."})
+    env: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -245,12 +267,16 @@ struct LogsParams {
     id: String,
     /// Case-insensitive substring filter applied to each log line
     grep: Option<String>,
+    /// Return only the last N lines (applied after grep)
+    tail: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct ServiceLogsParams {
     /// Case-insensitive substring filter applied to each log line
     grep: Option<String>,
+    /// Return only the last N lines (applied after grep)
+    tail: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -274,7 +300,7 @@ impl CapsemHandler {
         }
     }
 
-    #[tool(name = "capsem_vm_logs", description = "Get serial and process logs for a VM. Use grep to filter lines by substring")]
+    #[tool(name = "capsem_vm_logs", description = "Get serial and process logs for a VM. Use grep to filter lines, tail to limit to last N lines")]
     async fn vm_logs(&self, Parameters(params): Parameters<LogsParams>) -> Result<String, String> {
         match self.client.request::<Value, Value>("GET", &format!("/logs/{}", params.id), None).await {
             Ok(mut val) => {
@@ -284,13 +310,16 @@ impl CapsemHandler {
                 if let Some(pattern) = &params.grep {
                     grep_log_fields(&mut val, pattern);
                 }
+                if let Some(n) = params.tail {
+                    tail_log_fields(&mut val, n);
+                }
                 Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
             }
             Err(e) => Err(e.to_string()),
         }
     }
 
-    #[tool(name = "capsem_service_logs", description = "Get the latest capsem-service logs (last ~100KB). Use grep to filter lines by substring")]
+    #[tool(name = "capsem_service_logs", description = "Get the latest capsem-service logs (last ~100KB). Use grep to filter lines, tail to limit to last N lines")]
     async fn service_logs(&self, Parameters(params): Parameters<ServiceLogsParams>) -> Result<String, String> {
         let home = std::env::var("HOME").map_err(|e| e.to_string())?;
         let run_dir = std::env::var("CAPSEM_RUN_DIR")
@@ -314,6 +343,9 @@ impl CapsemHandler {
         if let Some(pattern) = &params.grep {
             buf = grep_lines(&buf, pattern);
         }
+        if let Some(n) = params.tail {
+            buf = tail_lines(&buf, n);
+        }
         Ok(buf)
     }
 
@@ -321,12 +353,15 @@ impl CapsemHandler {
     async fn create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, String> {
         info!(?params, "capsem_create tool called");
         let persistent = params.name.is_some();
-        let body = json!({
+        let mut body = json!({
             "name": params.name,
             "ram_mb": params.ram_mb.unwrap_or(2048),
             "cpus": params.cpu_count.unwrap_or(2),
             "persistent": persistent,
         });
+        if let Some(env) = params.env {
+            body["env"] = json!(env);
+        }
         match self.client.request::<Value, Value>("POST", "/provision", Some(body)).await {
             Ok(val) => {
                 if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
@@ -498,6 +533,19 @@ impl CapsemHandler {
             Err(e) => Err(e.to_string()),
         }
     }
+
+    #[tool(name = "capsem_version", description = "Get capsem version info: MCP server version and service connectivity")]
+    async fn version(&self) -> Result<String, String> {
+        let mcp_version = env!("CARGO_PKG_VERSION");
+        let service_status = match self.client.request::<Value, Value>("GET", "/list", None).await {
+            Ok(_) => "connected".to_string(),
+            Err(e) => format!("unreachable: {}", e),
+        };
+        Ok(json!({
+            "mcp_version": mcp_version,
+            "service": service_status,
+        }).to_string())
+    }
 }
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
@@ -577,6 +625,7 @@ mod tests {
             ram_mb: Some(2048),
             cpu_count: Some(2),
             version: None,
+            env: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert!(v.get("ramMb").is_some());
@@ -642,6 +691,29 @@ mod tests {
         let json = json!({"id": "vm-1"});
         let p: LogsParams = serde_json::from_value(json).unwrap();
         assert_eq!(p.grep, None);
+        assert_eq!(p.tail, None);
+    }
+
+    #[test]
+    fn logs_params_with_tail() {
+        let json = json!({"id": "vm-1", "tail": 50});
+        let p: LogsParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.tail, Some(50));
+    }
+
+    #[test]
+    fn logs_params_with_grep_and_tail() {
+        let json = json!({"id": "vm-1", "grep": "error", "tail": 20});
+        let p: LogsParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.grep, Some("error".into()));
+        assert_eq!(p.tail, Some(20));
+    }
+
+    #[test]
+    fn service_logs_params_with_tail() {
+        let json = json!({"tail": 100});
+        let p: ServiceLogsParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.tail, Some(100));
     }
 
     #[test]
@@ -681,6 +753,44 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // grep_lines
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tail_lines_basic() {
+        let text = "line 1\nline 2\nline 3\nline 4\nline 5";
+        assert_eq!(tail_lines(text, 2), "line 4\nline 5");
+    }
+
+    #[test]
+    fn tail_lines_more_than_available() {
+        let text = "line 1\nline 2";
+        assert_eq!(tail_lines(text, 10), text);
+    }
+
+    #[test]
+    fn tail_lines_exact() {
+        let text = "line 1\nline 2\nline 3";
+        assert_eq!(tail_lines(text, 3), text);
+    }
+
+    #[test]
+    fn tail_lines_empty() {
+        assert_eq!(tail_lines("", 5), "");
+    }
+
+    #[test]
+    fn tail_log_fields_applies_to_all() {
+        let mut val = json!({
+            "logs": "a\nb\nc\nd\ne",
+            "serial_logs": "1\n2\n3\n4\n5",
+            "process_logs": "x\ny\nz",
+        });
+        tail_log_fields(&mut val, 2);
+        assert_eq!(val["logs"], "d\ne");
+        assert_eq!(val["serial_logs"], "4\n5");
+        assert_eq!(val["process_logs"], "y\nz");
+    }
+
     // -----------------------------------------------------------------------
 
     #[test]
@@ -897,7 +1007,7 @@ mod tests {
             "capsem_read_file", "capsem_write_file", "capsem_inspect_schema",
             "capsem_inspect", "capsem_delete", "capsem_stop", "capsem_resume",
             "capsem_persist", "capsem_purge", "capsem_run", "capsem_vm_logs",
-            "capsem_service_logs",
+            "capsem_service_logs", "capsem_version",
         ];
         for name in &expected {
             assert!(names.contains(&name.to_string()), "Missing tool: {name}");
@@ -1007,6 +1117,22 @@ mod tests {
         let p: InspectParams = serde_json::from_value(json).unwrap();
         assert!(p.sql.contains("DROP TABLE"));
         // Backend MUST use read-only connection
+    }
+
+    #[test]
+    fn create_params_with_env() {
+        let json = json!({"name": "test", "env": {"API_KEY": "sk-123", "DEBUG": "true"}});
+        let p: CreateParams = serde_json::from_value(json).unwrap();
+        let env = p.env.unwrap();
+        assert_eq!(env.get("API_KEY").unwrap(), "sk-123");
+        assert_eq!(env.get("DEBUG").unwrap(), "true");
+    }
+
+    #[test]
+    fn create_params_without_env() {
+        let json = json!({"name": "test"});
+        let p: CreateParams = serde_json::from_value(json).unwrap();
+        assert!(p.env.is_none());
     }
 
     #[test]

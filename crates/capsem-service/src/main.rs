@@ -142,6 +142,9 @@ struct InstanceInfo {
     base_version: String,
     /// Whether this is a persistent (named) VM
     persistent: bool,
+    /// Environment variables injected at boot
+    #[allow(dead_code)]
+    env: Option<std::collections::HashMap<String, String>>,
 }
 
 impl ServiceState {
@@ -174,7 +177,7 @@ impl ServiceState {
         }
     }
 
-    fn provision_sandbox(&self, id: &str, ram_mb: u64, cpus: u32, version_override: Option<String>, persistent: bool) -> Result<()> {
+    fn provision_sandbox(&self, id: &str, ram_mb: u64, cpus: u32, version_override: Option<String>, persistent: bool, env: Option<std::collections::HashMap<String, String>>) -> Result<()> {
         self.cleanup_stale_instances();
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
@@ -261,6 +264,13 @@ impl ServiceState {
             .open(&process_log_path)
             .context("failed to open process.log")?;
 
+        // Add --env KEY=VALUE args for each env var
+        if let Some(ref env_vars) = env {
+            for (k, v) in env_vars {
+                child_cmd.arg("--env").arg(format!("{}={}", k, v));
+            }
+        }
+
         let mut child = child_cmd
             .env("RUST_LOG", "debug")
             .arg("--id").arg(id)
@@ -277,7 +287,7 @@ impl ServiceState {
 
         let pid = child.id().unwrap_or(0);
         info!(id, pid, version, "capsem-process spawned");
-        
+
         let id_clone = id.to_string();
         tokio::spawn(async move {
             let _ = child.wait().await;
@@ -308,6 +318,7 @@ impl ServiceState {
             start_time: std::time::Instant::now(),
             base_version: version,
             persistent,
+            env,
         });
 
         Ok(())
@@ -396,6 +407,7 @@ impl ServiceState {
             start_time: std::time::Instant::now(),
             base_version: version,
             persistent: true,
+            env: None,
         });
 
         Ok(name.to_string())
@@ -446,7 +458,7 @@ async fn handle_provision(
         format!("vm-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
     });
 
-    match state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), payload.persistent) {
+    match state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), payload.persistent, payload.env) {
         Ok(_) => Ok(Json(ProvisionResponse { id })),
         Err(e) => {
             error!(id, "provision failed: {e}");
@@ -885,6 +897,7 @@ async fn handle_persist(
                 start_time: info.start_time,
                 base_version: info.base_version,
                 persistent: true,
+                env: info.env,
             });
         }
     }
@@ -958,7 +971,7 @@ async fn handle_run(
         .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
 
     // 1. Provision ephemeral VM
-    state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), false)
+    state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), false, None)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
 
     // 2. Wait for VM socket to appear
@@ -1170,6 +1183,7 @@ mod tests {
                 start_time: std::time::Instant::now(),
                 base_version: "0.0.0".into(),
                 persistent: false,
+                env: None,
             },
         );
     }
@@ -1403,7 +1417,7 @@ mod tests {
         // path   = /tmp/capsem-test-svc/instances/{name}.sock
         // A 100-char name will blow past either OS limit.
         let long_name = "a".repeat(100);
-        let result = state.provision_sandbox(&long_name, 2048, 2, None, false);
+        let result = state.provision_sandbox(&long_name, 2048, 2, None, false, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("socket path"), "expected socket path error, got: {err}");
@@ -1419,7 +1433,7 @@ mod tests {
         // Name length that makes total path == sun_path_max (one byte over usable limit)
         let name_len = sun_path_max - prefix - suffix_len;
         let boundary_name = "x".repeat(name_len);
-        let result = state.provision_sandbox(&boundary_name, 2048, 2, None, false);
+        let result = state.provision_sandbox(&boundary_name, 2048, 2, None, false, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("socket path"), "expected socket path error at boundary, got: {err}");
@@ -1434,7 +1448,7 @@ mod tests {
         // One byte shorter than the limit -- should pass path validation
         let name_len = sun_path_max - prefix - suffix_len - 1;
         let ok_name = "x".repeat(name_len);
-        let result = state.provision_sandbox(&ok_name, 2048, 2, None, false);
+        let result = state.provision_sandbox(&ok_name, 2048, 2, None, false, None);
         // Will fail later (missing rootfs), but NOT for path length
         if let Err(e) = &result {
             let msg = e.to_string();
@@ -1445,7 +1459,7 @@ mod tests {
     #[test]
     fn provision_short_name_passes_path_check() {
         let state = make_test_state();
-        let result = state.provision_sandbox("my-vm", 2048, 2, None, false);
+        let result = state.provision_sandbox("my-vm", 2048, 2, None, false, None);
         // Fails for missing assets, not path length
         if let Err(e) = &result {
             let msg = e.to_string();
@@ -1592,7 +1606,7 @@ mod tests {
                 session_dir: PathBuf::from("/tmp/taken"),
             });
         }
-        let result = state.provision_sandbox("taken", 2048, 2, None, true);
+        let result = state.provision_sandbox("taken", 2048, 2, None, true, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("already exists"), "expected duplicate error, got: {err}");
@@ -1602,7 +1616,7 @@ mod tests {
     #[test]
     fn provision_persistent_validates_name() {
         let state = make_test_state();
-        let result = state.provision_sandbox("../evil", 2048, 2, None, true);
+        let result = state.provision_sandbox("../evil", 2048, 2, None, true, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("must start with") || err.contains("must contain only"),

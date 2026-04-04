@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -8,6 +9,9 @@ pub struct ProvisionRequest {
     /// When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop.
     #[serde(default)]
     pub persistent: bool,
+    /// Environment variables to inject into the guest at boot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -143,6 +147,23 @@ mod tests {
         assert_eq!(r.ram_mb, 4096);
         assert_eq!(r.cpus, 4);
         assert!(r.persistent);
+        assert!(r.env.is_none());
+    }
+
+    #[test]
+    fn provision_request_with_env() {
+        let json = json!({"ram_mb": 2048, "cpus": 2, "env": {"FOO": "bar", "BAZ": "qux"}});
+        let r: ProvisionRequest = serde_json::from_value(json).unwrap();
+        let env = r.env.unwrap();
+        assert_eq!(env.get("FOO").unwrap(), "bar");
+        assert_eq!(env.get("BAZ").unwrap(), "qux");
+    }
+
+    #[test]
+    fn provision_request_env_omitted() {
+        let r = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("env"));
     }
 
     #[test]

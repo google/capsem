@@ -27,6 +27,9 @@ struct Args {
     #[arg(long, default_value_t = 2)] cpus: u32,
     #[arg(long, default_value_t = 2048)] ram_mb: u64,
     #[arg(long)] uds_path: PathBuf,
+    /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
+    #[arg(long = "env")]
+    env: Vec<String>,
 }
 
 struct JobStore {
@@ -653,8 +656,14 @@ async fn run_async_main_loop(
     let net_state_clone = Arc::clone(&net_state);
     let mitm_config_clone = Arc::clone(&mitm_config);
     let mcp_config_clone = Arc::clone(&mcp_config);
+
+    // Parse --env KEY=VALUE pairs for guest injection
+    let cli_env: Vec<(String, String)> = args.env.iter()
+        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .collect();
+
     tokio::spawn(async move {
-        if let Err(e) = setup_vsock(args.id.clone(), vsock_rx, ipc_tx_clone, ctrl_rx, terminal_output_clone, job_store_clone, session_dir, mitm_config_clone, mcp_config_clone, net_state_clone).await {
+        if let Err(e) = setup_vsock(args.id.clone(), vsock_rx, ipc_tx_clone, ctrl_rx, terminal_output_clone, job_store_clone, session_dir, cli_env, mitm_config_clone, mcp_config_clone, net_state_clone).await {
             error!("vsock failed: {e:#}");
         }
     });
@@ -694,6 +703,7 @@ async fn setup_vsock(
     terminal_output: Arc<capsem_core::TerminalOutputQueue>,
     job_store: Arc<JobStore>,
     session_dir: PathBuf,
+    cli_env: Vec<(String, String)>,
     mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
     mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
     _net_state: Arc<capsem_core::SandboxNetworkState>,
@@ -719,7 +729,7 @@ async fn setup_vsock(
     let mut ctrl_file = clone_fd(control.fd)?;
 
     let _ = read_control_msg(&mut ctrl_file); // Initial Ready
-    send_boot_config(&mut ctrl_file, &[])?;
+    send_boot_config(&mut ctrl_file, &cli_env)?;
     let _ = read_control_msg(&mut ctrl_file); // BootReady
 
     let _ = ipc_tx.send(ProcessToService::StateChanged { 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -34,6 +35,9 @@ enum Commands {
         /// CPU cores
         #[arg(long, default_value_t = 4)]
         cpu: u32,
+        /// Set environment variables (repeatable: -e KEY=VALUE)
+        #[arg(short = 'e', long = "env")]
+        env: Vec<String>,
     },
     /// Resume a stopped persistent VM or attach to a running one
     #[command(alias = "attach")]
@@ -56,7 +60,11 @@ enum Commands {
     },
     /// List all sandboxes (running + stopped persistent)
     #[command(alias = "ls")]
-    List,
+    List {
+        /// Print only IDs, one per line (for scripting)
+        #[arg(short, long)]
+        quiet: bool,
+    },
     /// Get status of a sandbox
     Status {
         /// ID or name of the sandbox
@@ -68,6 +76,9 @@ enum Commands {
         id: String,
         /// Command to execute
         command: String,
+        /// Timeout in seconds (default 30)
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
     },
     /// Run a command in a fresh temporary VM and return output (VM is destroyed after)
     Run {
@@ -105,7 +116,17 @@ enum Commands {
     Logs {
         /// ID or name of the sandbox
         id: String,
+        /// Show only the last N lines
+        #[arg(long)]
+        tail: Option<usize>,
     },
+    /// Restart a persistent VM (stop + resume)
+    Restart {
+        /// Name of the persistent VM
+        name: String,
+    },
+    /// Show version information
+    Version,
     /// Run diagnostic tests in a fresh VM
     Doctor,
 }
@@ -117,6 +138,8 @@ struct ProvisionRequest {
     cpus: u32,
     #[serde(default)]
     persistent: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -418,13 +441,25 @@ async fn main() -> Result<()> {
     let client = UdsClient::new(uds_path);
 
     match &cli.command {
-        Commands::Create { name, ram, cpu } => {
+        Commands::Create { name, ram, cpu, env } => {
             let persistent = name.is_some();
+            let env_map = if env.is_empty() {
+                None
+            } else {
+                let mut map = HashMap::new();
+                for kv in env {
+                    let (k, v) = kv.split_once('=')
+                        .ok_or_else(|| anyhow::anyhow!("invalid env format: expected KEY=VALUE, got: {}", kv))?;
+                    map.insert(k.to_string(), v.to_string());
+                }
+                Some(map)
+            };
             let req = ProvisionRequest {
                 name: name.clone(),
                 ram_mb: ram * 1024,
                 cpus: *cpu,
                 persistent,
+                env: env_map,
             };
 
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
@@ -462,6 +497,7 @@ async fn main() -> Result<()> {
                         ram_mb: 4 * 1024,
                         cpus: 4,
                         persistent: false,
+                        env: None,
                     };
                     let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
                     let info = resp.into_result()?;
@@ -479,9 +515,13 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::List => {
+        Commands::List { quiet } => {
             let resp: ListResponse = client.get("/list").await?;
-            if resp.sandboxes.is_empty() {
+            if *quiet {
+                for s in resp.sandboxes {
+                    println!("{}", s.id);
+                }
+            } else if resp.sandboxes.is_empty() {
                 println!("No sandboxes.");
             } else {
                 println!("{:<20} {:<10} {:<10} {:<10}", "ID", "STATUS", "PERSIST", "PID");
@@ -500,10 +540,10 @@ async fn main() -> Result<()> {
             println!("Status: {}", info.status);
             println!("Persistent: {}", info.persistent);
         }
-        Commands::Exec { id, command } => {
+        Commands::Exec { id, command, timeout } => {
             let req = ExecRequest {
                 command: command.clone(),
-                timeout_secs: 30,
+                timeout_secs: *timeout,
             };
             let resp: ApiResponse<ExecResponse> = client.post(&format!("/exec/{}", id), req).await?;
             let resp = resp.into_result()?;
@@ -576,21 +616,64 @@ async fn main() -> Result<()> {
             let json = serde_json::to_string_pretty(&info)?;
             println!("{}", json);
         }
-        Commands::Logs { id } => {
+        Commands::Logs { id, tail } => {
             let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", id)).await?;
             let logs = resp.into_result()?;
 
+            let tail_lines = |text: &str, n: usize| -> String {
+                let lines: Vec<&str> = text.lines().collect();
+                if lines.len() <= n {
+                    text.to_string()
+                } else {
+                    lines[lines.len() - n..].join("\n")
+                }
+            };
+
             if let Some(process_logs) = logs.process_logs {
                 println!("--- Process Logs ({}) ---", id);
-                println!("{}", process_logs);
+                let output = match tail {
+                    Some(n) => tail_lines(&process_logs, *n),
+                    None => process_logs,
+                };
+                println!("{}", output);
             }
 
             if let Some(serial_logs) = logs.serial_logs {
                 println!("--- Serial Logs ({}) ---", id);
-                println!("{}", serial_logs);
+                let output = match tail {
+                    Some(n) => tail_lines(&serial_logs, *n),
+                    None => serial_logs,
+                };
+                println!("{}", output);
             } else if !logs.logs.is_empty() {
                 println!("--- Serial Logs ({}) ---", id);
-                println!("{}", logs.logs);
+                let output = match tail {
+                    Some(n) => tail_lines(&logs.logs, *n),
+                    None => logs.logs,
+                };
+                println!("{}", output);
+            }
+        }
+        Commands::Restart { name } => {
+            // Look up the VM to check it's persistent
+            let info_resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", name)).await?;
+            let info = info_resp.into_result()?;
+            if !info.persistent {
+                anyhow::bail!("Cannot restart ephemeral VM \"{}\". Only persistent VMs support restart.", name);
+            }
+
+            // Stop, then resume
+            let _: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", name), &serde_json::json!({})).await?;
+            let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
+            let resumed = resp.into_result()?;
+            println!("{}", resumed.id);
+        }
+        Commands::Version => {
+            println!("capsem {}", env!("CARGO_PKG_VERSION"));
+            // Try to query service version
+            match client.get::<serde_json::Value>("/list").await {
+                Ok(_) => println!("service: connected"),
+                Err(_) => println!("service: not running"),
             }
         }
         Commands::Doctor => {
@@ -602,6 +685,7 @@ async fn main() -> Result<()> {
                 ram_mb: 2048,
                 cpus: 2,
                 persistent: false,
+                env: None,
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let vm_id = resp.into_result()?.id;
@@ -650,7 +734,7 @@ mod tests {
     fn parse_create_with_name() {
         let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
         match cli.command {
-            Commands::Create { name, ram, cpu } => {
+            Commands::Create { name, ram, cpu, .. } => {
                 assert_eq!(name, Some("my-vm".into()));
                 assert_eq!(ram, 4);
                 assert_eq!(cpu, 4);
@@ -814,7 +898,25 @@ mod tests {
     #[test]
     fn parse_list() {
         let cli = Cli::parse_from(["capsem", "list"]);
-        assert!(matches!(cli.command, Commands::List));
+        assert!(matches!(cli.command, Commands::List { quiet: false }));
+    }
+
+    #[test]
+    fn parse_list_quiet() {
+        let cli = Cli::parse_from(["capsem", "list", "-q"]);
+        match cli.command {
+            Commands::List { quiet } => assert!(quiet),
+            _ => panic!("expected List"),
+        }
+    }
+
+    #[test]
+    fn parse_list_quiet_long() {
+        let cli = Cli::parse_from(["capsem", "list", "--quiet"]);
+        match cli.command {
+            Commands::List { quiet } => assert!(quiet),
+            _ => panic!("expected List"),
+        }
     }
 
     #[test]
@@ -854,12 +956,31 @@ mod tests {
 
     #[test]
     fn provision_request_serde() {
-        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 4096, cpus: 4, persistent: true };
+        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 4096, cpus: 4, persistent: true, env: None };
         let json = serde_json::to_string(&req).unwrap();
         let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req2.name, Some("test".into()));
         assert_eq!(req2.ram_mb, 4096);
         assert!(req2.persistent);
+        assert!(req2.env.is_none());
+    }
+
+    #[test]
+    fn provision_request_with_env() {
+        let mut env = HashMap::new();
+        env.insert("FOO".into(), "bar".into());
+        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 2048, cpus: 2, persistent: true, env: Some(env) };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("FOO"));
+        let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req2.env.as_ref().unwrap().get("FOO").unwrap(), "bar");
+    }
+
+    #[test]
+    fn provision_request_env_omitted_when_none() {
+        let req = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("env"));
     }
 
     #[test]
@@ -895,9 +1016,23 @@ mod tests {
     fn parse_exec() {
         let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
         match cli.command {
-            Commands::Exec { id, command } => {
+            Commands::Exec { id, command, timeout } => {
                 assert_eq!(id, "my-vm");
                 assert_eq!(command, "echo hello");
+                assert_eq!(timeout, 30); // default
+            }
+            _ => panic!("expected Exec"),
+        }
+    }
+
+    #[test]
+    fn parse_exec_with_timeout() {
+        let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
+        match cli.command {
+            Commands::Exec { id, command, timeout } => {
+                assert_eq!(id, "my-vm");
+                assert_eq!(command, "make build");
+                assert_eq!(timeout, 120);
             }
             _ => panic!("expected Exec"),
         }
@@ -918,6 +1053,78 @@ mod tests {
         match cli.command {
             Commands::Info { id } => assert_eq!(id, "vm-1"),
             _ => panic!("expected Info"),
+        }
+    }
+
+    #[test]
+    fn parse_logs_with_tail() {
+        let cli = Cli::parse_from(["capsem", "logs", "--tail", "50", "vm-1"]);
+        match cli.command {
+            Commands::Logs { id, tail } => {
+                assert_eq!(id, "vm-1");
+                assert_eq!(tail, Some(50));
+            }
+            _ => panic!("expected Logs"),
+        }
+    }
+
+    #[test]
+    fn parse_logs_without_tail() {
+        let cli = Cli::parse_from(["capsem", "logs", "vm-1"]);
+        match cli.command {
+            Commands::Logs { id, tail } => {
+                assert_eq!(id, "vm-1");
+                assert_eq!(tail, None);
+            }
+            _ => panic!("expected Logs"),
+        }
+    }
+
+    #[test]
+    fn parse_restart() {
+        let cli = Cli::parse_from(["capsem", "restart", "mydev"]);
+        match cli.command {
+            Commands::Restart { name } => assert_eq!(name, "mydev"),
+            _ => panic!("expected Restart"),
+        }
+    }
+
+    #[test]
+    fn parse_version() {
+        let cli = Cli::parse_from(["capsem", "version"]);
+        assert!(matches!(cli.command, Commands::Version));
+    }
+
+    #[test]
+    fn parse_create_with_env() {
+        let cli = Cli::parse_from(["capsem", "create", "-e", "FOO=bar", "-e", "BAZ=qux"]);
+        match cli.command {
+            Commands::Create { env, .. } => {
+                assert_eq!(env, vec!["FOO=bar", "BAZ=qux"]);
+            }
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn parse_create_with_env_long() {
+        let cli = Cli::parse_from(["capsem", "create", "--env", "API_KEY=secret123"]);
+        match cli.command {
+            Commands::Create { env, .. } => {
+                assert_eq!(env, vec!["API_KEY=secret123"]);
+            }
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn parse_create_no_env() {
+        let cli = Cli::parse_from(["capsem", "create"]);
+        match cli.command {
+            Commands::Create { env, .. } => {
+                assert!(env.is_empty());
+            }
+            _ => panic!("expected Create"),
         }
     }
 
