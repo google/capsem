@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use anyhow::{Context, Result};
 use std::time::SystemTime;
+use std::io::Write;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageEntry {
@@ -50,8 +51,33 @@ impl ImageRegistry {
             std::fs::create_dir_all(&self.images_dir)?;
         }
         let content = serde_json::to_string_pretty(data)?;
-        std::fs::write(&self.registry_path, content)?;
+        // Atomic write: write to temp file then rename
+        let tmp_path = self.registry_path.with_extension("json.tmp");
+        let mut f = std::fs::File::create(&tmp_path)?;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp_path, &self.registry_path)?;
         Ok(())
+    }
+
+    /// Acquire an exclusive file lock for registry mutations.
+    fn lock_registry(&self) -> Result<std::fs::File> {
+        if !self.images_dir.exists() {
+            std::fs::create_dir_all(&self.images_dir)?;
+        }
+        let lock_path = self.images_dir.join(".registry.lock");
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&lock_path)
+            .context("failed to open registry lock")?;
+        use std::os::unix::io::AsRawFd;
+        let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+        if rc != 0 {
+            anyhow::bail!("failed to acquire registry lock: {}", std::io::Error::last_os_error());
+        }
+        Ok(f)
     }
 
     pub fn get(&self, name: &str) -> Result<Option<ImageEntry>> {
@@ -67,12 +93,14 @@ impl ImageRegistry {
     }
 
     pub fn insert(&self, entry: ImageEntry) -> Result<()> {
+        let _lock = self.lock_registry()?;
         let mut data = self.load()?;
         data.images.insert(entry.name.clone(), entry);
         self.save(&data)
     }
 
     pub fn remove(&self, name: &str) -> Result<bool> {
+        let _lock = self.lock_registry()?;
         let mut data = self.load()?;
         let removed = data.images.remove(name).is_some();
         if removed {
@@ -114,10 +142,16 @@ pub fn create_image_from_session(
     base_version: &str,
 ) -> Result<ImageEntry> {
     let dst_dir = registry.image_dir(image_name);
-    if dst_dir.exists() {
-        anyhow::bail!("Image {} already exists", image_name);
+    // Atomic: create_dir fails if already exists, avoiding TOCTOU race
+    if let Err(e) = std::fs::create_dir_all(dst_dir.parent().unwrap()) {
+        anyhow::bail!("failed to create images directory: {e}");
     }
-    std::fs::create_dir_all(&dst_dir)?;
+    if let Err(e) = std::fs::create_dir(&dst_dir) {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            anyhow::bail!("Image {} already exists", image_name);
+        }
+        return Err(e.into());
+    }
 
     let sys_src = session_dir.join("system");
     let ws_src = session_dir.join("workspace");
@@ -342,5 +376,49 @@ mod tests {
         assert!(new_session.join("system/rootfs.img").exists());
         assert!(new_session.join("workspace").exists());
         assert!(new_session.join("session.db").exists(), "session.db should be restored in new session");
+    }
+
+    #[test]
+    fn create_image_duplicate_name_fails() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+
+        let session_dir = dir.path().join("mock-session");
+        std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+
+        create_image_from_session(&reg, &session_dir, "dup", None, "vm1", None, "0.16.1").unwrap();
+        let err = create_image_from_session(&reg, &session_dir, "dup", None, "vm1", None, "0.16.1");
+        assert!(err.is_err(), "duplicate image name should fail");
+        assert!(err.unwrap_err().to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn concurrent_registry_inserts_all_survive() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let reg = reg.clone();
+                std::thread::spawn(move || {
+                    reg.insert(ImageEntry {
+                        name: format!("img-{i}"),
+                        description: None,
+                        source_vm: "vm".into(),
+                        parent_image: None,
+                        base_version: "1.0".into(),
+                        created_at: SystemTime::now(),
+                        size_bytes: 100,
+                    })
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+
+        let entries = reg.list().unwrap();
+        assert_eq!(entries.len(), 8, "all concurrent inserts should survive");
     }
 }

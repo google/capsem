@@ -84,22 +84,25 @@ impl UdsClient {
 
         info!("Service not responding, attempting to relaunch...");
         let exe_path = std::env::current_exe()?;
-        let bin_dir = exe_path.parent().unwrap();
+        let bin_dir = exe_path.parent()
+            .ok_or_else(|| anyhow::anyhow!("exe path has no parent: {}", exe_path.display()))?;
         let service_bin = bin_dir.join("capsem-service");
-        
+
         if !service_bin.exists() {
             error!(path = %service_bin.display(), "capsem-service binary not found near mcp binary");
             return Err(anyhow::anyhow!("capsem-service not found at {}", service_bin.display()));
         }
 
         // Try to find assets dir - assume it is in the project root if we are in target/debug
-        let project_root = bin_dir.parent().unwrap().parent().unwrap();
+        let project_root = bin_dir.parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve project root from {}", bin_dir.display()))?;
         let assets_dir = project_root.join("assets").join(if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" });
         let process_bin = bin_dir.join("capsem-process");
 
         info!(service = %service_bin.display(), assets = %assets_dir.display(), "spawning service");
-        
-        let mut child = std::process::Command::new(&service_bin)
+
+        let mut child = tokio::process::Command::new(&service_bin)
             .arg("--foreground")
             .arg("--assets-dir").arg(&assets_dir)
             .arg("--process-binary").arg(&process_bin)
@@ -111,7 +114,7 @@ impl UdsClient {
                 info!("Service relaunched and responding");
                 // Spawn a reaper for the service process so it doesn't become a zombie
                 tokio::spawn(async move {
-                    let _ = child.wait();
+                    let _ = child.wait().await;
                 });
                 return Ok(());
             }
@@ -350,15 +353,18 @@ impl CapsemHandler {
             return Err("Service log not found".to_string());
         }
 
-        // Read last 100KB to avoid hitting MCP limits
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
-        let start = if len > 100_000 { len - 100_000 } else { 0 };
-        file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+        // Read last 100KB to avoid hitting MCP limits -- spawn_blocking for file I/O
+        let mut buf = tokio::task::spawn_blocking(move || -> Result<String, String> {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
+            let len = file.metadata().map_err(|e| e.to_string())?.len();
+            let start = if len > 100_000 { len - 100_000 } else { 0 };
+            file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+            let mut buf = String::new();
+            file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
+            Ok(buf)
+        }).await.map_err(|e| e.to_string())??;
 
-        let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
         if let Some(pattern) = &params.grep {
             buf = grep_lines(&buf, pattern);
         }

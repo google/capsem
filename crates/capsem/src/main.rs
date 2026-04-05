@@ -221,6 +221,12 @@ struct SandboxInfo {
     status: String,
     #[serde(default)]
     persistent: bool,
+    #[serde(default)]
+    ram_mb: Option<u64>,
+    #[serde(default)]
+    cpus: Option<u32>,
+    #[serde(default)]
+    version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -610,7 +616,7 @@ async fn main() -> Result<()> {
                     let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
                     for _ in 0..50 {
                         if socket_path.exists() { break; }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
 
                     let shell_result = run_shell(&info.id, &run_dir).await;
@@ -644,6 +650,9 @@ async fn main() -> Result<()> {
             println!("PID: {}", info.pid);
             println!("Status: {}", info.status);
             println!("Persistent: {}", info.persistent);
+            if let Some(ram) = info.ram_mb { println!("RAM: {} MB", ram); }
+            if let Some(cpus) = info.cpus { println!("CPUs: {}", cpus); }
+            if let Some(ver) = &info.version { println!("Version: {}", ver); }
         }
         Commands::Exec { id, command, timeout } => {
             let req = ExecRequest {
@@ -1101,8 +1110,8 @@ mod tests {
     fn list_response_with_entries() {
         let resp = ListResponse {
             sandboxes: vec![
-                SandboxInfo { id: "vm-1".into(), pid: 100, status: "Running".into(), persistent: false },
-                SandboxInfo { id: "mydev".into(), pid: 0, status: "Stopped".into(), persistent: true },
+                SandboxInfo { id: "vm-1".into(), pid: 100, status: "Running".into(), persistent: false, ram_mb: Some(2048), cpus: Some(2), version: Some("0.16.1".into()) },
+                SandboxInfo { id: "mydev".into(), pid: 0, status: "Stopped".into(), persistent: true, ram_mb: Some(4096), cpus: Some(4), version: None },
             ],
         };
         let json = serde_json::to_string(&resp).unwrap();

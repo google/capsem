@@ -597,7 +597,7 @@ impl SessionIndex {
                     SUM(total_bytes),
                     SUM(total_duration_ms)
              FROM mcp_usage
-             GROUP BY tool_name
+             GROUP BY tool_name, server_name
              ORDER BY SUM(call_count) DESC
              LIMIT ?1",
         )?;
@@ -1112,5 +1112,41 @@ mod tests {
 
         let vacuumed_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
         assert_eq!(vacuumed_rec.status, "vacuumed", "vacuumed content session preserved");
+    }
+
+    #[test]
+    fn top_mcp_tools_groups_by_server_name() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let s1 = make_session("s1", "2026-03-01T10:00:00Z", "stopped", 10, 5, 1);
+        let s2 = make_session("s2", "2026-03-02T10:00:00Z", "stopped", 10, 5, 1);
+        idx.create_session(&s1).unwrap();
+        idx.create_session(&s2).unwrap();
+
+        // Same tool_name "search" from different servers in different sessions
+        idx.replace_mcp_usage("s1", &[
+            McpToolSummary {
+                tool_name: "search".into(),
+                server_name: "github".into(),
+                call_count: 3,
+                total_bytes: 100,
+                total_duration_ms: 50,
+            },
+        ]).unwrap();
+        idx.replace_mcp_usage("s2", &[
+            McpToolSummary {
+                tool_name: "search".into(),
+                server_name: "jira".into(),
+                call_count: 2,
+                total_bytes: 80,
+                total_duration_ms: 40,
+            },
+        ]).unwrap();
+
+        let results = idx.top_mcp_tools(10).unwrap();
+        // Should return 2 entries (one per server), not merge them into 1
+        assert_eq!(results.len(), 2, "same tool_name from different servers should be separate rows");
+        let servers: Vec<&str> = results.iter().map(|r| r.server_name.as_str()).collect();
+        assert!(servers.contains(&"github"), "github server missing");
+        assert!(servers.contains(&"jira"), "jira server missing");
     }
 }

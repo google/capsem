@@ -90,24 +90,17 @@ pub mod time_format {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        // Quick & dirty parsing of ISO 8601 subset (e.g. 2026-02-25T14:30:52Z)
-        // In real code we'd use time or chrono, but let's do a basic conversion or fallback.
-        // For simplicity and since we only use it for sorting/display, we can try to
-        // just parse it or fall back to UNIX_EPOCH.
-        // Since we don't have `chrono` dependency, let's just parse the RFC3339 string if possible,
-        // or just return UNIX_EPOCH.
-        // Wait, does capsem-core have `time` or `chrono`? No.
-        // We'll implement a simple parser or just return UNIX_EPOCH for now since it's just for display sorting.
-        // Wait, if it's just for sorting, let's parse it correctly.
+        // Parse ISO 8601 subset: YYYY-MM-DDTHH:MM:SS (with optional trailing Z or offset)
         if s.len() >= 19 && s.as_bytes()[10] == b'T' {
-            let year = s[0..4].parse::<u64>().unwrap_or(1970);
-            let month = s[5..7].parse::<u64>().unwrap_or(1);
-            let day = s[8..10].parse::<u64>().unwrap_or(1);
-            let hour = s[11..13].parse::<u64>().unwrap_or(0);
-            let min = s[14..16].parse::<u64>().unwrap_or(0);
-            let sec = s[17..19].parse::<u64>().unwrap_or(0);
+            let bad = |field: &str| serde::de::Error::custom(format!("invalid {field} in datetime: {s}"));
+            let year = s[0..4].parse::<u64>().map_err(|_| bad("year"))?;
+            let month = s[5..7].parse::<u64>().map_err(|_| bad("month"))?;
+            let day = s[8..10].parse::<u64>().map_err(|_| bad("day"))?;
+            let hour = s[11..13].parse::<u64>().map_err(|_| bad("hour"))?;
+            let min = s[14..16].parse::<u64>().map_err(|_| bad("minute"))?;
+            let sec = s[17..19].parse::<u64>().map_err(|_| bad("second"))?;
 
-            let mut days = 0;
+            let mut days = 0u64;
             for y in 1970..year {
                 days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
             }
@@ -122,7 +115,7 @@ pub mod time_format {
             let secs = days * 86400 + hour * 3600 + min * 60 + sec;
             Ok(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
         } else {
-            Ok(std::time::UNIX_EPOCH)
+            Err(serde::de::Error::custom(format!("unsupported datetime format: {s}")))
         }
     }
 }
@@ -281,5 +274,38 @@ mod tests {
             x86.get("vmlinuz"),
             "arm64 and x86_64 must have different kernel hashes"
         );
+    }
+
+    // -- time_format serde tests --
+
+    #[derive(serde::Serialize, serde::Deserialize, Debug)]
+    struct TimeWrapper {
+        #[serde(with = "time_format")]
+        t: std::time::SystemTime,
+    }
+
+    #[test]
+    fn time_format_roundtrip() {
+        let now = std::time::SystemTime::now();
+        let w = TimeWrapper { t: now };
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: TimeWrapper = serde_json::from_str(&json).unwrap();
+        // Allow 1s tolerance (sub-second precision is lost)
+        let diff = now.duration_since(w2.t).unwrap_or_default();
+        assert!(diff.as_secs() <= 1, "roundtrip drift too large: {:?}", diff);
+    }
+
+    #[test]
+    fn time_format_rejects_garbage() {
+        let json = r#"{"t":"not-a-date"}"#;
+        let result = serde_json::from_str::<TimeWrapper>(json);
+        assert!(result.is_err(), "garbage timestamp should fail, not silently return epoch");
+    }
+
+    #[test]
+    fn time_format_rejects_empty() {
+        let json = r#"{"t":""}"#;
+        let result = serde_json::from_str::<TimeWrapper>(json);
+        assert!(result.is_err(), "empty timestamp should fail, not silently return epoch");
     }
 }

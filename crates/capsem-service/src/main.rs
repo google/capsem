@@ -721,17 +721,26 @@ async fn handle_logs(
 ) -> Result<Json<LogsResponse>, AppError> {
     let session_dir = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.session_dir.clone()
+        if let Some(i) = instances.get(&id) {
+            i.session_dir.clone()
+        } else {
+            let registry = state.persistent_registry.lock().unwrap();
+            registry.get(&id)
+                .map(|e| e.session_dir.clone())
+                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+        }
     };
-    
+
     let serial_log_path = session_dir.join("serial.log");
     let process_log_path = session_dir.join("process.log");
-    
-    let serial_logs = std::fs::read_to_string(&serial_log_path).ok();
-    let process_logs = std::fs::read_to_string(&process_log_path).ok();
-        
-    Ok(Json(LogsResponse { 
+
+    let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
+        let serial = std::fs::read_to_string(&serial_log_path).ok();
+        let process = std::fs::read_to_string(&process_log_path).ok();
+        (serial, process)
+    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
+
+    Ok(Json(LogsResponse {
         logs: serial_logs.clone().unwrap_or_default(),
         serial_logs,
         process_logs,
