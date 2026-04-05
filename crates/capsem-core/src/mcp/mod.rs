@@ -67,6 +67,11 @@ pub fn build_server_list(
             warn!(name = %def.name, "auto-detected server uses reserved name, skipping");
             continue;
         }
+        // Reject names containing the namespace separator
+        if def.name.contains(crate::mcp::types::NS_SEP) {
+            warn!(name = %def.name, "auto-detected server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
+            continue;
+        }
         // Apply enabled overrides: corp > user
         if let Some(&enabled) = corp_config.server_enabled.get(&def.name) {
             def.enabled = enabled;
@@ -86,6 +91,10 @@ pub fn build_server_list(
         }
         if manual.name == "builtin" {
             warn!("manual server uses reserved name 'builtin', skipping");
+            continue;
+        }
+        if manual.name.contains(crate::mcp::types::NS_SEP) {
+            warn!(name = %manual.name, "manual server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
             continue;
         }
         if seen.insert(manual.name.clone()) {
@@ -111,6 +120,10 @@ pub fn build_server_list(
     // 3. Corp-injected servers
     for corp_server in &corp_config.servers {
         if corp_server.name.is_empty() {
+            continue;
+        }
+        if corp_server.name.contains(crate::mcp::types::NS_SEP) {
+            warn!(name = %corp_server.name, "corp server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
             continue;
         }
         if seen.insert(corp_server.name.clone()) {
@@ -821,6 +834,38 @@ mod tests {
         .unwrap();
         let defs = parse_mcp_servers_from_file(&path, "test").unwrap();
         assert_eq!(defs.len(), 0);
+    }
+
+    #[test]
+    fn build_server_list_rejects_names_with_separator() {
+        let mut user = McpUserConfig::default();
+        user.servers.push(crate::mcp::policy::McpManualServer {
+            name: "bad__name".to_string(),
+            url: "http://localhost".to_string(),
+            headers: HashMap::new(),
+            bearer_token: None,
+            enabled: true,
+        });
+        user.servers.push(crate::mcp::policy::McpManualServer {
+            name: "goodname".to_string(),
+            url: "http://localhost".to_string(),
+            headers: HashMap::new(),
+            bearer_token: None,
+            enabled: true,
+        });
+
+        let mut corp = McpUserConfig::default();
+        corp.servers.push(crate::mcp::policy::McpManualServer {
+            name: "corp__bad".to_string(),
+            url: "http://localhost".to_string(),
+            headers: HashMap::new(),
+            bearer_token: None,
+            enabled: true,
+        });
+
+        let servers = build_server_list(&user, &corp);
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "goodname");
     }
 
     // ------------------------------------------------------------------

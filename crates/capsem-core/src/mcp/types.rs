@@ -242,6 +242,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_namespaced_ambiguous_server_name() {
+        // If a server name contains __, it breaks namespacing for its tools
+        // if split-on-first is used. This confirms we must either forbid __
+        // in server names or use split-on-last.
+        let (server, original) = parse_namespaced("a__b__c").unwrap();
+        assert_eq!(server, "a");
+        assert_eq!(original, "b__c");
+    }
+
+    #[test]
     fn namespace_roundtrip() {
         let ns = namespace_name("slack", "send_message");
         let (s, n) = parse_namespaced(&ns).unwrap();

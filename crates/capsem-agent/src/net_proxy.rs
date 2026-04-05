@@ -194,6 +194,19 @@ async fn get_process_name(client_port: u16) -> Option<String> {
     .unwrap_or(None)
 }
 
+fn sanitize_process_name(name: &str) -> String {
+    // Replace newlines, control characters, and spaces with underscores.
+    // Limit to 128 chars.
+    let mut s = name
+        .chars()
+        .map(|c| if c.is_control() || c == ' ' { '_' } else { c })
+        .collect::<String>();
+    if s.len() > 128 {
+        s.truncate(128);
+    }
+    s
+}
+
 async fn handle_connection(mut tcp_stream: TcpStream) {
     let peer_addr = match tcp_stream.peer_addr() {
         Ok(addr) => addr,
@@ -203,6 +216,7 @@ async fn handle_connection(mut tcp_stream: TcpStream) {
     let process_name = get_process_name(peer_addr.port())
         .await
         .unwrap_or_else(|| "unknown".to_string());
+    let process_name = sanitize_process_name(&process_name);
 
     let vsock_raw = match tokio::task::spawn_blocking(|| {
         vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY)
@@ -298,6 +312,18 @@ mod tests {
             assert!(vsock.is_ok(), "AsyncVsock should wrap a socketpair fd");
             // Drop will close the fd
         });
+    }
+
+    #[test]
+    fn test_sanitize_process_name() {
+        assert_eq!(sanitize_process_name("gemini"), "gemini");
+        assert_eq!(sanitize_process_name("my proc"), "my_proc");
+        assert_eq!(sanitize_process_name("my\nproc"), "my_proc");
+        assert_eq!(sanitize_process_name("my\rproc"), "my_proc");
+        assert_eq!(sanitize_process_name("my\0proc"), "my_proc");
+        
+        let long_name = "A".repeat(200);
+        assert_eq!(sanitize_process_name(&long_name).len(), 128);
     }
 
     #[tokio::test]

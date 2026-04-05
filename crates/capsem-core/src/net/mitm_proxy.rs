@@ -1896,6 +1896,51 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // TrackedBody tests
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn tracked_body_counts_bytes() {
+        use http_body_util::BodyExt;
+        let data = b"hello world";
+        let stats = Arc::new(Mutex::new(BodyStats::new(0)));
+        let inner = Full::new(Bytes::from(data.to_vec()));
+        let body = TrackedBody::new(inner, Arc::clone(&stats), 1024);
+
+        let _ = body.collect().await.unwrap();
+
+        let st = stats.lock().unwrap();
+        assert_eq!(st.bytes, data.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn tracked_body_captures_preview() {
+        use http_body_util::BodyExt;
+        let data = b"hello world";
+        let stats = Arc::new(Mutex::new(BodyStats::new(5))); // Capture 5 bytes
+        let inner = Full::new(Bytes::from(data.to_vec()));
+        let body = TrackedBody::new(inner, Arc::clone(&stats), 1024);
+
+        let _ = body.collect().await.unwrap();
+
+        let st = stats.lock().unwrap();
+        assert_eq!(st.preview, b"hello");
+    }
+
+    #[tokio::test]
+    async fn tracked_body_enforces_max_size() {
+        use http_body_util::BodyExt;
+        let data = b"too much data";
+        let stats = Arc::new(Mutex::new(BodyStats::new(0)));
+        let inner = Full::new(Bytes::from(data.to_vec()));
+        let body = TrackedBody::new(inner, Arc::clone(&stats), 5); // Limit to 5 bytes
+
+        let res = body.collect().await;
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("exceeded maximum size"));
+    }
+
+    // ---------------------------------------------------------------
     // TelemetryEmitter unit tests
     // ---------------------------------------------------------------
 
