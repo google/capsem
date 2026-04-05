@@ -263,8 +263,10 @@ fn main() {
                     compressed_size_bytes: None,
                     vacuumed_at: None,
                     storage_mode: if gui_virtiofs_shares.is_empty() { "block" } else { "virtiofs" }.to_string(),
-                    rootfs_hash: None,
-                    rootfs_version: None,
+                    rootfs_hash: None, // Will be populated when assets are fully resolved if possible
+                    rootfs_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                    source_image: None, // GUI currently doesn't support launching from images
+                    persistent: false, // GUI currently only launches ephemeral VMs
                 };
                 if let Err(e) = idx.create_session(&record) {
                     warn!("failed to record session: {e}");
@@ -356,7 +358,7 @@ fn main() {
                             // Clean up old version directories.
                             if let Some(base) = asset_manager::default_assets_dir() {
                                 let version = env!("CARGO_PKG_VERSION");
-                                if let Err(e) = asset_manager::cleanup_old_versions(&base, version) {
+                                if let Err(e) = asset_manager::cleanup_old_versions(&base, version, None) {
                                     warn!("cleanup old versions failed: {e:#}");
                                 }
                             }

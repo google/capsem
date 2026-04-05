@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tracing::{error, info};
 use hyper_util::rt::TokioIo;
 use tokio::net::UnixStream;
@@ -209,7 +210,25 @@ struct CreateParams {
     cpu_count: Option<u32>,
     version: Option<String>,
     /// Environment variables to inject into the guest (e.g. {"API_KEY": "sk-..."})
-    env: Option<std::collections::HashMap<String, String>>,
+    env: Option<HashMap<String, String>>,
+    /// Image to boot from. If provided, the VM session will be cloned from this image.
+    image: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct ForkParams {
+    /// ID or name of the VM to fork
+    id: String,
+    /// Name for the new image
+    name: String,
+    /// Optional description for the image
+    description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct ImageNameParams {
+    /// Name of the image
+    name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -361,6 +380,9 @@ impl CapsemHandler {
         });
         if let Some(env) = params.env {
             body["env"] = json!(env);
+        }
+        if let Some(image) = params.image {
+            body["image"] = json!(image);
         }
         match self.client.request::<Value, Value>("POST", "/provision", Some(body)).await {
             Ok(val) => {
@@ -534,6 +556,66 @@ impl CapsemHandler {
         }
     }
 
+    #[tool(name = "capsem_fork", description = "Fork a running or stopped VM into a reusable image")]
+    async fn fork(&self, Parameters(params): Parameters<ForkParams>) -> Result<String, String> {
+        info!(?params, "capsem_fork tool called");
+        let body = json!({
+            "name": params.name,
+            "description": params.description,
+        });
+        match self.client.request::<Value, Value>("POST", &format!("/fork/{}", params.id), Some(body)).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_image_list", description = "List all user images")]
+    async fn image_list(&self) -> Result<String, String> {
+        info!("capsem_image_list tool called");
+        match self.client.request::<Value, Value>("GET", "/images", None).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_image_inspect", description = "Get detailed information about a specific image")]
+    async fn image_inspect(&self, Parameters(params): Parameters<ImageNameParams>) -> Result<String, String> {
+        info!(?params, "capsem_image_inspect tool called");
+        match self.client.request::<Value, Value>("GET", &format!("/images/{}", params.name), None).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_image_delete", description = "Delete a user image completely")]
+    async fn image_delete(&self, Parameters(params): Parameters<ImageNameParams>) -> Result<String, String> {
+        info!(?params, "capsem_image_delete tool called");
+        match self.client.request::<Value, Value>("DELETE", &format!("/images/{}", params.name), None).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     #[tool(name = "capsem_version", description = "Get capsem version info: MCP server version and service connectivity")]
     async fn version(&self) -> Result<String, String> {
         let mcp_version = env!("CARGO_PKG_VERSION");
@@ -626,6 +708,7 @@ mod tests {
             cpu_count: Some(2),
             version: None,
             env: None,
+            image: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert!(v.get("ramMb").is_some());
@@ -1008,6 +1091,8 @@ mod tests {
             "capsem_inspect", "capsem_delete", "capsem_stop", "capsem_resume",
             "capsem_persist", "capsem_purge", "capsem_run", "capsem_vm_logs",
             "capsem_service_logs", "capsem_version",
+            "capsem_fork", "capsem_image_list", "capsem_image_inspect",
+            "capsem_image_delete",
         ];
         for name in &expected {
             assert!(names.contains(&name.to_string()), "Missing tool: {name}");

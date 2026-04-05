@@ -195,8 +195,10 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         compressed_size_bytes: None,
         vacuumed_at: None,
         storage_mode: if virtiofs_shares.is_empty() { "block" } else { "virtiofs" }.to_string(),
-        rootfs_hash: None,
-        rootfs_version: None,
+        rootfs_hash: None, // Will be populated when assets are resolved
+        rootfs_version: None, // Not directly available in cli.rs boot path without plumbing
+        source_image: None,
+        persistent: false,
     };
     if let Err(e) = session_index.create_session(&record) {
         warn!("failed to record session: {e}");

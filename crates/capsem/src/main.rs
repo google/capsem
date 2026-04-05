@@ -38,7 +38,23 @@ enum Commands {
         /// Set environment variables (repeatable: -e KEY=VALUE)
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
+        /// Boot the VM from a named image
+        #[arg(long)]
+        image: Option<String>,
     },
+    /// Fork a running or stopped VM into a reusable image.
+    Fork {
+        /// ID or name of the VM to fork
+        id: String,
+        /// Name for the new image
+        name: String,
+        /// Optional description for the image
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Manage user images.
+    #[command(subcommand)]
+    Image(ImageCommands),
     /// Resume a stopped persistent VM or attach to a running one
     #[command(alias = "attach")]
     Resume {
@@ -131,6 +147,24 @@ enum Commands {
     Doctor,
 }
 
+#[derive(Subcommand)]
+enum ImageCommands {
+    /// List all images
+    #[command(alias = "ls")]
+    List,
+    /// Delete an image
+    #[command(alias = "rm")]
+    Delete {
+        /// Name of the image to delete
+        name: String,
+    },
+    /// Inspect an image
+    Inspect {
+        /// Name of the image to inspect
+        name: String,
+    },
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct ProvisionRequest {
     name: Option<String>,
@@ -140,11 +174,44 @@ struct ProvisionRequest {
     persistent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     env: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ProvisionResponse {
     id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ForkRequest {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ForkResponse {
+    name: String,
+    size_bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ImageInfo {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    source_vm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_image: Option<String>,
+    base_version: String,
+    created_at: String,
+    size_bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ImageListResponse {
+    images: Vec<ImageInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -441,7 +508,7 @@ async fn main() -> Result<()> {
     let client = UdsClient::new(uds_path);
 
     match &cli.command {
-        Commands::Create { name, ram, cpu, env } => {
+        Commands::Create { name, ram, cpu, env, image } => {
             let persistent = name.is_some();
             let env_map = if env.is_empty() {
                 None
@@ -460,6 +527,7 @@ async fn main() -> Result<()> {
                 cpus: *cpu,
                 persistent,
                 env: env_map,
+                image: image.clone(),
             };
 
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
@@ -469,6 +537,42 @@ async fn main() -> Result<()> {
                 println!("{} (persistent)", info.id);
             } else {
                 println!("{}", info.id);
+            }
+        }
+        Commands::Fork { id, name, description } => {
+            let req = ForkRequest {
+                name: name.clone(),
+                description: description.clone(),
+            };
+            let resp: ApiResponse<ForkResponse> = client.post(&format!("/fork/{}", id), &req).await?;
+            let info = resp.into_result()?;
+            let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
+            println!("Forked VM {} to image '{}' ({:.1} MB)", id, info.name, size_mb);
+        }
+        Commands::Image(cmd) => {
+            match cmd {
+                ImageCommands::List => {
+                    let resp: ApiResponse<ImageListResponse> = client.get("/images").await?;
+                    let list = resp.into_result()?;
+                    
+                    println!("{:<20} {:<10} {:<20} {:<15} {}", "NAME", "SIZE(MB)", "SOURCE_VM", "BASE_VERSION", "CREATED_AT");
+                    println!("{:-<20} {:<10} {:-<20} {:-<15} {:-<20}", "", "", "", "", "");
+                    for img in list.images {
+                        let size_mb = img.size_bytes as f64 / 1024.0 / 1024.0;
+                        println!("{:<20} {:<10.1} {:<20} {:<15} {}", img.name, size_mb, img.source_vm, img.base_version, img.created_at);
+                    }
+                }
+                ImageCommands::Inspect { name } => {
+                    let resp: ApiResponse<ImageInfo> = client.get(&format!("/images/{}", name)).await?;
+                    let info = resp.into_result()?;
+                    let json = serde_json::to_string_pretty(&info)?;
+                    println!("{}", json);
+                }
+                ImageCommands::Delete { name } => {
+                    let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/images/{}", name)).await?;
+                    resp.into_result()?;
+                    println!("Image '{}' deleted.", name);
+                }
             }
         }
         Commands::Resume { name } => {
@@ -498,6 +602,7 @@ async fn main() -> Result<()> {
                         cpus: 4,
                         persistent: false,
                         env: None,
+                        image: None,
                     };
                     let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
                     let info = resp.into_result()?;
@@ -686,6 +791,7 @@ async fn main() -> Result<()> {
                 cpus: 2,
                 persistent: false,
                 env: None,
+                image: None,
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let vm_id = resp.into_result()?.id;
@@ -956,7 +1062,7 @@ mod tests {
 
     #[test]
     fn provision_request_serde() {
-        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 4096, cpus: 4, persistent: true, env: None };
+        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 4096, cpus: 4, persistent: true, env: None, image: None };
         let json = serde_json::to_string(&req).unwrap();
         let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req2.name, Some("test".into()));
@@ -969,7 +1075,7 @@ mod tests {
     fn provision_request_with_env() {
         let mut env = HashMap::new();
         env.insert("FOO".into(), "bar".into());
-        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 2048, cpus: 2, persistent: true, env: Some(env) };
+        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 2048, cpus: 2, persistent: true, env: Some(env), image: None };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("FOO"));
         let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
@@ -978,7 +1084,7 @@ mod tests {
 
     #[test]
     fn provision_request_env_omitted_when_none() {
-        let req = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None };
+        let req = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None, image: None };
         let json = serde_json::to_string(&req).unwrap();
         assert!(!json.contains("env"));
     }
@@ -1288,5 +1394,110 @@ mod tests {
         let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
         let err = resp.into_result().unwrap_err();
         assert!(err.to_string().is_empty() || err.to_string().contains(""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Fork / Image CLI parsing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_fork() {
+        let cli = Cli::parse_from(["capsem", "fork", "my-vm", "my-image"]);
+        match cli.command {
+            Commands::Fork { id, name, description } => {
+                assert_eq!(id, "my-vm");
+                assert_eq!(name, "my-image");
+                assert_eq!(description, None);
+            }
+            _ => panic!("expected Fork"),
+        }
+    }
+
+    #[test]
+    fn parse_fork_with_description() {
+        let cli = Cli::parse_from(["capsem", "fork", "vm1", "img1", "-d", "My description"]);
+        match cli.command {
+            Commands::Fork { id, name, description } => {
+                assert_eq!(id, "vm1");
+                assert_eq!(name, "img1");
+                assert_eq!(description, Some("My description".into()));
+            }
+            _ => panic!("expected Fork"),
+        }
+    }
+
+    #[test]
+    fn parse_image_list() {
+        let cli = Cli::parse_from(["capsem", "image", "list"]);
+        match cli.command {
+            Commands::Image(ImageCommands::List) => {}
+            _ => panic!("expected Image List"),
+        }
+    }
+
+    #[test]
+    fn parse_image_list_alias() {
+        let cli = Cli::parse_from(["capsem", "image", "ls"]);
+        match cli.command {
+            Commands::Image(ImageCommands::List) => {}
+            _ => panic!("expected Image List via ls alias"),
+        }
+    }
+
+    #[test]
+    fn parse_image_delete() {
+        let cli = Cli::parse_from(["capsem", "image", "delete", "my-img"]);
+        match cli.command {
+            Commands::Image(ImageCommands::Delete { name }) => {
+                assert_eq!(name, "my-img");
+            }
+            _ => panic!("expected Image Delete"),
+        }
+    }
+
+    #[test]
+    fn parse_image_delete_alias() {
+        let cli = Cli::parse_from(["capsem", "image", "rm", "my-img"]);
+        match cli.command {
+            Commands::Image(ImageCommands::Delete { name }) => {
+                assert_eq!(name, "my-img");
+            }
+            _ => panic!("expected Image Delete via rm alias"),
+        }
+    }
+
+    #[test]
+    fn parse_image_inspect() {
+        let cli = Cli::parse_from(["capsem", "image", "inspect", "my-img"]);
+        match cli.command {
+            Commands::Image(ImageCommands::Inspect { name }) => {
+                assert_eq!(name, "my-img");
+            }
+            _ => panic!("expected Image Inspect"),
+        }
+    }
+
+    #[test]
+    fn parse_create_with_image() {
+        let cli = Cli::parse_from(["capsem", "create", "--image", "base-img"]);
+        match cli.command {
+            Commands::Create { image, name, .. } => {
+                assert_eq!(image, Some("base-img".into()));
+                assert_eq!(name, None);
+            }
+            _ => panic!("expected Create with image"),
+        }
+    }
+
+    #[test]
+    fn parse_create_with_name_and_image() {
+        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm", "--image", "my-img"]);
+        match cli.command {
+            Commands::Create { name, image, .. } => {
+                assert_eq!(name, Some("my-vm".into()));
+                assert_eq!(image, Some("my-img".into()));
+            }
+            _ => panic!("expected Create with name and image"),
+        }
     }
 }
