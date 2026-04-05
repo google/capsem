@@ -68,6 +68,65 @@ pub fn target_arch_to_key(target_arch: &str) -> &str {
     }
 }
 
+/// Helper for serializing SystemTime to RFC 3339 strings in JSON.
+pub mod time_format {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+    use std::time::SystemTime;
+
+    pub fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let iso = crate::session::epoch_to_iso(
+            time.duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        serializer.serialize_str(&iso)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        // Quick & dirty parsing of ISO 8601 subset (e.g. 2026-02-25T14:30:52Z)
+        // In real code we'd use time or chrono, but let's do a basic conversion or fallback.
+        // For simplicity and since we only use it for sorting/display, we can try to
+        // just parse it or fall back to UNIX_EPOCH.
+        // Since we don't have `chrono` dependency, let's just parse the RFC3339 string if possible,
+        // or just return UNIX_EPOCH.
+        // Wait, does capsem-core have `time` or `chrono`? No.
+        // We'll implement a simple parser or just return UNIX_EPOCH for now since it's just for display sorting.
+        // Wait, if it's just for sorting, let's parse it correctly.
+        if s.len() >= 19 && s.as_bytes()[10] == b'T' {
+            let year = s[0..4].parse::<u64>().unwrap_or(1970);
+            let month = s[5..7].parse::<u64>().unwrap_or(1);
+            let day = s[8..10].parse::<u64>().unwrap_or(1);
+            let hour = s[11..13].parse::<u64>().unwrap_or(0);
+            let min = s[14..16].parse::<u64>().unwrap_or(0);
+            let sec = s[17..19].parse::<u64>().unwrap_or(0);
+
+            let mut days = 0;
+            for y in 1970..year {
+                days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+            }
+            let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+            for m in 1..month {
+                days += days_in_month[m as usize];
+                if m == 2 && is_leap { days += 1; }
+            }
+            days += day - 1;
+
+            let secs = days * 86400 + hour * 3600 + min * 60 + sec;
+            Ok(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+        } else {
+            Ok(std::time::UNIX_EPOCH)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

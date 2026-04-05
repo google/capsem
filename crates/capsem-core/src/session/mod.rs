@@ -75,6 +75,8 @@ mod tests {
             storage_mode: "block".to_string(),
             rootfs_hash: None,
             rootfs_version: None,
+            source_image: None,
+            persistent: false,
         }
     }
 
@@ -744,6 +746,57 @@ mod tests {
     }
 
     // -- Schema migration v2->v3 --
+
+    #[test]
+    fn schema_upgrade_from_v4_preserves_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Create a v4 schema manually.
+        conn.pragma_update(None, "user_version", 4u32).unwrap();
+        conn.execute_batch("
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, mode TEXT NOT NULL, command TEXT,
+                status TEXT NOT NULL DEFAULT 'running', created_at TEXT NOT NULL,
+                stopped_at TEXT, scratch_disk_size_gb INTEGER NOT NULL DEFAULT 16,
+                ram_bytes INTEGER NOT NULL DEFAULT 4294967296,
+                total_requests INTEGER NOT NULL DEFAULT 0,
+                allowed_requests INTEGER NOT NULL DEFAULT 0,
+                denied_requests INTEGER NOT NULL DEFAULT 0,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                total_output_tokens INTEGER NOT NULL DEFAULT 0,
+                total_estimated_cost REAL NOT NULL DEFAULT 0.0,
+                total_tool_calls INTEGER NOT NULL DEFAULT 0,
+                total_mcp_calls INTEGER NOT NULL DEFAULT 0,
+                total_file_events INTEGER NOT NULL DEFAULT 0,
+                compressed_size_bytes INTEGER,
+                vacuumed_at TEXT,
+                storage_mode TEXT NOT NULL DEFAULT 'block',
+                rootfs_hash TEXT,
+                rootfs_version TEXT
+            );
+        ").unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, mode, status, created_at) VALUES ('test-v4', 'gui', 'stopped', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+
+        // Migrate.
+        SessionIndex::ensure_schema(&conn).unwrap();
+
+        // Check version bumped.
+        let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // New columns exist with NULL/default defaults.
+        let source_image: Option<String> = conn.query_row(
+            "SELECT source_image FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)
+        ).unwrap();
+        assert!(source_image.is_none());
+
+        let persistent: bool = conn.query_row(
+            "SELECT persistent FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(persistent, false);
+    }
 
     #[test]
     fn schema_upgrade_from_v2_preserves_data() {

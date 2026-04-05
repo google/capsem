@@ -72,6 +72,10 @@ pub struct SessionRecord {
     pub rootfs_hash: Option<String>,
     /// Version string of the rootfs (e.g., "0.9.1").
     pub rootfs_version: Option<String>,
+    /// If booted from an image, the image name.
+    pub source_image: Option<String>,
+    /// True if this session is persistent (named VM).
+    pub persistent: bool,
 }
 
 /// Aggregated statistics across all sessions.

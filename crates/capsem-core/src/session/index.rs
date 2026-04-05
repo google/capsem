@@ -10,7 +10,7 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-pub(super) const SCHEMA_VERSION: u32 = 4;
+pub(super) const SCHEMA_VERSION: u32 = 5;
 
 pub(super) const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
@@ -35,7 +35,9 @@ pub(super) const SESSION_SCHEMA: &str = "
         vacuumed_at TEXT,
         storage_mode TEXT NOT NULL DEFAULT 'block',
         rootfs_hash TEXT,
-        rootfs_version TEXT
+        rootfs_version TEXT,
+        source_image TEXT,
+        persistent BOOLEAN NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_created
         ON sessions(created_at);
@@ -97,22 +99,33 @@ impl SessionIndex {
     /// Check user_version and migrate if needed.
     pub(crate) fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 3 {
-            // Additive migration v3->v4: add VirtioFS storage columns.
+        if version == 4 {
+            // Additive migration v4->v5: add image and persistent columns.
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN source_image TEXT;
+                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
+            )?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        } else if version == 3 {
+            // Additive migration v3->v5: add VirtioFS storage + image columns.
             conn.execute_batch(
                 "ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
                  ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
-                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;"
+                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
+                 ALTER TABLE sessions ADD COLUMN source_image TEXT;
+                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version == 2 {
-            // Additive migration v2->v3->v4: add vacuum + VirtioFS columns.
+            // Additive migration v2->v5: add vacuum + VirtioFS + image columns.
             conn.execute_batch(
                 "ALTER TABLE sessions ADD COLUMN compressed_size_bytes INTEGER;
                  ALTER TABLE sessions ADD COLUMN vacuumed_at TEXT;
                  ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
                  ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
-                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;"
+                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
+                 ALTER TABLE sessions ADD COLUMN source_image TEXT;
+                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version < 2 {
@@ -140,8 +153,8 @@ impl SessionIndex {
                 total_input_tokens, total_output_tokens, total_estimated_cost,
                 total_tool_calls, total_mcp_calls, total_file_events,
                 compressed_size_bytes, vacuumed_at,
-                storage_mode, rootfs_hash, rootfs_version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                storage_mode, rootfs_hash, rootfs_version, source_image, persistent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             params![
                 record.id,
                 record.mode,
@@ -165,6 +178,8 @@ impl SessionIndex {
                 record.storage_mode,
                 record.rootfs_hash,
                 record.rootfs_version,
+                record.source_image,
+                record.persistent,
             ],
         )?;
         Ok(())
@@ -216,7 +231,7 @@ impl SessionIndex {
          total_input_tokens, total_output_tokens, total_estimated_cost,
          total_tool_calls, total_mcp_calls, total_file_events,
          compressed_size_bytes, vacuumed_at,
-         storage_mode, rootfs_hash, rootfs_version";
+         storage_mode, rootfs_hash, rootfs_version, source_image, persistent";
 
     /// Parse a row into a SessionRecord. Column order must match SESSION_COLUMNS.
     fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
@@ -243,6 +258,8 @@ impl SessionIndex {
             storage_mode: row.get::<_, Option<String>>(19)?.unwrap_or_else(|| "block".to_string()),
             rootfs_hash: row.get(20)?,
             rootfs_version: row.get(21)?,
+            source_image: row.get(22)?,
+            persistent: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
         })
     }
 
@@ -270,7 +287,7 @@ impl SessionIndex {
         let cutoff_str = epoch_to_iso(cutoff_secs);
         let count = self.conn.execute(
             "UPDATE sessions SET status = 'terminated'
-             WHERE created_at < ?1 AND status IN ('stopped', 'crashed', 'vacuumed')",
+             WHERE created_at < ?1 AND status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
             params![cutoff_str],
         )?;
         Ok(count)
@@ -282,7 +299,7 @@ impl SessionIndex {
     pub fn terminate_excess_sessions(&self, max: usize) -> rusqlite::Result<usize> {
         let count = self.conn.execute(
             "UPDATE sessions SET status = 'terminated'
-             WHERE status IN ('stopped', 'crashed', 'vacuumed')
+             WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
              AND id NOT IN (
                 SELECT id FROM sessions ORDER BY created_at DESC LIMIT ?1
              )",
@@ -312,7 +329,7 @@ impl SessionIndex {
         let empty_count = self.conn.execute(
             "UPDATE sessions SET status = 'terminated'
              WHERE created_at < ?1
-             AND status IN ('stopped', 'crashed', 'vacuumed')
+             AND status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
              AND total_input_tokens = 0 AND total_tool_calls = 0 AND total_requests = 0",
             params![cutoff_str],
         )?;
@@ -321,11 +338,11 @@ impl SessionIndex {
         let content_count = self.conn.execute(
             "UPDATE sessions SET status = 'terminated'
              WHERE created_at < ?1
-             AND status IN ('stopped', 'crashed', 'vacuumed')
+             AND status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
              AND (total_input_tokens > 0 OR total_tool_calls > 0)
              AND id NOT IN (
                  SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
                  AND (total_input_tokens > 0 OR total_tool_calls > 0)
                  ORDER BY created_at DESC LIMIT ?2
              )",
@@ -345,7 +362,7 @@ impl SessionIndex {
     ) -> rusqlite::Result<usize> {
         // Count non-terminated, non-running sessions.
         let active_count: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed')",
+            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
             [],
             |row| row.get(0),
         )?;
@@ -357,11 +374,11 @@ impl SessionIndex {
         // Terminate empty sessions first (those with no content).
         let empty_count = self.conn.execute(
             "UPDATE sessions SET status = 'terminated'
-             WHERE status IN ('stopped', 'crashed', 'vacuumed')
+             WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
              AND total_input_tokens = 0 AND total_tool_calls = 0 AND total_requests = 0
              AND id NOT IN (
                  SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
                  ORDER BY created_at DESC LIMIT ?1
              )",
             params![max as i64],
@@ -369,7 +386,7 @@ impl SessionIndex {
 
         // Check if we're still over the cap after removing empty sessions.
         let still_active: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed')",
+            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
             [],
             |row| row.get(0),
         )?;
@@ -381,16 +398,16 @@ impl SessionIndex {
         // Still over cap: terminate oldest content sessions, but protect min_content_keep.
         let content_count = self.conn.execute(
             "UPDATE sessions SET status = 'terminated'
-             WHERE status IN ('stopped', 'crashed', 'vacuumed')
+             WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
              AND (total_input_tokens > 0 OR total_tool_calls > 0)
              AND id NOT IN (
                  SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
                  ORDER BY created_at DESC LIMIT ?1
              )
              AND id NOT IN (
                  SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed')
+                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
                  AND (total_input_tokens > 0 OR total_tool_calls > 0)
                  ORDER BY created_at DESC LIMIT ?2
              )",
@@ -425,7 +442,7 @@ impl SessionIndex {
     /// Return stopped/crashed sessions that have not been vacuumed yet.
     pub fn unvacuumed_sessions(&self) -> rusqlite::Result<Vec<SessionRecord>> {
         let sql = format!(
-            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed') AND vacuumed_at IS NULL ORDER BY created_at ASC",
+            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed') AND vacuumed_at IS NULL AND persistent = 0 ORDER BY created_at ASC",
             Self::SESSION_COLUMNS
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -840,7 +857,82 @@ mod tests {
             storage_mode: "virtiofs".to_string(),
             rootfs_hash: None,
             rootfs_version: None,
+            source_image: None,
+            persistent: false,
         }
+    }
+
+    fn make_persistent_session(id: &str, created_at: &str, status: &str) -> SessionRecord {
+        let mut s = make_session(id, created_at, status, 100, 5, 10);
+        s.persistent = true;
+        s
+    }
+
+    #[test]
+    fn terminate_older_skips_persistent_sessions() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // Old ephemeral session (60 days ago) -- should be terminated
+        let ephemeral = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
+        idx.create_session(&ephemeral).unwrap();
+
+        // Old persistent session (60 days ago) -- should NOT be terminated
+        let persistent = make_persistent_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped");
+        idx.create_session(&persistent).unwrap();
+
+        let n = idx.terminate_older_than_days(30).unwrap();
+        assert_eq!(n, 1, "only ephemeral session should be terminated");
+
+        let sessions = idx.recent(100).unwrap();
+        let eph = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
+        assert_eq!(eph.status, "terminated");
+        let pers = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
+        assert_eq!(pers.status, "stopped", "persistent session should remain stopped");
+    }
+
+    #[test]
+    fn terminate_older_leaves_persistent_crashed() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+
+        // Old persistent crashed session
+        let pers_crashed = make_persistent_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "crashed");
+        idx.create_session(&pers_crashed).unwrap();
+
+        let n = idx.terminate_older_than_days(30).unwrap();
+        assert_eq!(n, 0, "persistent crashed session should not be terminated");
+    }
+
+    #[test]
+    fn session_with_source_image_roundtrips() {
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
+        s.source_image = Some("my-image".into());
+        s.persistent = true;
+        idx.create_session(&s).unwrap();
+
+        let sessions = idx.recent(10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].source_image.as_deref(), Some("my-image"));
+        assert!(sessions[0].persistent);
+    }
+
+    #[test]
+    fn v5_schema_has_source_image_and_persistent() {
+        // Verify the schema includes the new columns by inserting and querying
+        let idx = SessionIndex::open_in_memory().unwrap();
+        let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
+        s.source_image = Some("test-img".into());
+        s.persistent = true;
+        idx.create_session(&s).unwrap();
+
+        // Raw query to verify columns exist
+        let (src_img, pers): (Option<String>, bool) = idx.conn.query_row(
+            "SELECT source_image, persistent FROM sessions WHERE id = ?1",
+            params!["20260326-100000-0001"],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(src_img.as_deref(), Some("test-img"));
+        assert!(pers);
     }
 
     #[test]

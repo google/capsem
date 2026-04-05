@@ -631,11 +631,16 @@ pub fn release_url(version: &str) -> String {
 }
 
 /// Clean up old versioned asset directories, keeping current + pinned versions.
+/// Also protects any base versions referenced by images in the ImageRegistry.
 ///
 /// Scans `base_dir/v*/` directories. Keeps `current_version` and any versions
 /// listed in `base_dir/pinned.json` (a JSON array of version strings).
 /// Returns paths that were removed.
-pub fn cleanup_old_versions(base_dir: &Path, current_version: &str) -> Result<Vec<PathBuf>> {
+pub fn cleanup_old_versions(
+    base_dir: &Path,
+    current_version: &str,
+    image_registry: Option<&crate::image::ImageRegistry>,
+) -> Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
     if !base_dir.exists() {
         return Ok(removed);
@@ -643,13 +648,22 @@ pub fn cleanup_old_versions(base_dir: &Path, current_version: &str) -> Result<Ve
 
     // Read pinned versions.
     let pinned_path = base_dir.join("pinned.json");
-    let pinned: std::collections::HashSet<String> = if pinned_path.exists() {
+    let mut pinned: std::collections::HashSet<String> = if pinned_path.exists() {
         let content = std::fs::read_to_string(&pinned_path)
             .context("failed to read pinned.json")?;
         serde_json::from_str(&content).unwrap_or_default()
     } else {
         std::collections::HashSet::new()
     };
+
+    // Protect versions used by any user image
+    if let Some(reg) = image_registry {
+        if let Ok(entries) = reg.list() {
+            for entry in entries {
+                pinned.insert(entry.base_version);
+            }
+        }
+    }
 
     let current_dir_name = format!("v{current_version}");
 
@@ -1271,7 +1285,7 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
         // Pin 0.8.8.
         std::fs::write(base.join("pinned.json"), r#"["0.8.8"]"#).unwrap();
 
-        let removed = cleanup_old_versions(base, "0.9.0").unwrap();
+        let removed = cleanup_old_versions(base, "0.9.0", None).unwrap();
         assert_eq!(removed.len(), 1);
         assert!(!base.join("v0.8.7").exists());
         assert!(base.join("v0.8.8").exists());
@@ -1288,7 +1302,7 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
         // Pin 0.8.7.
         std::fs::write(base.join("pinned.json"), r#"["0.8.7"]"#).unwrap();
 
-        let removed = cleanup_old_versions(base, "0.9.0").unwrap();
+        let removed = cleanup_old_versions(base, "0.9.0", None).unwrap();
         assert!(removed.is_empty());
         assert!(base.join("v0.8.7").exists());
     }
@@ -1296,14 +1310,42 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
     #[test]
     fn cleanup_old_versions_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let removed = cleanup_old_versions(dir.path(), "0.9.0").unwrap();
+        let removed = cleanup_old_versions(dir.path(), "0.9.0", None).unwrap();
         assert!(removed.is_empty());
     }
 
     #[test]
     fn cleanup_old_versions_nonexistent_dir() {
-        let removed = cleanup_old_versions(Path::new("/nonexistent/dir"), "0.9.0").unwrap();
+        let removed = cleanup_old_versions(Path::new("/nonexistent/dir"), "0.9.0", None).unwrap();
         assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn cleanup_old_versions_protects_image_referenced() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::create_dir_all(base.join("v0.8.7")).unwrap();
+        std::fs::create_dir_all(base.join("v0.8.8")).unwrap();
+        std::fs::create_dir_all(base.join("v0.9.0")).unwrap();
+
+        // Create an image registry that references v0.8.7
+        let reg = crate::image::ImageRegistry::new(dir.path());
+        reg.insert(crate::image::ImageEntry {
+            name: "protected-img".into(),
+            description: None,
+            source_vm: "vm1".into(),
+            parent_image: None,
+            base_version: "0.8.7".into(),
+            created_at: std::time::SystemTime::now(),
+            size_bytes: 100,
+        }).unwrap();
+
+        let removed = cleanup_old_versions(base, "0.9.0", Some(&reg)).unwrap();
+        // v0.8.7 should be protected by image reference, only v0.8.8 removed
+        assert_eq!(removed.len(), 1);
+        assert!(base.join("v0.8.7").exists(), "v0.8.7 should be protected by image");
+        assert!(!base.join("v0.8.8").exists(), "v0.8.8 should be removed");
+        assert!(base.join("v0.9.0").exists(), "current version should stay");
     }
 
     // ---- migration tests ----

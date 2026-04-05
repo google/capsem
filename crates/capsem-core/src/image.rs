@@ -1,0 +1,346 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
+use anyhow::{Context, Result};
+use std::time::SystemTime;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageEntry {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub source_vm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_image: Option<String>,
+    pub base_version: String,
+    #[serde(with = "crate::manifest_compat::time_format")]
+    pub created_at: SystemTime,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ImageRegistryData {
+    pub images: HashMap<String, ImageEntry>,
+}
+
+#[derive(Clone)]
+pub struct ImageRegistry {
+    pub images_dir: PathBuf,
+    registry_path: PathBuf,
+}
+
+impl ImageRegistry {
+    pub fn new(base_dir: &Path) -> Self {
+        let images_dir = base_dir.join("images");
+        let registry_path = images_dir.join("image_registry.json");
+        Self { registry_path, images_dir }
+    }
+
+    pub fn load(&self) -> Result<ImageRegistryData> {
+        if !self.registry_path.exists() {
+            return Ok(ImageRegistryData::default());
+        }
+        let content = std::fs::read_to_string(&self.registry_path)
+            .context("failed to read image_registry.json")?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    fn save(&self, data: &ImageRegistryData) -> Result<()> {
+        if !self.images_dir.exists() {
+            std::fs::create_dir_all(&self.images_dir)?;
+        }
+        let content = serde_json::to_string_pretty(data)?;
+        std::fs::write(&self.registry_path, content)?;
+        Ok(())
+    }
+
+    pub fn get(&self, name: &str) -> Result<Option<ImageEntry>> {
+        let data = self.load()?;
+        Ok(data.images.get(name).cloned())
+    }
+
+    pub fn list(&self) -> Result<Vec<ImageEntry>> {
+        let data = self.load()?;
+        let mut entries: Vec<_> = data.images.into_values().collect();
+        entries.sort_by(|a, b| b.created_at.cmp(&a.created_at)); // newest first
+        Ok(entries)
+    }
+
+    pub fn insert(&self, entry: ImageEntry) -> Result<()> {
+        let mut data = self.load()?;
+        data.images.insert(entry.name.clone(), entry);
+        self.save(&data)
+    }
+
+    pub fn remove(&self, name: &str) -> Result<bool> {
+        let mut data = self.load()?;
+        let removed = data.images.remove(name).is_some();
+        if removed {
+            self.save(&data)?;
+            let img_dir = self.images_dir.join(name);
+            if img_dir.exists() {
+                std::fs::remove_dir_all(&img_dir)?;
+            }
+        }
+        Ok(removed)
+    }
+
+    pub fn image_dir(&self, name: &str) -> PathBuf {
+        self.images_dir.join(name)
+    }
+
+    /// Return names of images that depend on a specific base squashfs version.
+    pub fn images_for_base_version(&self, version: &str) -> Result<Vec<String>> {
+        let data = self.load()?;
+        let mut names = Vec::new();
+        for entry in data.images.values() {
+            if entry.base_version == version {
+                names.push(entry.name.clone());
+            }
+        }
+        Ok(names)
+    }
+}
+
+/// Copy a session's workspace and rootfs into a new image directory.
+/// Note: We do NOT clone session.db or serial.log to ensure the new image starts clean.
+pub fn create_image_from_session(
+    registry: &ImageRegistry,
+    session_dir: &Path,
+    image_name: &str,
+    description: Option<String>,
+    source_vm: &str,
+    parent_image: Option<String>,
+    base_version: &str,
+) -> Result<ImageEntry> {
+    let dst_dir = registry.image_dir(image_name);
+    if dst_dir.exists() {
+        anyhow::bail!("Image {} already exists", image_name);
+    }
+    std::fs::create_dir_all(&dst_dir)?;
+
+    let sys_src = session_dir.join("system");
+    let ws_src = session_dir.join("workspace");
+    let sys_dst = dst_dir.join("system");
+    let ws_dst = dst_dir.join("workspace");
+
+    if sys_src.exists() {
+        crate::auto_snapshot::clone_directory(&sys_src, &sys_dst)
+            .context("failed to clone system dir")?;
+    }
+    if ws_src.exists() {
+        crate::auto_snapshot::clone_directory(&ws_src, &ws_dst)
+            .context("failed to clone workspace dir")?;
+    }
+
+    // Include session.db in the image as requested by the user.
+    let db_src = session_dir.join("session.db");
+    if db_src.exists() {
+        let db_dst = dst_dir.join("session.db");
+        // Use clone_file (CoW) for the database file.
+        crate::auto_snapshot::clone_file(&db_src, &db_dst)
+            .context("failed to clone session.db")?;
+    }
+
+    let size_bytes = crate::session::disk_usage_bytes(&dst_dir);
+
+    let entry = ImageEntry {
+        name: image_name.to_string(),
+        description,
+        source_vm: source_vm.to_string(),
+        parent_image,
+        base_version: base_version.to_string(),
+        created_at: SystemTime::now(),
+        size_bytes,
+    };
+
+    registry.insert(entry.clone())?;
+    Ok(entry)
+}
+
+/// Create a new session directory by cloning an image's workspace and system layers.
+/// Leaves telemetry and logs empty for a fresh start.
+pub fn create_session_from_image(
+    registry: &ImageRegistry,
+    image_name: &str,
+    session_dir: &Path,
+) -> Result<()> {
+    let img_dir = registry.image_dir(image_name);
+    if !img_dir.exists() {
+        anyhow::bail!("Image directory not found for {}", image_name);
+    }
+
+    std::fs::create_dir_all(session_dir)?;
+
+    let sys_src = img_dir.join("system");
+    let ws_src = img_dir.join("workspace");
+    let sys_dst = session_dir.join("system");
+    let ws_dst = session_dir.join("workspace");
+
+    if sys_src.exists() {
+        crate::auto_snapshot::clone_directory(&sys_src, &sys_dst)
+            .context("failed to clone system dir to session")?;
+    }
+    if ws_src.exists() {
+        crate::auto_snapshot::clone_directory(&ws_src, &ws_dst)
+            .context("failed to clone workspace dir to session")?;
+    }
+
+    // Restore session.db if present in the image
+    let db_src = img_dir.join("session.db");
+    if db_src.exists() {
+        let db_dst = session_dir.join("session.db");
+        crate::auto_snapshot::clone_file(&db_src, &db_dst)
+            .context("failed to clone session.db from image")?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn registry_crud() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+        
+        let entry = ImageEntry {
+            name: "test-img".into(),
+            description: Some("A test image".into()),
+            source_vm: "src-vm".into(),
+            parent_image: None,
+            base_version: "0.16.1".into(),
+            created_at: SystemTime::now(),
+            size_bytes: 1024,
+        };
+
+        reg.insert(entry.clone()).unwrap();
+        let loaded = reg.get("test-img").unwrap().unwrap();
+        assert_eq!(loaded.name, "test-img");
+        assert_eq!(loaded.base_version, "0.16.1");
+        
+        let list = reg.list().unwrap();
+        assert_eq!(list.len(), 1);
+        
+        let bases = reg.images_for_base_version("0.16.1").unwrap();
+        assert_eq!(bases.len(), 1);
+        assert_eq!(bases[0], "test-img");
+
+        let empty_bases = reg.images_for_base_version("99.0.0").unwrap();
+        assert!(empty_bases.is_empty());
+
+        reg.remove("test-img").unwrap();
+        assert!(reg.get("test-img").unwrap().is_none());
+        assert!(reg.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn create_image_fails_when_already_exists() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+
+        let session_dir = dir.path().join("mock-session");
+        std::fs::create_dir_all(session_dir.join("system")).unwrap();
+        std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+        std::fs::write(session_dir.join("system/rootfs.img"), "fake").unwrap();
+
+        create_image_from_session(&reg, &session_dir, "dup-img", None, "vm1", None, "0.16.1")
+            .unwrap();
+
+        let err = create_image_from_session(&reg, &session_dir, "dup-img", None, "vm2", None, "0.16.1")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("already exists"),
+            "Expected 'already exists' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn create_session_from_nonexistent_image() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+
+        let session_dir = dir.path().join("new-session");
+        let err = create_session_from_image(&reg, "no-such-image", &session_dir).unwrap_err();
+        assert!(
+            err.to_string().contains("not found"),
+            "Expected 'not found' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn create_image_empty_session() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+
+        // Session dir with nothing inside
+        let session_dir = dir.path().join("empty-session");
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        let entry = create_image_from_session(
+            &reg, &session_dir, "empty-img", Some("empty".into()),
+            "empty-vm", None, "0.16.1",
+        ).unwrap();
+
+        assert_eq!(entry.name, "empty-img");
+        let img_dir = reg.image_dir("empty-img");
+        assert!(img_dir.exists());
+        // No system or workspace should exist
+        assert!(!img_dir.join("system").exists());
+        assert!(!img_dir.join("workspace").exists());
+        // But it should be in the registry
+        assert!(reg.get("empty-img").unwrap().is_some());
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_false() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+        assert!(!reg.remove("no-such-image").unwrap());
+    }
+
+    #[test]
+    fn image_creation_and_session_restore() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+        
+        let session_dir = dir.path().join("mock-session");
+        std::fs::create_dir_all(session_dir.join("system")).unwrap();
+        std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+        std::fs::write(session_dir.join("system/rootfs.img"), "fake img").unwrap();
+        std::fs::write(session_dir.join("session.db"), "fake db").unwrap();
+        std::fs::write(session_dir.join("serial.log"), "fake logs").unwrap();
+
+        let entry = create_image_from_session(
+            &reg,
+            &session_dir,
+            "my-fork",
+            Some("My fork desc".into()),
+            "mock-session",
+            None,
+            "0.16.1"
+        ).unwrap();
+
+        assert_eq!(entry.name, "my-fork");
+        assert_eq!(entry.description.as_deref(), Some("My fork desc"));
+        
+        let img_dir = reg.image_dir("my-fork");
+        assert!(img_dir.join("system/rootfs.img").exists());
+        assert!(img_dir.join("workspace").exists());
+        
+        // session.db must be cloned as requested by user
+        assert!(img_dir.join("session.db").exists(), "session.db should be cloned");
+        // serial.log should NOT be cloned (keep it clean)
+        assert!(!img_dir.join("serial.log").exists(), "serial.log should NOT be cloned");
+
+        let new_session = dir.path().join("new-session");
+        create_session_from_image(&reg, "my-fork", &new_session).unwrap();
+        
+        assert!(new_session.join("system/rootfs.img").exists());
+        assert!(new_session.join("workspace").exists());
+        assert!(new_session.join("session.db").exists(), "session.db should be restored in new session");
+    }
+}
