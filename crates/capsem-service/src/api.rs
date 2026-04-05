@@ -12,6 +12,40 @@ pub struct ProvisionRequest {
     /// Environment variables to inject into the guest at boot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    /// Image to boot from. If provided, the VM session will be cloned from this image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ForkRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ForkResponse {
+    pub name: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ImageInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub source_vm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_image: Option<String>,
+    pub base_version: String,
+    pub created_at: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ImageListResponse {
+    pub images: Vec<ImageInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -161,9 +195,10 @@ mod tests {
 
     #[test]
     fn provision_request_env_omitted() {
-        let r = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None };
+        let r = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None, image: None };
         let json = serde_json::to_string(&r).unwrap();
         assert!(!json.contains("env"));
+        assert!(!json.contains("image"));
     }
 
     #[test]
@@ -172,6 +207,13 @@ mod tests {
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.name, None);
         assert!(!r.persistent);
+    }
+
+    #[test]
+    fn provision_request_with_image() {
+        let json = json!({"ram_mb": 2048, "cpus": 2, "image": "my-fork"});
+        let r: ProvisionRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(r.image.as_deref(), Some("my-fork"));
     }
 
     #[test]
