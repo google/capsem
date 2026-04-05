@@ -18,7 +18,7 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 
 | Tool | Parameters | What it does |
 |------|-----------|-------------|
-| `capsem_create` | name?, ramMb?, cpuCount?, env? | Boot a fresh VM (~10s). Named VMs are persistent. env = `{"KEY": "VALUE"}` for guest injection. |
+| `capsem_create` | name?, ramMb?, cpuCount?, env?, image? | Boot a fresh VM (~10s). Named VMs are persistent. env = `{"KEY": "VALUE"}` for guest injection. image = boot from a forked template. |
 | `capsem_run` | command, timeout? | One-shot: boot temp VM, exec command, destroy, return output |
 | `capsem_list` | -- | List all VMs (running + stopped persistent) |
 | `capsem_info` | id | VM config, status, persistent, PID |
@@ -35,6 +35,10 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_inspect` | id, sql | Raw SQL against session.db |
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
+| `capsem_fork` | id, name, description? | Fork a running/stopped VM into a reusable image |
+| `capsem_image_list` | -- | List all user images |
+| `capsem_image_inspect` | name | Get detailed info about a specific image |
+| `capsem_image_delete` | name | Delete a user image |
 
 ### Debug workflow
 
@@ -248,6 +252,7 @@ The MCP integration tests (`tests/capsem-mcp/`) are black-box tests that boot a 
 | `test_file_io.py` | Read/write, unicode, large payloads, edge cases |
 | `test_inspect.py` | DB schema query, SQL execution, error cases |
 | `test_errors.py` | Deleted VM ops, concurrent isolation, error mapping |
+| `test_fork_images.py` | Fork lifecycle, image CRUD, create-from-image, error cases |
 
 **Fixture architecture:**
 

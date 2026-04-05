@@ -105,6 +105,10 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 | `capsem_delete` | Destroy VM and wipe all state |
 | `capsem_persist` | Convert running ephemeral VM to persistent |
 | `capsem_purge` | Kill all temp VMs (all=true includes persistent) |
+| `capsem_fork` | Fork a running/stopped VM into a reusable image |
+| `capsem_image_list` | List all user images |
+| `capsem_image_inspect` | Inspect a specific image's metadata |
+| `capsem_image_delete` | Delete a user image |
 
 ### Debug workflow
 

@@ -58,10 +58,14 @@ User     -> capsem CLI          -> HTTP over UDS -> capsem-service (daemon)
 | GET | `/logs/{id}` | Serial/boot logs |
 | POST | `/inspect/{id}` | Raw SQL query against session.db |
 | DELETE | `/delete/{id}` | Destroy VM and wipe all state |
+| POST | `/fork/{id}` | Fork a VM into a reusable image |
+| GET | `/images` | List all user images |
+| GET | `/images/{name}` | Inspect a specific image |
+| DELETE | `/images/{name}` | Delete an image |
 
 ### MCP tools (capsem-mcp)
 
-17 tools: `capsem_create` (env param for guest injection), `capsem_list`, `capsem_info`, `capsem_exec` (timeout param), `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_vm_logs` (grep + tail), `capsem_service_logs` (grep + tail), `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`, `capsem_version`.
+21 tools: `capsem_create` (env + image params), `capsem_list`, `capsem_info`, `capsem_exec` (timeout param), `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_vm_logs` (grep + tail), `capsem_service_logs` (grep + tail), `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`, `capsem_version`, `capsem_fork`, `capsem_image_list`, `capsem_image_inspect`, `capsem_image_delete`.
 
 ## Host-guest communication
 
@@ -101,6 +105,16 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
 
 **Block mode** (legacy): tmpfs overlay + scratch disk. No host file visibility, no snapshots.
 
+**Fork images** (user-created templates):
+```
+~/.capsem/images/
+  image_registry.json       # Image metadata index (JSON)
+  {name}/
+    system/                  # APFS clone of source VM's rootfs overlay
+    workspace/               # APFS clone of workspace files
+    session.db               # Telemetry from source VM (checkpointed)
+```
+
 ## Network architecture
 
 The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
@@ -132,6 +146,8 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 **Block mode**: `mke2fs` runs unconditionally at boot. Overlay upper is always tmpfs.
 
 **Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. Persistent VM data lives in `~/.capsem/run/persistent/`. Never make the overlay upper layer persistent for ephemeral VMs. To add packages: edit guest config and `just build-assets`.
+
+**Fork images** extend the ephemeral model with reusable templates. `capsem fork <vm> <image-name>` snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image <name>` boots from the template. Images have flat genealogy: each depends only on a base squashfs version, never on other images. Deleting any image is always safe; asset cleanup protects referenced squashfs versions.
 
 ## Key source files
 

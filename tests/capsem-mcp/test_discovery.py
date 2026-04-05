@@ -8,11 +8,16 @@ EXPECTED_TOOLS = {
     "capsem_create", "capsem_list", "capsem_info",
     "capsem_exec", "capsem_read_file", "capsem_write_file",
     "capsem_inspect_schema", "capsem_inspect", "capsem_delete",
+    "capsem_stop", "capsem_resume", "capsem_persist",
+    "capsem_purge", "capsem_run", "capsem_vm_logs",
+    "capsem_service_logs", "capsem_version",
+    "capsem_fork", "capsem_image_list",
+    "capsem_image_inspect", "capsem_image_delete",
 }
 
 
 def test_all_tools_discovered(mcp_session):
-    """All 9 capsem tools must appear in tools/list."""
+    """All capsem tools must appear in tools/list."""
     resp = mcp_session.request("tools/list")
     tools = {t["name"] for t in resp["result"]["tools"]}
     missing = EXPECTED_TOOLS - tools
@@ -35,13 +40,14 @@ def test_tool_descriptions_nonempty(mcp_session):
 
 
 def test_create_schema_fields(mcp_session):
-    """capsem_create schema must declare name, ramMb, cpuCount."""
+    """capsem_create schema must declare name, ramMb, cpuCount, image."""
     resp = mcp_session.request("tools/list")
     create = next(t for t in resp["result"]["tools"] if t["name"] == "capsem_create")
     props = create["inputSchema"].get("properties", {})
     assert "name" in props, "Missing 'name' in create schema"
     assert "ramMb" in props, "Missing 'ramMb' in create schema"
     assert "cpuCount" in props, "Missing 'cpuCount' in create schema"
+    assert "image" in props, "Missing 'image' in create schema"
 
 
 def test_exec_schema_fields(mcp_session):
@@ -51,3 +57,21 @@ def test_exec_schema_fields(mcp_session):
     props = exec_tool["inputSchema"].get("properties", {})
     assert "id" in props
     assert "command" in props
+
+
+def test_fork_schema_fields(mcp_session):
+    """capsem_fork schema must declare id, name, description."""
+    resp = mcp_session.request("tools/list")
+    fork = next(t for t in resp["result"]["tools"] if t["name"] == "capsem_fork")
+    props = fork["inputSchema"].get("properties", {})
+    assert "id" in props, "Missing 'id' in fork schema"
+    assert "name" in props, "Missing 'name' in fork schema"
+    assert "description" in props, "Missing 'description' in fork schema"
+
+
+def test_image_inspect_schema_fields(mcp_session):
+    """capsem_image_inspect schema must declare name."""
+    resp = mcp_session.request("tools/list")
+    tool = next(t for t in resp["result"]["tools"] if t["name"] == "capsem_image_inspect")
+    props = tool["inputSchema"].get("properties", {})
+    assert "name" in props, "Missing 'name' in image_inspect schema"
