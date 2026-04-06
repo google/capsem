@@ -38,8 +38,12 @@ ARCH=$(uname -m)
 [[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
 
 if [[ -d "$ASSETS_SRC/$ARCH" ]]; then
-    # Determine version from the capsem binary
-    VERSION=$("$INSTALL_DIR/capsem" version 2>/dev/null | head -1 | sed -n 's/capsem \([^ ]*\).*/\1/p')
+    # Determine version from the source binary (installed copy may not be codesigned yet on macOS)
+    VERSION=$("$BIN_SRC/capsem" version 2>/dev/null | head -1 | sed -n 's/capsem \([^ ]*\).*/\1/p')
+    if [[ -z "$VERSION" ]]; then
+        # Fallback: parse from Cargo.toml
+        VERSION=$(grep '^version' Cargo.toml 2>/dev/null | head -1 | sed 's/.*"\(.*\)"/\1/')
+    fi
     if [[ -z "$VERSION" ]]; then
         VERSION="dev"
     fi
@@ -50,5 +54,5 @@ fi
 echo "Installed to $INSTALL_DIR ($(ls "$INSTALL_DIR" | wc -l | tr -d ' ') binaries)"
 echo "Assets at $ASSETS_DST"
 
-# Print build hash for verification
-"$INSTALL_DIR/capsem" version 2>/dev/null | head -1 || true
+# Print build hash for verification (use source binary -- installed copy may not be signed yet)
+"$BIN_SRC/capsem" version 2>/dev/null | head -1 || true
