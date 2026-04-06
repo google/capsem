@@ -33,6 +33,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just install` | doctor + test + release .app + sign + /Applications |
 | `just cut-release` | Bump version, stamp changelog, tag, push, wait for CI |
 | `just clean` | Remove all build artifacts |
+| `just clean-all` | clean + Docker prune (full reset) |
 | **Integration test recipes** | |
 | `just test-service` | Service HTTP API tests (provision, exec, logs, delete) |
 | `just test-cli` | CLI integration tests via subprocess |
@@ -96,6 +97,19 @@ cut-release    -> test
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).
+
+## Docker disk management
+
+Docker builds (build-assets, cross-compile, test-install) accumulate images, build cache, and stopped containers inside the Colima VM. The `_docker-gc` recipe runs automatically after each of these recipes to prevent unbounded disk growth:
+
+- Removes stopped containers
+- Prunes unused images older than 72h
+- Prunes build cache older than 72h
+- Runs `fstrim` on the Colima VM disk to release freed space back to macOS
+
+The Colima VM uses a Virtualization.framework raw disk that only grows, never shrinks on its own. Without `fstrim`, Docker prune frees space inside the VM but macOS never gets it back. This is why `_docker-gc` always trims after pruning.
+
+For a full manual reset: `just clean-all` (removes all build artifacts + aggressive Docker prune).
 
 ## Build log
 

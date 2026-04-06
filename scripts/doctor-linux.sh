@@ -44,6 +44,7 @@ tool_hint() {
                 dnf) echo "sudo dnf install docker" ;;
                 *)   echo "install docker" ;;
             esac ;;
+        docker-daemon) echo "start Docker: sudo systemctl start docker" ;;
         docker-buildx)
             case "$pkg" in
                 apt) echo "sudo apt install docker-buildx-plugin" ;;

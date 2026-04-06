@@ -134,22 +134,4 @@ The container VM's clock has drifted:
 
 Run `just build-assets` first. Assets are gitignored and must be built locally.
 
-### Cross-compile linker errors
-
-```
-ld: unknown options: --as-needed -Bstatic ...
-```
-
-The system `cc` is being used instead of `rust-lld`. Fix:
-
-```bash
-rustup component add llvm-tools
-```
-
-Verify `.cargo/config.toml` sets `linker = "rust-lld"` for both musl targets.
-
-### VM boot hangs
-
-- Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
-- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.squashfs`
-- Debug logs: `RUST_LOG=capsem=debug just run`
+For runtime issues (disk full, boot hangs, cross-compile errors, network problems), see [Troubleshooting](/debugging/troubleshooting/).

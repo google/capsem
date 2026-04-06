@@ -206,6 +206,19 @@ Run `just build-assets` first. Assets are gitignored and must be built locally.
 - Run `rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl`
 - Platform-specific type issues: use `as _` for libc calls (see `/dev-rust-patterns`)
 
+### Disk full / Colima eating all disk space
+Docker builds accumulate images, build cache, and stopped containers inside the Colima VM. The VM uses a Virtualization.framework raw disk that only grows, never shrinks on its own -- even after `docker system prune`, macOS doesn't get the space back.
+
+The `_docker-gc` recipe runs automatically after `build-assets`, `cross-compile`, and `test-install` to prevent this. It prunes containers, images >72h, build cache >72h, and runs `fstrim` to release freed blocks back to macOS. If disk is already full:
+
+```bash
+# One-time recovery
+docker system prune -af --volumes           # free space inside VM
+colima ssh -- sudo fstrim /mnt/lima-colima  # release it to macOS
+```
+
+To check current state: `colima ssh -- docker system df` (inside VM) and `du -sh ~/.colima` (host).
+
 ### Docker credential helper error (`docker-credential-osxkeychain not found`)
 When Colima is installed standalone (without Docker Desktop), `~/.docker/config.json` may reference a credential helper that doesn't exist. The symptom is `docker run` failing to pull images with `exec: "docker-credential-osxkeychain": executable file not found`.
 

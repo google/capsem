@@ -40,6 +40,22 @@ sidebar:
 | `disabled by policy` at boot | API key not configured | Add key to `~/.capsem/user.toml` |
 | CLI hangs on first run | Waiting for network it can't reach | Check provider is in the domain allow list |
 
+## Disk full / Colima eating all disk space
+
+Docker builds (kernel, rootfs, cross-compile, install tests) accumulate images and build cache inside the Colima VM. The VM disk only grows -- freed space isn't returned to macOS without `fstrim`.
+
+The build system auto-prunes after Docker-heavy recipes (`_docker-gc`: stale images/cache >72h + fstrim). If your disk is already full:
+
+```bash
+# One-time recovery
+docker system prune -af --volumes           # free space inside VM
+colima ssh -- sudo fstrim /mnt/lima-colima  # release it to macOS
+
+# Check current state
+du -sh ~/.colima                            # host disk usage
+colima ssh -- docker system df              # Docker usage inside VM
+```
+
 ## Running diagnostics
 
 When something goes wrong, `capsem-doctor` is the fastest way to pinpoint the issue:

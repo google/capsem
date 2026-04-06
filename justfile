@@ -144,6 +144,7 @@ build-assets arch="": _install-tools _clean-stale
     done
     echo "=== Generating checksums ==="
     uv run python3 -c 'from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path(".")); generate_checksums(Path("{{assets_dir}}"), v); print(f"manifest.json generated (v{v})")'
+    just _docker-gc
 
 # Update all dependencies (Rust + npm) to latest compatible versions
 update-deps: _pnpm-install
@@ -326,6 +327,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     echo ""
     echo "=== Artifacts ==="
     ls -lh "$ROOT/dist/"
+    just _docker-gc
 
 # Generate settings-schema.json, defaults.json, mcp-tools.json, and mock-data.generated.ts
 _generate-settings:
@@ -429,6 +431,7 @@ test-install: _build-host
     echo "Cleaning up container..."
     docker stop "$CONTAINER" >/dev/null 2>&1
     docker rm "$CONTAINER" >/dev/null 2>&1
+    just _docker-gc
     exit $EXIT_CODE
 
 # Wait for CI to build and publish a tag.
@@ -652,6 +655,25 @@ _clean-stale:
             echo "target/ is $((TARGET_KB / 1024 / 1024)) GB (threshold: 20 GB) -- trimming incremental caches"
             rm -rf target/debug/incremental target/release/incremental target/llvm-cov-target 2>/dev/null || true
         fi
+    fi
+
+# Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
+# Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
+_docker-gc:
+    #!/bin/bash
+    if ! command -v docker &>/dev/null; then exit 0; fi
+    # Remove stopped containers
+    CONTAINERS=$(docker container ls -aq --filter status=exited 2>/dev/null)
+    if [ -n "$CONTAINERS" ]; then
+        docker container rm $CONTAINERS >/dev/null 2>&1 || true
+    fi
+    # Remove unused images older than 72h
+    docker image prune -af --filter until=72h >/dev/null 2>&1 || true
+    # Prune build cache older than 72h
+    docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
+    # Reclaim sparse disk space from Colima VM (fstrim punches holes in the raw disk)
+    if command -v colima &>/dev/null && colima status &>/dev/null; then
+        colima ssh -- sudo fstrim /mnt/lima-colima >/dev/null 2>&1 || true
     fi
 
 # --- Internal helpers (hidden from `just --list`) ---

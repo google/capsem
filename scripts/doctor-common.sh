@@ -178,12 +178,19 @@ _check_cargo_tool cargo-audit    cargo-audit
 _check_cargo_tool b3sum          b3sum
 _check_cargo_tool cargo-tauri    cargo-tauri
 
-section "Docker"
+section "Container Tools"
 if command -v docker &>/dev/null; then
-    pass "docker ($(docker --version 2>/dev/null | head -1))"
+    pass "docker CLI ($(docker --version 2>/dev/null | head -1))"
 else
     _hint=$(tool_hint docker)
-    fail "docker not found -- install: $_hint"
+    fail "docker CLI not found -- install: $_hint"
+fi
+
+if docker info &>/dev/null; then
+    pass "docker daemon (running)"
+else
+    _hint=$(tool_hint docker-daemon)
+    fail "docker daemon not reachable -- $_hint"
 fi
 
 if docker buildx version &>/dev/null; then

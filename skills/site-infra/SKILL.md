@@ -109,6 +109,11 @@ Custom CSS in `site/src/styles/custom.css`. Accent colors and fonts. Logo at `si
 
 `tmp/build_sprint/custom-images.md` -- 443-line draft for the custom images doc. Covers quick start, config reference, CLI reference, manifest, corporate deployment, troubleshooting.
 
+## Page scope boundaries
+
+- **`development/getting-started.md`** is strictly about environment setup: prerequisites, clone, bootstrap, build-assets, codesign, first run. Troubleshooting in this page must be limited to setup failures (doctor, codesign, build-assets OOM/clock, missing assets). Runtime issues (disk full, boot hangs, cross-compile errors, network problems) belong in `debugging/troubleshooting.md` -- link there instead of duplicating.
+- **`debugging/troubleshooting.md`** is the catch-all for runtime issues. New troubleshooting entries go here unless they are specifically about first-time env setup.
+
 ## Keep docs in sync
 
 When features change (settings, CLI flags, MCP tools, security invariants, benchmarks), update the corresponding doc page. When cutting a new minor release, create a new release page. Most pages are still stubs -- fill them in as features stabilize.
