@@ -101,9 +101,6 @@ _ensure-service: _sign
     rm -f "$PIDFILE"
     exit 1
 
-# Build all host binaries, sign, restart service if stale
-build: _sign _ensure-service
-
 # Start service daemon + Tauri GUI with hot-reloading
 ui: _ensure-setup _pnpm-install run-service
     CAPSEM_ASSETS_DIR={{assets_dir}} cargo tauri dev --config crates/capsem-app/tauri.conf.json
