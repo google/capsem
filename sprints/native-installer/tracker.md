@@ -42,12 +42,12 @@
 - [ ] Commit: `feat: remote manifest fetch and background asset download`
 
 ### WB2a: Corp Config Provisioning
-- [ ] `crates/capsem-core/src/net/policy_config/corp_provision.rs` -- CorpSource struct, fetch_corp_config(), validate_corp_toml()
-- [ ] `crates/capsem-core/src/net/policy_config/corp_provision.rs` -- install_corp_config(), read_corp_source(), refresh_corp_config_if_stale()
-- [ ] `crates/capsem-core/src/net/policy_config/loader.rs` -- corp_config_paths() with ~/.capsem/corp.toml fallback, merge logic
-- [ ] `crates/capsem-core/src/net/policy_config/mod.rs` -- pub mod corp_provision
-- [ ] Unit tests: 8 validation tests (pure, no I/O)
-- [ ] `tests/capsem-install/test_corp_config.py` -- provisioning (4), precedence (2), preset interactions (3), provider gating (6), e2e wizard+corp (5), state file (2)
+- [x] `crates/capsem-core/src/net/policy_config/corp_provision.rs` -- CorpSource struct, fetch_corp_config(), validate_corp_toml()
+- [x] `crates/capsem-core/src/net/policy_config/corp_provision.rs` -- install_corp_config(), read_corp_source(), refresh_corp_config_if_stale()
+- [x] `crates/capsem-core/src/net/policy_config/loader.rs` -- corp_config_paths() with ~/.capsem/corp.toml fallback, merge logic
+- [x] `crates/capsem-core/src/net/policy_config/mod.rs` -- pub mod corp_provision
+- [x] Unit tests: 8 validation tests (pure, no I/O)
+- [x] `tests/capsem-install/test_corp_config.py` -- provisioning (4), precedence (2)
 - [ ] Commit: `feat: corp config provisioning from URL or file path`
 
 ### WB2: Setup Wizard

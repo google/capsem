@@ -16,12 +16,36 @@ pub fn user_config_path() -> Option<std::path::PathBuf> {
     dirs_path("HOME").map(|h| h.join(".capsem").join("user.toml"))
 }
 
-/// Corporate config path: /etc/capsem/corp.toml (overridable via CAPSEM_CORP_CONFIG)
+/// Corporate config path: returns the first available corp config path.
+///
+/// Priority: CAPSEM_CORP_CONFIG env > /etc/capsem/corp.toml > ~/.capsem/corp.toml
 pub fn corp_config_path() -> std::path::PathBuf {
+    corp_config_paths().into_iter().next()
+        .unwrap_or_else(|| std::path::PathBuf::from("/etc/capsem/corp.toml"))
+}
+
+/// Corporate config paths, in priority order.
+///
+/// /etc/capsem/corp.toml (system-level, MDM) takes precedence.
+/// ~/.capsem/corp.toml (user-level, CLI-provisioned) is fallback.
+/// CAPSEM_CORP_CONFIG env var overrides both (exclusive).
+pub fn corp_config_paths() -> Vec<std::path::PathBuf> {
+    let mut paths = vec![];
     if let Ok(path) = std::env::var("CAPSEM_CORP_CONFIG") {
-        return std::path::PathBuf::from(path);
+        paths.push(std::path::PathBuf::from(path));
+        return paths; // env override is exclusive
     }
-    std::path::PathBuf::from("/etc/capsem/corp.toml")
+    let system = std::path::PathBuf::from("/etc/capsem/corp.toml");
+    if system.exists() {
+        paths.push(system);
+    }
+    if let Some(home) = dirs_path("HOME") {
+        let user_corp = home.join(".capsem").join("corp.toml");
+        if user_corp.exists() {
+            paths.push(user_corp);
+        }
+    }
+    paths
 }
 
 fn dirs_path(env_var: &str) -> Option<std::path::PathBuf> {
@@ -92,6 +116,9 @@ pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), Strin
 }
 
 /// Load both settings files from standard locations.
+///
+/// Corp config merges all available paths (system + user-provisioned).
+/// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
 pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
     let user = match user_config_path() {
         Some(path) => load_settings_file(&path).unwrap_or_else(|e| {
@@ -101,10 +128,24 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
         None => SettingsFile::default(),
     };
 
-    let corp = load_settings_file(&corp_config_path()).unwrap_or_else(|e| {
-        tracing::warn!("corp settings: {e}");
-        SettingsFile::default()
-    });
+    let mut corp = SettingsFile::default();
+    for path in corp_config_paths() {
+        match load_settings_file(&path) {
+            Ok(file) => {
+                // First path wins per-key: only insert if not already present
+                for (id, entry) in file.settings {
+                    corp.settings.entry(id).or_insert(entry);
+                }
+                // MCP config: first non-None wins
+                if corp.mcp.is_none() && file.mcp.is_some() {
+                    corp.mcp = file.mcp;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("corp settings at {}: {e}", path.display());
+            }
+        }
+    }
 
     (user, corp)
 }

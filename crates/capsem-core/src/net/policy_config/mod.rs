@@ -17,6 +17,7 @@ mod resolver;
 mod builder;
 mod lint;
 mod tree;
+pub mod corp_provision;
 
 // Re-export everything to preserve the existing public API.
 pub use types::*;
