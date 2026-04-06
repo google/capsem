@@ -13,7 +13,6 @@
 #   build-assets    -> doctor + _install-tools + _clean-stale + audit
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
-#   test-injection  -> _check-assets + _pack-initrd + _sign
 #   test-mcp        -> _check-assets + _pack-initrd (MCP integration tests, boots VMs)
 #   test-service    -> _check-assets + _pack-initrd (service HTTP API tests)
 #   test-cli        -> _check-assets + _pack-initrd (CLI integration tests)
@@ -24,9 +23,7 @@
 #
 # Service daemon:
 #   run-service     -> _check-assets + _pack-initrd (start daemon, idempotent)
-#   run-doctor      -> run-service + capsem doctor
 #   ui              -> run-service + cargo tauri dev (GUI with hot-reload)
-#   smoke-test-svc  -> _check-assets + _pack-initrd + doctor + MCP + service integration
 #
 # First-time setup:
 #   just doctor       (shows what's missing)
@@ -122,9 +119,6 @@ run-service: _check-assets _pack-initrd _ensure-service
 exec +CMD: run-service
     {{cli_binary}} run {{CMD}}
 
-# Run capsem-doctor (creates temp VM, tears down automatically)
-run-doctor: run-service
-    {{cli_binary}} doctor
 
 # VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch to build one.
 build-assets arch="": _install-tools _clean-stale audit
@@ -353,14 +347,20 @@ _generate-settings:
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
-# Fast path: build, sign, doctor, MCP + service + CLI integration tests (no Docker, no cross-compile)
+# Fast path: build, sign, doctor, injection, integration tests (no Docker, no cross-compile)
 smoke: _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
-    echo "=== capsem-doctor ==="
-    just run-doctor
+    echo "=== capsem-doctor (in-VM diagnostics) ==="
+    {{cli_binary}} doctor
     echo ""
-    echo "=== Integration tests (MCP + service + CLI) ==="
+    echo "=== Injection test ==="
+    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
+    echo ""
+    echo "=== Integration test ==="
+    python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
+    echo ""
+    echo "=== Python integration tests (MCP + service + CLI) ==="
     uv run python -m pytest tests/capsem-mcp/ tests/capsem-service/ tests/capsem-cli/ -v --tb=short
     echo ""
     echo "Smoke test passed"
@@ -372,10 +372,6 @@ coverage:
     cargo llvm-cov --workspace --no-cfg-coverage --html
     echo "Coverage report: target/llvm-cov/html/index.html"
     open target/llvm-cov/html/index.html 2>/dev/null || true
-
-# End-to-end injection test: boot VM with generated configs, verify all injection paths
-test-injection: _check-assets _pack-initrd _sign
-    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
 
 # Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
 bench: _ensure-setup _check-assets _sign
@@ -512,13 +508,14 @@ cut-release: test
     echo "Tag $TAG pushed. Waiting for CI..."
     just release "$TAG"
 
-# Check that all required dev tools and dependencies are installed
-doctor: _pnpm-install
-    scripts/doctor-common.sh
-
-# Doctor + auto-fix all fixable issues
-doctor-fix: _pnpm-install
-    scripts/doctor-common.sh --fix
+# Check dev tools and dependencies. Pass "fix" to auto-fix.
+doctor fix="": _pnpm-install
+    #!/bin/bash
+    if [ "{{fix}}" = "fix" ]; then
+        scripts/doctor-common.sh --fix
+    else
+        scripts/doctor-common.sh
+    fi
 
 # Clean all build artifacts and report freed space
 # Clean build artifacts. Pass "all" to also prune docker images/volumes.
@@ -569,16 +566,7 @@ logs:
 sandbox-logs id:
     {{cli_binary}} logs {{id}}
 
-# View logs for the latest sandbox
-last-logs:
-    #!/bin/bash
-    set -euo pipefail
-    ID=$({{cli_binary}} ls | grep -v "ID" | head -1 | awk '{print $1}')
-    if [ -n "$ID" ]; then
-        {{cli_binary}} logs "$ID"
-    else
-        echo "No running sandboxes found."
-    fi
+# TODO(forensics): replace last-logs with forensic log viewer from forensic sprint
 
 # List recent sessions with event counts per table
 list-sessions *args='':
