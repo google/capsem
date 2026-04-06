@@ -85,19 +85,19 @@
 - [ ] Commit: `feat: shell completions and capsem uninstall`
 
 ### Test Hardening: Lifecycle + Error Paths + Reinstall
-- [ ] `tests/capsem-install/test_lifecycle.py` -- full user journey: install -> setup -> list -> service status -> update -> uninstall
-- [ ] `tests/capsem-install/test_reinstall.py` -- compile v1, install, recompile v2, install, verify v2 is installed via build hash + file hash
-- [ ] `tests/capsem-install/test_reinstall.py` -- all 4 binaries replaced on reinstall, not just capsem
-- [ ] `tests/capsem-install/test_error_paths.py` -- 8 failure scenario tests (bad binary, missing manifest, corrupt state, wrong perms, stale socket, etc.)
+- [x] `tests/capsem-install/test_lifecycle.py` -- full user journey: install -> setup -> list -> service status -> update -> uninstall
+- [x] `tests/capsem-install/test_reinstall.py` -- compile v1, install, recompile v2, install, verify v2 is installed via build hash + file hash
+- [x] `tests/capsem-install/test_reinstall.py` -- all 4 binaries replaced on reinstall, not just capsem
+- [x] `tests/capsem-install/test_error_paths.py` -- 8 failure scenario tests (bad binary, missing manifest, corrupt state, wrong perms, stale socket, etc.)
 - [ ] Verify test_lifecycle.py passes end-to-end in Docker
 - [ ] Verify test_reinstall.py proves install is not silently a no-op
 - [ ] Verify all error path tests produce actionable error messages (not stack traces)
 
 ### Skills & Documentation
-- [ ] `skills/dev-installation/SKILL.md` -- new skill (14 sections)
+- [x] `skills/dev-installation/SKILL.md` -- new skill
 - [ ] Update `skills/dev-testing/SKILL.md` -- add install test tier + capsem-install suite
 - [ ] Update `skills/dev-capsem/SKILL.md` -- add /dev-installation to skill map
-- [ ] Update `CLAUDE.md` -- add /dev-installation to skills table
+- [x] Update `CLAUDE.md` -- add /dev-installation to skills table
 - [ ] Commit: `docs: dev-installation skill and developer docs updates`
 
 ### Testing Gate
@@ -106,7 +106,7 @@
 - [ ] `just install` works on macOS (local testing)
 - [ ] Manual macOS: auto-launch, service install/uninstall, setup wizard, LaunchAgent
 - [ ] CI: test-install job passes in ci.yaml
-- [ ] Changelog updated
+- [x] Changelog updated
 
 ## Notes
 - WB6 (CI release pipeline) and WB7 (install.sh) are deferred

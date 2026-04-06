@@ -68,6 +68,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Just recipes | `/dev-just` | Which just command to run for a given task |
 | Debugging | `/dev-debugging` | Bug investigation, reproduce-first workflow |
 | Release | `/release-process` | CI, signing, notarization, changelog |
+| Installation | `/dev-installation` | Setup wizard, service registration, self-update, install tests |
 | Architecture | `/site-architecture` | System design, service architecture, vsock, key files |
 
 ## Code Style
