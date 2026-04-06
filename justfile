@@ -386,11 +386,23 @@ install: smoke
             codesign --sign - --entitlements {{entitlements}} --force "$bin"
         done
     fi
-    # PATH check
-    if [[ ":$PATH:" != *":$HOME/.capsem/bin:"* ]]; then
-        echo ""
-        echo "WARNING: ~/.capsem/bin is not in your PATH"
-        echo "  Add to your shell profile: export PATH=\"\$HOME/.capsem/bin:\$PATH\""
+    # Ensure ~/.capsem/bin is in PATH via shell profile
+    CAPSEM_BIN="$HOME/.capsem/bin"
+    if [[ ":$PATH:" != *":$CAPSEM_BIN:"* ]]; then
+        LINE='export PATH="$HOME/.capsem/bin:$PATH"'
+        # Detect shell profile
+        if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$SHELL" == */zsh ]]; then
+            PROFILE="$HOME/.zshrc"
+        else
+            PROFILE="$HOME/.bashrc"
+        fi
+        if [[ -f "$PROFILE" ]] && grep -qF '.capsem/bin' "$PROFILE"; then
+            echo "PATH already configured in $PROFILE"
+        else
+            echo "$LINE" >> "$PROFILE"
+            echo "Added ~/.capsem/bin to PATH in $PROFILE"
+            echo "Run: source $PROFILE (or open a new terminal)"
+        fi
     fi
 
 # Run install e2e tests in Docker (Linux + systemd)
@@ -754,10 +766,9 @@ _check-assets:
         missing+=("vmlinuz (checked $dir/$arch/ and $dir/)")
     fi
     if [ ${#missing[@]} -gt 0 ]; then
-        echo "ERROR: Missing VM assets in $dir/: ${missing[*]}"
-        echo ""
-        echo "Run 'just build-assets' to build them (requires docker)."
-        exit 1
+        echo "Missing VM assets in $dir/: ${missing[*]}"
+        echo "Building assets (requires docker)..."
+        just build-assets
     fi
 
 _pnpm-install:
