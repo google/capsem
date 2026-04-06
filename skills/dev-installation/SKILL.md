@@ -37,7 +37,7 @@ These commands dispatch before UdsClient creation -- they work without the servi
 `discover_paths()` finds sibling binaries and assets:
 
 1. `current_exe().parent()` -> bin_dir -> capsem-service, capsem-process
-2. Assets: installed-first (`~/.capsem/assets/` with manifest.json), dev fallback (`bin_dir/../../assets/{arch}`)
+2. Assets: `~/.capsem/assets/` (the only layout -- no dev fallback, use `just install` or symlink)
 
 ## Auto-launch (main.rs UdsClient)
 
