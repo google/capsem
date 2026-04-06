@@ -1,0 +1,53 @@
+# Dockerfile.install-test -- e2e install test environment
+# Extends capsem-host-builder with systemd + non-root user for testing
+# the installed layout on Linux.
+#
+# Must be run with:
+#   docker run --privileged --cgroupns=host \
+#     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+#     --tmpfs /run --tmpfs /tmp \
+#     capsem-install-test /usr/lib/systemd/systemd
+#
+# Tests exec into the container as the capsem user:
+#   docker exec -u capsem <container> ...
+
+FROM capsem-host-builder:latest
+
+# Install systemd and dbus for user session support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    systemd \
+    systemd-container \
+    dbus \
+    dbus-user-session \
+    sudo \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for Python test runner
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Create non-root capsem user
+RUN useradd -m -s /bin/bash -u 1000 capsem \
+    && echo "capsem ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/capsem
+
+# Enable lingering so systemd user session starts at boot
+# (dbus must be running for loginctl, so we start it inline)
+RUN dbus-daemon --system --fork 2>/dev/null; \
+    loginctl enable-linger capsem 2>/dev/null || \
+    mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/capsem
+
+# Pre-create capsem directories owned by capsem user
+RUN mkdir -p /home/capsem/.capsem/bin \
+             /home/capsem/.capsem/assets \
+             /home/capsem/.capsem/run \
+             /home/capsem/.config/systemd/user \
+    && chown -R capsem:capsem /home/capsem/.capsem /home/capsem/.config
+
+# Set XDG_RUNTIME_DIR (required for systemctl --user)
+ENV XDG_RUNTIME_DIR=/run/user/1000
+
+# Ensure the runtime dir exists with correct ownership at boot
+RUN mkdir -p /run/user/1000 && chown capsem:capsem /run/user/1000
+
+# Copy project source (mounted read-only at runtime, this is just for uv sync)
+WORKDIR /src

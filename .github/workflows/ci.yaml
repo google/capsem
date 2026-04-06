@@ -214,3 +214,19 @@ jobs:
           > Coverage covers library crates only (capsem-core, agent, logger, proto).
           > Full workspace coverage runs in the release pipeline.
           EOF
+
+  # ---------------------------------------------------------------------------
+  # Install e2e: Docker-based install layout + systemd tests (Linux)
+  # ---------------------------------------------------------------------------
+  test-install:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: extractions/setup-just@v3
+
+      - name: Build host builder Docker image
+        run: just build-host-image
+
+      - name: Run install e2e tests
+        run: just test-install

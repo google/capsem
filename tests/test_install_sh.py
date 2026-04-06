@@ -1,3 +1,6 @@
+# TODO(WB7): update for native installer -- .pkg (macOS) + tar.gz (Linux) paths,
+# find_asset_url() patterns, install_linux() tar.gz extraction, and swap
+# simulate-install.sh for the real install.sh in conftest fixtures.
 """Tests for site/public/install.sh -- OS/arch detection and asset URL selection.
 
 Sources the install script with __INSTALL_SH_SOURCED=1 to access functions

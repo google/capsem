@@ -511,6 +511,16 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| PathBuf::from(home).join(".capsem").join("run"));
     let uds_path = cli.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
+    // Commands that don't need the service
+    if let Commands::Version = &cli.command {
+        println!(
+            "capsem {} (build {})",
+            env!("CARGO_PKG_VERSION"),
+            env!("CAPSEM_BUILD_HASH")
+        );
+        return Ok(());
+    }
+
     let client = UdsClient::new(uds_path);
 
     match &cli.command {
@@ -782,14 +792,7 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Version => {
-            println!("capsem {}", env!("CARGO_PKG_VERSION"));
-            // Try to query service version
-            match client.get::<serde_json::Value>("/list").await {
-                Ok(_) => println!("service: connected"),
-                Err(_) => println!("service: not running"),
-            }
-        }
+        Commands::Version => unreachable!("handled before UdsClient creation"),
         Commands::Doctor => {
             println!("Running capsem-doctor...");
 

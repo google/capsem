@@ -18,7 +18,8 @@
 #   test-service    -> _check-assets + _pack-initrd (service HTTP API tests)
 #   test-cli        -> _check-assets + _pack-initrd (CLI integration tests)
 #   cut-release     -> test
-#   install         -> doctor + test
+#   install         -> _build-host (build + install to ~/.capsem/)
+#   test-install    -> _build-host (Docker e2e: systemd + install layout)
 #
 # Service daemon:
 #   run-service     -> _check-assets + _pack-initrd (start daemon, idempotent)
@@ -32,7 +33,7 @@
 #
 # Daily dev:          just run     (service daemon + temp VM + shell, ~10s)
 #                     just ui      (service + Tauri GUI with hot-reload)
-# Before release:     just install (doctor + test -- all validation gates)
+# Local install:      just install (build + install to ~/.capsem/ for testing)
 # Releases:           just cut-release (test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps (cargo update + pnpm update)
 # Disk cleanup:       just clean   (nuke target/ + frontend build, ~100 GB)
@@ -384,10 +385,63 @@ test-injection: _check-assets _pack-initrd _sign
 bench: _ensure-setup _check-assets _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
-# Full validation (test + doctor + bench). Use `just run` for daily dev.
-install: doctor test
-    @echo ""
-    @echo "All gates passed. Use 'just run' to boot the VM."
+# Build and install to ~/.capsem/ for local testing
+install: _build-host
+    #!/bin/bash
+    set -euo pipefail
+    bash scripts/simulate-install.sh target/debug {{assets_dir}}
+    # Sign on macOS (required for Virtualization.framework)
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        for bin in "$HOME/.capsem/bin"/capsem*; do
+            codesign --sign - --entitlements {{entitlements}} --force "$bin"
+        done
+    fi
+    # PATH check
+    if [[ ":$PATH:" != *":$HOME/.capsem/bin:"* ]]; then
+        echo ""
+        echo "WARNING: ~/.capsem/bin is not in your PATH"
+        echo "  Add to your shell profile: export PATH=\"\$HOME/.capsem/bin:\$PATH\""
+    fi
+
+# Run install e2e tests in Docker (Linux + systemd)
+test-install: _build-host
+    #!/bin/bash
+    set -euo pipefail
+    IMAGE="capsem-install-test"
+    # Build the Docker image if needed
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+        echo "Building $IMAGE Docker image..."
+        docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
+    fi
+    CONTAINER="capsem-install-test-$$"
+    echo "Starting systemd container..."
+    docker run -d --name "$CONTAINER" \
+        --privileged --cgroupns=host \
+        -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+        --tmpfs /run --tmpfs /tmp \
+        -v "$PWD":/src:ro \
+        "$IMAGE" /usr/lib/systemd/systemd
+    # Wait for systemd to be ready
+    for i in $(seq 1 30); do
+        if docker exec "$CONTAINER" systemctl is-system-running --wait 2>/dev/null | grep -qE "running|degraded"; then
+            break
+        fi
+        sleep 0.5
+    done
+    echo "Building capsem binaries inside container..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "cd /src && cargo build {{host_crates}}"
+    echo "Running simulate-install.sh..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "cd /src && bash scripts/simulate-install.sh target/debug assets"
+    echo "Running install e2e tests..."
+    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
+        "cd /src && uv run pytest tests/capsem-install/ -v --tb=short"
+    EXIT_CODE=$?
+    echo "Cleaning up container..."
+    docker stop "$CONTAINER" >/dev/null 2>&1
+    docker rm "$CONTAINER" >/dev/null 2>&1
+    exit $EXIT_CODE
 
 # Wait for CI to build and publish a tag.
 # Usage: just release          (uses latest vX.Y.Z tag on HEAD)

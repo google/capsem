@@ -176,8 +176,22 @@ jobs:
           | Audit | cargo audit + pnpm audit |
           EOF
 
+  test-install:
+    needs: preflight
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: extractions/setup-just@v3
+
+      - name: Build host builder Docker image
+        run: just build-host-image
+
+      - name: Run install e2e tests
+        run: just test-install
+
   build-app-macos:
-    needs: [preflight, build-assets]
+    needs: [preflight, build-assets, test, test-install]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -302,7 +316,7 @@ jobs:
           path: release-artifacts/
 
   build-app-linux:
-    needs: [preflight, build-assets]
+    needs: [preflight, build-assets, test, test-install]
     strategy:
       matrix:
         include:
@@ -454,7 +468,7 @@ jobs:
           path: release-artifacts/
 
   create-release:
-    needs: [test, build-app-macos, build-app-linux]
+    needs: [test, test-install, build-app-macos, build-app-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
