@@ -1,7 +1,9 @@
+mod completions;
 mod paths;
 mod platform;
 mod service_install;
 mod setup;
+mod uninstall;
 mod update;
 
 use std::collections::HashMap;
@@ -155,6 +157,18 @@ enum Commands {
     /// Manage the capsem service daemon (install/uninstall/status)
     #[command(subcommand)]
     Service(ServiceCommands),
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Uninstall capsem completely (service, binaries, data)
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
     /// Check for updates and install the latest version
     Update {
         /// Skip confirmation prompt
@@ -658,6 +672,14 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Commands::Completions { shell } => {
+            completions::generate_completions(*shell);
+            return Ok(());
+        }
+        Commands::Uninstall { yes } => {
+            uninstall::run_uninstall(*yes).await?;
+            return Ok(());
+        }
         Commands::Update { yes } => {
             update::run_update(*yes).await?;
             return Ok(());
@@ -947,7 +969,8 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Version | Commands::Service(_) | Commands::Setup { .. } | Commands::Update { .. } => {
+        Commands::Version | Commands::Service(_) | Commands::Setup { .. }
+        | Commands::Update { .. } | Commands::Completions { .. } | Commands::Uninstall { .. } => {
             unreachable!("handled before UdsClient creation")
         }
         Commands::Doctor => {
@@ -1464,6 +1487,30 @@ mod tests {
                 assert!(non_interactive);
             }
             _ => panic!("expected Setup"),
+        }
+    }
+
+    #[test]
+    fn parse_completions_bash() {
+        let cli = Cli::parse_from(["capsem", "completions", "bash"]);
+        assert!(matches!(cli.command, Commands::Completions { shell: clap_complete::Shell::Bash }));
+    }
+
+    #[test]
+    fn parse_uninstall() {
+        let cli = Cli::parse_from(["capsem", "uninstall"]);
+        match cli.command {
+            Commands::Uninstall { yes } => assert!(!yes),
+            _ => panic!("expected Uninstall"),
+        }
+    }
+
+    #[test]
+    fn parse_uninstall_yes() {
+        let cli = Cli::parse_from(["capsem", "uninstall", "--yes"]);
+        match cli.command {
+            Commands::Uninstall { yes } => assert!(yes),
+            _ => panic!("expected Uninstall"),
         }
     }
 

@@ -77,11 +77,11 @@
 - [ ] Commit: `feat: capsem update with asset vacuum`
 
 ### Polish: Completions + Uninstall
-- [ ] `crates/capsem/src/completions.rs` -- generate_completions(shell) via clap_complete
-- [ ] `crates/capsem/src/uninstall.rs` -- run_uninstall(yes): stop, remove unit, remove binaries, remove ~/.capsem/
-- [ ] `crates/capsem/src/main.rs` -- Completions { shell } and Uninstall { yes } commands
-- [ ] `tests/capsem-install/test_completions.py` -- bash/zsh/fish validation
-- [ ] `tests/capsem-install/test_uninstall.py` -- full cleanup test
+- [x] `crates/capsem/src/completions.rs` -- generate_completions(shell) via clap_complete
+- [x] `crates/capsem/src/uninstall.rs` -- run_uninstall(yes): stop, remove unit, remove binaries, remove ~/.capsem/
+- [x] `crates/capsem/src/main.rs` -- Completions { shell } and Uninstall { yes } commands
+- [x] `tests/capsem-install/test_completions.py` -- bash/zsh/fish validation
+- [x] `tests/capsem-install/test_uninstall.py` -- full cleanup test
 - [ ] Commit: `feat: shell completions and capsem uninstall`
 
 ### Test Hardening: Lifecycle + Error Paths + Reinstall
