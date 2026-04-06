@@ -93,11 +93,17 @@ impl UdsClient {
             return Err(anyhow::anyhow!("capsem-service not found at {}", service_bin.display()));
         }
 
-        // Try to find assets dir - assume it is in the project root if we are in target/debug
-        let project_root = bin_dir.parent()
-            .and_then(|p| p.parent())
-            .ok_or_else(|| anyhow::anyhow!("cannot resolve project root from {}", bin_dir.display()))?;
-        let assets_dir = project_root.join("assets").join(if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" });
+        // Asset dir: installed layout first (~/.capsem/assets/), dev fallback (bin_dir/../../assets/{arch})
+        let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+        let assets_dir = std::env::var("HOME").ok()
+            .map(|h| std::path::PathBuf::from(h).join(".capsem").join("assets"))
+            .filter(|p| p.join("manifest.json").exists())
+            .unwrap_or_else(|| {
+                let project_root = bin_dir.parent()
+                    .and_then(|p| p.parent())
+                    .unwrap_or(bin_dir);
+                project_root.join("assets").join(arch)
+            });
         let process_bin = bin_dir.join("capsem-process");
 
         info!(service = %service_bin.display(), assets = %assets_dir.display(), "spawning service");

@@ -15,15 +15,15 @@
 - [x] Add `test-install` as gate in `release.yaml`
 - [x] Add `# TODO(WB7): update for native installer` to existing `tests/test_install_sh.py`
 - [x] Verify harness runs green with smoke test only
-- [ ] Commit: `feat: Docker-based e2e install test harness with just install`
+- [x] Commit: `feat: Docker-based e2e install test harness with just install`
 
 ### WB1: CLI Auto-Launch + Asset Path Fix
-- [ ] `crates/capsem/src/paths.rs` -- discover_paths() with installed-first, dev fallback
-- [ ] `crates/capsem/src/main.rs` -- try_ensure_service() (systemd/launchctl if unit exists, else direct spawn)
-- [ ] `crates/capsem/src/main.rs` -- consolidate post()/get()/delete() into request() with retry-on-connect-fail
-- [ ] `crates/capsem/src/main.rs` -- route Version before UdsClient creation
-- [ ] `crates/capsem-mcp/src/main.rs:96-100` -- installed-first asset path fallback
-- [ ] `tests/capsem-install/test_auto_launch.py` -- 5 tests (3 happy + 2 error: bad binary, missing assets)
+- [x] `crates/capsem/src/paths.rs` -- discover_paths() with installed-first, dev fallback
+- [x] `crates/capsem/src/main.rs` -- try_ensure_service() (systemd/launchctl if unit exists, else direct spawn)
+- [x] `crates/capsem/src/main.rs` -- consolidate post()/get()/delete() into request() with retry-on-connect-fail
+- [x] `crates/capsem/src/main.rs` -- route Version before UdsClient creation (was already done in Phase 0)
+- [x] `crates/capsem-mcp/src/main.rs:96-100` -- installed-first asset path fallback
+- [x] `tests/capsem-install/test_auto_launch.py` -- 5 tests (3 happy + 2 error: bad binary, missing assets)
 - [ ] Commit: `feat: CLI auto-launches service on first command`
 
 ### WB3: Service Installation Commands

@@ -1,3 +1,5 @@
+mod paths;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Context, Result};
@@ -9,6 +11,7 @@ use hyper::Request;
 use http_body_util::{BodyExt, Full};
 use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::{info, error};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -273,69 +276,133 @@ impl UdsClient {
         Self { uds_path }
     }
 
-    async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, path: &str, body: T) -> Result<R> {
-        let stream = UnixStream::connect(&self.uds_path).await
-            .context("failed to connect to service socket")?;
-        let io = TokioIo::new(stream);
+    /// Try to ensure the service is running. Checks socket, tries service manager
+    /// (systemd/launchctl) if a unit is installed, falls back to direct spawn.
+    async fn try_ensure_service(&self) -> Result<()> {
+        if UnixStream::connect(&self.uds_path).await.is_ok() {
+            return Ok(());
+        }
 
+        info!("Service not responding, attempting to launch...");
+
+        // Try platform service manager first (systemd/launchctl)
+        match paths::try_start_via_service_manager().await {
+            Ok(true) => {
+                info!("Service start requested via service manager");
+                // Wait for socket
+                for _ in 0..50 {
+                    if UnixStream::connect(&self.uds_path).await.is_ok() {
+                        info!("Service responding after service manager start");
+                        return Ok(());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                // Service manager started it but socket not ready -- fall through to direct spawn
+                info!("Service manager start did not produce socket, trying direct spawn");
+            }
+            Ok(false) => {} // No unit installed, direct spawn
+            Err(e) => {
+                info!(error = %e, "Service manager start failed, trying direct spawn");
+            }
+        }
+
+        // Direct spawn fallback
+        let paths = paths::discover_paths()
+            .context("cannot find capsem binaries for auto-launch")?;
+
+        if !paths.service_bin.exists() {
+            return Err(anyhow::anyhow!(
+                "capsem-service not found at {}",
+                paths.service_bin.display()
+            ));
+        }
+
+        info!(
+            service = %paths.service_bin.display(),
+            assets = %paths.assets_dir.display(),
+            "spawning service directly"
+        );
+
+        let mut child = tokio::process::Command::new(&paths.service_bin)
+            .arg("--foreground")
+            .arg("--assets-dir").arg(&paths.assets_dir)
+            .arg("--process-binary").arg(&paths.process_bin)
+            .spawn()
+            .context("failed to spawn capsem-service")?;
+
+        // Wait up to 5s for socket
+        for _ in 0..50 {
+            if UnixStream::connect(&self.uds_path).await.is_ok() {
+                info!("Service spawned and responding");
+                // Reaper so child doesn't become a zombie
+                tokio::spawn(async move {
+                    let _ = child.wait().await;
+                });
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        Err(anyhow::anyhow!("capsem-service failed to start within 5s"))
+    }
+
+    /// Unified HTTP request over UDS. Retries once via try_ensure_service() on
+    /// connection failure.
+    async fn request<T: Serialize, R: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<T>,
+    ) -> Result<R> {
+        let stream = match UnixStream::connect(&self.uds_path).await {
+            Ok(s) => s,
+            Err(_) => {
+                self.try_ensure_service().await?;
+                UnixStream::connect(&self.uds_path).await
+                    .context("failed to connect to service socket after auto-launch")?
+            }
+        };
+
+        let io = TokioIo::new(stream);
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         tokio::task::spawn(async move {
             if let Err(err) = conn.await {
-                eprintln!("Connection failed: {:?}", err);
+                error!("Connection failed: {:?}", err);
             }
         });
 
-        let json = serde_json::to_vec(&body)?;
-        let req = Request::post(format!("http://localhost{}", path))
-            .header("Content-Type", "application/json")
-            .body(Full::new(Bytes::from(json)))?;
+        let builder = Request::builder()
+            .method(method)
+            .uri(format!("http://localhost{}", path))
+            .header("Content-Type", "application/json");
+
+        let req = if let Some(b) = body {
+            let json = serde_json::to_vec(&b)?;
+            builder.body(Full::new(Bytes::from(json)))?
+        } else {
+            builder.body(Full::new(Bytes::new()))?
+        };
 
         let res = sender.send_request(req).await?;
-        let body = res.collect().await?.to_bytes();
+        let body_bytes = res.collect().await?.to_bytes();
+        serde_json::from_slice(&body_bytes).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to parse response: {e}. Body: {:?}",
+                String::from_utf8_lossy(&body_bytes)
+            )
+        })
+    }
 
-        serde_json::from_slice(&body).map_err(|e| anyhow::anyhow!("failed to parse response: {e}. Body: {:?}", String::from_utf8_lossy(&body)))
+    async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, path: &str, body: T) -> Result<R> {
+        self.request("POST", path, Some(body)).await
     }
 
     async fn get<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
-        let stream = UnixStream::connect(&self.uds_path).await
-            .context("failed to connect to service socket")?;
-        let io = TokioIo::new(stream);
-
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::task::spawn(async move {
-            if let Err(err) = conn.await {
-                eprintln!("Connection failed: {:?}", err);
-            }
-        });
-
-        let req = Request::get(format!("http://localhost{}", path))
-            .body(Full::<Bytes>::new(Bytes::new()))?;
-
-        let res = sender.send_request(req).await?;
-        let body = res.collect().await?.to_bytes();
-
-        serde_json::from_slice(&body).map_err(|e| anyhow::anyhow!("failed to parse response: {e}. Body: {:?}", String::from_utf8_lossy(&body)))
+        self.request::<(), R>("GET", path, None).await
     }
 
     async fn delete<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
-        let stream = UnixStream::connect(&self.uds_path).await
-            .context("failed to connect to service socket")?;
-        let io = TokioIo::new(stream);
-
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::task::spawn(async move {
-            if let Err(err) = conn.await {
-                eprintln!("Connection failed: {:?}", err);
-            }
-        });
-
-        let req = Request::delete(format!("http://localhost{}", path))
-            .body(Full::<Bytes>::new(Bytes::new()))?;
-
-        let res = sender.send_request(req).await?;
-        let body = res.collect().await?.to_bytes();
-
-        serde_json::from_slice(&body).map_err(|e| anyhow::anyhow!("failed to parse response: {e}. Body: {:?}", String::from_utf8_lossy(&body)))
+        self.request::<(), R>("DELETE", path, None).await
     }
 }
 
