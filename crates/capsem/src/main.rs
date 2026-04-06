@@ -1,4 +1,5 @@
 mod paths;
+mod service_install;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -148,6 +149,19 @@ enum Commands {
     Version,
     /// Run diagnostic tests in a fresh VM
     Doctor,
+    /// Manage the capsem service daemon (install/uninstall/status)
+    #[command(subcommand)]
+    Service(ServiceCommands),
+}
+
+#[derive(Subcommand)]
+enum ServiceCommands {
+    /// Install capsem as a system service (LaunchAgent on macOS, systemd on Linux)
+    Install,
+    /// Uninstall the capsem system service
+    Uninstall,
+    /// Show service installation and runtime status
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -579,13 +593,40 @@ async fn main() -> Result<()> {
     let uds_path = cli.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Commands that don't need the service
-    if let Commands::Version = &cli.command {
-        println!(
-            "capsem {} (build {})",
-            env!("CARGO_PKG_VERSION"),
-            env!("CAPSEM_BUILD_HASH")
-        );
-        return Ok(());
+    match &cli.command {
+        Commands::Version => {
+            println!(
+                "capsem {} (build {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("CAPSEM_BUILD_HASH")
+            );
+            return Ok(());
+        }
+        Commands::Service(cmd) => {
+            match cmd {
+                ServiceCommands::Install => {
+                    service_install::install_service().await?;
+                    println!("Service installed.");
+                }
+                ServiceCommands::Uninstall => {
+                    service_install::uninstall_service().await?;
+                    println!("Service uninstalled.");
+                }
+                ServiceCommands::Status => {
+                    let status = service_install::service_status().await?;
+                    println!("Installed: {}", status.installed);
+                    println!("Running:   {}", status.running);
+                    if let Some(pid) = status.pid {
+                        println!("PID:       {}", pid);
+                    }
+                    if let Some(path) = &status.unit_path {
+                        println!("Unit:      {}", path.display());
+                    }
+                }
+            }
+            return Ok(());
+        }
+        _ => {}
     }
 
     let client = UdsClient::new(uds_path);
@@ -859,7 +900,7 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Version => unreachable!("handled before UdsClient creation"),
+        Commands::Version | Commands::Service(_) => unreachable!("handled before UdsClient creation"),
         Commands::Doctor => {
             println!("Running capsem-doctor...");
 
@@ -1317,6 +1358,24 @@ mod tests {
     fn parse_doctor() {
         let cli = Cli::parse_from(["capsem", "doctor"]);
         assert!(matches!(cli.command, Commands::Doctor));
+    }
+
+    #[test]
+    fn parse_service_install() {
+        let cli = Cli::parse_from(["capsem", "service", "install"]);
+        assert!(matches!(cli.command, Commands::Service(ServiceCommands::Install)));
+    }
+
+    #[test]
+    fn parse_service_uninstall() {
+        let cli = Cli::parse_from(["capsem", "service", "uninstall"]);
+        assert!(matches!(cli.command, Commands::Service(ServiceCommands::Uninstall)));
+    }
+
+    #[test]
+    fn parse_service_status() {
+        let cli = Cli::parse_from(["capsem", "service", "status"]);
+        assert!(matches!(cli.command, Commands::Service(ServiceCommands::Status)));
     }
 
     // -----------------------------------------------------------------------

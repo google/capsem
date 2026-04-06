@@ -27,12 +27,12 @@
 - [ ] Commit: `feat: CLI auto-launches service on first command`
 
 ### WB3: Service Installation Commands
-- [ ] `crates/capsem/src/service_install.rs` -- generate_plist(), generate_systemd_unit() (pure)
-- [ ] Rust unit tests for pure generators -- 6 tests (plist XML valid, absolute paths, systemd restart policy, etc.)
-- [ ] `crates/capsem/src/service_install.rs` -- is_service_installed(), install_service(), uninstall_service(), service_status() (side-effecting)
-- [ ] `crates/capsem/src/main.rs` -- Service(ServiceCommands) with Install/Uninstall/Status, dispatch before UdsClient
-- [ ] Update try_ensure_service() to prefer systemd/launchctl when installed
-- [ ] `tests/capsem-install/test_service_install.py` -- 6 tests (4 happy + idempotent + uninstall-when-not-installed)
+- [x] `crates/capsem/src/service_install.rs` -- generate_plist(), generate_systemd_unit() (pure)
+- [x] Rust unit tests for pure generators -- 6 tests (plist XML valid, absolute paths, systemd restart policy, etc.)
+- [x] `crates/capsem/src/service_install.rs` -- is_service_installed(), install_service(), uninstall_service(), service_status() (side-effecting)
+- [x] `crates/capsem/src/main.rs` -- Service(ServiceCommands) with Install/Uninstall/Status, dispatch before UdsClient
+- [x] Update try_ensure_service() to prefer systemd/launchctl when installed (done in WB1)
+- [x] `tests/capsem-install/test_service_install.py` -- 6 tests (4 happy + idempotent + uninstall-when-not-installed)
 - [ ] Commit: `feat: capsem service install/uninstall/status`
 
 ### WB5: Remote Manifest + Background Download
