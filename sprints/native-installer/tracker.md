@@ -67,13 +67,13 @@
 - [ ] Commit: `feat: capsem setup interactive wizard`
 
 ### WB4: Self-Update
-- [ ] Add `self-replace`, `semver`, `tempfile`, `clap_complete` to `crates/capsem/Cargo.toml`
-- [ ] `crates/capsem/src/platform.rs` -- InstallLayout enum + detect_install_layout()
-- [ ] `crates/capsem/src/update.rs` -- read_cached_update_notice(), refresh_update_cache_if_stale()
-- [ ] `crates/capsem/src/update.rs` -- run_update() with atomic download-all-then-swap sequence
-- [ ] `crates/capsem/src/main.rs` -- Update { yes } command, background cache refresh after dispatch
-- [ ] Background corp config refresh (tokio::spawn after dispatch)
-- [ ] `tests/capsem-install/test_update.py` -- 4 tests (3 happy + partial-failure-preserves-old)
+- [x] Add `self-replace`, `semver` to `crates/capsem/Cargo.toml`
+- [x] `crates/capsem/src/platform.rs` -- InstallLayout enum + detect_install_layout()
+- [x] `crates/capsem/src/update.rs` -- read_cached_update_notice(), refresh_update_cache_if_stale()
+- [x] `crates/capsem/src/update.rs` -- run_update() with atomic download-all-then-swap sequence
+- [x] `crates/capsem/src/main.rs` -- Update { yes } command, background cache refresh after dispatch
+- [ ] Background corp config refresh (tokio::spawn after dispatch) -- deferred to when corp config is more common
+- [x] `tests/capsem-install/test_update.py` -- 4 tests (3 happy + partial-failure-preserves-old)
 - [ ] Commit: `feat: capsem update with asset vacuum`
 
 ### Polish: Completions + Uninstall

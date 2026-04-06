@@ -1,6 +1,8 @@
 mod paths;
+mod platform;
 mod service_install;
 mod setup;
+mod update;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -153,6 +155,12 @@ enum Commands {
     /// Manage the capsem service daemon (install/uninstall/status)
     #[command(subcommand)]
     Service(ServiceCommands),
+    /// Check for updates and install the latest version
+    Update {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
     /// Run the first-time setup wizard
     Setup {
         /// Run without prompts (accept defaults or detected values)
@@ -611,6 +619,11 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| PathBuf::from(home).join(".capsem").join("run"));
     let uds_path = cli.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
+    // Show update notice if available (sync file read, no latency)
+    if let Some(notice) = update::read_cached_update_notice() {
+        eprintln!("{}", notice);
+    }
+
     // Commands that don't need the service
     match &cli.command {
         Commands::Version => {
@@ -643,6 +656,10 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+            return Ok(());
+        }
+        Commands::Update { yes } => {
+            update::run_update(*yes).await?;
             return Ok(());
         }
         Commands::Setup { non_interactive, preset, force, accept_detected, corp_config } => {
@@ -930,7 +947,7 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Version | Commands::Service(_) | Commands::Setup { .. } => {
+        Commands::Version | Commands::Service(_) | Commands::Setup { .. } | Commands::Update { .. } => {
             unreachable!("handled before UdsClient creation")
         }
         Commands::Doctor => {
@@ -975,6 +992,9 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Background update check (fire-and-forget)
+    tokio::spawn(update::refresh_update_cache_if_stale());
 
     Ok(())
 }
@@ -1444,6 +1464,24 @@ mod tests {
                 assert!(non_interactive);
             }
             _ => panic!("expected Setup"),
+        }
+    }
+
+    #[test]
+    fn parse_update() {
+        let cli = Cli::parse_from(["capsem", "update"]);
+        match cli.command {
+            Commands::Update { yes } => assert!(!yes),
+            _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn parse_update_yes() {
+        let cli = Cli::parse_from(["capsem", "update", "--yes"]);
+        match cli.command {
+            Commands::Update { yes } => assert!(yes),
+            _ => panic!("expected Update"),
         }
     }
 
