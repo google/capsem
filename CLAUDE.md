@@ -7,8 +7,10 @@ Sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualizatio
 ```bash
 just doctor        # Check tools (first time)
 just build-assets  # Build kernel + rootfs (first time, needs docker via Colima on macOS)
-just run           # Build + boot VM (~10s)
-just test          # Unit tests + cross-compile + frontend check
+just shell         # Build + boot VM (~10s)
+just smoke         # Fast path: doctor + integration tests
+just install       # Smoke + install to ~/.capsem/
+just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
 ```
 
 See `/dev-just` for the full recipe reference and dependency chains.

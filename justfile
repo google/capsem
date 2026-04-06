@@ -8,7 +8,7 @@
 #   _check-assets   verifies VM assets exist, tells you to run build-assets if not
 #   audit           checks for known vulnerabilities in Rust + npm deps (gates all paths)
 #
-#   run             -> audit + _check-assets + _pack-initrd + run-service
+#   shell           -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
 #   test            -> audit + _install-tools + _check-assets + _pack-initrd + cross-compile + test-install (ALL tests)
 #   build-assets    -> doctor + _install-tools + _clean-stale + audit
 #   dev             -> _ensure-setup + _pnpm-install
@@ -18,7 +18,8 @@
 #   test-service    -> _check-assets + _pack-initrd (service HTTP API tests)
 #   test-cli        -> _check-assets + _pack-initrd (CLI integration tests)
 #   cut-release     -> test
-#   install         -> _build-host (build + install to ~/.capsem/)
+#   smoke           -> _check-assets + _pack-initrd + _ensure-service (fast path: doctor + integration)
+#   install         -> smoke (verify first, then install to ~/.capsem/)
 #   test-install    -> _build-host (Docker e2e: systemd + install layout)
 #
 # Service daemon:
@@ -31,9 +32,9 @@
 #   just doctor       (shows what's missing)
 #   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker via Colima on macOS)
 #
-# Daily dev:          just run     (service daemon + temp VM + shell, ~10s)
+# Daily dev:          just shell   (service daemon + temp VM + shell, ~10s)
 #                     just ui      (service + Tauri GUI with hot-reload)
-# Local install:      just install (build + install to ~/.capsem/ for testing)
+# Local install:      just install (smoke test + install to ~/.capsem/)
 # Releases:           just cut-release (test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps (cargo update + pnpm update)
 # Disk cleanup:       just clean   (nuke target/ + frontend build, ~100 GB)
@@ -109,20 +110,12 @@ ui: _ensure-setup _pnpm-install run-service
 dev-frontend: _pnpm-install
     cd frontend && pnpm run dev
 
-# Full rebuild + boot temporary VM via service daemon
-full-run: build-assets run-service
-    {{cli_binary}} shell
-
 # Start service daemon + boot temporary VM + shell (~10s after first build)
-run: audit _check-assets _pack-initrd run-service
+shell: _check-assets _pack-initrd _ensure-service
     {{cli_binary}} shell
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
 run-service: _check-assets _pack-initrd _ensure-service
-
-# Shell into a temporary VM (auto-deleted on exit)
-shell: run-service
-    {{cli_binary}} shell
 
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
@@ -388,10 +381,11 @@ test-injection: _check-assets _pack-initrd _sign
 bench: _ensure-setup _check-assets _sign
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
-# Build and install to ~/.capsem/ for local testing
-install: _build-host
+# Smoke test then install to ~/.capsem/ (verifies everything works before installing)
+install: smoke
     #!/bin/bash
     set -euo pipefail
+    echo "=== Installing to ~/.capsem/ ==="
     bash scripts/simulate-install.sh target/debug {{assets_dir}}
     # Sign on macOS (required for Virtualization.framework)
     if [[ "$(uname -s)" == "Darwin" ]]; then
