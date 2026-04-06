@@ -9,7 +9,7 @@
 #   audit           checks for known vulnerabilities in Rust + npm deps (gates all paths)
 #
 #   run             -> audit + _check-assets + _pack-initrd + run-service
-#   test            -> audit + _install-tools + _check-assets + _pack-initrd (ALL tests: unit + integration + VM)
+#   test            -> audit + _install-tools + _check-assets + _pack-initrd + cross-compile + test-install (ALL tests)
 #   build-assets    -> doctor + _install-tools + _clean-stale + audit
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
@@ -186,7 +186,7 @@ update-deps: _pnpm-install
     echo ""
     echo "Done. Run 'just audit' to verify, then 'just test' to confirm nothing broke."
 
-# Run ALL tests: Rust (warnings=errors for service crates) + cross-compile + frontend + all Python integration
+# Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
 test: _install-tools _clean-stale audit _pnpm-install _generate-settings _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
@@ -218,6 +218,12 @@ test: _install-tools _clean-stale audit _pnpm-install _generate-settings _check-
 
     echo "=== Benchmarks ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
+
+    echo "=== Cross-compile Linux release (Docker) ==="
+    just cross-compile
+
+    echo "=== Install e2e tests (Docker + systemd) ==="
+    just test-install
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 # See docker/Dockerfile.host-builder for contents.
@@ -357,7 +363,7 @@ _generate-settings:
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
-# Quick validation: build, sign, doctor, MCP + service + CLI integration tests
+# Fast path: build, sign, doctor, MCP + service + CLI integration tests (no Docker, no cross-compile)
 smoke: _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
