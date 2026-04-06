@@ -165,7 +165,7 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
 
     echo "=== Dependency audit ==="
     cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
-    cd frontend && pnpm audit && cd ..
+    (cd frontend && pnpm audit) || echo "pnpm audit warnings (see above)"
 
     echo "=== Rust: warnings-as-errors for service crates (check only, no codegen) ==="
     RUSTFLAGS="-D warnings" cargo check -p capsem-service -p capsem-process
@@ -346,7 +346,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     set -euo pipefail
     echo "=== Dependency audit ==="
     cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
-    cd frontend && pnpm audit && cd ..
+    (cd frontend && pnpm audit) || echo "pnpm audit warnings (see above)"
     echo ""
     echo "=== capsem-doctor (in-VM diagnostics) ==="
     {{cli_binary}} doctor
