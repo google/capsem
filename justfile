@@ -6,18 +6,17 @@
 #   doctor          read-only check of all required tools, writes .dev-setup (user-facing)
 #   _install-tools  auto-installs rust targets, components, cargo tools (internal)
 #   _check-assets   verifies VM assets exist, tells you to run build-assets if not
-#   audit           checks for known vulnerabilities in Rust + npm deps (gates all paths)
 #
 #   shell           -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
-#   test            -> audit + _install-tools + _check-assets + _pack-initrd + cross-compile + test-install (ALL tests)
-#   build-assets    -> doctor + _install-tools + _clean-stale + audit
+#   test            -> _install-tools + _check-assets + _pack-initrd + audit + cross-compile + test-install (ALL tests)
+#   build-assets    -> doctor + _install-tools + _clean-stale
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
 #   test-mcp        -> _check-assets + _pack-initrd (MCP integration tests, boots VMs)
 #   test-service    -> _check-assets + _pack-initrd (service HTTP API tests)
 #   test-cli        -> _check-assets + _pack-initrd (CLI integration tests)
 #   cut-release     -> test
-#   smoke           -> _check-assets + _pack-initrd + _ensure-service (fast path: doctor + integration)
+#   smoke           -> _check-assets + _pack-initrd + _ensure-service (fast path: audit + doctor + integration)
 #   install         -> smoke (verify first, then install to ~/.capsem/)
 #   test-install    -> _build-host (Docker e2e: systemd + install layout)
 #
@@ -121,7 +120,7 @@ exec +CMD: run-service
 
 
 # VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch to build one.
-build-assets arch="": _install-tools _clean-stale audit
+build-assets arch="": _install-tools _clean-stale
     #!/bin/bash
     set -euo pipefail
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
@@ -146,18 +145,6 @@ build-assets arch="": _install-tools _clean-stale audit
     echo "=== Generating checksums ==="
     uv run python3 -c 'from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path(".")); generate_checksums(Path("{{assets_dir}}"), v); print(f"manifest.json generated (v{v})")'
 
-# Dependency audit: check for known vulnerabilities in Rust and npm deps
-audit: _ensure-setup _install-tools _pnpm-install
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Cargo audit ==="
-    cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
-    echo ""
-    echo "=== Frontend audit ==="
-    cd frontend && pnpm audit
-    echo ""
-    echo "All dependencies clean. If vulnerabilities found, run: just update-deps"
-
 # Update all dependencies (Rust + npm) to latest compatible versions
 update-deps: _pnpm-install
     #!/bin/bash
@@ -168,12 +155,16 @@ update-deps: _pnpm-install
     echo "=== Frontend update ==="
     cd frontend && pnpm update
     echo ""
-    echo "Done. Run 'just audit' to verify, then 'just test' to confirm nothing broke."
+    echo "Done. Run 'just smoke' to verify nothing broke."
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
-test: _install-tools _clean-stale audit _pnpm-install _generate-settings _check-assets _pack-initrd
+test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
+
+    echo "=== Dependency audit ==="
+    cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
+    cd frontend && pnpm audit && cd ..
 
     echo "=== Rust: warnings-as-errors for service crates (check only, no codegen) ==="
     RUSTFLAGS="-D warnings" cargo check -p capsem-service -p capsem-process
@@ -347,10 +338,14 @@ _generate-settings:
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
-# Fast path: build, sign, doctor, injection, integration tests (no Docker, no cross-compile)
-smoke: _check-assets _pack-initrd _ensure-service
+# Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
+smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
+    echo "=== Dependency audit ==="
+    cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
+    cd frontend && pnpm audit && cd ..
+    echo ""
     echo "=== capsem-doctor (in-VM diagnostics) ==="
     {{cli_binary}} doctor
     echo ""
