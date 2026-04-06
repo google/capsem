@@ -36,9 +36,9 @@
 - [ ] Commit: `feat: capsem service install/uninstall/status`
 
 ### WB5: Remote Manifest + Background Download
-- [ ] `crates/capsem-core/src/asset_manager.rs` -- fetch_remote_manifest()
-- [ ] `crates/capsem-core/src/asset_manager.rs` -- fetch_latest_manifest()
-- [ ] `crates/capsem-core/src/asset_manager.rs` -- start_background_download() with BackgroundProgress channel
+- [x] `crates/capsem-core/src/asset_manager.rs` -- fetch_remote_manifest()
+- [x] `crates/capsem-core/src/asset_manager.rs` -- fetch_latest_manifest()
+- [x] `crates/capsem-core/src/asset_manager.rs` -- start_background_download() with BackgroundProgress channel
 - [ ] Commit: `feat: remote manifest fetch and background asset download`
 
 ### WB2a: Corp Config Provisioning

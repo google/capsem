@@ -630,6 +630,203 @@ pub fn release_url(version: &str) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Remote manifest fetch and background download
+// ---------------------------------------------------------------------------
+
+/// GitHub API URL for the latest release.
+const GITHUB_LATEST_RELEASE: &str =
+    "https://api.github.com/repos/google/capsem/releases/latest";
+
+/// Fetch a remote manifest.json for a specific version from GitHub releases.
+pub async fn fetch_remote_manifest(
+    client: &reqwest::Client,
+    version: &str,
+) -> Result<Manifest> {
+    validate_version(version)?;
+    let url = format!("{}/manifest.json", release_url(version));
+    info!(url = %url, "fetching remote manifest");
+
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/octet-stream")
+        .send()
+        .await
+        .context("failed to fetch remote manifest")?;
+
+    if !resp.status().is_success() {
+        bail!(
+            "remote manifest fetch failed: HTTP {} for {}",
+            resp.status(),
+            url
+        );
+    }
+
+    let body = resp.text().await.context("failed to read manifest body")?;
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
+    Manifest::from_json_for_arch(&body, arch)
+}
+
+/// Fetch the latest release version and its manifest from GitHub.
+///
+/// Uses the GitHub Releases API to discover the latest tag, then fetches
+/// the manifest.json for that version.
+pub async fn fetch_latest_manifest(
+    client: &reqwest::Client,
+) -> Result<(String, Manifest)> {
+    info!("fetching latest release info from GitHub");
+
+    let resp = client
+        .get(GITHUB_LATEST_RELEASE)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "capsem")
+        .send()
+        .await
+        .context("failed to fetch latest release info")?;
+
+    if !resp.status().is_success() {
+        bail!(
+            "GitHub releases API returned HTTP {}",
+            resp.status()
+        );
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .context("failed to parse GitHub releases response")?;
+
+    let tag = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("no tag_name in GitHub release response"))?;
+
+    // Strip leading 'v' if present (e.g. "v0.16.1" -> "0.16.1")
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    info!(version = %version, "latest release found");
+
+    let manifest = fetch_remote_manifest(client, version).await?;
+    Ok((version.to_string(), manifest))
+}
+
+/// Progress updates from a background download task.
+#[derive(Debug, Clone)]
+pub enum BackgroundProgress {
+    /// Download is starting.
+    Starting { total_assets: usize },
+    /// Progress for a single asset download.
+    Progress(DownloadProgress),
+    /// A single asset has been downloaded and verified.
+    AssetComplete { filename: String },
+    /// All assets have been downloaded.
+    AllComplete,
+    /// An error occurred during download.
+    Error(String),
+}
+
+/// Result of a background download.
+#[derive(Debug)]
+pub struct BackgroundDownloadResult {
+    pub downloaded: usize,
+    pub skipped: usize,
+    pub failed: usize,
+}
+
+/// Start downloading assets in the background.
+///
+/// Spawns a tokio task that creates an AssetManager from the manifest,
+/// checks which assets need downloading, and downloads them. Progress
+/// updates are sent on the returned channel.
+pub fn start_background_download(
+    manifest: Manifest,
+    version: String,
+    assets_base_dir: PathBuf,
+    arch: Option<String>,
+) -> (
+    tokio::task::JoinHandle<Result<BackgroundDownloadResult>>,
+    tokio::sync::mpsc::Receiver<BackgroundProgress>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+
+    let handle = tokio::spawn(async move {
+        let am = AssetManager::from_manifest(
+            &manifest,
+            &version,
+            assets_base_dir,
+            arch.as_deref(),
+        )?;
+
+        let statuses = am.check_all()?;
+        let needs_download: Vec<_> = statuses
+            .iter()
+            .filter(|(_, s)| matches!(s, AssetStatus::NeedsDownload { .. }))
+            .collect();
+
+        let total = needs_download.len();
+        let skipped = statuses.len() - total;
+
+        let _ = tx
+            .send(BackgroundProgress::Starting {
+                total_assets: total,
+            })
+            .await;
+
+        if total == 0 {
+            let _ = tx.send(BackgroundProgress::AllComplete).await;
+            return Ok(BackgroundDownloadResult {
+                downloaded: 0,
+                skipped,
+                failed: 0,
+            });
+        }
+
+        let client = reqwest::Client::new();
+        let mut downloaded = 0usize;
+        let mut failed = 0usize;
+
+        for (filename, _status) in &needs_download {
+            let tx_clone = tx.clone();
+            let fname = filename.clone();
+            let progress_cb = move |p: DownloadProgress| {
+                let _ = tx_clone.try_send(BackgroundProgress::Progress(p));
+            };
+
+            match am.download_asset(filename, &client, progress_cb).await {
+                Ok(_) => {
+                    downloaded += 1;
+                    let _ = tx
+                        .send(BackgroundProgress::AssetComplete {
+                            filename: fname,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    failed += 1;
+                    let _ = tx
+                        .send(BackgroundProgress::Error(format!(
+                            "{}: {}",
+                            fname, e
+                        )))
+                        .await;
+                }
+            }
+        }
+
+        let _ = tx.send(BackgroundProgress::AllComplete).await;
+        Ok(BackgroundDownloadResult {
+            downloaded,
+            skipped,
+            failed,
+        })
+    });
+
+    (handle, rx)
+}
+
 /// Clean up old versioned asset directories, keeping current + pinned versions.
 /// Also protects any base versions referenced by images in the ImageRegistry.
 ///
