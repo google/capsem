@@ -1,5 +1,6 @@
 mod paths;
 mod service_install;
+mod setup;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -152,6 +153,24 @@ enum Commands {
     /// Manage the capsem service daemon (install/uninstall/status)
     #[command(subcommand)]
     Service(ServiceCommands),
+    /// Run the first-time setup wizard
+    Setup {
+        /// Run without prompts (accept defaults or detected values)
+        #[arg(long)]
+        non_interactive: bool,
+        /// Security preset to apply (medium or high)
+        #[arg(long)]
+        preset: Option<String>,
+        /// Re-run all steps even if previously completed
+        #[arg(long)]
+        force: bool,
+        /// Auto-accept detected credentials without prompting
+        #[arg(long)]
+        accept_detected: bool,
+        /// Provision corp config from URL or file path
+        #[arg(long)]
+        corp_config: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -626,6 +645,17 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Commands::Setup { non_interactive, preset, force, accept_detected, corp_config } => {
+            let opts = setup::SetupOptions {
+                non_interactive: *non_interactive,
+                preset: preset.clone(),
+                force: *force,
+                accept_detected: *accept_detected,
+                corp_config: corp_config.clone(),
+            };
+            setup::run_setup(opts).await?;
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -900,7 +930,9 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Version | Commands::Service(_) => unreachable!("handled before UdsClient creation"),
+        Commands::Version | Commands::Service(_) | Commands::Setup { .. } => {
+            unreachable!("handled before UdsClient creation")
+        }
         Commands::Doctor => {
             println!("Running capsem-doctor...");
 
@@ -1376,6 +1408,43 @@ mod tests {
     fn parse_service_status() {
         let cli = Cli::parse_from(["capsem", "service", "status"]);
         assert!(matches!(cli.command, Commands::Service(ServiceCommands::Status)));
+    }
+
+    #[test]
+    fn parse_setup_non_interactive() {
+        let cli = Cli::parse_from(["capsem", "setup", "--non-interactive"]);
+        match cli.command {
+            Commands::Setup { non_interactive, preset, force, .. } => {
+                assert!(non_interactive);
+                assert_eq!(preset, None);
+                assert!(!force);
+            }
+            _ => panic!("expected Setup"),
+        }
+    }
+
+    #[test]
+    fn parse_setup_with_preset_and_force() {
+        let cli = Cli::parse_from(["capsem", "setup", "--preset", "high", "--force"]);
+        match cli.command {
+            Commands::Setup { preset, force, .. } => {
+                assert_eq!(preset, Some("high".into()));
+                assert!(force);
+            }
+            _ => panic!("expected Setup"),
+        }
+    }
+
+    #[test]
+    fn parse_setup_with_corp_config() {
+        let cli = Cli::parse_from(["capsem", "setup", "--corp-config", "https://example.com/corp.toml", "--non-interactive"]);
+        match cli.command {
+            Commands::Setup { corp_config, non_interactive, .. } => {
+                assert_eq!(corp_config, Some("https://example.com/corp.toml".into()));
+                assert!(non_interactive);
+            }
+            _ => panic!("expected Setup"),
+        }
     }
 
     // -----------------------------------------------------------------------

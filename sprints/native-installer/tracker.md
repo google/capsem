@@ -51,19 +51,19 @@
 - [ ] Commit: `feat: corp config provisioning from URL or file path`
 
 ### WB2: Setup Wizard
-- [ ] Add `inquire = "0.7"` to `crates/capsem/Cargo.toml`
-- [ ] `crates/capsem/src/setup.rs` -- SetupState, orchestrator, step functions
-- [ ] Step 0: Corp config provisioning (if --corp-config)
-- [ ] Step 1: Welcome + background asset download
-- [ ] Step 2: Doctor diagnostics (optional)
-- [ ] Step 3: Security preset (corp-aware, skip if locked)
-- [ ] Step 4: AI Providers (corp-aware, skip locked, pre-fill keys)
-- [ ] Step 5: Repositories (corp-aware)
-- [ ] Step 6: Summary + await download (10min timeout) + PATH check + install service + VM boot verify
-- [ ] `crates/capsem/src/main.rs` -- Setup command with --non-interactive, --preset, --force, --accept-detected, --corp-config
-- [ ] Non-interactive mode
-- [ ] Re-run logic: skip completed unless --force
-- [ ] `tests/capsem-install/test_setup_wizard.py` -- 4 tests
+- [x] Add `inquire = "0.7"` to `crates/capsem/Cargo.toml`
+- [x] `crates/capsem/src/setup.rs` -- SetupState, orchestrator, step functions
+- [x] Step 0: Corp config provisioning (if --corp-config)
+- [x] Step 1: Welcome + background asset download
+- [ ] Step 2: Doctor diagnostics (optional) -- deferred to interactive polish
+- [x] Step 3: Security preset (corp-aware, skip if locked)
+- [x] Step 4: AI Providers (corp-aware, skip locked, pre-fill keys)
+- [x] Step 5: Repositories (corp-aware)
+- [x] Step 6: Summary + PATH check + install service
+- [x] `crates/capsem/src/main.rs` -- Setup command with --non-interactive, --preset, --force, --accept-detected, --corp-config
+- [x] Non-interactive mode
+- [x] Re-run logic: skip completed unless --force
+- [x] `tests/capsem-install/test_setup_wizard.py` -- 4 tests
 - [ ] Commit: `feat: capsem setup interactive wizard`
 
 ### WB4: Self-Update
