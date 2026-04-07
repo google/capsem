@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use anyhow::{Context, Result};
 
+use crate::service_install;
+
 /// Resolved paths for capsem binaries and assets.
 #[derive(Debug)]
 pub struct CapsemPaths {
@@ -19,37 +21,12 @@ pub fn discover_paths() -> Result<CapsemPaths> {
         .ok_or_else(|| anyhow::anyhow!("executable path has no parent: {}", exe_path.display()))?;
 
     let home = std::env::var("HOME").context("HOME not set")?;
-    let assets_dir = PathBuf::from(&home).join(".capsem").join("assets");
 
     Ok(CapsemPaths {
         service_bin: bin_dir.join("capsem-service"),
         process_bin: bin_dir.join("capsem-process"),
-        assets_dir,
+        assets_dir: assets_dir_from_home(&home),
     })
-}
-
-/// Check if a systemd user unit for capsem is installed.
-#[cfg(target_os = "linux")]
-pub fn systemd_unit_installed() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("HOME") {
-        let unit = PathBuf::from(home).join(".config/systemd/user/capsem.service");
-        if unit.exists() {
-            return Some(unit);
-        }
-    }
-    None
-}
-
-/// Check if a LaunchAgent plist for capsem is installed.
-#[cfg(target_os = "macos")]
-pub fn launchagent_installed() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("HOME") {
-        let plist = PathBuf::from(home).join("Library/LaunchAgents/com.capsem.service.plist");
-        if plist.exists() {
-            return Some(plist);
-        }
-    }
-    None
 }
 
 /// Build the assets dir path from HOME. Separate function for testability.
@@ -57,30 +34,12 @@ pub fn assets_dir_from_home(home: &str) -> PathBuf {
     PathBuf::from(home).join(".capsem").join("assets")
 }
 
-/// Build the expected service spawn args from discovered paths.
-/// This is the contract between CLI auto-launch and the service binary.
-pub struct ServiceSpawnArgs {
-    pub service_bin: PathBuf,
-    pub assets_dir: PathBuf,
-    pub process_bin: PathBuf,
-}
-
-impl ServiceSpawnArgs {
-    pub fn from_paths(paths: &CapsemPaths) -> Self {
-        Self {
-            service_bin: paths.service_bin.clone(),
-            assets_dir: paths.assets_dir.clone(),
-            process_bin: paths.process_bin.clone(),
-        }
-    }
-}
-
 /// Try to start the service via the platform service manager.
 /// Returns Ok(true) if started via service manager, Ok(false) if no unit installed.
 pub async fn try_start_via_service_manager() -> Result<bool> {
     #[cfg(target_os = "linux")]
     {
-        if systemd_unit_installed().is_some() {
+        if service_install::systemd_unit_path().map(|p| p.exists()).unwrap_or(false) {
             let status = tokio::process::Command::new("systemctl")
                 .args(["--user", "start", "capsem"])
                 .status()
@@ -93,7 +52,7 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
 
     #[cfg(target_os = "macos")]
     {
-        if launchagent_installed().is_some() {
+        if service_install::plist_path().map(|p| p.exists()).unwrap_or(false) {
             let uid = nix::unistd::getuid();
             let status = tokio::process::Command::new("launchctl")
                 .args(["kickstart", &format!("gui/{}/com.capsem.service", uid)])
@@ -200,35 +159,6 @@ mod tests {
             paths.process_bin.file_name().unwrap().to_str().unwrap(),
             "capsem-process"
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // ServiceSpawnArgs: the contract between CLI and service
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn spawn_args_match_service_expectations() {
-        // The service expects: --foreground --assets-dir <dir> --process-binary <bin>
-        // Verify the args struct carries the right paths.
-        let paths = CapsemPaths {
-            service_bin: PathBuf::from("/home/u/.capsem/bin/capsem-service"),
-            process_bin: PathBuf::from("/home/u/.capsem/bin/capsem-process"),
-            assets_dir: PathBuf::from("/home/u/.capsem/assets"),
-        };
-        let args = ServiceSpawnArgs::from_paths(&paths);
-        assert_eq!(args.service_bin, paths.service_bin);
-        assert_eq!(args.process_bin, paths.process_bin);
-        assert_eq!(args.assets_dir, paths.assets_dir);
-    }
-
-    #[test]
-    fn spawn_args_assets_dir_is_base_not_versioned() {
-        // Service does its own v{ver}/ resolution internally.
-        // CLI must pass the base dir, not a versioned subdir.
-        let paths = discover_paths().unwrap();
-        let args = ServiceSpawnArgs::from_paths(&paths);
-        let dirname = args.assets_dir.file_name().unwrap().to_str().unwrap();
-        assert_eq!(dirname, "assets", "must be base dir, not v0.x.y");
     }
 
     // -----------------------------------------------------------------------

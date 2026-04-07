@@ -340,28 +340,41 @@ impl UdsClient {
 
         info!("Service not responding, attempting to launch...");
 
-        // Try platform service manager first (systemd/launchctl)
-        match paths::try_start_via_service_manager().await {
-            Ok(true) => {
-                info!("Service start requested via service manager");
-                // Wait for socket
-                for _ in 0..50 {
-                    if UnixStream::connect(&self.uds_path).await.is_ok() {
-                        info!("Service responding after service manager start");
-                        return Ok(());
+        // If the service is registered with a service manager, use that exclusively.
+        // Direct-spawning when a unit exists would create an unmanaged duplicate.
+        if service_install::is_service_installed() {
+            info!("Service unit installed, using service manager");
+            match paths::try_start_via_service_manager().await {
+                Ok(true) => {
+                    info!("Service start requested via service manager");
+                    for _ in 0..50 {
+                        if UnixStream::connect(&self.uds_path).await.is_ok() {
+                            info!("Service responding after service manager start");
+                            return Ok(());
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    return Err(anyhow::anyhow!(
+                        "Service manager started capsem but socket not ready after 5s. \
+                         Check logs: journalctl --user -u capsem (Linux) or \
+                         ~/Library/Logs/capsem/service.log (macOS)"
+                    ));
                 }
-                // Service manager started it but socket not ready -- fall through to direct spawn
-                info!("Service manager start did not produce socket, trying direct spawn");
-            }
-            Ok(false) => {} // No unit installed, direct spawn
-            Err(e) => {
-                info!(error = %e, "Service manager start failed, trying direct spawn");
+                Ok(false) => {
+                    return Err(anyhow::anyhow!(
+                        "Service unit found but service manager reports not installed"
+                    ));
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Service manager start failed: {}. \
+                         Check logs or reinstall with `capsem service install`", e
+                    ));
+                }
             }
         }
 
-        // Direct spawn fallback
+        // No service unit installed -- direct spawn fallback
         let paths = paths::discover_paths()
             .context("cannot find capsem binaries for auto-launch")?;
 
@@ -974,6 +987,9 @@ async fn main() -> Result<()> {
             unreachable!("handled before UdsClient creation")
         }
         Commands::Doctor => {
+            use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
+            use tokio_unix_ipc::channel_from_std;
+
             println!("Running capsem-doctor...");
 
             let name = format!("doctor-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
@@ -987,31 +1003,64 @@ async fn main() -> Result<()> {
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let vm_id = resp.into_result()?.id;
-            println!("Spawned temporary VM: {}", vm_id);
 
-            let exec_req = ExecRequest {
-                command: "capsem-doctor --json".to_string(),
-                timeout_secs: 60,
-            };
-            let exec_resp: ApiResponse<ExecResponse> = client.post(&format!("/exec/{}", vm_id), exec_req).await?;
-            let exec_resp = exec_resp.into_result()?;
+            // Connect directly to VM socket for streaming output
+            let sock_path = run_dir.join("instances").join(format!("{}.sock", vm_id));
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+            loop {
+                if sock_path.exists() {
+                    if let Ok(stream) = tokio::net::UnixStream::connect(&sock_path).await {
+                        if let Ok(std_stream) = stream.into_std() {
+                            if let Ok((tx, rx)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
+                                // Start streaming + exec doctor
+                                let _ = tx.send(ServiceToProcess::StartTerminalStream).await;
+                                let _ = tx.send(ServiceToProcess::Exec {
+                                    id: 1,
+                                    command: "capsem-doctor --durations=10".to_string(),
+                                }).await;
 
-            println!("\n=== Doctor Results ===");
-            if !exec_resp.stdout.is_empty() {
-                println!("{}", exec_resp.stdout);
-            }
-            if !exec_resp.stderr.is_empty() {
-                eprintln!("{}", exec_resp.stderr);
-            }
-            println!("Exit code: {}", exec_resp.exit_code);
+                                // Stream output until ExecResult arrives
+                                let mut stdout = tokio::io::stdout();
+                                let exit_code = loop {
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(120),
+                                        rx.recv(),
+                                    ).await {
+                                        Ok(Ok(ProcessToService::TerminalOutput { data })) => {
+                                            let _ = stdout.write_all(&data).await;
+                                            let _ = stdout.flush().await;
+                                        }
+                                        Ok(Ok(ProcessToService::ExecResult { exit_code, .. })) => {
+                                            break exit_code;
+                                        }
+                                        Ok(Ok(_)) => continue,
+                                        Ok(Err(e)) => {
+                                            eprintln!("IPC error: {e}");
+                                            break 1;
+                                        }
+                                        Err(_) => {
+                                            eprintln!("Doctor timed out after 120s");
+                                            break 1;
+                                        }
+                                    }
+                                };
 
-            println!("\nCleaning up...");
-            let delete_resp: ApiResponse<serde_json::Value> = client.delete(&format!("/delete/{}", vm_id)).await?;
-            delete_resp.into_result()?;
-            println!("Doctor VM destroyed.");
-
-            if exec_resp.exit_code != 0 {
-                std::process::exit(exec_resp.exit_code);
+                                // Cleanup
+                                let _: Result<ApiResponse<serde_json::Value>, _> = client.delete(&format!("/delete/{}", vm_id)).await;
+                                if exit_code != 0 {
+                                    std::process::exit(exit_code);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    eprintln!("VM did not become ready within 30s");
+                    let _: Result<ApiResponse<serde_json::Value>, _> = client.delete(&format!("/delete/{}", vm_id)).await;
+                    std::process::exit(1);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         }
     }

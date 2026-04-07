@@ -167,8 +167,8 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
     (cd frontend && pnpm audit) || echo "pnpm audit warnings (see above)"
 
-    echo "=== Rust: warnings-as-errors for service crates (check only, no codegen) ==="
-    RUSTFLAGS="-D warnings" cargo check -p capsem-service -p capsem-process
+    echo "=== Rust: warnings-as-errors (all crates) ==="
+    cargo check --workspace
 
     echo "=== Rust: test suite with coverage (compiles + runs all tests) ==="
     cargo llvm-cov --workspace --no-cfg-coverage
@@ -344,6 +344,9 @@ _generate-settings:
 smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
+    echo "=== Rust: warnings-as-errors (all crates) ==="
+    cargo check --workspace
+    echo ""
     echo "=== Dependency audit ==="
     cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
     (cd frontend && pnpm audit) || echo "pnpm audit warnings (see above)"
@@ -828,15 +831,18 @@ _pack-initrd:
         cp "$RELEASE_DIR/$b" .
         chmod 555 "$b"
     done
+    rm -f capsem-doctor
     cp "$ROOT/guest/artifacts/capsem-doctor" capsem-doctor
-    chmod 755 capsem-doctor
+    chmod 555 capsem-doctor
+    rm -f capsem-bench
     cp "$ROOT/guest/artifacts/capsem-bench" capsem-bench
-    chmod 755 capsem-bench
+    chmod 555 capsem-bench
     rm -rf capsem_bench
     cp -r "$ROOT/guest/artifacts/capsem_bench" capsem_bench
     find capsem_bench -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+    rm -f snapshots
     cp "$ROOT/guest/artifacts/snapshots" snapshots
-    chmod 755 snapshots
+    chmod 555 snapshots
     rm -rf diagnostics
     cp -r "$ROOT/guest/artifacts/diagnostics" diagnostics
     find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD"

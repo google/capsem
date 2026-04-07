@@ -37,6 +37,22 @@ Capsem is a security product. Every security-relevant feature needs tests that a
 
 Stress-test boundary conditions. Write tests for the attacks you'd attempt yourself.
 
+## Test fixture anti-pattern: masking races with polling
+
+If all test fixtures wait/poll before asserting, the tests will never catch server-side race conditions. For every endpoint that talks to a VM socket, write at least one test that calls it IMMEDIATELY after provision (no `wait_exec_ready`, no `ready_vm` fixture). The server must handle readiness internally.
+
+**Pattern to avoid** (masks the bug -- server never needs wait logic because client always waits):
+```
+fixture calls provision -> fixture polls wait_exec_ready -> test calls exec
+```
+
+**Required test pattern** (catches the bug -- if server doesn't wait, test fails):
+```
+test calls provision -> test immediately calls exec -> server handles wait
+```
+
+See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that enforce this.
+
 ## Where tests live
 
 - Rust unit: `#[cfg(test)] mod tests` in each module
@@ -74,8 +90,9 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Recovery | `capsem-recovery/` | `recovery` | Yes | Stale socket/instances, orphaned process, double service |
 | Rootfs artifacts | `capsem-rootfs-artifacts/` | `rootfs` | No | Artifact files, build context, doctor consistency |
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
+| Install | `capsem-install/` | `install` | No | Native installer: layout, auto-launch, service install, setup wizard, update, uninstall, lifecycle, reinstall, error paths |
 
-Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test` runs everything.
+Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test-install` runs the install suite in Docker with systemd. `just test` runs everything.
 
 ## Coverage
 

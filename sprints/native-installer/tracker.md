@@ -20,11 +20,12 @@
 ### WB1: CLI Auto-Launch + Asset Path Fix
 - [x] `crates/capsem/src/paths.rs` -- discover_paths() with installed-first, dev fallback
 - [x] `crates/capsem/src/main.rs` -- try_ensure_service() (systemd/launchctl if unit exists, else direct spawn)
+- [x] try_ensure_service() uses is_service_installed() as guard, discover_paths() for direct spawn
 - [x] `crates/capsem/src/main.rs` -- consolidate post()/get()/delete() into request() with retry-on-connect-fail
 - [x] `crates/capsem/src/main.rs` -- route Version before UdsClient creation (was already done in Phase 0)
 - [x] `crates/capsem-mcp/src/main.rs:96-100` -- installed-first asset path fallback
 - [x] `tests/capsem-install/test_auto_launch.py` -- 5 tests (3 happy + 2 error: bad binary, missing assets)
-- [ ] Commit: `feat: CLI auto-launches service on first command`
+- [x] Commit: `feat: CLI auto-launches service on first command`
 
 ### WB3: Service Installation Commands
 - [x] `crates/capsem/src/service_install.rs` -- generate_plist(), generate_systemd_unit() (pure)
@@ -33,13 +34,14 @@
 - [x] `crates/capsem/src/main.rs` -- Service(ServiceCommands) with Install/Uninstall/Status, dispatch before UdsClient
 - [x] Update try_ensure_service() to prefer systemd/launchctl when installed (done in WB1)
 - [x] `tests/capsem-install/test_service_install.py` -- 6 tests (4 happy + idempotent + uninstall-when-not-installed)
-- [ ] Commit: `feat: capsem service install/uninstall/status`
+- [x] Commit: `feat: capsem service install/uninstall/status`
 
 ### WB5: Remote Manifest + Background Download
 - [x] `crates/capsem-core/src/asset_manager.rs` -- fetch_remote_manifest()
 - [x] `crates/capsem-core/src/asset_manager.rs` -- fetch_latest_manifest()
 - [x] `crates/capsem-core/src/asset_manager.rs` -- start_background_download() with BackgroundProgress channel
-- [ ] Commit: `feat: remote manifest fetch and background asset download`
+- [x] start_background_download() wired into setup wizard step_welcome
+- [x] Commit: `feat: remote manifest fetch and background asset download`
 
 ### WB2a: Corp Config Provisioning
 - [x] `crates/capsem-core/src/net/policy_config/corp_provision.rs` -- CorpSource struct, fetch_corp_config(), validate_corp_toml()
@@ -48,7 +50,7 @@
 - [x] `crates/capsem-core/src/net/policy_config/mod.rs` -- pub mod corp_provision
 - [x] Unit tests: 8 validation tests (pure, no I/O)
 - [x] `tests/capsem-install/test_corp_config.py` -- provisioning (4), precedence (2)
-- [ ] Commit: `feat: corp config provisioning from URL or file path`
+- [x] Commit: `feat: corp config provisioning from URL or file path`
 
 ### WB2: Setup Wizard
 - [x] Add `inquire = "0.7"` to `crates/capsem/Cargo.toml`
@@ -64,7 +66,7 @@
 - [x] Non-interactive mode
 - [x] Re-run logic: skip completed unless --force
 - [x] `tests/capsem-install/test_setup_wizard.py` -- 4 tests
-- [ ] Commit: `feat: capsem setup interactive wizard`
+- [x] Commit: `feat: capsem setup interactive wizard`
 
 ### WB4: Self-Update
 - [x] Add `self-replace`, `semver` to `crates/capsem/Cargo.toml`
@@ -74,7 +76,7 @@
 - [x] `crates/capsem/src/main.rs` -- Update { yes } command, background cache refresh after dispatch
 - [ ] Background corp config refresh (tokio::spawn after dispatch) -- deferred to when corp config is more common
 - [x] `tests/capsem-install/test_update.py` -- 4 tests (3 happy + partial-failure-preserves-old)
-- [ ] Commit: `feat: capsem update with asset vacuum`
+- [x] Commit: `feat: capsem update with asset vacuum`
 
 ### Polish: Completions + Uninstall
 - [x] `crates/capsem/src/completions.rs` -- generate_completions(shell) via clap_complete
@@ -82,7 +84,7 @@
 - [x] `crates/capsem/src/main.rs` -- Completions { shell } and Uninstall { yes } commands
 - [x] `tests/capsem-install/test_completions.py` -- bash/zsh/fish validation
 - [x] `tests/capsem-install/test_uninstall.py` -- full cleanup test
-- [ ] Commit: `feat: shell completions and capsem uninstall`
+- [x] Commit: `feat: shell completions and capsem uninstall`
 
 ### Test Hardening: Lifecycle + Error Paths + Reinstall
 - [x] `tests/capsem-install/test_lifecycle.py` -- full user journey: install -> setup -> list -> service status -> update -> uninstall
@@ -95,10 +97,10 @@
 
 ### Skills & Documentation
 - [x] `skills/dev-installation/SKILL.md` -- new skill
-- [ ] Update `skills/dev-testing/SKILL.md` -- add install test tier + capsem-install suite
-- [ ] Update `skills/dev-capsem/SKILL.md` -- add /dev-installation to skill map
+- [x] Update `skills/dev-testing/SKILL.md` -- add install test tier + capsem-install suite
+- [x] Update `skills/dev-capsem/SKILL.md` -- add /dev-installation to skill map
 - [x] Update `CLAUDE.md` -- add /dev-installation to skills table
-- [ ] Commit: `docs: dev-installation skill and developer docs updates`
+- [x] Commit: `docs: dev-installation skill and developer docs updates`
 
 ### Testing Gate
 - [ ] `just test` passes (unit + cross-compile + frontend)
@@ -107,6 +109,37 @@
 - [ ] Manual macOS: auto-launch, service install/uninstall, setup wizard, LaunchAgent
 - [ ] CI: test-install job passes in ci.yaml
 - [x] Changelog updated
+- [x] `RUSTFLAGS="-D warnings" cargo check --workspace` passes
+- [x] `cargo test -p capsem` passes (95 tests)
+
+## Audit (2026-04-07): Sprint status was overstated
+
+A workspace-wide `-D warnings` check revealed dead code in the capsem crate, proving several "done" items were scaffolded but never wired into the dispatch. The coding agent marked tasks `[x]` after writing the functions and tests but never verified the functions were actually called from production code. `just install` was also broken by a race condition that tests masked with client-side polling.
+
+**Dead code found (functions written, tested in isolation, never called):**
+- `ServiceSpawnArgs::from_paths()` -- main.rs hardcodes spawn args instead of using this
+- `is_service_installed()` -- try_ensure_service() skips the guard check, tries service manager directly
+- `install_bin_dir()` -- update flow doesn't use it
+- `assets_dir_from_home()` -- only used in tests, real code duplicates the logic inline
+- `start_background_download()` -- setup wizard has a comment "would start here" but never calls it
+
+**Root cause:** No workspace-wide warning enforcement existed. Warnings only checked 2 of 5 crates, and only in `just test`, not `just smoke`. Dead code was invisible.
+
+**Fixed in this session:**
+- Added `RUSTFLAGS="-D warnings" cargo check --workspace` to both `smoke` and `test`
+- Fixed race condition in handle_exec/write_file/read_file (wait_for_vm_ready)
+- Fixed capsem doctor (streaming output, removed invalid --json flag)
+- Fixed MCP snapshots_changes JSON pagination
+- Fixed pnpm audit (defu + vite overrides)
+
+**Remaining work to truly close this sprint:**
+- [x] Consolidated duplicate path logic: removed `ServiceSpawnArgs`, `systemd_unit_installed()`, `launchagent_installed()` from paths.rs. Single source of truth is now `service_install.rs` for unit paths.
+- [x] Wire `is_service_installed()` as guard in try_ensure_service() -- refuses direct spawn when a unit is registered
+- [x] Wire `install_bin_dir()` into uninstall flow (layout-aware binary removal)
+- [x] Wire `start_background_download()` into setup wizard step_welcome
+- [x] Remove all `#[allow(dead_code)]` annotations (only `cfg_attr` for platform-conditional `generate_systemd_unit` remains)
+- [x] `RUSTFLAGS="-D warnings" cargo check --workspace` passes clean
+- [ ] Run full gate: `just test` + `just test-install` + `just install` end-to-end
 
 ## Notes
 - WB6 (CI release pipeline) and WB7 (install.sh) are deferred

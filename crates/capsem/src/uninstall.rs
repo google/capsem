@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use crate::platform;
+
 /// Run full uninstall: stop service, remove unit, remove binaries and data.
 pub async fn run_uninstall(yes: bool) -> Result<()> {
     let home = std::env::var("HOME").context("HOME not set")?;
@@ -42,11 +44,19 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         .status()
         .await;
 
-    // Remove binaries
-    let bin_dir = capsem_dir.join("bin");
-    if bin_dir.exists() {
-        println!("Removing binaries...");
-        std::fs::remove_dir_all(&bin_dir).ok();
+    // Remove binaries from the detected install location
+    if let Some(bin_dir) = platform::install_bin_dir() {
+        if bin_dir.exists() {
+            println!("Removing binaries from {}...", bin_dir.display());
+            std::fs::remove_dir_all(&bin_dir).ok();
+        }
+    } else {
+        // Fallback: remove ~/.capsem/bin if present
+        let bin_dir = capsem_dir.join("bin");
+        if bin_dir.exists() {
+            println!("Removing binaries...");
+            std::fs::remove_dir_all(&bin_dir).ok();
+        }
     }
 
     // Remove ~/.capsem entirely

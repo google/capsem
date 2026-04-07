@@ -58,6 +58,7 @@ pub fn generate_plist(
 /// Generate a systemd user unit file for capsem-service.
 ///
 /// All paths are absolute.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn generate_systemd_unit(
     service_bin: &Path,
     process_bin: &Path,
@@ -164,7 +165,7 @@ pub async fn service_status() -> Result<ServiceStatus> {
 
 // --- macOS LaunchAgent ---
 
-fn plist_path() -> Option<PathBuf> {
+pub fn plist_path() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join("Library/LaunchAgents/com.capsem.service.plist"))
@@ -243,7 +244,7 @@ async fn uninstall_launchagent() -> Result<()> {
 
 // --- Linux systemd ---
 
-fn systemd_unit_path() -> Option<PathBuf> {
+pub fn systemd_unit_path() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join(".config/systemd/user/capsem.service"))

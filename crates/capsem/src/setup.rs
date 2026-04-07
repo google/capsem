@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
+use tracing::{info, warn};
+
+use capsem_core::asset_manager;
 use capsem_core::net::policy_config;
 use capsem_core::net::policy_config::corp_provision;
 
@@ -100,10 +102,12 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     // Load merged settings for corp-awareness
     let (_user_settings, corp_settings) = policy_config::load_settings_files();
 
-    // Step 1: Welcome + background download
-    if opts.force || !state.is_step_done("welcome") {
-        step_welcome(&mut state, &opts)?;
-    }
+    // Step 1: Welcome + start background asset download
+    let bg_download = if opts.force || !state.is_step_done("welcome") {
+        step_welcome(&mut state).await?
+    } else {
+        None
+    };
 
     // Step 3: Security preset
     if opts.force || !state.is_step_done("security_preset") {
@@ -118,6 +122,27 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     // Step 5: Repositories
     if opts.force || !state.is_step_done("repositories") {
         step_repositories(&mut state, &opts, &corp_settings)?;
+    }
+
+    // Wait for background download to finish before summary
+    if let Some(handle) = bg_download {
+        match handle.await {
+            Ok(Ok(result)) => {
+                if result.downloaded > 0 {
+                    println!("  Downloaded {} asset(s).", result.downloaded);
+                }
+                if result.failed > 0 {
+                    println!("  Warning: {} asset(s) failed to download.", result.failed);
+                }
+            }
+            Ok(Err(e)) => {
+                warn!(error = %e, "background asset download failed");
+                println!("  Asset download failed: {}. Run `capsem update` later.", e);
+            }
+            Err(e) => {
+                warn!(error = %e, "background download task panicked");
+            }
+        }
     }
 
     // Step 6: Summary
@@ -135,7 +160,7 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
 async fn step_corp_config(capsem_dir: &Path, source: &str, state: &mut SetupState) -> Result<()> {
     println!("[1/6] Corp config provisioning...");
 
-    let content = if source.starts_with("http://") || source.starts_with("https://") {
+    let _content = if source.starts_with("http://") || source.starts_with("https://") {
         let client = reqwest::Client::new();
         let (body, etag) = corp_provision::fetch_corp_config(&client, source).await?;
         let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
@@ -180,15 +205,48 @@ async fn step_corp_config(capsem_dir: &Path, source: &str, state: &mut SetupStat
     Ok(())
 }
 
-fn step_welcome(state: &mut SetupState, _opts: &SetupOptions) -> Result<()> {
+/// Type alias for the background download join handle.
+type BgDownloadHandle = tokio::task::JoinHandle<anyhow::Result<asset_manager::BackgroundDownloadResult>>;
+
+async fn step_welcome(state: &mut SetupState) -> Result<Option<BgDownloadHandle>> {
     println!("[2/6] Welcome to Capsem!");
     println!("  Capsem sandboxes AI agents in air-gapped Linux VMs.");
 
-    // Background asset download would start here (WB5 integration)
-    // For now, just mark as done
+    // Start background asset download while the wizard continues
+    let handle = match start_asset_download().await {
+        Ok((handle, _rx)) => {
+            println!("  Downloading VM assets in the background...");
+            Some(handle)
+        }
+        Err(e) => {
+            info!(error = %e, "skipping background download");
+            println!("  Asset download skipped (run `capsem update` later).");
+            None
+        }
+    };
+
     state.mark_done("welcome");
     save_state(state)?;
-    Ok(())
+    Ok(handle)
+}
+
+async fn start_asset_download() -> Result<(
+    BgDownloadHandle,
+    tokio::sync::mpsc::Receiver<asset_manager::BackgroundProgress>,
+)> {
+    let client = reqwest::Client::new();
+    let (version, manifest) = asset_manager::fetch_latest_manifest(&client).await?;
+    let assets_dir = asset_manager::default_assets_dir()
+        .ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
+    let arch = if cfg!(target_arch = "aarch64") {
+        Some("arm64".to_string())
+    } else {
+        Some("x86_64".to_string())
+    };
+    let (handle, rx) = asset_manager::start_background_download(
+        manifest, version, assets_dir, arch,
+    );
+    Ok((handle, rx))
 }
 
 fn step_security_preset(
@@ -231,7 +289,7 @@ fn step_security_preset(
 fn step_providers(
     state: &mut SetupState,
     opts: &SetupOptions,
-    corp: &policy_config::SettingsFile,
+    _corp: &policy_config::SettingsFile,
 ) -> Result<()> {
     println!("[4/6] AI providers...");
 
@@ -301,7 +359,7 @@ fn step_repositories(
 async fn step_summary(
     capsem_dir: &Path,
     state: &mut SetupState,
-    opts: &SetupOptions,
+    _opts: &SetupOptions,
 ) -> Result<()> {
     println!("[6/6] Summary...");
 
