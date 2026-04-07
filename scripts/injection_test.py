@@ -185,23 +185,31 @@ def run_scenario(
     vm_command = "capsem-doctor -k injection"
     try:
         proc = subprocess.run(
-            [binary, vm_command],
+            [binary, "run", vm_command],
             env=env,
             capture_output=True,
             text=True,
             timeout=120,
         )
         exit_code = proc.returncode
-        output = proc.stdout + "\n" + proc.stderr
+        stdout = proc.stdout.strip()
+        stderr = proc.stderr.strip()
 
         if exit_code == 0:
-            results.ok(f"{name}: all injection tests passed (exit 0)")
+            results.ok(f"{name}: all injection tests passed")
         else:
             results.fail(f"{name}: injection tests failed (exit {exit_code})")
-            # Show pytest output for diagnosis.
-            for line in output.splitlines():
-                if "FAILED" in line or "ERROR" in line or "AssertionError" in line:
-                    print(f"    {RED}{line.strip()}{RESET}")
+            # Show full output so failures are easy to diagnose.
+            if stdout:
+                print(f"    {CYAN}--- stdout ---{RESET}")
+                for line in stdout.splitlines():
+                    color = RED if ("FAILED" in line or "AssertionError" in line) else ""
+                    end = RESET if color else ""
+                    print(f"    {color}{line}{end}")
+            if stderr:
+                print(f"    {YELLOW}--- stderr ---{RESET}")
+                for line in stderr.splitlines():
+                    print(f"    {line}")
     except subprocess.TimeoutExpired:
         results.fail(f"{name}: VM timed out after 120s")
     finally:

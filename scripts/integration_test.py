@@ -90,12 +90,9 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
-    # Pass API keys into the VM via --env flags.
-    # The integration test config intentionally omits API keys to avoid
-    # hardcoding secrets. Keys are read from ~/.capsem/user.toml or env vars.
-    extra_args = []
-
-    # Read Google API key from user.toml (the canonical source).
+    # API keys flow into the VM via the service's host_config::detect(), which
+    # reads env vars and ~/.capsem/user.toml. Pass them through the process env
+    # so the service can find them.
     google_key = os.environ.get("GOOGLE_API_KEY")
     if not google_key:
         user_toml = Path.home() / ".capsem" / "user.toml"
@@ -108,16 +105,11 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
                             google_key = match.group(1)
                             break
     if google_key:
-        extra_args.extend(["--env", f"GEMINI_API_KEY={google_key}"])
-
-    for key in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]:
-        if val := os.environ.get(key):
-            extra_args.extend(["--env", f"{key}={val}"])
+        env["GEMINI_API_KEY"] = google_key
 
     print(f"{BOLD}Booting VM with test command ...{RESET}")
-    # CLI arguments for capsem must be: [binary] [--env K=V ...] [command]
     proc = subprocess.run(
-        [binary] + extra_args + [VM_COMMAND],
+        [binary, "run", VM_COMMAND],
         env=env,
         capture_output=True,
         text=True,
@@ -127,7 +119,12 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     match = re.search(r"\[capsem\] session: (\S+)", output)
     if not match:
         print(f"{RED}FAIL: could not find session ID in output{RESET}")
-        print(output[:2000])
+        print(f"    {CYAN}--- stdout ---{RESET}")
+        for line in proc.stdout.strip().splitlines()[:30]:
+            print(f"    {line}")
+        print(f"    {YELLOW}--- stderr ---{RESET}")
+        for line in proc.stderr.strip().splitlines()[:30]:
+            print(f"    {line}")
         sys.exit(1)
     session_id = match.group(1)
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {proc.returncode}")

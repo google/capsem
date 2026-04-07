@@ -77,7 +77,7 @@ def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
 
     print(f"{BOLD}Booting VM with capsem-doctor ...{RESET}")
     proc = subprocess.run(
-        [binary, "capsem-doctor"],
+        [binary, "run", "capsem-doctor"],
         env=env,
         capture_output=True,
         text=True,
@@ -87,7 +87,12 @@ def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
     match = re.search(r"\[capsem\] session: (\S+)", output)
     if not match:
         print(f"{RED}FAIL: could not find session ID in output{RESET}")
-        print(output[:2000])
+        print(f"    {CYAN}--- stdout ---{RESET}")
+        for line in proc.stdout.strip().splitlines()[:30]:
+            print(f"    {line}")
+        print(f"    {YELLOW}--- stderr ---{RESET}")
+        for line in proc.stderr.strip().splitlines()[:30]:
+            print(f"    {line}")
         sys.exit(1)
     session_id = match.group(1)
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {proc.returncode}")

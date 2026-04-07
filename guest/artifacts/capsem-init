@@ -297,12 +297,12 @@ fi
 # Overwrites rootfs copies via the overlayfs upper layer.
 if [ -x /capsem-doctor ]; then
     cp /capsem-doctor /newroot/usr/local/bin/capsem-doctor
-    chmod 755 /newroot/usr/local/bin/capsem-doctor
+    chmod 555 /newroot/usr/local/bin/capsem-doctor
     echo "[capsem-init] capsem-doctor deployed"
 fi
 if [ -x /capsem-bench ]; then
     cp /capsem-bench /newroot/usr/local/bin/capsem-bench
-    chmod 755 /newroot/usr/local/bin/capsem-bench
+    chmod 555 /newroot/usr/local/bin/capsem-bench
     echo "[capsem-init] capsem-bench deployed"
 fi
 if [ -d /capsem_bench ]; then
@@ -312,7 +312,7 @@ if [ -d /capsem_bench ]; then
 fi
 if [ -x /snapshots ]; then
     cp /snapshots /newroot/usr/local/bin/snapshots
-    chmod 755 /newroot/usr/local/bin/snapshots
+    chmod 555 /newroot/usr/local/bin/snapshots
     echo "[capsem-init] snapshots deployed"
 fi
 if [ -d /diagnostics ]; then
