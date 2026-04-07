@@ -32,8 +32,8 @@ YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-SESSIONS_DIR = Path.home() / ".capsem" / "sessions"
-MAIN_DB = SESSIONS_DIR / "main.db"
+SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
+MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
 
 # The compound command executed inside the VM.  Semicolons ensure every step
 # runs even if an earlier one fails -- the host-side assertions decide pass/fail.
@@ -80,8 +80,11 @@ VM_COMMAND = "; ".join([
 
 
 def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
-    """Boot the VM, run the test command, return (session_id, exit_code)."""
-    # Isolate from host settings using dedicated test configs.
+    """Boot a temp VM via `capsem run`, return (session_id, exit_code).
+
+    The service preserves the session dir after `run` completes, so we
+    find the session by looking for the most recent run-* directory.
+    """
     env = {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
@@ -90,9 +93,8 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
-    # API keys flow into the VM via the service's host_config::detect(), which
-    # reads env vars and ~/.capsem/user.toml. Pass them through the process env
-    # so the service can find them.
+    # API keys flow into the VM via the service's host_config::detect(),
+    # which reads env vars and ~/.capsem/user.toml.
     google_key = os.environ.get("GOOGLE_API_KEY")
     if not google_key:
         user_toml = Path.home() / ".capsem" / "user.toml"
@@ -100,35 +102,42 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
             with open(user_toml) as f:
                 for line in f:
                     if line.strip().startswith("value") and "AIza" in line:
-                        match = re.search(r'value\s*=\s*"(AIza[^"]*)"', line)
-                        if match:
-                            google_key = match.group(1)
+                        m = re.search(r'value\s*=\s*"(AIza[^"]*)"', line)
+                        if m:
+                            google_key = m.group(1)
                             break
     if google_key:
         env["GEMINI_API_KEY"] = google_key
 
+    # Snapshot session dirs before so we can find the new one after.
+    existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
+
     print(f"{BOLD}Booting VM with test command ...{RESET}")
     proc = subprocess.run(
         [binary, "run", VM_COMMAND],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=300,
+        env=env, capture_output=True, text=True, timeout=300,
     )
-    output = proc.stdout + "\n" + proc.stderr
-    match = re.search(r"\[capsem\] session: (\S+)", output)
-    if not match:
-        print(f"{RED}FAIL: could not find session ID in output{RESET}")
-        print(f"    {CYAN}--- stdout ---{RESET}")
-        for line in proc.stdout.strip().splitlines()[:30]:
-            print(f"    {line}")
+    exit_code = proc.returncode
+    if proc.stdout.strip():
+        print(proc.stdout.strip())
+
+    # Find the new session dir (run-* created during this invocation).
+    new_sessions = sorted(
+        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.startswith("run-")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ) if SESSIONS_DIR.exists() else []
+
+    if not new_sessions:
+        print(f"{RED}FAIL: no new session directory found in {SESSIONS_DIR}{RESET}")
         print(f"    {YELLOW}--- stderr ---{RESET}")
         for line in proc.stderr.strip().splitlines()[:30]:
             print(f"    {line}")
         sys.exit(1)
-    session_id = match.group(1)
-    print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {proc.returncode}")
-    return session_id, proc.returncode
+
+    session_id = new_sessions[0].name
+    print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
+    return session_id, exit_code
 
 
 # ── assertions ───────────────────────────────────────────────────────────
@@ -410,14 +419,16 @@ def verify_session(session_id: str) -> bool:
     )
 
     # Bug 2: MCP data completeness -- request_preview must not be truncated
-    for row in conn.execute(
+    preview_rows = conn.execute(
         "SELECT id, request_preview FROM mcp_calls WHERE method='tools/call'"
-    ).fetchall():
-        r.check(
-            row["request_preview"] and len(row["request_preview"]) > 10,
-            f"mcp_call {row['id']} has meaningful request_preview",
-            f"mcp_call {row['id']} has empty/tiny request_preview",
-        )
+    ).fetchall()
+    bad_previews = [row["id"] for row in preview_rows
+                    if not row["request_preview"] or len(row["request_preview"]) <= 10]
+    r.check(
+        len(bad_previews) == 0,
+        f"all {len(preview_rows)} mcp tools/call have meaningful request_preview",
+        f"{len(bad_previews)} mcp tools/call have empty/tiny request_preview (ids: {bad_previews[:5]})",
+    )
 
     # Bug 2: bytes tracking
     mcp_with_bytes = conn.execute(
@@ -605,12 +616,12 @@ def verify_session(session_id: str) -> bool:
     # ── log files ─────────────────────────────────────────────────────
     print(f"\n{BOLD}log files{RESET}")
 
-    # Per-VM session log: ~/.capsem/sessions/<id>/capsem.log
-    vm_log_path = SESSIONS_DIR / session_id / "capsem.log"
+    # Per-VM session log: ~/.capsem/run/sessions/<id>/process.log
+    vm_log_path = SESSIONS_DIR / session_id / "process.log"
     r.check(
         vm_log_path.exists(),
-        f"capsem.log exists at {vm_log_path}",
-        f"capsem.log NOT found at {vm_log_path}",
+        f"process.log exists at {vm_log_path}",
+        f"process.log NOT found at {vm_log_path}",
     )
 
     if vm_log_path.exists():
@@ -618,8 +629,8 @@ def verify_session(session_id: str) -> bool:
         vm_log_lines = [l for l in vm_log_content.splitlines() if l.strip()]
         r.check(
             len(vm_log_lines) >= 3,
-            f"{len(vm_log_lines)} entries in capsem.log",
-            f"only {len(vm_log_lines)} entries in capsem.log (expected >= 3)",
+            f"{len(vm_log_lines)} entries in process.log",
+            f"only {len(vm_log_lines)} entries in process.log (expected >= 3)",
         )
 
         # Verify all lines are valid JSON with expected fields.
@@ -640,8 +651,8 @@ def verify_session(session_id: str) -> bool:
 
         r.check(
             valid_json == len(vm_log_lines),
-            f"all {valid_json} capsem.log entries are valid JSONL",
-            f"{len(invalid_lines)} invalid lines in capsem.log: {invalid_lines[:5]}",
+            f"all {valid_json} process.log entries are valid JSONL",
+            f"{len(invalid_lines)} invalid lines in process.log: {invalid_lines[:5]}",
         )
 
         # Check that log entries contain expected levels (INFO and above only).
@@ -654,13 +665,13 @@ def verify_session(session_id: str) -> bool:
                 pass
         r.check(
             "INFO" in levels,
-            f"capsem.log contains INFO entries (levels: {levels})",
-            f"capsem.log missing INFO entries (levels: {levels})",
+            f"process.log contains INFO entries (levels: {levels})",
+            f"process.log missing INFO entries (levels: {levels})",
         )
         r.check(
             "DEBUG" not in levels and "TRACE" not in levels,
-            "capsem.log filtered to INFO+ (no DEBUG/TRACE)",
-            f"capsem.log contains debug/trace entries (levels: {levels})",
+            "process.log filtered to INFO+ (no DEBUG/TRACE)",
+            f"process.log contains debug/trace entries (levels: {levels})",
         )
 
         # Check for boot_timeline state transition events.
@@ -674,7 +685,7 @@ def verify_session(session_id: str) -> bool:
                 pass
         r.check(
             len(timeline_entries) >= 2,
-            f"{len(timeline_entries)} boot_timeline state transitions in capsem.log",
+            f"{len(timeline_entries)} boot_timeline state transitions in process.log",
             f"only {len(timeline_entries)} state transitions (expected >= 2 boot phases)",
         )
 
@@ -788,7 +799,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
 
     print("  Invocation 1: writing sentinel file...")
     proc1 = subprocess.run(
-        [binary, PERSISTENCE_WRITE_CMD],
+        [binary, "run", PERSISTENCE_WRITE_CMD],
         env=env, capture_output=True, text=True, timeout=120,
     )
     output1 = proc1.stdout + "\n" + proc1.stderr
@@ -800,7 +811,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
 
     print("  Invocation 2: checking sentinel is absent...")
     proc2 = subprocess.run(
-        [binary, PERSISTENCE_CHECK_CMD],
+        [binary, "run", PERSISTENCE_CHECK_CMD],
         env=env, capture_output=True, text=True, timeout=120,
     )
     output2 = proc2.stdout + "\n" + proc2.stderr

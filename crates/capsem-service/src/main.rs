@@ -779,6 +779,23 @@ async fn send_ipc_command(uds_path: &std::path::Path, cmd: ServiceToProcess, tim
     }
 }
 
+/// Wait until a VM's IPC socket exists and responds to a ping.
+/// Returns Ok(()) when the VM is ready, or Err after timeout.
+async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        if uds_path.exists() {
+            if let Ok(ProcessToService::Pong) = send_ipc_command(uds_path, ServiceToProcess::Ping, 5).await {
+                return Ok(());
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("VM did not become ready within {timeout_secs}s"));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
 async fn handle_exec(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -790,10 +807,13 @@ async fn handle_exec(
         i.uds_path.clone()
     };
 
+    wait_for_vm_ready(&uds_path, 30).await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
     let id_val = state.next_job_id();
     let res = send_ipc_command(&uds_path, ServiceToProcess::Exec { id: id_val, command: payload.command }, payload.timeout_secs).await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    
+
     match res {
         ProcessToService::ExecResult { stdout, stderr, exit_code, .. } => {
             Ok(Json(ExecResponse {
@@ -816,6 +836,9 @@ async fn handle_write_file(
         let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         i.uds_path.clone()
     };
+
+    wait_for_vm_ready(&uds_path, 30).await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let id_val = state.next_job_id();
     let data = payload.content.into_bytes();
@@ -842,6 +865,9 @@ async fn handle_read_file(
         let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         i.uds_path.clone()
     };
+
+    wait_for_vm_ready(&uds_path, 30).await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let id_val = state.next_job_id();
     let res = send_ipc_command(&uds_path, ServiceToProcess::ReadFile { id: id_val, path: path.clone() }, 30).await
@@ -1149,22 +1175,11 @@ async fn handle_run(
 
     // 2. Wait for VM socket to appear
     let uds_path = state.run_dir.join("instances").join(format!("{}.sock", id));
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        if uds_path.exists() {
-            // Try a ping to confirm the VM is ready
-            if let Ok(ProcessToService::Pong) = send_ipc_command(&uds_path, ServiceToProcess::Ping, 5).await {
-                break;
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            // Cleanup on timeout
-            let _ = shutdown_vm_process(&state, &id).await;
-            let session_dir = state.run_dir.join("sessions").join(&id);
-            let _ = std::fs::remove_dir_all(&session_dir);
-            return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "VM did not become ready within 30s".into()));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
+        let _ = shutdown_vm_process(&state, &id).await;
+        let session_dir = state.run_dir.join("sessions").join(&id);
+        let _ = std::fs::remove_dir_all(&session_dir);
+        return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
     }
 
     // 3. Execute command
@@ -1175,10 +1190,8 @@ async fn handle_run(
         payload.timeout_secs,
     ).await;
 
-    // 4. Tear down VM regardless of exec outcome
+    // 4. Tear down VM process (session dir preserved for telemetry)
     let _ = shutdown_vm_process(&state, &id).await;
-    let session_dir = state.run_dir.join("sessions").join(&id);
-    let _ = std::fs::remove_dir_all(&session_dir);
 
     // 5. Return result
     match exec_result {

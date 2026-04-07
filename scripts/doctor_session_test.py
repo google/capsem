@@ -32,8 +32,8 @@ YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-SESSIONS_DIR = Path.home() / ".capsem" / "sessions"
-MAIN_DB = SESSIONS_DIR / "main.db"
+SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
+MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
 
 
 class Results:
@@ -68,12 +68,19 @@ class Results:
 
 
 def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
-    """Boot the VM with capsem-doctor, return (session_id, exit_code)."""
+    """Boot the VM with capsem-doctor, return (session_id, exit_code).
+
+    Finds the session by looking for the newest run-* dir created during
+    this invocation (the service preserves session dirs after `capsem run`).
+    """
     env = {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
     }
+
+    # Snapshot existing session dirs so we can diff after.
+    existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
     print(f"{BOLD}Booting VM with capsem-doctor ...{RESET}")
     proc = subprocess.run(
@@ -83,20 +90,27 @@ def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
         text=True,
         timeout=180,
     )
-    output = proc.stdout + "\n" + proc.stderr
-    match = re.search(r"\[capsem\] session: (\S+)", output)
-    if not match:
-        print(f"{RED}FAIL: could not find session ID in output{RESET}")
-        print(f"    {CYAN}--- stdout ---{RESET}")
-        for line in proc.stdout.strip().splitlines()[:30]:
-            print(f"    {line}")
+    exit_code = proc.returncode
+    if proc.stdout.strip():
+        print(proc.stdout.strip())
+
+    # Find the new session dir.
+    new_sessions = sorted(
+        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.startswith("run-")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ) if SESSIONS_DIR.exists() else []
+
+    if not new_sessions:
+        print(f"{RED}FAIL: no new session directory found in {SESSIONS_DIR}{RESET}")
         print(f"    {YELLOW}--- stderr ---{RESET}")
         for line in proc.stderr.strip().splitlines()[:30]:
             print(f"    {line}")
         sys.exit(1)
-    session_id = match.group(1)
-    print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {proc.returncode}")
-    return session_id, proc.returncode
+
+    session_id = new_sessions[0].name
+    print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
+    return session_id, exit_code
 
 
 def verify_session(session_id: str) -> bool:
@@ -316,11 +330,11 @@ def verify_session(session_id: str) -> bool:
 
     # -- log files ---------------------------------------------------------
     print(f"\n{BOLD}log files{RESET}")
-    vm_log_path = SESSIONS_DIR / session_id / "capsem.log"
+    vm_log_path = SESSIONS_DIR / session_id / "process.log"
     r.check(
         vm_log_path.exists(),
-        f"capsem.log exists at {vm_log_path}",
-        f"capsem.log NOT found at {vm_log_path}",
+        f"process.log exists at {vm_log_path}",
+        f"process.log NOT found at {vm_log_path}",
     )
 
     if vm_log_path.exists():
@@ -328,8 +342,8 @@ def verify_session(session_id: str) -> bool:
         vm_log_lines = [l for l in vm_log_content.splitlines() if l.strip()]
         r.check(
             len(vm_log_lines) >= 3,
-            f"{len(vm_log_lines)} entries in capsem.log",
-            f"only {len(vm_log_lines)} entries in capsem.log (expected >= 3)",
+            f"{len(vm_log_lines)} entries in process.log",
+            f"only {len(vm_log_lines)} entries in process.log (expected >= 3)",
         )
 
         # Verify all lines are valid JSON.
@@ -343,7 +357,7 @@ def verify_session(session_id: str) -> bool:
                 pass
         r.check(
             valid_json == len(vm_log_lines),
-            f"all {valid_json} capsem.log entries are valid JSONL",
+            f"all {valid_json} process.log entries are valid JSONL",
             f"{valid_json}/{len(vm_log_lines)} valid JSONL entries",
         )
 
