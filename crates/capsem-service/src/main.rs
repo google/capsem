@@ -183,7 +183,7 @@ impl ServiceState {
     }
 
     fn provision_sandbox(
-        &self,
+        self: &Arc<Self>,
         id: &str,
         ram_mb: u64,
         cpus: u32,
@@ -300,7 +300,11 @@ impl ServiceState {
             .open(&process_log_path)
             .context("failed to open process.log")?;
 
-        // Add --env KEY=VALUE args for each env var
+        // Inject VM identity so the guest knows its own name/ID.
+        child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
+        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", id));
+
+        // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
             for (k, v) in env_vars {
                 child_cmd.arg("--env").arg(format!("{}={}", k, v));
@@ -308,7 +312,7 @@ impl ServiceState {
         }
 
         let mut child = child_cmd
-            .env("RUST_LOG", "debug")
+            .env("RUST_LOG", "capsem=info")
             .arg("--id").arg(id)
             .arg("--assets-dir").arg(&assets_to_use)
             .arg("--rootfs").arg(&rootfs)
@@ -325,9 +329,20 @@ impl ServiceState {
         info!(id, pid, version, "capsem-process spawned");
 
         let id_clone = id.to_string();
+        let state_clone = Arc::clone(self);
+        let uds_clone = uds_path.clone();
         tokio::spawn(async move {
             let _ = child.wait().await;
-            info!(id_clone, "capsem-process exited, reaping complete");
+            info!(id_clone, "capsem-process exited, cleaning up");
+            // Remove from active instances so the service knows this VM is gone.
+            let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
+            let _ = std::fs::remove_file(&uds_clone);
+            if let Some(info) = removed {
+                if !info.persistent {
+                    let _ = std::fs::remove_dir_all(&info.session_dir);
+                    info!(id = id_clone, "ephemeral session cleaned up");
+                }
+            }
         });
 
         // Register persistent VM in the registry
@@ -364,7 +379,7 @@ impl ServiceState {
 
     /// Resume a stopped persistent VM by re-spawning capsem-process against its
     /// existing session directory.
-    fn resume_sandbox(&self, name: &str, ram_mb_override: Option<u64>, cpus_override: Option<u32>) -> Result<String> {
+    fn resume_sandbox(self: &Arc<Self>, name: &str, ram_mb_override: Option<u64>, cpus_override: Option<u32>) -> Result<String> {
         self.cleanup_stale_instances();
 
         // Check if already running
@@ -411,8 +426,12 @@ impl ServiceState {
             child_cmd = tokio::process::Command::new("target/debug/capsem-process");
         }
 
+        // Inject VM identity so the guest knows its own name/ID.
+        child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", name));
+        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
+
         let mut child = child_cmd
-            .env("RUST_LOG", "debug")
+            .env("RUST_LOG", "capsem=info")
             .arg("--id").arg(name)
             .arg("--assets-dir").arg(&assets_to_use)
             .arg("--rootfs").arg(&rootfs)
@@ -429,9 +448,14 @@ impl ServiceState {
         info!(name, pid, "capsem-process resumed");
 
         let name_clone = name.to_string();
+        let state_clone = Arc::clone(self);
+        let uds_clone = uds_path.clone();
         tokio::spawn(async move {
             let _ = child.wait().await;
-            info!(name_clone, "resumed capsem-process exited");
+            info!(name_clone, "capsem-process exited, cleaning up");
+            // Persistent VMs: remove from instances but keep session dir.
+            state_clone.instances.lock().unwrap().remove(&name_clone);
+            let _ = std::fs::remove_file(&uds_clone);
         });
 
         let mut instances = self.instances.lock().unwrap();
@@ -959,7 +983,8 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
         let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
     }
 
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    // Give the agent time for sync + SIGTERM bash + 2s cleanup.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     if pid > 0 {
         let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
@@ -1169,20 +1194,60 @@ async fn handle_run(
     let id = format!("run-{}", std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
 
+    let ram_bytes = payload.ram_mb * 1024 * 1024;
+    let session_dir = state.run_dir.join("sessions").join(&id);
+
     // 1. Provision ephemeral VM
-    state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), false, None, None)
+    state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), false, payload.env, None)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
 
-    // 2. Wait for VM socket to appear
+    // 2. Register session in main.db
+    let sessions_db_dir = state.run_dir.parent()
+        .unwrap_or(state.run_dir.as_path())
+        .join("sessions");
+    let _ = std::fs::create_dir_all(&sessions_db_dir);
+    let index = capsem_core::session::SessionIndex::open(&sessions_db_dir.join("main.db")).ok();
+    if let Some(ref idx) = index {
+        let record = capsem_core::session::SessionRecord {
+            id: id.clone(),
+            mode: "run".to_string(),
+            command: Some(payload.command.clone()),
+            status: "running".to_string(),
+            created_at: capsem_core::session::now_iso(),
+            stopped_at: None,
+            scratch_disk_size_gb: 0,
+            ram_bytes,
+            total_requests: 0,
+            allowed_requests: 0,
+            denied_requests: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_estimated_cost: 0.0,
+            total_tool_calls: 0,
+            total_mcp_calls: 0,
+            total_file_events: 0,
+            compressed_size_bytes: None,
+            vacuumed_at: None,
+            storage_mode: "virtiofs".to_string(),
+            rootfs_hash: None,
+            rootfs_version: Some(state.current_version.clone()),
+            source_image: None,
+            persistent: false,
+        };
+        if let Err(e) = idx.create_session(&record) {
+            tracing::warn!("failed to register session in main.db: {e}");
+        }
+    }
+
+    // 3. Wait for VM socket to appear
     let uds_path = state.run_dir.join("instances").join(format!("{}.sock", id));
     if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
         let _ = shutdown_vm_process(&state, &id).await;
-        let session_dir = state.run_dir.join("sessions").join(&id);
         let _ = std::fs::remove_dir_all(&session_dir);
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
     }
 
-    // 3. Execute command
+    // 4. Execute command
     let job_id = state.next_job_id();
     let exec_result = send_ipc_command(
         &uds_path,
@@ -1190,10 +1255,31 @@ async fn handle_run(
         payload.timeout_secs,
     ).await;
 
-    // 4. Tear down VM process (session dir preserved for telemetry)
+    // 5. Tear down VM process (session dir preserved for telemetry)
     let _ = shutdown_vm_process(&state, &id).await;
 
-    // 5. Return result
+    // 6. Roll up session counters into main.db
+    if let Some(ref idx) = index {
+        let session_db_path = session_dir.join("session.db");
+        if session_db_path.exists() {
+            if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
+                if let Ok(counts) = reader.net_event_counts() {
+                    let _ = idx.update_request_counts(
+                        &id, counts.total as u64, counts.allowed as u64, counts.denied as u64,
+                    );
+                }
+                // Roll up file events and MCP calls.
+                let file_events = reader.file_event_count().unwrap_or(0);
+                let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
+                let _ = idx.update_session_summary(
+                    &id, 0, 0, 0.0, 0, mcp_calls, file_events,
+                );
+            }
+        }
+        let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
+    }
+
+    // 7. Return result
     match exec_result {
         Ok(ProcessToService::ExecResult { stdout, stderr, exit_code, .. }) => {
             Ok(Json(ExecResponse {
@@ -1331,9 +1417,119 @@ async fn main() -> Result<()> {
     info!(socket = %service_sock.display(), "listening on UDS");
 
     let uds = UnixListener::bind(&service_sock).context("failed to bind UDS")?;
-    axum::serve(uds, app).await.context("server error")?;
+
+    // Spawn companion processes (gateway + tray) as children.
+    // They are killed automatically when the service exits because we hold
+    // the Child handles and drop them on shutdown.
+    let mut children = spawn_companions(&service_sock, &run_dir).await;
+
+    axum::serve(uds, app)
+        .with_graceful_shutdown(async {
+            shutdown_signal().await;
+            info!("service shutting down, killing companions");
+        })
+        .await
+        .context("server error")?;
+
+    // Explicitly kill companion processes on shutdown
+    for child in &mut children {
+        let _ = child.kill().await;
+    }
 
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+    }
+}
+
+/// Find a sibling binary next to the current executable, falling back to
+/// target/debug/ for development builds.
+fn find_sibling_binary(name: &str) -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.parent().unwrap().join(name);
+        if sibling.exists() {
+            return sibling;
+        }
+    }
+    PathBuf::from(format!("target/debug/{name}"))
+}
+
+/// Spawn the gateway and tray as child processes of the service.
+async fn spawn_companions(
+    service_sock: &std::path::Path,
+    run_dir: &std::path::Path,
+) -> Vec<tokio::process::Child> {
+    let mut children = Vec::new();
+
+    // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
+    let gateway_bin = find_sibling_binary("capsem-gateway");
+    info!(binary = %gateway_bin.display(), "spawning capsem-gateway");
+    match tokio::process::Command::new(&gateway_bin)
+        .arg("--uds-path")
+        .arg(service_sock)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => {
+            info!(pid = child.id(), "capsem-gateway spawned");
+            children.push(child);
+
+            // Wait for gateway to write token + port files (up to 5s)
+            let token_path = run_dir.join("gateway.token");
+            let port_path = run_dir.join("gateway.port");
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            while tokio::time::Instant::now() < deadline {
+                if token_path.exists() && port_path.exists() {
+                    info!("gateway ready (token + port files present)");
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+
+            // 2. Spawn capsem-tray (menu bar) -- only on macOS, only after gateway ready
+            #[cfg(target_os = "macos")]
+            if token_path.exists() {
+                let tray_bin = find_sibling_binary("capsem-tray");
+                info!(binary = %tray_bin.display(), "spawning capsem-tray");
+                match tokio::process::Command::new(&tray_bin)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(child) => {
+                        info!(pid = child.id(), "capsem-tray spawned");
+                        children.push(child);
+                    }
+                    Err(e) => {
+                        tracing::warn!("failed to spawn capsem-tray: {e} (non-fatal)");
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("failed to spawn capsem-gateway: {e} (non-fatal)");
+        }
+    }
+
+    children
 }
 
 #[cfg(test)]
@@ -1341,7 +1537,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
 
-    fn make_test_state() -> ServiceState {
+    fn make_test_state() -> Arc<ServiceState> {
         let dummy_hash = "a".repeat(64);
         let manifest_json = format!(
             r#"{{"latest":"0.0.0","releases":{{"0.0.0":{{"assets":[{{"filename":"dummy.img","hash":"{}","size":0}}]}}}}}}"#,
@@ -1352,7 +1548,7 @@ mod tests {
             &manifest, "0.0.0", PathBuf::from("/tmp/capsem-test-assets"), None
         ).unwrap();
         let registry_path = PathBuf::from("/tmp/capsem-test-svc/persistent_registry.json");
-        ServiceState {
+        Arc::new(ServiceState {
             instances: Mutex::new(HashMap::new()),
             persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
             image_registry: Arc::new(capsem_core::image::ImageRegistry::new(std::path::Path::new("/tmp/capsem-test-svc"))),
@@ -1362,7 +1558,7 @@ mod tests {
             job_counter: AtomicU64::new(1),
             asset_manager: Arc::new(am),
             current_version: "0.0.0".into(),
-        }
+        })
     }
 
     fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
@@ -1827,7 +2023,7 @@ mod tests {
     // Image handler tests (service-level unit tests)
     // -----------------------------------------------------------------------
 
-    fn make_test_state_with_tempdir() -> (ServiceState, tempfile::TempDir) {
+    fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let dummy_hash = "a".repeat(64);
         let manifest_json = format!(
@@ -1839,7 +2035,7 @@ mod tests {
             &manifest, "0.0.0", dir.path().join("assets"), None
         ).unwrap();
         let registry_path = dir.path().join("persistent_registry.json");
-        let state = ServiceState {
+        let state = Arc::new(ServiceState {
             instances: Mutex::new(HashMap::new()),
             persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
             image_registry: Arc::new(capsem_core::image::ImageRegistry::new(dir.path())),
@@ -1849,7 +2045,7 @@ mod tests {
             job_counter: AtomicU64::new(1),
             asset_manager: Arc::new(am),
             current_version: "0.0.0".into(),
-        };
+        });
         (state, dir)
     }
 
@@ -1868,7 +2064,7 @@ mod tests {
     #[tokio::test]
     async fn handle_image_list_empty() {
         let (state, _dir) = make_test_state_with_tempdir();
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let result = handle_image_list(State(state)).await.unwrap();
         assert!(result.0.images.is_empty());
     }
@@ -1878,7 +2074,7 @@ mod tests {
         let (state, _dir) = make_test_state_with_tempdir();
         seed_image(&state, "img-a");
         seed_image(&state, "img-b");
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let result = handle_image_list(State(state)).await.unwrap();
         assert_eq!(result.0.images.len(), 2);
         let names: Vec<&str> = result.0.images.iter().map(|i| i.name.as_str()).collect();
@@ -1890,7 +2086,7 @@ mod tests {
     async fn handle_image_inspect_found() {
         let (state, _dir) = make_test_state_with_tempdir();
         seed_image(&state, "my-img");
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let result = handle_image_inspect(State(state), Path("my-img".into())).await.unwrap();
         assert_eq!(result.0.name, "my-img");
         assert_eq!(result.0.description.as_deref(), Some("test image"));
@@ -1901,7 +2097,7 @@ mod tests {
     #[tokio::test]
     async fn handle_image_inspect_not_found() {
         let (state, _dir) = make_test_state_with_tempdir();
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let err = handle_image_inspect(State(state), Path("ghost".into())).await.unwrap_err();
         assert_eq!(err.0, StatusCode::NOT_FOUND);
     }
@@ -1910,7 +2106,7 @@ mod tests {
     async fn handle_image_delete_success() {
         let (state, _dir) = make_test_state_with_tempdir();
         seed_image(&state, "del-me");
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let result = handle_image_delete(State(state.clone()), Path("del-me".into())).await.unwrap();
         assert_eq!(result.0["success"], true);
         // Verify gone
@@ -1921,7 +2117,7 @@ mod tests {
     #[tokio::test]
     async fn handle_image_delete_not_found() {
         let (state, _dir) = make_test_state_with_tempdir();
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let err = handle_image_delete(State(state), Path("ghost".into())).await.unwrap_err();
         assert_eq!(err.0, StatusCode::NOT_FOUND);
     }
@@ -1950,7 +2146,7 @@ mod tests {
                 source_image: None,
             },
         );
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let result = handle_fork(
             State(state.clone()),
             Path("fork-src".into()),
@@ -1967,7 +2163,7 @@ mod tests {
     #[tokio::test]
     async fn handle_fork_not_found() {
         let (state, _dir) = make_test_state_with_tempdir();
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let err = handle_fork(
             State(state),
             Path("ghost".into()),
@@ -1999,9 +2195,9 @@ mod tests {
                 source_image: None,
             },
         );
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         // First fork succeeds
-        handle_fork(
+        let _ = handle_fork(
             State(state.clone()),
             Path("dup-src".into()),
             Json(ForkRequest { name: "same-name".into(), description: None }),
@@ -2034,7 +2230,7 @@ mod tests {
                 source_image: None,
             });
         }
-        let state = Arc::new(state);
+        // state is already Arc<ServiceState> from make_test_state*
         let result = handle_fork(
             State(state),
             Path("pers-vm".into()),

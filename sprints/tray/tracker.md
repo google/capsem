@@ -225,8 +225,12 @@ Status: Done
 
 ### Service team (amend `sprints/next-gen/tracker.md`)
 
-- capsem-service spawns `capsem-tray` as child process on startup, after gateway is ready
-- Kills capsem-tray on shutdown
+- [x] capsem-service spawns `capsem-gateway` then `capsem-tray` as child processes on startup
+- [x] Kills both on shutdown (kill_on_drop + explicit kill in graceful shutdown)
+- [x] Finds sibling binaries relative to current exe, falls back to target/debug/
+- [x] Waits up to 5s for gateway token+port files before spawning tray
+- [x] Tray spawn is macOS-only (#[cfg(target_os = "macos")])
+- [x] Both spawns are non-fatal (warn on failure, service continues)
 
 ### UI team
 
