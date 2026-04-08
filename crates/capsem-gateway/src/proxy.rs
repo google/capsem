@@ -6,7 +6,6 @@ use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Limited};
 use hyper_util::rt::TokioIo;
 use tokio::net::UnixStream;
 
@@ -20,43 +19,38 @@ pub async fn handle_proxy(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> Response {
-    match forward(&state, req).await {
-        Ok(resp) => resp,
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("length limit") {
-                (
+    if let Some(content_length) = req.headers().get(axum::http::header::CONTENT_LENGTH) {
+        if let Ok(len) = content_length.to_str().unwrap_or("").parse::<usize>() {
+            if len > MAX_BODY_SIZE {
+                return (
                     StatusCode::PAYLOAD_TOO_LARGE,
                     axum::Json(serde_json::json!({"error": "request body too large"})),
                 )
-                    .into_response()
-            } else {
-                tracing::error!(error = %e, "proxy error");
-                (
-                    StatusCode::BAD_GATEWAY,
-                    axum::Json(serde_json::json!({"error": "service unavailable"})),
-                )
-                    .into_response()
+                    .into_response();
             }
+        }
+    }
+
+    match forward(&state, req).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::error!(error = %e, "proxy error");
+            (
+                StatusCode::BAD_GATEWAY,
+                axum::Json(serde_json::json!({"error": "service unavailable"})),
+            )
+                .into_response()
         }
     }
 }
 
-async fn forward(state: &AppState, req: Request) -> anyhow::Result<Response> {
-    let method = req.method().clone();
+async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response> {
     let uri = req.uri().clone();
-    let content_type = req
-        .headers()
-        .get("content-type")
-        .cloned();
 
-    // Collect incoming body with size limit to prevent OOM
-    let limited = Limited::new(req.into_body(), MAX_BODY_SIZE);
-    let body_bytes = limited
-        .collect()
-        .await
-        .map_err(|e| anyhow::anyhow!("length limit: {}", e))?
-        .to_bytes();
+    // Clean up headers
+    let headers = req.headers_mut();
+    headers.remove(http::header::HOST);
+    headers.remove(http::header::AUTHORIZATION);
 
     // Connect to UDS
     let stream = UnixStream::connect(&state.uds_path).await?;
@@ -74,41 +68,22 @@ async fn forward(state: &AppState, req: Request) -> anyhow::Result<Response> {
     } else {
         format!("http://localhost{}", uri.path())
     };
+    *req.uri_mut() = upstream_uri.parse().unwrap();
 
-    let mut builder = hyper::Request::builder()
-        .method(method)
-        .uri(upstream_uri);
-
-    if let Some(ct) = content_type {
-        builder = builder.header("content-type", ct);
-    }
-
-    let upstream_req = builder.body(Full::new(body_bytes))?;
+    let (parts, body) = req.into_parts();
+    
+    // Wrap body in length limit for chunked requests
+    use http_body_util::Limited;
+    let limited_body = axum::body::Body::new(Limited::new(body, MAX_BODY_SIZE));
+    let upstream_req = hyper::Request::from_parts(parts, limited_body);
 
     // Send with timeout
     let res = tokio::time::timeout(Duration::from_secs(30), sender.send_request(upstream_req))
         .await
         .map_err(|_| anyhow::anyhow!("request timed out"))??;
 
-    // Convert hyper response to axum response
-    let status = res.status();
-    let headers = res.headers().clone();
-    let body_bytes: Bytes = res.into_body().collect().await?.to_bytes();
-
-    let mut response = Response::builder().status(status);
-    for (key, value) in headers.iter() {
-        response = response.header(key, value);
-    }
-
-    Ok(response
-        .body(Body::from(body_bytes))
-        .unwrap_or_else(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error",
-            )
-                .into_response()
-        }))
+    let (parts, body) = res.into_parts();
+    Ok(Response::from_parts(parts, axum::body::Body::new(body)))
 }
 
 #[cfg(test)]
@@ -384,17 +359,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_forwards_content_type_to_upstream() {
+    async fn preserves_client_headers_except_auth_and_host() {
         let mock = axum::Router::new().route(
             "/headers",
             axum::routing::get(|req: axum::extract::Request| async move {
                 let has_accept = req.headers().contains_key("accept");
                 let has_x_custom = req.headers().contains_key("x-custom");
-                let has_ct = req.headers().contains_key("content-type");
+                let has_auth = req.headers().contains_key("authorization");
+                let has_host = req.headers().contains_key("host");
                 axum::Json(serde_json::json!({
                     "has_accept": has_accept,
                     "has_x_custom": has_x_custom,
-                    "has_content_type": has_ct,
+                    "has_auth": has_auth,
+                    "has_host": has_host,
                 }))
             }),
         );
@@ -406,8 +383,9 @@ mod tests {
                 axum::http::Request::builder()
                     .uri("/headers")
                     .header("accept", "application/json")
-                    .header("x-custom", "should-be-dropped")
-                    .header("content-type", "application/json")
+                    .header("x-custom", "should-be-preserved")
+                    .header("authorization", "Bearer test-token")
+                    .header("host", "example.com")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -415,10 +393,11 @@ mod tests {
             .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        // Only content-type should arrive at upstream
-        assert_eq!(json["has_content_type"], true);
-        assert_eq!(json["has_accept"], false);
-        assert_eq!(json["has_x_custom"], false);
+        
+        assert_eq!(json["has_accept"], true);
+        assert_eq!(json["has_x_custom"], true);
+        assert_eq!(json["has_auth"], false);
+        assert_eq!(json["has_host"], false);
         h.abort();
     }
 
@@ -515,6 +494,7 @@ mod tests {
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/big")
+                    .header("content-length", oversized.len().to_string())
                     .body(Body::from(oversized))
                     .unwrap(),
             )

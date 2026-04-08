@@ -666,6 +666,7 @@ async fn handle_list(
         for i in instances.values() {
             sandboxes.push(SandboxInfo {
                 id: i.id.clone(),
+                name: if i.persistent { Some(i.id.clone()) } else { None },
                 pid: i.pid,
                 status: "Running".to_string(),
                 persistent: i.persistent,
@@ -684,6 +685,7 @@ async fn handle_list(
             if !instances.contains_key(&entry.name) {
                 sandboxes.push(SandboxInfo {
                     id: entry.name.clone(),
+                    name: Some(entry.name.clone()),
                     pid: 0,
                     status: "Stopped".to_string(),
                     persistent: true,
@@ -710,6 +712,7 @@ async fn handle_info(
         if let Some(i) = instances.get(&id) {
             return Ok(Json(SandboxInfo {
                 id: i.id.clone(),
+                name: if i.persistent { Some(i.id.clone()) } else { None },
                 pid: i.pid,
                 status: "Running".to_string(),
                 persistent: i.persistent,
@@ -726,6 +729,7 @@ async fn handle_info(
         if let Some(entry) = registry.get(&id) {
             return Ok(Json(SandboxInfo {
                 id: entry.name.clone(),
+                name: Some(entry.name.clone()),
                 pid: 0,
                 status: "Stopped".to_string(),
                 persistent: true,

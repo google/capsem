@@ -85,6 +85,8 @@ struct ListResponse {
 struct SandboxInfo {
     id: String,
     #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
     status: String,
     #[serde(default)]
     persistent: bool,
@@ -118,14 +120,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
     let mut stopped: usize = 0;
 
     for sb in &list.sandboxes {
-        // Try to get name from /info endpoint
-        let name = match uds_get(&state.uds_path, &format!("/info/{}", sb.id)).await {
-            Ok(body) => serde_json::from_slice::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|v| v.get("name")?.as_str().map(String::from)),
-            Err(_) => None,
-        };
-
         if let Some(ram) = sb.ram_mb {
             total_ram += ram;
         }
@@ -141,7 +135,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 
         vms.push(VmSummary {
             id: sb.id.clone(),
-            name,
+            name: sb.name.clone(),
             status: sb.status.clone(),
             persistent: sb.persistent,
         });
@@ -401,20 +395,11 @@ mod tests {
             .route("/list", axum::routing::get(|| async {
                 axum::Json(serde_json::json!({
                     "sandboxes": [
-                        {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                        {"id": "vm1", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
                         {"id": "vm2", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4},
-                        {"id": "vm3", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                        {"id": "vm3", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
                     ]
                 }))
-            }))
-            .route("/info/vm1", axum::routing::get(|| async {
-                axum::Json(serde_json::json!({"name": "dev", "id": "vm1"}))
-            }))
-            .route("/info/vm2", axum::routing::get(|| async {
-                axum::Json(serde_json::json!({"id": "vm2"}))
-            }))
-            .route("/info/vm3", axum::routing::get(|| async {
-                axum::Json(serde_json::json!({"name": "ci", "id": "vm3"}))
             }));
         let (path, h, _d) = mock_uds(mock).await;
 
@@ -423,7 +408,7 @@ mod tests {
         assert_eq!(resp.service, "running");
         assert_eq!(resp.vm_count, 3);
         assert_eq!(resp.vms[0].name, Some("dev".into()));
-        assert_eq!(resp.vms[1].name, None); // no name in /info response
+        assert_eq!(resp.vms[1].name, None); // no name in /list response
         assert_eq!(resp.vms[2].name, Some("ci".into()));
         let rs = resp.resource_summary.unwrap();
         assert_eq!(rs.total_ram_mb, 7168);
@@ -451,31 +436,6 @@ mod tests {
         let state = test_app_state(&path);
         let resp = fetch_status(&state).await;
         assert_eq!(resp.service, "unavailable");
-        h.abort();
-    }
-
-    #[tokio::test]
-    async fn fetch_status_info_failure_per_vm() {
-        let mock = axum::Router::new()
-            .route("/list", axum::routing::get(|| async {
-                axum::Json(serde_json::json!({
-                    "sandboxes": [
-                        {"id": "ok1", "pid": 1, "status": "Running", "persistent": false},
-                        {"id": "fail1", "pid": 2, "status": "Running", "persistent": false},
-                    ]
-                }))
-            }))
-            .route("/info/ok1", axum::routing::get(|| async {
-                axum::Json(serde_json::json!({"name": "good-vm"}))
-            }));
-        // No /info/fail1 route -- returns 404 from axum fallback
-        let (path, h, _d) = mock_uds(mock).await;
-
-        let state = test_app_state(&path);
-        let resp = fetch_status(&state).await;
-        assert_eq!(resp.vm_count, 2);
-        assert_eq!(resp.vms[0].name, Some("good-vm".into()));
-        assert_eq!(resp.vms[1].name, None); // /info failed, graceful degradation
         h.abort();
     }
 
