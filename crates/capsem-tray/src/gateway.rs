@@ -184,3 +184,82 @@ impl GatewayClient {
             .context("provision response missing id")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_status_response() {
+        let json = r#"{
+            "service": "running",
+            "vm_count": 2,
+            "vms": [
+                {"id": "abc123", "name": "dev", "status": "running", "persistent": true},
+                {"id": "def456", "name": null, "status": "stopped", "persistent": false}
+            ]
+        }"#;
+        let resp: StatusResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.service, "running");
+        assert_eq!(resp.vm_count, 2);
+        assert_eq!(resp.vms.len(), 2);
+        assert_eq!(resp.vms[0].name.as_deref(), Some("dev"));
+        assert!(resp.vms[0].persistent);
+        assert_eq!(resp.vms[1].name, None);
+        assert!(!resp.vms[1].persistent);
+    }
+
+    #[test]
+    fn deserialize_empty_vm_list() {
+        let json = r#"{"service": "running", "vm_count": 0, "vms": []}"#;
+        let resp: StatusResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.vm_count, 0);
+        assert!(resp.vms.is_empty());
+    }
+
+    #[test]
+    fn deserialize_extra_fields_ignored() {
+        let json = r#"{
+            "service": "running",
+            "vm_count": 0,
+            "vms": [],
+            "extra_field": "should be ignored"
+        }"#;
+        let resp: StatusResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.vm_count, 0);
+    }
+
+    #[test]
+    fn deserialize_vm_extra_fields_ignored() {
+        let json = r#"{
+            "id": "abc",
+            "name": "test",
+            "status": "running",
+            "persistent": true,
+            "ram_mb": 512,
+            "cpus": 4
+        }"#;
+        let vm: VmSummary = serde_json::from_str(json).unwrap();
+        assert_eq!(vm.id, "abc");
+    }
+
+    #[test]
+    fn base_url_format() {
+        let client = GatewayClient {
+            port: 19222,
+            token: "test-token".into(),
+            client: reqwest::Client::new(),
+        };
+        assert_eq!(client.base_url(), "http://127.0.0.1:19222");
+    }
+
+    #[test]
+    fn auth_header_format() {
+        let client = GatewayClient {
+            port: 8080,
+            token: "my-secret".into(),
+            client: reqwest::Client::new(),
+        };
+        assert_eq!(client.auth_header().to_str().unwrap(), "Bearer my-secret");
+    }
+}

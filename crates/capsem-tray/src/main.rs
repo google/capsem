@@ -53,6 +53,7 @@ fn main() -> Result<()> {
 
     let tray = TrayIconBuilder::new()
         .with_icon(initial_icon)
+        .with_icon_as_template(true)
         .with_menu(Box::new(initial_menu))
         .with_tooltip("Capsem")
         .build()
@@ -84,19 +85,22 @@ fn main() -> Result<()> {
         while let Ok(result) = poll_rx.try_recv() {
             match result {
                 PollResult::Status(status) => {
-                    let state = if status.vm_count > 0 {
-                        TrayState::Active
-                    } else {
-                        TrayState::Idle
-                    };
-                    tray.set_icon(Some(icons::load_icon(state)))
-                        .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                    let state = state_for_status(&status);
+                    let is_template = state == TrayState::Idle;
+                    tray.set_icon_with_as_template(
+                        Some(icons::load_icon(state)),
+                        is_template,
+                    )
+                    .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
                     let new_menu = menu::build_menu(&status);
                     tray.set_menu(Some(Box::new(new_menu)));
                 }
                 PollResult::Unavailable(reason) => {
-                    tray.set_icon(Some(icons::load_icon(TrayState::Error)))
-                        .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                    tray.set_icon_with_as_template(
+                        Some(icons::load_icon(TrayState::Error)),
+                        false,
+                    )
+                    .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
                     tray.set_menu(Some(Box::new(menu::build_unavailable_menu())));
                     warn!("gateway unavailable: {reason}");
                 }
@@ -223,6 +227,15 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
     }
 }
 
+/// Determine tray icon state from a status response.
+fn state_for_status(status: &gateway::StatusResponse) -> TrayState {
+    if status.vm_count > 0 {
+        TrayState::Active
+    } else {
+        TrayState::Idle
+    }
+}
+
 fn launch_ui(vm_id: Option<&str>) {
     let mut cmd = std::process::Command::new("open");
     cmd.args(["-a", "Capsem"]);
@@ -239,5 +252,46 @@ fn launch_ui_new_named() {
     cmd.args(["-a", "Capsem", "--args", "--new-named"]);
     if let Err(e) = cmd.spawn() {
         warn!("failed to launch UI: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::{StatusResponse, VmSummary};
+
+    fn make_status(vm_count: u32, vms: Vec<VmSummary>) -> StatusResponse {
+        StatusResponse {
+            service: "running".into(),
+            vm_count,
+            vms,
+        }
+    }
+
+    fn make_vm(id: &str, status: &str) -> VmSummary {
+        VmSummary {
+            id: id.into(),
+            name: None,
+            status: status.into(),
+            persistent: false,
+        }
+    }
+
+    #[test]
+    fn state_active_when_vms_running() {
+        let status = make_status(2, vec![make_vm("a", "running"), make_vm("b", "running")]);
+        assert_eq!(state_for_status(&status), TrayState::Active);
+    }
+
+    #[test]
+    fn state_idle_when_no_vms() {
+        let status = make_status(0, vec![]);
+        assert_eq!(state_for_status(&status), TrayState::Idle);
+    }
+
+    #[test]
+    fn state_active_with_one_vm() {
+        let status = make_status(1, vec![make_vm("x", "suspended")]);
+        assert_eq!(state_for_status(&status), TrayState::Active);
     }
 }

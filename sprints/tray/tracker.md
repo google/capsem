@@ -198,8 +198,8 @@ Status: Done
 - [x] `tray-error.png` / `@2x` -- red (#EF4444)
 - [x] 22x22 @1x and 44x44 @2x Retina variants
 - [x] icons.rs uses `include_bytes!` + `png` crate (no `image`/`resvg` bloat)
-- [ ] macOS template image flag (white/black auto-adapts to light/dark mode)
-- [ ] Verify: icons render correctly in both light and dark mode
+- [x] macOS template image flag: idle icon is black + alpha with `set_icon_as_template(true)`, colored icons use `set_icon_with_as_template(_, false)`
+- [ ] Verify: icons render correctly in both light and dark mode (needs manual visual check)
 
 ## Acceptance Criteria (Sprint Gate)
 
