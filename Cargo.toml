@@ -11,6 +11,7 @@ members = [
     "crates/capsem",
     "crates/capsem-mcp",
     "crates/capsem-tray",
+    "crates/capsem-gateway",
 ]
 
 [workspace.package]
