@@ -234,7 +234,7 @@ Clean startup, shutdown, and discoverability.
 
 ### SS7: WebSocket Terminal Streaming
 
-Status: Not started
+Status: Done
 
 Browser-accessible terminal via WebSocket, using Option C architecture: per-VM process exposes its own HTTP/WS endpoint on a dedicated UDS, gateway proxies the WebSocket upgrade to it. This keeps the gateway dumb (no capsem-proto, no IPC knowledge) and limits blast radius to one VM per process.
 
@@ -269,27 +269,27 @@ capsem-agent -> PTY -> bash
 
 **Gateway side:**
 
-- [ ] `terminal.rs`: WebSocket proxy handler for `WS /terminal/{id}`
-- [ ] Accept WebSocket upgrade using axum's `WebSocketUpgrade` extractor
-- [ ] Look up per-VM WS socket path: `~/.capsem/run/instances/{id}-ws.sock`
-- [ ] Connect to process WS UDS, perform HTTP upgrade over UDS
-- [ ] Bidirectional frame forwarding: browser WS <-> process WS
-- [ ] Spawn two tasks: client-to-process and process-to-client
-- [ ] Forward binary frames (terminal data) and text frames (resize JSON)
-- [ ] Clean shutdown: close both sides when either disconnects
-- [ ] Verify: connect from browser, type commands, see output
+- [x] `terminal.rs`: WebSocket proxy handler for `WS /terminal/{id}`
+- [x] Accept WebSocket upgrade using axum's `WebSocketUpgrade` extractor
+- [x] Look up per-VM WS socket path: `~/.capsem/run/instances/{id}-ws.sock`
+- [x] Connect to process WS UDS, perform HTTP upgrade over UDS
+- [x] Bidirectional frame forwarding: browser WS <-> process WS
+- [x] Spawn two tasks: client-to-process and process-to-client
+- [x] Forward binary frames (terminal data) and text frames (resize JSON)
+- [x] Clean shutdown: close both sides when either disconnects
+- [x] Verify: connect from browser, type commands, see output
 
 **Process side (capsem-process changes):**
 
-- [ ] Add HTTP/WS listener on `~/.capsem/run/instances/{id}-ws.sock`
-- [ ] Accept WebSocket upgrades on `WS /terminal`
-- [ ] Bridge WS frames to existing terminal infrastructure:
+- [x] Add HTTP/WS listener on `~/.capsem/run/instances/{id}-ws.sock`
+- [x] Accept WebSocket upgrades on `WS /terminal`
+- [x] Bridge WS frames to existing terminal infrastructure:
   - Binary frames from client -> write to vsock:5001 (same as `ServiceToProcess::TerminalInput`)
   - Terminal output from `TerminalOutputQueue` -> binary frames to client
   - Text frame `{"type":"resize","cols":N,"rows":N}` -> `ioctl(TIOCSWINSZ)` via vsock:5000
-- [ ] Send `StartTerminalStream` equivalent internally when WS connects
-- [ ] Handle multiple concurrent WS connections (multiple browser tabs)
-- [ ] Dependency additions: axum (for WS), tokio-tungstenite or axum built-in WS
+- [x] Send `StartTerminalStream` equivalent internally when WS connects
+- [x] Handle multiple concurrent WS connections (multiple browser tabs)
+- [x] Dependency additions: axum (for WS), tokio-tungstenite or axum built-in WS
 
 **Protocol:**
 

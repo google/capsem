@@ -1,6 +1,7 @@
 mod auth;
 mod proxy;
 mod status;
+mod terminal;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -74,6 +75,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/", get(handle_health))
         .route("/status", get(status::handle_status))
+        .route("/terminal/{id}", get(terminal::handle_terminal_ws))
         .fallback(proxy::handle_proxy)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

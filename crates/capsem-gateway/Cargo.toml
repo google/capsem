@@ -23,6 +23,8 @@ bytes.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 rand = "0.9"
+tokio-tungstenite = "0.29.0"
+futures.workspace = true
 
 [lints]
 workspace = true

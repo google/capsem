@@ -15,7 +15,9 @@ use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
 use tokio::sync::{broadcast, oneshot, mpsc};
 use std::os::unix::io::RawFd;
 use tracing::{info, error};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 use std::io::{Read, Write};
+use futures::{sink::SinkExt, stream::StreamExt};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -464,7 +466,12 @@ mod tests {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().json().with_writer(std::io::stderr))
+        .init();
     let args = Args::parse();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
@@ -479,6 +486,17 @@ fn main() -> Result<()> {
         "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
         None, &virtiofs_shares, args.cpus, args.ram_mb * 1024 * 1024,
     )?;
+
+    // Emit boot timeline state transitions for process.log.
+    for t in sm.history() {
+        info!(
+            category = "boot_timeline",
+            from = %t.from, to = %t.to,
+            trigger = %t.trigger,
+            duration_ms = t.duration_in_from.as_millis() as u64,
+            "state transition"
+        );
+    }
 
     rt.spawn(async move {
         if let Err(e) = run_async_main_loop(args, vm, vsock_rx, sm).await {
@@ -520,6 +538,25 @@ async fn run_async_main_loop(
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     let db = Arc::new(capsem_logger::DbWriter::open(&args.session_dir.join("session.db"), 256)?);
+
+    // Start host file monitor to record fs_events.
+    // _fs_monitor must live until the process exits to keep the watcher alive.
+    let workspace_dir = args.session_dir.join("workspace");
+    let _fs_monitor = match capsem_core::fs_monitor::FsMonitor::start(
+        workspace_dir.clone(),
+        workspace_dir.clone(),
+        Arc::clone(&db),
+    ) {
+        Ok(monitor) => {
+            info!("host file monitor started");
+            Some(monitor)
+        }
+        Err(e) => {
+            error!("failed to start host file monitor: {e}");
+            None
+        }
+    };
+
     let net_state = Arc::new(capsem_core::create_net_state(&args.id, Arc::clone(&db))?);
 
     let merged = capsem_core::net::policy_config::MergedPolicies::from_disk();
@@ -662,21 +699,59 @@ async fn run_async_main_loop(
         .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
 
+    let ctrl_tx_ipc = ctrl_tx.clone();
+    let uds_path = args.uds_path.clone();
+    let vm_id_ws = args.id.clone();
     tokio::spawn(async move {
-        if let Err(e) = setup_vsock(args.id.clone(), vsock_rx, ipc_tx_clone, ctrl_rx, terminal_output_clone, job_store_clone, session_dir, cli_env, mitm_config_clone, mcp_config_clone, net_state_clone).await {
+        if let Err(e) = setup_vsock(args.id.clone(), vsock_rx, ipc_tx_clone, ctrl_tx, ctrl_rx, terminal_output_clone, job_store_clone, session_dir, cli_env, mitm_config_clone, mcp_config_clone, net_state_clone).await {
             error!("vsock failed: {e:#}");
         }
     });
 
-    if args.uds_path.exists() { std::fs::remove_file(&args.uds_path)?; }
-    let listener = UnixListener::bind(&args.uds_path)?;
-    info!(socket = %args.uds_path.display(), "listening for IPC");
+    if uds_path.exists() { std::fs::remove_file(&uds_path)?; }
+    let listener = UnixListener::bind(&uds_path)?;
+    info!(socket = %uds_path.display(), "listening for IPC");
+
+    let ws_sock_path = uds_path.with_file_name(format!("{}-ws.sock", vm_id_ws));
+    if ws_sock_path.exists() { std::fs::remove_file(&ws_sock_path)?; }
+    let ws_listener = tokio::net::UnixListener::bind(&ws_sock_path)?;
+    info!(socket = %ws_sock_path.display(), "listening for terminal WS");
+
+    // We use a broadcast channel to fan out terminal output to multiple WS connections
+    let (term_bcast_tx, _) = tokio::sync::broadcast::channel::<Vec<u8>>(1024);
+    let term_c_bcast = Arc::clone(&terminal_output);
+    let term_bcast_tx_clone = term_bcast_tx.clone();
+    tokio::spawn(async move {
+        while let Some(data) = term_c_bcast.poll().await {
+            let _ = term_bcast_tx_clone.send(data);
+        }
+    });
+
+    let ctrl_tx_ws = ctrl_tx_ipc.clone();
+    let term_bcast_tx_app = term_bcast_tx.clone();
+
+    let ws_app = axum::Router::new()
+        .route("/terminal", axum::routing::get(
+            move |ws: axum::extract::ws::WebSocketUpgrade| {
+                let ctrl_tx = ctrl_tx_ws.clone();
+                let term_rx = term_bcast_tx_app.subscribe();
+                async move {
+                    ws.on_upgrade(move |socket| handle_terminal_socket(socket, ctrl_tx, term_rx))
+                }
+            }
+        ));
+
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(ws_listener, ws_app).await {
+            error!("WS server error: {}", e);
+        }
+    });
 
     loop {
         let (stream, _) = listener.accept().await?;
-        let tx_c = ctrl_tx.clone();
+        let tx_c = ctrl_tx_ipc.clone();
         let ipc_tx_pass = ipc_tx.clone();
-        let term_c = Arc::clone(&terminal_output);
+        let term_c = term_bcast_tx.clone();
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_config);
@@ -691,6 +766,9 @@ async fn run_async_main_loop(
 
 pub(crate) fn clone_fd(fd: RawFd) -> std::io::Result<std::fs::File> {
     use std::os::unix::io::FromRawFd;
+    if fd == -1 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid file descriptor -1"));
+    }
     let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
     file.try_clone()
 }
@@ -699,6 +777,7 @@ async fn setup_vsock(
     vm_id: String,
     mut vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
     ipc_tx: broadcast::Sender<ProcessToService>,
+    ctrl_tx: mpsc::Sender<ServiceToProcess>,
     mut ctrl_rx: mpsc::Receiver<ServiceToProcess>,
     terminal_output: Arc<capsem_core::TerminalOutputQueue>,
     job_store: Arc<JobStore>,
@@ -729,13 +808,15 @@ async fn setup_vsock(
     let mut ctrl_file = clone_fd(control.fd)?;
 
     let _ = read_control_msg(&mut ctrl_file); // Initial Ready
+    info!(category = "boot_timeline", from = "Booting", to = "Handshaking", trigger = "ready_received", "state transition");
     send_boot_config(&mut ctrl_file, &cli_env)?;
     let _ = read_control_msg(&mut ctrl_file); // BootReady
+    info!(category = "boot_timeline", from = "Handshaking", to = "Running", trigger = "booted", "state transition");
 
-    let _ = ipc_tx.send(ProcessToService::StateChanged { 
-        id: vm_id, 
-        state: "Running".into(), 
-        trigger: "booted".into() 
+    let _ = ipc_tx.send(ProcessToService::StateChanged {
+        id: vm_id.clone(),
+        state: "Running".into(),
+        trigger: "booted".into()
     });
 
     let term_out = Arc::clone(&terminal_output);
@@ -819,9 +900,13 @@ async fn setup_vsock(
 
     let mitm_config_loop = Arc::clone(&mitm_config);
     let mcp_config_loop = Arc::clone(&mcp_config);
+    let ipc_tx_lifecycle = ipc_tx.clone();
+    let ctrl_tx_lifecycle = ctrl_tx.clone();
+    let vm_id_lifecycle = vm_id.clone();
     tokio::spawn(async move {
         loop {
-            if let Some(conn) = vsock_rx.recv().await {
+            match vsock_rx.recv().await {
+            Some(conn) => {
                 match conn.port {
                     capsem_core::VSOCK_PORT_SNI_PROXY => {
                         let config = Arc::clone(&mitm_config_loop);
@@ -837,10 +922,46 @@ async fn setup_vsock(
                             drop(conn); // Hold conn alive
                         });
                     }
+                    capsem_core::VSOCK_PORT_LIFECYCLE => {
+                        let ipc_tx = ipc_tx_lifecycle.clone();
+                        let ctrl_tx = ctrl_tx_lifecycle.clone();
+                        let vm_id = vm_id_lifecycle.clone();
+                        std::thread::spawn(move || {
+                            let mut f = match clone_fd(conn.fd) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    error!("lifecycle: clone_fd failed: {e}");
+                                    return;
+                                }
+                            };
+                            match read_control_msg(&mut f) {
+                                Ok(GuestToHost::ShutdownRequest) => {
+                                    info!("guest requested shutdown via lifecycle port");
+                                    let _ = ipc_tx.send(ProcessToService::ShutdownRequested { id: vm_id });
+                                    if let Err(e) = ctrl_tx.blocking_send(ServiceToProcess::Shutdown) {
+                                        error!("lifecycle: ctrl_tx send failed: {e}");
+                                    }
+                                }
+                                Ok(GuestToHost::SuspendRequest) => {
+                                    info!("guest requested suspend via lifecycle port");
+                                    let _ = ipc_tx.send(ProcessToService::SuspendRequested { id: vm_id });
+                                }
+                                Ok(other) => {
+                                    error!("lifecycle port: unexpected message: {other:?}");
+                                }
+                                Err(e) => {
+                                    error!("lifecycle port: read error: {e}");
+                                }
+                            }
+                            drop(conn);
+                        });
+                    }
                     _ => {}
                 }
-            } else {
+            }
+            None => {
                 break;
+            }
             }
         }
     });
@@ -959,7 +1080,7 @@ async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     ipc_tx: broadcast::Sender<ProcessToService>,
-    terminal_output: Arc<capsem_core::TerminalOutputQueue>,
+    term_bcast_tx: broadcast::Sender<Vec<u8>>,
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
@@ -984,9 +1105,9 @@ async fn handle_ipc_connection(
                 ServiceToProcess::StartTerminalStream => {
                     info!("Starting terminal stream for connection");
                     let out_tx = ipc_tx_out.clone();
-                    let term_c = Arc::clone(&terminal_output);
+                    let mut term_rx = term_bcast_tx.subscribe();
                     tokio::spawn(async move {
-                        while let Some(data) = term_c.poll().await {
+                        while let Ok(data) = term_rx.recv().await {
                             if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() { break; }
                         }
                     });
@@ -1086,9 +1207,64 @@ async fn handle_ipc_connection(
                     info!("Received Shutdown command, exiting IPC loop gracefully");
                     break;
                 }
+                ServiceToProcess::PrepareSnapshot
+                | ServiceToProcess::Unfreeze
+                | ServiceToProcess::Suspend { .. }
+                | ServiceToProcess::Resume => {
+                    // Phase 2 (T3-T6): forwarded to ctrl channel when implemented.
+                    info!("lifecycle IPC command received (not yet implemented)");
+                }
             },
             Err(_) => break,
         }
     }
     Ok(())
+}
+
+async fn handle_terminal_socket(
+    ws: axum::extract::ws::WebSocket,
+    ctrl_tx: mpsc::Sender<ServiceToProcess>,
+    mut term_rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+) {
+    let (mut client_write, mut client_read) = ws.split();
+
+    let _ = ctrl_tx.send(ServiceToProcess::StartTerminalStream).await;
+
+    let mut rx_task = tokio::spawn(async move {
+        while let Ok(data) = term_rx.recv().await {
+            if client_write.send(axum::extract::ws::Message::Binary(data.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let ctrl_tx_c = ctrl_tx.clone();
+    let mut tx_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = client_read.next().await {
+            match msg {
+                axum::extract::ws::Message::Binary(b) => {
+                    let _ = ctrl_tx_c.send(ServiceToProcess::TerminalInput { data: b.to_vec() }).await;
+                }
+                axum::extract::ws::Message::Text(t) => {
+                    if let Ok(resize) = serde_json::from_str::<serde_json::Value>(t.as_str()) {
+                        if let (Some(cols), Some(rows)) = (
+                            resize.get("cols").and_then(|v| v.as_u64()),
+                            resize.get("rows").and_then(|v| v.as_u64())
+                        ) {
+                            let _ = ctrl_tx_c.send(ServiceToProcess::TerminalResize { 
+                                cols: cols as u16, 
+                                rows: rows as u16 
+                            }).await;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+
+    tokio::select! {
+        _ = &mut rx_task => { tx_task.abort(); },
+        _ = &mut tx_task => { rx_task.abort(); },
+    }
 }

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
 use hyper_util::rt::TokioIo;
 use tokio::net::UnixStream;
 
@@ -92,6 +90,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use axum::Router;
     use tower::ServiceExt;
+    use axum::body::Body;
+    use bytes::Bytes;
 
     use crate::status::StatusCache;
 
