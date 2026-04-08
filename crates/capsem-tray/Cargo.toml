@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 tray-icon = "0.22"
 muda = "0.17"
-image = { version = "0.25", default-features = false, features = ["png"] }
+png = "0.18"
 reqwest = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

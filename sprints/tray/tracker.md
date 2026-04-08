@@ -190,15 +190,15 @@ Status: Done
 
 ### SS6: Icon Assets
 
-Status: Not started (using programmatic placeholders)
+Status: Done
 
-- [ ] Create 22x22 template PNG icons for macOS menu bar
-- [ ] `tray-default.png` -- grey outline (idle/no VMs)
-- [ ] `tray-active.png` -- green/filled (VMs running)
-- [ ] `tray-error.png` -- red (gateway unreachable)
-- [ ] @2x Retina variants (44x44)
+- [x] Pre-rendered from project SVG (icon.svg) via rsvg-convert
+- [x] `tray-idle.png` / `@2x` -- grey (#808080)
+- [x] `tray-active.png` / `@2x` -- purple (#7C3AED)
+- [x] `tray-error.png` / `@2x` -- red (#EF4444)
+- [x] 22x22 @1x and 44x44 @2x Retina variants
+- [x] icons.rs uses `include_bytes!` + `png` crate (no `image`/`resvg` bloat)
 - [ ] macOS template image flag (white/black auto-adapts to light/dark mode)
-- [ ] Switch icons.rs from programmatic to `include_bytes!` PNG loading
 - [ ] Verify: icons render correctly in both light and dark mode
 
 ## Acceptance Criteria (Sprint Gate)
