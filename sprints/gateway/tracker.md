@@ -328,9 +328,9 @@ crates/capsem-gateway/
 - [x] CORS headers present on all responses
 - [x] Clean shutdown (SIGTERM) deletes token + port + pid files
 - [x] Integration test: provision, list, exec, stop cycle through gateway with a running capsem-service
-- [ ] `WS /terminal/{id}` connects browser to guest PTY through gateway -> process WS UDS
-- [ ] Terminal resize from browser propagates to guest PTY
-- [ ] Terminal session closes cleanly on browser disconnect
+- [x] `WS /terminal/{id}` connects browser to guest PTY through gateway -> process WS UDS
+- [x] Terminal resize from browser propagates to guest PTY
+- [x] Terminal session closes cleanly on browser disconnect
 
 ## Test Coverage (SS1-SS6)
 
