@@ -47,6 +47,7 @@ markers = [
     "rootfs: Rootfs artifact validation tests (no VM needed)",
     "session_exhaustive: Exhaustive per-table session.db data validation",
     "e2e: End-to-end tests via real CLI binary (the actual user path)",
+    "gateway: Gateway TCP-to-UDS proxy tests (mock UDS or real service)",
 ]
 
 [dependency-groups]

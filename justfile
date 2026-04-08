@@ -41,10 +41,11 @@ cli_binary := "target/debug/capsem"
 service_binary := "target/debug/capsem-service"
 process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp"
+gateway_binary := "target/debug/capsem-gateway"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-gateway"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-gateway"
 
 # Compile all host binaries
 _build-host:
@@ -68,17 +69,31 @@ _ensure-service: _sign
     [[ "$arch" == "arm64" ]] || arch="x86_64"
     mkdir -p ~/.capsem/run
     PIDFILE=~/.capsem/run/service.pid
-    # Kill existing service if any
-    if [[ -f "$PIDFILE" ]]; then
-        OLD_PID=$(cat "$PIDFILE")
-        if kill -0 "$OLD_PID" 2>/dev/null; then
-            echo "Stopping capsem-service (PID $OLD_PID)..."
-            kill "$OLD_PID" 2>/dev/null || true
-            sleep 1
-        fi
-        rm -f "$PIDFILE"
-    fi
+    # Kill ALL capsem-service processes (stale installed services, old dev sessions).
+    # The dev service must own the socket exclusively.
+    pkill -f "capsem-service.*--foreground" 2>/dev/null || true
+    sleep 0.5
+    rm -f "$PIDFILE"
     rm -f ~/.capsem/run/service.sock
+    # Symlink ~/.capsem/assets -> repo assets so installed tools (MCP, CLI)
+    # see the same repacked initrd as the dev service.
+    DEV_ASSETS="$(cd "{{assets_dir}}" && pwd)"
+    if [ -L ~/.capsem/assets ]; then
+        # Already a symlink -- update if stale
+        CURRENT=$(readlink ~/.capsem/assets)
+        if [ "$CURRENT" != "$DEV_ASSETS" ]; then
+            ln -sfn "$DEV_ASSETS" ~/.capsem/assets
+            echo "Updated ~/.capsem/assets -> $DEV_ASSETS"
+        fi
+    elif [ -d ~/.capsem/assets ]; then
+        # Real directory from install -- replace with symlink for dev
+        mv ~/.capsem/assets ~/.capsem/assets.installed
+        ln -sfn "$DEV_ASSETS" ~/.capsem/assets
+        echo "Saved ~/.capsem/assets.installed, symlinked ~/.capsem/assets -> $DEV_ASSETS"
+    else
+        ln -sfn "$DEV_ASSETS" ~/.capsem/assets
+        echo "Symlinked ~/.capsem/assets -> $DEV_ASSETS"
+    fi
     echo "Starting capsem-service..."
     RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
@@ -307,7 +322,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                echo '--- Build agent binaries ---' && \
                cargo build --release --target \$RUST_TARGET -p capsem-agent && \
                mkdir -p /cargo-target/linux-agent/\$TARGET_ARCH && \
-               cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/linux-agent/\$TARGET_ARCH/ && \
+               cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Build Tauri app ---' && \
@@ -361,9 +376,32 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
     echo ""
     echo "=== Python integration tests (MCP + service + CLI) ==="
-    uv run python -m pytest tests/capsem-mcp/ tests/capsem-service/ tests/capsem-cli/ -v --tb=short
+    uv run python -m pytest tests/capsem-mcp/ tests/capsem-service/ tests/capsem-cli/ tests/capsem-gateway/ -v --tb=short -m "gateway or integration or mcp"
     echo ""
     echo "Smoke test passed"
+
+# Gateway unit + integration tests (no VM needed)
+test-gateway:
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Gateway: Rust unit tests ==="
+    cargo test -p capsem-gateway -- --nocapture
+    echo ""
+    echo "=== Gateway: build binary ==="
+    cargo build -p capsem-gateway
+    echo ""
+    echo "=== Gateway: Python integration tests (mock UDS) ==="
+    uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway and not e2e"
+    echo ""
+    echo "Gateway tests passed"
+
+# Gateway E2E tests (requires capsem-service + VM assets)
+test-gateway-e2e: _check-assets _pack-initrd _sign
+    #!/bin/bash
+    set -euo pipefail
+    cargo build -p capsem-gateway {{host_crates}}
+    echo "=== Gateway: E2E tests (real service + VMs) ==="
+    uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway and e2e"
 
 # Local HTML coverage report across all Rust crates
 coverage:
@@ -822,7 +860,7 @@ _pack-initrd:
     chmod 755 init
     # Verify binaries exist before repacking
     RELEASE_DIR="$ROOT/target/linux-agent/$arch"
-    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
+    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-sysutil; do
         if [ ! -f "$RELEASE_DIR/$b" ]; then
             echo "ERROR: $b missing from $RELEASE_DIR"
             exit 1
@@ -859,4 +897,4 @@ _pack-initrd:
     python3 "$ROOT/scripts/gen_manifest.py" "$ASSETS" "$ROOT/Cargo.toml"
     # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
-    echo "initrd repacked (with agent + net-proxy + mcp-server + doctor)"
+    echo "initrd repacked (with agent + net-proxy + mcp-server + sysutil + doctor)"
