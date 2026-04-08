@@ -318,19 +318,30 @@ crates/capsem-gateway/
 
 ## Acceptance Criteria (Sprint Gate)
 
-- [ ] `capsem-gateway` binary builds cleanly (`cargo build -p capsem-gateway`)
-- [ ] Starts in <100ms, logs port and token path
-- [ ] Token written to `gateway.token` with 0o600 permissions
-- [ ] Unauthenticated requests -> 401 JSON
-- [ ] `GET /` -> 200 (no auth required, health check)
-- [ ] All service endpoints reachable through gateway with valid token
-- [ ] `GET /status` returns aggregated VM health
-- [ ] CORS headers present on all responses
-- [ ] Clean shutdown (SIGTERM) deletes token + port + pid files
-- [ ] Integration test: provision, list, exec, stop cycle through gateway with a running capsem-service
+- [x] `capsem-gateway` binary builds cleanly (`cargo build -p capsem-gateway`)
+- [x] Starts in <100ms, logs port and token path
+- [x] Token written to `gateway.token` with 0o600 permissions
+- [x] Unauthenticated requests -> 401 JSON
+- [x] `GET /` -> 200 (no auth required, health check)
+- [x] All service endpoints reachable through gateway with valid token
+- [x] `GET /status` returns aggregated VM health
+- [x] CORS headers present on all responses
+- [x] Clean shutdown (SIGTERM) deletes token + port + pid files
+- [x] Integration test: provision, list, exec, stop cycle through gateway with a running capsem-service
 - [ ] `WS /terminal/{id}` connects browser to guest PTY through gateway -> process WS UDS
 - [ ] Terminal resize from browser propagates to guest PTY
 - [ ] Terminal session closes cleanly on browser disconnect
+
+## Test Coverage (SS1-SS6)
+
+| Tier | Count | Scope |
+|------|-------|-------|
+| Rust unit | 58 | auth (22), proxy (21), status (15), health (2) |
+| Python integration (mock UDS) | 32 | health (3), auth (7), proxy (8), status (4), runtime (6), CORS (3) |
+| Python E2E (real service + VM) | 5 | lifecycle, /status, 404, race regression, health |
+| **Total** | **95** | |
+
+Security: 10MB body limit (413), auth bypass edge cases (8 vectors), path traversal, header filtering.
 
 ## Depends On
 
