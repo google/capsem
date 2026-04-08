@@ -121,6 +121,64 @@ async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     }))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    use crate::status::StatusCache;
+
+    fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
+        let state = Arc::new(AppState {
+            token: "test".into(),
+            uds_path: uds_path.into(),
+            status_cache: StatusCache::new(),
+        });
+        let app = axum::Router::new()
+            .route("/", axum::routing::get(handle_health))
+            .with_state(state.clone());
+        (app, state)
+    }
+
+    #[tokio::test]
+    async fn health_response_shape() {
+        let (app, _) = health_app("/tmp/test.sock");
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json["version"].is_string());
+        assert!(json["service_socket"].is_string());
+    }
+
+    #[tokio::test]
+    async fn health_version_matches_cargo_pkg() {
+        let (app, _) = health_app("/tmp/test.sock");
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["version"].as_str().unwrap(), env!("CARGO_PKG_VERSION"));
+    }
+}
+
 async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]

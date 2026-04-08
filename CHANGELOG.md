@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **capsem-gateway: TCP-to-UDS reverse proxy** -- standalone binary that bridges TCP (default port 19222) to capsem-service UDS. Bearer token auth (64-char random, regenerated on restart, written to `~/.capsem/run/gateway.token` with 0600 permissions). All service endpoints proxied through with method/path/query/body preserved. `GET /` health check (no auth). `GET /status` aggregated VM health with 2s cache TTL for efficient tray polling. CORS permissive for browser access. Graceful shutdown cleans up token/port/pid files. No capsem-core dependency, no VM access -- pure low-privilege proxy.
+
+### Security
+- **capsem-gateway: 10 MB request body size limit** -- proxy now enforces a 10 MB maximum on incoming request bodies via `http_body_util::Limited`, returning 413 Payload Too Large for oversized payloads. Prevents OOM from malicious clients.
 - **capsem-tray: macOS menu bar tray** -- standalone binary that polls the gateway `/status` endpoint and shows per-VM submenus (Connect, Suspend/Resume, Fork, Stop, Delete), global actions (New Temporary VM, New Long-term VM, Open Capsem, Quit), and color-coded status icons (green/grey/red). Uses `tray-icon` + `muda` for native NSStatusItem. No capsem-core dependency, no Tauri.
 
 ### Fixed

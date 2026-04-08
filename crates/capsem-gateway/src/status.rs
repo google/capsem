@@ -230,4 +230,284 @@ mod tests {
         assert_eq!(json["vm_count"], 0);
         assert!(json["resource_summary"].is_null());
     }
+
+    #[test]
+    fn status_response_multiple_vms_resource_aggregation() {
+        let resp = StatusResponse {
+            service: "running".into(),
+            gateway_version: "0.1.0".into(),
+            vm_count: 3,
+            vms: vec![
+                VmSummary { id: "a".into(), name: Some("dev".into()), status: "running".into(), persistent: true },
+                VmSummary { id: "b".into(), name: None, status: "running".into(), persistent: false },
+                VmSummary { id: "c".into(), name: Some("ci".into()), status: "stopped".into(), persistent: true },
+            ],
+            resource_summary: Some(ResourceSummary {
+                total_ram_mb: 6144,
+                total_cpus: 6,
+                running_count: 2,
+                stopped_count: 1,
+            }),
+        };
+
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["vm_count"], 3);
+        assert_eq!(json["resource_summary"]["running_count"], 2);
+        assert_eq!(json["resource_summary"]["stopped_count"], 1);
+        assert_eq!(json["resource_summary"]["total_ram_mb"], 6144);
+        // VM with no name should serialize name as null
+        assert!(json["vms"][1]["name"].is_null());
+    }
+
+    #[test]
+    fn vm_summary_name_null_when_absent() {
+        let vm = VmSummary {
+            id: "x".into(),
+            name: None,
+            status: "running".into(),
+            persistent: false,
+        };
+        let json = serde_json::to_value(&vm).unwrap();
+        assert!(json["name"].is_null());
+        assert!(!json["persistent"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn list_response_deserializes() {
+        let json = r#"{"sandboxes":[{"id":"abc","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2}]}"#;
+        let list: ListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(list.sandboxes.len(), 1);
+        assert_eq!(list.sandboxes[0].id, "abc");
+        assert!(list.sandboxes[0].persistent);
+        assert_eq!(list.sandboxes[0].ram_mb, Some(2048));
+    }
+
+    #[test]
+    fn list_response_handles_missing_optional_fields() {
+        let json = r#"{"sandboxes":[{"id":"abc","pid":123}]}"#;
+        let list: ListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(list.sandboxes[0].ram_mb, None);
+        assert_eq!(list.sandboxes[0].cpus, None);
+        assert!(!list.sandboxes[0].persistent);
+    }
+
+    #[tokio::test]
+    async fn cache_returns_fresh_data() {
+        let cache = StatusCache::new();
+        let resp = StatusResponse {
+            service: "running".into(),
+            gateway_version: "test".into(),
+            vm_count: 1,
+            vms: vec![],
+            resource_summary: None,
+        };
+
+        // Populate cache
+        {
+            let mut guard = cache.inner.write().await;
+            *guard = Some((Instant::now(), resp.clone()));
+        }
+
+        // Read back within TTL
+        {
+            let guard = cache.inner.read().await;
+            let (ts, ref cached) = guard.as_ref().unwrap();
+            assert!(ts.elapsed() < CACHE_TTL);
+            assert_eq!(cached.service, "running");
+            assert_eq!(cached.vm_count, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_expires_after_ttl() {
+        let cache = StatusCache::new();
+        let resp = StatusResponse {
+            service: "running".into(),
+            gateway_version: "test".into(),
+            vm_count: 0,
+            vms: vec![],
+            resource_summary: None,
+        };
+
+        // Populate cache with a timestamp in the past
+        {
+            let mut guard = cache.inner.write().await;
+            *guard = Some((Instant::now() - Duration::from_secs(5), resp));
+        }
+
+        // Cache should be stale
+        {
+            let guard = cache.inner.read().await;
+            let (ts, _) = guard.as_ref().unwrap();
+            assert!(ts.elapsed() >= CACHE_TTL);
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_starts_empty() {
+        let cache = StatusCache::new();
+        let guard = cache.inner.read().await;
+        assert!(guard.is_none());
+    }
+
+    // --- fetch_status with mock UDS ---
+
+    use crate::AppState;
+
+    fn test_app_state(uds_path: &str) -> AppState {
+        AppState {
+            token: "test".into(),
+            uds_path: uds_path.into(),
+            status_cache: StatusCache::new(),
+        }
+    }
+
+    async fn mock_uds(app: axum::Router) -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("mock.sock");
+        let path_str = sock_path.to_str().unwrap().to_string();
+        let uds = tokio::net::UnixListener::bind(&sock_path).unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(uds, app).await.ok();
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        (path_str, handle, dir)
+    }
+
+    #[tokio::test]
+    async fn fetch_status_empty_vm_list() {
+        let mock = axum::Router::new()
+            .route("/list", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({"sandboxes": []}))
+            }));
+        let (path, h, _d) = mock_uds(mock).await;
+
+        let state = test_app_state(&path);
+        let resp = fetch_status(&state).await;
+        assert_eq!(resp.service, "running");
+        assert_eq!(resp.vm_count, 0);
+        assert!(resp.vms.is_empty());
+        let rs = resp.resource_summary.unwrap();
+        assert_eq!(rs.total_ram_mb, 0);
+        assert_eq!(rs.total_cpus, 0);
+        assert_eq!(rs.running_count, 0);
+        assert_eq!(rs.stopped_count, 0);
+        h.abort();
+    }
+
+    #[tokio::test]
+    async fn fetch_status_multiple_vms() {
+        let mock = axum::Router::new()
+            .route("/list", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "sandboxes": [
+                        {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                        {"id": "vm2", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4},
+                        {"id": "vm3", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    ]
+                }))
+            }))
+            .route("/info/vm1", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({"name": "dev", "id": "vm1"}))
+            }))
+            .route("/info/vm2", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({"id": "vm2"}))
+            }))
+            .route("/info/vm3", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({"name": "ci", "id": "vm3"}))
+            }));
+        let (path, h, _d) = mock_uds(mock).await;
+
+        let state = test_app_state(&path);
+        let resp = fetch_status(&state).await;
+        assert_eq!(resp.service, "running");
+        assert_eq!(resp.vm_count, 3);
+        assert_eq!(resp.vms[0].name, Some("dev".into()));
+        assert_eq!(resp.vms[1].name, None); // no name in /info response
+        assert_eq!(resp.vms[2].name, Some("ci".into()));
+        let rs = resp.resource_summary.unwrap();
+        assert_eq!(rs.total_ram_mb, 7168);
+        assert_eq!(rs.total_cpus, 7);
+        assert_eq!(rs.running_count, 2);
+        assert_eq!(rs.stopped_count, 1);
+        h.abort();
+    }
+
+    #[tokio::test]
+    async fn fetch_status_service_unavailable() {
+        let state = test_app_state("/tmp/capsem-gw-test-no-such-socket.sock");
+        let resp = fetch_status(&state).await;
+        assert_eq!(resp.service, "unavailable");
+        assert_eq!(resp.vm_count, 0);
+        assert!(resp.resource_summary.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_status_malformed_list_json() {
+        let mock = axum::Router::new()
+            .route("/list", axum::routing::get(|| async { "not json at all" }));
+        let (path, h, _d) = mock_uds(mock).await;
+
+        let state = test_app_state(&path);
+        let resp = fetch_status(&state).await;
+        assert_eq!(resp.service, "unavailable");
+        h.abort();
+    }
+
+    #[tokio::test]
+    async fn fetch_status_info_failure_per_vm() {
+        let mock = axum::Router::new()
+            .route("/list", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "sandboxes": [
+                        {"id": "ok1", "pid": 1, "status": "Running", "persistent": false},
+                        {"id": "fail1", "pid": 2, "status": "Running", "persistent": false},
+                    ]
+                }))
+            }))
+            .route("/info/ok1", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({"name": "good-vm"}))
+            }));
+        // No /info/fail1 route -- returns 404 from axum fallback
+        let (path, h, _d) = mock_uds(mock).await;
+
+        let state = test_app_state(&path);
+        let resp = fetch_status(&state).await;
+        assert_eq!(resp.vm_count, 2);
+        assert_eq!(resp.vms[0].name, Some("good-vm".into()));
+        assert_eq!(resp.vms[1].name, None); // /info failed, graceful degradation
+        h.abort();
+    }
+
+    #[tokio::test]
+    async fn cache_prevents_duplicate_fetches() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = counter.clone();
+        let mock = axum::Router::new()
+            .route("/list", axum::routing::get(move || {
+                let c = c.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!({"sandboxes": []}))
+                }
+            }));
+        let (path, h, _d) = mock_uds(mock).await;
+
+        let state = Arc::new(AppState {
+            token: "test".into(),
+            uds_path: path.into(),
+            status_cache: StatusCache::new(),
+        });
+
+        // First call -- cache miss, fetches from UDS
+        handle_status(axum::extract::State(state.clone())).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        // Second call within TTL -- should use cache
+        handle_status(axum::extract::State(state.clone())).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "cache should prevent second fetch");
+        h.abort();
+    }
 }

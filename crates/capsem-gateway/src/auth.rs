@@ -110,6 +110,36 @@ pub async fn auth_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::routing::get;
+    use axum::Router;
+    use http::Request;
+    use tower::ServiceExt;
+
+    use crate::status::StatusCache;
+
+    fn test_state(token: &str) -> Arc<AppState> {
+        Arc::new(AppState {
+            token: token.to_string(),
+            uds_path: "/tmp/nonexistent.sock".into(),
+            status_cache: StatusCache::new(),
+        })
+    }
+
+    fn test_app(token: &str) -> Router {
+        let state = test_state(token);
+        Router::new()
+            .route("/", get(|| async { "health" }))
+            .route("/list", get(|| async { "ok" }))
+            .route("/status", get(|| async { "status" }))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ))
+            .with_state(state)
+    }
+
+    // --- Token generation ---
 
     #[test]
     fn token_is_64_chars_alphanumeric() {
@@ -124,6 +154,15 @@ mod tests {
         let t2 = generate_token();
         assert_ne!(t1, t2);
     }
+
+    #[test]
+    fn token_uniqueness_over_100_samples() {
+        let tokens: std::collections::HashSet<String> =
+            (0..100).map(|_| generate_token()).collect();
+        assert_eq!(tokens.len(), 100);
+    }
+
+    // --- AuthState file lifecycle ---
 
     #[test]
     fn auth_state_lifecycle() {
@@ -146,5 +185,318 @@ mod tests {
         assert!(!state.token_path.exists());
         assert!(!state.port_path.exists());
         assert!(!state.pid_path.exists());
+    }
+
+    #[test]
+    fn auth_state_creates_run_dir_if_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("nested/deep");
+        assert!(!nested.exists());
+
+        let state = AuthState::new(&nested, "tok", 9999).unwrap();
+        assert!(nested.exists());
+        assert!(state.token_path.exists());
+        state.cleanup();
+    }
+
+    #[test]
+    fn auth_state_pid_file_contains_current_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AuthState::new(dir.path(), "tok", 1234).unwrap();
+        let pid: u32 = std::fs::read_to_string(&state.pid_path).unwrap().parse().unwrap();
+        assert_eq!(pid, std::process::id());
+        state.cleanup();
+    }
+
+    #[test]
+    fn cleanup_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AuthState::new(dir.path(), "tok", 1234).unwrap();
+        state.cleanup();
+        state.cleanup(); // second call should not panic
+    }
+
+    // --- Auth middleware ---
+
+    #[tokio::test]
+    async fn health_endpoint_requires_no_auth() {
+        let app = test_app("secret-token");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn rejects_request_without_token() {
+        let app = test_app("secret-token");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "unauthorized");
+    }
+
+    #[tokio::test]
+    async fn rejects_request_with_wrong_token() {
+        let app = test_app("correct-token");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer wrong-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn accepts_request_with_valid_token() {
+        let app = test_app("my-token");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer my-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_auth_header() {
+        let app = test_app("tok");
+
+        // No "Bearer " prefix
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "tok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Basic auth instead of Bearer
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Basic dG9rOg==")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_bearer_token() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer ")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn post_to_health_requires_auth() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // POST / is not the health check (only GET / is exempt)
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn all_non_root_paths_require_auth() {
+        let app = test_app("tok");
+        for path in ["/status", "/list"] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "{path} should require auth"
+            );
+        }
+    }
+
+    // --- Security edge cases ---
+
+    #[tokio::test]
+    async fn rejects_double_space_bearer() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer  tok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_lowercase_bearer() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "bearer tok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_tab_separated_bearer() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer\ttok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_token_with_trailing_whitespace() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer tok ")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_non_ascii_auth_header() {
+        let app = test_app("tok");
+        // HeaderValue::from_bytes accepts 0x80, but to_str() rejects non-visible-ASCII
+        let hv = http::HeaderValue::from_bytes(&[0x80, 0x81]).unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", hv)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn health_exempt_only_exact_root() {
+        let app = test_app("tok");
+        // /healthz is NOT exempt
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // GET / with query is still exempt (path() returns "/" regardless of query)
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/?foo=bar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn delete_method_on_root_requires_auth() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
