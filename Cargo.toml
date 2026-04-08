@@ -10,6 +10,7 @@ members = [
     "crates/capsem-service",
     "crates/capsem",
     "crates/capsem-mcp",
+    "crates/capsem-tray",
 ]
 
 [workspace.package]
@@ -19,6 +20,9 @@ version = "0.16.1"
 # unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.
 [profile.dev.package.blake3]
 opt-level = 3
+
+[workspace.lints.rust]
+warnings = "deny"
 
 [workspace.dependencies]
 anyhow = "1"
