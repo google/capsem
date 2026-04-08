@@ -1228,8 +1228,6 @@ async fn handle_terminal_socket(
 ) {
     let (mut client_write, mut client_read) = ws.split();
 
-    let _ = ctrl_tx.send(ServiceToProcess::StartTerminalStream).await;
-
     let mut rx_task = tokio::spawn(async move {
         while let Ok(data) = term_rx.recv().await {
             if client_write.send(axum::extract::ws::Message::Binary(data.into())).await.is_err() {
