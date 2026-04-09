@@ -5,7 +5,7 @@ use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde::Deserialize;
 use tracing::debug;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[allow(dead_code)]
 pub struct StatusResponse {
     pub service: String,
@@ -13,7 +13,7 @@ pub struct StatusResponse {
     pub vms: Vec<VmSummary>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[allow(dead_code)]
 pub struct VmSummary {
     pub id: String,

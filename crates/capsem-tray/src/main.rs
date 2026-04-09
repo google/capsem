@@ -42,17 +42,22 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // Channel: async poller -> main thread
+    // Channel: async poller -> main thread (std mpsc is fine for non-tokio main thread)
     let (poll_tx, poll_rx) = mpsc::channel::<PollResult>();
-    // Channel: main thread -> async runtime (for actions)
-    let (action_tx, action_rx) = mpsc::channel::<Action>();
+    // Channel: main thread -> async runtime (tokio mpsc for async recv)
+    let (action_tx, action_rx) = tokio::sync::mpsc::channel::<Action>(32);
+
+    // Pre-decode icons
+    let icon_idle = icons::load_icon(TrayState::Idle);
+    let icon_active = icons::load_icon(TrayState::Active);
+    let icon_error = icons::load_icon(TrayState::Error);
 
     // Build initial tray icon with idle state
-    let initial_icon = icons::load_icon(TrayState::Idle);
+    let initial_state = TrayState::Idle;
     let initial_menu = menu::build_unavailable_menu();
 
     let tray = TrayIconBuilder::new()
-        .with_icon(initial_icon)
+        .with_icon(icon_idle.clone())
         .with_icon_as_template(true)
         .with_menu(Box::new(initial_menu))
         .with_tooltip("Capsem")
@@ -80,47 +85,64 @@ fn main() -> Result<()> {
     // tray-icon uses winit/tao-compatible event handling.
     let menu_channel = MenuEvent::receiver();
 
+    let mut last_state = Some(initial_state);
+    let mut last_status: Option<gateway::StatusResponse> = None;
+
     loop {
         // Process poll results (non-blocking)
         while let Ok(result) = poll_rx.try_recv() {
             match result {
                 PollResult::Status(status) => {
                     let state = state_for_status(&status);
-                    let is_template = state == TrayState::Idle;
-                    tray.set_icon_with_as_template(
-                        Some(icons::load_icon(state)),
-                        is_template,
-                    )
-                    .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
-                    let new_menu = menu::build_menu(&status);
-                    tray.set_menu(Some(Box::new(new_menu)));
+                    
+                    if last_state != Some(state) {
+                        let is_template = state == TrayState::Idle;
+                        let icon = match state {
+                            TrayState::Idle => icon_idle.clone(),
+                            TrayState::Active => icon_active.clone(),
+                            TrayState::Error => icon_error.clone(),
+                        };
+                        tray.set_icon_with_as_template(Some(icon), is_template)
+                            .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                        last_state = Some(state);
+                    }
+
+                    if last_status.as_ref() != Some(&status) {
+                        let new_menu = menu::build_menu(&status);
+                        tray.set_menu(Some(Box::new(new_menu)));
+                        last_status = Some(status);
+                    }
                 }
                 PollResult::Unavailable(reason) => {
-                    tray.set_icon_with_as_template(
-                        Some(icons::load_icon(TrayState::Error)),
-                        false,
-                    )
-                    .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
-                    tray.set_menu(Some(Box::new(menu::build_unavailable_menu())));
+                    let state = TrayState::Error;
+                    
+                    if last_state != Some(state) {
+                        tray.set_icon_with_as_template(Some(icon_error.clone()), false)
+                            .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                        tray.set_menu(Some(Box::new(menu::build_unavailable_menu())));
+                        last_state = Some(state);
+                        last_status = None;
+                    }
+                    
                     warn!("gateway unavailable: {reason}");
                 }
             }
         }
 
         // Process menu clicks
-        if let Ok(event) = menu_channel.try_recv() {
+        while let Ok(event) = menu_channel.try_recv() {
             match menu::parse_action(&event.id) {
                 Some(Action::Quit) => {
                     info!("quit requested");
-                    std::process::exit(0);
+                    return Ok(());
                 }
                 Some(Action::OpenUi) => {
                     launch_ui(None);
                 }
                 Some(action) => {
-                    if action_tx.send(action).is_err() {
+                    if action_tx.blocking_send(action).is_err() {
                         error!("async worker gone, exiting");
-                        std::process::exit(1);
+                        return Ok(());
                     }
                 }
                 None => {}
@@ -138,25 +160,19 @@ async fn async_worker(
     port_override: Option<u16>,
     interval_secs: u64,
     poll_tx: mpsc::Sender<PollResult>,
-    action_rx: mpsc::Receiver<Action>,
+    mut action_rx: tokio::sync::mpsc::Receiver<Action>,
 ) {
-    let interval = std::time::Duration::from_secs(interval_secs);
+    let interval_duration = std::time::Duration::from_secs(interval_secs);
+    let mut poll_interval = tokio::time::interval(interval_duration);
 
     // Initial discovery -- retry until gateway is reachable
-    let mut client = match GatewayClient::discover(port_override).await {
-        Ok(c) => c,
-        Err(e) => {
-            warn!("initial gateway discovery failed: {e}");
-            let _ = poll_tx.send(PollResult::Unavailable(e.to_string()));
-            // Keep trying
-            loop {
-                tokio::time::sleep(interval).await;
-                match GatewayClient::discover(port_override).await {
-                    Ok(c) => break c,
-                    Err(e) => {
-                        let _ = poll_tx.send(PollResult::Unavailable(e.to_string()));
-                    }
-                }
+    let mut client = loop {
+        match GatewayClient::discover(port_override).await {
+            Ok(c) => break c,
+            Err(e) => {
+                warn!("gateway discovery failed: {e}");
+                let _ = poll_tx.send(PollResult::Unavailable(e.to_string()));
+                tokio::time::sleep(interval_duration).await;
             }
         }
     };
@@ -164,32 +180,38 @@ async fn async_worker(
     info!("gateway discovered at port {}", client.port());
 
     loop {
-        // Poll status
-        match client.status().await {
-            Ok(status) => {
-                let _ = poll_tx.send(PollResult::Status(status));
-            }
-            Err(e) => {
-                warn!("status poll failed: {e}");
-                // Try re-discovery (token/port may have changed)
-                match GatewayClient::discover(port_override).await {
-                    Ok(new_client) => {
-                        client = new_client;
-                        info!("gateway re-discovered at port {}", client.port());
+        tokio::select! {
+            _ = poll_interval.tick() => {
+                // Poll status
+                match client.status().await {
+                    Ok(status) => {
+                        let _ = poll_tx.send(PollResult::Status(status));
                     }
-                    Err(_) => {
-                        let _ = poll_tx.send(PollResult::Unavailable(e.to_string()));
+                    Err(e) => {
+                        warn!("status poll failed: {e}");
+                        // Try re-discovery (token/port may have changed)
+                        match GatewayClient::discover(port_override).await {
+                            Ok(new_client) => {
+                                client = new_client;
+                                info!("gateway re-discovered at port {}", client.port());
+                            }
+                            Err(_) => {
+                                let _ = poll_tx.send(PollResult::Unavailable(e.to_string()));
+                            }
+                        }
                     }
                 }
             }
+            Some(action) = action_rx.recv() => {
+                dispatch_action(&client, action).await;
+                // After an action, trigger an immediate status poll to update UI
+                poll_interval.reset(); // Optional: reset interval if we want to delay next poll
+                // OR just poll immediately:
+                if let Ok(status) = client.status().await {
+                     let _ = poll_tx.send(PollResult::Status(status));
+                }
+            }
         }
-
-        // Drain pending actions before sleeping
-        while let Ok(action) = action_rx.try_recv() {
-            dispatch_action(&client, action).await;
-        }
-
-        tokio::time::sleep(interval).await;
     }
 }
 
