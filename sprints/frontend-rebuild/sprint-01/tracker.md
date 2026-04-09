@@ -50,11 +50,15 @@ Worktree: `worktrees/capsem-ui` (branch: `frontend-ui`)
 
 ## Remaining
 
-- [ ] Vitest tests for postMessage validators
-- [ ] Vitest tests for theme store (localStorage round-trip)
-- [ ] Vitest tests for rate limiter
+- [x] Vitest tests for postMessage validators
+- [x] Vitest tests for theme store (localStorage round-trip)
+- [x] Vitest tests for rate limiter
 - [x] Terminal theme picker in Settings page
-- [ ] Chrome DevTools MCP screenshot: all accents with terminal
+- [x] Chrome DevTools MCP screenshot: all accents with terminal
+- [x] WCAG 4.5:1 contrast for all terminal theme ANSI colors (unit tested)
+- [x] Fix VMFrame import paths (.svelte -> .svelte.ts)
+- [x] Remove legacy mode/theme controls from toolbar dropdown
+- [x] Dark/light UI surface overrides (#282828/#3c3c3c dark, #f4f3f2/#ffffff light)
 
 ## Testing Gate
 
@@ -62,5 +66,6 @@ Worktree: `worktrees/capsem-ui` (branch: `frontend-ui`)
 - [x] Terminal renders in iframe, WebGL confirmed
 - [x] Theme switches propagate from parent to terminal iframe
 - [x] Two VM tabs open simultaneously -- verified isolation
-- [ ] Vitest tests for postMessage protocol and theme store
+- [x] Vitest tests for postMessage protocol and theme store
 - [x] Chrome DevTools MCP: terminal in dark + light, dracula theme verified
+- [x] 137 vitest tests pass (postmessage, rate-limiter, theme-store, theme-contrast)
