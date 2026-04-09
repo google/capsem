@@ -99,10 +99,23 @@ Status: TODO (manual, after SS1-SS4)
 - [ ] Post-install health check passes (service + gateway reachable)
 - [ ] `just install` is idempotent (safe to run multiple times)
 
+## Parallel Workstreams
+
+The **UI rewrite** (frontend-rebuild sprint, `worktrees/capsem-ui`, branch `frontend-ui`) lands in parallel on a separate workstream. This sprint does not block on the UI and the UI does not block on this sprint.
+
+After both this sprint and the UI land, the next sprint is the **release sprint** -- CI pipeline, signing, notarization, changelog, and cutting the first build.
+
+```
+  [S14: Install Lifecycle]  ──┐
+                               ├──>  [Release Sprint: CI + ship]
+  [UI Rewrite]  ──────────────┘
+```
+
 ## Reference
 
 - Install script: `scripts/simulate-install.sh`
 - Service companion spawn: `crates/capsem-service/src/main.rs` (spawn_companions)
 - Tray sprint: `sprints/tray/tracker.md`
+- UI rewrite sprint: `sprints/frontend-rebuild/tracker.md`
 - Native installer sprint: `sprints/native-installer/tracker.md`
 - Just recipes: `justfile` (install, _ensure-service, smoke)
