@@ -282,7 +282,19 @@ fn main() {
         }
     }
 
-    // Step 4b: Set hostname from CAPSEM_VM_NAME if present.
+    // Step 4b: Activate Python venv if capsem-init created one.
+    // This ensures both the PTY shell and exec commands see the venv.
+    const VENV_DIR: &str = "/root/.venv";
+    if std::path::Path::new(VENV_DIR).join("bin/activate").exists() {
+        boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()));
+        // Prepend venv bin to PATH if PATH exists in boot_env.
+        if let Some((_, path_val)) = boot_env.iter_mut().find(|(k, _)| k == "PATH") {
+            *path_val = format!("{VENV_DIR}/bin:{path_val}");
+        }
+        blog_line(&mut blog, "venv activated in boot_env");
+    }
+
+    // Step 4c: Set hostname from CAPSEM_VM_NAME if present.
     if let Some((_, name)) = boot_env.iter().find(|(k, _)| k == "CAPSEM_VM_NAME") {
         let c_name = std::ffi::CString::new(name.as_str()).unwrap_or_default();
         let ret = unsafe { libc::sethostname(c_name.as_ptr(), name.len() as _) };

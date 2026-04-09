@@ -592,25 +592,20 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
 
     // Spawn a task to read from IPC and write to stdout
     let mut output_task = tokio::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(msg) => {
-                    match msg {
-                        ProcessToService::TerminalOutput { data } => {
-                            let _ = stdout.write_all(&data).await;
-                            let _ = stdout.flush().await;
-                        }
-                        ProcessToService::Pong => {}
-                        ProcessToService::StateChanged { .. } => {}
-                        ProcessToService::ExecResult { .. } => {}
-                        ProcessToService::WriteFileResult { .. } => {}
-                        ProcessToService::ReadFileResult { .. } => {}
-                        ProcessToService::ShutdownRequested { .. }
-                        | ProcessToService::SuspendRequested { .. }
-                        | ProcessToService::SnapshotReady { .. } => {}
-                    }
+        while let Ok(msg) = rx.recv().await {
+            match msg {
+                ProcessToService::TerminalOutput { data } => {
+                    let _ = stdout.write_all(&data).await;
+                    let _ = stdout.flush().await;
                 }
-                Err(_) => break, // Socket closed
+                ProcessToService::Pong => {}
+                ProcessToService::StateChanged { .. } => {}
+                ProcessToService::ExecResult { .. } => {}
+                ProcessToService::WriteFileResult { .. } => {}
+                ProcessToService::ReadFileResult { .. } => {}
+                ProcessToService::ShutdownRequested { .. }
+                | ProcessToService::SuspendRequested { .. }
+                | ProcessToService::SnapshotReady { .. } => {}
             }
         }
     });
@@ -780,7 +775,7 @@ async fn main() -> Result<()> {
                     let resp: ApiResponse<ImageListResponse> = client.get("/images").await?;
                     let list = resp.into_result()?;
                     
-                    println!("{:<20} {:<10} {:<20} {:<15} {}", "NAME", "SIZE(MB)", "SOURCE_VM", "BASE_VERSION", "CREATED_AT");
+                    println!("{:<20} {:<10} {:<20} {:<15} CREATED_AT", "NAME", "SIZE(MB)", "SOURCE_VM", "BASE_VERSION");
                     println!("{:-<20} {:<10} {:-<20} {:-<15} {:-<20}", "", "", "", "", "");
                     for img in list.images {
                         let size_mb = img.size_bytes as f64 / 1024.0 / 1024.0;
@@ -1027,7 +1022,12 @@ async fn main() -> Result<()> {
             use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
             use tokio_unix_ipc::channel_from_std;
 
+            // Log file: ~/.capsem/run/doctor-latest.log (always overwritten)
+            let log_path = run_dir.join("doctor-latest.log");
+            let mut log_file = std::fs::File::create(&log_path).ok();
+
             println!("Running capsem-doctor...");
+            println!("Log: {}", log_path.display());
 
             let name = format!("doctor-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             let req = ProvisionRequest {
@@ -1041,6 +1041,15 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let vm_id = resp.into_result()?.id;
 
+            // Helper: always delete the VM, even on Ctrl-C or error
+            async fn delete_vm(client: &UdsClient, vm_id: &str) {
+                let _: Result<ApiResponse<serde_json::Value>, _> =
+                    client.delete(&format!("/delete/{}", vm_id)).await;
+            }
+
+            let ctrl_c = tokio::signal::ctrl_c();
+            tokio::pin!(ctrl_c);
+
             // Connect directly to VM socket for streaming output
             let sock_path = run_dir.join("instances").join(format!("{}.sock", vm_id));
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -1049,55 +1058,119 @@ async fn main() -> Result<()> {
                     if let Ok(stream) = tokio::net::UnixStream::connect(&sock_path).await {
                         if let Ok(std_stream) = stream.into_std() {
                             if let Ok((tx, rx)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
-                                // Start streaming + exec doctor
+                                // Subscribe to terminal output then type the command
+                                // into the shell. This streams output in real-time
+                                // (unlike Exec which buffers until completion).
                                 let _ = tx.send(ServiceToProcess::StartTerminalStream).await;
-                                let _ = tx.send(ServiceToProcess::Exec {
-                                    id: 1,
-                                    command: "capsem-doctor --durations=10".to_string(),
-                                }).await;
 
-                                // Stream output until ExecResult arrives
+                                // Wait for shell to be ready (boot banner finishes)
+                                let mut ready = false;
+                                let boot_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+                                while !ready {
+                                    tokio::select! {
+                                        _ = &mut ctrl_c => {
+                                            eprintln!("\nInterrupted, cleaning up VM...");
+                                            delete_vm(&client, &vm_id).await;
+                                            std::process::exit(130);
+                                        }
+                                        result = tokio::time::timeout(
+                                            std::time::Duration::from_secs(30),
+                                            rx.recv(),
+                                        ) => {
+                                            match result {
+                                                Ok(Ok(ProcessToService::TerminalOutput { data })) => {
+                                                    // Look for the shell prompt (ends with "# ")
+                                                    let text = String::from_utf8_lossy(&data);
+                                                    if text.contains("# ") || text.contains("$ ") {
+                                                        ready = true;
+                                                    }
+                                                }
+                                                Ok(Ok(_)) => continue,
+                                                Ok(Err(_)) | Err(_) => break,
+                                            }
+                                        }
+                                    }
+                                    if tokio::time::Instant::now() >= boot_deadline {
+                                        eprintln!("Shell did not become ready within 30s");
+                                        delete_vm(&client, &vm_id).await;
+                                        std::process::exit(1);
+                                    }
+                                }
+
+                                // Type the doctor command into the shell
+                                let cmd = b"capsem-doctor --durations=10\n";
+                                let _ = tx.send(ServiceToProcess::TerminalInput { data: cmd.to_vec() }).await;
+
+                                // Stream output until we see the sentinel line
                                 let mut stdout = tokio::io::stdout();
+                                let mut output_buf = String::new();
                                 let exit_code = loop {
-                                    match tokio::time::timeout(
-                                        std::time::Duration::from_secs(300),
-                                        rx.recv(),
-                                    ).await {
-                                        Ok(Ok(ProcessToService::TerminalOutput { data })) => {
-                                            let _ = stdout.write_all(&data).await;
-                                            let _ = stdout.flush().await;
+                                    tokio::select! {
+                                        _ = &mut ctrl_c => {
+                                            eprintln!("\nInterrupted, cleaning up VM...");
+                                            break 130;
                                         }
-                                        Ok(Ok(ProcessToService::ExecResult { exit_code, .. })) => {
-                                            break exit_code;
-                                        }
-                                        Ok(Ok(_)) => continue,
-                                        Ok(Err(e)) => {
-                                            eprintln!("IPC error: {e}");
-                                            break 1;
-                                        }
-                                        Err(_) => {
-                                            eprintln!("Doctor timed out after 300s");
-                                            break 1;
+                                        result = tokio::time::timeout(
+                                            std::time::Duration::from_secs(300),
+                                            rx.recv(),
+                                        ) => {
+                                            match result {
+                                                Ok(Ok(ProcessToService::TerminalOutput { data })) => {
+                                                    let _ = stdout.write_all(&data).await;
+                                                    let _ = stdout.flush().await;
+                                                    if let Some(ref mut f) = log_file {
+                                                        let _ = std::io::Write::write_all(f, &data);
+                                                    }
+                                                    // Check for sentinel
+                                                    output_buf.push_str(&String::from_utf8_lossy(&data));
+                                                    // Keep only last 512 bytes to avoid unbounded growth
+                                                    if output_buf.len() > 1024 {
+                                                        output_buf = output_buf.split_off(output_buf.len() - 512);
+                                                    }
+                                                    if output_buf.contains("RESULT: PASS") {
+                                                        break 0;
+                                                    } else if output_buf.contains("RESULT: FAIL") {
+                                                        break 1;
+                                                    }
+                                                }
+                                                Ok(Ok(_)) => continue,
+                                                Ok(Err(e)) => {
+                                                    eprintln!("IPC error: {e}");
+                                                    break 1;
+                                                }
+                                                Err(_) => {
+                                                    eprintln!("Doctor timed out after 300s");
+                                                    break 1;
+                                                }
+                                            }
                                         }
                                     }
                                 };
 
-                                // Cleanup
-                                let _: Result<ApiResponse<serde_json::Value>, _> = client.delete(&format!("/delete/{}", vm_id)).await;
+                                delete_vm(&client, &vm_id).await;
                                 if exit_code != 0 {
+                                    eprintln!("Full log: {}", log_path.display());
                                     std::process::exit(exit_code);
                                 }
-                                break;
+                                return Ok(());
                             }
                         }
                     }
                 }
+                // Check Ctrl-C while waiting for socket
+                tokio::select! {
+                    _ = &mut ctrl_c => {
+                        eprintln!("\nInterrupted, cleaning up VM...");
+                        delete_vm(&client, &vm_id).await;
+                        std::process::exit(130);
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
+                }
                 if tokio::time::Instant::now() >= deadline {
                     eprintln!("VM did not become ready within 30s");
-                    let _: Result<ApiResponse<serde_json::Value>, _> = client.delete(&format!("/delete/{}", vm_id)).await;
+                    delete_vm(&client, &vm_id).await;
                     std::process::exit(1);
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         }
     }

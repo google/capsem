@@ -10,11 +10,8 @@ export HISTFILE=/root/.bash_history
 export HOME=/root
 cd /root
 
-# Activate Python virtualenv (packages install here since rootfs is read-only).
-# Created by capsem-init at boot using uv.
-if [ -f /root/.venv/bin/activate ]; then
-    . /root/.venv/bin/activate
-fi
+# Python venv is activated by capsem-pty-agent at boot (VIRTUAL_ENV + PATH).
+# Both the PTY shell and exec commands see the venv without sourcing here.
 
 # PATH is set by the host via BootConfig SetEnv (source of truth: config/defaults.toml).
 # Do NOT set PATH here -- it creates duplicates and hides bugs.

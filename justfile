@@ -42,10 +42,10 @@ service_binary := "target/debug/capsem-service"
 process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-gateway"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-gateway target/debug/capsem-tray"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-gateway"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-gateway -p capsem-tray"
 
 # Compile all host binaries
 _build-host:
@@ -131,7 +131,7 @@ run-service: _check-assets _pack-initrd _ensure-service
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
 exec +CMD: run-service
-    {{cli_binary}} run {{CMD}}
+    {{cli_binary}} run "{{CMD}}"
 
 
 # VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch to build one.

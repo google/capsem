@@ -1635,6 +1635,8 @@ def test_scenario_s11_delete_recreate_revert_third():
     run("echo s11_latest > /root/s11.txt")  # modify after all snaps
 
     _mcp_revert("s11.txt", cp3)
+    # Drop VirtioFS cached metadata so the guest sees the new file size.
+    run("sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; true")
     r = run("cat /root/s11.txt")
     assert "s11_recreated" in r.stdout, f"expected recreated, got: {r.stdout}"
     run("rm -f /root/s11.txt")

@@ -15,7 +15,7 @@ TESTS_DIR="/usr/local/lib/capsem-tests"
 echo "=== Capsem VM Diagnostics ==="
 echo ""
 
-python3 -m pytest "$TESTS_DIR" -v --tb=short --no-header "$@"
+python3 -m pytest "$TESTS_DIR" -v --tb=long --no-header "$@"
 EXIT_CODE=$?
 
 echo ""

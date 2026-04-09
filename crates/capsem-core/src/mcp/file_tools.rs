@@ -588,7 +588,7 @@ pub fn handle_revert_file(
         // Auto-select: scan snapshots newest-first, find first containing the file.
         let snapshots = scheduler.list_snapshots();
         let found = snapshots.iter().find(|s| {
-            s.workspace_path.join(&path_str).exists()
+            s.workspace_path.join(&path_str).symlink_metadata().is_ok()
         });
         match found {
             Some(s) => (s.slot, format!("cp-{}", s.slot)),
@@ -617,22 +617,34 @@ pub fn handle_revert_file(
     let snap_file = snap.workspace_path.clone().join(&path_str);
     let current_file = workspace_root.join(&path_str);
 
-    // Check for symlink escape: canonicalize both paths to handle macOS /var -> /private/var.
-    if let (Ok(resolved_file), Ok(resolved_root)) =
-        (current_file.canonicalize(), workspace_root.canonicalize())
-    {
-        if !resolved_file.starts_with(&resolved_root) {
-            return JsonRpcResponse::err(
-                request_id,
-                -32602,
-                "path resolves outside workspace (symlink escape)",
-            );
+    // Check for path escape: verify the target path stays within the workspace.
+    // Use the parent dir (which must exist) for canonicalization since the file
+    // itself may not exist yet (deleted file being restored).
+    if let Some(parent) = current_file.parent() {
+        if let (Ok(resolved_parent), Ok(resolved_root)) =
+            (parent.canonicalize(), workspace_root.canonicalize())
+        {
+            if !resolved_parent.starts_with(&resolved_root) {
+                return JsonRpcResponse::err(
+                    request_id,
+                    -32602,
+                    "path resolves outside workspace (symlink escape)",
+                );
+            }
         }
     }
 
+    // Use symlink_metadata to detect presence without following symlinks.
+    let snap_exists = snap_file.symlink_metadata().is_ok();
+    let current_exists = current_file.symlink_metadata().is_ok();
+    let snap_is_symlink = snap_file.symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+
     let action;
     // Check if file already matches snapshot (no-op): same content AND same permissions.
-    if snap_file.exists() && current_file.exists() {
+    // Skip no-op check for symlinks (comparing link targets is handled below).
+    if snap_exists && current_exists && !snap_is_symlink {
         if let (Ok(snap_bytes), Ok(cur_bytes)) = (
             std::fs::read(&snap_file),
             std::fs::read(&current_file),
@@ -652,7 +664,7 @@ pub fn handle_revert_file(
                 );
             }
         }
-    } else if !snap_file.exists() && !current_file.exists() {
+    } else if !snap_exists && !current_exists {
         return JsonRpcResponse::err(
             request_id,
             -32602,
@@ -660,7 +672,7 @@ pub fn handle_revert_file(
         );
     }
 
-    if snap_file.exists() {
+    if snap_exists {
         // File exists in snapshot -- restore it.
         action = "restored";
         if let Some(parent) = current_file.parent() {
@@ -672,19 +684,82 @@ pub fn handle_revert_file(
                 );
             }
         }
-        // Use std::fs::copy (not clone_file) because the destination is in the
-        // VirtioFS shared workspace. APFS clonefile is metadata-only and may not
-        // propagate through VirtioFS immediately, causing stale reads in the guest.
-        if let Err(e) = std::fs::copy(&snap_file, &current_file) {
-            return JsonRpcResponse::err(
-                request_id,
-                -32603,
-                format!("failed to restore file: {e}"),
-            );
-        }
-        // Restore permissions from snapshot.
-        if let Ok(snap_meta) = snap_file.metadata() {
-            let _ = std::fs::set_permissions(&current_file, snap_meta.permissions());
+        if snap_is_symlink {
+            // Remove existing file/symlink before creating the new symlink.
+            if current_exists {
+                let _ = std::fs::remove_file(&current_file);
+            }
+            // Restore symlink: read the link target from the snapshot and recreate it.
+            // Security: the symlink target is whatever the guest originally created.
+            // This is safe because we only write into the VirtioFS workspace directory;
+            // the guest already had the ability to create this exact symlink.
+            match std::fs::read_link(&snap_file) {
+                Ok(link_target) => {
+                    if let Err(e) = std::os::unix::fs::symlink(&link_target, &current_file) {
+                        return JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to restore symlink: {e}"),
+                        );
+                    }
+                }
+                Err(e) => {
+                    return JsonRpcResponse::err(
+                        request_id,
+                        -32603,
+                        format!("failed to read symlink from snapshot: {e}"),
+                    );
+                }
+            }
+        } else {
+            // Regular file: remove + write + fsync.
+            // VirtioFS caches file metadata (size) in the guest kernel.
+            // A plain overwrite can leave the guest with a stale cached size,
+            // causing truncated reads. Removing first invalidates the dentry;
+            // fsync on the new file and its parent dir flushes metadata to
+            // the VirtioFS host so the guest sees the correct size.
+            let _ = std::fs::remove_file(&current_file);
+            let snap_data = match std::fs::read(&snap_file) {
+                Ok(d) => d,
+                Err(e) => {
+                    return JsonRpcResponse::err(
+                        request_id,
+                        -32603,
+                        format!("failed to read snapshot file: {e}"),
+                    );
+                }
+            };
+            {
+                use std::io::Write;
+                let mut f = match std::fs::File::create(&current_file) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to create restored file: {e}"),
+                        );
+                    }
+                };
+                if let Err(e) = f.write_all(&snap_data) {
+                    return JsonRpcResponse::err(
+                        request_id,
+                        -32603,
+                        format!("failed to write restored file: {e}"),
+                    );
+                }
+                let _ = f.sync_all();
+            }
+            // Fsync parent dir to flush dentry metadata.
+            if let Some(parent) = current_file.parent() {
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    let _ = dir.sync_all();
+                }
+            }
+            // Restore permissions from snapshot.
+            if let Ok(snap_meta) = snap_file.metadata() {
+                let _ = std::fs::set_permissions(&current_file, snap_meta.permissions());
+            }
         }
     } else {
         // File was created after checkpoint -- delete it.
