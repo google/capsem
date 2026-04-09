@@ -107,13 +107,25 @@
 }
 
 /*
- * Consistent dark mode base (darker than Preline default).
- * All accents share this same dark/light surface -- only primary color changes.
+ * Surface hierarchy (light and dark).
+ *
+ * --background    Main canvas (content area, page body)
+ * --background-1  Recessed surface (address bar, inset panels)
+ * --background-2  Most recessed (inactive tabs)
+ * --layer         Elevated / selected (active tab, toolbar, cards, settings sidebar)
  */
+:root {
+  --background: #ffffff;            /* canvas: white                    */
+  --background-1: #f4f3f2;         /* recessed: rgb(244,243,242)       */
+  --background-2: #f4f3f2;         /* most recessed: same              */
+  --layer: #ffffff;                 /* elevated/selected: white         */
+}
+
 .dark {
-  --background: var(--color-neutral-900);
-  --background-1: var(--color-neutral-950);
-  --background-2: var(--color-neutral-950);
+  --background: #282828;            /* canvas: rgb(40,40,40)            */
+  --background-1: #282828;          /* recessed: same as canvas         */
+  --background-2: #282828;          /* most recessed: same              */
+  --layer: #3c3c3c;                 /* elevated/selected: rgb(60,60,60) */
 }
 
 /* -- Accent color overrides (primary scale only) -- */

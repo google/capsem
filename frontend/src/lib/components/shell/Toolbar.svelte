@@ -1,16 +1,11 @@
 <script lang="ts">
   import { tabStore } from '../../stores/tabs.svelte.ts';
-  import { themeStore, PRELINE_THEMES } from '../../stores/theme.svelte.ts';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Stop from 'phosphor-svelte/lib/Stop';
   import Trash from 'phosphor-svelte/lib/Trash';
   import GitFork from 'phosphor-svelte/lib/GitFork';
   import MagnifyingGlass from 'phosphor-svelte/lib/MagnifyingGlass';
-  import Sun from 'phosphor-svelte/lib/Sun';
-  import Moon from 'phosphor-svelte/lib/Moon';
-  import Desktop from 'phosphor-svelte/lib/Desktop';
   import List from 'phosphor-svelte/lib/List';
-  import Palette from 'phosphor-svelte/lib/Palette';
   import Info from 'phosphor-svelte/lib/Info';
   import GearSix from 'phosphor-svelte/lib/GearSix';
 
@@ -94,43 +89,6 @@
     {#if menuOpen}
       <div class="absolute end-0 top-full mt-1 w-56 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
         <div class="p-1">
-          <!-- Mode toggle (auto -> light -> dark -> auto) -->
-          <button
-            type="button"
-            class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
-            onclick={() => themeStore.toggleMode()}
-          >
-            {#if themeStore.modePref === 'auto'}
-              <Desktop size={16} />
-              <span>Auto ({themeStore.mode})</span>
-            {:else if themeStore.modePref === 'dark'}
-              <Moon size={16} />
-              <span>Dark</span>
-            {:else}
-              <Sun size={16} />
-              <span>Light</span>
-            {/if}
-          </button>
-
-          <div class="border-t border-dropdown-divider my-1"></div>
-
-          <!-- Preline theme select -->
-          <div class="flex items-center gap-x-3 py-2 px-3">
-            <Palette size={16} class="shrink-0 text-dropdown-item-foreground" />
-            <select
-              class="flex-1 text-sm rounded-lg border border-line-2 bg-layer text-foreground py-1 px-2 focus:outline-hidden focus:border-primary"
-              value={themeStore.prelineTheme}
-              onchange={(e) => themeStore.setPrelineTheme((e.target as HTMLSelectElement).value)}
-            >
-              {#each PRELINE_THEMES as theme (theme.value)}
-                <option value={theme.value}>{theme.label}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="border-t border-dropdown-divider my-1"></div>
-
-          <!-- Other menu items -->
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"

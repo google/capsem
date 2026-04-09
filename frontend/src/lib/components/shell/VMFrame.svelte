@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { parseIframeMessage } from '../../terminal/postmessage';
-  import type { ParentToIframeMsg } from '../../terminal/postmessage';
-  import { themeStore } from '../../stores/theme.svelte';
-  import { tabStore } from '../../stores/tabs.svelte';
+  import { parseIframeMessage } from '../../terminal/postmessage.ts';
+  import type { ParentToIframeMsg } from '../../terminal/postmessage.ts';
+  import { themeStore } from '../../stores/theme.svelte.ts';
+  import { tabStore } from '../../stores/tabs.svelte.ts';
 
   let { vmId, tabId }: { vmId: string; tabId: string } = $props();
 
