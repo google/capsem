@@ -16,16 +16,23 @@ Crate changes: none (justfile + scripts + tests only).
 
 ## Sub-sprints
 
-### SS0: Pass Smoke Tests
+### SS0: Clean System Baseline
 
 Status: TODO
 
-- [ ] `just smoke` passes on next-gen with all current changes
+Gate: nothing else in this sprint starts until SS0 is 100% green. The system must be fully clean -- no warnings, no skipped tests, no known failures. Fix everything, don't defer.
+
+- [ ] `cargo build --workspace` succeeds with zero warnings (fix all warnings, not suppress)
+- [ ] `cargo clippy --workspace` passes clean (zero warnings, zero errors)
+- [ ] `cargo test --workspace` passes -- all unit tests across all crates green
 - [ ] `cargo test -p capsem-tray` passes (47 tests)
 - [ ] `cargo test -p capsem-gateway` passes
 - [ ] `cargo test -p capsem-service` passes
-- [ ] `cargo build` for all workspace crates succeeds clean
-- [ ] No clippy warnings on changed crates
+- [ ] `just smoke` passes on next-gen with all current changes
+- [ ] All new code has tests (no untested code paths shipped)
+- [ ] No `#[allow(dead_code)]` on new code -- if it's dead, delete it
+- [ ] No `todo!()`, `unimplemented!()`, or `// TODO` in shipped code paths
+- [ ] No stale/orphaned processes from previous runs (clean PID files)
 
 ### SS1: Add Missing Binaries to Install
 
