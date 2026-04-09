@@ -1701,7 +1701,6 @@ def test_scenario_s20_touch_mtime_unchanged():
     run("rm -f /root/s20.txt")
 
 
-@pytest.mark.skip(reason="Symlinks not captured by APFS clonefile snapshot (WalkDir follows symlinks)")
 def test_scenario_s21_symlink_revert():
     """S21: create A, symlink B->A, snap, delete B, revert -> B restored as symlink."""
     run("echo s21_target > /root/s21_a.txt")
