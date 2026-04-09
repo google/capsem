@@ -161,11 +161,12 @@ impl AutoSnapshotScheduler {
         clone_directory(&ws_src, &ws_dst)?;
         let clone_ws_ms = t0.elapsed().as_millis();
 
-        // Count files in workspace (lightweight metadata-only walk).
+        // Count files + symlinks in workspace (lightweight metadata-only walk).
         let files_count = walkdir::WalkDir::new(&ws_src)
+            .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
+            .filter(|e| e.file_type().is_file() || e.file_type().is_symlink())
             .count();
 
         // Clone system image.
@@ -357,7 +358,11 @@ impl AutoSnapshotScheduler {
                 continue;
             }
             // Copy all files from this snapshot into merged (overwriting older versions).
-            for entry in walkdir::WalkDir::new(&src_ws).into_iter().filter_map(|e| e.ok()) {
+            for entry in walkdir::WalkDir::new(&src_ws)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
                 let rel = match entry.path().strip_prefix(&src_ws) {
                     Ok(r) => r,
                     Err(_) => continue,
@@ -365,6 +370,15 @@ impl AutoSnapshotScheduler {
                 let dst = merged_ws.join(rel);
                 if entry.file_type().is_dir() {
                     let _ = std::fs::create_dir_all(&dst);
+                } else if entry.file_type().is_symlink() {
+                    // Preserve symlinks as symlinks.
+                    if let Some(parent) = dst.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::remove_file(&dst);
+                    if let Ok(link_target) = std::fs::read_link(entry.path()) {
+                        let _ = std::os::unix::fs::symlink(&link_target, &dst);
+                    }
                 } else if entry.file_type().is_file() {
                     if let Some(parent) = dst.parent() {
                         let _ = std::fs::create_dir_all(parent);
@@ -437,24 +451,43 @@ impl AutoSnapshotScheduler {
 }
 
 /// Compute a blake3 hash of the workspace manifest (sorted file paths + sizes).
+/// Includes symlinks: hashes both symlink size and link target path to
+/// distinguish symlinks pointing at different targets.
 fn workspace_hash(workspace: &Path) -> String {
     let mut entries: BTreeMap<String, u64> = BTreeMap::new();
+    let mut symlink_targets: BTreeMap<String, String> = BTreeMap::new();
     for entry in walkdir::WalkDir::new(workspace)
+        .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
     {
-        if !entry.file_type().is_file() {
+        let ft = entry.file_type();
+        if !ft.is_file() && !ft.is_symlink() {
             continue;
         }
         if let Ok(rel) = entry.path().strip_prefix(workspace) {
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            entries.insert(rel.to_string_lossy().to_string(), size);
+            let rel_str = rel.to_string_lossy().to_string();
+            let size = entry
+                .path()
+                .symlink_metadata()
+                .map(|m| m.len())
+                .unwrap_or(0);
+            entries.insert(rel_str.clone(), size);
+            if ft.is_symlink() {
+                if let Ok(target) = std::fs::read_link(entry.path()) {
+                    symlink_targets.insert(rel_str, target.to_string_lossy().to_string());
+                }
+            }
         }
     }
     let mut hasher = blake3::Hasher::new();
     for (path, size) in &entries {
         hasher.update(path.as_bytes());
         hasher.update(&size.to_le_bytes());
+        // Include symlink target in hash so different targets produce different hashes.
+        if let Some(target) = symlink_targets.get(path) {
+            hasher.update(target.as_bytes());
+        }
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -568,13 +601,23 @@ impl SnapshotBackend for ReflinkSnapshot {
         let reflink_supported = AtomicBool::new(false);
         let mut reflink_failed_logged = false;
 
-        for entry in walkdir::WalkDir::new(source).min_depth(1) {
+        for entry in walkdir::WalkDir::new(source)
+            .follow_links(false)
+            .min_depth(1)
+        {
             let entry = entry?;
             let rel = entry.path().strip_prefix(source)?;
             let target = dest.join(rel);
 
             if entry.file_type().is_dir() {
                 std::fs::create_dir_all(&target)?;
+            } else if entry.file_type().is_symlink() {
+                // Preserve symlinks as symlinks (not their targets).
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let link_target = std::fs::read_link(entry.path())?;
+                std::os::unix::fs::symlink(&link_target, &target)?;
             } else if entry.file_type().is_file() {
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -1377,5 +1420,50 @@ mod tests {
         // System dir should also be snapshotted
         let system_snap = session.join(format!("auto_snapshots/{}/system", slot.slot));
         assert!(system_snap.exists());
+    }
+
+    // -------------------------------------------------------------------
+    // Symlink handling in snapshots
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn symlink_included_in_file_count() {
+        let (_tmp, session) = setup_session_dir();
+        std::fs::write(session.join("workspace/real.txt"), "data").unwrap();
+        std::os::unix::fs::symlink("real.txt", session.join("workspace/link.txt")).unwrap();
+
+        let mut s = sched(&session);
+        let slot = s.take_snapshot().unwrap();
+        // Both the file and symlink should be counted.
+        assert_eq!(slot.files_count, 2);
+    }
+
+    #[test]
+    fn workspace_hash_includes_symlinks() {
+        let (_tmp, session) = setup_session_dir();
+        std::fs::write(session.join("workspace/file.txt"), "data").unwrap();
+        let h1 = workspace_hash(&session.join("workspace"));
+
+        // Adding a symlink should change the hash.
+        std::os::unix::fs::symlink("file.txt", session.join("workspace/link.txt")).unwrap();
+        let h2 = workspace_hash(&session.join("workspace"));
+        assert_ne!(h1, h2, "hash must change when symlink is added");
+    }
+
+    #[test]
+    fn workspace_hash_distinguishes_different_symlink_targets() {
+        let (_tmp, session) = setup_session_dir();
+        std::fs::write(session.join("workspace/a.txt"), "aaa").unwrap();
+        std::fs::write(session.join("workspace/b.txt"), "bbb").unwrap();
+
+        std::os::unix::fs::symlink("a.txt", session.join("workspace/link")).unwrap();
+        let h1 = workspace_hash(&session.join("workspace"));
+
+        // Re-point the symlink to a different target.
+        std::fs::remove_file(session.join("workspace/link")).unwrap();
+        std::os::unix::fs::symlink("b.txt", session.join("workspace/link")).unwrap();
+        let h2 = workspace_hash(&session.join("workspace"));
+
+        assert_ne!(h1, h2, "hash must differ for different symlink targets");
     }
 }

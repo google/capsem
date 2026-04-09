@@ -295,32 +295,51 @@ fn validate_snapshot_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
+/// Entry from a directory walk: size and whether the entry is a symlink.
+#[derive(Debug, Clone, Copy)]
+struct FileEntry {
+    size: u64,
+    is_symlink: bool,
+}
+
 /// Entry describing a changed file.
 #[derive(Debug, serde::Serialize)]
 struct ChangedFile {
     path: String,
     op: &'static str,
     size: Option<u64>,
+    is_symlink: bool,
     checkpoint: String,
     checkpoint_age: String,
     checkpoint_origin: String,
     checkpoint_name: Option<String>,
 }
 
-/// Collect file listing from a directory (relative paths + sizes).
-fn collect_files(root: &Path) -> HashMap<String, u64> {
+/// Collect file listing from a directory (relative paths + metadata).
+/// Includes both regular files and symlinks. Does not follow symlinks.
+fn collect_files(root: &Path) -> HashMap<String, FileEntry> {
     let mut files = HashMap::new();
     if !root.exists() {
         return files;
     }
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
-        if !entry.file_type().is_file() {
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let ft = entry.file_type();
+        if !ft.is_file() && !ft.is_symlink() {
             continue;
         }
         if let Ok(rel) = entry.path().strip_prefix(root) {
             let rel_str = rel.to_string_lossy().to_string();
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            files.insert(rel_str, size);
+            // Use symlink_metadata so we don't follow symlinks for size.
+            let size = entry
+                .path()
+                .symlink_metadata()
+                .map(|m| m.len())
+                .unwrap_or(0);
+            files.insert(rel_str, FileEntry { size, is_symlink: ft.is_symlink() });
         }
     }
     files
@@ -364,12 +383,13 @@ fn collect_changes(
         };
 
         // Created: in current but not in snapshot.
-        for (path, size) in &current_files {
+        for (path, entry) in &current_files {
             if !snap_files.contains_key(path) && seen_paths.insert(path.clone()) {
                 changes.push(ChangedFile {
                     path: path.clone(),
                     op: "created",
-                    size: Some(*size),
+                    size: Some(entry.size),
+                    is_symlink: entry.is_symlink,
                     checkpoint: cp_id.clone(),
                     checkpoint_age: age.clone(),
                     checkpoint_origin: origin_str.into(),
@@ -379,12 +399,13 @@ fn collect_changes(
         }
 
         // Deleted: in snapshot but not in current.
-        for path in snap_files.keys() {
+        for (path, entry) in &snap_files {
             if !current_files.contains_key(path) && seen_paths.insert(path.clone()) {
                 changes.push(ChangedFile {
                     path: path.clone(),
                     op: "deleted",
                     size: None,
+                    is_symlink: entry.is_symlink,
                     checkpoint: cp_id.clone(),
                     checkpoint_age: age.clone(),
                     checkpoint_origin: origin_str.into(),
@@ -394,13 +415,14 @@ fn collect_changes(
         }
 
         // Modified: in both but different size.
-        for (path, current_size) in &current_files {
-            if let Some(snap_size) = snap_files.get(path) {
-                if current_size != snap_size && seen_paths.insert(path.clone()) {
+        for (path, cur_entry) in &current_files {
+            if let Some(snap_entry) = snap_files.get(path) {
+                if cur_entry.size != snap_entry.size && seen_paths.insert(path.clone()) {
                     changes.push(ChangedFile {
                         path: path.clone(),
                         op: "modified",
-                        size: Some(*current_size),
+                        size: Some(cur_entry.size),
+                        is_symlink: cur_entry.is_symlink,
                         checkpoint: cp_id.clone(),
                         checkpoint_age: age.clone(),
                         checkpoint_origin: origin_str.into(),
@@ -525,12 +547,14 @@ pub fn handle_list_changed_files(
     let changes = collect_changes(scheduler, workspace_root);
     let (start_index, max_length, format) = extract_pagination_params(arguments);
 
-    let text = if format == "json" {
-        serde_json::to_string(&changes).unwrap_or_else(|_| "[]".into())
-    } else {
-        render_changes_table(&changes)
-    };
+    if format == "json" {
+        // JSON output is machine-readable -- return full array without pagination
+        // headers that would break JSON parsing.
+        let json = serde_json::to_string(&changes).unwrap_or_else(|_| "[]".into());
+        return tool_ok(request_id, &json);
+    }
 
+    let text = render_changes_table(&changes);
     paginated_response(&text, start_index, max_length, request_id)
 }
 
@@ -782,7 +806,7 @@ fn collect_snapshot_entries(
     // list_snapshots returns newest-first; reverse to walk oldest-first.
     snapshots.reverse();
 
-    let mut prev_files: HashMap<String, u64> = HashMap::new();
+    let mut prev_files: HashMap<String, FileEntry> = HashMap::new();
     let mut entries: Vec<serde_json::Value> = Vec::new();
 
     for s in &snapshots {
@@ -843,30 +867,30 @@ pub fn handle_list_snapshots(
 
 /// Compute changes between two snapshots: what's new/modified/deleted in `current` vs `prev`.
 fn compute_changes_vs_previous(
-    current: &HashMap<String, u64>,
-    prev: &HashMap<String, u64>,
+    current: &HashMap<String, FileEntry>,
+    prev: &HashMap<String, FileEntry>,
 ) -> Vec<Value> {
     let mut changes = Vec::new();
 
     // New: in current but not in prev.
-    for (path, size) in current {
+    for (path, entry) in current {
         if !prev.contains_key(path) {
-            changes.push(serde_json::json!({"path": path, "op": "new", "size": size}));
+            changes.push(serde_json::json!({"path": path, "op": "new", "size": entry.size, "is_symlink": entry.is_symlink}));
         }
     }
 
     // Deleted: in prev but not in current.
-    for path in prev.keys() {
+    for (path, entry) in prev {
         if !current.contains_key(path) {
-            changes.push(serde_json::json!({"path": path, "op": "deleted"}));
+            changes.push(serde_json::json!({"path": path, "op": "deleted", "is_symlink": entry.is_symlink}));
         }
     }
 
     // Modified: in both but different size.
-    for (path, cur_size) in current {
-        if let Some(prev_size) = prev.get(path) {
-            if cur_size != prev_size {
-                changes.push(serde_json::json!({"path": path, "op": "modified", "size": cur_size}));
+    for (path, cur_entry) in current {
+        if let Some(prev_entry) = prev.get(path) {
+            if cur_entry.size != prev_entry.size {
+                changes.push(serde_json::json!({"path": path, "op": "modified", "size": cur_entry.size, "is_symlink": cur_entry.is_symlink}));
             }
         }
     }
@@ -1867,5 +1891,37 @@ mod tests {
             assert!(snap["files_count"].is_number(), "snapshot must have files_count: {snap}");
             assert!(snap["changes"].is_array(), "snapshot must have changes array: {snap}");
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Symlink handling in collect_files
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn collect_files_includes_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("real.txt"), "data").unwrap();
+        std::os::unix::fs::symlink("real.txt", dir.path().join("link.txt")).unwrap();
+
+        let files = collect_files(dir.path());
+        assert!(files.contains_key("real.txt"), "regular file must appear");
+        assert!(files.contains_key("link.txt"), "symlink must appear");
+        assert_eq!(files.len(), 2);
+        assert!(!files["real.txt"].is_symlink);
+        assert!(files["link.txt"].is_symlink);
+    }
+
+    #[test]
+    fn collect_files_does_not_follow_symlinks_for_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = "x".repeat(1000);
+        std::fs::write(dir.path().join("big.txt"), &data).unwrap();
+        std::os::unix::fs::symlink("big.txt", dir.path().join("link.txt")).unwrap();
+
+        let files = collect_files(dir.path());
+        let link_size = files["link.txt"].size;
+        // Symlink size is the length of the target path, not the target file size.
+        // "big.txt" is 7 bytes as a symlink target.
+        assert!(link_size < 100, "symlink size should be small (target path), not {link_size}");
     }
 }
