@@ -43,9 +43,9 @@ crates/capsem-tray/
     gateway.rs    # HTTP client for gateway (reqwest, token reading)
     icons.rs      # Icon loading + state management
   icons/
-    tray-default.png    # 22x22 grey template (@1x, @2x)
-    tray-active.png     # 22x22 green
-    tray-error.png      # 22x22 red
+    tray-idle.png       # 22x22 black template (@1x, @2x) -- auto light/dark
+    tray-active.png     # 22x22 purple #7C3AED (@1x, @2x)
+    tray-error.png      # 22x22 red #EF4444 (@1x, @2x)
 ```
 
 ### Dependencies
@@ -61,9 +61,9 @@ name = "capsem-tray"
 path = "src/main.rs"
 
 [dependencies]
-tray-icon = "0.21"         # Native NSStatusItem, same lib Tauri uses
-muda = "0.16"              # Menu library (tray-icon peer dep)
-image = "0.25"             # Icon loading
+tray-icon = "0.22"         # Native NSStatusItem, same lib Tauri uses
+muda = "0.17"              # Menu library (tray-icon peer dep)
+png = "0.18"               # Lightweight PNG decoding for icons
 reqwest = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -79,25 +79,29 @@ No capsem-core. No Tauri. No objc2.
 ## Menu Structure
 
 ```
-[Tray Icon: green/grey/red]
+[Tray Icon: purple/black-template/red]
   |
-  +-- "dev -- running"           # Per-VM (named)
-  |     +-- Connect              # Opens UI focused on this VM
-  |     +-- Suspend / Resume     # Toggle (S7 lands soon)
-  |     +-- Fork                 # Snapshot VM to image
-  |     +-- Stop
-  |     +-- Delete
-  |
-  +-- "abc123 -- running"        # Per-VM (unnamed, short id)
-  |     +-- Connect
-  |     +-- Suspend / Resume
-  |     +-- Fork
-  |     +-- Stop
-  |     +-- Delete
+  +-- Permanent                  # Section header (disabled)
+  |     +-- "dev -- running"     # Per-VM submenu (named)
+  |     |     +-- Connect        # Opens UI focused on this VM
+  |     |     +-- Fork
+  |     |     +-- Stop
+  |     |     +-- Delete
+  |     +-- "staging -- suspended"
+  |           +-- Resume         # Context-sensitive: Resume when suspended
+  |           +-- Fork
+  |           +-- Stop
+  |           +-- Delete
   |
   +-- ────────────────
-  +-- New Temporary VM           # Provision ephemeral + open UI
-  +-- New Long-term VM           # Provision persistent/named + open UI
+  +-- Temporary                  # Section header (disabled)
+  |     +-- "abc123de -- running"  # Per-VM submenu (ephemeral, short id)
+  |           +-- Connect
+  |           +-- Delete         # No Fork/Stop for ephemeral VMs
+  |
+  +-- ────────────────
+  +-- New Temporary              # Provision ephemeral + open UI
+  +-- New Permanent...           # Opens UI with name dialog
   +-- Open Capsem                # Launch/focus UI (no specific VM)
   +-- ────────────────
   +-- Quit
@@ -108,7 +112,7 @@ When gateway is unreachable:
 ```
 [Tray Icon: red]
   |
-  +-- Service unavailable
+  +-- Service unavailable        # Disabled
   +-- ────────────────
   +-- Quit
 ```
@@ -126,7 +130,7 @@ Status: Done
 - [x] Main-thread event loop using `MenuEvent::receiver()` + 16ms poll
 - [x] Spawn tokio runtime on background thread for async work
 - [x] Channel (std::sync::mpsc) from async poller to main-thread menu rebuilder
-- [x] Channel (std::sync::mpsc) from main thread to async runtime for actions
+- [x] Channel (tokio::sync::mpsc) from main thread to async runtime for actions
 - [x] Verify: `cargo build -p capsem-tray` succeeds, clippy clean
 
 ### SS2: Gateway Client
@@ -151,25 +155,30 @@ Status: Done
 
 Status: Done
 
-- [x] `menu.rs`: `build_menu(status: &StatusResponse) -> muda::Menu`
-- [x] Per-VM submenu: Connect, Suspend/Resume (toggle based on vm.status), Fork, Stop, Delete
+- [x] `menu.rs`: testable `MenuSpec` layer + `render_menu()` for muda construction
+- [x] VMs split into Permanent and Temporary sections with disabled headers
+- [x] Permanent VMs: Connect/Resume (context-sensitive), Fork, Stop, Delete
+- [x] Temporary VMs: Connect/Resume (context-sensitive), Delete only
 - [x] VM display: `"{name} -- {status}"` for named, `"{short_id} -- {status}"` for unnamed
-- [x] Global items: "New Temporary VM", "New Long-term VM", "Open Capsem", separator, "Quit"
-- [x] `build_unavailable_menu() -> muda::Menu` for when gateway is down
+- [x] Global items: "New Temporary", "New Permanent..." (opens UI with name dialog), "Open Capsem", "Quit"
+- [x] `build_unavailable_menu()` for when gateway is down
 - [x] Menu item IDs encode action + VM id: `"connect:abc123"`, `"stop:abc123"`, `"new-temp"`, `"new-named"`, `"open"`, `"quit"`
 - [x] `parse_action(id: &MenuId) -> Option<Action>` for dispatch
+- [x] 47 unit tests, menu.rs at 93% line coverage
 
 ### SS4: Polling + Icon State
 
-Status: Done (placeholder icons)
+Status: Done
 
-- [x] `icons.rs`: three states: Active (green), Idle (grey), Error (red)
-- [x] `load_icon(state: TrayState) -> tray_icon::Icon` with programmatic 22x22 solid-color placeholders
+- [x] `icons.rs`: three states: Active (purple), Idle (black template), Error (red)
+- [x] `load_icon(state: TrayState) -> tray_icon::Icon` with pre-rendered PNGs via `include_bytes!`
+- [x] Icons pre-decoded once at startup, cloned on state change (no re-decode per poll)
 - [x] Background poller: tokio task that calls `gateway.status()` every N seconds with retry
 - [x] On each poll: send `PollResult` (Status or Unavailable) over channel to main thread
 - [x] Main thread: on channel receive, rebuild menu + update icon
-- [x] State transitions: `vm_count > 0` -> green, `vm_count == 0` -> grey, gateway unreachable -> red
-- [ ] Verify: start with no VMs (grey), provision one (green), kill gateway (red) (blocked on gateway)
+- [x] State transitions: `vm_count > 0` -> purple, `vm_count == 0` -> idle (template), gateway unreachable -> red
+- [x] Only rebuild menu/icon when state actually changes (diff check avoids redundant NSMenu rebuilds)
+- [ ] Verify: start with no VMs (idle), provision one (purple), kill gateway (red) (blocked on gateway)
 
 ### SS5: Action Dispatch
 
@@ -203,14 +212,17 @@ Status: Done
 
 ## Acceptance Criteria (Sprint Gate)
 
-- [ ] `cargo build -p capsem-tray` succeeds
+- [x] `cargo build -p capsem-tray` succeeds
+- [x] 47 unit tests pass (menu spec, parse_action, vm_label, icons, gateway deser, state transitions)
 - [ ] Tray icon appears in macOS menu bar on launch
-- [ ] Polls gateway `/status` every 5s, menu shows VM list
-- [ ] Per-VM actions work: Connect, Stop, Delete, Fork
-- [ ] "New Temporary VM" provisions and opens UI
-- [ ] "New Long-term VM" provisions and opens UI
+- [ ] Polls gateway `/status` every 5s, menu shows VM list split into Permanent/Temporary
+- [ ] Permanent VM actions work: Connect, Fork, Stop, Delete
+- [ ] Temporary VM actions work: Connect, Delete
+- [ ] Suspended VMs show Resume instead of Connect
+- [ ] "New Temporary" provisions and opens UI
+- [ ] "New Permanent..." opens UI with name dialog
 - [ ] "Open Capsem" launches/focuses UI window
-- [ ] Icon: green with VMs, grey without, red when gateway down
+- [ ] Icon: purple with VMs, black template without (auto light/dark), red when gateway down
 - [ ] Token hot-reload works after gateway restart
 - [ ] "Quit" exits cleanly
 
