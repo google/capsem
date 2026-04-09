@@ -1,6 +1,8 @@
-# Sprint: Install Lifecycle (S14)
+# Sprint: Install Lifecycle (S14) -- Ship It
 
-`just install` must deploy all binaries (including gateway and tray), restart the service so it picks up new code, and leave the system in a testable state. Currently the install script only copies 4 of 6 binaries and does not restart anything.
+This is the "get it out the door" sprint. After this sprint, the only remaining work is CI. Everything builds, every test passes, `just install` deploys a fully working system, and the tray/gateway/service all come up clean from a single command.
+
+The goal is a 100% clean local system: zero warnings, zero dead code, zero skipped tests, zero manual steps. If it's not automated and tested, it doesn't ship.
 
 Depends on: core changes landing on next-gen (suspend/resume, gateway, tray).
 Crate changes: none (justfile + scripts + tests only).
