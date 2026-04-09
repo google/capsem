@@ -16,6 +16,17 @@ Crate changes: none (justfile + scripts + tests only).
 
 ## Sub-sprints
 
+### SS0: Pass Smoke Tests
+
+Status: TODO
+
+- [ ] `just smoke` passes on next-gen with all current changes
+- [ ] `cargo test -p capsem-tray` passes (47 tests)
+- [ ] `cargo test -p capsem-gateway` passes
+- [ ] `cargo test -p capsem-service` passes
+- [ ] `cargo build` for all workspace crates succeeds clean
+- [ ] No clippy warnings on changed crates
+
 ### SS1: Add Missing Binaries to Install
 
 Status: TODO
