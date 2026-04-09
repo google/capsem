@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use axum::extract::State;
@@ -9,6 +10,38 @@ use axum::response::{IntoResponse, Response};
 use tracing::info;
 
 use crate::AppState;
+
+/// Maximum auth failures per window before returning 429.
+const MAX_AUTH_FAILURES: u32 = 20;
+/// Time window for counting auth failures.
+const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Tracks auth failure rate to throttle brute-force attempts.
+pub struct AuthFailureTracker {
+    inner: tokio::sync::Mutex<(Instant, u32)>,
+}
+
+impl AuthFailureTracker {
+    pub fn new() -> Self {
+        Self {
+            inner: tokio::sync::Mutex::new((Instant::now(), 0)),
+        }
+    }
+
+    /// Record a failure. Returns true if the caller should be throttled (429).
+    pub async fn record_failure(&self) -> bool {
+        let mut guard = self.inner.lock().await;
+        let (ref mut window_start, ref mut count) = *guard;
+        if window_start.elapsed() > AUTH_FAILURE_WINDOW {
+            *window_start = Instant::now();
+            *count = 1;
+            false
+        } else {
+            *count += 1;
+            *count > MAX_AUTH_FAILURES
+        }
+    }
+}
 
 /// Runtime file state for cleanup on shutdown.
 #[derive(Clone)]
@@ -99,11 +132,20 @@ pub async fn auth_middleware(
     if valid {
         next.run(req).await
     } else {
-        (
-            StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({"error": "unauthorized"})),
-        )
-            .into_response()
+        let throttled = state.auth_failures.record_failure().await;
+        if throttled {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(serde_json::json!({"error": "too many failed auth attempts"})),
+            )
+                .into_response()
+        } else {
+            (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({"error": "unauthorized"})),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -123,6 +165,7 @@ mod tests {
             token: token.to_string(),
             uds_path: "/tmp/nonexistent.sock".into(),
             status_cache: StatusCache::new(),
+            auth_failures: AuthFailureTracker::new(),
         })
     }
 
@@ -498,5 +541,106 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // --- Rate limiting (issue #3) ---
+
+    #[tokio::test]
+    async fn auth_failure_tracker_allows_initial_failures() {
+        let tracker = AuthFailureTracker::new();
+        for _ in 0..MAX_AUTH_FAILURES {
+            assert!(!tracker.record_failure().await, "should not throttle within limit");
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_failure_tracker_throttles_after_limit() {
+        let tracker = AuthFailureTracker::new();
+        for _ in 0..MAX_AUTH_FAILURES {
+            tracker.record_failure().await;
+        }
+        assert!(tracker.record_failure().await, "should throttle after exceeding limit");
+    }
+
+    #[tokio::test]
+    async fn auth_failure_tracker_resets_after_window() {
+        let tracker = AuthFailureTracker::new();
+        // Exhaust the limit
+        for _ in 0..=MAX_AUTH_FAILURES {
+            tracker.record_failure().await;
+        }
+        assert!(tracker.record_failure().await);
+
+        // Simulate window expiry by backdating the window start
+        {
+            let mut guard = tracker.inner.lock().await;
+            guard.0 = Instant::now() - AUTH_FAILURE_WINDOW - Duration::from_secs(1);
+        }
+        // After window reset, should allow again
+        assert!(!tracker.record_failure().await);
+    }
+
+    #[tokio::test]
+    async fn returns_429_after_too_many_failures() {
+        let state = test_state("secret");
+        // Exhaust the failure budget
+        {
+            for _ in 0..=MAX_AUTH_FAILURES {
+                state.auth_failures.record_failure().await;
+            }
+        }
+
+        let app = Router::new()
+            .route("/", get(|| async { "health" }))
+            .route("/list", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ))
+            .with_state(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "too many failed auth attempts");
+    }
+
+    #[tokio::test]
+    async fn valid_auth_succeeds_even_after_many_failures() {
+        let state = test_state("correct-token");
+        // Exhaust some failures but still under limit
+        for _ in 0..5 {
+            state.auth_failures.record_failure().await;
+        }
+
+        let app = Router::new()
+            .route("/list", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ))
+            .with_state(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list")
+                    .header("authorization", "Bearer correct-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

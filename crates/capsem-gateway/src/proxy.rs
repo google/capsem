@@ -12,6 +12,14 @@ use crate::AppState;
 /// Maximum request body size (10 MB). Prevents OOM from malicious oversized payloads.
 const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 
+/// Default request timeout. Long enough for suspend (quiescence up to 10s +
+/// pause/save up to 15s) and exec operations.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Safety timeout for the background HTTP connection driver. Prevents orphaned
+/// tasks if neither side closes the connection cleanly.
+const CONN_DRIVER_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Catch-all handler: forward any request to capsem-service over UDS.
 pub async fn handle_proxy(
     State(state): State<Arc<AppState>>,
@@ -55,8 +63,10 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     let io = TokioIo::new(stream);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
     tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            tracing::error!(error = %e, "UDS connection error");
+        match tokio::time::timeout(CONN_DRIVER_TIMEOUT, conn).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::debug!(error = %e, "UDS connection driver error"),
+            Err(_) => tracing::warn!("UDS connection driver timed out"),
         }
     });
 
@@ -66,7 +76,8 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     } else {
         format!("http://localhost{}", uri.path())
     };
-    *req.uri_mut() = upstream_uri.parse().unwrap();
+    *req.uri_mut() = upstream_uri.parse()
+        .map_err(|e| anyhow::anyhow!("invalid upstream URI: {e}"))?;
 
     let (parts, body) = req.into_parts();
     
@@ -76,7 +87,7 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     let upstream_req = hyper::Request::from_parts(parts, limited_body);
 
     // Send with timeout
-    let res = tokio::time::timeout(Duration::from_secs(30), sender.send_request(upstream_req))
+    let res = tokio::time::timeout(REQUEST_TIMEOUT, sender.send_request(upstream_req))
         .await
         .map_err(|_| anyhow::anyhow!("request timed out"))??;
 
@@ -100,6 +111,7 @@ mod tests {
             token: "test".into(),
             uds_path: uds_path.into(),
             status_cache: StatusCache::new(),
+            auth_failures: crate::auth::AuthFailureTracker::new(),
         });
         Router::new()
             .fallback(handle_proxy)
@@ -572,5 +584,28 @@ mod tests {
         assert!(results.iter().all(|s| *s == StatusCode::OK));
         assert_eq!(counter.load(Ordering::SeqCst), 10);
         h.abort();
+    }
+
+    // --- Timeout constants (issues #2, #10) ---
+
+    #[test]
+    fn request_timeout_covers_suspend_operation() {
+        // Suspend: up to 10s quiescence + 15s wait + 0.5s cleanup = ~26s
+        assert!(
+            REQUEST_TIMEOUT >= Duration::from_secs(30),
+            "proxy timeout must exceed worst-case suspend duration"
+        );
+    }
+
+    #[test]
+    fn conn_driver_timeout_is_bounded() {
+        assert!(
+            CONN_DRIVER_TIMEOUT <= Duration::from_secs(600),
+            "driver timeout should not be excessive"
+        );
+        assert!(
+            CONN_DRIVER_TIMEOUT > REQUEST_TIMEOUT,
+            "driver timeout must exceed request timeout"
+        );
     }
 }

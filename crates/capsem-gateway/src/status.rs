@@ -13,16 +13,19 @@ use tokio::sync::RwLock;
 
 use crate::AppState;
 
-const CACHE_TTL: Duration = Duration::from_secs(2);
+const CACHE_TTL: Duration = Duration::from_secs(1);
 
 pub struct StatusCache {
     inner: RwLock<Option<(Instant, StatusResponse)>>,
+    /// Serializes refresh calls so only one fetch runs at a time.
+    refresh: tokio::sync::Mutex<()>,
 }
 
 impl StatusCache {
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(None),
+            refresh: tokio::sync::Mutex::new(()),
         }
     }
 }
@@ -50,11 +53,16 @@ pub struct ResourceSummary {
     pub total_cpus: u32,
     pub running_count: usize,
     pub stopped_count: usize,
+    pub suspended_count: usize,
 }
 
 /// GET /status -- aggregated system health for tray polling.
+///
+/// Uses a refresh mutex to prevent thundering herd: when the cache expires,
+/// only one request fetches from the service while others wait and reuse
+/// the refreshed cache.
 pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
-    // Check cache
+    // Fast path: serve from cache if fresh
     {
         let cache = state.status_cache.inner.read().await;
         if let Some((ts, ref resp)) = *cache {
@@ -64,10 +72,21 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
         }
     }
 
-    // Fetch fresh data
+    // Slow path: acquire refresh lock so only one caller fetches
+    let _refresh_guard = state.status_cache.refresh.lock().await;
+
+    // Double-check: another caller may have refreshed while we waited
+    {
+        let cache = state.status_cache.inner.read().await;
+        if let Some((ts, ref resp)) = *cache {
+            if ts.elapsed() < CACHE_TTL {
+                return (StatusCode::OK, axum::Json(resp.clone())).into_response();
+            }
+        }
+    }
+
     let resp = fetch_status(&state).await;
 
-    // Update cache
     {
         let mut cache = state.status_cache.inner.write().await;
         *cache = Some((Instant::now(), resp.clone()));
@@ -118,6 +137,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
     let mut total_cpus: u32 = 0;
     let mut running: usize = 0;
     let mut stopped: usize = 0;
+    let mut suspended: usize = 0;
 
     for sb in &list.sandboxes {
         if let Some(ram) = sb.ram_mb {
@@ -127,8 +147,11 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             total_cpus += cpus;
         }
 
-        if sb.status.to_lowercase().contains("running") {
+        let status_lower = sb.status.to_lowercase();
+        if status_lower.contains("running") {
             running += 1;
+        } else if status_lower.contains("suspended") {
+            suspended += 1;
         } else {
             stopped += 1;
         }
@@ -151,6 +174,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             total_cpus,
             running_count: running,
             stopped_count: stopped,
+            suspended_count: suspended,
         }),
     }
 }
@@ -199,6 +223,7 @@ mod tests {
                 total_cpus: 2,
                 running_count: 1,
                 stopped_count: 0,
+                suspended_count: 0,
             }),
         };
 
@@ -241,6 +266,7 @@ mod tests {
                 total_cpus: 6,
                 running_count: 2,
                 stopped_count: 1,
+                suspended_count: 0,
             }),
         };
 
@@ -323,10 +349,10 @@ mod tests {
             resource_summary: None,
         };
 
-        // Populate cache with a timestamp in the past
+        // Populate cache with a timestamp beyond the 1s TTL
         {
             let mut guard = cache.inner.write().await;
-            *guard = Some((Instant::now() - Duration::from_secs(5), resp));
+            *guard = Some((Instant::now() - Duration::from_secs(2), resp));
         }
 
         // Cache should be stale
@@ -353,6 +379,7 @@ mod tests {
             token: "test".into(),
             uds_path: uds_path.into(),
             status_cache: StatusCache::new(),
+            auth_failures: crate::auth::AuthFailureTracker::new(),
         }
     }
 
@@ -459,6 +486,7 @@ mod tests {
             token: "test".into(),
             uds_path: path.into(),
             status_cache: StatusCache::new(),
+            auth_failures: crate::auth::AuthFailureTracker::new(),
         });
 
         // First call -- cache miss, fetches from UDS
@@ -469,5 +497,44 @@ mod tests {
         handle_status(axum::extract::State(state.clone())).await;
         assert_eq!(counter.load(Ordering::SeqCst), 1, "cache should prevent second fetch");
         h.abort();
+    }
+
+    // --- Suspended count (issue #8) ---
+
+    #[tokio::test]
+    async fn fetch_status_counts_suspended_vms() {
+        let mock = axum::Router::new()
+            .route("/list", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "sandboxes": [
+                        {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                        {"id": "vm2", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                        {"id": "vm3", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    ]
+                }))
+            }));
+        let (path, h, _d) = mock_uds(mock).await;
+
+        let state = test_app_state(&path);
+        let resp = fetch_status(&state).await;
+        assert_eq!(resp.vm_count, 3);
+        let rs = resp.resource_summary.unwrap();
+        assert_eq!(rs.running_count, 1);
+        assert_eq!(rs.suspended_count, 1);
+        assert_eq!(rs.stopped_count, 1);
+        h.abort();
+    }
+
+    #[test]
+    fn suspended_count_serializes_in_json() {
+        let rs = ResourceSummary {
+            total_ram_mb: 4096,
+            total_cpus: 4,
+            running_count: 1,
+            stopped_count: 1,
+            suspended_count: 2,
+        };
+        let json = serde_json::to_value(&rs).unwrap();
+        assert_eq!(json["suspended_count"], 2);
     }
 }

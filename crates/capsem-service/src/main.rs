@@ -44,6 +44,10 @@ struct PersistentVmEntry {
     session_dir: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     source_image: Option<String>,
+    #[serde(default)]
+    suspended: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    checkpoint_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -86,6 +90,10 @@ impl PersistentRegistry {
 
     fn get(&self, name: &str) -> Option<&PersistentVmEntry> {
         self.data.vms.get(name)
+    }
+
+    fn get_mut(&mut self, name: &str) -> Option<&mut PersistentVmEntry> {
+        self.data.vms.get_mut(name)
     }
 
     fn list(&self) -> impl Iterator<Item = &PersistentVmEntry> {
@@ -331,21 +339,37 @@ impl ServiceState {
         let id_clone = id.to_string();
         let state_clone = Arc::clone(self);
         let uds_clone = uds_path.clone();
+        let session_dir_clone = session_dir.clone();
         tokio::spawn(async move {
             let _ = child.wait().await;
             info!(id_clone, "capsem-process exited, cleaning up");
-            // Remove from active instances so the service knows this VM is gone.
-            let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
-            let _ = std::fs::remove_file(&uds_clone);
-            if let Some(info) = removed {
-                if !info.persistent {
-                    let _ = std::fs::remove_dir_all(&info.session_dir);
-                    info!(id = id_clone, "ephemeral session cleaned up");
+            
+            // If this was a persistent VM and checkpoint.vzsave exists, mark it suspended
+            {
+                let mut registry = state_clone.persistent_registry.lock().unwrap();
+                if let Some(entry) = registry.data.vms.get_mut(&id_clone) {
+                    let checkpoint_path = session_dir_clone.join("checkpoint.vzsave");
+                    if checkpoint_path.exists() {
+                        info!(id_clone, "Checkpoint file found, marking VM as suspended");
+                        entry.suspended = true;
+                        entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
+                        let _ = registry.save();
+                    } else {
+                        // Ensure it's not stuck in a suspended state if it crashed or was stopped manually
+                        entry.suspended = false;
+                        entry.checkpoint_path = None;
+                        let _ = registry.save();
+                    }
                 }
             }
+
+            // Remove from active instances so the service knows this VM is gone.
+            // Session directory cleanup is handled by the caller (handle_stop,
+            // handle_run, handle_purge) to avoid racing with telemetry reads.
+            state_clone.instances.lock().unwrap().remove(&id_clone);
+            let _ = std::fs::remove_file(&uds_clone);
         });
 
-        // Register persistent VM in the registry
         if persistent {
             let mut registry = self.persistent_registry.lock().unwrap();
             registry.register(PersistentVmEntry {
@@ -356,6 +380,8 @@ impl ServiceState {
                 created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
                 session_dir: session_dir.clone(),
                 source_image: image.clone(),
+                suspended: false,
+                checkpoint_path: None,
             })?;
         }
 
@@ -430,6 +456,19 @@ impl ServiceState {
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", name));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
 
+        // Pass checkpoint path for warm restore from suspended state
+        if entry.suspended {
+            if let Some(ref cp) = entry.checkpoint_path {
+                let full_checkpoint = entry.session_dir.join(cp);
+                if full_checkpoint.exists() {
+                    child_cmd.arg("--checkpoint-path").arg(&full_checkpoint);
+                    info!(name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
+                } else {
+                    tracing::warn!(name, checkpoint = %full_checkpoint.display(), "checkpoint file missing, cold booting");
+                }
+            }
+        }
+
         let mut child = child_cmd
             .env("RUST_LOG", "capsem=info")
             .arg("--id").arg(name)
@@ -472,6 +511,16 @@ impl ServiceState {
             env: None,
             source_image: entry.source_image.clone(),
         });
+
+        // Clear suspended state now that the VM is running again
+        {
+            let mut registry = self.persistent_registry.lock().unwrap();
+            if let Some(reg_entry) = registry.get_mut(name) {
+                reg_entry.suspended = false;
+                reg_entry.checkpoint_path = None;
+                let _ = registry.save();
+            }
+        }
 
         Ok(name.to_string())
     }
@@ -677,17 +726,22 @@ async fn handle_list(
         }
     }
 
-    // Stopped persistent VMs (not in instances map)
+    // Stopped/Suspended persistent VMs (not in instances map)
     {
         let registry = state.persistent_registry.lock().unwrap();
         let instances = state.instances.lock().unwrap();
         for entry in registry.list() {
             if !instances.contains_key(&entry.name) {
+                let status = if entry.suspended {
+                    "Suspended"
+                } else {
+                    "Stopped"
+                };
                 sandboxes.push(SandboxInfo {
                     id: entry.name.clone(),
                     name: Some(entry.name.clone()),
                     pid: 0,
-                    status: "Stopped".to_string(),
+                    status: status.to_string(),
                     persistent: true,
                     ram_mb: Some(entry.ram_mb),
                     cpus: Some(entry.cpus),
@@ -723,15 +777,16 @@ async fn handle_info(
         }
     }
 
-    // Check stopped persistent VMs
+    // Check stopped/suspended persistent VMs
     {
         let registry = state.persistent_registry.lock().unwrap();
         if let Some(entry) = registry.get(&id) {
+            let status = if entry.suspended { "Suspended" } else { "Stopped" };
             return Ok(Json(SandboxInfo {
                 id: entry.name.clone(),
                 name: Some(entry.name.clone()),
                 pid: 0,
-                status: "Stopped".to_string(),
+                status: status.to_string(),
                 persistent: true,
                 ram_mb: Some(entry.ram_mb),
                 cpus: Some(entry.cpus),
@@ -1000,6 +1055,76 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
     Some((session_dir, persistent))
 }
 
+async fn handle_suspend(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (uds_path, pid) = {
+        let mut instances = state.instances.lock().unwrap();
+        let i = instances.get_mut(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        if !i.persistent {
+            return Err(AppError(StatusCode::BAD_REQUEST, "ephemeral VMs cannot be suspended (persist first)".into()));
+        }
+        (i.uds_path.clone(), i.pid)
+    };
+
+    let stream = tokio::net::UnixStream::connect(&uds_path)
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to connect to VM IPC: {e}")))?;
+    let std_stream = stream
+        .into_std()
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to convert stream: {e}")))?;
+    let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to create IPC channel: {e}")))?;
+
+    let checkpoint_path = "checkpoint.vzsave".to_string();
+    tx.send(ServiceToProcess::Suspend { checkpoint_path })
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to send suspend command: {e}")))?;
+
+    // Wait for StateChanged { state: "Suspended" } or process exit
+    let mut suspended = false;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        while let Ok(msg) = rx.recv().await {
+            if let ProcessToService::StateChanged { state, .. } = msg {
+                if state == "Suspended" {
+                    suspended = true;
+                    break;
+                }
+            }
+        }
+    }).await;
+
+    if !suspended {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "suspend timed out: VM did not confirm suspended state".into(),
+        ));
+    }
+
+    // Wait a little more for process exit
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    if pid > 0 {
+        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+    }
+
+    state.instances.lock().unwrap().remove(&id);
+    let _ = std::fs::remove_file(&uds_path);
+
+    // Update persistent registry
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        if let Some(entry) = registry.get_mut(&id) {
+            entry.suspended = true;
+            entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
+            let _ = registry.save();
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
 async fn handle_stop(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -1107,6 +1232,8 @@ async fn handle_persist(
             created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
             session_dir: new_session_dir.clone(),
             source_image: source_image.clone(),
+            suspended: false,
+            checkpoint_path: None,
         }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
@@ -1406,6 +1533,7 @@ async fn main() -> Result<()> {
         .route("/write_file/{id}", post(handle_write_file))
         .route("/read_file/{id}", post(handle_read_file))
         .route("/stop/{id}", post(handle_stop))
+        .route("/suspend/{id}", post(handle_suspend))
         .route("/delete/{id}", delete(handle_delete))
         .route("/resume/{name}", post(handle_resume))
         .route("/persist/{id}", post(handle_persist))
@@ -1925,6 +2053,8 @@ mod tests {
             created_at: "12345".into(),
             session_dir: dir.join("mydev"),
             source_image: None,
+            suspended: false,
+            checkpoint_path: None,
         }).unwrap();
 
         assert!(registry.contains("mydev"));
@@ -1954,6 +2084,8 @@ mod tests {
             created_at: "12345".into(),
             session_dir: dir.join("dup"),
             source_image: None,
+            suspended: false,
+            checkpoint_path: None,
         };
         registry.register(entry.clone()).unwrap();
         let err = registry.register(entry).unwrap_err();
@@ -1978,6 +2110,8 @@ mod tests {
             created_at: "12345".into(),
             session_dir: dir.join("tmp"),
             source_image: None,
+            suspended: false,
+            checkpoint_path: None,
         }).unwrap();
         assert!(registry.contains("tmp"));
         registry.unregister("tmp").unwrap();
@@ -2004,6 +2138,8 @@ mod tests {
                 created_at: "0".into(),
                 session_dir: PathBuf::from("/tmp/taken"),
                 source_image: None,
+                suspended: false,
+                checkpoint_path: None,
             });
         }
         let result = state.provision_sandbox("taken", 2048, 2, None, true, None, None);
@@ -2232,6 +2368,8 @@ mod tests {
                 created_at: "2026-01-01T00:00:00Z".into(),
                 session_dir: session_dir.clone(),
                 source_image: None,
+                suspended: false,
+                checkpoint_path: None,
             });
         }
         // state is already Arc<ServiceState> from make_test_state*
@@ -2250,5 +2388,219 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"), "expected image not found, got: {err}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Suspend/resume registry fixes (issues #4-8)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn persistent_registry_get_mut() {
+        let dir = std::env::temp_dir().join("capsem-test-registry-getmut");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_registry.json");
+        let _ = std::fs::remove_file(&path);
+
+        let mut registry = PersistentRegistry::load(path);
+        registry.register(PersistentVmEntry {
+            name: "mutvm".into(),
+            ram_mb: 2048,
+            cpus: 2,
+            base_version: "0.1.0".into(),
+            created_at: "12345".into(),
+            session_dir: dir.join("mutvm"),
+            source_image: None,
+            suspended: false,
+            checkpoint_path: None,
+        }).unwrap();
+
+        // Mutate via get_mut
+        let entry = registry.get_mut("mutvm").unwrap();
+        entry.suspended = true;
+        entry.checkpoint_path = Some("checkpoint.vzsave".into());
+        let _ = registry.save();
+
+        assert!(registry.get("mutvm").unwrap().suspended);
+        assert_eq!(
+            registry.get("mutvm").unwrap().checkpoint_path.as_deref(),
+            Some("checkpoint.vzsave")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn handle_list_shows_suspended_status() {
+        let (state, _dir) = make_test_state_with_tempdir();
+
+        // Register a suspended persistent VM
+        {
+            let mut reg = state.persistent_registry.lock().unwrap();
+            reg.data.vms.insert("susp-vm".into(), PersistentVmEntry {
+                name: "susp-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/susp-vm"),
+                source_image: None,
+                suspended: true,
+                checkpoint_path: Some("checkpoint.vzsave".into()),
+            });
+        }
+
+        // Register a stopped (not suspended) persistent VM
+        {
+            let mut reg = state.persistent_registry.lock().unwrap();
+            reg.data.vms.insert("stop-vm".into(), PersistentVmEntry {
+                name: "stop-vm".into(),
+                ram_mb: 1024,
+                cpus: 1,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/stop-vm"),
+                source_image: None,
+                suspended: false,
+                checkpoint_path: None,
+            });
+        }
+
+        let Json(list) = handle_list(State(state)).await;
+
+        let susp = list.sandboxes.iter().find(|s| s.id == "susp-vm").unwrap();
+        assert_eq!(susp.status, "Suspended", "suspended VM should show Suspended status");
+
+        let stop = list.sandboxes.iter().find(|s| s.id == "stop-vm").unwrap();
+        assert_eq!(stop.status, "Stopped", "non-suspended VM should show Stopped status");
+    }
+
+    #[tokio::test]
+    async fn handle_info_shows_suspended_status() {
+        let (state, _dir) = make_test_state_with_tempdir();
+
+        {
+            let mut reg = state.persistent_registry.lock().unwrap();
+            reg.data.vms.insert("info-susp".into(), PersistentVmEntry {
+                name: "info-susp".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/info-susp"),
+                source_image: None,
+                suspended: true,
+                checkpoint_path: Some("checkpoint.vzsave".into()),
+            });
+        }
+
+        let result = handle_info(State(state), Path("info-susp".into())).await;
+        let Json(info) = result.unwrap();
+        assert_eq!(info.status, "Suspended");
+    }
+
+    #[tokio::test]
+    async fn handle_suspend_rejects_ephemeral_vm() {
+        let (state, _dir) = make_test_state_with_tempdir();
+
+        // Insert an ephemeral VM in instances
+        {
+            let mut instances = state.instances.lock().unwrap();
+            instances.insert("eph-vm".into(), InstanceInfo {
+                id: "eph-vm".into(),
+                pid: 0,
+                uds_path: state.run_dir.join("instances/eph-vm.sock"),
+                session_dir: state.run_dir.join("sessions/eph-vm"),
+                ram_mb: 2048,
+                cpus: 2,
+                start_time: std::time::Instant::now(),
+                base_version: "0.0.0".into(),
+                persistent: false,
+                env: None,
+                source_image: None,
+            });
+        }
+
+        let result = handle_suspend(State(state), Path("eph-vm".into())).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("ephemeral"));
+    }
+
+    #[tokio::test]
+    async fn handle_suspend_returns_not_found_for_missing_vm() {
+        let (state, _dir) = make_test_state_with_tempdir();
+        let result = handle_suspend(State(state), Path("nonexistent".into())).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn resume_clears_suspended_flag_in_registry() {
+        let dir = std::env::temp_dir().join("capsem-test-resume-flag");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_registry.json");
+        let _ = std::fs::remove_file(&path);
+
+        let mut registry = PersistentRegistry::load(path.clone());
+        registry.register(PersistentVmEntry {
+            name: "resumevm".into(),
+            ram_mb: 2048,
+            cpus: 2,
+            base_version: "0.1.0".into(),
+            created_at: "12345".into(),
+            session_dir: dir.join("resumevm"),
+            source_image: None,
+            suspended: true,
+            checkpoint_path: Some("checkpoint.vzsave".into()),
+        }).unwrap();
+
+        // Verify suspended initially
+        assert!(registry.get("resumevm").unwrap().suspended);
+        assert!(registry.get("resumevm").unwrap().checkpoint_path.is_some());
+
+        // Simulate what resume_sandbox does after spawning the process
+        if let Some(entry) = registry.get_mut("resumevm") {
+            entry.suspended = false;
+            entry.checkpoint_path = None;
+        }
+        let _ = registry.save();
+
+        // Verify cleared
+        assert!(!registry.get("resumevm").unwrap().suspended);
+        assert!(registry.get("resumevm").unwrap().checkpoint_path.is_none());
+
+        // Verify persists to disk
+        let registry2 = PersistentRegistry::load(path);
+        assert!(!registry2.get("resumevm").unwrap().suspended);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn suspended_flag_roundtrips_through_json() {
+        let entry = PersistentVmEntry {
+            name: "jsonvm".into(),
+            ram_mb: 2048,
+            cpus: 2,
+            base_version: "0.1.0".into(),
+            created_at: "12345".into(),
+            session_dir: PathBuf::from("/tmp/jsonvm"),
+            source_image: None,
+            suspended: true,
+            checkpoint_path: Some("checkpoint.vzsave".into()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let parsed: PersistentVmEntry = serde_json::from_str(&json).unwrap();
+        assert!(parsed.suspended);
+        assert_eq!(parsed.checkpoint_path.as_deref(), Some("checkpoint.vzsave"));
+    }
+
+    #[test]
+    fn suspended_flag_defaults_to_false_when_missing() {
+        // Old registry entries won't have the suspended field
+        let json = r#"{"name":"old","ram_mb":2048,"cpus":2,"base_version":"0.1.0","created_at":"0","session_dir":"/tmp/old"}"#;
+        let entry: PersistentVmEntry = serde_json::from_str(json).unwrap();
+        assert!(!entry.suspended, "suspended should default to false");
+        assert!(entry.checkpoint_path.is_none(), "checkpoint_path should default to None");
     }
 }
