@@ -4,14 +4,10 @@ import uuid
 
 import pytest
 
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
-
-
-def vm_name(prefix="test"):
-    """Generate a unique VM name with the given prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture(scope="session")
@@ -34,7 +30,7 @@ def fresh_vm(client):
     """Factory: provision a VM, delete on teardown."""
     created = []
 
-    def _create(prefix="svc", ram_mb=2048, cpus=2):
+    def _create(prefix="svc", ram_mb=DEFAULT_RAM_MB, cpus=DEFAULT_CPUS):
         name = vm_name(prefix)
         resp = client.post("/provision", {"name": name, "ram_mb": ram_mb, "cpus": cpus})
         created.append(name)
@@ -54,8 +50,8 @@ def ready_vm(service_env):
     """A single exec-ready VM that stays alive for the module. Yields (client, name)."""
     client = service_env.client()
     name = vm_name(service_env.__class__.__name__[:8])
-    client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
-    assert wait_exec_ready(client, name, timeout=30), f"VM {name} never exec-ready"
+    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), f"VM {name} never exec-ready"
     yield client, name
     try:
         client.delete(f"/delete/{name}")

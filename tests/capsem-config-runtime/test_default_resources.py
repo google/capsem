@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
 pytestmark = pytest.mark.config_runtime
@@ -15,8 +16,8 @@ def test_default_cpu_count(config_svc):
     name = f"defcpu-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 4})
-        assert wait_exec_ready(client, name, timeout=30)
+        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 4})
+        assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/exec/{name}", {"command": "nproc"})
         nproc = int(resp.get("stdout", "0").strip()) if resp else 0
@@ -34,8 +35,8 @@ def test_default_ram(config_svc):
     name = f"defram-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": 4096, "cpus": 2})
-        assert wait_exec_ready(client, name, timeout=30)
+        client.post("/provision", {"name": name, "ram_mb": 4096, "cpus": DEFAULT_CPUS})
+        assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/exec/{name}", {"command": "free -m | awk '/Mem:/ {print $2}'"})
         total_mb = int(resp.get("stdout", "0").strip()) if resp else 0

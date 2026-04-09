@@ -13,6 +13,7 @@ import time
 import pytest
 
 from conftest import RealService
+from helpers.constants import EXEC_READY_TIMEOUT
 
 pytestmark = pytest.mark.e2e
 
@@ -69,7 +70,7 @@ class TestServiceStartup:
         # Start a VM so there's a capsem-process child
         name = f"shutdown-{os.getpid()}"
         svc.cli("start", "--rm", "--name", name)
-        svc.wait_exec_ready(name, timeout=30)
+        svc.wait_exec_ready(name, timeout=EXEC_READY_TIMEOUT)
 
         svc.stop()
         assert svc.proc.returncode is not None, (

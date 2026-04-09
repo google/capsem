@@ -2,9 +2,7 @@
 
 import pytest
 
-
-def content_text(result):
-    return result["content"][0]["text"]
+from helpers.mcp import content_text
 
 pytestmark = pytest.mark.mcp
 

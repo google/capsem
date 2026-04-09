@@ -10,6 +10,7 @@ import uuid
 
 from pathlib import Path
 
+from .constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
@@ -94,7 +95,7 @@ class ServiceInstance:
         # shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
 
-def wait_exec_ready(client, vm_name, timeout=30):
+def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
     """Poll until a VM responds to exec."""
     for _ in range(timeout):
         try:
@@ -105,3 +106,8 @@ def wait_exec_ready(client, vm_name, timeout=30):
             pass
         time.sleep(1)
     return False
+
+
+def vm_name(prefix="test"):
+    """Generate a unique VM name with the given prefix."""
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"

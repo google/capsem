@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
 pytestmark = pytest.mark.config_runtime
@@ -15,8 +16,8 @@ def test_blocked_domain_denied(config_svc):
     name = f"block-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
-        assert wait_exec_ready(client, name, timeout=30)
+        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Try to access a domain that should be blocked by default policy
         # Most policies block everything except an allowlist

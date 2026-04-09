@@ -7,6 +7,7 @@ import pytest
 import subprocess
 from pathlib import Path
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -29,7 +30,7 @@ def _provision_vm(uds_path, name, persistent=False):
     """Provision a VM via the service API (non-blocking, for test setup)."""
     from helpers.uds_client import UdsHttpClient
     client = UdsHttpClient(uds_path)
-    body = {"name": name, "ram_mb": 2048, "cpus": 2}
+    body = {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
     if persistent:
         body["persistent"] = True
     return client.post("/provision", body)
@@ -275,7 +276,7 @@ class TestEnv:
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
         resp = client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "persistent": True, "env": {"CAPSEM_TEST_VAR": "hello_from_host"}
         })
         assert resp is not None, "provision with env failed"

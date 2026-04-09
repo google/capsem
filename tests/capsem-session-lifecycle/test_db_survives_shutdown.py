@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.session_lifecycle
@@ -20,7 +21,7 @@ def test_db_survives_clean_shutdown():
     vm_name = f"survive-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": vm_name, "ram_mb": 2048, "cpus": 2})
+        client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, vm_name), f"VM {vm_name} never exec-ready"
 
         # Run a command to generate some data

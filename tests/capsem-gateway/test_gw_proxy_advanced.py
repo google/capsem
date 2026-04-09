@@ -46,14 +46,14 @@ class TestProxyEndpointCoverage:
     def test_post_write_file(self, gw_client):
         """POST /write_file/{id} returns success."""
         resp = gw_client.post("/write_file/vm-001", {
-            "path": "/tmp/test.txt",
+            "path": "/root/test.txt",
             "content": "hello",
         })
         assert resp is not None
 
     def test_post_read_file(self, gw_client):
         """POST /read_file/{id} returns file content."""
-        resp = gw_client.post("/read_file/vm-001", {"path": "/tmp/test.txt"})
+        resp = gw_client.post("/read_file/vm-001", {"path": "/root/test.txt"})
         assert resp is not None
 
     def test_post_inspect(self, gw_client):

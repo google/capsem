@@ -4,35 +4,15 @@ Same lifecycle as test_winterfell_rw but uses capsem_exec to write and read
 files via shell commands instead of the write_file/read_file API.
 """
 
-import json
-import time
 import uuid
 
 import pytest
 
+from helpers.constants import EXEC_READY_TIMEOUT
+from helpers.mcp import content_text, parse_content
+from helpers.mcp import wait_exec_ready as wait_ready
+
 pytestmark = pytest.mark.mcp
-
-
-def parse_content(result):
-    return json.loads(result["content"][0]["text"])
-
-
-def content_text(result):
-    return result["content"][0]["text"]
-
-
-def wait_ready(session, vm_name, timeout=30):
-    for _ in range(timeout):
-        try:
-            res = session.call_tool("capsem_exec", {
-                "id": vm_name, "command": "echo ready",
-            })
-            if "ready" in content_text(res):
-                return True
-        except (AssertionError, KeyError):
-            pass
-        time.sleep(1)
-    return False
 
 
 def test_winterfell_exec(mcp_session):
@@ -91,7 +71,7 @@ def test_winterfell_exec(mcp_session):
         assert name in content_text(res)
 
         # 9. Wait for resumed VM to be exec-ready
-        assert wait_ready(mcp_session, name, timeout=30), (
+        assert wait_ready(mcp_session, name, timeout=EXEC_READY_TIMEOUT), (
             f"{name} not exec-ready after resume"
         )
 

@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.isolation
@@ -19,15 +20,15 @@ def test_resume_after_neighbor_delete():
     vm_b = f"resume-b-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": vm_a, "ram_mb": 2048, "cpus": 2})
-        client.post("/provision", {"name": vm_b, "ram_mb": 2048, "cpus": 2})
+        client.post("/provision", {"name": vm_a, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/provision", {"name": vm_b, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
         assert wait_exec_ready(client, vm_a), f"VM-A never exec-ready"
         assert wait_exec_ready(client, vm_b), f"VM-B never exec-ready"
 
         # Write a file in VM-A
         client.post(f"/write_file/{vm_a}", {
-            "path": "/tmp/resume-test.txt",
+            "path": "/root/resume-test.txt",
             "content": "still-here",
         })
 
@@ -35,7 +36,7 @@ def test_resume_after_neighbor_delete():
         client.delete(f"/delete/{vm_b}")
 
         # VM-A file should still be there
-        resp = client.post(f"/read_file/{vm_a}", {"path": "/tmp/resume-test.txt"})
+        resp = client.post(f"/read_file/{vm_a}", {"path": "/root/resume-test.txt"})
         assert resp.get("content") == "still-here"
 
         # VM-A exec should still work

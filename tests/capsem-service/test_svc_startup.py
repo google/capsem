@@ -9,9 +9,8 @@ import socket
 
 import pytest
 
-from helpers.service import ServiceInstance, wait_exec_ready
-
-from conftest import vm_name
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
 
@@ -40,11 +39,11 @@ class TestServiceStartup:
     def test_provision_creates_vm_socket(self, client):
         """Provisioning a VM must create a per-VM socket that accepts connections."""
         name = vm_name("startup")
-        resp = client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
+        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         try:
             assert resp is not None, "Provision returned empty response"
             vm_id = resp.get("id", name)
-            assert wait_exec_ready(client, vm_id, timeout=30), (
+            assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT), (
                 f"VM {vm_id} never became exec-ready -- "
                 "service->process->VM boot chain is broken"
             )

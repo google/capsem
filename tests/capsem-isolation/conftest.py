@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.isolation
@@ -19,8 +20,8 @@ def multi_vm_env():
 
     vm_a = f"iso-a-{uuid.uuid4().hex[:8]}"
     vm_b = f"iso-b-{uuid.uuid4().hex[:8]}"
-    client.post("/provision", {"name": vm_a, "ram_mb": 2048, "cpus": 2})
-    client.post("/provision", {"name": vm_b, "ram_mb": 2048, "cpus": 2})
+    client.post("/provision", {"name": vm_a, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/provision", {"name": vm_b, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
     assert wait_exec_ready(client, vm_a), f"VM {vm_a} never exec-ready"
     assert wait_exec_ready(client, vm_b), f"VM {vm_b} never exec-ready"

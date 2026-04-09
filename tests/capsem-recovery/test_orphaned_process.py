@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.recovery
@@ -18,8 +19,8 @@ def test_orphaned_vm_cleanup_on_restart():
     name = f"orphan-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
-        wait_exec_ready(client, name, timeout=30)
+        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Kill the service process (simulates crash)
         svc.proc.kill()

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
 pytestmark = pytest.mark.gateway
@@ -25,8 +26,8 @@ MOCK_VMS = {
         "name": "dev",
         "status": "Running",
         "persistent": True,
-        "ram_mb": 2048,
-        "cpus": 2,
+        "ram_mb": DEFAULT_RAM_MB,
+        "cpus": DEFAULT_CPUS,
         "version": "0.16.1",
     },
     "vm-002": {
@@ -35,8 +36,8 @@ MOCK_VMS = {
         "name": None,
         "status": "Running",
         "persistent": False,
-        "ram_mb": 4096,
-        "cpus": 4,
+        "ram_mb": DEFAULT_RAM_MB * 2,
+        "cpus": DEFAULT_CPUS * 2,
         "version": "0.16.1",
     },
 }

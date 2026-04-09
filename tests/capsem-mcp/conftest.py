@@ -22,6 +22,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from helpers.constants import EXEC_READY_TIMEOUT
+from helpers.mcp import content_text, parse_content, wait_exec_ready as mcp_wait_exec_ready
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
 SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
@@ -73,16 +76,6 @@ class McpSession:
     def call_tool_raw(self, name, args=None):
         """Call a tool, return raw response (no assertions)."""
         return self.request("tools/call", {"name": name, "arguments": args or {}})
-
-
-def parse_content(result):
-    """Extract and JSON-parse the first content text from a tool result."""
-    return json.loads(result["content"][0]["text"])
-
-
-def content_text(result):
-    """Extract the raw text from the first content block."""
-    return result["content"][0]["text"]
 
 
 def _make_mcp_session(uds_path):
@@ -219,22 +212,7 @@ def shared_vm(capsem_service):
     vm_name = f"shared-{uuid.uuid4().hex[:8]}"
     session.call_tool("capsem_create", {"name": vm_name})
 
-    # Wait for VM to become exec-ready
-    ready = False
-    for _ in range(30):
-        try:
-            res = session.call_tool("capsem_exec", {
-                "id": vm_name,
-                "command": "echo ready",
-            })
-            if "ready" in content_text(res):
-                ready = True
-                break
-        except (AssertionError, KeyError):
-            pass
-        time.sleep(1)
-
-    if not ready:
+    if not mcp_wait_exec_ready(session, vm_name, timeout=EXEC_READY_TIMEOUT):
         _kill_proc(proc)
         pytest.fail(f"Shared VM {vm_name} never became exec-ready")
 

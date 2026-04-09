@@ -18,7 +18,7 @@ def test_file_create_logged(session_env, session_db):
     """Writing a file via the service should create an fs_event."""
     client, vm_name, _ = session_env
     client.post(f"/write_file/{vm_name}", {
-        "path": "/tmp/fstest-create.txt",
+        "path": "/root/fstest-create.txt",
         "content": "logged",
     })
     time.sleep(2)

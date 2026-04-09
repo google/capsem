@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
@@ -39,7 +40,7 @@ class TestGatewayE2E:
         name = vm_name("gw-e2e")
         # Provision
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         assert resp is not None, "provision failed"
         vm_id = resp.get("id", name)
@@ -76,7 +77,7 @@ class TestGatewayE2E:
         """GET /status shows running VMs with resource summary."""
         name = vm_name("gw-st")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
@@ -106,7 +107,7 @@ class TestGatewayE2E:
         """
         name = vm_name("gw-race")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         assert resp is not None, "provision failed"
         vm_id = resp.get("id", name)
@@ -116,8 +117,8 @@ class TestGatewayE2E:
         try:
             exec_resp = e2e_client.post(
                 f"/exec/{vm_id}",
-                {"command": "echo race-ok", "timeout_secs": 60},
-                timeout=90,
+                {"command": "echo race-ok", "timeout_secs": EXEC_TIMEOUT_SECS},
+                timeout=HTTP_TIMEOUT,
             )
             assert exec_resp is not None, "exec returned None"
             assert "race-ok" in exec_resp.get("stdout", ""), (
@@ -148,7 +149,7 @@ class TestGatewayFileIO:
         """Write a file to guest, then read it back through gateway."""
         name = vm_name("gw-file")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
@@ -156,14 +157,14 @@ class TestGatewayFileIO:
         try:
             # Write file
             write_resp = e2e_client.post(f"/write_file/{vm_id}", {
-                "path": "/tmp/gw-test.txt",
+                "path": "/root/gw-test.txt",
                 "content": "gateway file io test",
             })
             assert write_resp is not None
 
             # Read file back
             read_resp = e2e_client.post(f"/read_file/{vm_id}", {
-                "path": "/tmp/gw-test.txt",
+                "path": "/root/gw-test.txt",
             })
             assert read_resp is not None
             assert "gateway file io test" in str(read_resp)
@@ -174,20 +175,20 @@ class TestGatewayFileIO:
         """Write a file with special characters."""
         name = vm_name("gw-bin")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
 
         try:
             write_resp = e2e_client.post(f"/write_file/{vm_id}", {
-                "path": "/tmp/special.txt",
+                "path": "/root/special.txt",
                 "content": "line1\nline2\ttab\n",
             })
             assert write_resp is not None
 
             exec_resp = e2e_client.post(f"/exec/{vm_id}", {
-                "command": "wc -l /tmp/special.txt",
+                "command": "wc -l /root/special.txt",
             })
             assert exec_resp is not None
             # Should have 2-3 lines
@@ -203,7 +204,7 @@ class TestGatewayPersistence:
         """Create ephemeral VM, persist it, stop, resume through gateway."""
         name = vm_name("gw-persist")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "persistent": True,
         })
         assert resp is not None
@@ -213,7 +214,7 @@ class TestGatewayPersistence:
         try:
             # Write a marker file
             e2e_client.post(f"/write_file/{vm_id}", {
-                "path": "/tmp/persist-marker.txt",
+                "path": "/root/persist-marker.txt",
                 "content": "survived-restart",
             })
 
@@ -232,7 +233,7 @@ class TestGatewayPersistence:
 
             # Check marker file survived
             exec_resp = e2e_client.post(f"/exec/{resumed_id}", {
-                "command": "cat /tmp/persist-marker.txt",
+                "command": "cat /root/persist-marker.txt",
             })
             assert exec_resp is not None
             assert "survived-restart" in exec_resp.get("stdout", "")
@@ -243,7 +244,7 @@ class TestGatewayPersistence:
         """POST /purge kills ephemeral VMs through gateway."""
         name = vm_name("gw-purge")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         assert resp is not None
 
@@ -264,7 +265,7 @@ class TestGatewayLogs:
         """GET /logs/{id} returns boot logs for a running VM."""
         name = vm_name("gw-logs")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
@@ -284,7 +285,7 @@ class TestGatewayEnvVars:
         """Environment variables are passed through gateway to the guest."""
         name = vm_name("gw-env")
         resp = e2e_client.post("/provision", {
-            "name": name, "ram_mb": 2048, "cpus": 2,
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "env": {"GW_TEST_VAR": "hello-from-gateway"},
         })
         assert resp is not None
@@ -301,7 +302,7 @@ class TestGatewayEnvVars:
             e2e_client.delete(f"/delete/{vm_id}")
 
 
-def wait_exec_ready_tcp(client, vm_id, timeout=30):
+def wait_exec_ready_tcp(client, vm_id, timeout=EXEC_READY_TIMEOUT):
     """Poll until VM responds to exec through gateway."""
     import time
     for _ in range(timeout):

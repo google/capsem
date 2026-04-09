@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.session_lifecycle
@@ -18,7 +19,7 @@ def lifecycle_env():
 
     client = svc.client()
     vm_name = f"lifecycle-{uuid.uuid4().hex[:8]}"
-    client.post("/provision", {"name": vm_name, "ram_mb": 2048, "cpus": 2})
+    client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
     if not wait_exec_ready(client, vm_name):
         svc.stop()

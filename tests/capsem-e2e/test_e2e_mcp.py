@@ -177,12 +177,12 @@ class TestMcpLifecycle:
 
             # Write
             client.call_tool("capsem_write_file", {
-                "id": name, "path": "/tmp/mcp-test.txt", "content": "mcp-payload",
+                "id": name, "path": "/root/mcp-test.txt", "content": "mcp-payload",
             })
 
             # Read
             text = client.tool_text("capsem_read_file", {
-                "id": name, "path": "/tmp/mcp-test.txt",
+                "id": name, "path": "/root/mcp-test.txt",
             })
             assert "mcp-payload" in text
 

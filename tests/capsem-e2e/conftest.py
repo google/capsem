@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.sign import sign_binary
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -134,7 +135,7 @@ class RealService:
         )
         return r
 
-    def wait_exec_ready(self, vm_name, timeout=30):
+    def wait_exec_ready(self, vm_name, timeout=EXEC_READY_TIMEOUT):
         """Poll until a VM responds to exec via the real CLI."""
         deadline = time.time() + timeout
         while time.time() < deadline:

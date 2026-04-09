@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.build_chain
@@ -17,10 +18,10 @@ def test_full_chain_boot_exec_delete(signed_binaries):
     name = f"chain-{uuid.uuid4().hex[:8]}"
 
     try:
-        resp = client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
+        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert resp is not None, f"Provision failed: {resp}"
 
-        assert wait_exec_ready(client, name, timeout=30), (
+        assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
             f"VM {name} never became exec-ready"
         )
 

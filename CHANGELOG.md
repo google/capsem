@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **test: DRY shared constants and helpers across integration tests** -- extracted `DEFAULT_RAM_MB`, `DEFAULT_CPUS`, `EXEC_READY_TIMEOUT`, `EXEC_TIMEOUT_SECS`, `HTTP_TIMEOUT`, and `GUEST_WORKSPACE` into `tests/helpers/constants.py`. Moved duplicated `parse_content`, `content_text`, `wait_exec_ready`, and `wait_file_ready` helpers into `tests/helpers/mcp.py`. Updated 49 test files to use shared constants and helpers instead of hardcoded values.
+- **test: fix file I/O paths rejected by workspace sandbox** -- tests were writing to `/tmp/` which the agent now correctly rejects as outside the workspace root (`/root/`). Fixed all service, gateway, isolation, session, and E2E test paths to use `/root/`.
+
 ### Added
 - **VM lifecycle: guest-initiated shutdown** -- `shutdown`, `halt`, `poweroff`, and `reboot` commands work inside the VM via `capsem-sysutil`, a multi-call binary deployed to `/run/capsem-sysutil` with symlinks in `/sbin/`. Opens a dedicated vsock:5004 lifecycle channel (independent of the PTY agent) to send `ShutdownRequest` to the host. Reboot prints an error (not supported in sandbox). Includes countdown timer matching `SHUTDOWN_GRACE_SECS`.
 - **VM lifecycle: suspend and warm resume** -- persistent VMs can be suspended via `capsem suspend <name>` (CLI), `capsem_suspend` (MCP), or `suspend` inside the guest. Uses Apple VZ `saveMachineStateTo` (macOS 14+) with a quiescence protocol: agent freezes filesystem (`fsfreeze -f /`), host pauses VM, saves checkpoint, stops. Resume detects checkpoint file and uses `restoreMachineStateFrom` for warm restore. Agent reconnects with exponential backoff, re-sends Ready, and thaws filesystem.

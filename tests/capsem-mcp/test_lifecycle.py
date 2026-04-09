@@ -1,13 +1,11 @@
 """VM lifecycle: create, list, info, delete and edge cases."""
 
-import json
 import time
 
 import pytest
 
-
-def parse_content(result):
-    return json.loads(result["content"][0]["text"])
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.mcp import parse_content
 
 pytestmark = pytest.mark.mcp
 
@@ -35,8 +33,8 @@ def test_create_with_resources(mcp_session):
     vm_name = f"res-{int(time.time() * 1000)}"
     mcp_session.call_tool("capsem_create", {
         "name": vm_name,
-        "ramMb": 2048,
-        "cpuCount": 2,
+        "ramMb": DEFAULT_RAM_MB,
+        "cpuCount": DEFAULT_CPUS,
     })
     try:
         res = mcp_session.call_tool("capsem_info", {"id": vm_name})

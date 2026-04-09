@@ -12,6 +12,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
 pytestmark = pytest.mark.cleanup
@@ -36,10 +37,10 @@ def test_ephemeral_cleaned_on_process_death(cleanup_env):
     name = f"eph-{uuid.uuid4().hex[:6]}"
     client.post("/provision", {
         "name": name,
-        "ram_mb": 2048,
-        "cpus": 2,
+        "ram_mb": DEFAULT_RAM_MB,
+        "cpus": DEFAULT_CPUS,
     })
-    wait_exec_ready(client, name, timeout=30)
+    wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
     sessions_dir = cleanup_env.tmp_dir / "sessions" / name
     pid = _get_vm_pid(client, name)
@@ -65,11 +66,11 @@ def test_persistent_preserved_on_process_death(cleanup_env):
     name = f"prs-{uuid.uuid4().hex[:6]}"
     client.post("/provision", {
         "name": name,
-        "ram_mb": 2048,
-        "cpus": 2,
+        "ram_mb": DEFAULT_RAM_MB,
+        "cpus": DEFAULT_CPUS,
         "persistent": True,
     })
-    wait_exec_ready(client, name, timeout=30)
+    wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
     pid = _get_vm_pid(client, name)
     assert pid, f"Could not get PID for VM {name}"
@@ -98,10 +99,10 @@ def test_explicit_delete_always_works(cleanup_env):
     name = f"del-{uuid.uuid4().hex[:6]}"
     client.post("/provision", {
         "name": name,
-        "ram_mb": 2048,
-        "cpus": 2,
+        "ram_mb": DEFAULT_RAM_MB,
+        "cpus": DEFAULT_CPUS,
     })
-    wait_exec_ready(client, name, timeout=30)
+    wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
     client.delete(f"/delete/{name}")
     assert not _vm_in_list(client, name), f"VM {name} still in list after explicit delete"

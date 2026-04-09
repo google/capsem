@@ -6,6 +6,8 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.snapshot
@@ -19,7 +21,7 @@ def snapshot_vm():
     client = svc.client()
 
     name = f"snap-{uuid.uuid4().hex[:8]}"
-    client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
+    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     assert wait_exec_ready(client, name), f"VM {name} never exec-ready"
 
     yield client, name, svc.tmp_dir

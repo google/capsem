@@ -3,17 +3,10 @@
 import time
 import uuid
 
-import json
-
 import pytest
 
-
-def content_text(result):
-    return result["content"][0]["text"]
-
-
-def parse_content(result):
-    return json.loads(result["content"][0]["text"])
+from helpers.constants import EXEC_READY_TIMEOUT
+from helpers.mcp import content_text, parse_content, wait_exec_ready
 
 pytestmark = pytest.mark.mcp
 
@@ -43,7 +36,7 @@ def test_write_on_deleted_vm(mcp_session):
 
     resp = mcp_session.call_tool_raw("capsem_write_file", {
         "id": vm_name,
-        "path": "/tmp/x.txt",
+        "path": "/root/x.txt",
         "content": "nope",
     })
     result = resp.get("result", {})
@@ -92,35 +85,24 @@ def test_two_vms_isolated(mcp_session):
     try:
         # Wait for both to be exec-ready
         for vm in (vm_a, vm_b):
-            ready = False
-            for _ in range(60):
-                try:
-                    r = mcp_session.call_tool("capsem_exec", {
-                        "id": vm,
-                        "command": "echo ready",
-                    })
-                    if "ready" in content_text(r):
-                        ready = True
-                        break
-                except (AssertionError, KeyError):
-                    pass
-                time.sleep(1)
-            assert ready, f"VM {vm} never became exec-ready"
+            assert wait_exec_ready(mcp_session, vm, timeout=EXEC_READY_TIMEOUT), (
+                f"VM {vm} never became exec-ready"
+            )
 
         # Write different data to same path
         mcp_session.call_tool("capsem_write_file", {
-            "id": vm_a, "path": "/tmp/id.txt", "content": "vm-a",
+            "id": vm_a, "path": "/root/id.txt", "content": "vm-a",
         })
         mcp_session.call_tool("capsem_write_file", {
-            "id": vm_b, "path": "/tmp/id.txt", "content": "vm-b",
+            "id": vm_b, "path": "/root/id.txt", "content": "vm-b",
         })
 
         # Verify isolation
         res_a = mcp_session.call_tool("capsem_read_file", {
-            "id": vm_a, "path": "/tmp/id.txt",
+            "id": vm_a, "path": "/root/id.txt",
         })
         res_b = mcp_session.call_tool("capsem_read_file", {
-            "id": vm_b, "path": "/tmp/id.txt",
+            "id": vm_b, "path": "/root/id.txt",
         })
         assert parse_content(res_a)["content"] == "vm-a"
         assert parse_content(res_b)["content"] == "vm-b"

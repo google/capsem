@@ -1,7 +1,9 @@
 """Provision, list, info, and delete endpoint tests."""
 
 import pytest
-from conftest import vm_name
+
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.service import vm_name
 
 pytestmark = pytest.mark.integration
 
@@ -14,7 +16,7 @@ class TestProvision:
         assert resp.get("id") == name or name in str(resp)
 
     def test_create_without_name(self, client):
-        resp = client.post("/provision", {"ram_mb": 2048, "cpus": 2})
+        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert resp is not None
         vm_id = resp.get("id")
         assert vm_id, f"No ID in response: {resp}"
@@ -32,7 +34,7 @@ class TestProvision:
     def test_create_duplicate_name(self, fresh_vm, client):
         name, _ = fresh_vm("dup")
         # Second create with same name should fail
-        resp = client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
+        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert resp is None or "error" in str(resp).lower() or "already" in str(resp).lower(), (
             f"Expected error for duplicate name, got: {resp}"
         )
@@ -48,7 +50,7 @@ class TestPersistence:
         assert info["id"] == name
 
     def test_provision_default_not_persistent(self, client):
-        resp = client.post("/provision", {"ram_mb": 2048, "cpus": 2})
+        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert resp is not None
         vm_id = resp.get("id")
         assert vm_id
@@ -98,7 +100,7 @@ class TestDelete:
 
     def test_delete_removes_from_list(self, client):
         name = vm_name("del")
-        client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
+        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         client.delete(f"/delete/{name}")
         resp = client.get("/list")
         ids = [s["id"] for s in resp["sandboxes"]]
@@ -106,7 +108,7 @@ class TestDelete:
 
     def test_delete_twice(self, client):
         name = vm_name("del2x")
-        client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
+        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         client.delete(f"/delete/{name}")
         resp = client.delete(f"/delete/{name}")
         assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower()

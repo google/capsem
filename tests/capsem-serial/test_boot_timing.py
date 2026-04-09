@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.serial
@@ -19,11 +20,11 @@ def test_boot_under_30_seconds():
 
     try:
         start = time.time()
-        client.post("/provision", {"name": name, "ram_mb": 2048, "cpus": 2})
+        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
         # Poll for exec-ready
         ready = False
-        for _ in range(30):
+        for _ in range(EXEC_READY_TIMEOUT):
             try:
                 resp = client.post(f"/exec/{name}", {"command": "echo ready"})
                 if resp and "ready" in resp.get("stdout", ""):
@@ -36,8 +37,8 @@ def test_boot_under_30_seconds():
         elapsed = time.time() - start
 
         assert ready, f"VM never became exec-ready after {elapsed:.1f}s"
-        assert elapsed < 30, (
-            f"Boot took {elapsed:.1f}s, exceeds 30s regression gate"
+        assert elapsed < EXEC_READY_TIMEOUT, (
+            f"Boot took {elapsed:.1f}s, exceeds {EXEC_READY_TIMEOUT}s regression gate"
         )
 
     finally:

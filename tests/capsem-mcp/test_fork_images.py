@@ -1,36 +1,12 @@
 """Fork images: MCP tool tests for fork, image list/inspect/delete, create-from-image."""
 
-import json
-import time
 import uuid
 
 import pytest
 
+from helpers.mcp import content_text, parse_content, wait_exec_ready as _wait_exec_ready
+
 pytestmark = pytest.mark.mcp
-
-
-def parse_content(result):
-    return json.loads(result["content"][0]["text"])
-
-
-def content_text(result):
-    return result["content"][0]["text"]
-
-
-def _wait_exec_ready(session, vm_name, timeout=30):
-    """Poll until a VM responds to exec via MCP."""
-    for _ in range(timeout):
-        try:
-            res = session.call_tool("capsem_exec", {
-                "id": vm_name,
-                "command": "echo ready",
-            })
-            if "ready" in content_text(res):
-                return True
-        except (AssertionError, KeyError):
-            pass
-        time.sleep(1)
-    return False
 
 
 # ---------------------------------------------------------------------------
