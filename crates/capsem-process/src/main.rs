@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use anyhow::Result;
+use anyhow::{Result, Context};
 use clap::Parser;
 use capsem_core::{
     boot_vm, VirtioFsShare,
@@ -14,7 +14,7 @@ use tokio::net::UnixListener;
 use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
 use tokio::sync::{broadcast, oneshot, mpsc};
 use std::os::unix::io::RawFd;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 use std::io::{Read, Write};
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -29,6 +29,7 @@ struct Args {
     #[arg(long, default_value_t = 2)] cpus: u32,
     #[arg(long, default_value_t = 2048)] ram_mb: u64,
     #[arg(long)] uds_path: PathBuf,
+    #[arg(long)] checkpoint_path: Option<PathBuf>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -38,6 +39,8 @@ struct JobStore {
     jobs: Mutex<HashMap<u64, oneshot::Sender<JobResult>>>,
     /// Currently active exec job ID and its captured output.
     active_exec: Mutex<Option<(u64, Vec<u8>)>>,
+    /// Channel for snapshot ready signal.
+    snapshot_ready: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 #[cfg_attr(test, derive(Debug))]
@@ -46,6 +49,56 @@ enum JobResult {
     WriteFile { success: bool, error: Option<String> },
     ReadFile { data: Option<Vec<u8>>, error: Option<String> },
     Error { message: String },
+}
+
+/// Orchestrates a guest quiescence sequence around a provided async operation.
+/// 
+/// 1. Sends `PrepareSnapshot` to the guest (sync + fsfreeze).
+/// 2. Waits up to `timeout` for `SnapshotReady`.
+/// 3. If successful, executes the provided operation.
+/// 4. Sends `Unfreeze` to the guest regardless of operation success or timeout.
+#[allow(dead_code)]
+async fn with_quiescence<F, Fut>(
+    ctrl_cmd_tx: &std::sync::mpsc::Sender<HostToGuest>,
+    job_store: &Arc<JobStore>,
+    timeout: std::time::Duration,
+    op: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    // Prepare oneshot channel
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    *job_store.snapshot_ready.lock().unwrap() = Some(tx);
+
+    info!("Sending PrepareSnapshot to guest");
+    ctrl_cmd_tx
+        .send(HostToGuest::PrepareSnapshot)
+        .map_err(|e| anyhow::anyhow!("failed to send PrepareSnapshot: {}", e))?;
+
+    // Wait for SnapshotReady with timeout
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(_)) => {
+            info!("Guest filesystem frozen successfully, running operation");
+            let op_result = op().await;
+
+            info!("Operation complete, sending Unfreeze to guest");
+            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze);
+            op_result
+        }
+        Ok(Err(_)) => {
+            // Channel closed without receiving
+            warn!("SnapshotReady channel closed prematurely, aborting operation and unfreezing");
+            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze);
+            anyhow::bail!("SnapshotReady channel closed prematurely");
+        }
+        Err(_) => {
+            warn!("Timeout waiting for SnapshotReady, aborting operation and unfreezing");
+            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze);
+            anyhow::bail!("timed out waiting for SnapshotReady");
+        }
+    }
 }
 
 fn strip_ansi(data: &[u8]) -> Vec<u8> {
@@ -232,6 +285,7 @@ mod tests {
         let store = JobStore {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(None),
+            snapshot_ready: Mutex::new(None),
         };
         let (tx, _rx) = oneshot::channel::<JobResult>();
         store.jobs.lock().unwrap().insert(1, tx);
@@ -246,6 +300,7 @@ mod tests {
         let store = JobStore {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(None),
+            snapshot_ready: Mutex::new(None),
         };
         let removed = store.jobs.lock().unwrap().remove(&999);
         assert!(removed.is_none());
@@ -256,6 +311,7 @@ mod tests {
         let store = JobStore {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(None),
+            snapshot_ready: Mutex::new(None),
         };
         for i in 0..100 {
             let (tx, _rx) = oneshot::channel::<JobResult>();
@@ -269,6 +325,7 @@ mod tests {
         let store = JobStore {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(None),
+            snapshot_ready: Mutex::new(None),
         };
         assert!(store.active_exec.lock().unwrap().is_none());
 
@@ -288,6 +345,7 @@ mod tests {
         let store = JobStore {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(Some((1, Vec::new()))),
+            snapshot_ready: Mutex::new(None),
         };
         // Simulate output capture
         if let Some((_, ref mut captured)) = *store.active_exec.lock().unwrap() {
@@ -303,6 +361,7 @@ mod tests {
         let store = JobStore {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(None),
+            snapshot_ready: Mutex::new(None),
         };
         let (tx1, _rx1) = oneshot::channel::<JobResult>();
         let (tx2, _rx2) = oneshot::channel::<JobResult>();
@@ -463,6 +522,27 @@ mod tests {
         let result = rt.block_on(rx);
         assert!(result.is_err()); // RecvError
     }
+
+    #[tokio::test]
+    async fn quiescence_timeout_fires() {
+        let job_store = Arc::new(JobStore {
+            jobs: Mutex::new(HashMap::new()),
+            active_exec: Mutex::new(None),
+            snapshot_ready: Mutex::new(None),
+        });
+        let (tx, _rx) = std::sync::mpsc::channel();
+
+        // 1. Never send SnapshotReady
+        let start = std::time::Instant::now();
+        let result = with_quiescence(&tx, &job_store, std::time::Duration::from_millis(100), || async {
+            Ok(())
+        }).await;
+
+        let elapsed = start.elapsed();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("timed out"));
+        assert!(elapsed.as_millis() >= 100);
+    }
 }
 
 fn main() -> Result<()> {
@@ -485,7 +565,20 @@ fn main() -> Result<()> {
         &args.assets_dir, Some(&args.rootfs),
         "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
         None, &virtiofs_shares, args.cpus, args.ram_mb * 1024 * 1024,
+        args.checkpoint_path.clone().map(|p| if p.is_absolute() { p } else { args.session_dir.join(p) }),
     )?;
+    
+    // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown
+    if let Some(cp) = &args.checkpoint_path {
+        let full_path = if std::path::Path::new(cp).is_absolute() {
+            std::path::PathBuf::from(cp)
+        } else {
+            args.session_dir.join(cp)
+        };
+        let _ = std::fs::remove_file(full_path);
+    }
+
+    let vm_arc = Arc::new(tokio::sync::Mutex::new(vm));
 
     // Emit boot timeline state transitions for process.log.
     for t in sm.history() {
@@ -499,7 +592,7 @@ fn main() -> Result<()> {
     }
 
     rt.spawn(async move {
-        if let Err(e) = run_async_main_loop(args, vm, vsock_rx, sm).await {
+        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm).await {
             error!("async loop failed: {e:#}");
             std::process::exit(1);
         }
@@ -525,13 +618,14 @@ fn query_max_fs_event_id(db: &capsem_logger::DbWriter) -> i64 {
 
 async fn run_async_main_loop(
     args: Args,
-    vm: Box<dyn capsem_core::hypervisor::VmHandle>,
+    vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
     _sm: capsem_core::host_state::HostStateMachine,
 ) -> Result<()> {
     let job_store = Arc::new(JobStore { 
         jobs: Mutex::new(HashMap::new()),
         active_exec: Mutex::new(None),
+        snapshot_ready: Mutex::new(None),
     });
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
@@ -672,7 +766,10 @@ async fn run_async_main_loop(
     let terminal_output_clone = Arc::clone(&terminal_output);
     
     // Spawn serial log reader
-    let mut rx = vm.serial().subscribe();
+    let mut rx = {
+        let v = vm.lock().await;
+        v.serial().subscribe()
+    };
     let log_path = args.session_dir.join("serial.log");
     tokio::spawn(async move {
         use std::io::Write;
@@ -702,20 +799,32 @@ async fn run_async_main_loop(
     let ctrl_tx_ipc = ctrl_tx.clone();
     let uds_path = args.uds_path.clone();
     let vm_id_ws = args.id.clone();
+    let is_restore = args.checkpoint_path.is_some();
+    let vm_for_vsock = Arc::clone(&vm);
     tokio::spawn(async move {
-        if let Err(e) = setup_vsock(args.id.clone(), vsock_rx, ipc_tx_clone, ctrl_tx, ctrl_rx, terminal_output_clone, job_store_clone, session_dir, cli_env, mitm_config_clone, mcp_config_clone, net_state_clone).await {
+        if let Err(e) = setup_vsock(args.id.clone(), vm_for_vsock, vsock_rx, ipc_tx_clone, ctrl_tx, ctrl_rx, terminal_output_clone, job_store_clone, session_dir, cli_env, mitm_config_clone, mcp_config_clone, net_state_clone, is_restore).await {
             error!("vsock failed: {e:#}");
         }
     });
 
     if uds_path.exists() { std::fs::remove_file(&uds_path)?; }
     let listener = UnixListener::bind(&uds_path)?;
-    info!(socket = %uds_path.display(), "listening for IPC");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&uds_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
 
     let ws_sock_path = uds_path.with_file_name(format!("{}-ws.sock", vm_id_ws));
     if ws_sock_path.exists() { std::fs::remove_file(&ws_sock_path)?; }
     let ws_listener = tokio::net::UnixListener::bind(&ws_sock_path)?;
-    info!(socket = %ws_sock_path.display(), "listening for terminal WS");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&ws_sock_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    info!(socket = %ws_sock_path.display(), "listening for terminal WS (mode 0600)");
 
     // We use a broadcast channel to fan out terminal output to multiple WS connections
     let (term_bcast_tx, _) = tokio::sync::broadcast::channel::<Vec<u8>>(1024);
@@ -775,6 +884,7 @@ pub(crate) fn clone_fd(fd: RawFd) -> std::io::Result<std::fs::File> {
 
 async fn setup_vsock(
     vm_id: String,
+    vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     mut vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
     ipc_tx: broadcast::Sender<ProcessToService>,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
@@ -786,6 +896,7 @@ async fn setup_vsock(
     mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
     mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
     _net_state: Arc<capsem_core::SandboxNetworkState>,
+    is_restore: bool,
     ) -> Result<()> {
     let mut terminal_conn = None;
     let mut control_conn = None;
@@ -809,7 +920,14 @@ async fn setup_vsock(
 
     let _ = read_control_msg(&mut ctrl_file); // Initial Ready
     info!(category = "boot_timeline", from = "Booting", to = "Handshaking", trigger = "ready_received", "state transition");
-    send_boot_config(&mut ctrl_file, &cli_env)?;
+    
+    if is_restore {
+        info!("Abbreviated handshake for restored VM");
+        let _ = write_control_msg(&mut ctrl_file, &HostToGuest::BootConfigDone);
+    } else {
+        send_boot_config(&mut ctrl_file, &cli_env)?;
+    }
+    
     let _ = read_control_msg(&mut ctrl_file); // BootReady
     info!(category = "boot_timeline", from = "Handshaking", to = "Running", trigger = "booted", "state transition");
 
@@ -824,11 +942,32 @@ async fn setup_vsock(
     let mut term_f = clone_fd(terminal.fd)?;
     let serial_log_path = session_dir.join("serial.log");
     tokio::spawn(async move {
-        let mut log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(serial_log_path)
-            .ok();
+        let mut log_file = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .mode(0o600)
+                    .open(&serial_log_path)
+                    .ok()
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&serial_log_path)
+                    .ok()
+            }
+        };
+        // Ensure 0600 even if file already existed
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&serial_log_path, std::fs::Permissions::from_mode(0o600));
+        }
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(128);
 
@@ -945,6 +1084,10 @@ async fn setup_vsock(
                                 Ok(GuestToHost::SuspendRequest) => {
                                     info!("guest requested suspend via lifecycle port");
                                     let _ = ipc_tx.send(ProcessToService::SuspendRequested { id: vm_id });
+                                    // Let capsem-process handle suspend internally just like shutdown
+                                    if let Err(e) = ctrl_tx.blocking_send(ServiceToProcess::Suspend { checkpoint_path: "checkpoint.vzsave".into() }) {
+                                        error!("lifecycle: ctrl_tx send failed: {e}");
+                                    }
                                 }
                                 Ok(other) => {
                                     error!("lifecycle port: unexpected message: {other:?}");
@@ -1016,12 +1159,18 @@ async fn setup_vsock(
                                 let _ = tx.send(JobResult::Error { message });
                             }
                         }
+                        GuestToHost::SnapshotReady => {
+                            info!("Received SnapshotReady from guest");
+                            if let Some(tx) = js.snapshot_ready.lock().unwrap().take() {
+                                let _ = tx.send(());
+                            }
+                        }
                         _ => {}
                     }
                 }
                 Err(e) => {
-                    error!("control channel read error: {e:#}");
-                    std::process::exit(1);
+                    error!("control channel closed: {e:#}");
+                    break;
                 }
             }
         }
@@ -1058,6 +1207,11 @@ async fn setup_vsock(
     // Terminal writes go to term_f_write (sole user), control writes go through
     // the serialized ctrl_write_tx channel.
     let ctrl_cmd_tx = ctrl_write_tx;
+    let vm_for_cmd = Arc::clone(&vm);
+    let js_for_cmd = Arc::clone(&job_store);
+    let ipc_tx_for_cmd = ipc_tx.clone();
+    let vm_id_for_cmd = vm_id.clone();
+    let session_dir_for_cmd = session_dir.clone();
     tokio::task::spawn_blocking(move || {
         while let Some(msg) = ctrl_rx.blocking_recv() {
             match msg {
@@ -1068,6 +1222,46 @@ async fn setup_vsock(
                 ServiceToProcess::ReadFile { id, path } => { let _ = ctrl_cmd_tx.send(HostToGuest::FileRead { id, path }); }
                 ServiceToProcess::Shutdown => { let _ = ctrl_cmd_tx.send(HostToGuest::Shutdown); }
                 ServiceToProcess::Ping => { let _ = ctrl_cmd_tx.send(HostToGuest::Ping); }
+                ServiceToProcess::Suspend { checkpoint_path } => {
+                    info!("Suspend requested, pausing VM...");
+                    let vm_clone = Arc::clone(&vm_for_cmd);
+                    let ctrl_cmd_tx_clone = ctrl_cmd_tx.clone();
+                    let js_clone = Arc::clone(&js_for_cmd);
+                    let ipc_tx_clone = ipc_tx_for_cmd.clone();
+                    let vm_id_clone = vm_id_for_cmd.clone();
+                    let full_path = if std::path::Path::new(&checkpoint_path).is_absolute() {
+                        std::path::PathBuf::from(checkpoint_path)
+                    } else {
+                        session_dir_for_cmd.join(checkpoint_path)
+                    };
+                    
+                    let rt = tokio::runtime::Handle::current();
+                    rt.spawn(async move {
+                        let res = with_quiescence(&ctrl_cmd_tx_clone, &js_clone, std::time::Duration::from_secs(10), || async {
+                            let v = vm_clone.lock().await;
+                            v.pause().context("failed to pause")?;
+                            v.save_state(&full_path).context("failed to save state")?;
+                            v.stop().context("failed to stop")?;
+                            Ok(())
+                        }).await;
+                        
+                        if let Err(e) = res {
+                            error!("Suspend sequence failed: {e:#}");
+                            // Attempt to unfreeze if something failed
+                            let _ = ctrl_cmd_tx_clone.send(HostToGuest::Unfreeze);
+                        } else {
+                            info!("VM suspended and stopped successfully.");
+                            let _ = ipc_tx_clone.send(ProcessToService::StateChanged {
+                                id: vm_id_clone,
+                                state: "Suspended".into(),
+                                trigger: "suspend_requested".into(),
+                            });
+                            // Delay slightly to let StateChanged propagate
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            std::process::exit(0);
+                        }
+                    });
+                }
                 _ => {}
             }
         }

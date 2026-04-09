@@ -143,6 +143,18 @@ struct FunctionCall {
 
 8. **Platform-gate all macOS-only APIs**: Any code using macOS-only symbols (`libc::clonefile`, Apple framework bindings, etc.) must be wrapped in `#[cfg(target_os = "macos")]` -- both the struct/impl and the tests. The Linux app build (Tauri deb/AppImage) compiles the full workspace; ungated macOS symbols cause `cannot find function` errors on Linux CI. This burned v0.14.7: `ApfsSnapshot` used `libc::clonefile` without a cfg gate. Rule: when adding platform-specific code, gate the definition, the impl, and the tests.
 
+9. **Server-side readiness, not client-side polling**: When a service spawns a process (VM, subprocess, etc.) and registers it, any handler that talks to that process via IPC must wait for the process to be ready. Don't rely on clients polling -- the `wait_for_vm_ready` pattern (wait for socket + ping) must be in every handler that calls `send_ipc_command`, not just one. The doctor race condition shipped because `handle_exec` assumed clients always poll, but `capsem doctor` didn't. All test fixtures masked it with `wait_exec_ready()`.
+
+10. **VirtioFS and FSEvents**: Apple VZ VirtioFS guest writes bypass macOS FSEvents (the kernel's file notification subsystem). If you need to monitor a host directory that is mounted into a guest via VirtioFS, `notify::RecommendedWatcher` will silently drop guest-originated events. You MUST use `notify::poll::PollWatcher` to detect guest file modifications reliably.
+
+11. **Process sandbox: env_clear() on child spawn**: When spawning a child process (e.g., capsem-process from service), always call `env_clear()` then re-add only the minimal env vars needed (`HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`). The service's shell environment may contain API keys, tokens, or secrets that the child process has no business seeing. The guest's `--env` args are a separate injection path and are already validated.
+
+12. **UDS socket permissions must be 0600**: After `UnixListener::bind()`, immediately `set_permissions(..., 0o600)`. The default umask leaves sockets world-accessible, meaning any local user can connect to a VM's IPC or terminal WebSocket with no auth. The gateway token file already does this; per-VM sockets must match.
+
+13. **Never process::exit() on guest-controlled I/O**: A guest can close a vsock fd at any time. If the host handler calls `process::exit(1)` on read error, the guest has an unconditional DoS. Use `break` to exit the read loop and let the process shut down through normal channels.
+
+14. **File permissions for sensitive logs**: `serial.log` contains raw terminal output and may include secrets typed by the user. Create with explicit `mode(0o600)` via `OpenOptionsExt`, and enforce permissions even if the file already exists (re-set with `set_permissions`).
+
 ## Async reference
 
 Read `references/rust-async-patterns.md` for comprehensive tokio patterns (tasks, channels, streams, error handling). From the community (6.4K installs).

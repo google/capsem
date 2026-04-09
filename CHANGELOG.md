@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **capsem-gateway: 10 MB request body size limit** -- proxy now enforces a 10 MB maximum on incoming request bodies via `http_body_util::Limited`, returning 413 Payload Too Large for oversized payloads. Prevents OOM from malicious clients.
 - **capsem-gateway: CORS restricted to localhost origins** -- replaced `CorsLayer::permissive()` (allow all origins) with a predicate that only allows `http(s)://localhost`, `http(s)://127.0.0.1`, and `tauri://` origins. Prevents cross-origin requests from external websites.
 - **capsem-gateway: auth failure rate limiting** -- after 20 failed auth attempts within 60 seconds, the gateway returns 429 Too Many Requests instead of 401. Prevents brute-force token guessing.
+- **capsem-process: UDS sockets hardened to 0600** -- IPC and terminal WebSocket sockets now have chmod 0600 after bind. Previously inherited umask (0755), allowing any local user to connect to a VM's terminal or send exec commands with no auth.
+- **capsem-process: environment cleared on spawn** -- service now uses `env_clear()` before spawning capsem-process, passing only `HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`. Prevents API keys, tokens, and secrets from the user's shell leaking into per-VM processes.
+- **capsem-process: serial.log permissions 0600** -- serial log files now created with explicit 0600 mode. Previously world-readable via umask default, potentially exposing terminal output containing secrets.
+- **capsem-process: guest cannot force process exit** -- control channel read error on vsock:5000 now breaks the read loop instead of calling `process::exit(1)`. A compromised guest can no longer DoS its host process by closing the vsock fd.
 - **capsem-tray: macOS menu bar tray** -- standalone binary that polls the gateway `/status` endpoint and shows per-VM submenus (Connect, Suspend/Resume, Fork, Stop, Delete), global actions (New Temporary VM, New Long-term VM, Open Capsem, Quit), and color-coded status icons (green/grey/red). Uses `tray-icon` + `muda` for native NSStatusItem. No capsem-core dependency, no Tauri.
 
 ### Fixed

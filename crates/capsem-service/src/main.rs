@@ -319,6 +319,15 @@ impl ServiceState {
             }
         }
 
+        // Clear inherited env to prevent API key/token leakage, then
+        // re-add only the minimal set needed for the process to function.
+        child_cmd.env_clear();
+        for key in &["HOME", "PATH", "USER", "TMPDIR"] {
+            if let Ok(val) = std::env::var(key) {
+                child_cmd.env(key, val);
+            }
+        }
+
         let mut child = child_cmd
             .env("RUST_LOG", "capsem=info")
             .arg("--id").arg(id)
@@ -466,6 +475,15 @@ impl ServiceState {
                 } else {
                     tracing::warn!(name, checkpoint = %full_checkpoint.display(), "checkpoint file missing, cold booting");
                 }
+            }
+        }
+
+        // Clear inherited env to prevent API key/token leakage, then
+        // re-add only the minimal set needed for the process to function.
+        child_cmd.env_clear();
+        for key in &["HOME", "PATH", "USER", "TMPDIR"] {
+            if let Ok(val) = std::env::var(key) {
+                child_cmd.env(key, val);
             }
         }
 
