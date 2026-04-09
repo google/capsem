@@ -303,14 +303,17 @@ class TestGatewayEnvVars:
 
 
 def wait_exec_ready_tcp(client, vm_id, timeout=EXEC_READY_TIMEOUT):
-    """Poll until VM responds to exec through gateway."""
-    import time
-    for _ in range(timeout):
-        try:
-            resp = client.post(f"/exec/{vm_id}", {"command": "echo ready"}, timeout=10)
-            if resp and "ready" in resp.get("stdout", ""):
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
+    """Wait until VM responds to exec through gateway.
+
+    The server polls internally for VM readiness, so a single call with
+    adequate timeout is sufficient.
+    """
+    try:
+        resp = client.post(
+            f"/exec/{vm_id}",
+            {"command": "echo ready", "timeout_secs": timeout},
+            timeout=timeout + 5,
+        )
+        return resp is not None and "ready" in resp.get("stdout", "")
+    except Exception:
+        return False

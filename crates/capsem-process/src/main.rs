@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use anyhow::{Result, Context};
 use clap::Parser;
 use capsem_core::{
-    boot_vm, VirtioFsShare,
+    boot_vm, BootOptions, VirtioFsShare,
     VsockConnection,
 };
 use capsem_core::{read_control_msg, send_boot_config, write_control_msg};
@@ -101,38 +102,6 @@ where
     }
 }
 
-fn strip_ansi(data: &[u8]) -> Vec<u8> {
-    let s = String::from_utf8_lossy(data);
-    let mut cleaned = s.to_string();
-
-    // 1. Remove ANSI escape sequences
-    let re = regex::Regex::new(r"\x1b\[[0-9;?]*[a-zA-Z]").unwrap();
-    cleaned = re.replace_all(&cleaned, "").to_string();
-
-    // 2. Remove the sentinel suffix (where it says CAPSEM_EXIT:id:code\) and anything after it (like the next prompt)
-    if let Some(idx) = cleaned.find("\x1b_CAPSEM_EXIT:") {
-        cleaned = cleaned[..idx].to_string();
-    }
-
-    // 3. Remove the initial injected command string echo.
-    // The injected string always starts with `bash -c `
-    if let Some(idx) = cleaned.find("bash -c '") {
-        if let Some(end_idx) = cleaned[idx..].find('\n') {
-            cleaned = cleaned[idx + end_idx + 1..].to_string();
-        }
-    }
-    
-    // 4. Remove any trailing prompt like `capsem:~#` or similar
-    if let Some(idx) = cleaned.rfind("capsem:~#") {
-        cleaned = cleaned[..idx].to_string();
-    }
-    
-    // 5. Clean up any trailing \r
-    cleaned = cleaned.replace("\r\n", "\n");
-    cleaned = cleaned.trim().to_string();
-    
-    cleaned.into_bytes()
-}
 
 #[cfg(test)]
 mod tests {
@@ -221,59 +190,6 @@ mod tests {
             "--cpus", "not-a-number",
         ]);
         assert!(result.is_err());
-    }
-
-    // -----------------------------------------------------------------------
-    // strip_ansi
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn strip_ansi_removes_color_codes() {
-        let input = b"\x1b[32mhello\x1b[0m world";
-        let result = strip_ansi(input);
-        assert_eq!(result, b"hello world");
-    }
-
-    #[test]
-    fn strip_ansi_no_codes_passthrough() {
-        let input = b"plain text";
-        let result = strip_ansi(input);
-        assert_eq!(result, b"plain text");
-    }
-
-    #[test]
-    fn strip_ansi_empty_input() {
-        let result = strip_ansi(b"");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn strip_ansi_multiple_codes() {
-        let input = b"\x1b[1m\x1b[31mBOLD RED\x1b[0m normal";
-        let result = strip_ansi(input);
-        assert_eq!(result, b"BOLD RED normal");
-    }
-
-    #[test]
-    fn strip_ansi_cursor_codes() {
-        let input = b"\x1b[2J\x1b[Hcleared";
-        let result = strip_ansi(input);
-        assert_eq!(result, b"cleared");
-    }
-
-    #[test]
-    fn strip_ansi_preserves_newlines() {
-        let input = b"line1\n\x1b[32mline2\x1b[0m\nline3";
-        let result = strip_ansi(input);
-        assert_eq!(result, b"line1\nline2\nline3");
-    }
-
-    #[test]
-    fn strip_ansi_question_mark_codes() {
-        // CSI ? sequences like \x1b[?25h (show cursor)
-        let input = b"\x1b[?25hvisible";
-        let result = strip_ansi(input);
-        assert_eq!(result, b"visible");
     }
 
     // -----------------------------------------------------------------------
@@ -562,12 +478,19 @@ fn main() -> Result<()> {
     let guest_dir = capsem_core::guest_share_dir(&args.session_dir);
     let virtiofs_shares = vec![VirtioFsShare { tag: "capsem".into(), host_path: guest_dir, read_only: false }];
 
-    let (vm, vsock_rx, sm) = boot_vm(
-        &args.assets_dir, Some(&args.rootfs),
-        "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
-        None, &virtiofs_shares, args.cpus, args.ram_mb * 1024 * 1024,
-        args.checkpoint_path.clone().map(|p| if p.is_absolute() { p } else { args.session_dir.join(p) }),
-    )?;
+    let (vm, vsock_rx, sm) = boot_vm(BootOptions {
+        assets: &args.assets_dir,
+        rootfs_override: Some(&args.rootfs),
+        cmdline: "console=hvc0 ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1",
+        scratch_disk_path: None,
+        virtiofs_shares: &virtiofs_shares,
+        cpu_count: args.cpus,
+        ram_bytes: args.ram_mb * 1024 * 1024,
+        checkpoint_path: args
+            .checkpoint_path
+            .clone()
+            .map(|p| if p.is_absolute() { p } else { args.session_dir.join(p) }),
+    })?;
     
     // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown
     if let Some(cp) = &args.checkpoint_path {
@@ -652,15 +575,21 @@ async fn run_async_main_loop(
         }
     };
 
-    let net_state = Arc::new(capsem_core::create_net_state(&args.id, Arc::clone(&db))?);
+    // Load settings files once and derive everything from them.
+    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
+    let snap_settings = capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf);
+    let guest_config = merged.guest.clone();
 
-    let merged = capsem_core::net::policy_config::MergedPolicies::from_disk();
+    let net_state = Arc::new(capsem_core::create_net_state_with_policy(
+        &args.id,
+        Arc::clone(&db),
+        merged.network.clone(),
+    )?);
     let mcp_servers = capsem_core::mcp::build_server_list(
-        &capsem_core::net::policy_config::load_settings_files().0.mcp.unwrap_or_default(),
-        &capsem_core::net::policy_config::load_settings_files().1.mcp.unwrap_or_default()
+        &user_sf.mcp.clone().unwrap_or_default(),
+        &corp_sf.mcp.clone().unwrap_or_default(),
     );
-
-    let snap_settings = capsem_core::net::policy_config::load_merged_settings();
     let snap_auto_max = snap_settings.iter()
         .find(|s| s.id == "vm.snapshots.auto_max")
         .and_then(|s| s.effective_value.as_number())
@@ -682,23 +611,27 @@ async fn run_async_main_loop(
     );
     let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
 
-    // Take initial snapshot
+    // Defer initial snapshot to background -- workspace is empty at boot, no need to block.
     {
-        let mut s = scheduler.lock().await;
-        if let Ok(slot) = s.take_snapshot() {
-            let stop_id = query_max_fs_event_id(&db);
-            db.write(capsem_logger::WriteOp::SnapshotEvent(
-                capsem_logger::SnapshotEvent {
-                    timestamp: slot.timestamp,
-                    slot: slot.slot,
-                    origin: "auto".into(),
-                    name: None,
-                    files_count: slot.files_count,
-                    start_fs_event_id: 0,
-                    stop_fs_event_id: stop_id,
-                },
-            )).await;
-        }
+        let sched = Arc::clone(&scheduler);
+        let db_snap = Arc::clone(&db);
+        tokio::spawn(async move {
+            let mut s = sched.lock().await;
+            if let Ok(slot) = s.take_snapshot() {
+                let stop_id = query_max_fs_event_id(&db_snap);
+                db_snap.write(capsem_logger::WriteOp::SnapshotEvent(
+                    capsem_logger::SnapshotEvent {
+                        timestamp: slot.timestamp,
+                        slot: slot.slot,
+                        origin: "auto".into(),
+                        name: None,
+                        files_count: slot.files_count,
+                        start_fs_event_id: 0,
+                        stop_fs_event_id: stop_id,
+                    },
+                )).await;
+            }
+        });
     }
 
     let mcp_config = Arc::new(capsem_core::mcp::gateway::McpGatewayConfig {
@@ -797,13 +730,33 @@ async fn run_async_main_loop(
         .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
 
+    let vm_ready = Arc::new(AtomicBool::new(false));
+
     let ctrl_tx_ipc = ctrl_tx.clone();
     let uds_path = args.uds_path.clone();
     let vm_id_ws = args.id.clone();
     let is_restore = args.checkpoint_path.is_some();
     let vm_for_vsock = Arc::clone(&vm);
+    let vm_ready_vsock = Arc::clone(&vm_ready);
     tokio::spawn(async move {
-        if let Err(e) = setup_vsock(args.id.clone(), vm_for_vsock, vsock_rx, ipc_tx_clone, ctrl_tx, ctrl_rx, terminal_output_clone, job_store_clone, session_dir, cli_env, mitm_config_clone, mcp_config_clone, net_state_clone, is_restore).await {
+        if let Err(e) = setup_vsock(VsockOptions {
+            vm_id: args.id.clone(),
+            vm: vm_for_vsock,
+            vsock_rx,
+            ipc_tx: ipc_tx_clone,
+            ctrl_tx,
+            ctrl_rx,
+            terminal_output: terminal_output_clone,
+            job_store: job_store_clone,
+            session_dir,
+            cli_env,
+            guest_config,
+            mitm_config: mitm_config_clone,
+            mcp_config: mcp_config_clone,
+            net_state: net_state_clone,
+            is_restore,
+            vm_ready: vm_ready_vsock,
+        }).await {
             error!("vsock failed: {e:#}");
         }
     });
@@ -865,9 +818,10 @@ async fn run_async_main_loop(
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_config);
+        let ready_c = Arc::clone(&vm_ready);
 
         tokio::spawn(async move {
-            if let Err(e) = handle_ipc_connection(stream, tx_c, ipc_tx_pass, term_c, job_c, net_c, mcp_c).await {
+            if let Err(e) = handle_ipc_connection(stream, tx_c, ipc_tx_pass, term_c, job_c, net_c, mcp_c, ready_c).await {
                 error!("IPC error: {e:#}");
             }
         });
@@ -883,22 +837,44 @@ pub(crate) fn clone_fd(fd: RawFd) -> std::io::Result<std::fs::File> {
     file.try_clone()
 }
 
-async fn setup_vsock(
+struct VsockOptions {
     vm_id: String,
     vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
-    mut vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
+    vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
     ipc_tx: broadcast::Sender<ProcessToService>,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
-    mut ctrl_rx: mpsc::Receiver<ServiceToProcess>,
+    ctrl_rx: mpsc::Receiver<ServiceToProcess>,
     terminal_output: Arc<capsem_core::TerminalOutputQueue>,
     job_store: Arc<JobStore>,
     session_dir: PathBuf,
     cli_env: Vec<(String, String)>,
+    guest_config: capsem_core::net::policy_config::GuestConfig,
     mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
     mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
-    _net_state: Arc<capsem_core::SandboxNetworkState>,
+    net_state: Arc<capsem_core::SandboxNetworkState>,
     is_restore: bool,
-    ) -> Result<()> {
+    vm_ready: Arc<AtomicBool>,
+}
+
+async fn setup_vsock(options: VsockOptions) -> Result<()> {
+    let VsockOptions {
+        vm_id,
+        vm,
+        mut vsock_rx,
+        ipc_tx,
+        ctrl_tx,
+        mut ctrl_rx,
+        terminal_output,
+        job_store,
+        session_dir,
+        cli_env,
+        guest_config,
+        mitm_config,
+        mcp_config,
+        net_state: _net_state,
+        is_restore,
+        vm_ready,
+    } = options;
     let mut terminal_conn = None;
     let mut control_conn = None;
     let mut deferred_conns = Vec::new();
@@ -926,7 +902,7 @@ async fn setup_vsock(
         info!("Abbreviated handshake for restored VM");
         let _ = write_control_msg(&mut ctrl_file, &HostToGuest::BootConfigDone);
     } else {
-        send_boot_config(&mut ctrl_file, &cli_env)?;
+        send_boot_config(&mut ctrl_file, &cli_env, Some(guest_config))?;
     }
     
     let _ = read_control_msg(&mut ctrl_file); // BootReady
@@ -937,9 +913,9 @@ async fn setup_vsock(
         state: "Running".into(),
         trigger: "booted".into()
     });
+    vm_ready.store(true, Ordering::Release);
 
     let term_out = Arc::clone(&terminal_output);
-    let js_term = Arc::clone(&job_store);
     let mut term_f = clone_fd(terminal.fd)?;
     let serial_log_path = session_dir.join("serial.log");
     tokio::spawn(async move {
@@ -1007,11 +983,6 @@ async fn setup_vsock(
                     let _ = f.write_all(&data);
                 }
 
-                // If there's an active exec, capture its output
-                if let Some((_, ref mut captured)) = *js_term.active_exec.lock().unwrap() {
-                    captured.extend_from_slice(&data);
-                }
-
                 term_out.push(data);
             });
         }
@@ -1043,11 +1014,10 @@ async fn setup_vsock(
     let ipc_tx_lifecycle = ipc_tx.clone();
     let ctrl_tx_lifecycle = ctrl_tx.clone();
     let vm_id_lifecycle = vm_id.clone();
+    let job_store_vsock = Arc::clone(&job_store);
     tokio::spawn(async move {
-        loop {
-            match vsock_rx.recv().await {
-            Some(conn) => {
-                match conn.port {
+        while let Some(conn) = vsock_rx.recv().await {
+            match conn.port {
                     capsem_core::VSOCK_PORT_SNI_PROXY => {
                         let config = Arc::clone(&mitm_config_loop);
                         tokio::spawn(async move {
@@ -1060,6 +1030,51 @@ async fn setup_vsock(
                         tokio::spawn(async move {
                             capsem_core::mcp::gateway::serve_mcp_session(conn.fd, mcp).await;
                             drop(conn); // Hold conn alive
+                        });
+                    }
+                    capsem_core::VSOCK_PORT_EXEC => {
+                        // Exec output connection: read ExecStarted handshake,
+                        // then accumulate all output locally until EOF, then
+                        // swap into active_exec in a single lock acquisition.
+                        let js = Arc::clone(&job_store_vsock);
+                        std::thread::spawn(move || {
+                            let mut file = match clone_fd(conn.fd) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    error!("exec port: clone_fd failed: {e}");
+                                    return;
+                                }
+                            };
+                            match read_control_msg(&mut file) {
+                                Ok(GuestToHost::ExecStarted { id }) => {
+                                    info!(id, "exec port: received ExecStarted");
+                                    // Accumulate locally -- no lock contention during I/O.
+                                    let mut local_buf = Vec::new();
+                                    let mut read_buf = [0u8; 8192];
+                                    loop {
+                                        match std::io::Read::read(&mut file, &mut read_buf) {
+                                            Ok(0) => break,
+                                            Ok(n) => local_buf.extend_from_slice(&read_buf[..n]),
+                                            Err(_) => break,
+                                        }
+                                    }
+                                    // Single lock acquisition at EOF.
+                                    if let Some((active_id, ref mut captured)) =
+                                        *js.active_exec.lock().unwrap()
+                                    {
+                                        if active_id == id {
+                                            *captured = local_buf;
+                                        }
+                                    }
+                                }
+                                Ok(other) => {
+                                    error!("exec port: unexpected message: {other:?}");
+                                }
+                                Err(e) => {
+                                    error!("exec port: read error: {e}");
+                                }
+                            }
+                            drop(conn);
                         });
                     }
                     capsem_core::VSOCK_PORT_LIFECYCLE => {
@@ -1102,11 +1117,6 @@ async fn setup_vsock(
                     }
                     _ => {}
                 }
-            }
-            None => {
-                break;
-            }
-            }
         }
     });
 
@@ -1119,10 +1129,11 @@ async fn setup_vsock(
                     match msg {
                         GuestToHost::ExecDone { id, exit_code } => {
                             info!(id, exit_code, "Received ExecDone from guest");
-                            // Wait for terminal data to drain from vsock:5001.
-                            // ExecDone arrives on vsock:5000 (control) which may
-                            // outpace the terminal data on vsock:5001.
-                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            // The exec port reader thread accumulates output
+                            // locally and writes to active_exec atomically at
+                            // EOF. The agent closes exec_fd before sending
+                            // ExecDone, so the reader has already finished by
+                            // the time we get here.
                             let stdout = {
                                 let active = js.active_exec.lock().unwrap();
                                 if let Some((active_id, captured)) = active.as_ref() {
@@ -1279,6 +1290,7 @@ async fn handle_ipc_connection(
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
+    vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
     let std_stream = stream.into_std()?;
     let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) = channel_from_std(std_stream)?;
@@ -1294,10 +1306,9 @@ async fn handle_ipc_connection(
         }
     });
 
-    loop {
-        match rx.recv().await {
-            Ok(msg) => match msg {
-                ServiceToProcess::StartTerminalStream => {
+    while let Ok(msg) = rx.recv().await {
+        match msg {
+            ServiceToProcess::StartTerminalStream => {
                     info!("Starting terminal stream for connection");
                     let out_tx = ipc_tx_out.clone();
                     let mut term_rx = term_bcast_tx.subscribe();
@@ -1315,70 +1326,89 @@ async fn handle_ipc_connection(
                         }
                     });
                 }
-                ServiceToProcess::Ping => { let _ = ipc_tx_out.send(ProcessToService::Pong).await; }
+                ServiceToProcess::Ping => {
+                    if vm_ready.load(Ordering::Acquire) {
+                        let _ = ipc_tx_out.send(ProcessToService::Pong).await;
+                    }
+                    // Not ready yet: silently drop -- caller will retry
+                }
                 ServiceToProcess::TerminalInput { data } => { let _ = ctrl_tx.send(ServiceToProcess::TerminalInput { data }).await; }
                 ServiceToProcess::TerminalResize { cols, rows } => { let _ = ctrl_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await; }
                 ServiceToProcess::Exec { id, command } => {
-                    info!(id, command, "Received Exec command via IPC");
-                    let (j_tx, j_rx) = oneshot::channel();
-                    job_store.jobs.lock().unwrap().insert(id, j_tx);
+                    let job_store = job_store.clone();
+                    let ctrl_tx = ctrl_tx.clone();
+                    let ipc_tx_out = ipc_tx_out.clone();
+                    tokio::spawn(async move {
+                        info!(id, command, "Received Exec command via IPC");
+                        let (j_tx, j_rx) = oneshot::channel();
+                        job_store.jobs.lock().unwrap().insert(id, j_tx);
 
-                    // Set as active exec to start capturing output
-                    *job_store.active_exec.lock().unwrap() = Some((id, Vec::new()));
+                        // Set as active exec to start capturing output
+                        *job_store.active_exec.lock().unwrap() = Some((id, Vec::new()));
 
-                    let _ = ctrl_tx.send(ServiceToProcess::Exec { id, command }).await;
-                    match j_rx.await {
-                        Ok(JobResult::Exec { stdout, stderr, exit_code }) => {
-                            let clean_stdout = strip_ansi(&stdout);
-                            info!(id, exit_code, "Sending ExecResult back via IPC");
-                            let _ = ipc_tx_out.send(ProcessToService::ExecResult { id, stdout: clean_stdout, stderr, exit_code }).await;
+                        let _ = ctrl_tx.send(ServiceToProcess::Exec { id, command }).await;
+                        match j_rx.await {
+                            Ok(JobResult::Exec { stdout, stderr, exit_code }) => {
+                                info!(id, exit_code, "Sending ExecResult back via IPC");
+                                let _ = ipc_tx_out.send(ProcessToService::ExecResult { id, stdout, stderr, exit_code }).await;
+                            }
+                            Ok(JobResult::Error { message }) => {
+                                error!(id, message, "Sending Exec error back via IPC");
+                                let _ = ipc_tx_out.send(ProcessToService::ExecResult { id, stdout: vec![], stderr: message.into_bytes(), exit_code: -1 }).await;
+                            }
+                            _ => {
+                                error!(id, "Job result channel closed for Exec");
+                            }
                         }
-                        Ok(JobResult::Error { message }) => {
-                            error!(id, message, "Sending Exec error back via IPC");
-                            let _ = ipc_tx_out.send(ProcessToService::ExecResult { id, stdout: vec![], stderr: message.into_bytes(), exit_code: -1 }).await;
-                        }
-                        _ => {
-                            error!(id, "Job result channel closed for Exec");
-                        }
-                    }
+                    });
                 }
                 ServiceToProcess::WriteFile { id, path, data } => {
-                    info!(id, path, len = data.len(), "Received WriteFile command via IPC");
-                    let (j_tx, j_rx) = oneshot::channel();
-                    job_store.jobs.lock().unwrap().insert(id, j_tx);
-                    let _ = ctrl_tx.send(ServiceToProcess::WriteFile { id, path, data }).await;
-                    match j_rx.await {
-                        Ok(JobResult::WriteFile { success, error }) => {
-                            info!(id, success, "Sending WriteFileResult back via IPC");
-                            let _ = ipc_tx_out.send(ProcessToService::WriteFileResult { id, success, error }).await;
+                    let job_store = job_store.clone();
+                    let ctrl_tx = ctrl_tx.clone();
+                    let ipc_tx_out = ipc_tx_out.clone();
+                    tokio::spawn(async move {
+                        info!(id, path, len = data.len(), "Received WriteFile command via IPC");
+                        let (j_tx, j_rx) = oneshot::channel();
+                        job_store.jobs.lock().unwrap().insert(id, j_tx);
+                        let _ = ctrl_tx.send(ServiceToProcess::WriteFile { id, path, data }).await;
+                        match j_rx.await {
+                            Ok(JobResult::WriteFile { success, error }) => {
+                                info!(id, success, "Sending WriteFileResult back via IPC");
+                                let _ = ipc_tx_out.send(ProcessToService::WriteFileResult { id, success, error }).await;
+                            }
+                            Ok(JobResult::Error { message }) => {
+                                error!(id, message, "Sending WriteFile error back via IPC");
+                                let _ = ipc_tx_out.send(ProcessToService::WriteFileResult { id, success: false, error: Some(message) }).await;
+                            }
+                            _ => {
+                                error!(id, "Job result channel closed for WriteFile");
+                            }
                         }
-                        Ok(JobResult::Error { message }) => {
-                            error!(id, message, "Sending WriteFile error back via IPC");
-                            let _ = ipc_tx_out.send(ProcessToService::WriteFileResult { id, success: false, error: Some(message) }).await;
-                        }
-                        _ => {
-                            error!(id, "Job result channel closed for WriteFile");
-                        }
-                    }
+                    });
                 }
                 ServiceToProcess::ReadFile { id, path } => {
-                    info!(id, path, "Received ReadFile command via IPC");
-                    let (j_tx, j_rx) = oneshot::channel();
-                    job_store.jobs.lock().unwrap().insert(id, j_tx);
-                    let _ = ctrl_tx.send(ServiceToProcess::ReadFile { id, path }).await;
-                    match j_rx.await {
-                        Ok(JobResult::ReadFile { data, error }) => {
-                            info!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
-                            let _ = ipc_tx_out.send(ProcessToService::ReadFileResult { id, data, error }).await;
+                    let job_store = job_store.clone();
+                    let ctrl_tx = ctrl_tx.clone();
+                    let ipc_tx_out = ipc_tx_out.clone();
+                    tokio::spawn(async move {
+                        info!(id, path, "Received ReadFile command via IPC");
+                        let (j_tx, j_rx) = oneshot::channel();
+                        job_store.jobs.lock().unwrap().insert(id, j_tx);
+                        let _ = ctrl_tx.send(ServiceToProcess::ReadFile { id, path }).await;
+                        match j_rx.await {
+                            Ok(JobResult::ReadFile { data, error }) => {
+                                info!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
+                                let _ = ipc_tx_out.send(ProcessToService::ReadFileResult { id, data, error }).await;
+                            }
+                            Ok(JobResult::Error { message }) => {
+                                error!(id, message, "Sending ReadFile error back via IPC");
+                                let _ = ipc_tx_out.send(ProcessToService::ReadFileResult { id, data: None, error: Some(message) }).await;
+                            }
+                            _ => {
+                                error!(id, "Job result channel closed for ReadFile");
+                            }
                         }
-                        Ok(JobResult::Error { message }) => {
-                            error!(id, message, "Sending ReadFile error back via IPC");
-                            let _ = ipc_tx_out.send(ProcessToService::ReadFileResult { id, data: None, error: Some(message) }).await;
-                        }
-                        _ => {
-                            error!(id, "Job result channel closed for ReadFile");
-                        }
-                    }
+                    });
                 }
                 ServiceToProcess::ReloadConfig => {
                     info!("Reloading policies from disk");
@@ -1413,8 +1443,6 @@ async fn handle_ipc_connection(
                     // not expected over IPC from service.
                     warn!("unexpected lifecycle IPC command received");
                 }
-            },
-            Err(_) => break,
         }
     }
     Ok(())

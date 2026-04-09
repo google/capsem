@@ -96,16 +96,21 @@ class ServiceInstance:
 
 
 def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
-    """Poll until a VM responds to exec."""
-    for _ in range(timeout):
-        try:
-            resp = client.post(f"/exec/{vm_name}", {"command": "echo ready"})
-            if resp and "ready" in resp.get("stdout", ""):
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
+    """Wait until a VM responds to exec.
+
+    The server's handle_exec already polls internally for VM readiness,
+    so a single call with adequate timeout is sufficient -- no client-side
+    retry loop needed.
+    """
+    try:
+        resp = client.post(
+            f"/exec/{vm_name}",
+            {"command": "echo ready", "timeout_secs": timeout},
+            timeout=timeout + 5,
+        )
+        return resp is not None and "ready" in resp.get("stdout", "")
+    except Exception:
+        return False
 
 
 def vm_name(prefix="test"):

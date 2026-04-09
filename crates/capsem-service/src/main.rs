@@ -160,6 +160,16 @@ struct InstanceInfo {
     source_image: Option<String>,
 }
 
+pub struct ProvisionOptions<'a> {
+    pub id: &'a str,
+    pub ram_mb: u64,
+    pub cpus: u32,
+    pub version_override: Option<String>,
+    pub persistent: bool,
+    pub env: Option<std::collections::HashMap<String, String>>,
+    pub image: Option<String>,
+}
+
 impl ServiceState {
     fn next_job_id(&self) -> u64 {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
@@ -192,23 +202,18 @@ impl ServiceState {
 
     fn provision_sandbox(
         self: &Arc<Self>,
-        id: &str,
-        ram_mb: u64,
-        cpus: u32,
-        version_override: Option<String>,
-        persistent: bool,
-        env: Option<std::collections::HashMap<String, String>>,
-        image: Option<String>,
+        options: ProvisionOptions,
     ) -> Result<()> {
+        let ProvisionOptions { id, ram_mb, cpus, version_override, persistent, env, image } = options;
         self.cleanup_stale_instances();
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
 
-        if cpus < 1 || cpus > 8 {
+        if !(1..=8).contains(&cpus) {
             return Err(anyhow!("cpus must be between 1 and 8"));
         }
-        if ram_mb < 256 || ram_mb > 16384 {
+        if !(256..=16384).contains(&ram_mb) {
             return Err(anyhow!("ram_mb must be between 256 and 16384"));
         }
 
@@ -706,7 +711,15 @@ async fn handle_provision(
         format!("vm-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
     });
 
-    match state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), payload.persistent, payload.env, payload.image) {
+    match state.provision_sandbox(ProvisionOptions {
+        id: &id,
+        ram_mb: payload.ram_mb,
+        cpus: payload.cpus,
+        version_override: Some(state.current_version.clone()),
+        persistent: payload.persistent,
+        env: payload.env,
+        image: payload.image,
+    }) {
         Ok(_) => Ok(Json(ProvisionResponse { id })),
         Err(e) => {
             error!(id, "provision failed: {e}");
@@ -883,18 +896,21 @@ async fn send_ipc_command(uds_path: &std::path::Path, cmd: ServiceToProcess, tim
 /// Wait until a VM's IPC socket exists and responds to a ping.
 /// Returns Ok(()) when the VM is ready, or Err after timeout.
 async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Result<(), String> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    loop {
-        if uds_path.exists() {
-            if let Ok(ProcessToService::Pong) = send_ipc_command(uds_path, ServiceToProcess::Ping, 5).await {
-                return Ok(());
+    let uds = uds_path.to_owned();
+    capsem_core::poll::poll_until(
+        capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs)),
+        || {
+            let uds = uds.clone();
+            async move {
+                if uds.exists() {
+                    if let Ok(ProcessToService::Pong) = send_ipc_command(&uds, ServiceToProcess::Ping, 5).await {
+                        return Some(());
+                    }
+                }
+                None
             }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(format!("VM did not become ready within {timeout_secs}s"));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
+        },
+    ).await.map_err(|()| format!("VM did not become ready within {timeout_secs}s"))
 }
 
 async fn handle_exec(
@@ -1234,7 +1250,7 @@ async fn handle_persist(
     };
 
     // Move session dir to persistent location
-    let new_session_dir = state.run_dir.join("persistent").join(&name);
+    let new_session_dir = state.run_dir.join("persistent").join(name);
     let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
     std::fs::rename(&old_session_dir, &new_session_dir)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to move session dir: {e}")))?;
@@ -1347,7 +1363,15 @@ async fn handle_run(
     let session_dir = state.run_dir.join("sessions").join(&id);
 
     // 1. Provision ephemeral VM
-    state.provision_sandbox(&id, payload.ram_mb, payload.cpus, Some(state.current_version.clone()), false, payload.env, None)
+    state.provision_sandbox(ProvisionOptions {
+        id: &id,
+        ram_mb: payload.ram_mb,
+        cpus: payload.cpus,
+        version_override: Some(state.current_version.clone()),
+        persistent: false,
+        env: payload.env,
+        image: None,
+    })
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
 
     // 2. Register session in main.db
@@ -1644,13 +1668,19 @@ async fn spawn_companions(
             // Wait for gateway to write token + port files (up to 5s)
             let token_path = run_dir.join("gateway.token");
             let port_path = run_dir.join("gateway.port");
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-            while tokio::time::Instant::now() < deadline {
-                if token_path.exists() && port_path.exists() {
-                    info!("gateway ready (token + port files present)");
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            {
+                let tp = token_path.clone();
+                let pp = port_path.clone();
+                let _ = capsem_core::poll::poll_until(
+                    capsem_core::poll::PollOpts::new("gateway-ready", std::time::Duration::from_secs(5)),
+                    || {
+                        let tp = tp.clone();
+                        let pp = pp.clone();
+                        async move {
+                            if tp.exists() && pp.exists() { Some(()) } else { None }
+                        }
+                    },
+                ).await;
             }
 
             // 2. Spawn capsem-tray (menu bar) -- only on macOS, only after gateway ready
@@ -1959,7 +1989,15 @@ mod tests {
         // path   = /tmp/capsem-test-svc/instances/{name}.sock
         // A 100-char name will blow past either OS limit.
         let long_name = "a".repeat(100);
-        let result = state.provision_sandbox(&long_name, 2048, 2, None, false, None, None);
+        let result = state.provision_sandbox(ProvisionOptions {
+            id: &long_name,
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: false,
+            env: None,
+            image: None,
+        });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("socket path"), "expected socket path error, got: {err}");
@@ -1975,7 +2013,15 @@ mod tests {
         // Name length that makes total path == sun_path_max (one byte over usable limit)
         let name_len = sun_path_max - prefix - suffix_len;
         let boundary_name = "x".repeat(name_len);
-        let result = state.provision_sandbox(&boundary_name, 2048, 2, None, false, None, None);
+        let result = state.provision_sandbox(ProvisionOptions {
+            id: &boundary_name,
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: false,
+            env: None,
+            image: None,
+        });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("socket path"), "expected socket path error at boundary, got: {err}");
@@ -1990,7 +2036,15 @@ mod tests {
         // One byte shorter than the limit -- should pass path validation
         let name_len = sun_path_max - prefix - suffix_len - 1;
         let ok_name = "x".repeat(name_len);
-        let result = state.provision_sandbox(&ok_name, 2048, 2, None, false, None, None);
+        let result = state.provision_sandbox(ProvisionOptions {
+            id: &ok_name,
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: false,
+            env: None,
+            image: None,
+        });
         // Will fail later (missing rootfs), but NOT for path length
         if let Err(e) = &result {
             let msg = e.to_string();
@@ -2001,7 +2055,15 @@ mod tests {
     #[test]
     fn provision_short_name_passes_path_check() {
         let state = make_test_state();
-        let result = state.provision_sandbox("my-vm", 2048, 2, None, false, None, None);
+        let result = state.provision_sandbox(ProvisionOptions {
+            id: "my-vm",
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: false,
+            env: None,
+            image: None,
+        });
         // Fails for missing assets, not path length
         if let Err(e) = &result {
             let msg = e.to_string();
@@ -2160,7 +2222,15 @@ mod tests {
                 checkpoint_path: None,
             });
         }
-        let result = state.provision_sandbox("taken", 2048, 2, None, true, None, None);
+        let result = state.provision_sandbox(ProvisionOptions {
+            id: "taken",
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: true,
+            env: None,
+            image: None,
+        });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("already exists"), "expected duplicate error, got: {err}");
@@ -2170,7 +2240,15 @@ mod tests {
     #[test]
     fn provision_persistent_validates_name() {
         let state = make_test_state();
-        let result = state.provision_sandbox("../evil", 2048, 2, None, true, None, None);
+        let result = state.provision_sandbox(ProvisionOptions {
+            id: "../evil",
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: true,
+            env: None,
+            image: None,
+        });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("must start with") || err.contains("must contain only"),
@@ -2402,7 +2480,15 @@ mod tests {
     #[test]
     fn provision_rejects_nonexistent_image() {
         let (state, _dir) = make_test_state_with_tempdir();
-        let result = state.provision_sandbox("vm1", 2048, 2, None, false, None, Some("ghost-img".into()));
+        let result = state.provision_sandbox(ProvisionOptions {
+            id: "vm1",
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: false,
+            env: None,
+            image: Some("ghost-img".into()),
+        });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"), "expected image not found, got: {err}");

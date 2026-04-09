@@ -93,9 +93,10 @@ fn set_io_timeouts(fd: RawFd) {
     }
 }
 
-/// Connect to a vsock port with exponential backoff retry.
+/// Connect to a vsock port with exponential backoff retry and total timeout.
 pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
-    let mut delay_ms = 100;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut delay_ms: u64 = 100;
     loop {
         match vsock_connect(cid, port) {
             Ok(fd) => {
@@ -103,6 +104,10 @@ pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
                 return fd;
             }
             Err(e) => {
+                if std::time::Instant::now() >= deadline {
+                    eprintln!("[capsem-agent] {label} connect timed out after 30s: {e}");
+                    std::process::exit(1);
+                }
                 eprintln!("[capsem-agent] {label} connect failed: {e}, retrying in {delay_ms}ms");
                 thread::sleep(Duration::from_millis(delay_ms));
                 delay_ms = (delay_ms * 2).min(2000);

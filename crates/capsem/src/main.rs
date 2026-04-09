@@ -870,10 +870,14 @@ async fn main() -> Result<()> {
                     let info = resp.into_result()?;
 
                     let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
-                    for _ in 0..50 {
-                        if socket_path.exists() { break; }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
+                    let sp = socket_path.clone();
+                    let _ = capsem_core::poll::poll_until(
+                        capsem_core::poll::PollOpts::new("shell-socket", std::time::Duration::from_secs(5)),
+                        || {
+                            let sp = sp.clone();
+                            async move { if sp.exists() { Some(()) } else { None } }
+                        },
+                    ).await;
 
                     let shell_result = run_shell(&info.id, &run_dir).await;
                     // Ephemeral: auto-destroy on disconnect

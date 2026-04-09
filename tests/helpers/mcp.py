@@ -5,7 +5,6 @@ that were previously duplicated across every MCP test module.
 """
 
 import json
-import time
 
 from .constants import EXEC_READY_TIMEOUT
 
@@ -21,36 +20,37 @@ def content_text(result):
 
 
 def wait_exec_ready(session, vm_name, timeout=EXEC_READY_TIMEOUT):
-    """Poll until a VM responds to exec via MCP."""
-    for _ in range(timeout):
-        try:
-            res = session.call_tool("capsem_exec", {
-                "id": vm_name,
-                "command": "echo ready",
-            })
-            if "ready" in content_text(res):
-                return True
-        except (AssertionError, KeyError):
-            pass
-        time.sleep(1)
-    return False
+    """Wait until a VM responds to exec via MCP.
+
+    The server polls internally for VM readiness, so a single call with
+    adequate timeout is sufficient.
+    """
+    try:
+        res = session.call_tool("capsem_exec", {
+            "id": vm_name,
+            "command": "echo ready",
+            "timeout_secs": timeout,
+        })
+        return "ready" in content_text(res)
+    except (AssertionError, KeyError):
+        return False
 
 
 def wait_file_ready(session, vm_name, timeout=EXEC_READY_TIMEOUT):
-    """Poll until a VM responds to write_file+read_file roundtrip."""
+    """Wait until a VM responds to write_file+read_file roundtrip.
+
+    The server polls internally for VM readiness, so a single call with
+    adequate timeout is sufficient.
+    """
     probe_path = "/root/.capsem-ready-probe"
-    for _ in range(timeout):
-        try:
-            session.call_tool("capsem_write_file", {
-                "id": vm_name, "path": probe_path, "content": "ready",
-            })
-            res = session.call_tool("capsem_read_file", {
-                "id": vm_name, "path": probe_path,
-            })
-            data = parse_content(res)
-            if data.get("content") == "ready":
-                return True
-        except (AssertionError, KeyError, json.JSONDecodeError):
-            pass
-        time.sleep(1)
-    return False
+    try:
+        session.call_tool("capsem_write_file", {
+            "id": vm_name, "path": probe_path, "content": "ready",
+        })
+        res = session.call_tool("capsem_read_file", {
+            "id": vm_name, "path": probe_path,
+        })
+        data = parse_content(res)
+        return data.get("content") == "ready"
+    except (AssertionError, KeyError, json.JSONDecodeError):
+        return False

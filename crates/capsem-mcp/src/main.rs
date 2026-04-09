@@ -107,20 +107,23 @@ impl UdsClient {
             .arg("--process-binary").arg(&process_bin)
             .spawn()?;
 
-        // Wait up to 5s for socket
-        for _ in 0..50 {
-            if UnixStream::connect(&self.uds_path).await.is_ok() {
-                info!("Service relaunched and responding");
-                // Spawn a reaper for the service process so it doesn't become a zombie
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                });
-                return Ok(());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
+        // Wait up to 5s for socket with exponential backoff
+        let uds = self.uds_path.clone();
+        capsem_core::poll::poll_until(
+            capsem_core::poll::PollOpts::new("service-socket", std::time::Duration::from_secs(5)),
+            || {
+                let uds = uds.clone();
+                async move {
+                    UnixStream::connect(&uds).await.ok()
+                }
+            },
+        ).await.map_err(|()| anyhow::anyhow!("Service failed to start within 5s"))?;
 
-        Err(anyhow::anyhow!("Service failed to start within 5s"))
+        info!("Service relaunched and responding");
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        Ok(())
     }
 
     async fn request<T: Serialize, R: for<'de> Deserialize<'de>>(
@@ -359,7 +362,7 @@ impl CapsemHandler {
             use std::io::{Read, Seek, SeekFrom};
             let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
             let len = file.metadata().map_err(|e| e.to_string())?.len();
-            let start = if len > 100_000 { len - 100_000 } else { 0 };
+            let start = len.saturating_sub(100_000);
             file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
             let mut buf = String::new();
             file.read_to_string(&mut buf).map_err(|e| e.to_string())?;

@@ -136,14 +136,14 @@ class RealService:
         return r
 
     def wait_exec_ready(self, vm_name, timeout=EXEC_READY_TIMEOUT):
-        """Poll until a VM responds to exec via the real CLI."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            r = self.cli("exec", vm_name, "echo ready")
-            if r.returncode == 0 and "ready" in r.stdout:
-                return True
-            time.sleep(1)
-        return False
+        """Wait until a VM responds to exec via the real CLI.
+
+        The server polls internally for VM readiness, so a single call with
+        adequate timeout is sufficient.
+        """
+        r = self.cli("exec", "--timeout", str(timeout), vm_name, "echo ready",
+                      timeout=timeout + 5)
+        return r.returncode == 0 and "ready" in r.stdout
 
     def _dump_logs(self):
         for name in ["service.log", "service.stderr.log"]:

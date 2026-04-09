@@ -72,6 +72,14 @@ test calls provision -> test immediately calls exec -> server handles wait
 
 See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that enforce this.
 
+### wait_exec_ready is a single call, not a loop
+
+`wait_exec_ready` (in `tests/helpers/service.py`, `tests/helpers/mcp.py`, `tests/capsem-gateway/test_gw_e2e.py`) makes one exec call with the server-side timeout passed through. The server's `handle_exec` calls `wait_for_vm_ready` internally, which polls until the VM is ready. Do NOT add client-side retry loops -- that creates a double-wait where each retry can block for the full server timeout (30s client retries x 30s server wait = pathological cascade). One wait, one place.
+
+### Exec latency regression gate
+
+`tests/capsem-serial/test_boot_timing.py::test_exec_latency_under_1_5_seconds` asserts that provision-to-first-exec completes in under 1.5s. If this test fails, investigate boot time (process.log boot_timeline spans), not the wait mechanism.
+
 ## Where tests live
 
 - Rust unit: `#[cfg(test)] mod tests` in each module
