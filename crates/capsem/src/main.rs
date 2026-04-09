@@ -19,6 +19,11 @@ use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, error};
 
+/// Initial timeout for UDS connect attempts (doubles on each retry).
+const CONNECT_INITIAL_TIMEOUT_MS: u64 = 100;
+/// Maximum number of connect-with-backoff retries.
+const CONNECT_MAX_RETRIES: u32 = 10;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -334,20 +339,53 @@ struct LogsResponse {
 
 struct UdsClient {
     uds_path: PathBuf,
+    auto_launch: bool,
 }
 
 impl UdsClient {
-    fn new(uds_path: PathBuf) -> Self {
-        Self { uds_path }
+    fn new(uds_path: PathBuf, auto_launch: bool) -> Self {
+        Self { uds_path, auto_launch }
     }
 
-    /// Try to ensure the service is running. Checks socket, tries service manager
-    /// (systemd/launchctl) if a unit is installed, falls back to direct spawn.
-    async fn try_ensure_service(&self) -> Result<()> {
-        if UnixStream::connect(&self.uds_path).await.is_ok() {
-            return Ok(());
+    /// Connect to the service socket with exponential backoff.
+    /// Starts at CONNECT_INITIAL_TIMEOUT_MS, doubles each retry, up to
+    /// CONNECT_MAX_RETRIES attempts. Fails immediately on ENOENT (socket
+    /// file doesn't exist).
+    async fn connect_with_timeout(&self) -> Result<UnixStream> {
+        let mut timeout = std::time::Duration::from_millis(CONNECT_INITIAL_TIMEOUT_MS);
+        for attempt in 0..CONNECT_MAX_RETRIES {
+            match tokio::time::timeout(timeout, UnixStream::connect(&self.uds_path)).await {
+                Ok(Ok(stream)) => return Ok(stream),
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(anyhow::anyhow!(
+                        "service socket not found: {}",
+                        self.uds_path.display()
+                    ));
+                }
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    return Err(anyhow::anyhow!(
+                        "service not listening at {}",
+                        self.uds_path.display()
+                    ));
+                }
+                _ => {
+                    if attempt < CONNECT_MAX_RETRIES - 1 {
+                        timeout *= 2;
+                    }
+                }
+            }
         }
+        Err(anyhow::anyhow!(
+            "cannot connect to service at {} after {} attempts",
+            self.uds_path.display(),
+            CONNECT_MAX_RETRIES
+        ))
+    }
 
+    /// Try to ensure the service is running. Tries service manager
+    /// (systemd/launchctl) if a unit is installed, falls back to direct spawn.
+    /// Caller already verified the socket is unreachable.
+    async fn try_ensure_service(&self) -> Result<()> {
         info!("Service not responding, attempting to launch...");
 
         // If the service is registered with a service manager, use that exclusively.
@@ -357,18 +395,13 @@ impl UdsClient {
             match paths::try_start_via_service_manager().await {
                 Ok(true) => {
                     info!("Service start requested via service manager");
-                    for _ in 0..50 {
-                        if UnixStream::connect(&self.uds_path).await.is_ok() {
-                            info!("Service responding after service manager start");
-                            return Ok(());
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-                    return Err(anyhow::anyhow!(
-                        "Service manager started capsem but socket not ready after 5s. \
-                         Check logs: journalctl --user -u capsem (Linux) or \
-                         ~/Library/Logs/capsem/service.log (macOS)"
-                    ));
+                    return self.connect_with_timeout().await.map(|_| ()).map_err(|_| {
+                        anyhow::anyhow!(
+                            "Service manager started capsem but socket not ready. \
+                             Check logs: journalctl --user -u capsem (Linux) or \
+                             ~/Library/Logs/capsem/service.log (macOS)"
+                        )
+                    });
                 }
                 Ok(false) => {
                     return Err(anyhow::anyhow!(
@@ -408,20 +441,16 @@ impl UdsClient {
             .spawn()
             .context("failed to spawn capsem-service")?;
 
-        // Wait up to 5s for socket
-        for _ in 0..50 {
-            if UnixStream::connect(&self.uds_path).await.is_ok() {
+        match self.connect_with_timeout().await {
+            Ok(_) => {
                 info!("Service spawned and responding");
-                // Reaper so child doesn't become a zombie
                 tokio::spawn(async move {
                     let _ = child.wait().await;
                 });
-                return Ok(());
+                Ok(())
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            Err(_) => Err(anyhow::anyhow!("capsem-service failed to start")),
         }
-
-        Err(anyhow::anyhow!("capsem-service failed to start within 5s"))
     }
 
     /// Unified HTTP request over UDS. Retries once via try_ensure_service() on
@@ -432,11 +461,17 @@ impl UdsClient {
         path: &str,
         body: Option<T>,
     ) -> Result<R> {
-        let stream = match UnixStream::connect(&self.uds_path).await {
+        let stream = match self.connect_with_timeout().await {
             Ok(s) => s,
+            Err(e) if !self.auto_launch => {
+                return Err(anyhow::anyhow!(
+                    "cannot connect to service at {}: {e}",
+                    self.uds_path.display()
+                ));
+            }
             Err(_) => {
                 self.try_ensure_service().await?;
-                UnixStream::connect(&self.uds_path).await
+                self.connect_with_timeout().await
                     .context("failed to connect to service socket after auto-launch")?
             }
         };
@@ -658,6 +693,7 @@ async fn main() -> Result<()> {
     let run_dir = std::env::var("CAPSEM_RUN_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(home).join(".capsem").join("run"));
+    let auto_launch = cli.uds_path.is_none();
     let uds_path = cli.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Show update notice if available (sync file read, no latency)
@@ -725,7 +761,7 @@ async fn main() -> Result<()> {
         _ => {}
     }
 
-    let client = UdsClient::new(uds_path);
+    let client = UdsClient::new(uds_path, auto_launch);
 
     match &cli.command {
         Commands::Create { name, ram, cpu, env, image } => {
