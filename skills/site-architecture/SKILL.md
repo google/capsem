@@ -255,3 +255,6 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 - The service's UDS socket (filesystem permission only)
 - The persistent registry or other service state
 - The user's environment variables (cleared at spawn)
+
+### MITM CA key transparency
+The MITM proxy CA private key (`config/capsem-ca.key`) is committed to the repo and embedded at compile time. This is intentional -- capsem's network interception exists for user visibility into what AI agents do, not for secrecy. The CA is only trusted inside capsem's own air-gapped VMs and has zero trust outside them. A public key lets anyone verify there is no hidden interception. Per-installation key generation would reduce transparency.
