@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import type { TabView } from '../../stores/tabs.svelte.ts';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Stop from 'phosphor-svelte/lib/Stop';
   import Trash from 'phosphor-svelte/lib/Trash';
@@ -8,10 +9,25 @@
   import List from 'phosphor-svelte/lib/List';
   import Info from 'phosphor-svelte/lib/Info';
   import GearSix from 'phosphor-svelte/lib/GearSix';
+  import Terminal from 'phosphor-svelte/lib/Terminal';
+  import ChartBar from 'phosphor-svelte/lib/ChartBar';
+  import Scroll from 'phosphor-svelte/lib/Scroll';
+  import HardDrives from 'phosphor-svelte/lib/HardDrives';
 
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
   let menuOpen = $state(false);
+
+  const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
+    { view: 'terminal', label: 'Terminal', icon: Terminal },
+    { view: 'stats', label: 'Stats', icon: ChartBar },
+  ];
+
+  function switchView(view: TabView) {
+    if (active) {
+      tabStore.updateView(active.id, view);
+    }
+  }
 
   function onClickOutside(e: MouseEvent) {
     const target = e.target as HTMLElement;
@@ -28,7 +44,7 @@
   <div class="flex items-center gap-x-0.5">
     <button
       type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover disabled:opacity-30 disabled:pointer-events-none"
+      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
       disabled={!isVM}
       aria-label="Restart"
       title="Restart VM"
@@ -37,7 +53,7 @@
     </button>
     <button
       type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover disabled:opacity-30 disabled:pointer-events-none"
+      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
       disabled={!isVM}
       aria-label="Stop"
       title="Stop VM"
@@ -46,7 +62,7 @@
     </button>
     <button
       type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-muted-hover disabled:opacity-30 disabled:pointer-events-none"
+      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-destructive hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
       disabled={!isVM}
       aria-label="Destroy"
       title="Destroy VM"
@@ -55,7 +71,7 @@
     </button>
     <button
       type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover disabled:opacity-30 disabled:pointer-events-none"
+      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
       disabled={!isVM}
       aria-label="Fork"
       title="Fork VM"
@@ -74,11 +90,30 @@
     {/if}
   </div>
 
-  <!-- Right: menu button -->
+  <!-- Right: view switcher + menu -->
+  {#if isVM}
+    <div class="flex items-center bg-background-1 rounded-lg p-0.5">
+      {#each vmViewButtons as btn}
+        <button
+          type="button"
+          class="inline-flex items-center gap-x-1 px-2 py-1 text-xs rounded-md transition-colors
+            {active?.view === btn.view
+              ? 'bg-layer text-foreground shadow-sm'
+              : 'text-muted-foreground-1 hover:text-foreground'}"
+          onclick={() => switchView(btn.view)}
+          title={btn.label}
+        >
+          <btn.icon size={14} />
+          <span class="hidden sm:inline">{btn.label}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <div class="relative" data-menu>
     <button
       type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover"
+      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover"
       onclick={(e: MouseEvent) => { e.stopPropagation(); menuOpen = !menuOpen; }}
       aria-label="Menu"
       title="Menu"
@@ -89,6 +124,25 @@
     {#if menuOpen}
       <div class="absolute end-0 top-full mt-1 w-56 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
         <div class="p-1">
+          {#if isVM}
+            <button
+              type="button"
+              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
+              onclick={() => { if (active) tabStore.updateView(active.id, 'logs'); menuOpen = false; }}
+            >
+              <Scroll size={16} />
+              <span>VM Logs</span>
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
+            onclick={() => { tabStore.add('logs', 'Service Logs'); menuOpen = false; }}
+          >
+            <HardDrives size={16} />
+            <span>Service Logs</span>
+          </button>
+          <div class="border-t border-dropdown-border my-1"></div>
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
