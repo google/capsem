@@ -75,6 +75,11 @@ enum Commands {
         /// ID or name of the sandbox
         id: String,
     },
+    /// Suspend a running sandbox. Saves RAM and CPU state to disk. Ephemeral VMs cannot be suspended.
+    Suspend {
+        /// ID or name of the sandbox
+        id: String,
+    },
     /// Open a shell. No args = temporary VM (destroyed on exit). With ID/name = attach to existing.
     Shell {
         /// Find by name (for persistent VMs)
@@ -112,6 +117,9 @@ enum Commands {
         /// Timeout in seconds (default 60)
         #[arg(long, default_value_t = 60)]
         timeout: u64,
+        /// Set environment variables (repeatable: -e KEY=VALUE)
+        #[arg(short = 'e', long = "env")]
+        env: Vec<String>,
     },
     /// Delete a sandbox completely (destroys all state)
     #[command(alias = "rm")]
@@ -301,6 +309,8 @@ struct PersistRequest {
 struct RunRequest {
     command: String,
     timeout_secs: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -581,7 +591,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     let mut buf = vec![0u8; 65536];
 
     // Spawn a task to read from IPC and write to stdout
-    let output_task = tokio::spawn(async move {
+    let mut output_task = tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(msg) => {
@@ -595,6 +605,9 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                         ProcessToService::ExecResult { .. } => {}
                         ProcessToService::WriteFileResult { .. } => {}
                         ProcessToService::ReadFileResult { .. } => {}
+                        ProcessToService::ShutdownRequested { .. }
+                        | ProcessToService::SuspendRequested { .. }
+                        | ProcessToService::SnapshotReady { .. } => {}
                     }
                 }
                 Err(_) => break, // Socket closed
@@ -604,7 +617,8 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
 
     let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
 
-    // Read from stdin and send over IPC
+    // Read from stdin and send over IPC.
+    // Also watch for output_task completion (VM connection closed).
     loop {
         tokio::select! {
             _ = sigwinch.recv() => {
@@ -613,6 +627,10 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                         let _ = tx.send(ServiceToProcess::TerminalResize { cols, rows }).await;
                     }
                 }
+            }
+            _ = &mut output_task => {
+                // VM connection closed (shutdown, process exit, etc.)
+                break;
             }
             res = stdin.read(&mut buf) => {
                 match res {
@@ -632,7 +650,8 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         }
     }
 
-    output_task.abort();
+    // Ensure the parent shell redraws its prompt after raw mode exit.
+    eprintln!();
     Ok(())
 }
 
@@ -792,6 +811,12 @@ async fn main() -> Result<()> {
             resp.into_result()?;
             println!("Sandbox stopped.");
         }
+        Commands::Suspend { id } => {
+            println!("Suspending sandbox: {}", id);
+            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/suspend/{}", id), &serde_json::json!({})).await?;
+            resp.into_result()?;
+            println!("Sandbox suspended.");
+        }
         Commands::Shell { name, id } => {
             let target = name.as_ref().or(id.as_ref());
             match target {
@@ -869,10 +894,22 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Run { command, timeout } => {
+        Commands::Run { command, timeout, env } => {
+            let env_map = if env.is_empty() {
+                None
+            } else {
+                let mut map = std::collections::HashMap::new();
+                for kv in env {
+                    let (k, v) = kv.split_once('=')
+                        .ok_or_else(|| anyhow::anyhow!("invalid env format: expected KEY=VALUE, got: {}", kv))?;
+                    map.insert(k.to_string(), v.to_string());
+                }
+                Some(map)
+            };
             let req = RunRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
+                env: env_map,
             };
             let resp: ApiResponse<ExecResponse> = client.post("/run", &req).await?;
             let resp = resp.into_result()?;
@@ -1023,7 +1060,7 @@ async fn main() -> Result<()> {
                                 let mut stdout = tokio::io::stdout();
                                 let exit_code = loop {
                                     match tokio::time::timeout(
-                                        std::time::Duration::from_secs(120),
+                                        std::time::Duration::from_secs(300),
                                         rx.recv(),
                                     ).await {
                                         Ok(Ok(ProcessToService::TerminalOutput { data })) => {
@@ -1039,7 +1076,7 @@ async fn main() -> Result<()> {
                                             break 1;
                                         }
                                         Err(_) => {
-                                            eprintln!("Doctor timed out after 120s");
+                                            eprintln!("Doctor timed out after 300s");
                                             break 1;
                                         }
                                     }
@@ -1155,6 +1192,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_suspend() {
+        let cli = Cli::parse_from(["capsem", "suspend", "vm-123"]);
+        match cli.command {
+            Commands::Suspend { id } => assert_eq!(id, "vm-123"),
+            _ => panic!("expected Suspend"),
+        }
+    }
+
+    #[test]
     fn parse_shell_positional() {
         let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
         match cli.command {
@@ -1225,9 +1271,10 @@ mod tests {
     fn parse_run() {
         let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
         match cli.command {
-            Commands::Run { command, timeout } => {
+            Commands::Run { command, timeout, env } => {
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, 60); // default
+                assert!(env.is_empty());
             }
             _ => panic!("expected Run"),
         }
@@ -1237,9 +1284,10 @@ mod tests {
     fn parse_run_with_timeout() {
         let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
         match cli.command {
-            Commands::Run { command, timeout } => {
+            Commands::Run { command, timeout, env } => {
                 assert_eq!(command, "ls -la");
                 assert_eq!(timeout, 120);
+                assert!(env.is_empty());
             }
             _ => panic!("expected Run"),
         }

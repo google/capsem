@@ -21,6 +21,14 @@ pub enum ServiceToProcess {
     ReloadConfig,
     /// Start streaming terminal output to this IPC connection.
     StartTerminalStream,
+    /// Quiescence: tell process to prepare guest for snapshot.
+    PrepareSnapshot,
+    /// Resume guest filesystem I/O after snapshot.
+    Unfreeze,
+    /// Suspend VM and save checkpoint to disk.
+    Suspend { checkpoint_path: String },
+    /// Resume VM from checkpoint (warm restore).
+    Resume,
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -38,6 +46,12 @@ pub enum ProcessToService {
     WriteFileResult { id: u64, success: bool, error: Option<String> },
     /// Result of a ReadFile operation.
     ReadFileResult { id: u64, data: Option<Vec<u8>>, error: Option<String> },
+    /// Guest requested shutdown (forwarded from capsem-sysutil via vsock:5004).
+    ShutdownRequested { id: String },
+    /// Guest requested suspend (forwarded from capsem-sysutil via vsock:5004).
+    SuspendRequested { id: String },
+    /// Guest quiescence complete: filesystem frozen, safe to snapshot.
+    SnapshotReady { id: String },
 }
 
 #[cfg(test)]
@@ -315,5 +329,79 @@ mod tests {
         let bytes = serde_json::to_vec(&msg).unwrap();
         let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
         assert!(matches!(msg2, ServiceToProcess::ReloadConfig));
+    }
+
+    // -----------------------------------------------------------------------
+    // Lifecycle IPC roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn prepare_snapshot_roundtrip() {
+        let msg = ServiceToProcess::PrepareSnapshot;
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(msg2, ServiceToProcess::PrepareSnapshot));
+    }
+
+    #[test]
+    fn unfreeze_roundtrip() {
+        let msg = ServiceToProcess::Unfreeze;
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(msg2, ServiceToProcess::Unfreeze));
+    }
+
+    #[test]
+    fn suspend_roundtrip() {
+        let msg = ServiceToProcess::Suspend { checkpoint_path: "/tmp/checkpoint.vzsave".into() };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::Suspend { checkpoint_path } => {
+                assert_eq!(checkpoint_path, "/tmp/checkpoint.vzsave");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn resume_roundtrip() {
+        let msg = ServiceToProcess::Resume;
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(msg2, ServiceToProcess::Resume));
+    }
+
+    #[test]
+    fn shutdown_requested_roundtrip() {
+        let msg = ProcessToService::ShutdownRequested { id: "vm-abc".into() };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::ShutdownRequested { id } => assert_eq!(id, "vm-abc"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn suspend_requested_roundtrip() {
+        let msg = ProcessToService::SuspendRequested { id: "vm-xyz".into() };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::SuspendRequested { id } => assert_eq!(id, "vm-xyz"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn snapshot_ready_roundtrip() {
+        let msg = ProcessToService::SnapshotReady { id: "vm-snap".into() };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::SnapshotReady { id } => assert_eq!(id, "vm-snap"),
+            _ => panic!("wrong variant"),
+        }
     }
 }

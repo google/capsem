@@ -173,7 +173,7 @@ impl AppleVzMachine {
     /// Start the VM. Must be called on the main thread.
     ///
     /// Also spawns the serial reader thread.
-    pub fn start(&self, serial: &AppleVzSerialConsole) -> Result<()> {
+    pub fn start(&self, serial: &AppleVzSerialConsole, checkpoint_path: Option<&std::path::Path>) -> Result<()> {
         let _span = debug_span!("vm_start").entered();
 
         anyhow::ensure!(
@@ -196,12 +196,22 @@ impl AppleVzMachine {
         });
 
         unsafe {
-            self.inner.startWithCompletionHandler(&completion);
+            if let Some(cp) = checkpoint_path {
+                let path_str = cp.to_string_lossy().to_string();
+                let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&path_str));
+                self.inner.restoreMachineStateFromURL_completionHandler(&url, &completion);
+            } else {
+                self.inner.startWithCompletionHandler(&completion);
+            }
         }
 
         spin_runloop_until(&rx).context("VM start")?;
 
-        info!("virtual machine started");
+        if checkpoint_path.is_some() {
+            info!("virtual machine restored from checkpoint");
+        } else {
+            info!("virtual machine started");
+        }
         Ok(())
     }
 
@@ -231,6 +241,92 @@ impl AppleVzMachine {
 
         info!("virtual machine stopped");
         Ok(())
+    }
+
+    pub fn pause(&self) -> Result<()> {
+        anyhow::ensure!(
+            is_main_thread(),
+            "VZVirtualMachine.pause() must be called on the main thread"
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        let completion = RcBlock::new(move |error: *mut objc2_foundation::NSError| {
+            if error.is_null() {
+                let _ = tx.send(Ok(()));
+            } else {
+                let desc = unsafe { format!("{:?}", (*error).debugDescription()) };
+                let _ = tx.send(Err(anyhow::anyhow!("VM pause failed: {desc}")));
+            }
+        });
+        unsafe {
+            self.inner.pauseWithCompletionHandler(&completion);
+        }
+        spin_runloop_until(&rx).context("VM pause")?;
+        info!("virtual machine paused");
+        Ok(())
+    }
+
+    pub fn resume(&self) -> Result<()> {
+        anyhow::ensure!(
+            is_main_thread(),
+            "VZVirtualMachine.resume() must be called on the main thread"
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        let completion = RcBlock::new(move |error: *mut objc2_foundation::NSError| {
+            if error.is_null() {
+                let _ = tx.send(Ok(()));
+            } else {
+                let desc = unsafe { format!("{:?}", (*error).debugDescription()) };
+                let _ = tx.send(Err(anyhow::anyhow!("VM resume failed: {desc}")));
+            }
+        });
+        unsafe {
+            self.inner.resumeWithCompletionHandler(&completion);
+        }
+        spin_runloop_until(&rx).context("VM resume")?;
+        info!("virtual machine resumed");
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn save_state(&self, path: &std::path::Path) -> Result<()> {
+        anyhow::ensure!(
+            is_main_thread(),
+            "VZVirtualMachine.saveMachineStateToURL() must be called on the main thread"
+        );
+        let path_str = path.to_string_lossy().to_string();
+        let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&path_str));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let completion = RcBlock::new(move |error: *mut objc2_foundation::NSError| {
+            if error.is_null() {
+                let _ = tx.send(Ok(()));
+            } else {
+                let desc = unsafe { format!("{:?}", (*error).debugDescription()) };
+                let _ = tx.send(Err(anyhow::anyhow!("VM save_state failed: {desc}")));
+            }
+        });
+
+        unsafe {
+            self.inner.saveMachineStateToURL_completionHandler(&url, &completion);
+        }
+
+        spin_runloop_until(&rx).context("VM save_state")?;
+        info!("virtual machine state saved");
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn restore_state(&self, _path: &std::path::Path) -> Result<()> {
+        // According to Apple docs, you restore state by calling restoreMachineStateFromURL
+        // on a VZVirtualMachine. Wait, let me check the bindings.
+        // Actually, the tracker says "save_state(path)", but to restore you initialize the VM
+        // and then call restoreMachineStateFromURL... wait, restore requires creating the VM.
+        // Let's just implement the method here.
+        Err(anyhow::anyhow!("restore_state must be called during boot via VZVirtualMachine.restoreMachineStateFromURL"))
+    }
+
+    pub fn supports_checkpoint(&self) -> bool {
+        true
     }
 
     /// Get the current VM state.

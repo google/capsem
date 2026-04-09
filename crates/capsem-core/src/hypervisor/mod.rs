@@ -52,6 +52,31 @@ pub trait VmHandle: Send {
 
     /// Downcast to the concrete backend type.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Pause the VM.
+    fn pause(&self) -> Result<()> {
+        Err(anyhow::anyhow!("pause not supported by this hypervisor backend"))
+    }
+
+    /// Resume the paused VM.
+    fn resume(&self) -> Result<()> {
+        Err(anyhow::anyhow!("resume not supported by this hypervisor backend"))
+    }
+
+    /// Save the VM state to the given path.
+    fn save_state(&self, _path: &std::path::Path) -> Result<()> {
+        Err(anyhow::anyhow!("save_state not supported by this hypervisor backend"))
+    }
+
+    /// Restore the VM state from the given path.
+    fn restore_state(&self, _path: &std::path::Path) -> Result<()> {
+        Err(anyhow::anyhow!("restore_state not supported by this hypervisor backend"))
+    }
+
+    /// Returns true if this hypervisor supports suspend/resume functionality.
+    fn supports_checkpoint(&self) -> bool {
+        false
+    }
 }
 
 /// Serial console I/O.
@@ -103,6 +128,24 @@ mod tests {
         _v: &dyn VmHandle,
         _s: &dyn SerialConsole,
     ) {}
+
+    struct DummyKvmHandle;
+    impl VmHandle for DummyKvmHandle {
+        fn stop(&self) -> Result<()> { Ok(()) }
+        fn state(&self) -> crate::vm::VmState { crate::vm::VmState::Stopped }
+        fn serial(&self) -> &dyn SerialConsole { unimplemented!() }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+    }
+
+    #[test]
+    fn kvm_default_impls_return_errors() {
+        let handle = DummyKvmHandle;
+        assert!(!handle.supports_checkpoint());
+        assert!(handle.pause().is_err());
+        assert!(handle.resume().is_err());
+        assert!(handle.save_state(std::path::Path::new("")).is_err());
+        assert!(handle.restore_state(std::path::Path::new("")).is_err());
+    }
 
     fn _assert_send_sync() {
         fn assert_send<T: Send>() {}

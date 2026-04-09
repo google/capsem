@@ -213,6 +213,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
         &virtiofs_shares,
         cpu_count,
         ram_bytes,
+        None,
     )?;
 
     info!("[boot-audit] boot_vm returned OK");
@@ -470,7 +471,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
     }
 
     // Start auto-snapshot scheduler and file monitor in VirtioFS mode.
-    // _fs_monitor must outlive the session -- dropping it stops FSEvents.
+    // _fs_monitor must outlive the session -- dropping it stops the file watcher.
     let mut _fs_monitor: Option<capsem_core::fs_monitor::FsMonitor> = None;
     if !virtiofs_shares.is_empty() {
         if let Some(ref dir) = cli_session_dir {
@@ -482,7 +483,7 @@ pub(crate) fn run_cli(command: &str, cli_env: &[(String, String)], session_index
             }
 
             // Start host file monitor (uses session_db directly, not gated on MITM proxy).
-            // _fs_monitor must live until session ends -- dropping it stops the FSEvents watcher.
+            // _fs_monitor must live until session ends -- dropping it stops the file watcher.
             let workspace = dir.join("workspace");
             _fs_monitor = match capsem_core::fs_monitor::FsMonitor::start(
                 workspace.clone(),

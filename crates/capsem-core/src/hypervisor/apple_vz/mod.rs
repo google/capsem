@@ -29,7 +29,7 @@ impl Hypervisor for AppleVzHypervisor {
         let (machine, serial_console) = machine::AppleVzMachine::create(config)?;
 
         // Start the VM (spawns serial reader, waits for completion)
-        machine.start(&serial_console)?;
+        machine.start(&serial_console, config.checkpoint_path.as_deref())?;
 
         // Set up vsock listeners on the socket device
         let socket_devices = machine.socket_devices();
@@ -74,6 +74,28 @@ impl VmHandle for AppleVzHandle {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn pause(&self) -> Result<()> {
+        self.machine.pause()
+    }
+
+    fn resume(&self) -> Result<()> {
+        self.machine.resume()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn save_state(&self, path: &std::path::Path) -> Result<()> {
+        self.machine.save_state(path)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn restore_state(&self, path: &std::path::Path) -> Result<()> {
+        self.machine.restore_state(path)
+    }
+
+    fn supports_checkpoint(&self) -> bool {
+        self.machine.supports_checkpoint()
     }
 }
 

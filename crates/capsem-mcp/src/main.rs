@@ -260,6 +260,8 @@ struct RunParams {
     command: String,
     /// Timeout in seconds (default 60)
     timeout: Option<u64>,
+    /// Environment variables to inject into the guest at boot
+    env: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -503,6 +505,19 @@ impl CapsemHandler {
         }
     }
 
+    #[tool(name = "capsem_suspend", description = "Suspend a VM. Saves RAM and CPU state. Requires persistent VM")]
+    async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
+        match self.client.request::<Value, Value>("POST", &format!("/suspend/{}", params.id), Some(json!({}))).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     #[tool(name = "capsem_resume", description = "Resume a stopped persistent VM or get ID of a running one. Returns VM ID")]
     async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
         match self.client.request::<Value, Value>("POST", &format!("/resume/{}", params.name), Some(json!({}))).await {
@@ -546,10 +561,13 @@ impl CapsemHandler {
 
     #[tool(name = "capsem_run", description = "Run a command in a fresh temporary VM. VM is auto-provisioned and destroyed. Returns stdout, stderr, exit_code")]
     async fn run(&self, Parameters(params): Parameters<RunParams>) -> Result<String, String> {
-        let body = json!({
+        let mut body = json!({
             "command": params.command,
             "timeout_secs": params.timeout.unwrap_or(60),
         });
+        if let Some(env) = params.env {
+            body["env"] = json!(env);
+        }
         match self.client.request::<Value, Value>("POST", "/run", Some(body)).await {
             Ok(val) => {
                 if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
@@ -1093,7 +1111,7 @@ mod tests {
         let expected = [
             "capsem_list", "capsem_create", "capsem_info", "capsem_exec",
             "capsem_read_file", "capsem_write_file", "capsem_inspect_schema",
-            "capsem_inspect", "capsem_delete", "capsem_stop", "capsem_resume",
+            "capsem_inspect", "capsem_delete", "capsem_stop", "capsem_suspend", "capsem_resume",
             "capsem_persist", "capsem_purge", "capsem_run", "capsem_vm_logs",
             "capsem_service_logs", "capsem_version",
             "capsem_fork", "capsem_image_list", "capsem_image_inspect",

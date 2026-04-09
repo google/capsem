@@ -28,6 +28,10 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Maximum cumulative file bytes allowed during boot handshake (10MB).
 pub const MAX_BOOT_FILE_BYTES: usize = 10_485_760;
 
+/// Grace period (seconds) between SIGTERM and SIGKILL during shutdown.
+/// capsem-sysutil derives its countdown from this (SHUTDOWN_GRACE_SECS + 1).
+pub const SHUTDOWN_GRACE_SECS: u64 = 2;
+
 /// Maximum length of an env var key.
 pub const MAX_ENV_KEY_LEN: usize = 256;
 
@@ -97,9 +101,13 @@ pub enum HostToGuest {
     FileRead { id: u64, path: String },
     /// Delete file in guest workspace.
     FileDelete { id: u64, path: String },
-    // -- Lifecycle (reserved) --
+    // -- Lifecycle --
     /// Graceful shutdown request.
     Shutdown,
+    /// Quiescence: sync + fsfreeze before snapshot.
+    PrepareSnapshot,
+    /// Resume filesystem I/O after snapshot.
+    Unfreeze,
 }
 
 /// A single boot timing measurement from the guest init script.
@@ -143,6 +151,13 @@ pub enum GuestToHost {
     FileOpDone { id: u64 },
     /// Error encountered during a file operation or exec.
     Error { id: u64, message: String },
+    // -- Lifecycle --
+    /// Guest requests shutdown.
+    ShutdownRequest,
+    /// Guest requests suspend.
+    SuspendRequest,
+    /// Quiescence ack: filesystem frozen, safe to snapshot.
+    SnapshotReady,
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +448,22 @@ mod tests {
         assert!(matches!(decoded, HostToGuest::Shutdown));
     }
 
+    #[test]
+    fn roundtrip_prepare_snapshot() {
+        let msg = HostToGuest::PrepareSnapshot;
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, HostToGuest::PrepareSnapshot));
+    }
+
+    #[test]
+    fn roundtrip_unfreeze() {
+        let msg = HostToGuest::Unfreeze;
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, HostToGuest::Unfreeze));
+    }
+
     // -------------------------------------------------------------------
     // GuestToHost roundtrip
     // -------------------------------------------------------------------
@@ -587,6 +618,30 @@ mod tests {
             }
             other => panic!("expected FileContent, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn roundtrip_shutdown_request() {
+        let msg = GuestToHost::ShutdownRequest;
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, GuestToHost::ShutdownRequest));
+    }
+
+    #[test]
+    fn roundtrip_suspend_request() {
+        let msg = GuestToHost::SuspendRequest;
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, GuestToHost::SuspendRequest));
+    }
+
+    #[test]
+    fn roundtrip_snapshot_ready() {
+        let msg = GuestToHost::SnapshotReady;
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        assert!(matches!(decoded, GuestToHost::SnapshotReady));
     }
 
     // -------------------------------------------------------------------
@@ -760,6 +815,8 @@ mod tests {
                 path: "/test".into(),
             },
             HostToGuest::Shutdown,
+            HostToGuest::PrepareSnapshot,
+            HostToGuest::Unfreeze,
         ];
         for msg in messages {
             let frame = encode_host_msg(&msg).unwrap();
@@ -805,6 +862,9 @@ mod tests {
                 path: "/test".into(),
                 data: vec![0; 10],
             },
+            GuestToHost::ShutdownRequest,
+            GuestToHost::SuspendRequest,
+            GuestToHost::SnapshotReady,
         ];
         for msg in messages {
             let frame = encode_guest_msg(&msg).unwrap();

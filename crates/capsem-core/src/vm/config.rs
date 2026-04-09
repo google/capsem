@@ -67,6 +67,7 @@ pub struct VmConfig {
     pub kernel_cmdline: String,
     pub expected_kernel_hash: Option<String>,
     pub expected_initrd_hash: Option<String>,
+    pub checkpoint_path: Option<PathBuf>,
     pub expected_disk_hash: Option<String>,
 }
 
@@ -88,6 +89,7 @@ pub struct VmConfigBuilder {
     kernel_cmdline: String,
     expected_kernel_hash: Option<String>,
     expected_initrd_hash: Option<String>,
+    checkpoint_path: Option<PathBuf>,
     expected_disk_hash: Option<String>,
 }
 
@@ -104,6 +106,7 @@ impl Default for VmConfigBuilder {
             kernel_cmdline: default_kernel_cmdline().to_string(),
             expected_kernel_hash: None,
             expected_initrd_hash: None,
+            checkpoint_path: None,
             expected_disk_hash: None,
         }
     }
@@ -171,6 +174,11 @@ impl VmConfigBuilder {
 
     pub fn expected_disk_hash(mut self, hash: impl Into<String>) -> Self {
         self.expected_disk_hash = Some(hash.into());
+        self
+    }
+
+    pub fn checkpoint_path(mut self, path: std::path::PathBuf) -> Self {
+        self.checkpoint_path = Some(path);
         self
     }
 
@@ -317,6 +325,7 @@ impl VmConfigBuilder {
             kernel_cmdline: self.kernel_cmdline,
             expected_kernel_hash: self.expected_kernel_hash,
             expected_initrd_hash: self.expected_initrd_hash,
+            checkpoint_path: self.checkpoint_path,
             expected_disk_hash: self.expected_disk_hash,
         })
     }

@@ -74,7 +74,7 @@ pub(crate) fn gui_boot_vm(
     ram_bytes: u64,
 ) {
     info!("[boot-audit] gui_boot_vm: calling boot_vm");
-    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), &virtiofs_shares, cpu_count, ram_bytes) {
+    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), &virtiofs_shares, cpu_count, ram_bytes, None) {
         Ok((vm, vsock_rx, sm)) => {
             info!("[boot-audit] boot_vm returned OK");
 

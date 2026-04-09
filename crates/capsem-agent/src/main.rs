@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use capsem_proto::{
-    BootStage, GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_host_msg, encode_guest_msg,
+    BootStage, GuestToHost, HostToGuest, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
+    decode_host_msg, encode_guest_msg,
     validate_env_key, validate_env_value, validate_file_path,
     MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
 };
@@ -282,6 +283,20 @@ fn main() {
         }
     }
 
+    // Step 4b: Set hostname from CAPSEM_VM_NAME if present.
+    if let Some((_, name)) = boot_env.iter().find(|(k, _)| k == "CAPSEM_VM_NAME") {
+        let c_name = std::ffi::CString::new(name.as_str()).unwrap_or_default();
+        let ret = unsafe { libc::sethostname(c_name.as_ptr(), name.len() as _) };
+        if ret == 0 {
+            blog_line(&mut blog, &format!("hostname set to {name}"));
+        } else {
+            blog_line(&mut blog, &format!(
+                "WARNING: sethostname failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+
     // Step 5: Open PTY pair and set initial size.
     let pty = openpty(None, None).expect("openpty failed");
     let master_fd = pty.master.as_raw_fd();
@@ -340,23 +355,79 @@ fn main() {
 
             // Ignore SIGHUP so we don't die when the child exits.
             unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }.ok();
+            
+            drop(blog); // flush and close boot log before loop
 
-            // Step 7: Send BootReady -- config applied, terminal ready.
-            blog_line(&mut blog, "sending BootReady, entering bridge loop");
-            if let Err(e) = send_guest_msg(control_fd, &GuestToHost::BootReady) {
-                eprintln!("[capsem-agent] failed to send BootReady: {e}");
+            let mut is_first = true;
+            let mut delay_ms = 100;
+            let start_reconnect = std::time::Instant::now();
+            let mut t_fd = terminal_fd;
+            let mut c_fd = control_fd;
+
+            loop {
+                if !is_first {
+                    eprintln!("[capsem-agent] connection lost, reconnecting in {delay_ms}ms...");
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    
+                    if start_reconnect.elapsed().as_secs() > 30 {
+                        eprintln!("[capsem-agent] 30s reconnect timeout reached, exiting");
+                        let _ = nix::sys::signal::kill(child, Signal::SIGHUP);
+                        process::exit(1);
+                    }
+                    delay_ms = (delay_ms * 2).min(5000);
+
+                    match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL) {
+                        Ok(fd) => t_fd = fd,
+                        Err(_) => continue,
+                    }
+                    match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_CONTROL) {
+                        Ok(fd) => c_fd = fd,
+                        Err(_) => {
+                            unsafe { libc::close(t_fd); }
+                            continue;
+                        }
+                    }
+
+                    eprintln!("[capsem-agent] reconnected successfully");
+                    let _ = send_guest_msg(c_fd, &GuestToHost::Ready { version: env!("CARGO_PKG_VERSION").to_string() });
+                    
+                    // Drain abbreviated handshake
+                    loop {
+                        match recv_host_msg(c_fd) {
+                            Ok(HostToGuest::BootConfigDone) => break,
+                            Ok(HostToGuest::Shutdown) => {
+                                let _ = nix::sys::signal::kill(child, Signal::SIGTERM);
+                                process::exit(0);
+                            }
+                            Ok(_) => {} // Ignore env/files on reconnect
+                            Err(_) => break, // vsock broke again
+                        }
+                    }
+                    
+                    // Unfreeze filesystem in case we were suspended
+                    std::process::Command::new("fsfreeze").args(["-u", "/"]).status().ok();
+                }
+
+                // Send BootReady
+                if let Err(e) = send_guest_msg(c_fd, &GuestToHost::BootReady) {
+                    eprintln!("[capsem-agent] failed to send BootReady: {e}");
+                }
+
+                // Send boot timing only on first boot
+                if is_first {
+                    let stages = parse_boot_timing(BOOT_TIMING_PATH);
+                    if !stages.is_empty() {
+                        let _ = send_guest_msg(c_fd, &GuestToHost::BootTiming { stages });
+                    }
+                    is_first = false;
+                }
+
+                // Enter bridge loop
+                run_bridge(master_fd, child, t_fd, c_fd);
+                
+                // Cleanup broken FDs
+                unsafe { libc::close(t_fd); libc::close(c_fd); }
             }
-
-            // Send boot timing from capsem-init (JSONL written to /run).
-            let stages = parse_boot_timing(BOOT_TIMING_PATH);
-            if !stages.is_empty() {
-                let _ = send_guest_msg(control_fd, &GuestToHost::BootTiming { stages });
-            }
-
-            drop(blog); // flush and close boot log before bridge loop
-
-            // Enter bridge loop with already-connected fds.
-            run_bridge(master_fd, child, terminal_fd, control_fd);
         }
         Err(e) => {
             eprintln!("[capsem-agent] fork failed: {e}");
@@ -411,16 +482,15 @@ fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: 
     let exec_state_ctrl = Arc::clone(&exec_state);
     let master_fd_for_ctrl = master_fd;
     thread::spawn(move || {
-        control_loop(control_fd, master_fd_for_ctrl, exec_state_ctrl, exec_done_rx);
+        control_loop(control_fd, master_fd_for_ctrl, child_pid, exec_state_ctrl, exec_done_rx);
     });
 
     // Main I/O bridge: master PTY <-> vsock terminal port.
     bridge_loop(master_fd, terminal_fd, &exec_state, exec_done_tx);
 
-    // If bridge exits, kill the child shell to prevent orphans.
-    eprintln!("[capsem-agent] bridge exited, killing child shell");
-    let _ = nix::sys::signal::kill(child_pid, Signal::SIGHUP);
-    let _ = nix::sys::wait::waitpid(child_pid, None);
+    // If bridge exits, we just return. The reconnect loop will handle re-establishing vsock.
+    // If it was a genuine Shutdown, control_loop already killed the child, and the process will eventually exit.
+    eprintln!("[capsem-agent] bridge exited");
 }
 
 
@@ -611,6 +681,7 @@ fn bridge_loop(
 fn control_loop(
     control_fd: RawFd,
     master_fd: RawFd,
+    child_pid: Pid,
     exec_state: Arc<ExecState>,
     exec_done_rx: mpsc::Receiver<(u64, i32)>,
 ) {
@@ -632,6 +703,18 @@ fn control_loop(
                     eprintln!("[capsem-agent] failed to send Pong: {e}");
                     break;
                 }
+            }
+            Ok(HostToGuest::Shutdown) => {
+                eprintln!("[capsem-agent] received Shutdown from host");
+                // Flush dirty pages to disk.
+                unsafe { libc::sync(); }
+                // Ask bash to exit gracefully.
+                let _ = nix::sys::signal::kill(child_pid, Signal::SIGTERM);
+                // Give bash time to clean up (save history, run traps).
+                thread::sleep(std::time::Duration::from_secs(SHUTDOWN_GRACE_SECS));
+                // Force-kill if bash ignored SIGTERM (interactive bash does this).
+                let _ = nix::sys::signal::kill(child_pid, Signal::SIGKILL);
+                break;
             }
             Ok(HostToGuest::Exec { id, command }) => {
                 eprintln!("[capsem-agent] exec[{id}]: {command}");
@@ -737,6 +820,41 @@ fn control_loop(
                 if let Err(e) = res {
                     eprintln!("[capsem-agent] failed to send FileDelete response: {e}");
                     break;
+                }
+            }
+            Ok(HostToGuest::PrepareSnapshot) => {
+                eprintln!("[capsem-agent] PrepareSnapshot: syncing and freezing /");
+                unsafe { libc::sync(); }
+                // Use spawn_blocking pattern for potential long-running sync/freeze
+                match std::process::Command::new("fsfreeze").args(["-f", "/"]).status() {
+                    Ok(st) if st.success() => {
+                        if let Err(e) = send_guest_msg(control_fd, &GuestToHost::SnapshotReady) {
+                            eprintln!("[capsem-agent] failed to send SnapshotReady: {e}");
+                            break;
+                        }
+                    }
+                    Ok(st) => {
+                        eprintln!("[capsem-agent] fsfreeze -f failed: {}", st);
+                        let _ = send_guest_msg(control_fd, &GuestToHost::Error {
+                            id: 0,
+                            message: format!("fsfreeze -f failed: {st}"),
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[capsem-agent] failed to execute fsfreeze: {e}");
+                        let _ = send_guest_msg(control_fd, &GuestToHost::Error {
+                            id: 0,
+                            message: format!("fsfreeze exec failed: {e}"),
+                        });
+                    }
+                }
+            }
+            Ok(HostToGuest::Unfreeze) => {
+                eprintln!("[capsem-agent] Unfreeze: thawing /");
+                match std::process::Command::new("fsfreeze").args(["-u", "/"]).status() {
+                    Ok(st) if !st.success() => eprintln!("[capsem-agent] fsfreeze -u failed: {}", st),
+                    Err(e) => eprintln!("[capsem-agent] failed to execute fsfreeze: {e}"),
+                    _ => {}
                 }
             }
             Ok(msg) => {
@@ -924,6 +1042,42 @@ mod tests {
             }
             other => panic!("expected ExecDone, got {other:?}"),
         }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn prepare_snapshot_roundtrip() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::PrepareSnapshot;
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        assert!(matches!(decoded, HostToGuest::PrepareSnapshot));
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn unfreeze_roundtrip() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::Unfreeze;
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        assert!(matches!(decoded, HostToGuest::Unfreeze));
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn snapshot_ready_roundtrip() {
+        let (read_fd, write_fd) = make_pipe();
+        send_guest_msg(write_fd, &GuestToHost::SnapshotReady).unwrap();
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
+        assert!(matches!(decoded, GuestToHost::SnapshotReady));
         unsafe { libc::close(read_fd); libc::close(write_fd); }
     }
 

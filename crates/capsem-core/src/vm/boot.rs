@@ -12,8 +12,8 @@ use crate::host_state::{HostState, HostStateMachine};
 
 use crate::{
     GuestToHost, HostToGuest, VirtioFsShare, decode_guest_msg, encode_host_msg,
-    MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY,
-    VSOCK_PORT_TERMINAL,
+    MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_MCP_GATEWAY,
+    VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
 #[cfg(target_os = "macos")]
 use crate::hypervisor::apple_vz::AppleVzHypervisor;
@@ -66,6 +66,7 @@ pub fn boot_vm(
     virtiofs_shares: &[VirtioFsShare],
     cpu_count: u32,
     ram_bytes: u64,
+    checkpoint_path: Option<std::path::PathBuf>,
 ) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>, HostStateMachine)> {
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
@@ -91,6 +92,10 @@ pub fn boot_vm(
             .ram_bytes(ram_bytes)
             .kernel_path(kernel_path)
             .kernel_cmdline(&effective_cmdline);
+
+        if let Some(cp) = checkpoint_path {
+            builder = builder.checkpoint_path(cp);
+        }
 
         if let Some(hash) = option_env!("VMLINUZ_HASH") {
             info!("[boot-audit] kernel hash verification enabled");
@@ -151,6 +156,7 @@ pub fn boot_vm(
         VSOCK_PORT_TERMINAL,
         VSOCK_PORT_SNI_PROXY,
         VSOCK_PORT_MCP_GATEWAY,
+        VSOCK_PORT_LIFECYCLE,
     ];
 
     info!("[boot-audit] calling hypervisor boot");
