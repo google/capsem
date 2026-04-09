@@ -37,6 +37,25 @@ Capsem is a security product. Every security-relevant feature needs tests that a
 
 Stress-test boundary conditions. Write tests for the attacks you'd attempt yourself.
 
+### Security invariants to verify in tests
+
+When touching security-relevant code, check these invariants have test coverage:
+
+| Invariant | What to test | Where |
+|-----------|-------------|-------|
+| VirtioFS share is `guest/` only | `session_dir/guest/` exists, symlinks resolve, host-only files (`session.db`, `serial.log`) are outside the share | `capsem-core::lib::tests` |
+| UDS sockets are 0600 | After bind, verify permissions exclude other users | `capsem-process` |
+| Process env is cleared | `env_clear()` called, only allowlisted vars passed | `capsem-service` spawn tests |
+| No `process::exit` on guest I/O | Control channel close causes loop break, not exit | `capsem-process` |
+| Sensitive logs are 0600 | `serial.log` created with restricted permissions | `capsem-process` |
+| Gateway auth on all routes | Every route except `GET /` returns 401 without token | `capsem-gateway::auth::tests` |
+| Auth rate limiting | 429 after threshold, resets after window | `capsem-gateway::auth::tests` |
+| CORS rejects external origins | Only localhost/127.0.0.1/tauri allowed | `capsem-gateway::tests` |
+| Body size limit | 413 for >10MB payloads | `capsem-gateway::proxy::tests` |
+| VM ID validation | Path traversal (`../`), dots, spaces, null bytes rejected | `capsem-gateway::terminal::tests` |
+| Rootfs read-only | squashfs mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
+| Suspend reports errors | IPC failure and timeout both return 500, not silent success | `capsem-service` tests |
+
 ## Test fixture anti-pattern: masking races with polling
 
 If all test fixtures wait/poll before asserting, the tests will never catch server-side race conditions. For every endpoint that talks to a VM socket, write at least one test that calls it IMMEDIATELY after provision (no `wait_exec_ready`, no `ready_vm` fixture). The server must handle readiness internally.

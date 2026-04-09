@@ -155,6 +155,8 @@ struct FunctionCall {
 
 14. **File permissions for sensitive logs**: `serial.log` contains raw terminal output and may include secrets typed by the user. Create with explicit `mode(0o600)` via `OpenOptionsExt`, and enforce permissions even if the file already exists (re-set with `set_permissions`).
 
+15. **VirtioFS share boundary -- only guest/ subtree**: The VirtioFS share must point at `session_dir/guest/`, not `session_dir` itself. Host-only files (`session.db`, `serial.log`, `auto_snapshots/`, `checkpoint.vzsave`) must stay outside the share. When adding new host-side files to `session_dir`, they are automatically outside the guest boundary. When adding new guest-visible content, put it under `guest/`. Compat symlinks (`session_dir/{system,workspace} -> guest/{system,workspace}`) let existing host code reference the old paths. Use `capsem_core::guest_share_dir(session_dir)` to get the share root.
+
 ## Async reference
 
 Read `references/rust-async-patterns.md` for comprehensive tokio patterns (tasks, channels, streams, error handling). From the community (6.4K installs).
