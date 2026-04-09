@@ -241,7 +241,7 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
 6. **Rootfs read-only**: squashfs mounted read-only by Apple VZ. Guest binaries deployed chmod 555.
 7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
-8. **VirtioFS boundary**: the full session_dir is exposed read-write to the guest (not just workspace/). This is a known trade-off -- session.db and serial.log are writable by a compromised guest. Future: narrow the share to workspace/ only.
+8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `auto_snapshots/`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
 
 ### What capsem-process CAN access
 - Its own session_dir (read-write)

@@ -559,7 +559,8 @@ fn main() -> Result<()> {
 
     std::fs::create_dir_all(&args.session_dir)?;
     capsem_core::create_virtiofs_session(&args.session_dir, 2)?;
-    let virtiofs_shares = vec![VirtioFsShare { tag: "capsem".into(), host_path: args.session_dir.clone(), read_only: false }];
+    let guest_dir = capsem_core::guest_share_dir(&args.session_dir);
+    let virtiofs_shares = vec![VirtioFsShare { tag: "capsem".into(), host_path: guest_dir, read_only: false }];
 
     let (vm, vsock_rx, sm) = boot_vm(
         &args.assets_dir, Some(&args.rootfs),
@@ -1401,12 +1402,16 @@ async fn handle_ipc_connection(
                     info!("Received Shutdown command, exiting IPC loop gracefully");
                     break;
                 }
+                ServiceToProcess::Suspend { checkpoint_path } => {
+                    info!("Received Suspend command, forwarding to ctrl channel");
+                    let _ = ctrl_tx.send(ServiceToProcess::Suspend { checkpoint_path }).await;
+                }
                 ServiceToProcess::PrepareSnapshot
                 | ServiceToProcess::Unfreeze
-                | ServiceToProcess::Suspend { .. }
                 | ServiceToProcess::Resume => {
-                    // Phase 2 (T3-T6): forwarded to ctrl channel when implemented.
-                    info!("lifecycle IPC command received (not yet implemented)");
+                    // These are sent directly by process internals (quiescence helper),
+                    // not expected over IPC from service.
+                    warn!("unexpected lifecycle IPC command received");
                 }
             },
             Err(_) => break,

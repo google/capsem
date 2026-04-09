@@ -28,7 +28,7 @@ pub use vm::terminal::TerminalOutputQueue;
 pub use vm::boot::{boot_vm, send_boot_config, read_control_msg, write_control_msg, create_net_state};
 pub use vm::VmState;
 pub use vm::vsock::{
-    self, CoalesceBuffer, VSOCK_PORT_CONTROL,
+    self, CoalesceBuffer, VSOCK_PORT_CONTROL, VSOCK_PORT_LIFECYCLE,
     VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
 
@@ -43,11 +43,15 @@ pub use hypervisor::kvm::KvmHypervisor;
 
 /// Create VirtioFS session directories for the single-share hybrid architecture.
 ///
-/// Layout (shared as one VirtioFS share with the guest):
-/// - `system/rootfs.img` -- sparse ext4 loopback image for overlayfs upper
-///   (packages, config, /run binaries)
-/// - `workspace/`        -- direct host-visible files for /root (AI workspace)
-/// - `auto_snapshots/`   -- rolling ring buffer for host-side APFS clone snapshots
+/// The session_dir has two zones:
+/// - `guest/` -- shared with the VM via VirtioFS (only this subtree is exposed)
+///   - `system/rootfs.img` -- sparse ext4 loopback image for overlayfs upper
+///   - `workspace/`        -- direct host-visible files for /root (AI workspace)
+/// - Host-only (NOT shared with guest):
+///   - `auto_snapshots/`   -- rolling ring buffer for host-side APFS clone snapshots
+///   - `session.db`        -- telemetry database
+///   - `serial.log`        -- terminal output log
+///   - `checkpoint.vzsave` -- suspend checkpoint
 ///
 /// The host creates a sparse `rootfs.img` (0 bytes actual). The guest formats
 /// it as ext4 on first boot (~1s). Forked sessions already have a formatted
@@ -56,11 +60,23 @@ pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> s
     use std::fs::OpenOptions;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-    std::fs::create_dir_all(session_dir.join("system"))?;
-    std::fs::create_dir_all(session_dir.join("workspace"))?;
+    let guest_dir = session_dir.join("guest");
+    std::fs::create_dir_all(guest_dir.join("system"))?;
+    std::fs::create_dir_all(guest_dir.join("workspace"))?;
     std::fs::create_dir_all(session_dir.join("auto_snapshots"))?;
 
-    let img_path = session_dir.join("system").join("rootfs.img");
+    // Create compat symlinks so existing code using session_dir/workspace and
+    // session_dir/system still works. The real dirs live inside guest/ which
+    // is the only subtree shared with the VM via VirtioFS.
+    for name in &["system", "workspace"] {
+        let link = session_dir.join(name);
+        let target = std::path::Path::new("guest").join(name);
+        if !link.exists() {
+            std::os::unix::fs::symlink(&target, &link)?;
+        }
+    }
+
+    let img_path = guest_dir.join("system").join("rootfs.img");
     if !img_path.exists() {
         let file = OpenOptions::new()
             .write(true)
@@ -73,6 +89,11 @@ pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> s
 
     std::fs::set_permissions(session_dir, std::fs::Permissions::from_mode(0o700))?;
     Ok(())
+}
+
+/// Return the guest-visible VirtioFS share path within a session directory.
+pub fn guest_share_dir(session_dir: &Path) -> std::path::PathBuf {
+    session_dir.join("guest")
 }
 
 /// Create a sparse scratch disk image file.
@@ -161,15 +182,29 @@ mod tests {
 
         create_virtiofs_session(&dir, 2).unwrap();
 
-        assert!(dir.join("system").is_dir());
-        assert!(dir.join("workspace").is_dir());
+        // Real dirs live inside guest/
+        assert!(dir.join("guest/system").is_dir());
+        assert!(dir.join("guest/workspace").is_dir());
         assert!(dir.join("auto_snapshots").is_dir());
 
-        let img = dir.join("system/rootfs.img");
+        // Compat symlinks at session root
+        assert!(dir.join("system").is_symlink());
+        assert!(dir.join("workspace").is_symlink());
+        // Symlinks resolve to the guest/ dirs
+        assert!(dir.join("system").is_dir());
+        assert!(dir.join("workspace").is_dir());
+
+        let img = dir.join("guest/system/rootfs.img");
         assert!(img.exists());
         let meta = std::fs::metadata(&img).unwrap();
         assert_eq!(meta.len(), 2 * 1024 * 1024 * 1024);
         assert!(meta.blocks() < 1024, "rootfs.img should be sparse");
+
+        // Symlink path also works
+        assert!(dir.join("system/rootfs.img").exists());
+
+        // VirtioFS share dir is the guest/ subdir
+        assert_eq!(guest_share_dir(&dir), dir.join("guest"));
 
         let dir_meta = std::fs::metadata(&dir).unwrap();
         assert_eq!(dir_meta.mode() & 0o777, 0o700);
