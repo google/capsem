@@ -14,9 +14,10 @@ pytestmark = pytest.mark.gateway
 class TestCORS:
 
     def test_cors_headers_on_health(self, gateway_env):
-        """GET / includes Access-Control-Allow-Origin header."""
+        """GET / with Origin header includes Access-Control-Allow-Origin."""
         result = subprocess.run(
             ["curl", "-s", "-D", "-", "--max-time", "5",
+             "-H", "Origin: http://localhost:5173",
              f"http://127.0.0.1:{gateway_env.port}/"],
             capture_output=True, text=True, timeout=10,
         )

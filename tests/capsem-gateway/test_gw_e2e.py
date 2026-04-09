@@ -141,6 +141,166 @@ class TestGatewayE2E:
         assert data["ok"] is True
 
 
+class TestGatewayFileIO:
+    """File read/write operations through the gateway."""
+
+    def test_write_and_read_file_through_gateway(self, e2e_client):
+        """Write a file to guest, then read it back through gateway."""
+        name = vm_name("gw-file")
+        resp = e2e_client.post("/provision", {
+            "name": name, "ram_mb": 2048, "cpus": 2,
+        })
+        vm_id = resp.get("id", name)
+        assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
+
+        try:
+            # Write file
+            write_resp = e2e_client.post(f"/write_file/{vm_id}", {
+                "path": "/tmp/gw-test.txt",
+                "content": "gateway file io test",
+            })
+            assert write_resp is not None
+
+            # Read file back
+            read_resp = e2e_client.post(f"/read_file/{vm_id}", {
+                "path": "/tmp/gw-test.txt",
+            })
+            assert read_resp is not None
+            assert "gateway file io test" in str(read_resp)
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
+
+    def test_write_binary_content(self, e2e_client):
+        """Write a file with special characters."""
+        name = vm_name("gw-bin")
+        resp = e2e_client.post("/provision", {
+            "name": name, "ram_mb": 2048, "cpus": 2,
+        })
+        vm_id = resp.get("id", name)
+        assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
+
+        try:
+            write_resp = e2e_client.post(f"/write_file/{vm_id}", {
+                "path": "/tmp/special.txt",
+                "content": "line1\nline2\ttab\n",
+            })
+            assert write_resp is not None
+
+            exec_resp = e2e_client.post(f"/exec/{vm_id}", {
+                "command": "wc -l /tmp/special.txt",
+            })
+            assert exec_resp is not None
+            # Should have 2-3 lines
+            assert exec_resp.get("exit_code") == 0
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
+
+
+class TestGatewayPersistence:
+    """Persistent VM operations through the gateway."""
+
+    def test_persist_and_resume_through_gateway(self, e2e_client):
+        """Create ephemeral VM, persist it, stop, resume through gateway."""
+        name = vm_name("gw-persist")
+        resp = e2e_client.post("/provision", {
+            "name": name, "ram_mb": 2048, "cpus": 2,
+            "persistent": True,
+        })
+        assert resp is not None
+        vm_id = resp.get("id", name)
+        assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
+
+        try:
+            # Write a marker file
+            e2e_client.post(f"/write_file/{vm_id}", {
+                "path": "/tmp/persist-marker.txt",
+                "content": "survived-restart",
+            })
+
+            # Stop
+            e2e_client.post(f"/stop/{vm_id}", {})
+            import time
+            time.sleep(2)
+
+            # Resume
+            resume_resp = e2e_client.post(f"/resume/{name}", {})
+            assert resume_resp is not None
+
+            # Wait for exec ready again
+            resumed_id = resume_resp.get("id", name)
+            assert wait_exec_ready_tcp(e2e_client, resumed_id, timeout=60)
+
+            # Check marker file survived
+            exec_resp = e2e_client.post(f"/exec/{resumed_id}", {
+                "command": "cat /tmp/persist-marker.txt",
+            })
+            assert exec_resp is not None
+            assert "survived-restart" in exec_resp.get("stdout", "")
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
+
+    def test_purge_through_gateway(self, e2e_client):
+        """POST /purge kills ephemeral VMs through gateway."""
+        name = vm_name("gw-purge")
+        resp = e2e_client.post("/provision", {
+            "name": name, "ram_mb": 2048, "cpus": 2,
+        })
+        assert resp is not None
+
+        # Purge
+        purge_resp = e2e_client.post("/purge", {})
+        assert purge_resp is not None
+
+        # VM should be gone
+        listing = e2e_client.get("/list")
+        ids = [s["id"] for s in listing.get("sandboxes", [])]
+        assert name not in ids
+
+
+class TestGatewayLogs:
+    """Log retrieval through the gateway."""
+
+    def test_logs_for_running_vm(self, e2e_client):
+        """GET /logs/{id} returns boot logs for a running VM."""
+        name = vm_name("gw-logs")
+        resp = e2e_client.post("/provision", {
+            "name": name, "ram_mb": 2048, "cpus": 2,
+        })
+        vm_id = resp.get("id", name)
+        assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
+
+        try:
+            logs_resp = e2e_client.get(f"/logs/{vm_id}")
+            assert logs_resp is not None
+            assert "logs" in logs_resp
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
+
+
+class TestGatewayEnvVars:
+    """Environment variable injection through the gateway."""
+
+    def test_env_vars_passed_to_guest(self, e2e_client):
+        """Environment variables are passed through gateway to the guest."""
+        name = vm_name("gw-env")
+        resp = e2e_client.post("/provision", {
+            "name": name, "ram_mb": 2048, "cpus": 2,
+            "env": {"GW_TEST_VAR": "hello-from-gateway"},
+        })
+        assert resp is not None
+        vm_id = resp.get("id", name)
+        assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
+
+        try:
+            exec_resp = e2e_client.post(f"/exec/{vm_id}", {
+                "command": "echo $GW_TEST_VAR",
+            })
+            assert exec_resp is not None
+            assert "hello-from-gateway" in exec_resp.get("stdout", "")
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
+
+
 def wait_exec_ready_tcp(client, vm_id, timeout=30):
     """Poll until VM responds to exec through gateway."""
     import time
