@@ -1,101 +1,233 @@
 @import "tailwindcss";
-@source "../lib/**/*.svelte";
-@source "../lib/**/*.ts";
-@source "../pages/**/*.astro";
-@source "../components/**/*.ts";
-@source "../../node_modules/layerchart/dist/**/*.svelte";
 
-@plugin "daisyui";
+/* -- Bundled fonts (local, zero external loads) -- */
 
-/* --- Design tokens (see docs/design.md) --- */
+/* UI font: Google Sans Flex (variable) */
+@font-face {
+  font-family: "Google Sans Flex";
+  src: url("/fonts/GoogleSansFlex-Variable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
 
+/* Default terminal font: Google Sans Code (variable) */
+@font-face {
+  font-family: "Google Sans Code";
+  src: url("/fonts/GoogleSansCode-Variable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* Terminal font options */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Variable.ttf") format("truetype");
+  font-weight: 100 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fira Code";
+  src: url("/fonts/FiraCode-Variable.ttf") format("truetype");
+  font-weight: 300 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inconsolata";
+  src: url("/fonts/Inconsolata-Variable.ttf") format("truetype");
+  font-weight: 200 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cascadia Code";
+  src: url("/fonts/CascadiaCode-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cascadia Code";
+  src: url("/fonts/CascadiaCode-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Hack";
+  src: url("/fonts/Hack-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Hack";
+  src: url("/fonts/Hack-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Mono";
+  src: url("/fonts/SpaceMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Mono";
+  src: url("/fonts/SpaceMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Ubuntu Mono";
+  src: url("/fonts/UbuntuMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Ubuntu Mono";
+  src: url("/fonts/UbuntuMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+/* Preline UI -- base theme only, accents via our own overrides */
+@source "../../node_modules/preline";
+@import "preline/variants.css";
+@import "preline/css/themes/theme.css";
+
+/* Pointer cursor on interactive elements */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@custom-variant hover (&:hover);
+
+/* Override Tailwind font-sans with Google Sans Flex */
 @theme {
-  /* Layerchart surface colors (mapped to DaisyUI base palette) */
-  --color-surface-content: var(--color-base-content);
-  --color-surface-100: var(--color-base-100);
-
-  /* Interactive (purple H=277 -- matches DaisyUI primary) */
-  --color-interactive: oklch(0.58 0.233 277);
-
-  /* Status */
-  --color-allowed: oklch(0.74 0.16 233);
-  --color-denied: oklch(0.65 0.15 300);
-  --color-caution: oklch(0.82 0.189 84);
-
-  /* Providers (brand identity) */
-  --color-provider-anthropic: oklch(0.75 0.14 60);
-  --color-provider-google: oklch(0.7 0.15 250);
-  --color-provider-openai: oklch(0.72 0.14 145);
-  --color-provider-mistral: oklch(0.65 0.2 25);
-  --color-provider-fallback: oklch(0.6 0.05 250);
-
-  /* Token types */
-  --color-token-input: oklch(0.7 0.15 250);
-  --color-token-output: oklch(0.72 0.14 145);
-  --color-token-cache: oklch(0.65 0.12 210);
-
-  /* Snapshots */
-  --color-snap-manual: oklch(0.7 0.15 250);
-  --color-snap-auto: oklch(0.6 0.05 250);
-
-  /* File actions */
-  --color-file-created: oklch(0.74 0.16 233);
-  --color-file-modified: oklch(0.72 0.14 185);
-  --color-file-deleted: oklch(0.65 0.15 300);
-
-  /* JSON syntax */
-  --color-json-key: oklch(0.75 0.15 250);
-  --color-json-string: oklch(0.72 0.14 145);
-  --color-json-bool: oklch(0.7 0.16 300);
-  --color-json-number: oklch(0.75 0.14 60);
-
-  /* Shell/conf syntax */
-  --color-sh-comment: oklch(0.55 0.02 250);
-  --color-sh-keyword: oklch(0.75 0.15 250);
-  --color-sh-variable: oklch(0.72 0.14 185);
-  --color-sh-escape: oklch(0.55 0.08 60);
-
-  /* Span types (trace viewer) */
-  --color-span-thinking: oklch(0.7 0.15 250);   /* blue */
-  --color-span-tool: oklch(0.72 0.14 145);       /* green */
-  --color-span-answer: oklch(0.65 0.15 300);     /* purple */
-
-  /* Chart infrastructure */
-  --color-chart-grid: oklch(0.4 0.01 250 / 0.15);
-  --color-chart-label: oklch(0.6 0.02 250);
+  --font-sans: "Google Sans Flex", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 }
 
-/* --- Component CSS var overrides --- */
-
-/* Toggle checked uses interactive */
-.toggle:checked {
-  --input-color: var(--color-interactive);
+/*
+ * Consistent dark mode base (darker than Preline default).
+ * All accents share this same dark/light surface -- only primary color changes.
+ */
+.dark {
+  --background: var(--color-neutral-900);
+  --background-1: var(--color-neutral-950);
+  --background-2: var(--color-neutral-950);
 }
 
-/* Menu active state uses interactive */
-.menu :where(li > *):where(.menu-active),
-.menu :where(li > *):is(:active) {
-  background-color: oklch(from var(--color-interactive) l c h / 0.15);
-  color: var(--color-interactive);
+/* -- Accent color overrides (primary scale only) -- */
+
+[data-theme="theme-ocean"] {
+  --primary-50: var(--color-cyan-50);
+  --primary-100: var(--color-cyan-100);
+  --primary-200: var(--color-cyan-200);
+  --primary-300: var(--color-cyan-300);
+  --primary-400: var(--color-cyan-400);
+  --primary-500: var(--color-cyan-500);
+  --primary-600: var(--color-cyan-600);
+  --primary-700: var(--color-cyan-700);
+  --primary-800: var(--color-cyan-800);
+  --primary-900: var(--color-cyan-900);
+  --primary-950: var(--color-cyan-950);
 }
 
-/* --- JSON syntax highlight classes (consolidated) --- */
+[data-theme="theme-moon"] {
+  --primary-50: var(--color-slate-50);
+  --primary-100: var(--color-slate-100);
+  --primary-200: var(--color-slate-200);
+  --primary-300: var(--color-slate-300);
+  --primary-400: var(--color-slate-400);
+  --primary-500: var(--color-slate-500);
+  --primary-600: var(--color-slate-600);
+  --primary-700: var(--color-slate-700);
+  --primary-800: var(--color-slate-800);
+  --primary-900: var(--color-slate-900);
+  --primary-950: var(--color-slate-950);
+}
 
-.json-key    { color: var(--color-json-key); }
-.json-string { color: var(--color-json-string); }
-.json-bool   { color: var(--color-json-bool); }
-.json-number { color: var(--color-json-number); }
+[data-theme="theme-harvest"] {
+  --primary-50: var(--color-amber-50);
+  --primary-100: var(--color-amber-100);
+  --primary-200: var(--color-amber-200);
+  --primary-300: var(--color-amber-300);
+  --primary-400: var(--color-amber-400);
+  --primary-500: var(--color-amber-500);
+  --primary-600: var(--color-amber-600);
+  --primary-700: var(--color-amber-700);
+  --primary-800: var(--color-amber-800);
+  --primary-900: var(--color-amber-900);
+  --primary-950: var(--color-amber-950);
+}
 
-/* --- Shell/conf syntax highlight classes --- */
+[data-theme="theme-retro"] {
+  --primary-50: var(--color-fuchsia-50);
+  --primary-100: var(--color-fuchsia-100);
+  --primary-200: var(--color-fuchsia-200);
+  --primary-300: var(--color-fuchsia-300);
+  --primary-400: var(--color-fuchsia-400);
+  --primary-500: var(--color-fuchsia-500);
+  --primary-600: var(--color-fuchsia-600);
+  --primary-700: var(--color-fuchsia-700);
+  --primary-800: var(--color-fuchsia-800);
+  --primary-900: var(--color-fuchsia-900);
+  --primary-950: var(--color-fuchsia-950);
+}
 
-.sh-comment  { color: var(--color-sh-comment); font-style: italic; }
-.sh-keyword  { color: var(--color-sh-keyword); font-weight: 600; }
-.sh-variable { color: var(--color-sh-variable); }
-.sh-escape   { color: var(--color-sh-escape); }
+[data-theme="theme-autumn"] {
+  --primary-50: var(--color-orange-50);
+  --primary-100: var(--color-orange-100);
+  --primary-200: var(--color-orange-200);
+  --primary-300: var(--color-orange-300);
+  --primary-400: var(--color-orange-400);
+  --primary-500: var(--color-orange-500);
+  --primary-600: var(--color-orange-600);
+  --primary-700: var(--color-orange-700);
+  --primary-800: var(--color-orange-800);
+  --primary-900: var(--color-orange-900);
+  --primary-950: var(--color-orange-950);
+}
 
-:root {
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+[data-theme="theme-bubblegum"] {
+  --primary-50: var(--color-pink-50);
+  --primary-100: var(--color-pink-100);
+  --primary-200: var(--color-pink-200);
+  --primary-300: var(--color-pink-300);
+  --primary-400: var(--color-pink-400);
+  --primary-500: var(--color-pink-500);
+  --primary-600: var(--color-pink-600);
+  --primary-700: var(--color-pink-700);
+  --primary-800: var(--color-pink-800);
+  --primary-900: var(--color-pink-900);
+  --primary-950: var(--color-pink-950);
+}
+
+[data-theme="theme-cashmere"] {
+  --primary-50: var(--color-purple-50);
+  --primary-100: var(--color-purple-100);
+  --primary-200: var(--color-purple-200);
+  --primary-300: var(--color-purple-300);
+  --primary-400: var(--color-purple-400);
+  --primary-500: var(--color-purple-500);
+  --primary-600: var(--color-purple-600);
+  --primary-700: var(--color-purple-700);
+  --primary-800: var(--color-purple-800);
+  --primary-900: var(--color-purple-900);
+  --primary-950: var(--color-purple-950);
+}
+
+[data-theme="theme-olive"] {
+  --primary-50: var(--color-lime-50);
+  --primary-100: var(--color-lime-100);
+  --primary-200: var(--color-lime-200);
+  --primary-300: var(--color-lime-300);
+  --primary-400: var(--color-lime-400);
+  --primary-500: var(--color-lime-500);
+  --primary-600: var(--color-lime-600);
+  --primary-700: var(--color-lime-700);
+  --primary-800: var(--color-lime-800);
+  --primary-900: var(--color-lime-900);
+  --primary-950: var(--color-lime-950);
 }
 
 /* Full-viewport shell */
