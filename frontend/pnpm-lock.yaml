@@ -26,6 +26,9 @@ importers:
       preline:
         specifier: ^4.1.3
         version: 4.1.3
+      shiki:
+        specifier: ^4.0.2
+        version: 4.0.2
     devDependencies:
       '@astrojs/check':
         specifier: ^0.9.8

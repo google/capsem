@@ -11,6 +11,8 @@
   import GearSix from 'phosphor-svelte/lib/GearSix';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import ChartBar from 'phosphor-svelte/lib/ChartBar';
+  import FolderSimple from 'phosphor-svelte/lib/FolderSimple';
+  import MagnifyingGlassPlus from 'phosphor-svelte/lib/MagnifyingGlassPlus';
   import Scroll from 'phosphor-svelte/lib/Scroll';
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
 
@@ -21,6 +23,8 @@
   const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
     { view: 'terminal', label: 'Terminal', icon: Terminal },
     { view: 'stats', label: 'Stats', icon: ChartBar },
+    { view: 'files', label: 'Files', icon: FolderSimple },
+    { view: 'inspector', label: 'Inspector', icon: MagnifyingGlassPlus },
   ];
 
   function switchView(view: TabView) {

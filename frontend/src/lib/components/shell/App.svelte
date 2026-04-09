@@ -7,10 +7,12 @@
   import StatsView from '../views/StatsView.svelte';
   import LogsView from '../views/LogsView.svelte';
   import ServiceLogsView from '../views/ServiceLogsView.svelte';
+  import FilesView from '../views/FilesView.svelte';
+  import InspectorView from '../views/InspectorView.svelte';
   import { tabStore } from '../../stores/tabs.svelte.ts';
 
   let active = $derived(tabStore.active);
-  const vmViews = ['terminal', 'stats', 'logs'] as const;
+  const vmViews = ['terminal', 'stats', 'logs', 'files', 'inspector'] as const;
   let isVmView = $derived(active != null && active.vmId != null && vmViews.includes(active.view as any));
 </script>
 
@@ -31,6 +33,10 @@
             <div class="absolute inset-0"><StatsView vmId={active.vmId} /></div>
           {:else if active.view === 'logs'}
             <div class="absolute inset-0"><LogsView vmId={active.vmId} /></div>
+          {:else if active.view === 'files'}
+            <div class="absolute inset-0"><FilesView vmId={active.vmId} /></div>
+          {:else if active.view === 'inspector'}
+            <div class="absolute inset-0"><InspectorView vmId={active.vmId} /></div>
           {/if}
         </div>
       {:else if active.view === 'logs' && !active.vmId}
