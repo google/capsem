@@ -8,5 +8,9 @@ serde = { workspace = true }
 rmp-serde = { workspace = true }
 anyhow = { workspace = true }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile = "3"

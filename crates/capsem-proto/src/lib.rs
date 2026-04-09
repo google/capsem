@@ -12,6 +12,8 @@
 
 pub mod ipc;
 
+use std::path::Path;
+
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +67,23 @@ pub const BLOCKED_ENV_VARS: &[&str] = &[
     "PROMPT_COMMAND",
     "PS4",
 ];
+
+// ---------------------------------------------------------------------------
+// Vsock port constants (shared between host and guest)
+// ---------------------------------------------------------------------------
+
+/// vsock port for structured control messages (resize, heartbeat, exec, file I/O).
+pub const VSOCK_PORT_CONTROL: u32 = 5000;
+/// vsock port for raw PTY byte streaming (stdin/stdout).
+pub const VSOCK_PORT_TERMINAL: u32 = 5001;
+/// vsock port for SNI proxy (HTTPS/HTTP traffic from guest).
+pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
+/// vsock port for MCP gateway (MCP tool calls from guest).
+pub const VSOCK_PORT_MCP_GATEWAY: u32 = 5003;
+/// vsock port for guest lifecycle commands (shutdown/suspend from capsem-sysutil).
+pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
+/// vsock port for exec output (direct child process stdout from guest).
+pub const VSOCK_PORT_EXEC: u32 = 5005;
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -129,6 +148,8 @@ pub enum GuestToHost {
     /// Boot timing measurements from the guest init script.
     BootTiming { stages: Vec<BootStage> },
     // -- Terminal --
+    /// Exec started: handshake on vsock exec port identifying the exec ID.
+    ExecStarted { id: u64 },
     /// Command completed with exit code.
     ExecDone { id: u64, exit_code: i32 },
     // -- Heartbeat --
@@ -275,6 +296,55 @@ pub fn validate_file_path(path: &str) -> Result<()> {
     if path.contains("..") {
         bail!("file path contains '..': {path:?}");
     }
+    Ok(())
+}
+
+/// Validate a file path for runtime file I/O inside the guest workspace.
+///
+/// Extends [`validate_file_path`] with symlink and containment checks:
+/// 1. String-level validation (empty, NUL, `..`)
+/// 2. Rejects paths that are themselves symlinks
+/// 3. Canonicalizes the resolved path and verifies it stays within `workspace_root`
+///
+/// For new files (path does not exist yet), the parent directory is checked.
+pub fn validate_file_path_safe(path: &str, workspace_root: &Path) -> Result<()> {
+    validate_file_path(path)?;
+
+    let full = Path::new(path);
+
+    // Reject if the path itself is a symlink.
+    if full
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        bail!("path is a symlink: {path:?}");
+    }
+
+    let ws_resolved = workspace_root
+        .canonicalize()
+        .with_context(|| format!("cannot canonicalize workspace root: {}", workspace_root.display()))?;
+
+    if full.exists() {
+        // Existing path: canonicalize and check containment.
+        let resolved = full
+            .canonicalize()
+            .with_context(|| format!("cannot canonicalize path: {path:?}"))?;
+        if !resolved.starts_with(&ws_resolved) {
+            bail!("path resolves outside workspace: {path:?}");
+        }
+    } else if let Some(parent) = full.parent() {
+        // New file: canonicalize parent and check containment.
+        if parent.exists() {
+            let resolved_parent = parent
+                .canonicalize()
+                .with_context(|| format!("cannot canonicalize parent: {}", parent.display()))?;
+            if !resolved_parent.starts_with(&ws_resolved) {
+                bail!("parent resolves outside workspace: {path:?}");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -527,6 +597,17 @@ mod tests {
         };
         let frame = encode_guest_msg(&msg).unwrap();
         assert!(decode_host_msg(&frame[4..]).is_err());
+    }
+
+    #[test]
+    fn roundtrip_exec_started() {
+        let msg = GuestToHost::ExecStarted { id: 42 };
+        let frame = encode_guest_msg(&msg).unwrap();
+        let decoded = decode_guest_msg(&frame[4..]).unwrap();
+        match decoded {
+            GuestToHost::ExecStarted { id } => assert_eq!(id, 42),
+            other => panic!("expected ExecStarted, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1458,5 +1539,55 @@ mod tests {
             GuestToHost::Error { message, .. } => assert_eq!(message, long_msg),
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    // -------------------------------------------------------------------
+    // validate_file_path_safe: symlink + containment
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn safe_rejects_symlink_pointing_outside() {
+        let ws = tempfile::tempdir().unwrap();
+        let link = ws.path().join("escape");
+        std::os::unix::fs::symlink("/etc/passwd", &link).unwrap();
+        let result = validate_file_path_safe(link.to_str().unwrap(), ws.path());
+        assert!(result.is_err(), "symlink to /etc/passwd must be rejected");
+    }
+
+    #[test]
+    fn safe_rejects_symlink_in_path_component() {
+        let ws = tempfile::tempdir().unwrap();
+        // Create a directory symlink pointing outside workspace.
+        let evil_dir = ws.path().join("evil");
+        std::os::unix::fs::symlink("/tmp", &evil_dir).unwrap();
+        let target = evil_dir.join("some_file");
+        let result = validate_file_path_safe(target.to_str().unwrap(), ws.path());
+        // The parent resolves outside workspace.
+        assert!(result.is_err(), "symlink dir component must be rejected");
+    }
+
+    #[test]
+    fn safe_accepts_normal_file() {
+        let ws = tempfile::tempdir().unwrap();
+        let f = ws.path().join("hello.txt");
+        std::fs::write(&f, b"hi").unwrap();
+        assert!(validate_file_path_safe(f.to_str().unwrap(), ws.path()).is_ok());
+    }
+
+    #[test]
+    fn safe_accepts_new_file_in_workspace() {
+        let ws = tempfile::tempdir().unwrap();
+        let f = ws.path().join("new_file.txt");
+        // File does not exist yet; parent is valid.
+        assert!(validate_file_path_safe(f.to_str().unwrap(), ws.path()).is_ok());
+    }
+
+    #[test]
+    fn safe_rejects_new_file_outside_workspace() {
+        let ws = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let f = outside.path().join("sneaky.txt");
+        let result = validate_file_path_safe(f.to_str().unwrap(), ws.path());
+        assert!(result.is_err(), "file outside workspace must be rejected");
     }
 }

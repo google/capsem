@@ -2,24 +2,24 @@
 //
 // Runs inside the Linux VM as a child of capsem-init. Creates a PTY pair,
 // forks bash on the slave side, and bridges the master PTY with the host
-// over two vsock connections:
+// over three vsock connections:
 //   - Port 5001: raw PTY I/O (terminal data)
 //   - Port 5000: control messages (resize, heartbeat, boot config)
+//   - Port 5005: exec output (direct child process stdout, on demand)
 
 #[path = "vsock_io.rs"]
 mod vsock_io;
 
-use std::io::{self, Write as _};
+use std::io::{self, Read as _, Write as _};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use capsem_proto::{
     BootStage, GuestToHost, HostToGuest, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
+    VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
     decode_host_msg, encode_guest_msg,
-    validate_env_key, validate_env_value, validate_file_path,
+    validate_env_key, validate_env_value, validate_file_path, validate_file_path_safe,
     MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
 };
 use nix::libc;
@@ -28,14 +28,13 @@ use nix::pty::openpty;
 use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::unistd::{ForkResult, Pid, close, dup2, execvp, fork, setsid};
 
-use vsock_io::{VSOCK_HOST_CID, read_exact_fd, vsock_connect_retry, write_all_fd};
-
-/// vsock port for control messages.
-const VSOCK_PORT_CONTROL: u32 = 5000;
-/// vsock port for terminal data.
-const VSOCK_PORT_TERMINAL: u32 = 5001;
+use vsock_io::{VSOCK_HOST_CID, read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd};
 /// Boot log persisted so it can be inspected after boot (`cat /var/log/capsem-boot.log`).
 const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
+/// Reconnect backoff: initial delay (ms), max delay (ms), total timeout (s).
+const RECONNECT_INITIAL_DELAY_MS: u64 = 100;
+const RECONNECT_MAX_DELAY_MS: u64 = 5000;
+const RECONNECT_TIMEOUT_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
 // Control message framing (using capsem-proto types)
@@ -303,6 +302,9 @@ fn main() {
     let slave_fd = pty.slave.as_raw_fd();
     set_winsize(master_fd, 80, 24);
 
+    // Clone boot env for the parent process (child consumes the original).
+    let boot_env_for_parent = boot_env.clone();
+
     // Step 6: Fork -- child becomes bash on the slave PTY.
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
@@ -359,8 +361,8 @@ fn main() {
             drop(blog); // flush and close boot log before loop
 
             let mut is_first = true;
-            let mut delay_ms = 100;
-            let start_reconnect = std::time::Instant::now();
+            let mut delay_ms = RECONNECT_INITIAL_DELAY_MS;
+            let mut start_reconnect = std::time::Instant::now();
             let mut t_fd = terminal_fd;
             let mut c_fd = control_fd;
 
@@ -369,12 +371,12 @@ fn main() {
                     eprintln!("[capsem-agent] connection lost, reconnecting in {delay_ms}ms...");
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     
-                    if start_reconnect.elapsed().as_secs() > 30 {
-                        eprintln!("[capsem-agent] 30s reconnect timeout reached, exiting");
+                    if start_reconnect.elapsed().as_secs() > RECONNECT_TIMEOUT_SECS {
+                        eprintln!("[capsem-agent] {}s reconnect timeout reached, exiting", RECONNECT_TIMEOUT_SECS);
                         let _ = nix::sys::signal::kill(child, Signal::SIGHUP);
                         process::exit(1);
                     }
-                    delay_ms = (delay_ms * 2).min(5000);
+                    delay_ms = (delay_ms * 2).min(RECONNECT_MAX_DELAY_MS);
 
                     match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL) {
                         Ok(fd) => t_fd = fd,
@@ -389,6 +391,7 @@ fn main() {
                     }
 
                     eprintln!("[capsem-agent] reconnected successfully");
+                    delay_ms = RECONNECT_INITIAL_DELAY_MS;
                     let _ = send_guest_msg(c_fd, &GuestToHost::Ready { version: env!("CARGO_PKG_VERSION").to_string() });
                     
                     // Drain abbreviated handshake
@@ -408,6 +411,10 @@ fn main() {
                     std::process::Command::new("fsfreeze").args(["-u", "/"]).status().ok();
                 }
 
+                // Reset reconnect timer after successful reconnect so future
+                // suspend/resume cycles get the full 30s budget.
+                start_reconnect = std::time::Instant::now();
+
                 // Send BootReady
                 if let Err(e) = send_guest_msg(c_fd, &GuestToHost::BootReady) {
                     eprintln!("[capsem-agent] failed to send BootReady: {e}");
@@ -423,7 +430,7 @@ fn main() {
                 }
 
                 // Enter bridge loop
-                run_bridge(master_fd, child, t_fd, c_fd);
+                run_bridge(master_fd, child, t_fd, c_fd, &boot_env_for_parent);
                 
                 // Cleanup broken FDs
                 unsafe { libc::close(t_fd); libc::close(c_fd); }
@@ -458,128 +465,38 @@ fn parse_boot_timing(path: &str) -> Vec<BootStage> {
         .collect()
 }
 
-/// Sentinel prefix for exec completion detection.
-/// Format: ESC _ CAPSEM_EXIT:{id}:{exit_code} ESC \
-const SENTINEL_PREFIX: &[u8] = b"\x1b_CAPSEM_EXIT:";
-const SENTINEL_TERMINATOR: &[u8] = b"\x1b\\";
+fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: RawFd, boot_env: &[(String, String)]) {
+    // Serialize all control channel writes through a single channel + writer
+    // thread. The exec background thread and control_loop both need to write
+    // to control_fd; concurrent writes would corrupt protocol framing.
+    let (ctrl_write_tx, ctrl_write_rx) = std::sync::mpsc::channel::<GuestToHost>();
 
-/// Shared state between control_loop and bridge_loop for exec tracking.
-struct ExecState {
-    active: AtomicBool,
-    current_id: Mutex<Option<u64>>,
-}
-
-fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: RawFd) {
-    // Shared exec state between control and bridge loops.
-    let exec_state = Arc::new(ExecState {
-        active: AtomicBool::new(false),
-        current_id: Mutex::new(None),
+    // Single control channel writer thread.
+    std::thread::spawn(move || {
+        while let Ok(msg) = ctrl_write_rx.recv() {
+            if send_guest_msg(control_fd, &msg).is_err() {
+                break;
+            }
+        }
     });
-    // Channel for bridge_loop to report exec completion to control_loop.
-    let (exec_done_tx, exec_done_rx) = mpsc::channel::<(u64, i32)>();
 
     // Spawn control channel handler in a background thread.
-    let exec_state_ctrl = Arc::clone(&exec_state);
-    let master_fd_for_ctrl = master_fd;
+    let boot_env_owned = boot_env.to_vec();
+    let ctrl_tx = ctrl_write_tx;
     thread::spawn(move || {
-        control_loop(control_fd, master_fd_for_ctrl, child_pid, exec_state_ctrl, exec_done_rx);
+        control_loop(control_fd, master_fd, child_pid, &boot_env_owned, ctrl_tx);
     });
 
     // Main I/O bridge: master PTY <-> vsock terminal port.
-    bridge_loop(master_fd, terminal_fd, &exec_state, exec_done_tx);
+    bridge_loop(master_fd, terminal_fd);
 
     // If bridge exits, we just return. The reconnect loop will handle re-establishing vsock.
     // If it was a genuine Shutdown, control_loop already killed the child, and the process will eventually exit.
     eprintln!("[capsem-agent] bridge exited");
 }
 
-
-/// Scan for sentinel in data, stripping it from the forwarded output.
-/// Returns (data_to_forward, optional (id, exit_code) if sentinel found).
-///
-/// The sentinel format is: ESC _ CAPSEM_EXIT:{id}:{exit_code} ESC \
-/// We use a tail buffer to handle sentinels that span read boundaries.
-fn scan_and_strip_sentinel(
-    tail: &mut Vec<u8>,
-    new_data: &[u8],
-) -> (Vec<u8>, Option<(u64, i32)>) {
-    // Combine tail with new data for scanning.
-    tail.extend_from_slice(new_data);
-
-    // Search for the sentinel start marker in the combined buffer.
-    if let Some(start) = find_subsequence(tail, SENTINEL_PREFIX) {
-        // Look for the terminator after the prefix.
-        let after_prefix = start + SENTINEL_PREFIX.len();
-        if let Some(term_offset) = find_subsequence(&tail[after_prefix..], SENTINEL_TERMINATOR) {
-            let term_pos = after_prefix + term_offset;
-            // Extract the payload between prefix and terminator: "{id}:{exit_code}"
-            let payload = &tail[after_prefix..term_pos];
-            if let Some(result) = parse_sentinel_payload(payload) {
-                // Data before sentinel goes to host; sentinel + terminator stripped.
-                let before = tail[..start].to_vec();
-                let after_sentinel = term_pos + SENTINEL_TERMINATOR.len();
-                // Keep any data after the sentinel in tail for next iteration.
-                let remainder = tail[after_sentinel..].to_vec();
-                tail.clear();
-                tail.extend_from_slice(&remainder);
-                return (before, Some(result));
-            }
-        }
-        // Sentinel started but not yet complete -- keep everything from the
-        // start marker in tail, forward everything before it.
-        let before = tail[..start].to_vec();
-        let kept = tail[start..].to_vec();
-        tail.clear();
-        tail.extend_from_slice(&kept);
-        return (before, None);
-    }
-
-    // No sentinel prefix found. Determine how many bytes to keep at the end
-    // to avoid splitting a sentinel across chunks.
-    // OPTIMIZATION: Only keep bytes if the tail ends with a prefix of the sentinel.
-    // This eliminates the 18-byte lag for normal interactive output.
-    let mut keep = 0;
-    for i in (1..SENTINEL_PREFIX.len()).rev() {
-        if tail.ends_with(&SENTINEL_PREFIX[..i]) {
-            keep = i;
-            break;
-        }
-    }
-
-    if tail.len() > keep {
-        let forward_end = tail.len() - keep;
-        let forward = tail[..forward_end].to_vec();
-        let kept = tail[forward_end..].to_vec();
-        tail.clear();
-        tail.extend_from_slice(&kept);
-        (forward, None)
-    } else {
-        // Not enough data to forward anything yet.
-        (Vec::new(), None)
-    }
-}
-
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-fn parse_sentinel_payload(payload: &[u8]) -> Option<(u64, i32)> {
-    let s = std::str::from_utf8(payload).ok()?;
-    let mut parts = s.splitn(2, ':');
-    let id: u64 = parts.next()?.parse().ok()?;
-    let exit_code: i32 = parts.next()?.parse().ok()?;
-    Some((id, exit_code))
-}
-
-fn bridge_loop(
-    master_fd: RawFd,
-    vsock_fd: RawFd,
-    exec_state: &ExecState,
-    exec_done_tx: mpsc::Sender<(u64, i32)>,
-) {
+fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
     let mut buf = [0u8; 8192];
-    // Rolling tail buffer for sentinel detection across read boundaries.
-    let mut tail: Vec<u8> = Vec::with_capacity(128);
 
     // Spawn a dedicated thread for vsock -> Master PTY (stdin direction)
     // This prevents deadlocks when both master_fd and vsock_fd buffers are full.
@@ -640,30 +557,7 @@ fn bridge_loop(
                 match nix::unistd::read(master_fd, &mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if exec_state.active.load(Ordering::Acquire) {
-                            // Exec active: scan for sentinel before forwarding.
-                            let (forward, result) = scan_and_strip_sentinel(
-                                &mut tail,
-                                &buf[..n],
-                            );
-                            if !forward.is_empty()
-                                && write_all_fd(vsock_fd, &forward).is_err() {
-                                    break;
-                                }
-                            if let Some((id, exit_code)) = result {
-                                exec_state.active.store(false, Ordering::Release);
-                                // Flush remaining tail data BEFORE signaling
-                                // ExecDone so terminal output reaches the host
-                                // before the control message triggers shutdown.
-                                if !tail.is_empty() {
-                                    let remaining = std::mem::take(&mut tail);
-                                    if write_all_fd(vsock_fd, &remaining).is_err() {
-                                        break;
-                                    }
-                                }
-                                let _ = exec_done_tx.send((id, exit_code));
-                            }
-                        } else if write_all_fd(vsock_fd, &buf[..n]).is_err() {
+                        if write_all_fd(vsock_fd, &buf[..n]).is_err() {
                             break;
                         }
                     }
@@ -678,12 +572,162 @@ fn bridge_loop(
     }
 }
 
+/// Execute a command as a direct child process, streaming output over vsock:5005.
+///
+/// Runs in a background thread so control_loop remains responsive to heartbeats.
+/// Output flows as raw bytes on a dedicated exec vsock connection. The exit code
+/// is sent as ExecDone via the serialized control write channel.
+fn run_exec(ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>, id: u64, command: &str, boot_env: &[(String, String)]) {
+    // Connect to host exec port.
+    let exec_fd = match vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC) {
+        Ok(fd) => fd,
+        Err(e) => {
+            eprintln!("[capsem-agent] exec[{id}] vsock connect failed: {e}");
+            let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
+            return;
+        }
+    };
+
+    run_exec_on_fds(exec_fd, ctrl_tx, id, command, boot_env);
+}
+
+/// Inner exec implementation that takes pre-connected fds (testable without vsock).
+/// `ctrl_tx` serializes writes to the control channel (prevents frame corruption
+/// from concurrent writers). `exec_fd` is consumed: closed on all exit paths.
+fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>, id: u64, command: &str, boot_env: &[(String, String)]) {
+    // RAII guard to ensure exec_fd is closed on all paths.
+    struct FdGuard(RawFd);
+    impl Drop for FdGuard {
+        fn drop(&mut self) { unsafe { libc::close(self.0); } }
+    }
+    let _exec_guard = FdGuard(exec_fd);
+
+    // Send ExecStarted handshake so host knows which exec ID this connection belongs to.
+    if let Err(e) = send_guest_msg(exec_fd, &GuestToHost::ExecStarted { id }) {
+        eprintln!("[capsem-agent] exec[{id}] handshake failed: {e}");
+        let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
+        return;
+    }
+
+    // Spawn child process with piped stdout and stderr.
+    let cwd = if std::path::Path::new("/root").exists() { "/root" } else { "/" };
+    let mut child = match std::process::Command::new("bash")
+        .arg("-c")
+        .arg(command)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .current_dir(cwd)
+        .envs(boot_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[capsem-agent] exec[{id}] spawn failed: {e}");
+            let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
+            return;
+        }
+    };
+
+    // Forward child stdout and stderr to exec vsock fd.
+    // Stderr is forwarded from a background thread; stdout is forwarded inline.
+    let stderr_thread = child.stderr.take().map(|mut stderr| {
+        let efd = exec_fd;
+        thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match stderr.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => { let _ = write_all_fd(efd, &buf[..n]); }
+                }
+            }
+        })
+    });
+
+    if let Some(mut stdout) = child.stdout.take() {
+        let mut buf = [0u8; 8192];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if write_all_fd(exec_fd, &buf[..n]).is_err() {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+    }
+
+    if let Some(t) = stderr_thread { let _ = t.join(); }
+
+    // Wait for child to exit and get exit code.
+    let exit_code = match child.wait() {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(_) => 126,
+    };
+
+    // exec_fd closed by _exec_guard drop (signals EOF to host).
+    drop(_exec_guard);
+
+    // Send ExecDone via serialized control write channel.
+    eprintln!("[capsem-agent] exec[{id}] done: exit_code={exit_code}");
+    let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code });
+}
+
+/// Guest workspace root (VirtioFS mount point).
+const GUEST_WORKSPACE_ROOT: &str = "/root";
+
+// ---------------------------------------------------------------------------
+// Symlink-safe file I/O (O_NOFOLLOW on final component)
+// ---------------------------------------------------------------------------
+
+/// Write a file, refusing to follow symlinks on the final path component.
+/// Returns ELOOP if the target is a symlink.
+fn write_nofollow(path: &str, data: &[u8], mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(data)?;
+    let _ = file.set_permissions(std::fs::Permissions::from_mode(mode));
+    Ok(())
+}
+
+/// Read a file, refusing to follow symlinks on the final path component.
+/// Returns ELOOP if the target is a symlink.
+fn read_nofollow(path: &str) -> io::Result<Vec<u8>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data)?;
+    Ok(data)
+}
+
+/// Delete a file only if it is not itself a symlink.
+fn delete_nofollow(path: &str) -> io::Result<()> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "refusing to delete symlink",
+        ));
+    }
+    std::fs::remove_file(path)
+}
+
 fn control_loop(
     control_fd: RawFd,
     master_fd: RawFd,
     child_pid: Pid,
-    exec_state: Arc<ExecState>,
-    exec_done_rx: mpsc::Receiver<(u64, i32)>,
+    boot_env: &[(String, String)],
+    ctrl_tx: std::sync::mpsc::Sender<GuestToHost>,
 ) {
     loop {
         match recv_host_msg(control_fd) {
@@ -699,8 +743,8 @@ fn control_loop(
                 }
             }
             Ok(HostToGuest::Ping) => {
-                if let Err(e) = send_guest_msg(control_fd, &GuestToHost::Pong) {
-                    eprintln!("[capsem-agent] failed to send Pong: {e}");
+                if ctrl_tx.send(GuestToHost::Pong).is_err() {
+                    eprintln!("[capsem-agent] control write channel closed");
                     break;
                 }
             }
@@ -718,131 +762,66 @@ fn control_loop(
             }
             Ok(HostToGuest::Exec { id, command }) => {
                 eprintln!("[capsem-agent] exec[{id}]: {command}");
-                // Store exec id and activate sentinel scanning.
-                {
-                    let mut current = exec_state.current_id.lock().unwrap();
-                    *current = Some(id);
-                }
-                exec_state.active.store(true, Ordering::Release);
-
-                // Disable PTY echo so the injected command text isn't shown.
-                // Command output (stdout/stderr) still appears -- ECHO only
-                // controls input echoing, not program output.
-                unsafe {
-                    let mut termios: libc::termios = std::mem::zeroed();
-                    libc::tcgetattr(master_fd, &mut termios);
-                    termios.c_lflag &= !libc::ECHO;
-                    libc::tcsetattr(master_fd, libc::TCSANOW, &termios);
-                }
-
-                let injection = format!(
-                    "bash -c '{}' 2>&1 ; printf '\\033_CAPSEM_EXIT:{}:%d\\033\\\\' $?\n",
-                    command.replace('\'', "'\\''"),
-                    id,
-                );
-                if let Err(e) = write_all_fd(master_fd, injection.as_bytes()) {
-                    eprintln!("[capsem-agent] failed to inject exec command: {e}");
-                    exec_state.active.store(false, Ordering::Release);
-                    // Send ExecDone with error exit code.
-                    let _ = send_guest_msg(control_fd, &GuestToHost::ExecDone {
-                        id,
-                        exit_code: 126,
-                    });
-                    continue;
-                }
-
-                // Wait for bridge_loop to detect the sentinel and report.
-                match exec_done_rx.recv() {
-                    Ok((done_id, exit_code)) => {
-                        eprintln!("[capsem-agent] exec[{done_id}] done: exit_code={exit_code}");
-                        // Re-enable PTY echo for interactive use.
-                        unsafe {
-                            let mut termios: libc::termios = std::mem::zeroed();
-                            libc::tcgetattr(master_fd, &mut termios);
-                            termios.c_lflag |= libc::ECHO;
-                            libc::tcsetattr(master_fd, libc::TCSANOW, &termios);
-                        }
-                        if let Err(e) = send_guest_msg(control_fd, &GuestToHost::ExecDone {
-                            id: done_id,
-                            exit_code,
-                        }) {
-                            eprintln!("[capsem-agent] failed to send ExecDone: {e}");
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        eprintln!("[capsem-agent] exec_done channel closed");
-                        break;
-                    }
-                }
+                let boot_env = boot_env.to_vec();
+                let tx = ctrl_tx.clone();
+                thread::spawn(move || {
+                    run_exec(&tx, id, &command, &boot_env);
+                });
             }
             Ok(HostToGuest::FileWrite { id, path, data, mode }) => {
                 eprintln!("[capsem-agent] FileWrite {path} ({} bytes)", data.len());
-                let res = if let Err(e) = std::fs::write(&path, &data) {
-                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("failed to write {path}: {e}") })
+                let ws = std::path::Path::new(GUEST_WORKSPACE_ROOT);
+                let msg = if let Err(e) = validate_file_path_safe(&path, ws) {
+                    GuestToHost::Error { id, message: format!("FileWrite rejected: {e}") }
+                } else if let Err(e) = write_nofollow(&path, &data, mode) {
+                    GuestToHost::Error { id, message: format!("failed to write {path}: {e}") }
                 } else {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
-                    }
-                    send_guest_msg(control_fd, &GuestToHost::FileOpDone { id })
+                    GuestToHost::FileOpDone { id }
                 };
-                if let Err(e) = res {
-                    eprintln!("[capsem-agent] failed to send FileWrite response: {e}");
-                    break;
-                }
+                if ctrl_tx.send(msg).is_err() { break; }
             }
             Ok(HostToGuest::FileRead { id, path }) => {
                 eprintln!("[capsem-agent] FileRead {path}");
-                let res = if let Err(e) = validate_file_path(&path) {
-                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("FileRead rejected: {e}") })
+                let ws = std::path::Path::new(GUEST_WORKSPACE_ROOT);
+                let msg = if let Err(e) = validate_file_path_safe(&path, ws) {
+                    GuestToHost::Error { id, message: format!("FileRead rejected: {e}") }
                 } else {
-                    match std::fs::read(&path) {
-                        Ok(data) => send_guest_msg(control_fd, &GuestToHost::FileContent { id, path, data }),
-                        Err(e) => send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("failed to read {path}: {e}") }),
+                    match read_nofollow(&path) {
+                        Ok(data) => GuestToHost::FileContent { id, path, data },
+                        Err(e) => GuestToHost::Error { id, message: format!("failed to read {path}: {e}") },
                     }
                 };
-                if let Err(e) = res {
-                    eprintln!("[capsem-agent] failed to send FileRead response: {e}");
-                    break;
-                }
+                if ctrl_tx.send(msg).is_err() { break; }
             }
             Ok(HostToGuest::FileDelete { id, path }) => {
                 eprintln!("[capsem-agent] FileDelete {path}");
-                let res = if let Err(e) = validate_file_path(&path) {
-                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("FileDelete rejected: {e}") })
-                } else if let Err(e) = std::fs::remove_file(&path) {
-                    send_guest_msg(control_fd, &GuestToHost::Error { id, message: format!("failed to delete {path}: {e}") })
+                let ws = std::path::Path::new(GUEST_WORKSPACE_ROOT);
+                let msg = if let Err(e) = validate_file_path_safe(&path, ws) {
+                    GuestToHost::Error { id, message: format!("FileDelete rejected: {e}") }
+                } else if let Err(e) = delete_nofollow(&path) {
+                    GuestToHost::Error { id, message: format!("failed to delete {path}: {e}") }
                 } else {
-                    send_guest_msg(control_fd, &GuestToHost::FileOpDone { id })
+                    GuestToHost::FileOpDone { id }
                 };
-                if let Err(e) = res {
-                    eprintln!("[capsem-agent] failed to send FileDelete response: {e}");
-                    break;
-                }
+                if ctrl_tx.send(msg).is_err() { break; }
             }
             Ok(HostToGuest::PrepareSnapshot) => {
                 eprintln!("[capsem-agent] PrepareSnapshot: syncing and freezing /");
                 unsafe { libc::sync(); }
-                // Use spawn_blocking pattern for potential long-running sync/freeze
                 match std::process::Command::new("fsfreeze").args(["-f", "/"]).status() {
                     Ok(st) if st.success() => {
-                        if let Err(e) = send_guest_msg(control_fd, &GuestToHost::SnapshotReady) {
-                            eprintln!("[capsem-agent] failed to send SnapshotReady: {e}");
-                            break;
-                        }
+                        if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() { break; }
                     }
                     Ok(st) => {
                         eprintln!("[capsem-agent] fsfreeze -f failed: {}", st);
-                        let _ = send_guest_msg(control_fd, &GuestToHost::Error {
+                        let _ = ctrl_tx.send(GuestToHost::Error {
                             id: 0,
                             message: format!("fsfreeze -f failed: {st}"),
                         });
                     }
                     Err(e) => {
                         eprintln!("[capsem-agent] failed to execute fsfreeze: {e}");
-                        let _ = send_guest_msg(control_fd, &GuestToHost::Error {
+                        let _ = ctrl_tx.send(GuestToHost::Error {
                             id: 0,
                             message: format!("fsfreeze exec failed: {e}"),
                         });
@@ -1226,114 +1205,22 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Sentinel scanning
+    // Bridge loop concurrency
     // -----------------------------------------------------------------------
-
-    #[test]
-    fn sentinel_detected_in_single_chunk() {
-        let mut tail = Vec::new();
-        let data = b"some output\x1b_CAPSEM_EXIT:42:0\x1b\\more data";
-        let (forward, result) = scan_and_strip_sentinel(&mut tail, data);
-        assert_eq!(&forward, b"some output");
-        assert_eq!(result, Some((42, 0)));
-        assert_eq!(&tail, b"more data");
-    }
-
-    #[test]
-    fn sentinel_with_nonzero_exit_code() {
-        let mut tail = Vec::new();
-        let data = b"error output\x1b_CAPSEM_EXIT:7:127\x1b\\";
-        let (forward, result) = scan_and_strip_sentinel(&mut tail, data);
-        assert_eq!(&forward, b"error output");
-        assert_eq!(result, Some((7, 127)));
-    }
-
-    #[test]
-    fn sentinel_split_across_two_reads() {
-        let mut tail = Vec::new();
-        let (forward1, result1) = scan_and_strip_sentinel(
-            &mut tail,
-            b"output\x1b_CAPSEM_EX",
-        );
-        assert!(result1.is_none());
-        assert!(!forward1.is_empty());
-
-        let (forward2, result2) = scan_and_strip_sentinel(
-            &mut tail,
-            b"IT:42:0\x1b\\trailing",
-        );
-        assert_eq!(result2, Some((42, 0)));
-        let mut all_forwarded = forward1.clone();
-        all_forwarded.extend_from_slice(&forward2);
-        assert_eq!(&all_forwarded, b"output");
-        assert_eq!(&tail, b"trailing");
-    }
-
-    #[test]
-    fn no_sentinel_forwards_data() {
-        let mut tail = Vec::new();
-        let data = b"just normal terminal output here\n";
-        let (forward, result) = scan_and_strip_sentinel(&mut tail, data);
-        assert!(result.is_none());
-        assert!(!forward.is_empty());
-        assert!(forward.len() + tail.len() == data.len());
-    }
-
-    #[test]
-    fn sentinel_negative_exit_code() {
-        let mut tail = Vec::new();
-        let data = b"\x1b_CAPSEM_EXIT:1:-1\x1b\\";
-        let (forward, result) = scan_and_strip_sentinel(&mut tail, data);
-        assert!(forward.is_empty());
-        assert_eq!(result, Some((1, -1)));
-    }
-
-    #[test]
-    fn parse_sentinel_payload_valid() {
-        assert_eq!(parse_sentinel_payload(b"42:0"), Some((42, 0)));
-        assert_eq!(parse_sentinel_payload(b"1:127"), Some((1, 127)));
-        assert_eq!(parse_sentinel_payload(b"18446744073709551615:0"), Some((u64::MAX, 0)));
-    }
-
-    #[test]
-    fn parse_sentinel_payload_invalid() {
-        assert_eq!(parse_sentinel_payload(b""), None);
-        assert_eq!(parse_sentinel_payload(b"42"), None);
-        assert_eq!(parse_sentinel_payload(b"abc:0"), None);
-        assert_eq!(parse_sentinel_payload(b"42:abc"), None);
-    }
-
-    #[test]
-    fn find_subsequence_basic() {
-        assert_eq!(find_subsequence(b"hello world", b"world"), Some(6));
-        assert_eq!(find_subsequence(b"hello world", b"xyz"), None);
-        assert_eq!(find_subsequence(b"abc", b"abc"), Some(0));
-    }
 
     #[test]
     fn bridge_loop_concurrency_no_deadlock() {
         use std::os::unix::net::UnixStream;
         use std::os::unix::io::AsRawFd;
-        use std::sync::atomic::AtomicBool;
-        use std::sync::Arc;
-        use std::sync::mpsc;
-        use std::sync::Mutex;
 
         let (mut master_host, master_guest) = UnixStream::pair().unwrap();
         let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
 
-        let exec_state = Arc::new(ExecState {
-            active: AtomicBool::new(false),
-            current_id: Mutex::new(None),
-        });
-        let (exec_done_tx, _exec_done_rx) = mpsc::channel();
-
         let master_fd = master_guest.as_raw_fd();
         let vsock_fd = vsock_guest.as_raw_fd();
 
-        let exec_state_clone = Arc::clone(&exec_state);
         let _bridge_thread = std::thread::spawn(move || {
-            bridge_loop(master_fd, vsock_fd, &exec_state_clone, exec_done_tx);
+            bridge_loop(master_fd, vsock_fd);
         });
 
         // 1MB ensures internal buffers (usually 8KB) fill up, triggering backpressure
@@ -1378,6 +1265,190 @@ mod tests {
 
         assert_eq!(master_out, test_data);
         assert_eq!(vsock_out, test_data);
+    }
+
+    // -----------------------------------------------------------------------
+    // Exec over vsock
+    // -----------------------------------------------------------------------
+
+    /// Helper: read ExecStarted handshake from exec fd, return exec id.
+    fn read_exec_started(exec_host: &mut std::os::unix::net::UnixStream) -> u64 {
+        use std::io::Read;
+        let mut len_buf = [0u8; 4];
+        exec_host.read_exact(&mut len_buf).unwrap();
+        let frame_len = u32::from_be_bytes(len_buf) as usize;
+        let mut frame = vec![0u8; frame_len];
+        exec_host.read_exact(&mut frame).unwrap();
+        match capsem_proto::decode_guest_msg(&frame).unwrap() {
+            GuestToHost::ExecStarted { id } => id,
+            other => panic!("expected ExecStarted, got {other:?}"),
+        }
+    }
+
+    /// Helper: receive ExecDone from mpsc channel, return (id, exit_code).
+    fn recv_exec_done(rx: &std::sync::mpsc::Receiver<GuestToHost>) -> (u64, i32) {
+        match rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap() {
+            GuestToHost::ExecDone { id, exit_code } => (id, exit_code),
+            other => panic!("expected ExecDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_echo_captures_output_and_exit_code() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(exec_fd, &ctrl_tx, 42, "echo hello", &[]);
+        });
+
+        let id = read_exec_started(&mut exec_host);
+        assert_eq!(id, 42);
+
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+        assert_eq!(String::from_utf8_lossy(&output).trim(), "hello");
+
+        let (done_id, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(done_id, 42);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn exec_nonzero_exit_code() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(exec_fd, &ctrl_tx, 7, "exit 42", &[]);
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut _output = Vec::new();
+        exec_host.read_to_end(&mut _output).unwrap();
+
+        let (done_id, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(done_id, 7);
+        assert_eq!(exit_code, 42);
+    }
+
+    #[test]
+    fn exec_boot_env_passed_to_child() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        let env = vec![
+            ("CAPSEM_TEST_VAR".to_string(), "test_value_42".to_string()),
+        ];
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(exec_fd, &ctrl_tx, 1, "echo $CAPSEM_TEST_VAR", &env);
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+        assert_eq!(String::from_utf8_lossy(&output).trim(), "test_value_42");
+
+        let (_, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn exec_stderr_captured() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(exec_fd, &ctrl_tx, 3, "echo out; echo err >&2", &[]);
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+        let text = String::from_utf8_lossy(&output);
+        assert!(text.contains("out"), "stdout missing: {text}");
+        assert!(text.contains("err"), "stderr missing: {text}");
+
+        let (_, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn exec_sentinel_in_output_is_not_stripped() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(
+                exec_fd, &ctrl_tx, 99,
+                r#"printf '\033_CAPSEM_EXIT:999:0\033\\'"#,
+                &[],
+            );
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+        assert!(output.windows(14).any(|w| w == b"\x1b_CAPSEM_EXIT:"),
+            "sentinel sequence should pass through as plain output");
+
+        let (done_id, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(done_id, 99);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn exec_large_output_no_truncation() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(
+                exec_fd, &ctrl_tx, 5,
+                "dd if=/dev/zero bs=1024 count=100 2>/dev/null | base64",
+                &[],
+            );
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+        assert!(output.len() > 100_000, "output too small: {} bytes", output.len());
+
+        let (_, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(exit_code, 0);
     }
 
     // -----------------------------------------------------------------------
@@ -1465,5 +1536,74 @@ mod tests {
         let result = parse_boot_timing(path.to_str().unwrap());
         assert_eq!(result.len(), 32);
         std::fs::remove_file(&path).ok();
+    }
+
+    // -------------------------------------------------------------------
+    // O_NOFOLLOW file I/O helpers
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn write_nofollow_works_for_regular_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-write-nofollow");
+        write_nofollow(path.to_str().unwrap(), b"hello", 0o644).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_nofollow_works_for_regular_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-read-nofollow");
+        std::fs::write(&path, b"world").unwrap();
+        assert_eq!(read_nofollow(path.to_str().unwrap()).unwrap(), b"world");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_nofollow_rejects_symlink() {
+        let dir = std::env::temp_dir();
+        let target = dir.join("capsem-test-wn-target");
+        let link = dir.join("capsem-test-wn-link");
+        std::fs::write(&target, b"original").unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = write_nofollow(link.to_str().unwrap(), b"evil", 0o644);
+        assert!(err.is_err(), "write through symlink must fail");
+        // Target must be unchanged.
+        assert_eq!(std::fs::read(&target).unwrap(), b"original");
+        std::fs::remove_file(&target).ok();
+        std::fs::remove_file(&link).ok();
+    }
+
+    #[test]
+    fn read_nofollow_rejects_symlink() {
+        let dir = std::env::temp_dir();
+        let target = dir.join("capsem-test-rn-target");
+        let link = dir.join("capsem-test-rn-link");
+        std::fs::write(&target, b"secret").unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = read_nofollow(link.to_str().unwrap());
+        assert!(err.is_err(), "read through symlink must fail");
+        std::fs::remove_file(&target).ok();
+        std::fs::remove_file(&link).ok();
+    }
+
+    #[test]
+    fn delete_nofollow_rejects_symlink() {
+        let dir = std::env::temp_dir();
+        let target = dir.join("capsem-test-dn-target");
+        let link = dir.join("capsem-test-dn-link");
+        std::fs::write(&target, b"keep").unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = delete_nofollow(link.to_str().unwrap());
+        assert!(err.is_err(), "delete of symlink must fail");
+        // Both should still exist.
+        assert!(target.exists());
+        assert!(link.symlink_metadata().is_ok());
+        std::fs::remove_file(&target).ok();
+        std::fs::remove_file(&link).ok();
     }
 }
