@@ -11,6 +11,7 @@
 //! encode/decode function pairs.
 
 pub mod ipc;
+pub mod poll;
 
 use std::path::Path;
 

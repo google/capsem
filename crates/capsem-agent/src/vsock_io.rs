@@ -8,7 +8,6 @@
 
 use std::io;
 use std::os::unix::io::RawFd;
-use std::thread;
 use std::time::Duration;
 
 use nix::libc;
@@ -94,24 +93,26 @@ fn set_io_timeouts(fd: RawFd) {
 }
 
 /// Connect to a vsock port with exponential backoff retry and total timeout.
+///
+/// Uses the shared `RetryOpts` backoff (50ms initial, 500ms max, 30s timeout).
+/// Exits the process on timeout -- vsock is required for guest operation.
 pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    let mut delay_ms: u64 = 100;
-    loop {
-        match vsock_connect(cid, port) {
-            Ok(fd) => {
-                eprintln!("[capsem-agent] {label} connected (port {port})");
-                return fd;
-            }
-            Err(e) => {
-                if std::time::Instant::now() >= deadline {
-                    eprintln!("[capsem-agent] {label} connect timed out after 30s: {e}");
-                    std::process::exit(1);
-                }
-                eprintln!("[capsem-agent] {label} connect failed: {e}, retrying in {delay_ms}ms");
-                thread::sleep(Duration::from_millis(delay_ms));
-                delay_ms = (delay_ms * 2).min(2000);
-            }
+    use capsem_proto::poll::{RetryOpts, retry_with_backoff};
+
+    // Leak a &'static str for the label so RetryOpts can use it.
+    let static_label: &'static str = Box::leak(format!("vsock-{label}").into_boxed_str());
+
+    match retry_with_backoff(
+        &RetryOpts::new(static_label, Duration::from_secs(30)),
+        || vsock_connect(cid, port).ok(),
+    ) {
+        Ok(fd) => {
+            eprintln!("[capsem-agent] {label} connected (port {port})");
+            fd
+        }
+        Err(()) => {
+            eprintln!("[capsem-agent] {label} connect timed out after 30s");
+            std::process::exit(1);
         }
     }
 }
@@ -189,6 +190,7 @@ pub fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::io::IntoRawFd;
+    use std::thread;
     use std::os::unix::net::UnixStream;
 
     #[test]
@@ -317,15 +319,12 @@ mod tests {
     }
 
     #[test]
-    fn backoff_doubles_then_caps() {
-        // Verify the retry logic by checking the progression:
-        // 100 -> 200 -> 400 -> 800 -> 1600 -> 2000 (capped)
-        let mut delay_ms: u64 = 100;
-        let expected = [200, 400, 800, 1600, 2000, 2000];
-        for &exp in &expected {
-            delay_ms = (delay_ms * 2).min(2000);
-            assert_eq!(delay_ms, exp);
-        }
+    fn backoff_uses_proto_defaults() {
+        // vsock_connect_retry uses capsem_proto::poll::RetryOpts defaults.
+        // Verify they match expectations: 50ms initial, 500ms max.
+        let opts = capsem_proto::poll::RetryOpts::default();
+        assert_eq!(opts.initial_delay, Duration::from_millis(50));
+        assert_eq!(opts.max_delay, Duration::from_millis(500));
     }
 
     #[test]

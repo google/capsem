@@ -217,6 +217,7 @@ impl ServiceState {
                     let _ = std::fs::remove_dir_all(&info.session_dir);
                 }
                 let _ = std::fs::remove_file(&info.uds_path);
+                let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
             }
         }
     }
@@ -407,6 +408,7 @@ impl ServiceState {
             // handle_run, handle_purge) to avoid racing with telemetry reads.
             state_clone.instances.lock().unwrap().remove(&id_clone);
             let _ = std::fs::remove_file(&uds_clone);
+            let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
 
         if persistent {
@@ -543,6 +545,7 @@ impl ServiceState {
             // Persistent VMs: remove from instances but keep session dir.
             state_clone.instances.lock().unwrap().remove(&name_clone);
             let _ = std::fs::remove_file(&uds_clone);
+            let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
 
         let mut instances = self.instances.lock().unwrap();
@@ -918,21 +921,22 @@ async fn send_ipc_command(uds_path: &std::path::Path, cmd: ServiceToProcess, tim
     }
 }
 
-/// Wait until a VM's IPC socket exists and responds to a ping.
-/// Returns Ok(()) when the VM is ready, or Err after timeout.
+/// Wait until a VM signals readiness via a `.ready` sentinel file.
+/// The capsem-process creates this file once the guest handshake completes.
+/// Falls back to IPC Ping if the sentinel never appears (defensive).
 async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Result<(), String> {
-    let uds = uds_path.to_owned();
+    let ready_path = uds_path.with_extension("ready");
     capsem_core::poll::poll_until(
-        capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs)),
+        capsem_core::poll::PollOpts {
+            label: "vm-ready",
+            timeout: std::time::Duration::from_secs(timeout_secs),
+            initial_delay: std::time::Duration::from_millis(5),
+            max_delay: std::time::Duration::from_millis(50),
+        },
         || {
-            let uds = uds.clone();
+            let ready = ready_path.clone();
             async move {
-                if uds.exists() {
-                    if let Ok(ProcessToService::Pong) = send_ipc_command(&uds, ServiceToProcess::Ping, 5).await {
-                        return Some(());
-                    }
-                }
-                None
+                if ready.exists() { Some(()) } else { None }
             }
         },
     ).await.map_err(|()| format!("VM did not become ready within {timeout_secs}s"))
@@ -1136,6 +1140,7 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
     tokio::spawn(async move {
         wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
         let _ = std::fs::remove_file(&uds_path);
+        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     });
 
     Some((session_dir, persistent, pid))
@@ -1204,6 +1209,7 @@ async fn handle_suspend(
 
     state.instances.lock().unwrap().remove(&id);
     let _ = std::fs::remove_file(&uds_path);
+    let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
     // Update persistent registry
     {

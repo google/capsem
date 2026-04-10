@@ -15,7 +15,7 @@ use tokio::net::UnixListener;
 use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
 use tokio::sync::{broadcast, oneshot, mpsc};
 use std::os::unix::io::RawFd;
-use tracing::{info, error, warn};
+use tracing::{info, error, warn, debug};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 use std::io::{Read, Write};
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -738,6 +738,7 @@ async fn run_async_main_loop(
     let is_restore = args.checkpoint_path.is_some();
     let vm_for_vsock = Arc::clone(&vm);
     let vm_ready_vsock = Arc::clone(&vm_ready);
+    let uds_path_vsock = uds_path.clone();
     tokio::spawn(async move {
         if let Err(e) = setup_vsock(VsockOptions {
             vm_id: args.id.clone(),
@@ -756,6 +757,7 @@ async fn run_async_main_loop(
             net_state: net_state_clone,
             is_restore,
             vm_ready: vm_ready_vsock,
+            uds_path: uds_path_vsock,
         }).await {
             error!("vsock failed: {e:#}");
         }
@@ -854,6 +856,7 @@ struct VsockOptions {
     net_state: Arc<capsem_core::SandboxNetworkState>,
     is_restore: bool,
     vm_ready: Arc<AtomicBool>,
+    uds_path: PathBuf,
 }
 
 async fn setup_vsock(options: VsockOptions) -> Result<()> {
@@ -874,6 +877,7 @@ async fn setup_vsock(options: VsockOptions) -> Result<()> {
         net_state: _net_state,
         is_restore,
         vm_ready,
+        uds_path,
     } = options;
     let mut terminal_conn = None;
     let mut control_conn = None;
@@ -914,6 +918,12 @@ async fn setup_vsock(options: VsockOptions) -> Result<()> {
         trigger: "booted".into()
     });
     vm_ready.store(true, Ordering::Release);
+
+    // Signal readiness to service via sentinel file (avoids IPC polling).
+    let ready_path = uds_path.with_extension("ready");
+    if let Err(e) = std::fs::File::create(&ready_path) {
+        warn!("failed to create ready sentinel: {e}");
+    }
 
     let term_out = Arc::clone(&terminal_output);
     let mut term_f = clone_fd(terminal.fd)?;
@@ -1344,8 +1354,10 @@ async fn handle_ipc_connection(
                 ServiceToProcess::Ping => {
                     if vm_ready.load(Ordering::Acquire) {
                         let _ = ipc_tx_out.send(ProcessToService::Pong).await;
+                    } else {
+                        debug!("Ping received but VM not ready, closing connection");
+                        return Ok(());
                     }
-                    // Not ready yet: silently drop -- caller will retry
                 }
                 ServiceToProcess::TerminalInput { data } => { let _ = ctrl_tx.send(ServiceToProcess::TerminalInput { data }).await; }
                 ServiceToProcess::TerminalResize { cols, rows } => { let _ = ctrl_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await; }

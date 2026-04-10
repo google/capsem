@@ -19,10 +19,6 @@ use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, error};
 
-/// Initial timeout for UDS connect attempts (doubles on each retry).
-const CONNECT_INITIAL_TIMEOUT_MS: u64 = 100;
-/// Maximum number of connect-with-backoff retries.
-const CONNECT_MAX_RETRIES: u32 = 10;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -348,38 +344,44 @@ impl UdsClient {
     }
 
     /// Connect to the service socket with exponential backoff.
-    /// Starts at CONNECT_INITIAL_TIMEOUT_MS, doubles each retry, up to
-    /// CONNECT_MAX_RETRIES attempts. Fails immediately on ENOENT (socket
-    /// file doesn't exist).
+    /// Uses shared `PollOpts` backoff (50ms initial, 500ms max, 5s timeout).
+    /// Fails immediately on ENOENT or ConnectionRefused (non-retryable).
     async fn connect_with_timeout(&self) -> Result<UnixStream> {
-        let mut timeout = std::time::Duration::from_millis(CONNECT_INITIAL_TIMEOUT_MS);
-        for attempt in 0..CONNECT_MAX_RETRIES {
-            match tokio::time::timeout(timeout, UnixStream::connect(&self.uds_path)).await {
+        let opts = capsem_core::poll::PollOpts::new(
+            "service-connect",
+            std::time::Duration::from_secs(5),
+        );
+        let deadline = tokio::time::Instant::now() + opts.timeout;
+        let mut delay = opts.initial_delay;
+
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                UnixStream::connect(&self.uds_path),
+            ).await {
                 Ok(Ok(stream)) => return Ok(stream),
                 Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Err(anyhow::anyhow!(
-                        "service socket not found: {}",
-                        self.uds_path.display()
+                        "service socket not found: {}", self.uds_path.display()
                     ));
                 }
                 Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
                     return Err(anyhow::anyhow!(
-                        "service not listening at {}",
-                        self.uds_path.display()
+                        "service not listening at {}", self.uds_path.display()
                     ));
                 }
                 _ => {
-                    if attempt < CONNECT_MAX_RETRIES - 1 {
-                        timeout *= 2;
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(anyhow::anyhow!(
+                            "cannot connect to service at {} (timed out)",
+                            self.uds_path.display()
+                        ));
                     }
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(opts.max_delay);
                 }
             }
         }
-        Err(anyhow::anyhow!(
-            "cannot connect to service at {} after {} attempts",
-            self.uds_path.display(),
-            CONNECT_MAX_RETRIES
-        ))
     }
 
     /// Try to ensure the service is running. Tries service manager

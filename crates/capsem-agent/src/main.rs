@@ -31,9 +31,7 @@ use nix::unistd::{ForkResult, Pid, close, dup2, execvp, fork, setsid};
 use vsock_io::{VSOCK_HOST_CID, read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd};
 /// Boot log persisted so it can be inspected after boot (`cat /var/log/capsem-boot.log`).
 const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
-/// Reconnect backoff: initial delay (ms), max delay (ms), total timeout (s).
-const RECONNECT_INITIAL_DELAY_MS: u64 = 100;
-const RECONNECT_MAX_DELAY_MS: u64 = 5000;
+/// Reconnect timeout before giving up (seconds).
 const RECONNECT_TIMEOUT_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
@@ -373,39 +371,39 @@ fn main() {
             drop(blog); // flush and close boot log before loop
 
             let mut is_first = true;
-            let mut delay_ms = RECONNECT_INITIAL_DELAY_MS;
-            let mut start_reconnect = std::time::Instant::now();
             let mut t_fd = terminal_fd;
             let mut c_fd = control_fd;
 
             loop {
                 if !is_first {
-                    eprintln!("[capsem-agent] connection lost, reconnecting in {delay_ms}ms...");
-                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                    
-                    if start_reconnect.elapsed().as_secs() > RECONNECT_TIMEOUT_SECS {
-                        eprintln!("[capsem-agent] {}s reconnect timeout reached, exiting", RECONNECT_TIMEOUT_SECS);
-                        let _ = nix::sys::signal::kill(child, Signal::SIGHUP);
-                        process::exit(1);
-                    }
-                    delay_ms = (delay_ms * 2).min(RECONNECT_MAX_DELAY_MS);
+                    use capsem_proto::poll::{RetryOpts, retry_with_backoff};
 
-                    match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL) {
-                        Ok(fd) => t_fd = fd,
-                        Err(_) => continue,
-                    }
-                    match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_CONTROL) {
-                        Ok(fd) => c_fd = fd,
-                        Err(_) => {
-                            unsafe { libc::close(t_fd); }
-                            continue;
+                    let fds = retry_with_backoff(
+                        &RetryOpts::new("reconnect", std::time::Duration::from_secs(RECONNECT_TIMEOUT_SECS)),
+                        || {
+                            let t = vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL).ok()?;
+                            match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_CONTROL) {
+                                Ok(c) => Some((t, c)),
+                                Err(_) => { unsafe { libc::close(t); } None }
+                            }
+                        },
+                    );
+
+                    match fds {
+                        Ok((new_t, new_c)) => {
+                            t_fd = new_t;
+                            c_fd = new_c;
+                        }
+                        Err(()) => {
+                            eprintln!("[capsem-agent] {}s reconnect timeout reached, exiting", RECONNECT_TIMEOUT_SECS);
+                            let _ = nix::sys::signal::kill(child, Signal::SIGHUP);
+                            process::exit(1);
                         }
                     }
 
                     eprintln!("[capsem-agent] reconnected successfully");
-                    delay_ms = RECONNECT_INITIAL_DELAY_MS;
                     let _ = send_guest_msg(c_fd, &GuestToHost::Ready { version: env!("CARGO_PKG_VERSION").to_string() });
-                    
+
                     // Drain abbreviated handshake
                     loop {
                         match recv_host_msg(c_fd) {
@@ -418,14 +416,10 @@ fn main() {
                             Err(_) => break, // vsock broke again
                         }
                     }
-                    
+
                     // Unfreeze filesystem in case we were suspended
                     std::process::Command::new("fsfreeze").args(["-u", "/"]).status().ok();
                 }
-
-                // Reset reconnect timer after successful reconnect so future
-                // suspend/resume cycles get the full 30s budget.
-                start_reconnect = std::time::Instant::now();
 
                 // Send BootReady
                 if let Err(e) = send_guest_msg(c_fd, &GuestToHost::BootReady) {
