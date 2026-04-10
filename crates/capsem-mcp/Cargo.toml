@@ -22,3 +22,6 @@ hyper-util.workspace = true
 http-body-util.workspace = true
 bytes.workspace = true
 async-trait = "0.1.89"
+
+[lints]
+workspace = true

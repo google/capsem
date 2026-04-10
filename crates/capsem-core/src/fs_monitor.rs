@@ -1,9 +1,9 @@
 //! Host-based file monitor for VirtioFS overlay directories.
 //!
-//! Uses macOS FSEvents (via the `notify` crate) to watch the session's
+//! Uses a stat-based `PollWatcher` (via the `notify` crate) to watch the session's
 //! workspace directory on the host filesystem.
 //!
-//! Design: two-phase queue+flush. Raw events from FSEvents are pushed into
+//! Design: two-phase queue+flush. Raw events from the watcher are pushed into
 //! a bounded queue (no processing on the hot path). A timer fires every
 //! FLUSH_INTERVAL_MS to drain the queue, coalesce consecutive same-type
 //! events on the same path, and emit the results to the session DB.
@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, EventKind, RecursiveMode, Watcher};
+use notify::poll::PollWatcher;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -32,6 +33,10 @@ const EXCLUDED_DIRS: &[&str] = &[
 
 /// How often the queue is drained and events are emitted (ms).
 const FLUSH_INTERVAL_MS: u64 = 100;
+
+/// How often the PollWatcher rescans the directory tree (ms).
+/// Apple VZ VirtioFS writes bypass FSEvents, so we must poll.
+const POLL_INTERVAL_MS: u64 = 500;
 
 /// Maximum number of raw events buffered before dropping.
 const MAX_QUEUE_SIZE: usize = 10_000;
@@ -68,10 +73,12 @@ struct QueuedEvent {
 
 /// Host-side file system monitor.
 ///
-/// Watches the VirtioFS overlay's `upper/root/` directory using FSEvents
-/// and emits FileEvent records to the session database.
+/// Watches the VirtioFS workspace directory using stat-based polling.
+/// Apple VZ VirtioFS writes do not trigger macOS FSEvents, so we use
+/// `PollWatcher` (which compares mtime/size on each scan) instead of
+/// the native `FsEventWatcher`.
 pub struct FsMonitor {
-    _watcher: RecommendedWatcher,
+    _watcher: PollWatcher,
     shutdown_tx: mpsc::Sender<()>,
 }
 
@@ -88,14 +95,17 @@ impl FsMonitor {
         let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, _>| {
+        let config = Config::default()
+            .with_poll_interval(Duration::from_millis(POLL_INTERVAL_MS));
+        let mut watcher = PollWatcher::new(move |res: Result<Event, _>| {
             if let Ok(event) = res {
                 let _ = event_tx.blocking_send(event);
             }
-        })?;
+        }, config)?;
 
         watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
-        info!(dir = %watch_dir.display(), "host fs-monitor started");
+        info!(dir = %watch_dir.display(), poll_ms = POLL_INTERVAL_MS,
+              "host fs-monitor started (poll mode, FSEvents unreliable for VirtioFS)");
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -179,7 +189,7 @@ impl FsMonitor {
             *dropped = 0;
         }
 
-        let batch: Vec<QueuedEvent> = queue.drain(..).collect();
+        let batch = std::mem::take(queue);
         let raw_count = batch.len();
 
         // Coalesce: walk the batch in order. For each (path, action), if the

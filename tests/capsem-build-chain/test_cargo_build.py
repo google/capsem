@@ -1,6 +1,5 @@
 """Verify cargo build produces all expected daemon binaries."""
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -36,24 +35,21 @@ def test_binaries_nonzero_size(built_binaries):
         assert path.stat().st_size > 0, f"{name} is empty"
 
 
-def test_service_crates_have_no_warnings():
-    """capsem-service and capsem-process must compile with zero warnings.
+def test_workspace_has_no_warnings():
+    """All workspace crates must compile with zero warnings.
 
-    Compiler warnings in these crates have historically masked broken code
-    (unused imports, dead fields, unconstructed response types) that caused
-    runtime failures while unit tests passed.
+    Compiler warnings have historically masked broken code (unused imports,
+    dead fields, unconstructed response types) that caused runtime failures
+    while unit tests passed. Workspace lints deny warnings via Cargo.toml.
     """
-    env = os.environ.copy()
-    env["RUSTFLAGS"] = "-D warnings"
     result = subprocess.run(
-        ["cargo", "build", "-p", "capsem-service", "-p", "capsem-process"],
+        ["cargo", "check", "--workspace"],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
-        env=env,
         timeout=300,
     )
     assert result.returncode == 0, (
-        "Service crates have compiler warnings (treated as errors):\n"
+        "Workspace crates have compiler warnings (treated as errors):\n"
         f"{result.stderr}"
     )

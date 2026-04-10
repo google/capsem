@@ -1232,7 +1232,22 @@ async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::Exec { id, command } => { let _ = ctrl_cmd_tx.send(HostToGuest::Exec { id, command }); }
                 ServiceToProcess::WriteFile { id, path, data } => { let _ = ctrl_cmd_tx.send(HostToGuest::FileWrite { id, path, data, mode: 0o644 }); }
                 ServiceToProcess::ReadFile { id, path } => { let _ = ctrl_cmd_tx.send(HostToGuest::FileRead { id, path }); }
-                ServiceToProcess::Shutdown => { let _ = ctrl_cmd_tx.send(HostToGuest::Shutdown); }
+                ServiceToProcess::Shutdown => {
+                    let _ = ctrl_cmd_tx.send(HostToGuest::Shutdown);
+                    // Give the guest agent SHUTDOWN_GRACE_SECS + margin for kernel
+                    // teardown, then force-stop the VM and exit. Without this,
+                    // CFRunLoopRun keeps the process alive indefinitely.
+                    let vm_clone = Arc::clone(&vm_for_cmd);
+                    let rt = tokio::runtime::Handle::current();
+                    rt.spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            (capsem_proto::SHUTDOWN_GRACE_SECS * 1000) + 500
+                        )).await;
+                        let v = vm_clone.lock().await;
+                        let _ = v.stop();
+                        std::process::exit(0);
+                    });
+                }
                 ServiceToProcess::Ping => { let _ = ctrl_cmd_tx.send(HostToGuest::Ping); }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     info!("Suspend requested, pausing VM...");

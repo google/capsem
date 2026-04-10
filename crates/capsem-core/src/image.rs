@@ -114,6 +114,10 @@ impl ImageRegistry {
     }
 
     pub fn image_dir(&self, name: &str) -> PathBuf {
+        assert!(
+            !name.contains('/') && !name.contains('\\') && !name.contains(".."),
+            "image_dir path escape: {name}"
+        );
         self.images_dir.join(name)
     }
 
@@ -158,6 +162,17 @@ pub fn create_image_from_session(
     let sys_dst = dst_dir.join("system");
     let ws_dst = dst_dir.join("workspace");
 
+    // Flush the host page cache for rootfs.img before cloning.
+    // Guest writes arrive via VirtioFS and land in the macOS page cache.
+    // Without fsync, clonefile() captures stale APFS data, missing
+    // recently written overlay changes (e.g. installed packages).
+    let rootfs_path = sys_src.join("rootfs.img");
+    if rootfs_path.exists() {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&rootfs_path) {
+            f.sync_all().context("failed to fsync rootfs.img before fork")?;
+        }
+    }
+
     if sys_src.exists() {
         crate::auto_snapshot::clone_directory(&sys_src, &sys_dst)
             .context("failed to clone system dir")?;
@@ -193,7 +208,8 @@ pub fn create_image_from_session(
 }
 
 /// Create a new session directory by cloning an image's workspace and system layers.
-/// Leaves telemetry and logs empty for a fresh start.
+/// Data is placed under `guest/` so the VM can see it via VirtioFS, with compat
+/// symlinks at the session root. Leaves telemetry and logs empty for a fresh start.
 pub fn create_session_from_image(
     registry: &ImageRegistry,
     image_name: &str,
@@ -204,12 +220,15 @@ pub fn create_session_from_image(
         anyhow::bail!("Image directory not found for {}", image_name);
     }
 
-    std::fs::create_dir_all(session_dir)?;
+    // Clone into guest/ subdirectories matching VirtioFS share layout.
+    // The VM only sees session_dir/guest/ via VirtioFS, so data must live there.
+    let guest_dir = session_dir.join("guest");
+    std::fs::create_dir_all(&guest_dir)?;
 
     let sys_src = img_dir.join("system");
     let ws_src = img_dir.join("workspace");
-    let sys_dst = session_dir.join("system");
-    let ws_dst = session_dir.join("workspace");
+    let sys_dst = guest_dir.join("system");
+    let ws_dst = guest_dir.join("workspace");
 
     if sys_src.exists() {
         crate::auto_snapshot::clone_directory(&sys_src, &sys_dst)
@@ -220,7 +239,17 @@ pub fn create_session_from_image(
             .context("failed to clone workspace dir to session")?;
     }
 
-    // Restore session.db if present in the image
+    // Compat symlinks so code using session_dir/system still works
+    for name in &["system", "workspace"] {
+        let link = session_dir.join(name);
+        let target = std::path::Path::new("guest").join(name);
+        if !link.exists() {
+            std::os::unix::fs::symlink(&target, &link)
+                .with_context(|| format!("failed to create compat symlink for {name}"))?;
+        }
+    }
+
+    // Restore session.db at session root (host-only, not in guest/)
     let db_src = img_dir.join("session.db");
     if db_src.exists() {
         let db_dst = session_dir.join("session.db");
@@ -340,11 +369,12 @@ mod tests {
     fn image_creation_and_session_restore() {
         let dir = tempdir().unwrap();
         let reg = ImageRegistry::new(dir.path());
-        
+
         let session_dir = dir.path().join("mock-session");
         std::fs::create_dir_all(session_dir.join("system")).unwrap();
         std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
         std::fs::write(session_dir.join("system/rootfs.img"), "fake img").unwrap();
+        std::fs::write(session_dir.join("workspace/user_file.txt"), "user data").unwrap();
         std::fs::write(session_dir.join("session.db"), "fake db").unwrap();
         std::fs::write(session_dir.join("serial.log"), "fake logs").unwrap();
 
@@ -360,22 +390,39 @@ mod tests {
 
         assert_eq!(entry.name, "my-fork");
         assert_eq!(entry.description.as_deref(), Some("My fork desc"));
-        
+
         let img_dir = reg.image_dir("my-fork");
         assert!(img_dir.join("system/rootfs.img").exists());
-        assert!(img_dir.join("workspace").exists());
-        
+        assert!(img_dir.join("workspace/user_file.txt").exists());
+
         // session.db must be cloned as requested by user
         assert!(img_dir.join("session.db").exists(), "session.db should be cloned");
         // serial.log should NOT be cloned (keep it clean)
         assert!(!img_dir.join("serial.log").exists(), "serial.log should NOT be cloned");
 
+        // Restore session from image
         let new_session = dir.path().join("new-session");
         create_session_from_image(&reg, "my-fork", &new_session).unwrap();
-        
-        assert!(new_session.join("system/rootfs.img").exists());
-        assert!(new_session.join("workspace").exists());
-        assert!(new_session.join("session.db").exists(), "session.db should be restored in new session");
+
+        // Data must land under guest/ for VirtioFS visibility
+        assert!(new_session.join("guest/system/rootfs.img").exists(),
+            "rootfs.img must be under guest/system/");
+        assert_eq!(
+            std::fs::read_to_string(new_session.join("guest/workspace/user_file.txt")).unwrap(),
+            "user data",
+            "workspace files must be under guest/workspace/"
+        );
+
+        // Compat symlinks at session root must resolve to guest/ dirs
+        assert!(new_session.join("system").is_symlink(), "system should be a symlink");
+        assert!(new_session.join("workspace").is_symlink(), "workspace should be a symlink");
+        assert!(new_session.join("system/rootfs.img").exists(),
+            "system symlink must resolve to guest/system/rootfs.img");
+        assert!(new_session.join("workspace/user_file.txt").exists(),
+            "workspace symlink must resolve to guest/workspace/user_file.txt");
+
+        // session.db restored at session root (host-only)
+        assert!(new_session.join("session.db").exists(), "session.db should be restored");
     }
 
     #[test]
@@ -420,5 +467,13 @@ mod tests {
 
         let entries = reg.list().unwrap();
         assert_eq!(entries.len(), 8, "all concurrent inserts should survive");
+    }
+
+    #[test]
+    #[should_panic(expected = "image_dir path escape")]
+    fn image_dir_rejects_path_traversal() {
+        let dir = tempdir().unwrap();
+        let reg = ImageRegistry::new(dir.path());
+        let _ = reg.image_dir("../../etc");
     }
 }

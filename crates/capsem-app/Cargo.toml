@@ -32,6 +32,9 @@ objc2-virtualization = { workspace = true }
 objc2-foundation = { workspace = true }
 objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSView"] }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tempfile = "3"
 

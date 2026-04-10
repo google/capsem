@@ -697,7 +697,7 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
         }
         // clonefile not supported (cross-volume, non-APFS) -- fall back to byte copy.
         std::fs::copy(src, dst)?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(target_os = "linux")]
     {

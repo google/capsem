@@ -89,11 +89,6 @@ impl VmHandle for AppleVzHandle {
         self.machine.save_state(path)
     }
 
-    #[cfg(target_os = "macos")]
-    fn restore_state(&self, path: &std::path::Path) -> Result<()> {
-        self.machine.restore_state(path)
-    }
-
     fn supports_checkpoint(&self) -> bool {
         self.machine.supports_checkpoint()
     }

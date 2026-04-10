@@ -351,7 +351,13 @@ def verify_session(session_id: str) -> bool:
         for line in vm_log_lines:
             try:
                 entry = json.loads(line)
-                if all(k in entry for k in ("timestamp", "level", "target", "message")):
+                # tracing-subscriber's JSON formatter puts 'message' inside 'fields'.
+                # TauriLogLayer puts it at top level. Support both.
+                msg = entry.get("message")
+                if msg is None and "fields" in entry:
+                    msg = entry["fields"].get("message")
+
+                if all(k in entry for k in ("timestamp", "level", "target")) and msg is not None:
                     valid_json += 1
             except json.JSONDecodeError:
                 pass

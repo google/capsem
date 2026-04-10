@@ -26,10 +26,8 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
+use capsem_proto::VSOCK_PORT_SNI_PROXY;
 use vsock_io::{VSOCK_HOST_CID, vsock_connect};
-
-/// vsock port for SNI proxy on the host.
-const VSOCK_PORT_SNI_PROXY: u32 = 5002;
 
 /// TCP port to listen on for HTTPS traffic (iptables REDIRECT target).
 const LISTEN_PORT_HTTPS: u16 = 10443;

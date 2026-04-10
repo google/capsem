@@ -69,7 +69,7 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
         }
     };
 
-    let req = format!("ws://localhost/terminal");
+    let req = "ws://localhost/terminal".to_string();
     let (process_ws, _) = match client_async(&req, stream).await {
         Ok(res) => res,
         Err(e) => {

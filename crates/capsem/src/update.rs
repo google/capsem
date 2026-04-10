@@ -1,6 +1,6 @@
 //! Self-update: check GitHub, download new binaries + assets, restart service.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -190,7 +190,7 @@ pub async fn run_update(yes: bool) -> Result<()> {
             am.download_asset(filename, &client, move |p| {
                 if p.total_bytes > 0 {
                     let pct = (p.bytes_downloaded as f64 / p.total_bytes as f64 * 100.0) as u32;
-                    if pct % 25 == 0 {
+                    if pct.is_multiple_of(25) {
                         eprint!("\r  {} {}%", fname, pct);
                     }
                 }

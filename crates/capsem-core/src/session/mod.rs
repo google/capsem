@@ -440,10 +440,10 @@ mod tests {
         // Must complete in under 1 second (was infinite before fix).
         assert!(elapsed < std::time::Duration::from_secs(1),
             "disk_usage_bytes hung on symlink loop: {elapsed:?}");
-        // Should only count the real file once, not follow the loop.
-        assert!(usage >= 1024, "usage={usage} -- should count the real file");
-        // Should NOT double-count via the symlink.
-        assert!(usage < 4096, "usage={usage} -- double-counted through symlink loop");
+        // Should count the real file once (1024 bytes -> 1 FS block = 4096 on disk).
+        assert!(usage >= 4096, "usage={usage} -- should count the real file");
+        // Should NOT double-count via the symlink (2 blocks = 8192).
+        assert!(usage < 8192, "usage={usage} -- double-counted through symlink loop");
     }
 
     /// Absolute symlinks pointing outside the session dir must not be followed.
@@ -494,6 +494,26 @@ mod tests {
             assert!(usage < target_size,
                 "usage={usage} target_size={target_size} -- followed symlink to python3 binary");
         }
+    }
+
+    /// Sparse files must report actual allocated blocks, not logical size.
+    /// A 2GB sparse rootfs.img with no writes should be near-zero on disk.
+    #[test]
+    fn disk_usage_bytes_sparse_file_reports_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("20260409-sparse");
+        std::fs::create_dir_all(&session).unwrap();
+
+        // Create a 2GB sparse file (zero actual blocks)
+        let img = session.join("rootfs.img");
+        let f = std::fs::File::create(&img).unwrap();
+        f.set_len(2 * 1024 * 1024 * 1024).unwrap();
+
+        let usage = disk_usage_bytes(dir.path());
+        // Logical size is 2GB but actual disk usage should be near zero.
+        // Allow up to 64KB for filesystem metadata overhead.
+        assert!(usage < 65_536,
+            "usage={usage} -- sparse 2GB file should report near-zero actual blocks, not logical size");
     }
 
     // -- epoch_to_iso --

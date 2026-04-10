@@ -1,19 +1,12 @@
 //! Platform-agnostic vsock utilities: output coalescing and port constants.
 
-// Re-export protocol types from capsem-proto.
+// Re-export protocol types and port constants from capsem-proto.
 pub use capsem_proto::{
     GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_guest_msg, decode_host_msg, encode_guest_msg,
     encode_host_msg, max_frame_size,
+    VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY,
+    VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_EXEC,
 };
-
-/// vsock port for structured control messages (resize, heartbeat).
-pub const VSOCK_PORT_CONTROL: u32 = 5000;
-/// vsock port for raw PTY byte streaming (stdin/stdout).
-pub const VSOCK_PORT_TERMINAL: u32 = 5001;
-/// vsock port for SNI proxy (HTTPS/HTTP traffic from guest).
-pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
-/// vsock port for MCP gateway (MCP tool calls from guest).
-pub const VSOCK_PORT_MCP_GATEWAY: u32 = 5003;
 
 // ---------------------------------------------------------------------------
 // Output coalescing buffer

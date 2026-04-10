@@ -60,6 +60,9 @@ block2 = { workspace = true }
 dispatch2 = { workspace = true }
 core-foundation-sys = "0.8"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tempfile = "3"
 dotenvy = "0.15"

@@ -8,7 +8,7 @@ use objc2_virtualization::{
     VZVirtioSocketListenerDelegate,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::hypervisor::VsockConnection;
 
@@ -45,7 +45,7 @@ define_class!(
         ) -> Bool {
             let fd = unsafe { connection.fileDescriptor() };
             let port = unsafe { connection.destinationPort() };
-            debug!(fd, port, "vsock: incoming connection");
+            info!(fd, port, "vsock: accepted connection");
 
             if fd < 0 {
                 warn!("vsock: connection has invalid fd (-1), rejecting");
@@ -73,6 +73,12 @@ impl VsockListenerDelegate {
     }
 }
 
+pub type VsockListeners = (
+    mpsc::UnboundedReceiver<VsockConnection>,
+    Retained<VsockListenerDelegate>,
+    Vec<Retained<VZVirtioSocketListener>>,
+);
+
 /// Set up vsock listeners on the VM's socket devices.
 ///
 /// Returns an unbounded receiver that delivers accepted connections.
@@ -81,11 +87,7 @@ impl VsockListenerDelegate {
 pub fn setup_vsock_listeners(
     socket_devices: &NSArray<VZSocketDevice>,
     ports: &[u32],
-) -> Result<(
-    mpsc::UnboundedReceiver<VsockConnection>,
-    Retained<VsockListenerDelegate>,
-    Vec<Retained<VZVirtioSocketListener>>,
-)> {
+) -> Result<VsockListeners> {
     let device_count = socket_devices.count();
     if device_count == 0 {
         anyhow::bail!("no socket devices configured on VM");

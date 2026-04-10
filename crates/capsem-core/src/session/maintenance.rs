@@ -46,10 +46,12 @@ pub fn vacuum_and_compress_session_db(session_dir: &Path) -> anyhow::Result<u64>
     Ok(compressed_size)
 }
 
-/// Calculate total disk usage in bytes for all session directories under the given base path.
+/// Calculate total actual disk usage in bytes for all entries under the given base path.
 ///
-/// Uses `symlink_metadata` to avoid following symlinks, which prevents infinite
-/// recursion from symlink loops (e.g. `.venv/lib64 -> lib`).
+/// Uses `symlink_metadata` to avoid following symlinks (prevents infinite recursion
+/// from symlink loops). Reports actual allocated blocks (`blocks * 512`) instead of
+/// logical file size, so sparse files (e.g. a 2GB rootfs.img overlay with 9MB of
+/// actual changes) report their true disk footprint.
 pub fn disk_usage_bytes(sessions_base: &Path) -> u64 {
     let entries = match std::fs::read_dir(sessions_base) {
         Ok(e) => e,
@@ -65,7 +67,7 @@ pub fn disk_usage_bytes(sessions_base: &Path) -> u64 {
         if meta.is_dir() {
             total += dir_size(&path);
         } else {
-            total += meta.len();
+            total += file_disk_usage(&meta);
         }
     }
     total
@@ -86,10 +88,23 @@ fn dir_size(path: &Path) -> u64 {
         if meta.is_dir() {
             total += dir_size(&p);
         } else {
-            total += meta.len();
+            total += file_disk_usage(&meta);
         }
     }
     total
+}
+
+/// Actual disk usage for a file: allocated blocks * 512 bytes.
+/// Sparse files report only the blocks actually written to disk.
+#[cfg(unix)]
+fn file_disk_usage(meta: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.blocks() * 512
+}
+
+#[cfg(not(unix))]
+fn file_disk_usage(meta: &std::fs::Metadata) -> u64 {
+    meta.len()
 }
 
 #[cfg(test)]

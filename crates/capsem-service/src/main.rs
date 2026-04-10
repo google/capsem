@@ -71,7 +71,13 @@ impl PersistentRegistry {
 
     fn save(&self) -> Result<()> {
         let json = serde_json::to_string_pretty(&self.data)?;
-        std::fs::write(&self.path, json)?;
+        // Atomic write: write to temp file, fsync, then rename.
+        // Prevents torn writes on crash from losing all persistent VM state.
+        let tmp_path = self.path.with_extension("json.tmp");
+        let mut f = std::fs::File::create(&tmp_path)?;
+        std::io::Write::write_all(&mut f, json.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp_path, &self.path)?;
         Ok(())
     }
 
@@ -118,6 +124,21 @@ fn validate_vm_name(name: &str) -> Result<()> {
     }
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err(anyhow!("VM name must contain only letters, digits, hyphens, and underscores"));
+    }
+    Ok(())
+}
+
+/// Validate an image name. Same rules as VM names -- alphanumeric, hyphens,
+/// underscores only. Prevents path traversal (../../etc) in image operations.
+fn validate_image_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty() || name.len() > 64 {
+        return Err(AppError(StatusCode::BAD_REQUEST, "image name must be 1-64 characters".into()));
+    }
+    if !name.chars().next().unwrap().is_ascii_alphanumeric() {
+        return Err(AppError(StatusCode::BAD_REQUEST, "image name must start with a letter or digit".into()));
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(AppError(StatusCode::BAD_REQUEST, "image name must contain only letters, digits, hyphens, and underscores".into()));
     }
     Ok(())
 }
@@ -367,12 +388,16 @@ impl ServiceState {
                         info!(id_clone, "Checkpoint file found, marking VM as suspended");
                         entry.suspended = true;
                         entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
-                        let _ = registry.save();
+                        if let Err(e) = registry.save() {
+                            error!(id_clone, "failed to save persistent registry: {e}");
+                        }
                     } else {
                         // Ensure it's not stuck in a suspended state if it crashed or was stopped manually
                         entry.suspended = false;
                         entry.checkpoint_path = None;
-                        let _ = registry.save();
+                        if let Err(e) = registry.save() {
+                            error!(id_clone, "failed to save persistent registry: {e}");
+                        }
                     }
                 }
             }
@@ -541,7 +566,9 @@ impl ServiceState {
             if let Some(reg_entry) = registry.get_mut(name) {
                 reg_entry.suspended = false;
                 reg_entry.checkpoint_path = None;
-                let _ = registry.save();
+                if let Err(e) = registry.save() {
+                    error!(name, "failed to save persistent registry: {e}");
+                }
             }
         }
 
@@ -595,35 +622,35 @@ async fn handle_fork(
     Path(id): Path<String>,
     Json(payload): Json<ForkRequest>,
 ) -> Result<Json<ForkResponse>, AppError> {
-    state.cleanup_stale_instances();
+    validate_image_name(&payload.name)?;
 
-    let session_dir = {
-        // Find in running instances or persistent registry
-        if let Some(i) = state.instances.lock().unwrap().get(&id) {
-            i.session_dir.clone()
-        } else if let Some(p) = state.persistent_registry.lock().unwrap().get(&id) {
-            p.session_dir.clone()
+    let (session_dir, base_version, parent_image, uds_path) = {
+        let instances = state.instances.lock().unwrap();
+        if let Some(i) = instances.get(&id) {
+            (i.session_dir.clone(), i.base_version.clone(), i.source_image.clone(), Some(i.uds_path.clone()))
         } else {
-            return Err(AppError(StatusCode::NOT_FOUND, format!("source sandbox not found: {}", id)));
+            drop(instances);
+            let registry = state.persistent_registry.lock().unwrap();
+            if let Some(p) = registry.get(&id) {
+                (p.session_dir.clone(), p.base_version.clone(), p.source_image.clone(), None)
+            } else {
+                return Err(AppError(StatusCode::NOT_FOUND, format!("source sandbox not found: {}", id)));
+            }
         }
     };
 
-    let base_version = {
-        if let Some(i) = state.instances.lock().unwrap().get(&id) {
-            i.base_version.clone()
-        } else if let Some(p) = state.persistent_registry.lock().unwrap().get(&id) {
-            p.base_version.clone()
-        } else {
-            state.current_version.clone()
+    // Freeze + thaw the guest root filesystem so the ext4 loopback overlay
+    // (rootfs.img) is fully flushed through VirtioFS to the host file.
+    // Plain `sync` is not enough -- fsfreeze forces the filesystem and VirtioFS
+    // write-back caches to drain completely.
+    if let Some(ref uds) = uds_path {
+        let freeze_id = state.next_job_id();
+        if let Err(e) = send_ipc_command(uds, ServiceToProcess::Exec {
+            id: freeze_id, command: "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true".to_string(),
+        }, 10).await {
+            tracing::warn!("pre-fork fsfreeze failed (non-fatal): {e}");
         }
-    };
-
-    let parent_image = {
-        // If the source VM was booted from an image, propagate it if possible
-        // We don't currently track source_image in InstanceInfo/PersistentVmEntry, 
-        // so we'll leave it None for now. It can be added later.
-        None
-    };
+    }
 
     let entry = match capsem_core::image::create_image_from_session(
         &state.image_registry,
@@ -674,6 +701,7 @@ async fn handle_image_inspect(
     State(state): State<Arc<ServiceState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ImageInfo>, AppError> {
+    validate_image_name(&name)?;
     let entry = state.image_registry.get(&name)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to query image: {e}")))?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("image not found: {}", name)))?;
@@ -693,6 +721,7 @@ async fn handle_image_delete(
     State(state): State<Arc<ServiceState>>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    validate_image_name(&name)?;
     let removed = state.image_registry.remove(&name)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to delete image: {e}")))?;
 
@@ -736,8 +765,6 @@ async fn handle_provision(
 async fn handle_list(
     State(state): State<Arc<ServiceState>>,
 ) -> Json<ListResponse> {
-    state.cleanup_stale_instances();
-
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
     // Running instances
@@ -789,8 +816,6 @@ async fn handle_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxInfo>, AppError> {
-    state.cleanup_stale_instances();
-
     // Check running instances first
     {
         let instances = state.instances.lock().unwrap();
@@ -855,7 +880,7 @@ async fn handle_logs(
     }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
 
     Ok(Json(LogsResponse {
-        logs: serial_logs.clone().unwrap_or_default(),
+        logs: serial_logs.as_deref().unwrap_or("").to_string(),
         serial_logs,
         process_logs,
     }))
@@ -934,8 +959,8 @@ async fn handle_exec(
     match res {
         ProcessToService::ExecResult { stdout, stderr, exit_code, .. } => {
             Ok(Json(ExecResponse {
-                stdout: String::from_utf8_lossy(&stdout).to_string(),
-                stderr: String::from_utf8_lossy(&stderr).to_string(),
+                stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+                stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
                 exit_code,
             }))
         }
@@ -993,7 +1018,7 @@ async fn handle_read_file(
     match res {
         ProcessToService::ReadFileResult { data, error, .. } => {
             if let Some(d) = data {
-                Ok(Json(ReadFileResponse { content: String::from_utf8_lossy(&d).to_string() }))
+                Ok(Json(ReadFileResponse { content: String::from_utf8(d).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()) }))
             } else {
                 Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error.unwrap_or_else(|| "unknown read error".into())))
             }
@@ -1005,24 +1030,24 @@ async fn handle_read_file(
 async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.cleanup_stale_instances();
-    
     // Collect paths to broadcast to.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
         instances.iter().map(|(id, info)| (id.clone(), info.uds_path.clone())).collect::<Vec<_>>()
     };
     
-    let mut failures = Vec::new();
-    
-    for (id, uds_path) in uds_paths.iter() {
-        match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, 5).await {
-            Ok(ProcessToService::Pong) => {} // Expected response
-            Ok(_) => failures.push(format!("{id}: unexpected response")),
-            Err(e) => failures.push(format!("{id}: {e}")),
+    let results = futures::future::join_all(uds_paths.iter().map(|(id, uds_path)| {
+        let id = id.clone();
+        async move {
+            match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, 5).await {
+                Ok(ProcessToService::Pong) => None,
+                Ok(_) => Some(format!("{id}: unexpected response")),
+                Err(e) => Some(format!("{id}: {e}")),
+            }
         }
-    }
-    
+    })).await;
+    let failures: Vec<String> = results.into_iter().flatten().collect();
+
     if failures.is_empty() {
         Ok(Json(serde_json::json!({ "success": true, "reloaded": uds_paths.len() })))
     } else {
@@ -1057,14 +1082,41 @@ async fn handle_inspect(
     ))
 }
 
-/// Shutdown a running VM process by ID. Returns (session_dir, persistent) if found.
-async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf, bool)> {
+/// Wait for a process to exit, force-killing after timeout.
+async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
+    if pid == 0 {
+        return;
+    }
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
+///
+/// Sends the shutdown signal and removes the instance from the registry
+/// immediately, then spawns a background task to wait for process exit and
+/// force-kill if needed. Callers do not block on process teardown.
+///
+/// Callers that need the session DB (e.g. handle_run telemetry rollup) can
+/// use the returned pid with `wait_for_process_exit` before reading.
+async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf, bool, u32)> {
     let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(id)?;
         (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent)
     };
 
+    // Send shutdown command via IPC (or SIGTERM as fallback).
     let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
     if let Ok(stream) = stream_res {
         if let Ok(std_stream) = stream.into_std() {
@@ -1076,17 +1128,17 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
         let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
     }
 
-    // Give the agent time for sync + SIGTERM bash + 2s cleanup.
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-    if pid > 0 {
-        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
-    }
-
+    // Remove from active instances immediately so the service considers this
+    // VM gone. The spawned child-exit handler may also call remove (idempotent).
     state.instances.lock().unwrap().remove(id);
-    let _ = std::fs::remove_file(&uds_path);
 
-    Some((session_dir, persistent))
+    // Background: wait for process exit, force-kill if stuck, clean up socket.
+    tokio::spawn(async move {
+        wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
+        let _ = std::fs::remove_file(&uds_path);
+    });
+
+    Some((session_dir, persistent, pid))
 }
 
 async fn handle_suspend(
@@ -1136,11 +1188,18 @@ async fn handle_suspend(
         ));
     }
 
-    // Wait a little more for process exit
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-    if pid > 0 {
-        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+    // Poll for process exit (up to 500ms) instead of unconditional sleep.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+    loop {
+        if pid == 0 || unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
     state.instances.lock().unwrap().remove(&id);
@@ -1152,7 +1211,9 @@ async fn handle_suspend(
         if let Some(entry) = registry.get_mut(&id) {
             entry.suspended = true;
             entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
-            let _ = registry.save();
+            if let Err(e) = registry.save() {
+                error!(id, "failed to save persistent registry: {e}");
+            }
         }
     }
 
@@ -1163,10 +1224,10 @@ async fn handle_stop(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if let Some((session_dir, persistent)) = shutdown_vm_process(&state, &id).await {
+    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id).await {
         if !persistent {
-            // Ephemeral VMs: destroy session dir on stop
-            let _ = std::fs::remove_dir_all(&session_dir);
+            let dir = session_dir;
+            tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
         }
         Ok(Json(json!({ "success": true, "persistent": persistent })))
     } else {
@@ -1179,7 +1240,7 @@ async fn handle_delete(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Try to shut down if running
-    let session_dir = if let Some((session_dir, _)) = shutdown_vm_process(&state, &id).await {
+    let session_dir = if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id).await {
         session_dir
     } else {
         // Not running -- check persistent registry for stopped VM
@@ -1200,7 +1261,7 @@ async fn handle_delete(
     }
 
     // Always destroy session dir on delete
-    let _ = std::fs::remove_dir_all(&session_dir);
+    tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&session_dir); });
 
     Ok(Json(json!({ "success": true })))
 }
@@ -1235,18 +1296,13 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, ram_mb, cpus, base_version) = {
+    let (old_session_dir, ram_mb, cpus, base_version, source_image) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         if i.persistent {
             return Err(AppError(StatusCode::BAD_REQUEST, format!("VM \"{}\" is already persistent", id)));
         }
-        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone())
-    };
-
-    let source_image = {
-        let instances = state.instances.lock().unwrap();
-        instances.get(&id).and_then(|i| i.source_image.clone())
+        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), i.source_image.clone())
     };
 
     // Move session dir to persistent location
@@ -1298,8 +1354,6 @@ async fn handle_purge(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<PurgeRequest>,
 ) -> Result<Json<PurgeResponse>, AppError> {
-    state.cleanup_stale_instances();
-
     let mut ephemeral_purged: u32 = 0;
     let mut persistent_purged: u32 = 0;
 
@@ -1312,15 +1366,28 @@ async fn handle_purge(
             .collect()
     };
 
-    for (id, persistent) in &to_purge {
-        if let Some((session_dir, _)) = shutdown_vm_process(&state, id).await {
-            if *persistent {
-                let mut registry = state.persistent_registry.lock().unwrap();
-                let _ = registry.unregister(id);
+    let results = futures::future::join_all(to_purge.iter().map(|(id, persistent)| {
+        let state_ref = &state;
+        let id = id.clone();
+        let persistent = *persistent;
+        async move {
+            if let Some((session_dir, _, _pid)) = shutdown_vm_process(state_ref, &id).await {
+                Some((id, session_dir, persistent))
+            } else {
+                None
             }
-            let _ = std::fs::remove_dir_all(&session_dir);
-            if *persistent { persistent_purged += 1; } else { ephemeral_purged += 1; }
         }
+    })).await;
+
+    for item in results.into_iter().flatten() {
+        let (id, session_dir, persistent) = item;
+        if persistent {
+            let mut registry = state.persistent_registry.lock().unwrap();
+            let _ = registry.unregister(&id);
+        }
+        let dir = session_dir;
+        tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
+        if persistent { persistent_purged += 1; } else { ephemeral_purged += 1; }
     }
 
     // If --all, also purge stopped persistent VMs
@@ -1339,7 +1406,7 @@ async fn handle_purge(
                 registry.get(name).map(|e| e.session_dir.clone())
             };
             if let Some(dir) = session_dir {
-                let _ = std::fs::remove_dir_all(&dir);
+                tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
             }
             let mut registry = state.persistent_registry.lock().unwrap();
             let _ = registry.unregister(name);
@@ -1416,7 +1483,8 @@ async fn handle_run(
     let uds_path = state.run_dir.join("instances").join(format!("{}.sock", id));
     if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
         let _ = shutdown_vm_process(&state, &id).await;
-        let _ = std::fs::remove_dir_all(&session_dir);
+        let dir = session_dir;
+        tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
     }
 
@@ -1428,42 +1496,46 @@ async fn handle_run(
         payload.timeout_secs,
     ).await;
 
-    // 5. Tear down VM process (session dir preserved for telemetry)
-    let _ = shutdown_vm_process(&state, &id).await;
+    // 5. Tear down VM process and build response immediately.
+    let pid = shutdown_vm_process(&state, &id).await.map(|(_, _, p)| p).unwrap_or(0);
 
-    // 6. Roll up session counters into main.db
-    if let Some(ref idx) = index {
-        let session_db_path = session_dir.join("session.db");
-        if session_db_path.exists() {
-            if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
-                if let Ok(counts) = reader.net_event_counts() {
-                    let _ = idx.update_request_counts(
-                        &id, counts.total as u64, counts.allowed as u64, counts.denied as u64,
-                    );
-                }
-                // Roll up file events and MCP calls.
-                let file_events = reader.file_event_count().unwrap_or(0);
-                let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
-                let _ = idx.update_session_summary(
-                    &id, 0, 0, 0.0, 0, mcp_calls, file_events,
-                );
-            }
-        }
-        let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
-    }
-
-    // 7. Return result
-    match exec_result {
+    let response = match exec_result {
         Ok(ProcessToService::ExecResult { stdout, stderr, exit_code, .. }) => {
             Ok(Json(ExecResponse {
-                stdout: String::from_utf8_lossy(&stdout).to_string(),
-                stderr: String::from_utf8_lossy(&stderr).to_string(),
+                stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+                stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
                 exit_code,
             }))
         }
         Ok(_) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response".into())),
         Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
+    };
+
+    // 6. Roll up session counters in the background. Wait for the process to
+    //    exit first so the DbWriter has flushed all data to session.db.
+    if let Some(idx) = index {
+        tokio::spawn(async move {
+            wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
+            let session_db_path = session_dir.join("session.db");
+            if session_db_path.exists() {
+                if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
+                    if let Ok(counts) = reader.net_event_counts() {
+                        let _ = idx.update_request_counts(
+                            &id, counts.total as u64, counts.allowed as u64, counts.denied as u64,
+                        );
+                    }
+                    let file_events = reader.file_event_count().unwrap_or(0);
+                    let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
+                    let _ = idx.update_session_summary(
+                        &id, 0, 0, 0.0, 0, mcp_calls, file_events,
+                    );
+                }
+            }
+            let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
+        });
     }
+
+    response
 }
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
@@ -1563,6 +1635,18 @@ async fn main() -> Result<()> {
                 }
             }
         }
+    }
+
+    // Periodic cleanup of stale instances (replaces per-handler calls).
+    {
+        let state_for_cleanup = Arc::clone(&state);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                state_for_cleanup.cleanup_stale_instances();
+            }
+        });
     }
 
     let app = Router::new()
@@ -2109,6 +2193,38 @@ mod tests {
     fn validate_vm_name_too_long() {
         assert!(validate_vm_name(&"a".repeat(65)).is_err());
         assert!(validate_vm_name(&"a".repeat(64)).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Image name validation (path traversal defense)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_image_name_valid() {
+        assert!(validate_image_name("my-fork").is_ok());
+        assert!(validate_image_name("snapshot_v2").is_ok());
+        assert!(validate_image_name("a").is_ok());
+    }
+
+    #[test]
+    fn validate_image_name_path_traversal() {
+        assert!(validate_image_name("../../etc").is_err());
+        assert!(validate_image_name("foo/bar").is_err());
+        assert!(validate_image_name("..").is_err());
+    }
+
+    #[test]
+    fn validate_image_name_empty_and_long() {
+        assert!(validate_image_name("").is_err());
+        assert!(validate_image_name(&"a".repeat(65)).is_err());
+        assert!(validate_image_name(&"a".repeat(64)).is_ok());
+    }
+
+    #[test]
+    fn validate_image_name_special_chars() {
+        assert!(validate_image_name("has space").is_err());
+        assert!(validate_image_name("-starts-hyphen").is_err());
+        assert!(validate_image_name("has.dot").is_err());
     }
 
     // -----------------------------------------------------------------------

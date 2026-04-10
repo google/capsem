@@ -19,7 +19,7 @@ RUN_DIR="$HOME/.capsem/run"
 mkdir -p "$INSTALL_DIR" "$ASSETS_DST" "$RUN_DIR"
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-mcp; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2

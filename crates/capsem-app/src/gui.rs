@@ -8,7 +8,7 @@ use capsem_core::net::policy_config;
 use tauri::{Emitter, Manager};
 use tracing::{error, info, warn};
 
-use crate::boot::boot_vm;
+use crate::boot::{boot_vm, BootOptions};
 use crate::boot::create_net_state;
 use crate::session_mgmt::{session_dir_for, open_session_db};
 use crate::state::{AppState, VmInstance};
@@ -62,19 +62,42 @@ pub(crate) async fn check_for_update(app: tauri::AppHandle) {
 /// Boot the VM and set up all subsystems (vsock, serial, MITM proxy, MCP gateway).
 /// Called either immediately from the setup hook (rootfs available in bundle) or
 /// after async rootfs download completes.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn gui_boot_vm(
-    handle: &tauri::AppHandle,
-    assets: &Path,
-    rootfs: Option<&Path>,
-    session_id: &str,
-    scratch_path: Option<PathBuf>,
-    virtiofs_shares: Vec<VirtioFsShare>,
-    cpu_count: u32,
-    ram_bytes: u64,
-) {
+pub(crate) struct GuiBootOptions<'a> {
+    pub handle: &'a tauri::AppHandle,
+    pub assets: &'a Path,
+    pub rootfs: Option<&'a Path>,
+    pub session_id: &'a str,
+    pub scratch_path: Option<PathBuf>,
+    pub virtiofs_shares: Vec<VirtioFsShare>,
+    pub cpu_count: u32,
+    pub ram_bytes: u64,
+}
+
+/// Boot the VM and set up all subsystems (vsock, serial, MITM proxy, MCP gateway).
+/// Called either immediately from the setup hook (rootfs available in bundle) or
+/// after async rootfs download completes.
+pub(crate) fn gui_boot_vm(options: GuiBootOptions) {
+    let GuiBootOptions {
+        handle,
+        assets,
+        rootfs,
+        session_id,
+        scratch_path,
+        virtiofs_shares,
+        cpu_count,
+        ram_bytes,
+    } = options;
     info!("[boot-audit] gui_boot_vm: calling boot_vm");
-    match boot_vm(assets, rootfs, "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1", scratch_path.as_deref(), &virtiofs_shares, cpu_count, ram_bytes, None) {
+    match boot_vm(BootOptions {
+        assets,
+        rootfs_override: rootfs,
+        cmdline: "console=hvc0 ro loglevel=1 init_on_alloc=1 slab_nomerge page_alloc.shuffle=1",
+        scratch_disk_path: scratch_path.as_deref(),
+        virtiofs_shares: &virtiofs_shares,
+        cpu_count,
+        ram_bytes,
+        checkpoint_path: None,
+    }) {
         Ok((vm, vsock_rx, sm)) => {
             info!("[boot-audit] boot_vm returned OK");
 

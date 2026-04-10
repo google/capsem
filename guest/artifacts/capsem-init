@@ -29,9 +29,12 @@ if [ -f /conf/modules ]; then
     done < /conf/modules
 fi
 
-# IMPORTANT: Wait for hardware to enumerate (including virtio_console/hvc0).
-# Redirecting to /dev/console before this will fail and crash the init script.
-sleep 1
+# Wait for virtio_console/hvc0 to enumerate (typically <50ms in Apple VZ).
+# Poll instead of fixed sleep to avoid wasting ~950ms on every boot.
+_i=0
+while [ ! -e /dev/console ] && [ "$_i" -lt 200 ]; do
+    _i=$((_i + 1))
+done
 
 # Send all output to console so we can see what happens
 exec 0</dev/console 1>/dev/console 2>/dev/console
@@ -114,7 +117,9 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
 
     # Format if unformatted (first boot). Uses mke2fs from the squashfs rootfs
     # since busybox doesn't include it. Bind-mount /dev so chroot can see loop devices.
-    if ! blkid -p "$LOOP_DEV" 2>/dev/null | grep -q ext4; then
+    # Check ext4 magic number (0xEF53) at offset 0x438 to detect formatted images.
+    # Busybox blkid -p is unreliable for loop devices over VirtioFS.
+    if ! dd if="$LOOP_DEV" bs=1 skip=1080 count=2 2>/dev/null | od -A n -t x1 | grep -q '53 ef'; then
         echo "[capsem-init] formatting system image..."
         mount --bind /dev /mnt/a/dev
         chroot /mnt/a /usr/sbin/mke2fs -F -t ext4 -m 0 -O ^has_journal \
@@ -251,7 +256,11 @@ echo "nameserver 127.0.0.1" > /newroot/run/resolv.conf
 mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
 chroot /newroot dnsmasq --no-daemon --no-resolv --no-hosts \
     --address=/#/10.0.0.1 --listen-address=127.0.0.1 --port=53 &
-sleep 0.2
+# Poll for dnsmasq readiness instead of fixed sleep.
+_i=0
+while ! chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":53 "' && [ "$_i" -lt 40 ]; do
+    _i=$((_i + 1))
+done
 
 # iptables REDIRECT: use iptables-legacy since kernel has NF_TABLES=n.
 IPTABLES=iptables
@@ -274,7 +283,11 @@ elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
 fi
 if [ -n "$NET_PROXY_PATH" ]; then
     chroot /newroot "$NET_PROXY_PATH" &
-    sleep 0.1
+    # Poll for net-proxy readiness instead of fixed sleep.
+    _i=0
+    while ! chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10443 "' && [ "$_i" -lt 20 ]; do
+        _i=$((_i + 1))
+    done
     echo "[capsem-init] net-proxy started"
 else
     echo "[capsem-init] WARNING: capsem-net-proxy not found, no HTTPS proxy"
@@ -291,6 +304,19 @@ elif [ -x /newroot/usr/local/bin/capsem-mcp-server ]; then
     cp /newroot/usr/local/bin/capsem-mcp-server /newroot/run/capsem-mcp-server
     chmod 555 /newroot/run/capsem-mcp-server
     echo "[capsem-init] mcp-server deployed (from rootfs)"
+fi
+
+# Deploy capsem-sysutil binary and create lifecycle symlinks.
+if [ -x /capsem-sysutil ]; then
+    cp /capsem-sysutil /newroot/run/capsem-sysutil
+    chmod 555 /newroot/run/capsem-sysutil
+    ln -sf /run/capsem-sysutil /newroot/sbin/shutdown
+    ln -sf /run/capsem-sysutil /newroot/sbin/halt
+    ln -sf /run/capsem-sysutil /newroot/sbin/poweroff
+    ln -sf /run/capsem-sysutil /newroot/sbin/reboot
+    mkdir -p /newroot/usr/local/bin
+    ln -sf /run/capsem-sysutil /newroot/usr/local/bin/suspend
+    echo "[capsem-init] capsem-sysutil deployed (shutdown/halt/poweroff/reboot/suspend)"
 fi
 
 # Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).
@@ -341,12 +367,12 @@ export NPM_CONFIG_FUND=false
 export NPM_CONFIG_AUDIT=false
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Create Python virtualenv so pip/uv installs go to the scratch disk.
-# --system-site-packages: inherit pre-installed packages (numpy, requests, etc.)
-# from the squashfs rootfs while allowing new installs into the writable venv.
+# Create Python virtualenv in the background so it doesn't block the PTY agent.
+# The venv is only needed when the user runs Python, not for the initial shell prompt.
 # uv venv is ~100ms; fall back to stdlib venv if uv is missing.
-chroot /newroot uv venv --system-site-packages /root/.venv 2>/dev/null || \
+(chroot /newroot uv venv --system-site-packages /root/.venv 2>/dev/null || \
     chroot /newroot python3 -m venv --system-site-packages /root/.venv 2>/dev/null || true
+ touch /newroot/run/capsem-venv-ready) &
 boot_mark "venv"
 
 # Ensure PATH and venv survive login shells (tmux panes).
@@ -358,6 +384,14 @@ case ":$PATH:" in
     *:/opt/ai-clis/bin:*) ;;
     *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
 esac
+# Wait briefly for background venv creation if not ready yet.
+if [ ! -f /run/capsem-venv-ready ] && [ ! -f /root/.venv/bin/activate ]; then
+    _i=0
+    while [ ! -f /run/capsem-venv-ready ] && [ "$_i" -lt 30 ]; do
+        sleep 0.1
+        _i=$((_i + 1))
+    done
+fi
 if [ -f /root/.venv/bin/activate ]; then
     . /root/.venv/bin/activate
 fi

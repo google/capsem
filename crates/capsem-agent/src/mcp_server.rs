@@ -20,10 +20,8 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use std::process;
 use std::thread;
 
+use capsem_proto::VSOCK_PORT_MCP_GATEWAY;
 use vsock_io::{VSOCK_HOST_CID, vsock_connect_retry, write_all_fd};
-
-/// Vsock port for MCP gateway on the host.
-const VSOCK_PORT_MCP: u32 = 5003;
 
 /// Get the parent process name (the AI agent that spawned us).
 fn get_parent_process_name() -> String {
@@ -34,7 +32,7 @@ fn get_parent_process_name() -> String {
 fn main() {
     eprintln!("[capsem-mcp-server] starting (pid {})", process::id());
 
-    let vsock_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_MCP, "mcp");
+    let vsock_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_MCP_GATEWAY, "mcp");
 
     // Send metadata line
     let process_name = get_parent_process_name();
@@ -108,7 +106,7 @@ mod tests {
 
     #[test]
     fn vsock_port_matches_host() {
-        assert_eq!(VSOCK_PORT_MCP, 5003);
+        assert_eq!(VSOCK_PORT_MCP_GATEWAY, 5003);
     }
 
     #[test]

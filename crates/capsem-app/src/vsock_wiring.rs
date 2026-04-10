@@ -385,7 +385,7 @@ pub(crate) async fn setup_vsock(
         }
     }
 
-    if let Err(e) = send_boot_config(&mut ctrl_file, &[]) {
+    if let Err(e) = send_boot_config(&mut ctrl_file, &[], None) {
         warn!("vsock: failed to send boot config: {e}");
     }
 

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::{Context, Result};
 use block2::RcBlock;
 use objc2::AllocAnyThread;
@@ -315,16 +313,6 @@ impl AppleVzMachine {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
-    pub fn restore_state(&self, _path: &std::path::Path) -> Result<()> {
-        // According to Apple docs, you restore state by calling restoreMachineStateFromURL
-        // on a VZVirtualMachine. Wait, let me check the bindings.
-        // Actually, the tracker says "save_state(path)", but to restore you initialize the VM
-        // and then call restoreMachineStateFromURL... wait, restore requires creating the VM.
-        // Let's just implement the method here.
-        Err(anyhow::anyhow!("restore_state must be called during boot via VZVirtualMachine.restoreMachineStateFromURL"))
-    }
-
     pub fn supports_checkpoint(&self) -> bool {
         true
     }
@@ -431,14 +419,15 @@ fn spin_runloop_until(rx: &std::sync::mpsc::Receiver<Result<()>>) -> Result<()> 
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 // Pump the run loop so completion handlers can fire.
+                // returnAfterSourceHandled=1: return immediately once the
+                // completion handler fires instead of waiting for full timeout.
                 unsafe {
                     core_foundation_sys::runloop::CFRunLoopRunInMode(
                         core_foundation_sys::runloop::kCFRunLoopDefaultMode,
-                        0.01, // 10ms
-                        0,    // don't return after processing a source
+                        0.005, // 5ms max
+                        1,     // return after processing first source
                     );
                 }
-                std::thread::sleep(Duration::from_millis(1));
             }
         }
     }

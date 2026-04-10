@@ -75,6 +75,7 @@ GUEST_BINARY_PATHS = [
     "/usr/local/bin/capsem-net-proxy",
     "/run/capsem-net-proxy",
     "/run/capsem-mcp-server",
+    "/run/capsem-sysutil",
     "/usr/local/bin/snapshots",
 ]
 

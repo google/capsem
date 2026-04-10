@@ -1,10 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use capsem_core::net::policy_config;
 use capsem_core::session::{self, SessionIndex};
-use capsem_core::VmState;
 use capsem_logger::DbWriter;
 use tracing::{debug, info, warn};
 
@@ -243,41 +242,6 @@ pub(crate) fn vacuum_session(session_id: &str, index: &SessionIndex, session_dir
             warn!(id = %session_id, "failed to vacuum session DB: {e:#}");
         }
     }
-}
-
-/// Clean up a VM session: delete scratch.img, snapshot request counts, update status.
-pub(crate) fn cleanup_session(
-    _session_dir: &Path,
-    scratch_path: Option<&Path>,
-    session_id: &str,
-    index: &SessionIndex,
-    db: Option<&DbWriter>,
-) {
-    if let Some(scratch) = scratch_path {
-        if scratch.exists() {
-            info!(path = %scratch.display(), "deleting scratch.img");
-            if let Err(e) = std::fs::remove_file(scratch) {
-                warn!("failed to delete scratch.img: {e}");
-            }
-        }
-    }
-
-    // Snapshot request counts + summary data.
-    if let Some(writer) = db {
-        if let Ok(reader) = writer.reader() {
-            if let Ok(counts) = reader.net_event_counts() {
-                let _ = index.update_request_counts(
-                    session_id,
-                    counts.total as u64,
-                    counts.allowed as u64,
-                    counts.denied as u64,
-                );
-            }
-            flush_session_summary(session_id, index, &reader);
-        }
-    }
-
-    let _ = index.update_status(session_id, VmState::Stopped.as_str(), Some(&session::now_iso()));
 }
 
 /// Flush per-session summary data from info.db into main.db.

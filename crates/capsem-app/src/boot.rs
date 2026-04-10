@@ -5,8 +5,8 @@ pub use capsem_core::{
     boot_vm,
     create_net_state,
     read_control_msg,
-    write_control_msg,
     send_boot_config,
+    BootOptions,
 };
 
 /// Clone a raw fd into an independently-owned File.

@@ -12,8 +12,8 @@ use crate::host_state::{HostState, HostStateMachine};
 
 use crate::{
     GuestToHost, HostToGuest, VirtioFsShare, decode_guest_msg, encode_host_msg,
-    MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_MCP_GATEWAY,
-    VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+    MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE,
+    VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
 #[cfg(target_os = "macos")]
 use crate::hypervisor::apple_vz::AppleVzHypervisor;
@@ -32,11 +32,19 @@ pub const CA_CERT_PEM: &str = include_str!("../../../../config/capsem-ca.crt");
 
 /// Create per-sandbox network state (CA + policy for MITM proxy).
 pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetworkState> {
+    let policy = policy_config::load_merged_network_policy();
+    create_net_state_with_policy(vm_id, db, policy)
+}
+
+/// Create per-sandbox network state with a pre-loaded policy (avoids redundant disk reads).
+pub fn create_net_state_with_policy(
+    vm_id: &str,
+    db: Arc<DbWriter>,
+    policy: crate::net::policy::NetworkPolicy,
+) -> Result<SandboxNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM)
         .context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
-
-    let policy = policy_config::load_merged_network_policy();
     info!(
         vm_id,
         "loaded network policy ({} rules)",
@@ -51,6 +59,17 @@ pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetwork
     })
 }
 
+pub struct BootOptions<'a> {
+    pub assets: &'a Path,
+    pub rootfs_override: Option<&'a Path>,
+    pub cmdline: &'a str,
+    pub scratch_disk_path: Option<&'a Path>,
+    pub virtiofs_shares: &'a [VirtioFsShare],
+    pub cpu_count: u32,
+    pub ram_bytes: u64,
+    pub checkpoint_path: Option<std::path::PathBuf>,
+}
+
 /// Build config, boot the VM via the hypervisor trait, and return the handle +
 /// vsock receiver + state machine.
 ///
@@ -59,15 +78,18 @@ pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetwork
 /// If `virtiofs_shares` is non-empty, VirtioFS directory sharing devices are
 /// attached and `capsem.storage=virtiofs` is appended to the kernel cmdline.
 pub fn boot_vm(
-    assets: &Path,
-    rootfs_override: Option<&Path>,
-    cmdline: &str,
-    scratch_disk_path: Option<&Path>,
-    virtiofs_shares: &[VirtioFsShare],
-    cpu_count: u32,
-    ram_bytes: u64,
-    checkpoint_path: Option<std::path::PathBuf>,
+    options: BootOptions,
 ) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>, HostStateMachine)> {
+    let BootOptions {
+        assets,
+        rootfs_override,
+        cmdline,
+        scratch_disk_path,
+        virtiofs_shares,
+        cpu_count,
+        ram_bytes,
+        checkpoint_path,
+    } = options;
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
 
@@ -157,6 +179,7 @@ pub fn boot_vm(
         VSOCK_PORT_SNI_PROXY,
         VSOCK_PORT_MCP_GATEWAY,
         VSOCK_PORT_LIFECYCLE,
+        VSOCK_PORT_EXEC,
     ];
 
     info!("[boot-audit] calling hypervisor boot");
@@ -197,7 +220,12 @@ pub fn write_control_msg(file: &mut std::fs::File, msg: &HostToGuest) -> Result<
 }
 
 /// Send the boot configuration as individual vsock messages.
-pub fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) -> Result<()> {
+/// If `preloaded_guest_config` is provided, uses it instead of reading from disk.
+pub fn send_boot_config(
+    file: &mut std::fs::File,
+    cli_env: &[(String, String)],
+    preloaded_guest_config: Option<policy_config::GuestConfig>,
+) -> Result<()> {
     use crate::capsem_proto::{
         validate_env_key, validate_env_value, validate_file_path,
         MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
@@ -212,7 +240,8 @@ pub fn send_boot_config(file: &mut std::fs::File, cli_env: &[(String, String)]) 
     write_control_msg(file, &HostToGuest::BootConfig { epoch_secs })?;
 
     // 2. Send metadata-driven env vars from settings registry.
-    let guest_config = policy_config::load_merged_guest_config();
+    let guest_config = preloaded_guest_config
+        .unwrap_or_else(policy_config::load_merged_guest_config);
     let mut env_count: usize = 0;
 
     // Track what we actually send for the injection test manifest.

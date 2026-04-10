@@ -68,12 +68,12 @@ pub trait VmHandle: Send {
         Err(anyhow::anyhow!("save_state not supported by this hypervisor backend"))
     }
 
-    /// Restore the VM state from the given path.
-    fn restore_state(&self, _path: &std::path::Path) -> Result<()> {
-        Err(anyhow::anyhow!("restore_state not supported by this hypervisor backend"))
-    }
-
     /// Returns true if this hypervisor supports suspend/resume functionality.
+    ///
+    /// Restore is a boot-time operation: pass `checkpoint_path` to
+    /// `Hypervisor::boot()` / `AppleVzMachine::start()`. There is no
+    /// post-start `restore_state()` because Apple VZ requires calling
+    /// `restoreMachineStateFromURL` before the VM has ever been started.
     fn supports_checkpoint(&self) -> bool {
         false
     }
@@ -144,7 +144,6 @@ mod tests {
         assert!(handle.pause().is_err());
         assert!(handle.resume().is_err());
         assert!(handle.save_state(std::path::Path::new("")).is_err());
-        assert!(handle.restore_state(std::path::Path::new("")).is_err());
     }
 
     fn _assert_send_sync() {

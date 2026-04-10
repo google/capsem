@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::predicate(|origin, _| {
-                    origin.to_str().map_or(false, |s| {
+                    origin.to_str().is_ok_and(|s| {
                         s.starts_with("http://localhost")
                             || s.starts_with("http://127.0.0.1")
                             || s.starts_with("https://localhost")
