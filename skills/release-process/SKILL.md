@@ -153,6 +153,20 @@ cd site && pnpm run build   # Production build
 ### Keep docs in sync
 When features change (settings, CLI flags, MCP tools, security invariants, benchmarks), update the corresponding doc page. When cutting a new minor, create a new release page.
 
+### Update benchmarks before release
+
+Run the host-side benchmarks to generate versioned data files and update the results page:
+
+```bash
+# Generate benchmarks/fork/data_{version}.json and benchmarks/lifecycle/data_{version}.json
+uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
+
+# Update site/src/content/docs/benchmarks/results.md with new numbers
+# (manual -- copy from the benchmark summary tables)
+```
+
+Benchmark data files in `benchmarks/` are committed to git for historical tracking. The `test_fork_benchmark` gates ensure fork stays under 500ms and images under 12MB -- these must pass before release.
+
 ## Changelog
 
 Keep a Changelog format in `CHANGELOG.md`. Every user-visible change gets an entry under `## [Unreleased]` using: Added, Changed, Deprecated, Removed, Fixed, Security.

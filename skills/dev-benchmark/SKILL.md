@@ -119,7 +119,7 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 
 - Per-run breakdown printed to stdout
 - Summary table with min/mean/max per operation
-- JSON saved to `/tmp/capsem-lifecycle-benchmark.json`
+- JSON saved to `benchmarks/lifecycle/data_{version}.json` (committed to git for historical tracking)
 
 ### Regression gates
 
@@ -148,7 +148,7 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 
 - Per-run breakdown with timing + survival status
 - Summary table with min/mean/max + gate thresholds
-- JSON saved to `/tmp/capsem-fork-benchmark.json`
+- JSON saved to `benchmarks/fork/data_{version}.json` (committed to git for historical tracking)
 
 ### When to run
 
@@ -169,5 +169,19 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 
 - In-VM benchmark test: `just run "capsem-bench all"`
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
-- Host-side lifecycle: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
+- Host-side lifecycle: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs`
+- Host-side fork: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
+- Both host-side: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
 - Full run: `just bench` or `just test`
+
+## Benchmark data directory
+
+Host-side benchmarks save versioned JSON to `benchmarks/` (committed to git):
+
+```
+benchmarks/
+  fork/data_0.16.1.json          # Fork speed, image size, data survival
+  lifecycle/data_0.16.1.json     # Provision, exec-ready, exec, delete
+```
+
+These data files feed the documentation benchmark page at `site/src/content/docs/benchmarks/results.md`. Before a release, run both benchmarks and update the results page with the new numbers. See `/release-process` for the full checklist.

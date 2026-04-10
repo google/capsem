@@ -147,7 +147,24 @@ Host-side latency for individual VM operations. Measured over 3 provision/exec/d
 
 Provision, exec, and delete are fast. Delete was reduced from ~5,000ms to ~20ms by making shutdown async (signal the process, return immediately, clean up in background with telemetry rollup after process exit). exec_ready run 1 includes cold kernel/rootfs cache (~6s); runs 2-3 benefit from host page cache (~380ms). **Cold boot is the remaining optimization target.**
 
-Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
+Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs`
+
+## Fork (host-side)
+
+Host-side latency for fork (image creation) and boot-from-image. Measured over 3 cycles: create VM, install jq, write workspace files, fork, boot from image, verify data survived.
+
+| Metric | Min | Mean | Max | Gate | Description |
+|--------|-----|------|-----|------|-------------|
+| fork | 86ms | 97ms | 114ms | 500ms | APFS clonefile of rootfs overlay + workspace |
+| image_size | 7.9MB | 7.9MB | 7.9MB | 12MB | Actual disk (blocks), not logical sparse size |
+| boot_provision | 22ms | 24ms | 25ms | 1,200ms | Clone image into new session + spawn process |
+| boot_ready | 376ms | 379ms | 381ms | 1,200ms | First exec succeeds on image-booted VM |
+
+Fork is fast because APFS `clonefile()` is copy-on-write -- no actual data copying. Image size reports actual allocated blocks, not the logical 2GB sparse file size. Both rootfs overlay changes (installed packages) and workspace files (`/root/`) survive fork.
+
+**Regression gates**: fork < 500ms, image < 12MB, packages + workspace must survive every run.
+
+Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
 
 ## Test environment
 

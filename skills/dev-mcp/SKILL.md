@@ -253,6 +253,7 @@ The MCP integration tests (`tests/capsem-mcp/`) are black-box tests that boot a 
 | `test_inspect.py` | DB schema query, SQL execution, error cases |
 | `test_errors.py` | Deleted VM ops, concurrent isolation, error mapping |
 | `test_fork_images.py` | Fork lifecycle, image CRUD, create-from-image, error cases |
+| `test_winter_is_coming.py` | Full fork e2e: install packages + write workspace, fork, verify survival, assert fork < 500ms and image < 12MB |
 
 **Fixture architecture:**
 
