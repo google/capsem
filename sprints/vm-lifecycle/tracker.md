@@ -119,7 +119,7 @@
 - [x] capsem-doctor: verify hostname is non-default (`test_lifecycle.py::test_hostname_is_not_default`)
 - [x] capsem-doctor: verify CAPSEM_VM_ID env var set (`test_lifecycle.py::test_capsem_vm_id_set`)
 - [x] CHANGELOG.md update
-- [ ] Commit
+- [x] Commit (365cdae, 03b369f)
 
 ## Notes
 - **Dev assets symlink**: `_ensure-service` now symlinks `~/.capsem/assets -> repo assets/` so repacked initrd is used by the running service. Without this, dev builds and installed service use different initrds.

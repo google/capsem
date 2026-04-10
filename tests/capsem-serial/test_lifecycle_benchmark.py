@@ -7,8 +7,10 @@ Fork gates: fork < 500ms, image size < 12MB, boot-from-image verifies data.
 """
 
 import json
+import re
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,26 @@ from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.serial
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+
+def _project_version():
+    """Read version from workspace Cargo.toml."""
+    cargo = PROJECT_ROOT / "Cargo.toml"
+    m = re.search(r'^version\s*=\s*"([^"]+)"', cargo.read_text(), re.MULTILINE)
+    return m.group(1) if m else "unknown"
+
+
+def _save_benchmark(category, data):
+    """Save benchmark JSON to benchmarks/{category}/data_{version}.json."""
+    version = _project_version()
+    out_dir = PROJECT_ROOT / "benchmarks" / category
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"data_{version}.json"
+    with open(out_path, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"Benchmark saved to {out_path}")
 
 RUNS = 3
 OP_GATE_MS = 1200  # every individual operation must complete under this
@@ -211,10 +233,7 @@ def test_lifecycle_benchmark():
         print(f"{label:<16} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms")
 
     # JSON output
-    json_path = "/tmp/capsem-lifecycle-benchmark.json"
-    with open(json_path, "w") as f:
-        json.dump(summary, f, indent=2)
-    print(f"\nJSON results saved to {json_path}")
+    _save_benchmark("lifecycle", summary)
 
     # Gate: every operation mean must be under OP_GATE_MS
     for op, label in [
@@ -289,10 +308,7 @@ def test_fork_benchmark():
     print(f"{'boot_ready':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {OP_GATE_MS:>9}ms")
 
     # JSON output
-    json_path = "/tmp/capsem-fork-benchmark.json"
-    with open(json_path, "w") as f:
-        json.dump(summary, f, indent=2)
-    print(f"\nJSON results saved to {json_path}")
+    _save_benchmark("fork", summary)
 
     # Gate: fork speed
     fork_mean = summary["fork"]["fork_ms"]["mean"]

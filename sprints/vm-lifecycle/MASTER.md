@@ -17,7 +17,7 @@ Covers next-gen S5 (quiescence), S7 (Apple VZ suspend/resume), and new work (gue
 | T6 | Suspend/Resume service flow | Done | T3, T4, T5 |
 | T7 | Guest-initiated suspend | Done | T1, T6 |
 | T8 | CLI + MCP tools | Done | T6 |
-| T9 | Testing gate | Done (pending commit) | All |
+| T9 | Testing gate | Done | All |
 
 ## Phases
 
