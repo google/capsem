@@ -133,6 +133,22 @@ End-to-end latency for snapshot operations via the MCP gateway at 3 workspace si
 
 The 10-file `create` is slower than 100/500 because it includes the first MCP handshake (JSON-RPC initialize). Subsequent operations reuse the connection. List and changes scale modestly with file count. The host gateway-side latency is typically 3-20ms -- the rest is vsock + MCP protocol overhead.
 
+## VM lifecycle (host-side)
+
+Host-side latency for individual VM operations. Measured over 3 provision/exec/delete cycles on the same service instance.
+
+| Operation | Min | Mean | Max | Description |
+|-----------|-----|------|-----|-------------|
+| provision | 25ms | 31ms | 41ms | HTTP POST to service, spawn capsem-process |
+| exec_ready | 377ms | 2,347ms | 6,286ms | First exec succeeds (boot + vsock handshake) |
+| exec | 21ms | 26ms | 30ms | Simple `echo ok` on running VM |
+| delete | 17ms | 20ms | 21ms | Async VM teardown (signal + return immediately) |
+| **total** | **442ms** | **2,424ms** | **6,379ms** | |
+
+Provision, exec, and delete are fast. Delete was reduced from ~5,000ms to ~20ms by making shutdown async (signal the process, return immediately, clean up in background with telemetry rollup after process exit). exec_ready run 1 includes cold kernel/rootfs cache (~6s); runs 2-3 benefit from host page cache (~380ms). **Cold boot is the remaining optimization target.**
+
+Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
+
 ## Test environment
 
 | Component | Version |

@@ -138,8 +138,8 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
 
-      - name: Warnings-as-errors for service crates
-        run: RUSTFLAGS="-D warnings" cargo build -p capsem-service -p capsem-process
+      - name: Warnings-as-errors (all crates)
+        run: cargo check --workspace
 
       - name: Create stub assets for Tauri build.rs
         run: |

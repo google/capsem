@@ -23,7 +23,9 @@
     "overrides": {
       "yaml": ">=2.8.3",
       "picomatch": ">=4.0.4",
-      "smol-toml": ">=1.6.1"
+      "smol-toml": ">=1.6.1",
+      "defu": ">=6.1.5",
+      "vite": ">=6.4.2"
     }
   },
   "devDependencies": {

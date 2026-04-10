@@ -14,7 +14,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | MCP gateway | `/dev-mcp` | MCP tool routing, policy, built-in tools |
 | Testing | `/dev-testing` | Running or writing tests, TDD, coverage |
 | VM testing | `/dev-testing-vm` | In-VM diagnostics, capsem-doctor, session DB |
-| Frontend | `/frontend-design` | UI components, Svelte, Tailwind, Preline |
+| Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, Preline |
 | Build images | `/build-images` | capsem-builder, guest config, rootfs, kernel |
 | Initrd repack | `/build-initrd` | Guest binary changes, fast iteration loop |
 | Just recipes | `/dev-just` | Which just command to run for a given task |

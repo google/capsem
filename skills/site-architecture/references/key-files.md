@@ -26,6 +26,14 @@
 - `crates/capsem-core/src/fs_monitor.rs` -- host-side FSEvents file monitor
 - `crates/capsem-core/src/auto_snapshot.rs` -- rolling auto-snapshot scheduler (APFS clonefile ring buffer)
 
+## Gateway
+
+- `crates/capsem-gateway/src/main.rs` -- TCP listener, router setup, health endpoint, graceful shutdown
+- `crates/capsem-gateway/src/auth.rs` -- Bearer token auth middleware, runtime file lifecycle (token/port/pid)
+- `crates/capsem-gateway/src/proxy.rs` -- UDS reverse proxy (method/header/body forwarding, 10MB limit, 30s timeout)
+- `crates/capsem-gateway/src/status.rs` -- Aggregated status with 2s thundering-herd-safe cache
+- `crates/capsem-gateway/src/terminal.rs` -- WebSocket relay from TCP to per-VM UDS for terminal I/O
+
 ## App
 
 - `crates/capsem-app/src/commands.rs` -- Tauri IPC commands (serial_input, vm_status, terminal_resize, net_events)

@@ -1,61 +1,52 @@
 # Preline Framework Integration
 
-## Capsem Setup (Astro 5 + Svelte 5)
+## Capsem Setup (Astro 6 + Svelte 5)
 
-Capsem uses Astro 5 as a static shell with Svelte 5 components loaded via `client:only="svelte"`. This is the primary setup -- the generic Astro/Svelte sections below are reference only.
+Capsem uses Astro 6 as a static shell with Svelte 5 components loaded via `client:only="svelte"`. **Preline is CSS-only** -- we use its design tokens and CSS component patterns but NOT its JS plugins. All interactivity is pure Svelte 5 runes + TypeScript.
 
 ### Install
 ```bash
-npm i preline
+pnpm add preline
 ```
-
-No other dependencies needed. Preline's core 23 plugins (accordion, carousel, collapse, combobox, copy-markup, dropdown, input-number, layout-splitter, overlay, pin-input, remove-element, scroll-nav, scrollspy, select, stepper, strong-password, tabs, textarea-auto-height, theme-switch, toggle-count, toggle-password, tooltip, tree-view) work with zero external deps. Floating UI for positioning is bundled.
-
-Do NOT install jQuery, lodash, Dropzone, nouislider, datatables.net, or vanilla-calendar-pro unless you specifically need HSDataTable, HSFileUpload, HSRangeSlider, or HSDatepicker.
 
 ### CSS (`src/styles/global.css`)
 ```css
 @import "tailwindcss";
 
-/* Preline UI */
+/* Preline UI -- CSS tokens and component patterns only */
 @source "../../node_modules/preline";
-@import "preline/variants.css";
 
-/* Preline Theme (semantic design tokens) */
+/* Preline Themes -- all loaded, activated via data-theme on <html> */
 @import "preline/css/themes/theme.css";
+@import "preline/css/themes/harvest.css";
+@import "preline/css/themes/retro.css";
+@import "preline/css/themes/ocean.css";
+@import "preline/css/themes/bubblegum.css";
+@import "preline/css/themes/autumn.css";
+@import "preline/css/themes/moon.css";
+@import "preline/css/themes/cashmere.css";
+@import "preline/css/themes/olive.css";
 ```
 
-### Type declarations (`global.d.ts`)
-```typescript
-import type { IStaticMethods } from "preline/preline";
+### What we do NOT use
 
-declare global {
-  interface Window {
-    HSStaticMethods: IStaticMethods;
-  }
-}
-export {};
+- **No `preline/variants.css`** -- `hs-*-active:` variants require Preline JS plugins and `data-hs-*` attributes. We drive active/open/selected state with Svelte runes and conditional classes instead.
+- **No `import "preline"` JS** -- no `HSStaticMethods`, no `autoInit()`, no `global.d.ts` type declarations.
+- **No `data-hs-*` attributes** -- no `data-hs-tab`, `data-hs-dropdown`, etc.
+
+### How to replicate Preline component behavior in Svelte
+
+Preline docs show components like:
+```html
+<button class="hs-tab-active:bg-layer hs-tab-active:text-primary-active bg-muted ..." data-hs-tab="#panel">
 ```
 
-Only declare `HSStaticMethods`. Do not add jQuery/lodash/Dropzone types -- they are not used.
-
-### Loader script (`src/scripts/preline.ts`)
-```typescript
-async function initPreline() {
-  try {
-    await import('preline');
-    window.HSStaticMethods?.autoInit();
-  } catch (e) {
-    console.warn('[preline] init error:', e);
-  }
-}
-
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initPreline);
-else initPreline();
-
-// Re-init after Astro page transitions (if using View Transitions)
-document.addEventListener('astro:page-load', initPreline);
+In Capsem, extract the CSS class strings and drive state with Svelte:
+```svelte
+<button class="{active ? 'bg-layer text-primary-active' : 'bg-muted text-muted-foreground-1'} ...">
 ```
+
+Use `$state`, `$derived`, and class-based stores for all interactive state.
 
 ### Layout (`src/layouts/Layout.astro`)
 ```astro
@@ -64,39 +55,18 @@ import "../styles/global.css";
 ---
 <!doctype html>
 <html lang="en">
-  <body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capsem</title>
+  </head>
+  <body class="bg-background text-foreground antialiased">
     <slot />
-    <script>
-      import '../scripts/preline.ts';
-    </script>
   </body>
 </html>
 ```
 
-### Svelte component re-init
-
-Since Svelte components mount client-side after Astro's initial render, Preline must re-init when components mount. Add `onMount` to any Svelte component that uses Preline plugins:
-
-```svelte
-<script lang="ts">
-  import { onMount } from "svelte";
-
-  onMount(() => {
-    window.HSStaticMethods?.autoInit();
-  });
-</script>
-```
-
-For selective re-init (better performance when you know which plugins the component uses):
-```typescript
-onMount(() => {
-  window.HSStaticMethods?.autoInit(['dropdown', 'tooltip']);
-});
-```
-
-### Optional base styles
-
-Preline includes opinionated styles for pointer cursor on buttons and hover behavior:
+### Base styles in global.css
 
 ```css
 @layer base {
@@ -107,6 +77,13 @@ Preline includes opinionated styles for pointer cursor on buttons and hover beha
 }
 
 @custom-variant hover (&:hover);
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
 ```
 
 ---

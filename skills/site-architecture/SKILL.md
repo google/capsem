@@ -15,7 +15,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 - **capsem** (CLI): user-facing CLI. **Everything is ephemeral unless asked otherwise.** `capsem shell` (no args) = temp VM + auto-destroy on exit. `capsem create -n <name>` = persistent VM (detached). `capsem create` (no name) = ephemeral VM (detached). `capsem shell <id>` = attach to existing. Talks to capsem-service over UDS HTTP.
 - **capsem-mcp** (MCP server): stdio-based MCP server for AI agents (Claude Code, Gemini CLI). Bridges MCP tool calls to capsem-service HTTP API.
 - **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides `/status` (cached 1s), `/terminal/{id}` (WebSocket relay to per-VM UDS), and transparent fallback proxy to capsem-service. The frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
-- **capsem-app** (Tauri GUI): optional GUI shell with xterm.js frontend.
+- **capsem-app** (Tauri GUI): optional GUI shell with xterm.js frontend. All VM operations go through capsem-service (no direct VM boot).
 - **capsem-tray** (system tray): standalone menu bar process. Polls the gateway for VM status, shows running/stopped counts, and provides quick actions (open dashboard, quit). Runs in its own process, isolated from the service.
 
 **Guest-side:**
@@ -27,16 +27,31 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 
 ## Service architecture
 
+**All VM operations go through a single path.** There is no direct VM boot -- every entry point routes through capsem-service to capsem-process.
+
 ```
-AI Agent  -> capsem-mcp (stdio)  -> HTTP over UDS -> capsem-service (daemon)
-User      -> capsem CLI           -> HTTP over UDS -> capsem-service (daemon)
-Frontend  -> capsem-gateway (TCP) -> HTTP over UDS -> capsem-service (daemon)
-Tray app  -> capsem-gateway (TCP) -> HTTP over UDS -> capsem-service (daemon)
-                                                         |
-                                            capsem-process (per-VM, UDS IPC)
-                                                         |
-                                                vsock -> capsem-agent (guest)
+AI Agent  -> capsem-mcp (stdio)  -> HTTP/UDS -> capsem-service
+User      -> capsem CLI          -> HTTP/UDS -> capsem-service
+Frontend  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
+Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
+                                                     |
+                                        capsem-process (per-VM, UDS IPC)
+                                                     |
+                                         +-----------+-----------+
+                                         |           |           |
+                                    vsock:5000  vsock:5001  vsock:5005
+                                    (control)  (terminal)  (exec output)
+                                         |           |           |
+                                         +-----guest agent------+
 ```
+
+**Entry points for exec:**
+- `capsem exec <id> "cmd"` -> service HTTP `/exec/{id}` -> process IPC -> vsock
+- `capsem run "cmd"` -> service HTTP `/run` -> provision + exec + destroy
+- MCP `capsem_exec` / `capsem_run` -> service HTTP -> same path
+
+**Entry point for interactive shell:**
+- `capsem shell [id]` -> UDS IPC directly to capsem-process -> `StartTerminalStream` -> vsock:5001
 
 ### IPC protocols
 
@@ -46,7 +61,7 @@ Tray app  -> capsem-gateway (TCP) -> HTTP over UDS -> capsem-service (daemon)
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | CLI/MCP -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | Service -> process | MessagePack over UDS | `~/.capsem/run/instances/{id}.sock` |
-| Process -> guest agent | Binary frames over vsock | ports 5000 (control), 5001 (terminal), 5004 (lifecycle) |
+| Process -> guest agent | Binary frames over vsock | ports 5000 (control), 5001 (terminal), 5004 (lifecycle), 5005 (exec) |
 
 ### Service HTTP API
 
@@ -77,12 +92,17 @@ Tray app  -> capsem-gateway (TCP) -> HTTP over UDS -> capsem-service (daemon)
 
 ## Host-guest communication
 
+All host-guest communication flows through capsem-process via vsock. There is no direct vsock access from any other host binary.
+
 ```
-capsem CLI shell -> capsem-process UDS -> vsock:5001 -> Guest PTY agent -> bash
-capsem-service exec -> capsem-process -> vsock:5000 -> Guest agent -> command
+Interactive shell:  capsem-process -> vsock:5001 <-> Guest PTY (bash)
+Exec command:       capsem-process -> vsock:5000 (Exec cmd) -> Guest agent
+                    capsem-process <- vsock:5005 (stdout)    <- Guest child process
+                    capsem-process <- vsock:5000 (ExecDone)  <- Guest agent
+File I/O:           capsem-process -> vsock:5000 (FileWrite/FileRead) <-> Guest agent
 ```
 
-Terminal I/O flows through vsock port 5001. Structured commands (exec, file I/O) flow through vsock port 5000 (control channel).
+Terminal I/O flows through vsock port 5001 (raw PTY bytes). Exec output flows on a dedicated port 5005 connection -- completely separated from the interactive terminal. File I/O uses port 5000 (control channel).
 
 Serial console stays active for kernel boot logs. Terminal I/O switches to vsock once the guest agent sends `Ready`.
 
@@ -90,11 +110,12 @@ Serial console stays active for kernel boot logs. Terminal I/O switches to vsock
 
 | Port | Purpose |
 |------|---------|
-| 5000 | Control messages (resize, heartbeat, exec) |
+| 5000 | Control messages (resize, heartbeat, exec commands, file I/O) |
 | 5001 | Terminal data (PTY I/O) |
 | 5002 | MITM proxy (HTTPS connections) |
 | 5003 | MCP gateway (tool routing, NDJSON passthrough) |
 | 5004 | Lifecycle commands (shutdown/suspend, capsem-sysutil) |
+| 5005 | Exec output (direct child process stdout, on demand) |
 
 ## Guest agent architecture
 
@@ -114,10 +135,10 @@ Single-threaded, sync Rust binary (no tokio). Launched by capsem-init after file
 7. Enter bridge loop
 
 **Runtime -- two loops running concurrently:**
-- **bridge_loop** (main thread): polls master PTY, forwards output to vsock:5001. Spawns a dedicated thread for the reverse direction (vsock -> PTY). During exec, scans for sentinel markers in PTY output to detect command completion.
-- **control_loop** (background thread): reads vsock:5000, handles `Resize` (set winsize + SIGWINCH), `Ping`/`Pong` heartbeat, `Exec` (inject command into PTY with sentinel, wait for completion, send `ExecDone`), `FileWrite`/`FileRead`/`FileDelete`, and `Shutdown`.
+- **bridge_loop** (main thread): polls master PTY, forwards output to vsock:5001. Spawns a dedicated thread for the reverse direction (vsock -> PTY). Pure bidirectional byte bridge with no scanning or filtering.
+- **control_loop** (background thread): reads vsock:5000, handles `Resize` (set winsize + SIGWINCH), `Ping`/`Pong` heartbeat, `Exec` (spawns background thread for direct child process), `FileWrite`/`FileRead`/`FileDelete`, and `Shutdown`.
 
-**Exec mechanism:** injects `bash -c '<cmd>' 2>&1 ; printf '\033_CAPSEM_EXIT:{id}:%d\033\\' $?` into the PTY. The bridge loop scans output for the sentinel, strips it, and reports `(id, exit_code)` back to the control loop via an mpsc channel. PTY echo is disabled during exec to hide the injected command text.
+**Exec mechanism:** spawns `bash -c '<cmd> 2>&1'` as a direct child process (not via PTY). Connects to host on vsock:5005, sends `ExecStarted { id }` handshake, then streams child stdout to the exec port. Exit code comes from `waitpid`, sent as `ExecDone { id, exit_code }` on vsock:5000. Runs in a background thread so control_loop stays responsive to heartbeats during long commands.
 
 **Shutdown handler:** `sync()` -> `SIGTERM` bash -> wait `SHUTDOWN_GRACE_SECS` (defined in `capsem-proto`) -> `SIGKILL` (interactive bash ignores SIGTERM) -> break. The bridge loop cleanup then sends SIGHUP + waitpid to reap the child.
 

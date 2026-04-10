@@ -6,10 +6,11 @@ description: Preline UI v4.1.3 free component library reference. 27 headless Tai
 # Preline UI Reference (v4.1.3)
 
 Preline is NOT like DaisyUI. It does not provide pre-built component classes. It provides:
-1. **27 headless JS plugins** for interactive behavior (accordion, dropdown, modal, etc.)
-2. **70+ CSS component patterns** composed from Tailwind utilities + semantic design tokens
-3. **55 custom Tailwind variants** for styling plugin states (`hs-dropdown-open:`, `hs-tab-active:`, etc.)
-4. **A semantic design token system** (200+ CSS variables for theming via `theme.css`)
+1. **70+ CSS component patterns** composed from Tailwind utilities + semantic design tokens
+2. **A semantic design token system** (200+ CSS variables for theming via `theme.css`)
+3. 27 headless JS plugins and 55 custom variants (reference only -- **Capsem does NOT use Preline JS**)
+
+**IMPORTANT: In Capsem, we use Preline CSS-only.** All interactivity is pure Svelte 5 runes + TypeScript. Copy the CSS class strings from Preline component docs, but drive active/open/selected state with Svelte `$state`/`$derived`, NOT with `data-hs-*` attributes or `hs-*-active:` variants. See `framework-integration.md` for the full setup.
 
 ## Installation
 
@@ -17,19 +18,17 @@ Preline is NOT like DaisyUI. It does not provide pre-built component classes. It
 /* global.css */
 @import "tailwindcss";
 
-/* Preline UI */
-@source "./node_modules/preline/dist/*.js";
-@import "./node_modules/preline/variants.css";
+/* Preline UI -- CSS tokens only */
+@source "../../node_modules/preline";
 
-/* Preline Theme (semantic design tokens) */
-@import "./themes/theme.css";
+/* Preline Themes */
+@import "preline/css/themes/theme.css";
+/* ... plus other themes as needed */
 ```
 
 ```bash
-npm i preline
+pnpm add preline
 ```
-
-JS (end of `<body>` or via module): `import "preline"` auto-initializes all components.
 
 ## Plugin Initialization Patterns
 

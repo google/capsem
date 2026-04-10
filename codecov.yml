@@ -155,6 +155,15 @@ component_management:
         - type: project
           target: 80%
 
+    # TCP-to-UDS gateway: auth, proxy, status cache, terminal WebSocket.
+    - component_id: gateway
+      name: Gateway
+      paths:
+        - crates/capsem-gateway/src/**
+      statuses:
+        - type: project
+          target: 80%
+
     # Frontend: Astro + Svelte components, views, stores.
     # Populated when vitest coverage is added to pipeline.
     - component_id: ui

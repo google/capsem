@@ -86,7 +86,7 @@ Prefix-based grouping:
 - `site-infra` -- Astro Starlight docs site conventions
 
 ### Frontend
-- `frontend-design` -- design system, Preline, color scheme, Svelte 5 patterns
+- `frontend-design` -- design system, Preline, color scheme, Svelte 5 rune patterns
 
 ## Progressive disclosure
 

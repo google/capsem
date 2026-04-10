@@ -16,6 +16,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 | `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
 | `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
 | `capsem-mcp` | MCP server for AI agents. Stdio, bridges to service. | `main.rs` (rmcp handler, UDS client) |
+| `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |
 | `capsem-app` | Optional Tauri GUI shell. IPC commands, state. | `commands.rs`, `state.rs`, `cli.rs` |
 | `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent + file I/O), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay) |
 | `capsem-logger` | Session DB schema, queries, async writer. | `schema.rs`, `writer.rs`, `events.rs` |
@@ -28,7 +29,7 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | Path | What | Skill |
 |------|------|-------|
 | `crates/` | Rust workspace | `/site-architecture` |
-| `frontend/` | Astro + Svelte + Tailwind + Preline | `/frontend-design` |
+| `frontend/` | Astro 5 + Svelte 5 + Tailwind v4 + Preline | `/frontend-design` |
 | `site/` | Starlight documentation site | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
 | `guest/config/` | Guest TOML configs | `/build-images` |
@@ -73,7 +74,7 @@ When working on a specific area, consult the relevant skill:
 ### Frontend & site
 | Skill | When |
 |-------|------|
-| `/frontend-design` | Design system, colors, Preline, Svelte |
+| `/frontend-design` | Design system, colors, Preline, Svelte 5 runes |
 | `/site-architecture` | System architecture, Tauri, key files |
 | `/site-infra` | Astro Starlight docs site |
 
@@ -87,7 +88,7 @@ Guest HTTPS -> iptables -> vsock:5002 -> Host MITM proxy -> upstream
 Guest MCP   -> vsock:5003 -> Host MCP gateway -> external MCP servers
 ```
 
-Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP).
+Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP), 5005 (exec output).
 
 ## Config hierarchy
 

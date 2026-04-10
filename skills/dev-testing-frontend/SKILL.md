@@ -7,7 +7,7 @@ description: Testing the Capsem frontend (Astro 5 + Svelte 5 + Tailwind v4 + Pre
 
 ## Stack
 
-Astro 5 + Svelte 5 + Tailwind v4 + Preline + LayerChart v2.
+Astro 5 + Svelte 5 (runes only) + Tailwind v4 + Preline + LayerChart v2.
 
 ## Running tests
 
@@ -84,3 +84,4 @@ Read `references/svelte5.md` for Svelte 5 patterns and the `@sveltejs/mcp` CLI f
 - `vm-state-changed` payload is `{ state, trigger }` (object), not a plain string
 - Dynamic Svelte components: use `<svelte:component this={item.icon} />`, not `<item.icon />`
 - Tailwind v4 + `client:only`: needs `@source` directives to scan Svelte files
+- Preline is CSS-only -- no JS plugins, no `data-hs-*` attributes, no `HSStaticMethods`

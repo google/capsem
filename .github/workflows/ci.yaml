@@ -119,8 +119,8 @@ jobs:
       # Unit tests: lib tests with coverage + JUnit XML for test analytics
       - name: Unit tests with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway 2>&1 | tee coverage-summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
@@ -211,7 +211,7 @@ jobs:
           | Cross-compile | aarch64-unknown-linux-musl |
           | Audit | cargo audit + pnpm audit |
 
-          > Coverage covers library crates only (capsem-core, agent, logger, proto).
+          > Coverage covers library crates + gateway (capsem-core, agent, logger, proto, gateway).
           > Full workspace coverage runs in the release pipeline.
           EOF
 

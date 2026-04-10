@@ -30,6 +30,7 @@ GUEST_BINARIES = [
     "capsem-pty-agent",
     "capsem-net-proxy",
     "capsem-mcp-server",
+    "capsem-sysutil",
 ]
 
 # Scripts/tools that must be in rootfs build context (not cross-compiled Rust).
@@ -401,12 +402,22 @@ def container_compile_agent(
     target_volume = f"capsem-agent-target-{arch_suffix}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build cp + verification commands from GUEST_BINARIES constant
+    # Build all shell commands from GUEST_BINARIES constant
     cp_cmds = " && ".join(
         f"cp target/{rust_target}/release/{b} /output/{b}"
         for b in GUEST_BINARIES
     )
+    rm_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
+    chmod_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
     file_cmds = " && ".join(f"ls -l /output/{b}" for b in GUEST_BINARIES)
+
+    # Pre-pull the image so failures are clear, not buried in a long docker run
+    image = "rust:slim-bookworm"
+    try:
+        run_cmd([runtime, "image", "inspect", image], capture=True, echo=False)
+    except subprocess.CalledProcessError:
+        print(f"  Pulling {image} ({platform}) ...")
+        run_cmd([runtime, "pull", "--platform", platform, image])
 
     print(f"  Container build ({platform}) ...")
     # Source is mounted :ro to protect the host. We symlink everything into
@@ -423,14 +434,14 @@ def container_compile_agent(
         "-v", f"{rustup_volume}:/usr/local/rustup",
         "-v", f"{target_volume}:/build/target",
         "-w", "/build",
-        "rust:slim-bookworm", "bash", "-c",
-        f"for f in /src/*; do b=$(basename $f); [ $b != target ] && [ $b != Cargo.lock ] && [ $b != crates ] && ln -s $f /build/; done && "
+        image, "bash", "-c",
+        f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != Cargo.lock ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
         f"cp -r /src/crates /build/crates && "
         f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
         f"rustup target add {rust_target} && "
         f"cargo build --release --target {rust_target} -p capsem-agent && "
-        f"rm -f /output/capsem-pty-agent /output/capsem-net-proxy /output/capsem-mcp-server && "
-        f"{cp_cmds} && chmod 555 /output/capsem-pty-agent /output/capsem-net-proxy /output/capsem-mcp-server && {file_cmds}",
+        f"rm -f {rm_cmds} && "
+        f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
     ])
 
     copied: list[Path] = []

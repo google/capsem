@@ -96,8 +96,78 @@ Common causes:
 3. Wire it into `main()` with the `if mode in ("name", "all"):` pattern (lazy import)
 4. Update this skill and the benchmarking doc page
 
+## Host-side lifecycle benchmark
+
+Profiles individual VM lifecycle operations from the host. Runs outside the guest via pytest, not via `capsem-bench`.
+
+```bash
+uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
+```
+
+**Location:** `tests/capsem-serial/test_lifecycle_benchmark.py`
+
+### Operations measured
+
+| Operation | What it times |
+|-----------|--------------|
+| provision | HTTP POST `/provision` to service (VM creation + process spawn) |
+| exec_ready | First `echo ready` exec succeeds (VM boot + vsock handshake) |
+| exec | Simple `echo ok` on a running VM |
+| delete | HTTP DELETE `/delete/{name}` (VM teardown + cleanup) |
+
+### Output
+
+- Per-run breakdown printed to stdout
+- Summary table with min/mean/max per operation
+- JSON saved to `/tmp/capsem-lifecycle-benchmark.json`
+
+### Regression gates
+
+Every operation must complete in under 1.2 seconds. The test runs 3 cycles and asserts each individual operation stays under the gate.
+
+## Host-side fork benchmark
+
+Profiles fork (image creation) and boot-from-image. Same test file, separate test function.
+
+```bash
+uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs
+```
+
+### Operations measured
+
+| Metric | What it measures | Gate |
+|--------|-----------------|------|
+| fork | `POST /fork/{id}` — APFS clonefile of rootfs overlay + workspace | < 500ms |
+| image_size | Actual disk usage of forked image (blocks, not logical size) | < 12MB |
+| boot_provision | `POST /provision` with `image` param — clone image into new session | < 1200ms |
+| boot_ready | First exec succeeds on the image-booted VM | < 1200ms |
+| pkg_survived | Packages installed via apt survive fork (rootfs overlay) | must pass |
+| ws_survived | Files written to /root/ survive fork (VirtioFS workspace) | must pass |
+
+### Output
+
+- Per-run breakdown with timing + survival status
+- Summary table with min/mean/max + gate thresholds
+- JSON saved to `/tmp/capsem-fork-benchmark.json`
+
+### When to run
+
+- After changes to fork/image code (`capsem-core/src/image.rs`)
+- After changes to VirtioFS session layout (`capsem-core/src/lib.rs`)
+- After changes to disk usage reporting (`session/maintenance.rs`)
+- After changes to boot-from-image path in `capsem-service` or `capsem-process`
+- Before cutting a release
+
+### When to run (lifecycle)
+
+- After changes to boot path (`capsem-process`, `capsem-init`, `capsem-core/vm/boot.rs`)
+- After changes to VM teardown / delete path
+- After changes to the service daemon (`capsem-service`)
+- Before cutting a release
+
 ## Tests
 
 - In-VM benchmark test: `just run "capsem-bench all"`
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
+- Host-side lifecycle: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
 - Full run: `just bench` or `just test`

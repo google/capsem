@@ -280,3 +280,7 @@ just inspect-session <vm_id> "SELECT * FROM mcp_calls"
 ```
 
 Or use MCP tools directly (see "Fast debugging" section above) for the same workflow without leaving Claude Code.
+
+## Lessons learned
+
+1. **Never prepend headers to JSON output.** MCP tool responses with `format=json` must return raw, parseable JSON. Do not wrap JSON in pagination headers, content-length prefixes, or any other text. The `snapshots_changes` tool broke because `paginated_response()` prepended `"Content length: ...\nShowing: ...\n"` to the JSON array, making `json.loads()` fail. Rule: if a tool offers both text and JSON formats, branch early and return JSON directly without passing through text-oriented helpers like `paginated_response()`.

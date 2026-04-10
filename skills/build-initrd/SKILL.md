@@ -54,3 +54,12 @@ The initrd is a gzip+cpio archive. `_pack-initrd` in the justfile:
 4. Packs as cpio+gzip, writes to `assets/{arch}/initrd.img`
 
 At boot, `capsem-init` checks if a binary exists in the initrd bundle (`/binary`) before falling back to the rootfs path. This means initrd copies always take priority.
+
+## Lesson: permissions are set in TWO places
+
+Guest binary permissions must be 555 (read+execute, no write). There are two independent places that set permissions and both must agree:
+
+1. **Dockerfile.rootfs.j2** -- `chmod 555` when copying into the rootfs (baked into squashfs)
+2. **justfile `_pack-initrd`** -- `chmod` when copying into the initrd (overlays rootfs at boot)
+
+The initrd copy WINS at runtime because it overlays the rootfs. So even if the Dockerfile says 555, if the justfile says 755, the guest sees 755. When fixing permissions, always check both places. A rootfs rebuild (`just build-assets`) alone won't fix it if the initrd repack still sets the wrong mode.

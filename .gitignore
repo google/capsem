@@ -51,6 +51,9 @@ codecov-*.xml
 target/
 Cargo.lock
 
+# Git worktrees
+worktrees/
+
 # VM assets (built by capsem-builder)
 assets/*
 
