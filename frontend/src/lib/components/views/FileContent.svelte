@@ -1,56 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { createHighlighter, type Highlighter, type BundledTheme } from 'shiki';
+  import type { Highlighter } from 'shiki';
   import type { MockFileNode } from '../../mock.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
+  import { getShikiHighlighter, resolveShikiTheme, detectShikiLang } from '../../shiki.ts';
 
   let { node }: { node: MockFileNode | null } = $props();
 
   let highlighter: Highlighter | null = $state(null);
   let highlightedHtml = $state('');
 
-  // Map terminal theme families to Shiki theme IDs
-  const SHIKI_THEMES: Record<string, { dark: BundledTheme; light: BundledTheme }> = {
-    'default':     { dark: 'github-dark-default',  light: 'github-light-default' },
-    'one':         { dark: 'one-dark-pro',          light: 'one-light' },
-    'dracula':     { dark: 'dracula',               light: 'github-light' },
-    'catppuccin':  { dark: 'catppuccin-mocha',      light: 'catppuccin-latte' },
-    'monokai':     { dark: 'monokai',               light: 'github-light' },
-    'gruvbox':     { dark: 'gruvbox-dark-medium',   light: 'gruvbox-light-medium' },
-    'solarized':   { dark: 'solarized-dark',        light: 'solarized-light' },
-    'nord':        { dark: 'nord',                  light: 'github-light' },
-    'rose-pine':   { dark: 'rose-pine',             light: 'rose-pine-dawn' },
-    'tokyo-night': { dark: 'tokyo-night',           light: 'github-light' },
-    'kanagawa':    { dark: 'kanagawa-wave',         light: 'kanagawa-lotus' },
-    'everforest':  { dark: 'everforest-dark',       light: 'everforest-light' },
-  };
-
-  const ALL_SHIKI_THEME_IDS = [...new Set(
-    Object.values(SHIKI_THEMES).flatMap(t => [t.dark, t.light])
-  )];
-
-  function resolveShikiTheme(): BundledTheme {
-    const family = themeStore.terminalTheme;
-    const mode = themeStore.mode;
-    const entry = SHIKI_THEMES[family] ?? SHIKI_THEMES['default'];
-    return mode === 'dark' ? entry.dark : entry.light;
-  }
-
-  function getLang(filename: string): string {
-    const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-    const map: Record<string, string> = {
-      rs: 'rust', toml: 'toml', md: 'markdown', json: 'json',
-      ts: 'typescript', js: 'javascript', py: 'python',
-      sh: 'bash', yaml: 'yaml', yml: 'yaml',
-    };
-    return map[ext] ?? 'text';
-  }
-
   onMount(async () => {
-    highlighter = await createHighlighter({
-      themes: ALL_SHIKI_THEME_IDS,
-      langs: ['rust', 'toml', 'markdown', 'json', 'typescript', 'javascript', 'python', 'bash', 'yaml'],
-    });
+    highlighter = await getShikiHighlighter();
   });
 
   $effect(() => {
@@ -59,8 +20,8 @@
       return;
     }
     highlightedHtml = highlighter.codeToHtml(node.content, {
-      lang: getLang(node.name),
-      theme: resolveShikiTheme(),
+      lang: detectShikiLang(node.name),
+      theme: resolveShikiTheme(themeStore.terminalTheme, themeStore.mode),
     });
   });
 

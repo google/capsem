@@ -1,13 +1,7 @@
 // Settings store -- thin Svelte wrapper around SettingsModel.
-import {
-  getSettingsTree,
-  lintConfig,
-  listPresets,
-  applyPreset,
-  loadSettings,
-  saveSettings,
-} from '../api';
+// Sprint 04: uses mock data. Sprint 05: wire to gateway API.
 import { SettingsModel } from '../models/settings-model';
+import { buildMockSettingsResponse, recomputeEnabled, mockSettings } from '../mock-settings';
 import type {
   ConfigIssue,
   SecurityPreset,
@@ -15,7 +9,7 @@ import type {
   SettingsNode,
   SettingsLeaf,
   SettingValue,
-} from '../types';
+} from '../types/settings';
 
 class SettingsStore {
   model = $state<SettingsModel | null>(null);
@@ -23,7 +17,7 @@ class SettingsStore {
   loading = $state(false);
   error = $state<string | null>(null);
 
-  // --- Delegated accessors (backward-compatible) ---
+  // --- Delegated accessors ---
 
   get tree(): SettingsNode[] {
     return this.model?.tree ?? [];
@@ -63,27 +57,18 @@ class SettingsStore {
     return this.model?.issuesFor(id) ?? [];
   }
 
-  // --- Load (unified) ---
+  // --- Load ---
 
   async load() {
     this.loading = true;
     this.error = null;
     try {
-      const response = await loadSettings();
+      // Sprint 05: const response = await loadSettings();
+      const response = buildMockSettingsResponse();
       this.model = new SettingsModel(response);
     } catch (e) {
-      // Fallback to legacy 3-call approach if new command not available
-      try {
-        const [tree, issues, presets] = await Promise.all([
-          getSettingsTree(),
-          lintConfig(),
-          listPresets(),
-        ]);
-        this.model = new SettingsModel({ tree, issues, presets });
-      } catch (e2) {
-        console.error('Failed to load settings:', e2);
-        this.error = String(e2);
-      }
+      console.error('Failed to load settings:', e);
+      this.error = String(e);
     } finally {
       this.loading = false;
     }
@@ -96,13 +81,22 @@ class SettingsStore {
     this.model?.stage(id, value);
   }
 
-  /** Persist all pending changes in one IPC call. */
+  /** Persist all pending changes. Sprint 04: optimistic update on mock data. */
   async save() {
     if (!this.model?.isDirty) return;
     const changes = this.model.getPendingAsRecord();
     this.loading = true;
     try {
-      const response = await saveSettings(changes);
+      // Sprint 05: const response = await saveSettings(changes);
+      // Sprint 04: optimistically apply changes to mock data and rebuild
+      for (const [id, value] of Object.entries(changes)) {
+        const setting = mockSettings.find(s => s.id === id);
+        if (setting) {
+          setting.effective_value = value;
+        }
+      }
+      recomputeEnabled();
+      const response = buildMockSettingsResponse();
       this.model = new SettingsModel(response);
     } catch (e) {
       this.error = String(e);
@@ -111,7 +105,7 @@ class SettingsStore {
     }
   }
 
-  /** Discard all pending changes and reload from backend. */
+  /** Discard all pending changes and reload. */
   async discard() {
     this.model?.clearPending();
     await this.load();
@@ -126,7 +120,18 @@ class SettingsStore {
   async applySecurityPreset(id: string) {
     this.applyingPreset = id;
     try {
-      await applyPreset(id);
+      // Sprint 05: await applyPreset(id);
+      // Sprint 04: apply preset changes to mock data
+      const preset = this.model?.presets.find(p => p.id === id);
+      if (preset) {
+        for (const [settingId, value] of Object.entries(preset.settings)) {
+          const setting = mockSettings.find(s => s.id === settingId);
+          if (setting) {
+            setting.effective_value = value;
+          }
+        }
+        recomputeEnabled();
+      }
       await this.load();
     } finally {
       this.applyingPreset = null;

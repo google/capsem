@@ -50,13 +50,13 @@ export enum PolicySource {
   Corp = 'corp',
 }
 
-/** Map SettingType to its default Widget (no string comparison). */
 export enum McpToolOrigin {
   Builtin = 'builtin',
   Remote = 'remote',
   InVm = 'in_vm',
 }
 
+/** Map SettingType to its default Widget (no string comparison). */
 export function defaultWidget(type: SettingType): Widget {
   switch (type) {
     case SettingType.Bool:

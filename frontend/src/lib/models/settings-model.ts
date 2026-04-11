@@ -11,7 +11,7 @@ import {
   type ConfigIssue,
   type SecurityPreset,
   type SettingsResponse,
-} from '../types';
+} from '../types/settings';
 import {
   SettingType,
   Widget,
