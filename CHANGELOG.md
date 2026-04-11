@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **frontend: settings export/import** -- export all settings to JSON file, import from previously exported file. Import stages changes for review before saving. Validates version, skips corp-locked and unchanged settings.
+- **frontend: MCP server management UI** -- add/remove/enable/disable external MCP servers from the settings page. Form with name, URL, bearer token, and custom headers. Replaces the "edit config.toml" placeholder.
+
 ### Fixed
+- **frontend: syntax highlighting race condition** -- file editor controls (settings.json, state.json, etc.) now reliably get Shiki syntax coloring. Previously the first FileEditorControl to mount could miss highlighting due to async Shiki init not re-triggering the render effect.
+- **frontend: design system color violations** -- MCP section badges and status indicators now use semantic tokens (blue=positive, purple=negative) instead of raw green/red Tailwind colors.
 - **perf: cold boot 6x faster (6.2s -> 1.0s)** -- first VM boot was wasting 5 seconds on a silent IPC Ping timeout. When `vm_ready` was false, capsem-process silently dropped the Ping and the service waited the full 5s before retrying. Fixed: process now closes the connection immediately on not-ready Ping, and readiness is signaled via a `.ready` sentinel file (stat() check, 5ms poll) instead of IPC round trips. Also deduplicated three hand-rolled exponential backoff implementations (vsock_connect_retry, reconnect loop, CLI connect_with_timeout) into a shared `capsem_proto::poll` module with `RetryOpts` + `retry_with_backoff`, reused by the async `capsem_core::poll::poll_until` via type alias.
 - **perf: async VM delete (5s -> 20ms)** -- `shutdown_vm_process` now sends the shutdown signal and returns immediately. Process teardown (wait + force-kill + socket cleanup) runs in a background task. Telemetry rollup in `handle_run` waits for process exit in background before reading session.db, ensuring DbWriter has flushed. Also: consolidated redundant mutex acquisitions in `handle_fork` (4 locks -> 1-2) and `handle_persist` (2 locks -> 1), parallelized IPC fan-out in `handle_reload_config` and `handle_purge` with `join_all`, moved `remove_dir_all` to `spawn_blocking`, added periodic cleanup timer, logged registry save failures.
 - **perf: capsem-process self-exit on shutdown** -- after forwarding `HostToGuest::Shutdown` to the guest agent, capsem-process now waits `SHUTDOWN_GRACE_SECS + 500ms` then calls `vm.stop()` and `exit(0)`. Previously, `CFRunLoopRun` kept the process alive indefinitely after guest shutdown, requiring SIGKILL from the service.
