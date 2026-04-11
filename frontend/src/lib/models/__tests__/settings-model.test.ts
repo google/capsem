@@ -75,10 +75,10 @@ describe('SettingsModel', () => {
       expect(model.presets.length).toBeGreaterThan(0);
     });
 
-    it('activePresetId returns null when no preset matches', () => {
+    it('activePresetId detects matching preset', () => {
       const model = loadModel();
-      // Default settings don't match any preset exactly
-      expect(model.activePresetId).toBeNull();
+      // Default mock settings match the "high" preset
+      expect(model.activePresetId).toBe('high');
     });
   });
 
@@ -162,6 +162,167 @@ describe('SettingsModel', () => {
     it('returns true when no API keys are set', () => {
       const model = loadModel();
       expect(model.needsSetup).toBe(true);
+    });
+  });
+
+  describe('enabled / visibility', () => {
+    it('isEnabled returns true for settings without enabled_by', () => {
+      const model = loadModel();
+      expect(model.isEnabled('ai.anthropic.allow')).toBe(true);
+    });
+
+    it('isCorpLocked returns false for normal settings', () => {
+      const model = loadModel();
+      expect(model.isCorpLocked('vm.resources.cpu_count')).toBe(false);
+    });
+
+    it('isCorpLocked returns true for locked settings', () => {
+      const model = loadModel();
+      const leaf = model.getLeaf('vm.resources.cpu_count');
+      if (leaf) (leaf as { corp_locked: boolean }).corp_locked = true;
+      expect(model.isCorpLocked('vm.resources.cpu_count')).toBe(true);
+    });
+
+    it('isEnabled returns true for unknown ID', () => {
+      const model = loadModel();
+      expect(model.isEnabled('nonexistent')).toBe(true);
+    });
+
+    it('isCorpLocked returns false for unknown ID', () => {
+      const model = loadModel();
+      expect(model.isCorpLocked('nonexistent')).toBe(false);
+    });
+  });
+
+  describe('MCP servers', () => {
+    it('mcpServers returns array', () => {
+      const model = loadModel();
+      expect(Array.isArray(model.mcpServers)).toBe(true);
+    });
+
+    it('getMcpServer returns undefined for unknown key', () => {
+      const model = loadModel();
+      expect(model.getMcpServer('nonexistent')).toBeUndefined();
+    });
+  });
+
+  describe('side effects', () => {
+    it('getSideEffect returns ToggleTheme for dark_mode', () => {
+      const model = loadModel();
+      expect(model.getSideEffect('appearance.dark_mode')).toBe('toggle_theme');
+    });
+
+    it('getSideEffect returns null for normal settings', () => {
+      const model = loadModel();
+      expect(model.getSideEffect('vm.resources.cpu_count')).toBeNull();
+    });
+
+    it('getSideEffect returns null for unknown ID', () => {
+      const model = loadModel();
+      expect(model.getSideEffect('nonexistent')).toBeNull();
+    });
+  });
+
+  describe('pending changes edge cases', () => {
+    it('stage then unstage leaves clean', () => {
+      const model = loadModel();
+      model.stage('vm.resources.cpu_count', 8);
+      model.unstage('vm.resources.cpu_count');
+      expect(model.isDirty).toBe(false);
+      expect(model.pendingChanges.size).toBe(0);
+    });
+
+    it('unstage non-existent key is no-op', () => {
+      const model = loadModel();
+      model.unstage('nonexistent');
+      expect(model.isDirty).toBe(false);
+    });
+
+    it('stage overwrites previous staged value', () => {
+      const model = loadModel();
+      model.stage('vm.resources.cpu_count', 2);
+      model.stage('vm.resources.cpu_count', 8);
+      expect(model.pendingChanges.get('vm.resources.cpu_count')).toBe(8);
+      expect(model.pendingChanges.size).toBe(1);
+    });
+
+    it('clearPending after multiple stages', () => {
+      const model = loadModel();
+      model.stage('vm.resources.cpu_count', 8);
+      model.stage('vm.resources.ram_gb', 16);
+      model.stage('security.web.allow_read', true);
+      model.clearPending();
+      expect(model.isDirty).toBe(false);
+      expect(model.pendingChanges.size).toBe(0);
+    });
+
+    it('getPendingAsRecord includes all staged changes', () => {
+      const model = loadModel();
+      model.stage('vm.resources.cpu_count', 8);
+      model.stage('vm.resources.ram_gb', 16);
+      const record = model.getPendingAsRecord();
+      expect(record).toEqual({
+        'vm.resources.cpu_count': 8,
+        'vm.resources.ram_gb': 16,
+      });
+    });
+
+    it('stage complex file value', () => {
+      const model = loadModel();
+      const fileVal = { path: '/root/.bashrc', content: '# test' };
+      model.stage('vm.environment.shell.bashrc', fileVal);
+      expect(model.pendingChanges.get('vm.environment.shell.bashrc')).toEqual(fileVal);
+    });
+
+    it('stage boolean false', () => {
+      const model = loadModel();
+      model.stage('ai.anthropic.allow', false);
+      expect(model.pendingChanges.get('ai.anthropic.allow')).toBe(false);
+    });
+
+    it('stage number zero', () => {
+      const model = loadModel();
+      model.stage('vm.resources.cpu_count', 0);
+      expect(model.pendingChanges.get('vm.resources.cpu_count')).toBe(0);
+    });
+
+    it('stage empty string', () => {
+      const model = loadModel();
+      model.stage('vm.environment.shell.term', '');
+      expect(model.pendingChanges.get('vm.environment.shell.term')).toBe('');
+    });
+  });
+
+  describe('tree structure', () => {
+    it('flatLeaves count is consistent with tree', () => {
+      const model = loadModel();
+      expect(model.flatLeaves.length).toBeGreaterThan(30);
+      // Every flat leaf should be findable by ID
+      for (const leaf of model.flatLeaves) {
+        expect(model.getLeaf(leaf.id)).toBe(leaf);
+      }
+    });
+
+    it('sections are top-level groups only', () => {
+      const model = loadModel();
+      for (const section of model.sections) {
+        expect(section.kind).toBe('group');
+      }
+    });
+
+    it('tree contains various node kinds', () => {
+      const model = loadModel();
+      const kinds = new Set<string>();
+      function walk(nodes: import('../../types/settings').SettingsNode[]) {
+        for (const n of nodes) {
+          kinds.add(n.kind);
+          if (n.kind === 'group') walk(n.children);
+        }
+      }
+      walk(model.tree);
+      expect(kinds.has('group')).toBe(true);
+      expect(kinds.has('leaf')).toBe(true);
+      expect(kinds.has('action')).toBe(true);
     });
   });
 });

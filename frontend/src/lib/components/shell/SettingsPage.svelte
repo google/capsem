@@ -15,6 +15,8 @@
   import Info from 'phosphor-svelte/lib/Info';
   import Sun from 'phosphor-svelte/lib/Sun';
   import Moon from 'phosphor-svelte/lib/Moon';
+  import Export from 'phosphor-svelte/lib/Export';
+  import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
 
   // Live preview: resolve current terminal theme to get colors
   let previewTheme = $derived(getTheme(resolveThemeKey(themeStore.terminalTheme, themeStore.mode)));
@@ -25,7 +27,7 @@
   // Dynamic sections from settings tree (exclude 'appearance' -- handled by custom UI)
   let dynamicSections = $derived.by(() => {
     const sections = settingsStore.model?.sections ?? [];
-    return sections.filter(s => s.key !== 'appearance');
+    return sections.filter(s => s.key !== 'appearance' && s.key !== 'app');
   });
 
   // Active dynamic group (if sidebar selected a dynamic section)
@@ -55,7 +57,7 @@
       });
     }
     items.push({ key: 'mcp', label: 'MCP Servers', icon: Plugs });
-    items.push({ key: 'about', label: 'About Capsem', icon: Info });
+    items.push({ key: 'about', label: 'About', icon: Info });
     return items;
   });
 
@@ -63,12 +65,35 @@
     settingsStore.load();
   });
 
+  let importInput = $state<HTMLInputElement>(null!);
+  let importMessage = $state<{ text: string; error: boolean } | null>(null);
+
   async function handleSave() {
     await settingsStore.save();
   }
 
   async function handleDiscard() {
     await settingsStore.discard();
+  }
+
+  function handleExport() {
+    settingsStore.exportSettings();
+  }
+
+  async function handleImport(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    importMessage = null;
+    try {
+      const count = await settingsStore.importSettings(file);
+      importMessage = count > 0
+        ? { text: `${count} setting${count === 1 ? '' : 's'} staged. Review and save to apply.`, error: false }
+        : { text: 'No changes -- imported settings match current values.', error: false };
+    } catch (err) {
+      importMessage = { text: String(err instanceof Error ? err.message : err), error: true };
+    }
+    input.value = '';
   }
 </script>
 
@@ -99,10 +124,10 @@
 
       {#if activeSection === 'appearance'}
         <!-- ===== Appearance (custom, not from backend tree) ===== -->
-        <h2 class="text-xl font-bold text-foreground mb-6">Appearance</h2>
+        <h2 class="text-xl font-medium text-foreground mb-6">Appearance</h2>
 
         <!-- Interface -->
-        <h3 class="text-xs font-semibold text-muted-foreground-1 uppercase tracking-wider mb-2">Interface</h3>
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Interface</h3>
         <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-6">
           <!-- Mode -->
           <div class="flex items-center justify-between p-4">
@@ -188,7 +213,7 @@
         </div>
 
         <!-- Terminal -->
-        <h3 class="text-xs font-semibold text-muted-foreground-1 uppercase tracking-wider mb-2">Terminal</h3>
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Terminal</h3>
         <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-6">
           <!-- Live preview -->
           <div class="p-4">
@@ -282,7 +307,16 @@
 
       {:else if activeSection === 'about'}
         <!-- ===== About ===== -->
-        <h2 class="text-xl font-bold text-foreground mb-6">About Capsem</h2>
+        <h2 class="text-xl font-medium text-foreground mb-6">About</h2>
+
+        <!-- App settings (auto-update, check for updates) -->
+        {@const appGroup = settingsStore.findGroup('App')}
+        {#if appGroup}
+          <SettingsSection group={appGroup} depth={1} />
+        {/if}
+
+        <!-- Version info -->
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Version</h3>
         <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
           <div class="flex items-center justify-between p-4">
             <p class="text-sm text-foreground">Version</p>
@@ -295,6 +329,53 @@
           <div class="flex items-center justify-between p-4">
             <p class="text-sm text-foreground">Kernel</p>
             <p class="text-sm text-muted-foreground-1">6.12-capsem</p>
+          </div>
+        </div>
+
+        <!-- Data management -->
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Data</h3>
+        <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+          <div class="flex items-center justify-between p-4">
+            <div>
+              <p class="text-sm font-medium text-foreground">Export settings</p>
+              <p class="text-xs text-muted-foreground-1 mt-0.5">Download all settings as a JSON file</p>
+            </div>
+            <button
+              type="button"
+              class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+              onclick={handleExport}
+            >
+              <Export size={16} />
+              Export
+            </button>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-foreground">Import settings</p>
+                <p class="text-xs text-muted-foreground-1 mt-0.5">Load settings from a previously exported JSON file</p>
+              </div>
+              <button
+                type="button"
+                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+                onclick={() => importInput.click()}
+              >
+                <DownloadSimple size={16} />
+                Import
+              </button>
+              <input
+                bind:this={importInput}
+                type="file"
+                accept=".json"
+                class="hidden"
+                onchange={handleImport}
+              />
+            </div>
+            {#if importMessage}
+              <p class="text-xs mt-2 {importMessage.error ? 'text-destructive-foreground' : 'text-muted-foreground-1'}">
+                {importMessage.text}
+              </p>
+            {/if}
           </div>
         </div>
 

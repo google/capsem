@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { Highlighter } from 'shiki';
   import type { SettingsLeaf, SettingValue } from '../../../types/settings';
   import { themeStore } from '../../../stores/theme.svelte.ts';
   import { getShikiHighlighter, resolveShikiTheme, detectShikiLang } from '../../../shiki.ts';
@@ -17,7 +15,6 @@
     onchange: (value: SettingValue) => void;
   } = $props();
 
-  let highlighter: Highlighter | null = $state(null);
   let highlightedHtml = $state('');
   let isEditing = $state(false);
   let draftContent = $state('');
@@ -50,20 +47,22 @@
     try { return JSON.stringify(JSON.parse(text)); } catch { return text.trim(); }
   }
 
-  onMount(async () => {
-    highlighter = await getShikiHighlighter();
-  });
-
   $effect(() => {
-    if (!highlighter || !fv.content || isEditing) {
+    const content = fv.content;
+    const editing = isEditing;
+    const ft = filetype;
+    const termTheme = themeStore.terminalTheme;
+    const mode = themeStore.mode;
+
+    if (!content || editing) {
       highlightedHtml = '';
       return;
     }
-    const content = filetype === 'json' ? formatJson(fv.content) : fv.content;
-    const lang = detectShikiLang(filetype);
-    highlightedHtml = highlighter.codeToHtml(content, {
-      lang,
-      theme: resolveShikiTheme(themeStore.terminalTheme, themeStore.mode),
+    const formatted = ft === 'json' ? formatJson(content) : content;
+    const lang = detectShikiLang(ft);
+    const theme = resolveShikiTheme(termTheme, mode);
+    getShikiHighlighter().then(h => {
+      highlightedHtml = h.codeToHtml(formatted, { lang, theme });
     });
   });
 

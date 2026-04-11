@@ -117,6 +117,30 @@ class SettingsStore {
     await this.save();
   }
 
+  /** Export all settings as a JSON file download. */
+  exportSettings() {
+    if (!this.model) return;
+    const json = this.model.exportToJSON();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'capsem-settings.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /** Import settings from a JSON file. Changes are staged (not saved). */
+  async importSettings(file: File): Promise<number> {
+    if (!this.model) throw new Error('Settings not loaded');
+    const text = await file.text();
+    const changes = this.model.importFromJSON(text);
+    for (const [id, value] of changes) {
+      this.model.stage(id, value);
+    }
+    return changes.size;
+  }
+
   async applySecurityPreset(id: string) {
     this.applyingPreset = id;
     try {
