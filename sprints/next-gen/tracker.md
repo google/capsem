@@ -1,100 +1,87 @@
-# Next-Gen Platform Tracker
+# Next-Gen Platform Roadmap
 
-Restructured 2026-04-03 after codebase audit. S1 consolidates all foundation work (service, process, CLI, MCP, shell, snapshots, CLI parity, docs).
+What's been shipped, what's left, and what order it goes in.
 
-## Phase A: Foundation (Done)
+## Shipped
 
-| Sprint | Name | Status | What shipped |
-|--------|------|--------|-------------|
-| S1 | Service + Process + CLI + MCP + CLI Parity | Done | Daemon (19 API endpoints), process isolation, CLI (24+ commands), MCP (21 tools), shell, snapshots, persistent VMs, fork images, native installer (setup/update/uninstall/service install), env injection, corp config. Remaining stretch: `cp`, `stats`, `--disk`, `--follow`, `/health`, `flock`, skill/doc updates |
+| What | Sprint | Key deliverables |
+|------|--------|-----------------|
+| Foundation (S1) | `done/cli-parity`, `done/fork-images`, `done/image-simplification` | Daemon (19 endpoints), process isolation, CLI (24+ commands), MCP (21 tools), shell, snapshots, persistent VMs, fork-as-sandbox, env injection |
+| Native installer | `native-installer` (~85%) | Setup wizard, service install/uninstall, self-update, corp config, completions, uninstall. Remaining: binary swap + Docker e2e gate |
+| VM lifecycle | `done/vm-lifecycle` | Guest shutdown/halt/poweroff/suspend, VM identity injection, quiescence (fsfreeze), Apple VZ pause/save/restore, agent reconnect, CLI + MCP tools |
+| TCP gateway | `done/gateway` | capsem-gateway crate, Bearer auth, UDS proxy, /status aggregation, CORS, WebSocket terminal bridge, 95 tests |
+| Menu bar tray | `tray` (code complete) | capsem-tray crate, gateway polling, Permanent/Temporary VM sections, context-sensitive actions, icon states, 47 tests. Needs integration smoke test. |
+| Frontend rebuild | `frontend-rebuild` (sprints 01-05 done) | Preline + Svelte 5 + Tailwind v4 browser shell. Tab system, all views (terminal, logs, files, inspector, settings, stats, overview), gateway wiring. Remaining: polish/a11y (sprint 06) + CI/ship (sprint 07) |
+| Testing | `done/testing`, `done/testing-ci-coverage` | 25 test sub-sprints (T0-T25), capsem-process modularization (24->62 tests), CI expansion (+422 tests), 70% coverage floor |
+| Security | `done/symlink-security` | Guest I/O path hardening (validate + O_NOFOLLOW), snapshot symlink preservation |
 
-## Phase B: TCP HTTP API
+## In progress
 
-| Sprint | Name | Status | Depends On |
-|--------|------|--------|-----------|
-| S2 | Localhost HTTP API | Not started | S1 |
-| S3 | SSH key auth | Not started | - |
-| S4 | Remote HTTP API (mTLS) | Not started | S2, S3 |
+| What | Sprint | Effort | What's left |
+|------|--------|--------|-------------|
+| Native installer | `native-installer` | S | `run_update()` binary swap, Docker e2e verification, testing gate |
+| Frontend polish + ship | `frontend-rebuild` (06-07) | S | Keyboard shortcuts, animations, a11y, responsive, CI pipeline, production build |
+| Tray integration smoke | `tray` | XS | Manual verification with running gateway+service |
 
-## Phase C: VM Lifecycle (Shutdown, Suspend, Identity)
+## Remaining roadmap
 
-| Sprint | Name | Status | Depends On |
-|--------|------|--------|-----------|
-| S5+S7 | VM Lifecycle (shutdown, identity, quiescence, Apple VZ suspend/resume) | In progress | S1 |
-| S6 | Branch + Rewind | Not started | S5+S7 (quiescence) |
-| S8 | Auto-nap + pressure monitoring | Not started | S5+S7 |
-| S9 | Linux suspend/resume (KVM ioctls, GIC state, memory dump) | Deferred (~11-15 days) | S5+S7 |
+Ordered by dependency chain. Items without dependencies can run in parallel.
 
-S5+S7 combined into a single meta sprint: `sprints/done/vm-lifecycle/`. Covers guest system binaries (`shutdown`/`halt`/`poweroff`/`suspend`), VM identity injection, quiescence protocol (fsfreeze), Apple VZ pause/save/restore, agent reconnect after restore, and service orchestration. Guest-initiated lifecycle commands flow through the service's existing code paths.
+### Near-term (no new architecture)
 
-## Phase E: SSH + IDE
+| What | Sprint | Effort | Depends on | Notes |
+|------|--------|--------|------------|-------|
+| Install lifecycle | `install-lifecycle` | M | native-installer, tray | `just install` deploys all 6 binaries, graceful restart, post-install health check |
+| Tray-UI integration | `tray-ui-integration` | S | tray, frontend | Tauri accepts `--connect`/`--new-named` from tray menu items |
+| Tauri shell rewrite | `tauri-shell` | L | frontend, native-installer | New capsem-app from scratch, settings + MCP service endpoints, WebSocket events |
+| Tray notifications | `tray-notifications` | M | tray | macOS native notifications, badge dot, pulse animation, ack flow |
 
-| Sprint | Name | Status | Depends On |
-|--------|------|--------|-----------|
-| S10 | MITM SSH + IDE + file transfer (cp) | Not started | S4 |
-| S11 | IDE integration | Not started | S10 |
+### Mid-term (new capabilities)
 
-## Phase F: Menu Bar + Auto-start
+| What | Sprint | Effort | Depends on | Notes |
+|------|--------|--------|------------|-------|
+| Branch + rewind | -- | M | vm-lifecycle (done) | Disk-only ops via quiescence + reflink copy. Named snapshots. |
+| Auto-nap | -- | L | vm-lifecycle (done) | Memory pressure monitoring, idle detection, auto-suspend/resume |
+| SSH key auth | -- | M | -- | SSH key loading, mTLS with SSH-derived certs |
+| Remote HTTP API | -- | M | gateway (done), SSH key auth | mTLS listener on capsem-gateway for remote access |
+| FTS5 search | -- | L | -- | Per-session FTS5 index, cross-session ATTACH search, UI search bar |
 
-| Sprint | Name | Status | Depends On |
-|--------|------|--------|-----------|
-| S12 | Menu bar (standalone `capsem-tray`) | Not started | S1, gateway |
-| S13 | Auto-start + notifications | Not started | S12 |
+### Long-term (new subsystems)
 
-Sprint tracker: `sprints/tray/tracker.md`
-Gateway dependency: `sprints/done/gateway/tracker.md`
+| What | Sprint | Effort | Depends on | Notes |
+|------|--------|--------|------------|-------|
+| MITM SSH + IDE | -- | XL | remote HTTP API | Guest openssh, russh server, VM routing, session recording, VS Code extension, `capsem cp` |
+| Forensics | `forensics` | XL | -- | API namespace restructure, process logs to SQLite, FTS5, forensic CLI, adversarial tests |
+| Telemetry | `telemetry` | XL | -- | New crate (capsem-telemetry), OTLP export, per-VM instrumentation, service metrics |
+| Linux suspend | -- | L | vm-lifecycle (done) | KVM ioctls for vCPU/GIC/memory snapshot, ~11-15 days |
+| Enterprise polish | -- | L | SSH + IDE | Audit logging, OpenTelemetry, corp manifest enforcement, sandbox profiles |
+| Headless renderer | -- | XL | frontend | Per-VM browser subprocess, MCP tools for navigation/screenshot/DOM/JS |
+| Renderer UI preview | -- | M | headless renderer | Screenshot mode + sandboxed live preview in Tauri |
 
-## Phase G: Frontend Rebuild
-
-| Sprint | Name | Status | Depends On |
-|--------|------|--------|-----------|
-| S14 | Frontend rebuild (Preline + gateway + tabs) | Not started | gateway (done) |
-| S15 | Frontend views | Not started | S14 |
-| S16 | Search (FTS5) | Not started | S14 |
-
-## Phase H: Polish + Post-core
-
-| Sprint | Name | Status | Depends On |
-|--------|------|--------|-----------|
-| S17 | Enterprise polish | Not started | S10 |
-| S18 | Headless renderer | Not started | S14 |
-| S19 | Renderer UI preview | Not started | S18 |
-
-## Critical Path
+## Critical path
 
 ```
-S1 (done -- foundation + CLI/MCP parity + fork images + installer)
+[shipped: foundation, gateway, vm-lifecycle, tray, frontend 01-05]
   |
-  +---> S2 (localhost HTTP) ---> S4 (mTLS remote) ---> S10 (SSH) ---> S11 (IDE)
-  |                                    ^                                  |
-  +---> S3 (SSH key auth) ------------+                                   v
-  |                                                                     S17 (enterprise)
-  +---> S5+S7 (vm-lifecycle: shutdown, identity, quiescence, Apple VZ suspend/resume)
-  |         |
-  |         +---> S6 (branch/rewind)
-  |         +---> S8 (auto-nap)
-  |         +---> S9 (Linux suspend, deferred)
+  +-- frontend 06-07 (S) --> tauri-shell (L) --> tray-UI integration (S)
+  |                                |
+  |                                +--> install-lifecycle (M)
   |
-  +---> S12 (menu bar) ---> S13 (auto-start)
+  +-- SSH key auth (M) --> remote HTTP API (M) --> MITM SSH + IDE (XL) --> enterprise (L)
   |
-  +---> S2 ---> S14 (frontend) ---> S15 (views)
-                    |                    |
-                    +---> S16 (search)   +---> S18 (renderer) ---> S19 (preview)
+  +-- branch + rewind (M) ----+
+  |                            |
+  +-- auto-nap (L) -----------+-- (both depend on vm-lifecycle, already done)
+  |
+  +-- FTS5 search (L) -- standalone, no deps
+  +-- forensics (XL) -- standalone, no deps
+  +-- telemetry (XL) -- standalone, no deps
 ```
-
-Parallel tracks after S1: S2+S3, S5+S7, S12 can all start independently.
-
-## Spike (Complete)
-
-**Checkpoint/Restore** (2026-03-30, branch spike/checkpoint-restore): Apple VZ save/restore proven (730ms round-trip, 54MB for 2GB VM). Quiescence via fsfreeze validated. Informs S9-S13.
 
 ## Reference
 
 - Original plan: `sprints/next-gen/plan.md`
 - S1 detailed tracker: `sprints/next-gen/sprint-01/tracker.md`
-- S5+S7 (vm-lifecycle) sprint: `sprints/done/vm-lifecycle/MASTER.md`
 - Spike results: `sprints/next-gen/spike-checkpoint/results.md`
-- Testing master: `sprints/done/testing/MASTER.md` (25 test sub-sprints, all done)
-- Frontend rebuild: `sprints/frontend-rebuild/tracker.md` (S14 -- Preline + gateway + tabs)
-- Fork images sprint: `sprints/done/fork-images/tracker.md`
-- Native installer sprint: `sprints/native-installer/tracker.md`
+
+**Size key:** XS = ~half day, S = 1-2 days, M = 3-5 days, L = 1-2 weeks, XL = 2-4 weeks
