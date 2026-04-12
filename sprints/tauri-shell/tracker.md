@@ -1,33 +1,36 @@
 # Sprint: Tauri Shell Wiring
 
 ## T0: Frontend fixes and wiring
-- [ ] Fix `isMock` export in `mock.ts` -- build blocker (db.ts and Terminal.svelte import it)
-- [ ] Fix `isMock` import in `db.ts`
-- [ ] Add settings endpoints to `api.ts` (getSettings, saveSettings, getPresets, applyPreset, lintConfig)
-- [ ] Add MCP runtime endpoints to `api.ts` (getMcpServers, getMcpTools, refreshMcpTools, approveMcpTool, callMcpTool)
-- [ ] Add WebSocket `/events` to `api.ts` (onVmStateChanged, onDownloadProgress)
-- [ ] Wire `vm.svelte.ts` to real WebSocket events
-- [ ] Wire `mcp.svelte.ts` to real MCP runtime endpoints
-- [ ] Wire `wizard.svelte.ts` -- remove detectHostConfig, wire saveSettings
-- [ ] Delete `logs.svelte.ts` -- dead code
-- [ ] Tests for api.ts changes
-- [ ] Tests for mock.ts / db.ts fixes
-- [ ] Tests for stores
-- [ ] `pnpm run check` -- 0 type errors
-- [ ] `pnpm run test` -- all pass
+- [x] Fix `isMock` export in `mock.ts` -- build blocker (db.ts and Terminal.svelte import it)
+- [x] Fix `isMock` import in `db.ts`
+- [x] Add settings endpoints to `api.ts` (getSettings, saveSettings, getPresets, applyPreset, lintConfig)
+- [x] Add MCP runtime endpoints to `api.ts` (getMcpServers, getMcpTools, refreshMcpTools, approveMcpTool, callMcpTool)
+- [x] Add WebSocket `/events` to `api.ts` (onVmStateChanged, onDownloadProgress)
+- [x] Wire `vm.svelte.ts` to real WebSocket events
+- [x] Wire `mcp.svelte.ts` to real MCP runtime endpoints
+- [x] Wire `wizard.svelte.ts` -- remove detectHostConfig, wire saveSettings
+- [x] Delete `logs.svelte.ts` -- dead code
+- [x] Tests for api.ts changes (45 tests)
+- [x] Tests for mock.ts / db.ts fixes (15 tests)
+- [x] Tests for stores (34 tests -- mcp, wizard)
+- [x] `pnpm run check` -- 0 type errors
+- [x] `pnpm run test` -- all 413 pass
 
 ## T1: New capsem-app (from scratch)
-- [ ] Create `crates/capsem-app2/` -- clean Tauri shell
-- [ ] main.rs -- thin webview shell, 2 IPC commands (open_url, check_for_app_update)
-- [ ] Cargo.toml -- minimal deps (tauri, plugins, anyhow, serde, tracing)
-- [ ] tauri.conf.json -- gateway-first, bundled fallback
-- [ ] build.rs -- just tauri_build
-- [ ] Icons from graphics/tauri/
-- [ ] capabilities/ -- window + updater + opener only
-- [ ] `cargo check -p capsem-ui` passes
-- [ ] Delete old `crates/capsem-app/`
-- [ ] Rename capsem-app2 -> capsem-app
-- [ ] Update workspace Cargo.toml
+- [x] Create `crates/capsem-app/` -- clean Tauri shell (70 lines)
+- [x] main.rs -- thin webview shell, 2 IPC commands (open_url, check_for_app_update)
+- [x] Cargo.toml -- minimal deps (tauri, plugins, anyhow, serde, tracing)
+- [x] tauri.conf.json -- gateway-first (window URL http://127.0.0.1:19222), bundled fallback
+- [x] build.rs -- just tauri_build
+- [x] Icons from graphics/tauri/
+- [x] capabilities/ -- window + updater + opener only
+- [x] `cargo check -p capsem-ui` passes
+- [x] Delete old `crates/capsem-app/` (was 2000+ lines, 39 IPC commands)
+- [x] Rename capsem-app2 -> capsem-app
+- [x] Update workspace Cargo.toml
+- [x] Switch entry point: index.astro now imports shell/App.svelte (tabbed multi-VM UI)
+- [x] Delete dead old components (App.svelte, Sidebar.svelte)
+- [x] `cargo check` (full workspace) passes
 
 ## T2: Service endpoints -- settings (including MCP config)
 - [ ] GET /settings -- load merged tree + MCP policy
@@ -78,3 +81,4 @@
 - WebSocket for events (T4) -- reuse existing gateway WebSocket infrastructure, not SSE.
 - Gateway catch-all proxy forwards new service endpoints automatically.
 - Out of scope: host detection (installer sprint), log search (search sprint).
+- Entry point switched from old single-VM App.svelte to shell/App.svelte (tabbed multi-VM dashboard).
