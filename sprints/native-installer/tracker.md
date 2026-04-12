@@ -72,7 +72,7 @@
 - [x] Add `self-replace`, `semver` to `crates/capsem/Cargo.toml`
 - [x] `crates/capsem/src/platform.rs` -- InstallLayout enum + detect_install_layout()
 - [x] `crates/capsem/src/update.rs` -- read_cached_update_notice(), refresh_update_cache_if_stale()
-- [x] `crates/capsem/src/update.rs` -- run_update() with atomic download-all-then-swap sequence
+- [ ] `crates/capsem/src/update.rs` -- run_update() with atomic download-all-then-swap sequence (asset download works; binary swap blocked on WB6)
 - [x] `crates/capsem/src/main.rs` -- Update { yes } command, background cache refresh after dispatch
 - [ ] Background corp config refresh (tokio::spawn after dispatch) -- deferred to when corp config is more common
 - [x] `tests/capsem-install/test_update.py` -- 4 tests (3 happy + partial-failure-preserves-old)
@@ -110,7 +110,7 @@
 - [ ] CI: test-install job passes in ci.yaml
 - [x] Changelog updated
 - [x] `RUSTFLAGS="-D warnings" cargo check --workspace` passes
-- [x] `cargo test -p capsem` passes (95 tests)
+- [ ] `cargo test -p capsem` passes (needs re-verification after audit fixes and 2026-04-12 code review)
 
 ## Audit (2026-04-07): Sprint status was overstated
 
@@ -148,11 +148,11 @@ A workspace-wide `-D warnings` check revealed dead code in the capsem crate, pro
 - `scripts/simulate-install.sh` is the bridge to WB7 -- when real install.sh lands, swap it in conftest fixture
 - `host_config::detect()` already in capsem-core, no porting needed
 - `apply_preset()` already writes to user.toml, no porting needed
-- `cleanup_old_versions()` integrates with ImageRegistry, already tested
+- `cleanup_old_versions()` now pins the running binary's version via pinned.json before cleanup, so it only deletes versions that are neither latest nor running
 - MCP try_ensure_service() at capsem-mcp/src/main.rs:80 is the reference pattern
 - Service resolve_assets_dir() at capsem-service/src/main.rs:456 already works for installed layout
 - systemd-in-Docker requires --privileged --cgroupns=host + systemd as PID 1
 - LaunchAgent tests are manual-only (can't run launchctl in Docker)
 - generate_plist() and generate_systemd_unit() are pure functions -- unit tested on all platforms
-- Update uses atomic download-all-then-swap to avoid partial-update bricking
+- Update downloads assets atomically but binary swap is unimplemented (WB6 blocker). `self-replace` crate is in Cargo.toml ready to wire.
 - test_install_sh.py needs update when WB7 lands (marked with TODO)
