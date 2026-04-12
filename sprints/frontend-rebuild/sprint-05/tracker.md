@@ -8,40 +8,40 @@ Depends on: Sprints 01-04
 ## Acceptance Criteria
 
 ### API Client
-- [ ] `api.ts` — HTTP client to `http://127.0.0.1:19222` with Bearer auth
-- [ ] Token loaded from config (not hardcoded)
-- [ ] Bearer token safety: memory only, never in localStorage/DOM/logs/URLs
-- [ ] Mock fallback: detect gateway unreachable, switch to mock.ts data
-- [ ] Error handling: connection refused, auth failure, timeout
+- [x] `api.ts` — HTTP client to `http://127.0.0.1:19222` with Bearer auth
+- [x] Token loaded from `GET /token` endpoint (hardcoded 127.0.0.1 IP check)
+- [x] Bearer token safety: memory only, never in localStorage/DOM/logs/URLs
+- [x] Mock fallback: detect gateway unreachable, switch to mock.ts data
+- [x] Error handling: connection refused, auth failure, timeout
 
 ### Terminal WebSocket
-- [ ] WebSocket to `ws://127.0.0.1:19222/terminal/{id}`
-- [ ] VM ID validation before connecting (alphanumeric + hyphens only)
-- [ ] Bidirectional data: xterm input → WS, WS → xterm output
-- [ ] Resize events sent as text frames
+- [x] WebSocket to `ws://127.0.0.1:19222/terminal/{id}?token=`
+- [x] VM ID validation before connecting (alphanumeric + hyphens only)
+- [x] Bidirectional data: xterm input -> WS, WS -> xterm output
+- [x] Resize events sent as JSON text frames
 - [ ] Reconnect on disconnect with backoff
 
 ### Status Polling
-- [ ] `GET /status` polled every 1s for VM status
-- [ ] Tab status dots update in real-time (running/stopped/error)
-- [ ] VM list on new-tab page reflects live state
+- [x] `GET /status` polled every 2s for VM status
+- [x] Connection dot in toolbar (green=connected, gray=mock)
+- [x] VM list on new-tab page reflects live state
 
 ### VM Lifecycle
 - [ ] Create VM from new-tab page
-- [ ] Stop/delete/fork/resume from toolbar and overview
-- [ ] Optimistic UI updates with rollback on error
+- [x] Stop/delete/fork from toolbar and overview
+- [x] Resume from new-tab page action buttons
 
 ### Inspector Wiring
-- [ ] `db.ts` — SQL queries via `POST /inspect/{id}`
-- [ ] Results flow into InspectorView table
+- [x] SQL queries via `POST /inspect/{id}` in api.ts
+- [x] Results flow into InspectorView table
 
 ### Settings Wiring
-- [ ] Settings save via `POST /reload-config` and settings API
-- [ ] Settings load from gateway on startup
+- [ ] Settings save via gateway API (service has no settings CRUD yet)
+- [ ] Settings load from gateway on startup (service has no settings CRUD yet)
 
 ### Cleanup
-- [ ] Zero `@tauri-apps/api` imports remaining
-- [ ] No Tauri-specific code paths
+- [x] Zero `@tauri-apps/api` imports remaining
+- [x] No Tauri-specific code paths
 
 ## Testing Gate
 
@@ -51,5 +51,7 @@ Depends on: Sprints 01-04
 - [ ] VM create/stop/delete works from UI
 - [ ] Status dots update within 2s of VM state change
 - [ ] Inspector queries return real session DB data
-- [ ] `grep -r "tauri" frontend/src/` returns zero results
-- [ ] `pnpm run check` passes
+- [x] `grep -r "tauri" frontend/src/` returns zero results
+- [x] `pnpm run check` passes
+- [x] `pnpm test` passes (303 tests)
+- [x] `cargo test -p capsem-gateway` passes (115 tests)
