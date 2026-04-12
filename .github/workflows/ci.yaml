@@ -32,11 +32,11 @@ jobs:
           cargo install cargo-nextest --locked
           cargo install cargo-llvm-cov --locked
 
-      # Library crate tests with coverage (capsem-core includes KVM backend on Linux)
+      # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux)
       - name: Unit tests (KVM backend) with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json -p capsem-core -p capsem-logger -p capsem-proto
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-logger -p capsem-proto 2>&1 | tee coverage-summary-linux.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json --fail-under-lines 70 -p capsem-core -p capsem-logger -p capsem-proto -p capsem-service -p capsem -p capsem-mcp
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-logger -p capsem-proto -p capsem-service -p capsem -p capsem-mcp 2>&1 | tee coverage-summary-linux.txt
 
       - name: Upload Linux coverage
         if: ${{ !cancelled() }}
@@ -113,14 +113,11 @@ jobs:
           cargo install cargo-llvm-cov --locked
           cargo install cargo-nextest --locked
 
-      # capsem-app requires VM assets to compile (Tauri resource bundling),
-      # so we test the library crates only. Full workspace test runs in release.
-
-      # Unit tests: lib tests with coverage + JUnit XML for test analytics
+      # Unit tests: all crates with coverage + JUnit XML for test analytics
       - name: Unit tests with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json --fail-under-lines 70 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-tray -p capsem-process
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-tray -p capsem-process 2>&1 | tee coverage-summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
@@ -139,6 +136,16 @@ jobs:
       - name: Python schema tests with coverage
         run: uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml
 
+      # Python integration tests that need no VM
+      - name: Python integration tests (non-VM suites)
+        run: |
+          uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ -v --tb=short
+
+      # Verify all integration test suites import cleanly (catches broken imports/syntax)
+      - name: Verify all integration test imports
+        run: |
+          uv run python -m pytest tests/capsem-*/ --collect-only -q
+
       # Schema drift check
       - name: Schema drift check
         run: |
@@ -153,7 +160,7 @@ jobs:
           files: codecov-unit.json
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          fail_ci_if_error: true
 
       - name: Upload Rust integration test coverage
         if: ${{ !cancelled() }}

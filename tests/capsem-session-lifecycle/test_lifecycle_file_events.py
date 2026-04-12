@@ -23,5 +23,5 @@ def test_file_write_creates_fs_event(lifecycle_env, lifecycle_db):
     rows = lifecycle_db.execute(
         "SELECT action, path FROM fs_events"
     ).fetchall()
-    # fs_events may or may not be populated depending on implementation
-    assert len(rows) >= 0
+    # Host file monitor should have captured the write
+    assert len(rows) > 0, "Expected at least one fs_event from file write"

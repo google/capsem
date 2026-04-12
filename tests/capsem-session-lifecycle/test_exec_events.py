@@ -22,5 +22,5 @@ def test_exec_curl_creates_net_event(lifecycle_env, lifecycle_db):
     rows = lifecycle_db.execute(
         "SELECT domain, decision FROM net_events"
     ).fetchall()
-    # Should have at least one event (even if denied by policy)
-    assert len(rows) >= 0  # Event creation depends on proxy wiring
+    # Should have at least one event for the curl request
+    assert len(rows) > 0, "Expected at least one net_event from curl request"

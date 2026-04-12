@@ -189,7 +189,7 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     cargo check --workspace
 
     echo "=== Rust: test suite with coverage (compiles + runs all tests) ==="
-    cargo llvm-cov --workspace --no-cfg-coverage
+    cargo llvm-cov --workspace --no-cfg-coverage --fail-under-lines 70
 
     echo "=== Cross-compile agent ==="
     uv run capsem-builder agent

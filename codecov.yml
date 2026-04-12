@@ -180,5 +180,6 @@ component_management:
 ignore:
   - crates/*/tests/**
   - site/**
+  - docs/**
   - guest/**
   - scripts/**
