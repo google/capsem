@@ -207,6 +207,13 @@ mod tests {
     }
 
     #[test]
+    fn provision_request_image_alias_deserializes_to_from() {
+        let json = json!({"ram_mb": 2048, "cpus": 2, "image": "old-img"});
+        let r: ProvisionRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(r.from.as_deref(), Some("old-img"));
+    }
+
+    #[test]
     fn provision_response_roundtrip() {
         let r = ProvisionResponse { id: "vm-123".into() };
         let json = serde_json::to_string(&r).unwrap();

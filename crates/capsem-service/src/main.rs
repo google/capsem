@@ -747,7 +747,7 @@ async fn handle_list(
                 ram_mb: Some(i.ram_mb),
                 cpus: Some(i.cpus),
                 version: Some(i.base_version.clone()),
-                forked_from: None,
+                forked_from: i.forked_from.clone(),
             });
         }
     }
@@ -798,7 +798,7 @@ async fn handle_info(
                 ram_mb: Some(i.ram_mb),
                 cpus: Some(i.cpus),
                 version: Some(i.base_version.clone()),
-                forked_from: None,
+                forked_from: i.forked_from.clone(),
             }));
         }
     }
@@ -2419,7 +2419,7 @@ mod tests {
         ).await.unwrap();
         assert_eq!(result.0.name, "my-fork");
         assert!(result.0.size_bytes > 0);
-        // Verify fork created a persistent sandbox, not an image
+        // Verify fork created a persistent sandbox entry in the registry
         let registry = state.persistent_registry.lock().unwrap();
         let entry = registry.get("my-fork").unwrap();
         assert_eq!(entry.forked_from, Some("fork-src".into()));

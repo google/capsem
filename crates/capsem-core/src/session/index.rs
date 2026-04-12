@@ -100,7 +100,7 @@ impl SessionIndex {
     pub(crate) fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version == 5 {
-            // Additive migration v5->v6: rename forked_from to forked_from.
+            // Additive migration v5->v6: rename source_image to forked_from.
             conn.execute_batch(
                 "ALTER TABLE sessions RENAME COLUMN source_image TO forked_from;"
             )?;
