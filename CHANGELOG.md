@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **image elimination: everything is a sandbox** -- removed the "image" concept entirely. `fork` now creates a stopped persistent sandbox instead of an image. `create --from <sandbox>` replaces `create --image`. Image registry, image CLI commands, and image MCP tools are all removed. `--image` remains as a hidden alias for `--from`. Session DB schema bumped to v6 (renames `source_image` to `forked_from`). Net reduction: ~500 lines and one abstraction layer.
+- **image elimination: everything is a sandbox** -- removed the "image" concept entirely. `fork` now creates a stopped persistent sandbox instead of an image. `create --from <sandbox>` replaces `create --image`. Image registry, image CLI commands, and image MCP tools are all removed. `--image` remains as a hidden alias for `--from`. `SandboxInfo` API now includes `forked_from` and `description` fields. Session DB schema bumped to v6 (renames `source_image` to `forked_from`). Net reduction: ~500 lines and one abstraction layer.
 - **CI: test 6 additional Rust crates** -- capsem-service, capsem (CLI), capsem-mcp, capsem-tray, capsem-process now run in CI (422 tests were previously local-only). capsem-app gets a compile check.
 - **CI: run non-VM Python integration tests** -- capsem-bootstrap, capsem-codesign, capsem-rootfs-artifacts suites now execute in CI. All 25 integration suites are collect-only verified.
 - **CI: Rust coverage floor** -- `--fail-under-lines 70` enforced on both macOS and Linux CI jobs. Codecov unit upload now fails CI on error.
