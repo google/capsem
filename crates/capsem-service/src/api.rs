@@ -53,6 +53,8 @@ pub struct SandboxInfo {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -237,8 +239,8 @@ mod tests {
     fn list_response_multiple() {
         let r = ListResponse {
             sandboxes: vec![
-                SandboxInfo { id: "a".into(), name: Some("a".into()), pid: 100, status: "Running".into(), persistent: true, ram_mb: Some(2048), cpus: Some(2), version: None, forked_from: None },
-                SandboxInfo { id: "b".into(), name: None, pid: 200, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None },
+                SandboxInfo { id: "a".into(), name: Some("a".into()), pid: 100, status: "Running".into(), persistent: true, ram_mb: Some(2048), cpus: Some(2), version: None, forked_from: None, description: None },
+                SandboxInfo { id: "b".into(), name: None, pid: 200, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None, description: None },
             ],
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -252,7 +254,7 @@ mod tests {
 
     #[test]
     fn sandbox_info_optional_fields_omitted() {
-        let s = SandboxInfo { id: "x".into(), name: None, pid: 1, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None };
+        let s = SandboxInfo { id: "x".into(), name: None, pid: 1, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None, description: None };
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains("ram_mb"));
         assert!(!json.contains("cpus"));

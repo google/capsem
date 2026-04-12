@@ -748,6 +748,7 @@ async fn handle_list(
                 cpus: Some(i.cpus),
                 version: Some(i.base_version.clone()),
                 forked_from: i.forked_from.clone(),
+                description: None,
             });
         }
     }
@@ -773,6 +774,7 @@ async fn handle_list(
                     cpus: Some(entry.cpus),
                     version: Some(entry.base_version.clone()),
                     forked_from: entry.forked_from.clone(),
+                    description: entry.description.clone(),
                 });
             }
         }
@@ -799,6 +801,7 @@ async fn handle_info(
                 cpus: Some(i.cpus),
                 version: Some(i.base_version.clone()),
                 forked_from: i.forked_from.clone(),
+                description: None,
             }));
         }
     }
@@ -818,6 +821,7 @@ async fn handle_info(
                 cpus: Some(entry.cpus),
                 version: Some(entry.base_version.clone()),
                 forked_from: entry.forked_from.clone(),
+                description: entry.description.clone(),
             }));
         }
     }

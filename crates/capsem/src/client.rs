@@ -67,6 +67,8 @@ pub struct SandboxInfo {
     pub version: Option<String>,
     #[serde(default)]
     pub forked_from: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -654,6 +656,7 @@ mod tests {
                     cpus: Some(2),
                     version: Some("0.16.1".into()),
                     forked_from: None,
+                    description: None,
                 },
                 SandboxInfo {
                     id: "mydev".into(),
@@ -664,6 +667,7 @@ mod tests {
                     cpus: Some(4),
                     version: None,
                     forked_from: None,
+                    description: None,
                 },
             ],
         };
