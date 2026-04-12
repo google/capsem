@@ -11,7 +11,7 @@ import {
   type ConfigIssue,
   type SecurityPreset,
   type SettingsResponse,
-} from '../types';
+} from '../types/settings';
 import {
   SettingType,
   Widget,
@@ -214,5 +214,58 @@ export class SettingsModel {
 
   getPendingAsRecord(): Record<string, SettingValue> {
     return Object.fromEntries(this._pendingChanges);
+  }
+
+  // --- Export / Import ---
+
+  /** Serialize all leaf settings to a portable JSON string. */
+  exportToJSON(): string {
+    const settings: Record<string, { value: SettingValue; corp_locked: boolean }> = {};
+    for (const [id, leaf] of this._leafIndex) {
+      settings[id] = {
+        value: leaf.effective_value,
+        corp_locked: leaf.corp_locked,
+      };
+    }
+    return JSON.stringify({ version: '1', exported_at: new Date().toISOString(), settings }, null, 2);
+  }
+
+  /** Parse an exported JSON string and return a map of changes to stage.
+   *  Skips corp-locked settings and settings whose value already matches. */
+  importFromJSON(json: string): Map<string, SettingValue> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      throw new Error('Invalid JSON');
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('Invalid settings file: expected an object');
+    }
+    const obj = parsed as Record<string, unknown>;
+    if (obj.version !== '1') {
+      throw new Error(`Unsupported settings version: ${String(obj.version ?? 'missing')}`);
+    }
+    if (typeof obj.settings !== 'object' || obj.settings === null || Array.isArray(obj.settings)) {
+      throw new Error('Invalid settings file: missing settings object');
+    }
+    const incoming = obj.settings as Record<string, unknown>;
+    const changes = new Map<string, SettingValue>();
+    for (const [id, entry] of Object.entries(incoming)) {
+      const leaf = this._leafIndex.get(id);
+      if (!leaf) continue; // unknown setting, skip
+      if (leaf.corp_locked) continue; // corp-locked, skip
+      // Extract value: accept both { value, corp_locked } and raw values
+      let value: SettingValue;
+      if (typeof entry === 'object' && entry !== null && !Array.isArray(entry) && 'value' in entry) {
+        value = (entry as { value: SettingValue }).value;
+      } else {
+        value = entry as SettingValue;
+      }
+      // Skip if same as current
+      if (JSON.stringify(leaf.effective_value) === JSON.stringify(value)) continue;
+      changes.set(id, value);
+    }
+    return changes;
   }
 }

@@ -1,0 +1,28 @@
+---
+import "../styles/global.css";
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capsem</title>
+    <script is:inline>
+      // Apply persisted theme state before first paint to prevent flash
+      (function() {
+        try {
+          var pref = localStorage.getItem('capsem-ui-mode');
+          var dark = pref === 'dark' || (pref !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+          var preline = localStorage.getItem('capsem-preline-theme');
+          if (preline) document.documentElement.dataset.theme = preline;
+          var uiSize = localStorage.getItem('capsem-ui-font-size');
+          if (uiSize) document.documentElement.style.fontSize = uiSize + 'px';
+        } catch(e) {}
+      })();
+    </script>
+  </head>
+  <body class="bg-background text-foreground antialiased">
+    <slot />
+  </body>
+</html>
