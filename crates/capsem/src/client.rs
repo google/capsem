@@ -30,8 +30,8 @@ pub struct ProvisionRequest {
     pub persistent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "image")]
+    pub from: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -53,24 +53,6 @@ pub struct ForkResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ImageInfo {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub source_vm: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_image: Option<String>,
-    pub base_version: String,
-    pub created_at: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ImageListResponse {
-    pub images: Vec<ImageInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct SandboxInfo {
     pub id: String,
     pub pid: u32,
@@ -83,6 +65,8 @@ pub struct SandboxInfo {
     pub cpus: Option<u32>,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub forked_from: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -575,7 +559,7 @@ mod tests {
             cpus: 4,
             persistent: true,
             env: None,
-            image: None,
+            from: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
@@ -595,7 +579,7 @@ mod tests {
             cpus: 2,
             persistent: true,
             env: Some(env),
-            image: None,
+            from: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("FOO"));
@@ -611,40 +595,40 @@ mod tests {
             cpus: 2,
             persistent: false,
             env: None,
-            image: None,
+            from: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(!json.contains("env"));
     }
 
     #[test]
-    fn provision_request_with_image() {
+    fn provision_request_with_from() {
         let req = ProvisionRequest {
             name: None,
             ram_mb: 2048,
             cpus: 2,
             persistent: false,
             env: None,
-            image: Some("my-img".into()),
+            from: Some("my-sandbox".into()),
         };
         let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("my-img"));
+        assert!(json.contains("my-sandbox"));
         let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(req2.image, Some("my-img".into()));
+        assert_eq!(req2.from, Some("my-sandbox".into()));
     }
 
     #[test]
-    fn provision_request_image_omitted_when_none() {
+    fn provision_request_from_omitted_when_none() {
         let req = ProvisionRequest {
             name: None,
             ram_mb: 2048,
             cpus: 2,
             persistent: false,
             env: None,
-            image: None,
+            from: None,
         };
         let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("image"));
+        assert!(!json.contains("from"));
     }
 
     #[test]
@@ -669,6 +653,7 @@ mod tests {
                     ram_mb: Some(2048),
                     cpus: Some(2),
                     version: Some("0.16.1".into()),
+                    forked_from: None,
                 },
                 SandboxInfo {
                     id: "mydev".into(),
@@ -678,6 +663,7 @@ mod tests {
                     ram_mb: Some(4096),
                     cpus: Some(4),
                     version: None,
+                    forked_from: None,
                 },
             ],
         };
@@ -857,21 +843,4 @@ mod tests {
         assert!(info.version.is_none());
     }
 
-    #[test]
-    fn image_info_serde() {
-        let info = ImageInfo {
-            name: "my-img".into(),
-            description: Some("test".into()),
-            source_vm: "vm-1".into(),
-            parent_image: None,
-            base_version: "0.16.1".into(),
-            created_at: "2026-01-01".into(),
-            size_bytes: 1024 * 1024,
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        let info2: ImageInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(info2.name, "my-img");
-        assert_eq!(info2.source_vm, "vm-1");
-        assert!(info2.parent_image.is_none());
-    }
 }

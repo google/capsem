@@ -2,6 +2,7 @@
 
 mod assets;
 mod boot;
+mod cli;
 mod commands;
 mod gui;
 mod logging;
@@ -23,11 +24,19 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
-    // Global filter: always at least debug so file/UI layers capture boot events.
-    let filter = EnvFilter::new("capsem=debug,capsem_core=debug");
+    let cli_args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Global filter: always at least info so file/UI layers capture boot events.
+    // Stdout layer has its own per-layer filter for CLI (warn) vs GUI (debug).
+    let is_cli = !cli_args.is_empty();
+    let global_level = if is_cli { "info" } else { "debug" };
+    let filter = EnvFilter::new(format!("capsem={global_level},capsem_core={global_level}"));
     let stdout_filter = match std::env::var("RUST_LOG") {
         Ok(_) => EnvFilter::from_default_env(),
-        Err(_) => EnvFilter::new("capsem=debug,capsem_core=debug"),
+        Err(_) => {
+            let level = if is_cli { "warn" } else { "debug" };
+            EnvFilter::new(format!("capsem={level},capsem_core={level}"))
+        }
     };
 
     // Per-launch log file: ~/.capsem/logs/<timestamp>.jsonl
@@ -104,6 +113,21 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    if !cli_args.is_empty() {
+        session_mgmt::cleanup_stale_sessions(&session_index);
+        let (cli_env, remaining_args) = cli::parse_env_args(&cli_args);
+        if remaining_args.is_empty() {
+            eprintln!("capsem: no command specified");
+            std::process::exit(1);
+        }
+        let command = remaining_args.join(" ");
+        if let Err(e) = cli::run_cli(&command, &cli_env, &session_index, Some(&log_handle)) {
+            eprintln!("capsem: {e:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
 
     info!("starting capsem");
 
@@ -241,7 +265,7 @@ fn main() {
                     storage_mode: if gui_virtiofs_shares.is_empty() { "block" } else { "virtiofs" }.to_string(),
                     rootfs_hash: None, // Will be populated when assets are fully resolved if possible
                     rootfs_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                    source_image: None, // GUI currently doesn't support launching from images
+                    forked_from: None,
                     persistent: false, // GUI currently only launches ephemeral VMs
                 };
                 if let Err(e) = idx.create_session(&record) {
@@ -264,16 +288,10 @@ fn main() {
                     let app_state = app.state::<state::AppState>();
                     *app_state.app_status.lock().unwrap() = VmState::Booting.to_string();
                 }
-                gui::gui_boot_vm(gui::GuiBootOptions {
-                    handle: app.handle(),
-                    assets: &assets,
-                    rootfs: rootfs_path.as_deref(),
-                    session_id: &gui_session_id,
-                    scratch_path: None,
-                    virtiofs_shares: gui_virtiofs_shares.clone(),
-                    cpu_count,
-                    ram_bytes,
-                });
+                gui::gui_boot_vm(
+                    app.handle(), &assets, rootfs_path.as_deref(),
+                    &gui_session_id, None, gui_virtiofs_shares.clone(), cpu_count, ram_bytes,
+                );
                 info!("[boot-audit] gui_boot_vm returned");
             } else {
                 // Rootfs not found -- download it first.
@@ -340,7 +358,7 @@ fn main() {
                             // Clean up old version directories.
                             if let Some(base) = asset_manager::default_assets_dir() {
                                 let version = env!("CARGO_PKG_VERSION");
-                                if let Err(e) = asset_manager::cleanup_old_versions(&base, version, None) {
+                                if let Err(e) = asset_manager::cleanup_old_versions(&base, version, &[]) {
                                     warn!("cleanup old versions failed: {e:#}");
                                 }
                             }
@@ -354,16 +372,10 @@ fn main() {
                             let s = session_id.clone();
                             let r = rootfs.clone();
                             if let Err(e) = handle.run_on_main_thread(move || {
-                                gui::gui_boot_vm(gui::GuiBootOptions {
-                                    handle: &h,
-                                    assets: &a,
-                                    rootfs: Some(&r),
-                                    session_id: &s,
-                                    scratch_path: None,
-                                    virtiofs_shares: vfs_shares,
-                                    cpu_count,
-                                    ram_bytes,
-                                });
+                                gui::gui_boot_vm(
+                                    &h, &a, Some(&r),
+                                    &s, None, vfs_shares, cpu_count, ram_bytes,
+                                );
                             }) {
                                 error!("failed to dispatch boot to main thread: {e}");
                             }

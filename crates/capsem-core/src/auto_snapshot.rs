@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
+use anyhow::Context;
 use tracing::{debug, info, warn};
 
 /// Whether a snapshot was taken automatically or manually.
@@ -714,6 +715,66 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
         std::fs::copy(src, dst)?;
         Ok(())
     }
+}
+
+/// Clone a sandbox's state (system, workspace, session.db) from one session
+/// directory to another. The destination gets the `guest/` subdirectory layout
+/// with compat symlinks, ready for VirtioFS.
+///
+/// Performs fsync on rootfs.img before cloning to flush the VirtioFS write-back
+/// cache, ensuring the APFS clone captures all guest writes.
+///
+/// Returns the disk usage of the destination directory in bytes.
+pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
+    let sys_src = src_session_dir.join("system");
+    let ws_src = src_session_dir.join("workspace");
+
+    // Flush the host page cache for rootfs.img before cloning.
+    // Guest writes arrive via VirtioFS and land in the macOS page cache.
+    // Without fsync, clonefile() captures stale APFS data, missing
+    // recently written overlay changes (e.g. installed packages).
+    let rootfs_path = sys_src.join("rootfs.img");
+    if rootfs_path.exists() {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&rootfs_path) {
+            f.sync_all().context("failed to fsync rootfs.img before clone")?;
+        }
+    }
+
+    // Clone into guest/ subdirectories matching VirtioFS share layout.
+    let guest_dir = dst_session_dir.join("guest");
+    std::fs::create_dir_all(&guest_dir)?;
+
+    let sys_dst = guest_dir.join("system");
+    let ws_dst = guest_dir.join("workspace");
+
+    if sys_src.exists() {
+        clone_directory(&sys_src, &sys_dst)
+            .context("failed to clone system dir")?;
+    }
+    if ws_src.exists() {
+        clone_directory(&ws_src, &ws_dst)
+            .context("failed to clone workspace dir")?;
+    }
+
+    // Compat symlinks so code using session_dir/system still works
+    for name in &["system", "workspace"] {
+        let link = dst_session_dir.join(name);
+        let target = std::path::Path::new("guest").join(name);
+        if !link.exists() {
+            std::os::unix::fs::symlink(&target, &link)
+                .with_context(|| format!("failed to create compat symlink for {name}"))?;
+        }
+    }
+
+    // Clone session.db at session root (host-only, not in guest/)
+    let db_src = src_session_dir.join("session.db");
+    if db_src.exists() {
+        let db_dst = dst_session_dir.join("session.db");
+        clone_file(&db_src, &db_dst)
+            .context("failed to clone session.db")?;
+    }
+
+    Ok(crate::session::disk_usage_bytes(dst_session_dir))
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).
@@ -1465,5 +1526,73 @@ mod tests {
         let h2 = workspace_hash(&session.join("workspace"));
 
         assert_ne!(h1, h2, "hash must differ for different symlink targets");
+    }
+
+    #[test]
+    fn clone_sandbox_state_basic() {
+        let src_tmp = tempfile::tempdir().unwrap();
+        let src = src_tmp.path();
+        std::fs::create_dir_all(src.join("system")).unwrap();
+        std::fs::create_dir_all(src.join("workspace")).unwrap();
+        std::fs::write(src.join("system/rootfs.img"), b"rootfs-data").unwrap();
+        std::fs::write(src.join("workspace/hello.txt"), b"world").unwrap();
+
+        let dst_tmp = tempfile::tempdir().unwrap();
+        let dst = dst_tmp.path().join("clone");
+        std::fs::create_dir_all(&dst).unwrap();
+
+        let size = clone_sandbox_state(src, &dst).unwrap();
+        assert!(size > 0);
+
+        // Verify guest/ layout
+        assert!(dst.join("guest/system/rootfs.img").exists());
+        assert!(dst.join("guest/workspace/hello.txt").exists());
+        // Verify compat symlinks
+        assert!(dst.join("system").is_symlink());
+        assert!(dst.join("workspace").is_symlink());
+        assert_eq!(
+            std::fs::read(dst.join("system/rootfs.img")).unwrap(),
+            b"rootfs-data"
+        );
+        assert_eq!(
+            std::fs::read(dst.join("workspace/hello.txt")).unwrap(),
+            b"world"
+        );
+    }
+
+    #[test]
+    fn clone_sandbox_state_empty_session() {
+        let src_tmp = tempfile::tempdir().unwrap();
+        let src = src_tmp.path();
+        // No system/ or workspace/ dirs
+
+        let dst_tmp = tempfile::tempdir().unwrap();
+        let dst = dst_tmp.path().join("clone");
+        std::fs::create_dir_all(&dst).unwrap();
+
+        // Should succeed even with no content to clone
+        let size = clone_sandbox_state(src, &dst).unwrap();
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn clone_sandbox_state_with_session_db() {
+        let src_tmp = tempfile::tempdir().unwrap();
+        let src = src_tmp.path();
+        std::fs::create_dir_all(src.join("system")).unwrap();
+        std::fs::write(src.join("session.db"), b"db-contents").unwrap();
+
+        let dst_tmp = tempfile::tempdir().unwrap();
+        let dst = dst_tmp.path().join("clone");
+        std::fs::create_dir_all(&dst).unwrap();
+
+        clone_sandbox_state(src, &dst).unwrap();
+
+        // session.db should be at session root, not in guest/
+        assert!(dst.join("session.db").exists());
+        assert_eq!(
+            std::fs::read(dst.join("session.db")).unwrap(),
+            b"db-contents"
+        );
     }
 }

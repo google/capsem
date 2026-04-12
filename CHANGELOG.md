@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **image elimination: everything is a sandbox** -- removed the "image" concept entirely. `fork` now creates a stopped persistent sandbox instead of an image. `create --from <sandbox>` replaces `create --image`. Image registry, image CLI commands, and image MCP tools are all removed. `--image` remains as a hidden alias for `--from`. Session DB schema bumped to v6 (renames `source_image` to `forked_from`). Net reduction: ~500 lines and one abstraction layer.
+- **CI: test 6 additional Rust crates** -- capsem-service, capsem (CLI), capsem-mcp, capsem-tray, capsem-process now run in CI (422 tests were previously local-only). capsem-app gets a compile check.
+- **CI: run non-VM Python integration tests** -- capsem-bootstrap, capsem-codesign, capsem-rootfs-artifacts suites now execute in CI. All 25 integration suites are collect-only verified.
+- **CI: Rust coverage floor** -- `--fail-under-lines 70` enforced on both macOS and Linux CI jobs. Codecov unit upload now fails CI on error.
+- **capsem-process: module decomposition** -- split 1,522-line main.rs monolith into 6 modules (helpers, job_store, vsock, ipc, terminal + main). Tests grew from 24 to 62.
+- **dev-testing skill: test matrix** -- added Rust crate CI matrix, Python integration suite tier map, and coverage targets documentation.
+- **integration tests: suite expansion** -- capsem-recovery (4->9 tests: stale sentinels, partial sessions, post-recovery health), capsem-stress (3->7: rapid exec, file I/O, name reuse, mass delete), capsem-config-runtime (5->10: env injection, python3, arch match, workspace write, rootfs readonly), capsem-session-lifecycle (6->10: WAL cleanup, ordered events, domain fields, live DB reads). Fixed two `>= 0` assertions that always passed.
+
 ### Added
 - **gateway: token endpoint for browser auth** -- `GET /token` returns the auth token, restricted to loopback IP (127.0.0.1/::1) via hardcoded peer IP check. Allows browser-based frontends to authenticate without filesystem access.
 - **gateway: WebSocket query-param auth** -- `/terminal/{id}` paths accept `?token=` query parameter as auth fallback for browser WebSocket connections (which cannot set custom headers). Only the `token` param is recognized; all others are silently dropped. Non-terminal paths ignore query params entirely.

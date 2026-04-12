@@ -10,7 +10,7 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-pub(super) const SCHEMA_VERSION: u32 = 5;
+pub(super) const SCHEMA_VERSION: u32 = 6;
 
 pub(super) const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
@@ -36,7 +36,7 @@ pub(super) const SESSION_SCHEMA: &str = "
         storage_mode TEXT NOT NULL DEFAULT 'block',
         rootfs_hash TEXT,
         rootfs_version TEXT,
-        source_image TEXT,
+        forked_from TEXT,
         persistent BOOLEAN NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_created
@@ -99,32 +99,38 @@ impl SessionIndex {
     /// Check user_version and migrate if needed.
     pub(crate) fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 4 {
-            // Additive migration v4->v5: add image and persistent columns.
+        if version == 5 {
+            // Additive migration v5->v6: rename forked_from to forked_from.
             conn.execute_batch(
-                "ALTER TABLE sessions ADD COLUMN source_image TEXT;
+                "ALTER TABLE sessions RENAME COLUMN source_image TO forked_from;"
+            )?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        } else if version == 4 {
+            // Additive migration v4->v6: add forked_from and persistent columns.
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN forked_from TEXT;
                  ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version == 3 {
-            // Additive migration v3->v5: add VirtioFS storage + image columns.
+            // Additive migration v3->v6: add VirtioFS storage + forked_from columns.
             conn.execute_batch(
                 "ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
                  ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
                  ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
-                 ALTER TABLE sessions ADD COLUMN source_image TEXT;
+                 ALTER TABLE sessions ADD COLUMN forked_from TEXT;
                  ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version == 2 {
-            // Additive migration v2->v5: add vacuum + VirtioFS + image columns.
+            // Additive migration v2->v6: add vacuum + VirtioFS + forked_from columns.
             conn.execute_batch(
                 "ALTER TABLE sessions ADD COLUMN compressed_size_bytes INTEGER;
                  ALTER TABLE sessions ADD COLUMN vacuumed_at TEXT;
                  ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
                  ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
                  ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
-                 ALTER TABLE sessions ADD COLUMN source_image TEXT;
+                 ALTER TABLE sessions ADD COLUMN forked_from TEXT;
                  ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -153,7 +159,7 @@ impl SessionIndex {
                 total_input_tokens, total_output_tokens, total_estimated_cost,
                 total_tool_calls, total_mcp_calls, total_file_events,
                 compressed_size_bytes, vacuumed_at,
-                storage_mode, rootfs_hash, rootfs_version, source_image, persistent)
+                storage_mode, rootfs_hash, rootfs_version, forked_from, persistent)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             params![
                 record.id,
@@ -178,7 +184,7 @@ impl SessionIndex {
                 record.storage_mode,
                 record.rootfs_hash,
                 record.rootfs_version,
-                record.source_image,
+                record.forked_from,
                 record.persistent,
             ],
         )?;
@@ -231,7 +237,7 @@ impl SessionIndex {
          total_input_tokens, total_output_tokens, total_estimated_cost,
          total_tool_calls, total_mcp_calls, total_file_events,
          compressed_size_bytes, vacuumed_at,
-         storage_mode, rootfs_hash, rootfs_version, source_image, persistent";
+         storage_mode, rootfs_hash, rootfs_version, forked_from, persistent";
 
     /// Parse a row into a SessionRecord. Column order must match SESSION_COLUMNS.
     fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
@@ -258,7 +264,7 @@ impl SessionIndex {
             storage_mode: row.get::<_, Option<String>>(19)?.unwrap_or_else(|| "block".to_string()),
             rootfs_hash: row.get(20)?,
             rootfs_version: row.get(21)?,
-            source_image: row.get(22)?,
+            forked_from: row.get(22)?,
             persistent: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
         })
     }
@@ -857,7 +863,7 @@ mod tests {
             storage_mode: "virtiofs".to_string(),
             rootfs_hash: None,
             rootfs_version: None,
-            source_image: None,
+            forked_from: None,
             persistent: false,
         }
     }
@@ -903,31 +909,31 @@ mod tests {
     }
 
     #[test]
-    fn session_with_source_image_roundtrips() {
+    fn session_with_forked_from_roundtrips() {
         let idx = SessionIndex::open_in_memory().unwrap();
         let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
-        s.source_image = Some("my-image".into());
+        s.forked_from = Some("my-image".into());
         s.persistent = true;
         idx.create_session(&s).unwrap();
 
         let sessions = idx.recent(10).unwrap();
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].source_image.as_deref(), Some("my-image"));
+        assert_eq!(sessions[0].forked_from.as_deref(), Some("my-image"));
         assert!(sessions[0].persistent);
     }
 
     #[test]
-    fn v5_schema_has_source_image_and_persistent() {
+    fn v6_schema_has_forked_from_and_persistent() {
         // Verify the schema includes the new columns by inserting and querying
         let idx = SessionIndex::open_in_memory().unwrap();
         let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
-        s.source_image = Some("test-img".into());
+        s.forked_from = Some("test-img".into());
         s.persistent = true;
         idx.create_session(&s).unwrap();
 
         // Raw query to verify columns exist
         let (src_img, pers): (Option<String>, bool) = idx.conn.query_row(
-            "SELECT source_image, persistent FROM sessions WHERE id = ?1",
+            "SELECT forked_from, persistent FROM sessions WHERE id = ?1",
             params!["20260326-100000-0001"],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).unwrap();

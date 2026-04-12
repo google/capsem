@@ -75,7 +75,7 @@ mod tests {
             storage_mode: "block".to_string(),
             rootfs_hash: None,
             rootfs_version: None,
-            source_image: None,
+            forked_from: None,
             persistent: false,
         }
     }
@@ -807,10 +807,10 @@ mod tests {
         assert_eq!(version, SCHEMA_VERSION);
 
         // New columns exist with NULL/default defaults.
-        let source_image: Option<String> = conn.query_row(
-            "SELECT source_image FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)
+        let forked_from: Option<String> = conn.query_row(
+            "SELECT forked_from FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)
         ).unwrap();
-        assert!(source_image.is_none());
+        assert!(forked_from.is_none());
 
         let persistent: bool = conn.query_row(
             "SELECT persistent FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)

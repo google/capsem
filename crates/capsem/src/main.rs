@@ -1,3 +1,4 @@
+mod client;
 mod completions;
 mod paths;
 mod platform;
@@ -6,22 +7,101 @@ mod setup;
 mod uninstall;
 mod update;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
-use hyper_util::rt::TokioIo;
-use tokio::net::UnixStream;
-use hyper::Request;
-use http_body_util::{BodyExt, Full};
-use bytes::Bytes;
+use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{info, error};
 
+use client::{
+    ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
+    ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
+    ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SandboxInfo, UdsClient,
+};
+
+
+const fn cli_styles() -> Styles {
+    Styles::styled()
+        .header(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
+                .bold()
+                .underline(),
+        )
+        .usage(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
+                .bold(),
+        )
+        .literal(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green)))
+                .bold(),
+        )
+        .placeholder(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::BrightBlack))),
+        )
+        .error(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Red)))
+                .bold(),
+        )
+        .valid(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green))),
+        )
+        .invalid(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+        )
+}
+
+const GROUPED_HELP: &str = "\
+\x1b[36;1;4mSandbox Commands:\x1b[0m
+  \x1b[32;1mcreate\x1b[0m       Create and boot a new sandbox
+  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a sandbox
+  \x1b[32;1mresume\x1b[0m       Resume a stopped sandbox or attach to a running one
+  \x1b[32;1mstop\x1b[0m         Stop a running sandbox
+  \x1b[32;1msuspend\x1b[0m      Suspend a running sandbox to disk
+  \x1b[32;1mrestart\x1b[0m      Restart a persistent sandbox (stop + resume)
+  \x1b[32;1mexec\x1b[0m         Execute a command in a running sandbox
+  \x1b[32;1mrun\x1b[0m          Run a command in a fresh sandbox (destroyed after)
+  \x1b[32;1mlist\x1b[0m         List all sandboxes (running + stopped persistent)
+  \x1b[32;1mstatus\x1b[0m       Show the status of a sandbox
+  \x1b[32;1minfo\x1b[0m         Show detailed information about a sandbox
+  \x1b[32;1mlogs\x1b[0m         Show logs from a sandbox
+  \x1b[32;1mdelete\x1b[0m       Delete a sandbox and all its state
+  \x1b[32;1mfork\x1b[0m         Fork a sandbox into a reusable snapshot
+  \x1b[32;1mpersist\x1b[0m      Promote an ephemeral sandbox to persistent
+  \x1b[32;1mpurge\x1b[0m        Destroy all temporary sandboxes
+
+\x1b[36;1;4mService:\x1b[0m
+  \x1b[32;1mservice\x1b[0m      Manage the capsem background daemon
+               \u{251c}\u{2500} \x1b[32;1minstall\x1b[0m    Install as a system service (LaunchAgent / systemd)
+               \u{251c}\u{2500} \x1b[32;1muninstall\x1b[0m  Remove the system service
+               \u{2514}\u{2500} \x1b[32;1mstatus\x1b[0m     Show service installation and runtime status
+
+\x1b[36;1;4mMisc:\x1b[0m
+  \x1b[32;1msetup\x1b[0m        Run the first-time setup wizard
+  \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
+  \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh sandbox
+  \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
+  \x1b[32;1mversion\x1b[0m      Show version and build information
+  \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version,
+    about = "Sandboxes AI agents in air-gapped Linux VMs",
+    long_about = None,
+    styles = cli_styles(),
+    help_template = "{about-with-newline}\n{usage-heading} {usage}\n{after-help}\n\n\x1b[36;1;4mOptions:\x1b[0m\n{options}",
+    disable_help_subcommand = true,
+    subcommand_help_heading = None,
+    after_help = GROUPED_HELP,
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -33,10 +113,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create a new VM sandbox. VMs are temporary by default; use -n <name> to persist.
+    #[command(flatten)]
+    Sandbox(SandboxCommands),
+
+    /// Manage the capsem background daemon
+    #[command(subcommand)]
+    Service(ServiceCommands),
+
+    #[command(flatten)]
+    Misc(MiscCommands),
+}
+
+#[derive(Subcommand)]
+enum SandboxCommands {
+    /// Create and boot a new sandbox
+    ///
+    /// VMs are ephemeral by default and destroyed on stop. Use -n <name> to
+    /// create a persistent sandbox that survives stop/resume cycles.
     #[command(alias = "start")]
     Create {
-        /// Name for the VM (makes it persistent -- "if you name it, you keep it")
+        /// Name for the sandbox (makes it persistent -- "if you name it, you keep it")
         #[arg(short = 'n', long)]
         name: Option<String>,
         /// RAM in GB
@@ -48,58 +144,45 @@ enum Commands {
         /// Set environment variables (repeatable: -e KEY=VALUE)
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
-        /// Boot the VM from a named image
-        #[arg(long)]
-        image: Option<String>,
+        /// Clone state from an existing persistent sandbox
+        #[arg(long, alias = "image")]
+        from: Option<String>,
     },
-    /// Fork a running or stopped VM into a reusable image.
-    Fork {
-        /// ID or name of the VM to fork
-        id: String,
-        /// Name for the new image
-        name: String,
-        /// Optional description for the image
-        #[arg(short, long)]
-        description: Option<String>,
-    },
-    /// Manage user images.
-    #[command(subcommand)]
-    Image(ImageCommands),
-    /// Resume a stopped persistent VM or attach to a running one
-    #[command(alias = "attach")]
-    Resume {
-        /// Name of the persistent VM
-        name: String,
-    },
-    /// Stop a running sandbox. Persistent VMs preserve state; ephemeral VMs are destroyed.
-    Stop {
-        /// ID or name of the sandbox
-        id: String,
-    },
-    /// Suspend a running sandbox. Saves RAM and CPU state to disk. Ephemeral VMs cannot be suspended.
-    Suspend {
-        /// ID or name of the sandbox
-        id: String,
-    },
-    /// Open a shell. No args = temporary VM (destroyed on exit). With ID/name = attach to existing.
+    /// Open an interactive shell in a sandbox
+    ///
+    /// With no arguments, creates a temporary sandbox (destroyed on exit).
+    /// Pass an ID or --name to attach to an existing running sandbox.
     Shell {
-        /// Find by name (for persistent VMs)
+        /// Find by name (for persistent sandboxes)
         #[arg(short = 'n', long)]
         name: Option<String>,
         /// ID of the sandbox (positional)
         id: Option<String>,
     },
-    /// List all sandboxes (running + stopped persistent)
-    #[command(alias = "ls")]
-    List {
-        /// Print only IDs, one per line (for scripting)
-        #[arg(short, long)]
-        quiet: bool,
+    /// Resume a stopped sandbox or attach to a running one
+    #[command(alias = "attach")]
+    Resume {
+        /// Name of the persistent sandbox
+        name: String,
     },
-    /// Get status of a sandbox
-    Status {
+    /// Stop a running sandbox
+    ///
+    /// Persistent sandboxes preserve their disk state; ephemeral ones are destroyed.
+    Stop {
         /// ID or name of the sandbox
         id: String,
+    },
+    /// Suspend a running sandbox to disk
+    ///
+    /// Saves RAM and CPU state. Only persistent sandboxes can be suspended.
+    Suspend {
+        /// ID or name of the sandbox
+        id: String,
+    },
+    /// Restart a persistent sandbox (stop + resume)
+    Restart {
+        /// Name of the persistent sandbox
+        name: String,
     },
     /// Execute a command in a running sandbox
     Exec {
@@ -111,7 +194,10 @@ enum Commands {
         #[arg(long, default_value_t = 30)]
         timeout: u64,
     },
-    /// Run a command in a fresh temporary VM and return output (VM is destroyed after)
+    /// Run a command in a fresh sandbox (destroyed after)
+    ///
+    /// Creates a temporary sandbox, runs the command, prints output, and
+    /// destroys the sandbox. Useful for one-shot tasks and CI pipelines.
     Run {
         /// Command to execute
         command: String,
@@ -122,31 +208,26 @@ enum Commands {
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
     },
-    /// Delete a sandbox completely (destroys all state)
-    #[command(alias = "rm")]
-    Delete {
+    /// List all sandboxes (running + stopped persistent)
+    #[command(alias = "ls")]
+    List {
+        /// Print only IDs, one per line (for scripting)
+        #[arg(short, long)]
+        quiet: bool,
+    },
+    /// Show the status of a sandbox
+    Status {
         /// ID or name of the sandbox
         id: String,
     },
-    /// Convert a running ephemeral VM to a persistent named VM
-    Persist {
-        /// ID of the running ephemeral VM
-        id: String,
-        /// Name to assign
-        name: String,
-    },
-    /// Kill all temporary VMs. Use --all to also destroy persistent VMs.
-    Purge {
-        /// Also destroy persistent VMs (requires confirmation)
-        #[arg(long, default_value_t = false)]
-        all: bool,
-    },
-    /// Get detailed information about a sandbox
+    /// Show detailed information about a sandbox
     Info {
         /// ID or name of the sandbox
         id: String,
     },
-    /// Get logs from a sandbox (both serial and process logs)
+    /// Show logs from a sandbox
+    ///
+    /// Displays both serial console and process logs.
     Logs {
         /// ID or name of the sandbox
         id: String,
@@ -154,40 +235,45 @@ enum Commands {
         #[arg(long)]
         tail: Option<usize>,
     },
-    /// Restart a persistent VM (stop + resume)
-    Restart {
-        /// Name of the persistent VM
+    /// Delete a sandbox and all its state
+    #[command(alias = "rm")]
+    Delete {
+        /// ID or name of the sandbox
+        id: String,
+    },
+    /// Fork a sandbox into a new stopped sandbox
+    ///
+    /// Creates a point-in-time copy of the sandbox's disk state as a new
+    /// persistent sandbox. Boot it with `capsem resume <name>` or clone
+    /// with `capsem create --from <name>`.
+    Fork {
+        /// ID or name of the sandbox to fork
+        id: String,
+        /// Name for the new sandbox
+        name: String,
+        /// Optional description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Promote an ephemeral sandbox to persistent
+    Persist {
+        /// ID of the running ephemeral sandbox
+        id: String,
+        /// Name to assign
         name: String,
     },
-    /// Show version information
-    Version,
-    /// Run diagnostic tests in a fresh VM
-    Doctor {
-        /// Skip slow tests (throughput download, etc.)
-        #[arg(long)]
-        fast: bool,
+    /// Destroy all temporary sandboxes
+    ///
+    /// Use --all to also destroy persistent sandboxes (requires confirmation).
+    Purge {
+        /// Also destroy persistent sandboxes (requires confirmation)
+        #[arg(long, default_value_t = false)]
+        all: bool,
     },
-    /// Manage the capsem service daemon (install/uninstall/status)
-    #[command(subcommand)]
-    Service(ServiceCommands),
-    /// Generate shell completions
-    Completions {
-        /// Shell to generate completions for
-        #[arg(value_enum)]
-        shell: clap_complete::Shell,
-    },
-    /// Uninstall capsem completely (service, binaries, data)
-    Uninstall {
-        /// Skip confirmation prompt
-        #[arg(long, short)]
-        yes: bool,
-    },
-    /// Check for updates and install the latest version
-    Update {
-        /// Skip confirmation prompt
-        #[arg(long, short)]
-        yes: bool,
-    },
+}
+
+#[derive(Subcommand)]
+enum MiscCommands {
     /// Run the first-time setup wizard
     Setup {
         /// Run without prompts (accept defaults or detected values)
@@ -206,6 +292,35 @@ enum Commands {
         #[arg(long)]
         corp_config: Option<String>,
     },
+    /// Check for updates and install the latest version
+    Update {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Run diagnostic tests in a fresh sandbox
+    ///
+    /// Boots a temporary sandbox, runs the capsem-doctor test suite, and reports
+    /// results. Use --fast to skip slow network tests.
+    Doctor {
+        /// Skip slow tests (throughput download, etc.)
+        #[arg(long)]
+        fast: bool,
+    },
+    /// Generate shell completions (bash, zsh, fish, powershell)
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Show version and build information
+    Version,
+    /// Uninstall capsem completely (service, binaries, data)
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -218,353 +333,13 @@ enum ServiceCommands {
     Status,
 }
 
-#[derive(Subcommand)]
-enum ImageCommands {
-    /// List all images
-    #[command(alias = "ls")]
-    List,
-    /// Delete an image
-    #[command(alias = "rm")]
-    Delete {
-        /// Name of the image to delete
-        name: String,
-    },
-    /// Inspect an image
-    Inspect {
-        /// Name of the image to inspect
-        name: String,
-    },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ProvisionRequest {
-    name: Option<String>,
-    ram_mb: u64,
-    cpus: u32,
-    #[serde(default)]
-    persistent: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    env: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    image: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ProvisionResponse {
-    id: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ForkRequest {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ForkResponse {
-    name: String,
-    size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ImageInfo {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    source_vm: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    parent_image: Option<String>,
-    base_version: String,
-    created_at: String,
-    size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ImageListResponse {
-    images: Vec<ImageInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct SandboxInfo {
-    id: String,
-    pid: u32,
-    status: String,
-    #[serde(default)]
-    persistent: bool,
-    #[serde(default)]
-    ram_mb: Option<u64>,
-    #[serde(default)]
-    cpus: Option<u32>,
-    #[serde(default)]
-    version: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ListResponse {
-    sandboxes: Vec<SandboxInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PersistRequest {
-    name: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct RunRequest {
-    command: String,
-    timeout_secs: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    env: Option<std::collections::HashMap<String, String>>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PurgeRequest {
-    all: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PurgeResponse {
-    purged: u32,
-    persistent_purged: u32,
-    ephemeral_purged: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct LogsResponse {
-    logs: String,
-    serial_logs: Option<String>,
-    process_logs: Option<String>,
-}
-
-struct UdsClient {
-    uds_path: PathBuf,
-    auto_launch: bool,
-}
-
-impl UdsClient {
-    fn new(uds_path: PathBuf, auto_launch: bool) -> Self {
-        Self { uds_path, auto_launch }
-    }
-
-    /// Connect to the service socket with exponential backoff.
-    /// Uses shared `PollOpts` backoff (50ms initial, 500ms max, 5s timeout).
-    /// Fails immediately on ENOENT or ConnectionRefused (non-retryable).
-    async fn connect_with_timeout(&self) -> Result<UnixStream> {
-        let opts = capsem_core::poll::PollOpts::new(
-            "service-connect",
-            std::time::Duration::from_secs(5),
-        );
-        let deadline = tokio::time::Instant::now() + opts.timeout;
-        let mut delay = opts.initial_delay;
-
-        loop {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                UnixStream::connect(&self.uds_path),
-            ).await {
-                Ok(Ok(stream)) => return Ok(stream),
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(anyhow::anyhow!(
-                        "service socket not found: {}", self.uds_path.display()
-                    ));
-                }
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-                    return Err(anyhow::anyhow!(
-                        "service not listening at {}", self.uds_path.display()
-                    ));
-                }
-                _ => {
-                    if tokio::time::Instant::now() >= deadline {
-                        return Err(anyhow::anyhow!(
-                            "cannot connect to service at {} (timed out)",
-                            self.uds_path.display()
-                        ));
-                    }
-                    tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(opts.max_delay);
-                }
-            }
-        }
-    }
-
-    /// Try to ensure the service is running. Tries service manager
-    /// (systemd/launchctl) if a unit is installed, falls back to direct spawn.
-    /// Caller already verified the socket is unreachable.
-    async fn try_ensure_service(&self) -> Result<()> {
-        info!("Service not responding, attempting to launch...");
-
-        // If the service is registered with a service manager, use that exclusively.
-        // Direct-spawning when a unit exists would create an unmanaged duplicate.
-        if service_install::is_service_installed() {
-            info!("Service unit installed, using service manager");
-            match paths::try_start_via_service_manager().await {
-                Ok(true) => {
-                    info!("Service start requested via service manager");
-                    return self.connect_with_timeout().await.map(|_| ()).map_err(|_| {
-                        anyhow::anyhow!(
-                            "Service manager started capsem but socket not ready. \
-                             Check logs: journalctl --user -u capsem (Linux) or \
-                             ~/Library/Logs/capsem/service.log (macOS)"
-                        )
-                    });
-                }
-                Ok(false) => {
-                    return Err(anyhow::anyhow!(
-                        "Service unit found but service manager reports not installed"
-                    ));
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Service manager start failed: {}. \
-                         Check logs or reinstall with `capsem service install`", e
-                    ));
-                }
-            }
-        }
-
-        // No service unit installed -- direct spawn fallback
-        let paths = paths::discover_paths()
-            .context("cannot find capsem binaries for auto-launch")?;
-
-        if !paths.service_bin.exists() {
-            return Err(anyhow::anyhow!(
-                "capsem-service not found at {}",
-                paths.service_bin.display()
-            ));
-        }
-
-        info!(
-            service = %paths.service_bin.display(),
-            assets = %paths.assets_dir.display(),
-            "spawning service directly"
-        );
-
-        let mut child = tokio::process::Command::new(&paths.service_bin)
-            .arg("--foreground")
-            .arg("--assets-dir").arg(&paths.assets_dir)
-            .arg("--process-binary").arg(&paths.process_bin)
-            .spawn()
-            .context("failed to spawn capsem-service")?;
-
-        match self.connect_with_timeout().await {
-            Ok(_) => {
-                info!("Service spawned and responding");
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                });
-                Ok(())
-            }
-            Err(_) => Err(anyhow::anyhow!("capsem-service failed to start")),
-        }
-    }
-
-    /// Unified HTTP request over UDS. Retries once via try_ensure_service() on
-    /// connection failure.
-    async fn request<T: Serialize, R: for<'de> Deserialize<'de>>(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<T>,
-    ) -> Result<R> {
-        let stream = match self.connect_with_timeout().await {
-            Ok(s) => s,
-            Err(e) if !self.auto_launch => {
-                return Err(anyhow::anyhow!(
-                    "cannot connect to service at {}: {e}",
-                    self.uds_path.display()
-                ));
-            }
-            Err(_) => {
-                self.try_ensure_service().await?;
-                self.connect_with_timeout().await
-                    .context("failed to connect to service socket after auto-launch")?
-            }
-        };
-
-        let io = TokioIo::new(stream);
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::task::spawn(async move {
-            if let Err(err) = conn.await {
-                error!("Connection failed: {:?}", err);
-            }
-        });
-
-        let builder = Request::builder()
-            .method(method)
-            .uri(format!("http://localhost{}", path))
-            .header("Content-Type", "application/json");
-
-        let req = if let Some(b) = body {
-            let json = serde_json::to_vec(&b)?;
-            builder.body(Full::new(Bytes::from(json)))?
-        } else {
-            builder.body(Full::new(Bytes::new()))?
-        };
-
-        let res = sender.send_request(req).await?;
-        let body_bytes = res.collect().await?.to_bytes();
-        serde_json::from_slice(&body_bytes).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to parse response: {e}. Body: {:?}",
-                String::from_utf8_lossy(&body_bytes)
-            )
-        })
-    }
-
-    async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, path: &str, body: T) -> Result<R> {
-        self.request("POST", path, Some(body)).await
-    }
-
-    async fn get<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
-        self.request::<(), R>("GET", path, None).await
-    }
-
-    async fn delete<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
-        self.request::<(), R>("DELETE", path, None).await
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ExecRequest {
-    command: String,
-    timeout_secs: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ExecResponse {
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ErrorResponse {
-    error: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-enum ApiResponse<T> {
-    Err(ErrorResponse),
-    Ok(T),
-}
-
-impl<T> ApiResponse<T> {
-    fn into_result(self) -> Result<T> {
-        match self {
-            ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(e) => Err(anyhow::anyhow!(e.error)),
-        }
-    }
-}
-
 async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
     use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
     use std::sync::Arc;
     use nix::sys::termios::{tcgetattr, tcsetattr, SetArg};
-    
+
+    client::validate_id(id)?;
     let sock_path = run_dir.join("instances").join(format!("{}.sock", id));
     if !sock_path.exists() {
         anyhow::bail!("Sandbox socket not found at: {}", sock_path.display());
@@ -707,9 +482,13 @@ async fn main() -> Result<()> {
         eprintln!("{}", notice);
     }
 
+    // Background update check (fire-and-forget). Spawned early so it runs
+    // even for commands that call std::process::exit (exec, run).
+    tokio::spawn(update::refresh_update_cache_if_stale());
+
     // Commands that don't need the service
     match &cli.command {
-        Commands::Version => {
+        Commands::Misc(MiscCommands::Version) => {
             println!(
                 "capsem {} (build {})",
                 env!("CARGO_PKG_VERSION"),
@@ -741,19 +520,19 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Commands::Completions { shell } => {
+        Commands::Misc(MiscCommands::Completions { shell }) => {
             completions::generate_completions(*shell);
             return Ok(());
         }
-        Commands::Uninstall { yes } => {
+        Commands::Misc(MiscCommands::Uninstall { yes }) => {
             uninstall::run_uninstall(*yes).await?;
             return Ok(());
         }
-        Commands::Update { yes } => {
+        Commands::Misc(MiscCommands::Update { yes }) => {
             update::run_update(*yes).await?;
             return Ok(());
         }
-        Commands::Setup { non_interactive, preset, force, accept_detected, corp_config } => {
+        Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, accept_detected, corp_config }) => {
             let opts = setup::SetupOptions {
                 non_interactive: *non_interactive,
                 preset: preset.clone(),
@@ -770,26 +549,15 @@ async fn main() -> Result<()> {
     let client = UdsClient::new(uds_path, auto_launch);
 
     match &cli.command {
-        Commands::Create { name, ram, cpu, env, image } => {
-            let persistent = name.is_some();
-            let env_map = if env.is_empty() {
-                None
-            } else {
-                let mut map = HashMap::new();
-                for kv in env {
-                    let (k, v) = kv.split_once('=')
-                        .ok_or_else(|| anyhow::anyhow!("invalid env format: expected KEY=VALUE, got: {}", kv))?;
-                    map.insert(k.to_string(), v.to_string());
-                }
-                Some(map)
-            };
+        Commands::Sandbox(SandboxCommands::Create { name, ram, cpu, env, from }) => {
+            let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
                 name: name.clone(),
                 ram_mb: ram * 1024,
                 cpus: *cpu,
                 persistent,
-                env: env_map,
-                image: image.clone(),
+                env: client::parse_env_vars(env)?,
+                from: from.clone(),
             };
 
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
@@ -801,7 +569,8 @@ async fn main() -> Result<()> {
                 println!("{}", info.id);
             }
         }
-        Commands::Fork { id, name, description } => {
+        Commands::Sandbox(SandboxCommands::Fork { id, name, description }) => {
+            client::validate_id(id)?;
             let req = ForkRequest {
                 name: name.clone(),
                 description: description.clone(),
@@ -809,56 +578,34 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<ForkResponse> = client.post(&format!("/fork/{}", id), &req).await?;
             let info = resp.into_result()?;
             let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
-            println!("Forked VM {} to image '{}' ({:.1} MB)", id, info.name, size_mb);
+            println!("Forked sandbox '{}' from '{}' ({:.1} MB)", info.name, id, size_mb);
         }
-        Commands::Image(cmd) => {
-            match cmd {
-                ImageCommands::List => {
-                    let resp: ApiResponse<ImageListResponse> = client.get("/images").await?;
-                    let list = resp.into_result()?;
-                    
-                    println!("{:<20} {:<10} {:<20} {:<15} CREATED_AT", "NAME", "SIZE(MB)", "SOURCE_VM", "BASE_VERSION");
-                    println!("{:-<20} {:<10} {:-<20} {:-<15} {:-<20}", "", "", "", "", "");
-                    for img in list.images {
-                        let size_mb = img.size_bytes as f64 / 1024.0 / 1024.0;
-                        println!("{:<20} {:<10.1} {:<20} {:<15} {}", img.name, size_mb, img.source_vm, img.base_version, img.created_at);
-                    }
-                }
-                ImageCommands::Inspect { name } => {
-                    let resp: ApiResponse<ImageInfo> = client.get(&format!("/images/{}", name)).await?;
-                    let info = resp.into_result()?;
-                    let json = serde_json::to_string_pretty(&info)?;
-                    println!("{}", json);
-                }
-                ImageCommands::Delete { name } => {
-                    let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/images/{}", name)).await?;
-                    resp.into_result()?;
-                    println!("Image '{}' deleted.", name);
-                }
-            }
-        }
-        Commands::Resume { name } => {
+        Commands::Sandbox(SandboxCommands::Resume { name }) => {
+            client::validate_id(name)?;
             let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
         }
-        Commands::Stop { id } => {
+        Commands::Sandbox(SandboxCommands::Stop { id }) => {
+            client::validate_id(id)?;
             println!("Stopping sandbox: {}", id);
             let resp: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", id), &serde_json::json!({})).await?;
             resp.into_result()?;
             println!("Sandbox stopped.");
         }
-        Commands::Suspend { id } => {
+        Commands::Sandbox(SandboxCommands::Suspend { id }) => {
+            client::validate_id(id)?;
             println!("Suspending sandbox: {}", id);
             let resp: ApiResponse<serde_json::Value> = client.post(&format!("/suspend/{}", id), &serde_json::json!({})).await?;
             resp.into_result()?;
             println!("Sandbox suspended.");
         }
-        Commands::Shell { name, id } => {
+        Commands::Sandbox(SandboxCommands::Shell { name, id }) => {
             let target = name.as_ref().or(id.as_ref());
             match target {
                 Some(t) => {
                     // Attach to existing VM
+                    client::validate_id(t)?;
                     run_shell(t, &run_dir).await?;
                 }
                 None => {
@@ -870,18 +617,25 @@ async fn main() -> Result<()> {
                         cpus: 4,
                         persistent: false,
                         env: None,
-                        image: None,
+                        from: None,
                     };
                     let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
                     let info = resp.into_result()?;
 
+                    // Poll until the socket is connectable (not just present on disk).
+                    // The file appears at bind() time, but connect() fails until listen().
                     let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
                     let sp = socket_path.clone();
                     let _ = capsem_core::poll::poll_until(
-                        capsem_core::poll::PollOpts::new("shell-socket", std::time::Duration::from_secs(5)),
+                        capsem_core::poll::PollOpts::new("shell-socket", std::time::Duration::from_secs(10)),
                         || {
                             let sp = sp.clone();
-                            async move { if sp.exists() { Some(()) } else { None } }
+                            async move {
+                                match tokio::net::UnixStream::connect(&sp).await {
+                                    Ok(_) => Some(()),
+                                    Err(_) => None,
+                                }
+                            }
                         },
                     ).await;
 
@@ -892,8 +646,9 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::List { quiet } => {
-            let resp: ListResponse = client.get("/list").await?;
+        Commands::Sandbox(SandboxCommands::List { quiet }) => {
+            let resp: ApiResponse<ListResponse> = client.get("/list").await?;
+            let resp = resp.into_result()?;
             if *quiet {
                 for s in resp.sandboxes {
                     println!("{}", s.id);
@@ -909,7 +664,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Status { id } => {
+        Commands::Sandbox(SandboxCommands::Status { id }) => {
+            client::validate_id(id)?;
             let resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", id)).await?;
             let info = resp.into_result()?;
             println!("ID: {}", info.id);
@@ -920,7 +676,8 @@ async fn main() -> Result<()> {
             if let Some(cpus) = info.cpus { println!("CPUs: {}", cpus); }
             if let Some(ver) = &info.version { println!("Version: {}", ver); }
         }
-        Commands::Exec { id, command, timeout } => {
+        Commands::Sandbox(SandboxCommands::Exec { id, command, timeout }) => {
+            client::validate_id(id)?;
             let req = ExecRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
@@ -935,22 +692,11 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Run { command, timeout, env } => {
-            let env_map = if env.is_empty() {
-                None
-            } else {
-                let mut map = std::collections::HashMap::new();
-                for kv in env {
-                    let (k, v) = kv.split_once('=')
-                        .ok_or_else(|| anyhow::anyhow!("invalid env format: expected KEY=VALUE, got: {}", kv))?;
-                    map.insert(k.to_string(), v.to_string());
-                }
-                Some(map)
-            };
+        Commands::Sandbox(SandboxCommands::Run { command, timeout, env }) => {
             let req = RunRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
-                env: env_map,
+                env: client::parse_env_vars(env)?,
             };
             let resp: ApiResponse<ExecResponse> = client.post("/run", &req).await?;
             let resp = resp.into_result()?;
@@ -962,23 +708,26 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Delete { id } => {
+        Commands::Sandbox(SandboxCommands::Delete { id }) => {
+            client::validate_id(id)?;
             println!("Deleting sandbox: {}", id);
             let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/delete/{}", id)).await?;
             resp.into_result()?;
             println!("Sandbox deleted.");
         }
-        Commands::Persist { id, name } => {
+        Commands::Sandbox(SandboxCommands::Persist { id, name }) => {
+            client::validate_id(id)?;
             let req = PersistRequest { name: name.clone() };
             let resp: ApiResponse<serde_json::Value> = client.post(&format!("/persist/{}", id), &req).await?;
             resp.into_result()?;
             println!("[*] VM \"{}\" is now persistent as \"{}\"", id, name);
         }
-        Commands::Purge { all } => {
+        Commands::Sandbox(SandboxCommands::Purge { all }) => {
             if *all {
                 // Confirmation prompt
                 use std::io::Write;
-                let resp: ListResponse = client.get("/list").await?;
+                let list_resp: ApiResponse<ListResponse> = client.get("/list").await?;
+                let resp = list_resp.into_result()?;
                 let persistent_count = resp.sandboxes.iter().filter(|s| s.persistent).count();
                 let ephemeral_count = resp.sandboxes.iter().filter(|s| !s.persistent).count();
                 print!("[!] This will destroy {} persistent VMs and {} temporary VMs. Continue? [y/N] ",
@@ -1002,13 +751,15 @@ async fn main() -> Result<()> {
                 println!("[*] Purged {} temporary VMs.", result.ephemeral_purged);
             }
         }
-        Commands::Info { id } => {
+        Commands::Sandbox(SandboxCommands::Info { id }) => {
+            client::validate_id(id)?;
             let resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", id)).await?;
             let info = resp.into_result()?;
             let json = serde_json::to_string_pretty(&info)?;
             println!("{}", json);
         }
-        Commands::Logs { id, tail } => {
+        Commands::Sandbox(SandboxCommands::Logs { id, tail }) => {
+            client::validate_id(id)?;
             let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", id)).await?;
             let logs = resp.into_result()?;
 
@@ -1046,7 +797,8 @@ async fn main() -> Result<()> {
                 println!("{}", output);
             }
         }
-        Commands::Restart { name } => {
+        Commands::Sandbox(SandboxCommands::Restart { name }) => {
+            client::validate_id(name)?;
             // Look up the VM to check it's persistent
             let info_resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", name)).await?;
             let info = info_resp.into_result()?;
@@ -1055,16 +807,22 @@ async fn main() -> Result<()> {
             }
 
             // Stop, then resume
-            let _: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", name), &serde_json::json!({})).await?;
+            let stop_resp: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", name), &serde_json::json!({})).await?;
+            stop_resp.into_result().context("failed to stop VM during restart")?;
             let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Version | Commands::Service(_) | Commands::Setup { .. }
-        | Commands::Update { .. } | Commands::Completions { .. } | Commands::Uninstall { .. } => {
+        Commands::Misc(
+            MiscCommands::Version
+            | MiscCommands::Setup { .. }
+            | MiscCommands::Update { .. }
+            | MiscCommands::Completions { .. }
+            | MiscCommands::Uninstall { .. }
+        ) | Commands::Service(_) => {
             unreachable!("handled before UdsClient creation")
         }
-        Commands::Doctor { fast } => {
+        Commands::Misc(MiscCommands::Doctor { fast }) => {
             use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
             use tokio_unix_ipc::channel_from_std;
 
@@ -1075,14 +833,13 @@ async fn main() -> Result<()> {
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
 
-            let name = format!("doctor-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             let req = ProvisionRequest {
-                name: Some(name.clone()),
+                name: None,
                 ram_mb: 2048,
                 cpus: 2,
                 persistent: false,
                 env: None,
-                image: None,
+                from: None,
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let vm_id = resp.into_result()?.id;
@@ -1173,9 +930,12 @@ async fn main() -> Result<()> {
                                                     }
                                                     // Check for sentinel
                                                     output_buf.push_str(&String::from_utf8_lossy(&data));
-                                                    // Keep only last 512 bytes to avoid unbounded growth
+                                                    // Keep only last 512 bytes to avoid unbounded growth.
+                                                    // Pad by sentinel length so we never split "RESULT: FAIL"
+                                                    // across a truncation boundary.
                                                     if output_buf.len() > 1024 {
-                                                        output_buf = output_buf.split_off(output_buf.len() - 512);
+                                                        let keep = 512 + "RESULT: FAIL".len();
+                                                        output_buf = output_buf.split_off(output_buf.len() - keep);
                                                     }
                                                     if output_buf.contains("RESULT: PASS") {
                                                         break 0;
@@ -1225,9 +985,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Background update check (fire-and-forget)
-    tokio::spawn(update::refresh_update_cache_if_stale());
-
     Ok(())
 }
 
@@ -1244,7 +1001,7 @@ mod tests {
     fn parse_create_with_name() {
         let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
         match cli.command {
-            Commands::Create { name, ram, cpu, .. } => {
+            Commands::Sandbox(SandboxCommands::Create { name, ram, cpu, .. }) => {
                 assert_eq!(name, Some("my-vm".into()));
                 assert_eq!(ram, 4);
                 assert_eq!(cpu, 4);
@@ -1257,7 +1014,7 @@ mod tests {
     fn parse_create_ephemeral() {
         let cli = Cli::parse_from(["capsem", "create"]);
         match cli.command {
-            Commands::Create { name, .. } => {
+            Commands::Sandbox(SandboxCommands::Create { name, .. }) => {
                 assert_eq!(name, None);
             }
             _ => panic!("expected Create"),
@@ -1268,7 +1025,7 @@ mod tests {
     fn parse_start_alias_for_create() {
         let cli = Cli::parse_from(["capsem", "start", "-n", "dev"]);
         match cli.command {
-            Commands::Create { name, .. } => {
+            Commands::Sandbox(SandboxCommands::Create { name, .. }) => {
                 assert_eq!(name, Some("dev".into()));
             }
             _ => panic!("expected Create via start alias"),
@@ -1279,7 +1036,7 @@ mod tests {
     fn parse_create_with_resources() {
         let cli = Cli::parse_from(["capsem", "create", "--ram", "8", "--cpu", "2"]);
         match cli.command {
-            Commands::Create { ram, cpu, .. } => {
+            Commands::Sandbox(SandboxCommands::Create { ram, cpu, .. }) => {
                 assert_eq!(ram, 8);
                 assert_eq!(cpu, 2);
             }
@@ -1291,7 +1048,7 @@ mod tests {
     fn parse_resume() {
         let cli = Cli::parse_from(["capsem", "resume", "mydev"]);
         match cli.command {
-            Commands::Resume { name } => assert_eq!(name, "mydev"),
+            Commands::Sandbox(SandboxCommands::Resume { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Resume"),
         }
     }
@@ -1300,7 +1057,7 @@ mod tests {
     fn parse_attach_alias_for_resume() {
         let cli = Cli::parse_from(["capsem", "attach", "mydev"]);
         match cli.command {
-            Commands::Resume { name } => assert_eq!(name, "mydev"),
+            Commands::Sandbox(SandboxCommands::Resume { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Resume via attach alias"),
         }
     }
@@ -1309,7 +1066,7 @@ mod tests {
     fn parse_stop() {
         let cli = Cli::parse_from(["capsem", "stop", "vm-123"]);
         match cli.command {
-            Commands::Stop { id } => assert_eq!(id, "vm-123"),
+            Commands::Sandbox(SandboxCommands::Stop { id }) => assert_eq!(id, "vm-123"),
             _ => panic!("expected Stop"),
         }
     }
@@ -1318,7 +1075,7 @@ mod tests {
     fn parse_suspend() {
         let cli = Cli::parse_from(["capsem", "suspend", "vm-123"]);
         match cli.command {
-            Commands::Suspend { id } => assert_eq!(id, "vm-123"),
+            Commands::Sandbox(SandboxCommands::Suspend { id }) => assert_eq!(id, "vm-123"),
             _ => panic!("expected Suspend"),
         }
     }
@@ -1327,7 +1084,7 @@ mod tests {
     fn parse_shell_positional() {
         let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
         match cli.command {
-            Commands::Shell { id, name } => {
+            Commands::Sandbox(SandboxCommands::Shell { id, name }) => {
                 assert_eq!(id, Some("my-vm".into()));
                 assert_eq!(name, None);
             }
@@ -1339,7 +1096,7 @@ mod tests {
     fn parse_shell_by_name() {
         let cli = Cli::parse_from(["capsem", "shell", "-n", "mydev"]);
         match cli.command {
-            Commands::Shell { name, id } => {
+            Commands::Sandbox(SandboxCommands::Shell { name, id }) => {
                 assert_eq!(name, Some("mydev".into()));
                 assert_eq!(id, None);
             }
@@ -1352,7 +1109,7 @@ mod tests {
         // Bare `capsem shell` = temp VM + auto-destroy
         let cli = Cli::parse_from(["capsem", "shell"]);
         match cli.command {
-            Commands::Shell { name, id } => {
+            Commands::Sandbox(SandboxCommands::Shell { name, id }) => {
                 assert_eq!(name, None);
                 assert_eq!(id, None);
             }
@@ -1364,7 +1121,7 @@ mod tests {
     fn parse_persist() {
         let cli = Cli::parse_from(["capsem", "persist", "vm-123", "mydev"]);
         match cli.command {
-            Commands::Persist { id, name } => {
+            Commands::Sandbox(SandboxCommands::Persist { id, name }) => {
                 assert_eq!(id, "vm-123");
                 assert_eq!(name, "mydev");
             }
@@ -1376,7 +1133,7 @@ mod tests {
     fn parse_purge() {
         let cli = Cli::parse_from(["capsem", "purge"]);
         match cli.command {
-            Commands::Purge { all } => assert!(!all),
+            Commands::Sandbox(SandboxCommands::Purge { all }) => assert!(!all),
             _ => panic!("expected Purge"),
         }
     }
@@ -1385,7 +1142,7 @@ mod tests {
     fn parse_purge_all() {
         let cli = Cli::parse_from(["capsem", "purge", "--all"]);
         match cli.command {
-            Commands::Purge { all } => assert!(all),
+            Commands::Sandbox(SandboxCommands::Purge { all }) => assert!(all),
             _ => panic!("expected Purge --all"),
         }
     }
@@ -1394,7 +1151,7 @@ mod tests {
     fn parse_run() {
         let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
         match cli.command {
-            Commands::Run { command, timeout, env } => {
+            Commands::Sandbox(SandboxCommands::Run { command, timeout, env }) => {
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, 60); // default
                 assert!(env.is_empty());
@@ -1407,7 +1164,7 @@ mod tests {
     fn parse_run_with_timeout() {
         let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
         match cli.command {
-            Commands::Run { command, timeout, env } => {
+            Commands::Sandbox(SandboxCommands::Run { command, timeout, env }) => {
                 assert_eq!(command, "ls -la");
                 assert_eq!(timeout, 120);
                 assert!(env.is_empty());
@@ -1419,14 +1176,14 @@ mod tests {
     #[test]
     fn parse_list() {
         let cli = Cli::parse_from(["capsem", "list"]);
-        assert!(matches!(cli.command, Commands::List { quiet: false }));
+        assert!(matches!(cli.command, Commands::Sandbox(SandboxCommands::List { quiet: false })));
     }
 
     #[test]
     fn parse_list_quiet() {
         let cli = Cli::parse_from(["capsem", "list", "-q"]);
         match cli.command {
-            Commands::List { quiet } => assert!(quiet),
+            Commands::Sandbox(SandboxCommands::List { quiet }) => assert!(quiet),
             _ => panic!("expected List"),
         }
     }
@@ -1435,7 +1192,7 @@ mod tests {
     fn parse_list_quiet_long() {
         let cli = Cli::parse_from(["capsem", "list", "--quiet"]);
         match cli.command {
-            Commands::List { quiet } => assert!(quiet),
+            Commands::Sandbox(SandboxCommands::List { quiet }) => assert!(quiet),
             _ => panic!("expected List"),
         }
     }
@@ -1444,7 +1201,7 @@ mod tests {
     fn parse_status() {
         let cli = Cli::parse_from(["capsem", "status", "vm-1"]);
         match cli.command {
-            Commands::Status { id } => assert_eq!(id, "vm-1"),
+            Commands::Sandbox(SandboxCommands::Status { id }) => assert_eq!(id, "vm-1"),
             _ => panic!("expected Status"),
         }
     }
@@ -1472,64 +1229,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Type serde
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn provision_request_serde() {
-        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 4096, cpus: 4, persistent: true, env: None, image: None };
-        let json = serde_json::to_string(&req).unwrap();
-        let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(req2.name, Some("test".into()));
-        assert_eq!(req2.ram_mb, 4096);
-        assert!(req2.persistent);
-        assert!(req2.env.is_none());
-    }
-
-    #[test]
-    fn provision_request_with_env() {
-        let mut env = HashMap::new();
-        env.insert("FOO".into(), "bar".into());
-        let req = ProvisionRequest { name: Some("test".into()), ram_mb: 2048, cpus: 2, persistent: true, env: Some(env), image: None };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("FOO"));
-        let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(req2.env.as_ref().unwrap().get("FOO").unwrap(), "bar");
-    }
-
-    #[test]
-    fn provision_request_env_omitted_when_none() {
-        let req = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None, image: None };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("env"));
-    }
-
-    #[test]
-    fn list_response_empty_serde() {
-        let resp = ListResponse { sandboxes: vec![] };
-        let json = serde_json::to_string(&resp).unwrap();
-        let resp2: ListResponse = serde_json::from_str(&json).unwrap();
-        assert!(resp2.sandboxes.is_empty());
-    }
-
-    #[test]
-    fn list_response_with_entries() {
-        let resp = ListResponse {
-            sandboxes: vec![
-                SandboxInfo { id: "vm-1".into(), pid: 100, status: "Running".into(), persistent: false, ram_mb: Some(2048), cpus: Some(2), version: Some("0.16.1".into()) },
-                SandboxInfo { id: "mydev".into(), pid: 0, status: "Stopped".into(), persistent: true, ram_mb: Some(4096), cpus: Some(4), version: None },
-            ],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let resp2: ListResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp2.sandboxes.len(), 2);
-        assert_eq!(resp2.sandboxes[0].id, "vm-1");
-        assert!(!resp2.sandboxes[0].persistent);
-        assert_eq!(resp2.sandboxes[1].id, "mydev");
-        assert!(resp2.sandboxes[1].persistent);
-    }
-
-    // -----------------------------------------------------------------------
     // New commands: exec, delete, info, doctor
     // -----------------------------------------------------------------------
 
@@ -1537,7 +1236,7 @@ mod tests {
     fn parse_exec() {
         let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
         match cli.command {
-            Commands::Exec { id, command, timeout } => {
+            Commands::Sandbox(SandboxCommands::Exec { id, command, timeout }) => {
                 assert_eq!(id, "my-vm");
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, 30); // default
@@ -1550,7 +1249,7 @@ mod tests {
     fn parse_exec_with_timeout() {
         let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
         match cli.command {
-            Commands::Exec { id, command, timeout } => {
+            Commands::Sandbox(SandboxCommands::Exec { id, command, timeout }) => {
                 assert_eq!(id, "my-vm");
                 assert_eq!(command, "make build");
                 assert_eq!(timeout, 120);
@@ -1563,7 +1262,7 @@ mod tests {
     fn parse_delete() {
         let cli = Cli::parse_from(["capsem", "delete", "vm-123"]);
         match cli.command {
-            Commands::Delete { id } => assert_eq!(id, "vm-123"),
+            Commands::Sandbox(SandboxCommands::Delete { id }) => assert_eq!(id, "vm-123"),
             _ => panic!("expected Delete"),
         }
     }
@@ -1572,7 +1271,7 @@ mod tests {
     fn parse_info() {
         let cli = Cli::parse_from(["capsem", "info", "vm-1"]);
         match cli.command {
-            Commands::Info { id } => assert_eq!(id, "vm-1"),
+            Commands::Sandbox(SandboxCommands::Info { id }) => assert_eq!(id, "vm-1"),
             _ => panic!("expected Info"),
         }
     }
@@ -1581,7 +1280,7 @@ mod tests {
     fn parse_logs_with_tail() {
         let cli = Cli::parse_from(["capsem", "logs", "--tail", "50", "vm-1"]);
         match cli.command {
-            Commands::Logs { id, tail } => {
+            Commands::Sandbox(SandboxCommands::Logs { id, tail }) => {
                 assert_eq!(id, "vm-1");
                 assert_eq!(tail, Some(50));
             }
@@ -1593,7 +1292,7 @@ mod tests {
     fn parse_logs_without_tail() {
         let cli = Cli::parse_from(["capsem", "logs", "vm-1"]);
         match cli.command {
-            Commands::Logs { id, tail } => {
+            Commands::Sandbox(SandboxCommands::Logs { id, tail }) => {
                 assert_eq!(id, "vm-1");
                 assert_eq!(tail, None);
             }
@@ -1605,7 +1304,7 @@ mod tests {
     fn parse_restart() {
         let cli = Cli::parse_from(["capsem", "restart", "mydev"]);
         match cli.command {
-            Commands::Restart { name } => assert_eq!(name, "mydev"),
+            Commands::Sandbox(SandboxCommands::Restart { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Restart"),
         }
     }
@@ -1613,14 +1312,14 @@ mod tests {
     #[test]
     fn parse_version() {
         let cli = Cli::parse_from(["capsem", "version"]);
-        assert!(matches!(cli.command, Commands::Version));
+        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Version)));
     }
 
     #[test]
     fn parse_create_with_env() {
         let cli = Cli::parse_from(["capsem", "create", "-e", "FOO=bar", "-e", "BAZ=qux"]);
         match cli.command {
-            Commands::Create { env, .. } => {
+            Commands::Sandbox(SandboxCommands::Create { env, .. }) => {
                 assert_eq!(env, vec!["FOO=bar", "BAZ=qux"]);
             }
             _ => panic!("expected Create"),
@@ -1631,7 +1330,7 @@ mod tests {
     fn parse_create_with_env_long() {
         let cli = Cli::parse_from(["capsem", "create", "--env", "API_KEY=secret123"]);
         match cli.command {
-            Commands::Create { env, .. } => {
+            Commands::Sandbox(SandboxCommands::Create { env, .. }) => {
                 assert_eq!(env, vec!["API_KEY=secret123"]);
             }
             _ => panic!("expected Create"),
@@ -1642,7 +1341,7 @@ mod tests {
     fn parse_create_no_env() {
         let cli = Cli::parse_from(["capsem", "create"]);
         match cli.command {
-            Commands::Create { env, .. } => {
+            Commands::Sandbox(SandboxCommands::Create { env, .. }) => {
                 assert!(env.is_empty());
             }
             _ => panic!("expected Create"),
@@ -1652,7 +1351,7 @@ mod tests {
     #[test]
     fn parse_doctor() {
         let cli = Cli::parse_from(["capsem", "doctor"]);
-        assert!(matches!(cli.command, Commands::Doctor { fast: false }));
+        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Doctor { fast: false })));
     }
 
     #[test]
@@ -1677,7 +1376,7 @@ mod tests {
     fn parse_setup_non_interactive() {
         let cli = Cli::parse_from(["capsem", "setup", "--non-interactive"]);
         match cli.command {
-            Commands::Setup { non_interactive, preset, force, .. } => {
+            Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, .. }) => {
                 assert!(non_interactive);
                 assert_eq!(preset, None);
                 assert!(!force);
@@ -1690,7 +1389,7 @@ mod tests {
     fn parse_setup_with_preset_and_force() {
         let cli = Cli::parse_from(["capsem", "setup", "--preset", "high", "--force"]);
         match cli.command {
-            Commands::Setup { preset, force, .. } => {
+            Commands::Misc(MiscCommands::Setup { preset, force, .. }) => {
                 assert_eq!(preset, Some("high".into()));
                 assert!(force);
             }
@@ -1702,7 +1401,7 @@ mod tests {
     fn parse_setup_with_corp_config() {
         let cli = Cli::parse_from(["capsem", "setup", "--corp-config", "https://example.com/corp.toml", "--non-interactive"]);
         match cli.command {
-            Commands::Setup { corp_config, non_interactive, .. } => {
+            Commands::Misc(MiscCommands::Setup { corp_config, non_interactive, .. }) => {
                 assert_eq!(corp_config, Some("https://example.com/corp.toml".into()));
                 assert!(non_interactive);
             }
@@ -1713,14 +1412,14 @@ mod tests {
     #[test]
     fn parse_completions_bash() {
         let cli = Cli::parse_from(["capsem", "completions", "bash"]);
-        assert!(matches!(cli.command, Commands::Completions { shell: clap_complete::Shell::Bash }));
+        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Completions { shell: clap_complete::Shell::Bash })));
     }
 
     #[test]
     fn parse_uninstall() {
         let cli = Cli::parse_from(["capsem", "uninstall"]);
         match cli.command {
-            Commands::Uninstall { yes } => assert!(!yes),
+            Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(!yes),
             _ => panic!("expected Uninstall"),
         }
     }
@@ -1729,7 +1428,7 @@ mod tests {
     fn parse_uninstall_yes() {
         let cli = Cli::parse_from(["capsem", "uninstall", "--yes"]);
         match cli.command {
-            Commands::Uninstall { yes } => assert!(yes),
+            Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(yes),
             _ => panic!("expected Uninstall"),
         }
     }
@@ -1738,7 +1437,7 @@ mod tests {
     fn parse_update() {
         let cli = Cli::parse_from(["capsem", "update"]);
         match cli.command {
-            Commands::Update { yes } => assert!(!yes),
+            Commands::Misc(MiscCommands::Update { yes }) => assert!(!yes),
             _ => panic!("expected Update"),
         }
     }
@@ -1747,60 +1446,9 @@ mod tests {
     fn parse_update_yes() {
         let cli = Cli::parse_from(["capsem", "update", "--yes"]);
         match cli.command {
-            Commands::Update { yes } => assert!(yes),
+            Commands::Misc(MiscCommands::Update { yes }) => assert!(yes),
             _ => panic!("expected Update"),
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // ApiResponse untagged enum
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn api_response_ok_variant() {
-        let json = r#"{"id":"vm-1"}"#;
-        let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
-        let result = resp.into_result().unwrap();
-        assert_eq!(result.id, "vm-1");
-    }
-
-    #[test]
-    fn api_response_err_variant() {
-        let json = r#"{"error":"sandbox not found"}"#;
-        let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
-        let err = resp.into_result().unwrap_err();
-        assert!(err.to_string().contains("sandbox not found"));
-    }
-
-    // -----------------------------------------------------------------------
-    // ExecRequest / ExecResponse serde
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn exec_request_serde() {
-        let req = ExecRequest { command: "ls -la".into(), timeout_secs: 30 };
-        let json = serde_json::to_string(&req).unwrap();
-        let req2: ExecRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(req2.command, "ls -la");
-        assert_eq!(req2.timeout_secs, 30);
-    }
-
-    #[test]
-    fn exec_response_serde() {
-        let resp = ExecResponse { stdout: "hello\n".into(), stderr: "".into(), exit_code: 0 };
-        let json = serde_json::to_string(&resp).unwrap();
-        let resp2: ExecResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp2.stdout, "hello\n");
-        assert_eq!(resp2.exit_code, 0);
-    }
-
-    #[test]
-    fn exec_response_nonzero_exit() {
-        let resp = ExecResponse { stdout: "".into(), stderr: "not found\n".into(), exit_code: 127 };
-        let json = serde_json::to_string(&resp).unwrap();
-        let resp2: ExecResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp2.exit_code, 127);
-        assert_eq!(resp2.stderr, "not found\n");
     }
 
     // -----------------------------------------------------------------------
@@ -1825,90 +1473,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Security: socket path construction
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn socket_path_with_traversal_id() {
-        // If VM ID contains ../, the socket path would escape the instances dir
-        let run_dir = PathBuf::from("/home/user/.capsem/run");
-        let id = "../../../tmp/evil";
-        let sock_path = run_dir.join("instances").join(format!("{}.sock", id));
-        // This path escapes the intended directory
-        assert!(sock_path.to_string_lossy().contains(".."));
-        // Service should validate IDs before constructing paths
-    }
-
-    #[test]
-    fn socket_path_normal_id() {
-        let run_dir = PathBuf::from("/home/user/.capsem/run");
-        let id = "vm-abc123";
-        let sock_path = run_dir.join("instances").join(format!("{}.sock", id));
-        assert_eq!(
-            sock_path,
-            PathBuf::from("/home/user/.capsem/run/instances/vm-abc123.sock")
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // RAM conversion edge cases
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn ram_gb_zero() {
-        let ram_gb: u32 = 0;
-        let ram_mb: u64 = ram_gb as u64 * 1024;
-        assert_eq!(ram_mb, 0);
-    }
-
-    #[test]
-    fn ram_gb_large() {
-        let ram_gb: u32 = 128;
-        let ram_mb: u64 = ram_gb as u64 * 1024;
-        assert_eq!(ram_mb, 131072);
-    }
-
-    // -----------------------------------------------------------------------
-    // ExecResponse exit code propagation
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn exec_response_negative_exit_code() {
-        let resp = ExecResponse { stdout: "".into(), stderr: "killed".into(), exit_code: -1 };
-        let json = serde_json::to_string(&resp).unwrap();
-        let resp2: ExecResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp2.exit_code, -1);
-    }
-
-    #[test]
-    fn exec_response_signal_exit_code() {
-        // SIGKILL = 137 in Docker-style convention
-        let resp = ExecResponse { stdout: "".into(), stderr: "".into(), exit_code: 137 };
-        assert_eq!(resp.exit_code, 137);
-    }
-
-    // -----------------------------------------------------------------------
-    // ApiResponse edge cases
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn api_response_malformed_json() {
-        let json = r#"{"unexpected": true}"#;
-        // ListResponse doesn't have "unexpected" field, but serde might still parse it
-        let result: Result<ApiResponse<ListResponse>, _> = serde_json::from_str(json);
-        // Untagged enum tries both variants
-        assert!(result.is_ok() || result.is_err());
-    }
-
-    #[test]
-    fn api_response_empty_error() {
-        let json = r#"{"error":""}"#;
-        let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
-        let err = resp.into_result().unwrap_err();
-        assert!(err.to_string().is_empty() || err.to_string().contains(""));
-    }
-
-    // -----------------------------------------------------------------------
     // Fork / Image CLI parsing
     // -----------------------------------------------------------------------
 
@@ -1916,7 +1480,7 @@ mod tests {
     fn parse_fork() {
         let cli = Cli::parse_from(["capsem", "fork", "my-vm", "my-image"]);
         match cli.command {
-            Commands::Fork { id, name, description } => {
+            Commands::Sandbox(SandboxCommands::Fork { id, name, description }) => {
                 assert_eq!(id, "my-vm");
                 assert_eq!(name, "my-image");
                 assert_eq!(description, None);
@@ -1929,7 +1493,7 @@ mod tests {
     fn parse_fork_with_description() {
         let cli = Cli::parse_from(["capsem", "fork", "vm1", "img1", "-d", "My description"]);
         match cli.command {
-            Commands::Fork { id, name, description } => {
+            Commands::Sandbox(SandboxCommands::Fork { id, name, description }) => {
                 assert_eq!(id, "vm1");
                 assert_eq!(name, "img1");
                 assert_eq!(description, Some("My description".into()));
@@ -1939,77 +1503,38 @@ mod tests {
     }
 
     #[test]
-    fn parse_image_list() {
-        let cli = Cli::parse_from(["capsem", "image", "list"]);
+    fn parse_create_with_from() {
+        let cli = Cli::parse_from(["capsem", "create", "--from", "base-sandbox"]);
         match cli.command {
-            Commands::Image(ImageCommands::List) => {}
-            _ => panic!("expected Image List"),
-        }
-    }
-
-    #[test]
-    fn parse_image_list_alias() {
-        let cli = Cli::parse_from(["capsem", "image", "ls"]);
-        match cli.command {
-            Commands::Image(ImageCommands::List) => {}
-            _ => panic!("expected Image List via ls alias"),
-        }
-    }
-
-    #[test]
-    fn parse_image_delete() {
-        let cli = Cli::parse_from(["capsem", "image", "delete", "my-img"]);
-        match cli.command {
-            Commands::Image(ImageCommands::Delete { name }) => {
-                assert_eq!(name, "my-img");
-            }
-            _ => panic!("expected Image Delete"),
-        }
-    }
-
-    #[test]
-    fn parse_image_delete_alias() {
-        let cli = Cli::parse_from(["capsem", "image", "rm", "my-img"]);
-        match cli.command {
-            Commands::Image(ImageCommands::Delete { name }) => {
-                assert_eq!(name, "my-img");
-            }
-            _ => panic!("expected Image Delete via rm alias"),
-        }
-    }
-
-    #[test]
-    fn parse_image_inspect() {
-        let cli = Cli::parse_from(["capsem", "image", "inspect", "my-img"]);
-        match cli.command {
-            Commands::Image(ImageCommands::Inspect { name }) => {
-                assert_eq!(name, "my-img");
-            }
-            _ => panic!("expected Image Inspect"),
-        }
-    }
-
-    #[test]
-    fn parse_create_with_image() {
-        let cli = Cli::parse_from(["capsem", "create", "--image", "base-img"]);
-        match cli.command {
-            Commands::Create { image, name, .. } => {
-                assert_eq!(image, Some("base-img".into()));
+            Commands::Sandbox(SandboxCommands::Create { from, name, .. }) => {
+                assert_eq!(from, Some("base-sandbox".into()));
                 assert_eq!(name, None);
             }
-            _ => panic!("expected Create with image"),
+            _ => panic!("expected Create with --from"),
         }
     }
 
     #[test]
-    fn parse_create_with_name_and_image() {
-        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm", "--image", "my-img"]);
+    fn parse_create_with_from_image_alias() {
+        // --image is a backward-compat alias for --from
+        let cli = Cli::parse_from(["capsem", "create", "--image", "old-img"]);
         match cli.command {
-            Commands::Create { name, image, .. } => {
-                assert_eq!(name, Some("my-vm".into()));
-                assert_eq!(image, Some("my-img".into()));
+            Commands::Sandbox(SandboxCommands::Create { from, .. }) => {
+                assert_eq!(from, Some("old-img".into()));
             }
-            _ => panic!("expected Create with name and image"),
+            _ => panic!("expected Create with --image alias"),
+        }
+    }
+
+    #[test]
+    fn parse_create_with_name_and_from() {
+        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm", "--from", "my-src"]);
+        match cli.command {
+            Commands::Sandbox(SandboxCommands::Create { name, from, .. }) => {
+                assert_eq!(name, Some("my-vm".into()));
+                assert_eq!(from, Some("my-src".into()));
+            }
+            _ => panic!("expected Create with name and --from"),
         }
     }
 }

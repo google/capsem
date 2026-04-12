@@ -42,8 +42,10 @@ struct PersistentVmEntry {
     base_version: String,
     created_at: String,
     session_dir: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none", default, alias = "source_image")]
+    forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    source_image: Option<String>,
+    description: Option<String>,
     #[serde(default)]
     suspended: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -128,20 +130,6 @@ fn validate_vm_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate an image name. Same rules as VM names -- alphanumeric, hyphens,
-/// underscores only. Prevents path traversal (../../etc) in image operations.
-fn validate_image_name(name: &str) -> Result<(), AppError> {
-    if name.is_empty() || name.len() > 64 {
-        return Err(AppError(StatusCode::BAD_REQUEST, "image name must be 1-64 characters".into()));
-    }
-    if !name.chars().next().unwrap().is_ascii_alphanumeric() {
-        return Err(AppError(StatusCode::BAD_REQUEST, "image name must start with a letter or digit".into()));
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(AppError(StatusCode::BAD_REQUEST, "image name must contain only letters, digits, hyphens, and underscores".into()));
-    }
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -152,7 +140,6 @@ struct ServiceState {
     instances: Mutex<HashMap<String, InstanceInfo>>,
     /// Registry of persistent (named) VMs
     persistent_registry: Mutex<PersistentRegistry>,
-    image_registry: Arc<capsem_core::image::ImageRegistry>,
     process_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
@@ -177,8 +164,8 @@ struct InstanceInfo {
     /// Environment variables injected at boot
     #[allow(dead_code)]
     env: Option<std::collections::HashMap<String, String>>,
-    /// Image from which this VM was booted, if any
-    source_image: Option<String>,
+    /// Sandbox this VM was cloned from, if any
+    forked_from: Option<String>,
 }
 
 pub struct ProvisionOptions<'a> {
@@ -188,7 +175,8 @@ pub struct ProvisionOptions<'a> {
     pub version_override: Option<String>,
     pub persistent: bool,
     pub env: Option<std::collections::HashMap<String, String>>,
-    pub image: Option<String>,
+    pub from: Option<String>,
+    pub description: Option<String>,
 }
 
 impl ServiceState {
@@ -249,7 +237,7 @@ impl ServiceState {
         self: &Arc<Self>,
         options: ProvisionOptions,
     ) -> Result<()> {
-        let ProvisionOptions { id, ram_mb, cpus, version_override, persistent, env, image } = options;
+        let ProvisionOptions { id, ram_mb, cpus, version_override, persistent, env, from, description } = options;
         self.cleanup_stale_instances();
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
@@ -281,24 +269,25 @@ impl ServiceState {
             }
         }
 
-        // Validate image if provided
-        let image_entry = if let Some(img_name) = &image {
-            let entry = self.image_registry.get(img_name)
-                .context("failed to query image registry")?
-                .ok_or_else(|| anyhow!("image '{}' not found", img_name))?;
+        // Validate source sandbox if --from provided
+        let source_entry = if let Some(ref from_name) = from {
+            let registry = self.persistent_registry.lock().unwrap();
+            let entry = registry.get(from_name)
+                .ok_or_else(|| anyhow!("source sandbox '{}' not found", from_name))?
+                .clone();
             Some(entry)
         } else {
             None
         };
 
-        // If booting from an image, override the base_version to match the image's base_version.
-        let version = if let Some(ref entry) = image_entry {
+        // If cloning from a source sandbox, inherit its base_version.
+        let version = if let Some(ref entry) = source_entry {
             entry.base_version.clone()
         } else {
             version_override.unwrap_or_else(|| self.current_version.clone())
         };
 
-        info!(id, version, persistent, image, "provision_sandbox called");
+        info!(id, version, persistent, from, "provision_sandbox called");
 
         let uds_path = self.instance_socket_path(id);
 
@@ -315,11 +304,11 @@ impl ServiceState {
         let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
         let _ = std::fs::create_dir_all(&session_dir);
 
-        // If booting from an image, clone the image state into the new session directory
-        if let Some(ref img_name) = image {
-            info!(image = img_name, session_dir = %session_dir.display(), "cloning session from image");
-            capsem_core::image::create_session_from_image(&self.image_registry, img_name, &session_dir)
-                .context("failed to clone session from image")?;
+        // If cloning from a source sandbox, clone its state into the new session directory
+        if let Some(ref entry) = source_entry {
+            info!(from = entry.name, session_dir = %session_dir.display(), "cloning session from source sandbox");
+            capsem_core::auto_snapshot::clone_sandbox_state(&entry.session_dir, &session_dir)
+                .context("failed to clone sandbox state")?;
         }
 
         let assets_to_use = self.resolve_assets_dir(&version)?;
@@ -434,7 +423,8 @@ impl ServiceState {
                 base_version: version.clone(),
                 created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
                 session_dir: session_dir.clone(),
-                source_image: image.clone(),
+                forked_from: from.clone(),
+                description: description.clone(),
                 suspended: false,
                 checkpoint_path: None,
             })?;
@@ -452,7 +442,7 @@ impl ServiceState {
             base_version: version.clone(),
             persistent,
             env,
-            source_image: image.clone(),
+            forked_from: from.clone(),
         });
 
         Ok(())
@@ -574,7 +564,7 @@ impl ServiceState {
             base_version: version,
             persistent: true,
             env: None,
-            source_image: entry.source_image.clone(),
+            forked_from: entry.forked_from.clone(),
         });
 
         // Clear suspended state now that the VM is running again
@@ -639,17 +629,27 @@ async fn handle_fork(
     Path(id): Path<String>,
     Json(payload): Json<ForkRequest>,
 ) -> Result<Json<ForkResponse>, AppError> {
-    validate_image_name(&payload.name)?;
+    let name = &payload.name;
+    validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let (session_dir, base_version, parent_image, uds_path) = {
+    // Check name is not taken
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        if registry.contains(name) {
+            return Err(AppError(StatusCode::CONFLICT, format!("sandbox '{}' already exists", name)));
+        }
+    }
+
+    // Find source: running instance or stopped persistent VM
+    let (session_dir, ram_mb, cpus, base_version, uds_path) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
-            (i.session_dir.clone(), i.base_version.clone(), i.source_image.clone(), Some(i.uds_path.clone()))
+            (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), Some(i.uds_path.clone()))
         } else {
             drop(instances);
             let registry = state.persistent_registry.lock().unwrap();
             if let Some(p) = registry.get(&id) {
-                (p.session_dir.clone(), p.base_version.clone(), p.source_image.clone(), None)
+                (p.session_dir.clone(), p.ram_mb, p.cpus, p.base_version.clone(), None)
             } else {
                 return Err(AppError(StatusCode::NOT_FOUND, format!("source sandbox not found: {}", id)));
             }
@@ -658,8 +658,6 @@ async fn handle_fork(
 
     // Freeze + thaw the guest root filesystem so the ext4 loopback overlay
     // (rootfs.img) is fully flushed through VirtioFS to the host file.
-    // Plain `sync` is not enough -- fsfreeze forces the filesystem and VirtioFS
-    // write-back caches to drain completely.
     if let Some(ref uds) = uds_path {
         let freeze_id = state.next_job_id();
         if let Err(e) = send_ipc_command(uds, ServiceToProcess::Exec {
@@ -669,84 +667,35 @@ async fn handle_fork(
         }
     }
 
-    let entry = match capsem_core::image::create_image_from_session(
-        &state.image_registry,
-        &session_dir,
-        &payload.name,
-        payload.description.clone(),
-        &id,
-        parent_image,
-        &base_version,
-    ) {
-        Ok(e) => e,
-        Err(e) => {
-            let status = if e.to_string().contains("already exists") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            return Err(AppError(status, format!("failed to fork image: {e}")));
-        }
-    };
+    // Clone state into new persistent sandbox
+    let new_session_dir = state.run_dir.join("persistent").join(name);
+    let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
+    let _ = std::fs::create_dir_all(&new_session_dir);
 
-    Ok(Json(ForkResponse {
-        name: entry.name,
-        size_bytes: entry.size_bytes,
-    }))
-}
+    let size_bytes = capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &new_session_dir)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fork sandbox: {e}")))?;
 
-async fn handle_image_list(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<ImageListResponse>, AppError> {
-    let entries = state.image_registry.list()
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to list images: {e}")))?;
-
-    let images = entries.into_iter().map(|e| ImageInfo {
-        name: e.name,
-        description: e.description,
-        source_vm: e.source_vm,
-        parent_image: e.parent_image,
-        base_version: e.base_version,
-        created_at: capsem_core::session::epoch_to_iso(e.created_at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()),
-        size_bytes: e.size_bytes,
-    }).collect();
-
-    Ok(Json(ImageListResponse { images }))
-}
-
-async fn handle_image_inspect(
-    State(state): State<Arc<ServiceState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ImageInfo>, AppError> {
-    validate_image_name(&name)?;
-    let entry = state.image_registry.get(&name)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to query image: {e}")))?
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("image not found: {}", name)))?;
-
-    Ok(Json(ImageInfo {
-        name: entry.name,
-        description: entry.description,
-        source_vm: entry.source_vm,
-        parent_image: entry.parent_image,
-        base_version: entry.base_version,
-        created_at: capsem_core::session::epoch_to_iso(entry.created_at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()),
-        size_bytes: entry.size_bytes,
-    }))
-}
-
-async fn handle_image_delete(
-    State(state): State<Arc<ServiceState>>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_image_name(&name)?;
-    let removed = state.image_registry.remove(&name)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to delete image: {e}")))?;
-
-    if !removed {
-        return Err(AppError(StatusCode::NOT_FOUND, format!("image not found: {}", name)));
+    // Register as persistent VM
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry.register(PersistentVmEntry {
+            name: name.clone(),
+            ram_mb,
+            cpus,
+            base_version,
+            created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+            session_dir: new_session_dir,
+            forked_from: Some(id.clone()),
+            description: payload.description.clone(),
+            suspended: false,
+            checkpoint_path: None,
+        }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(ForkResponse {
+        name: name.clone(),
+        size_bytes,
+    }))
 }
 
 async fn handle_provision(
@@ -764,7 +713,8 @@ async fn handle_provision(
         version_override: Some(state.current_version.clone()),
         persistent: payload.persistent,
         env: payload.env,
-        image: payload.image,
+        from: payload.from,
+        description: None,
     }) {
         Ok(_) => Ok(Json(ProvisionResponse { id })),
         Err(e) => {
@@ -797,6 +747,7 @@ async fn handle_list(
                 ram_mb: Some(i.ram_mb),
                 cpus: Some(i.cpus),
                 version: Some(i.base_version.clone()),
+                forked_from: None,
             });
         }
     }
@@ -821,6 +772,7 @@ async fn handle_list(
                     ram_mb: Some(entry.ram_mb),
                     cpus: Some(entry.cpus),
                     version: Some(entry.base_version.clone()),
+                    forked_from: entry.forked_from.clone(),
                 });
             }
         }
@@ -846,6 +798,7 @@ async fn handle_info(
                 ram_mb: Some(i.ram_mb),
                 cpus: Some(i.cpus),
                 version: Some(i.base_version.clone()),
+                forked_from: None,
             }));
         }
     }
@@ -864,6 +817,7 @@ async fn handle_info(
                 ram_mb: Some(entry.ram_mb),
                 cpus: Some(entry.cpus),
                 version: Some(entry.base_version.clone()),
+                forked_from: entry.forked_from.clone(),
             }));
         }
     }
@@ -1359,13 +1313,13 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, ram_mb, cpus, base_version, source_image) = {
+    let (old_session_dir, ram_mb, cpus, base_version, forked_from) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         if i.persistent {
             return Err(AppError(StatusCode::BAD_REQUEST, format!("VM \"{}\" is already persistent", id)));
         }
-        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), i.source_image.clone())
+        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), i.forked_from.clone())
     };
 
     // Move session dir to persistent location
@@ -1384,7 +1338,8 @@ async fn handle_persist(
             base_version: base_version.clone(),
             created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
             session_dir: new_session_dir.clone(),
-            source_image: source_image.clone(),
+            forked_from: forked_from.clone(),
+            description: None,
             suspended: false,
             checkpoint_path: None,
         }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1405,7 +1360,7 @@ async fn handle_persist(
                 base_version: info.base_version,
                 persistent: true,
                 env: info.env,
-                source_image,
+                forked_from,
             });
         }
     }
@@ -1500,7 +1455,8 @@ async fn handle_run(
         version_override: Some(state.current_version.clone()),
         persistent: false,
         env: payload.env,
-        image: None,
+        from: None,
+        description: None,
     })
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
 
@@ -1534,7 +1490,7 @@ async fn handle_run(
             storage_mode: "virtiofs".to_string(),
             rootfs_hash: None,
             rootfs_version: Some(state.current_version.clone()),
-            source_image: None,
+            forked_from: None,
             persistent: false,
         };
         if let Err(e) = idx.create_session(&record) {
@@ -1610,7 +1566,7 @@ async fn main() -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(&home).join(".capsem/run"));
     
-    let home_capsem = PathBuf::from(&home).join(".capsem");
+    let _home_capsem = PathBuf::from(&home).join(".capsem");
     
     let _ = std::fs::create_dir_all(&run_dir);
 
@@ -1671,12 +1627,9 @@ async fn main() -> Result<()> {
     let persistent_registry = PersistentRegistry::load(registry_path);
     info!(persistent_vms = persistent_registry.data.vms.len(), "loaded persistent VM registry");
 
-    let image_registry = Arc::new(capsem_core::image::ImageRegistry::new(&home_capsem));
-
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
-        image_registry,
         process_binary,
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
@@ -1728,8 +1681,6 @@ async fn main() -> Result<()> {
         .route("/run", post(handle_run))
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))
-        .route("/images", get(handle_image_list))
-        .route("/images/{name}", get(handle_image_inspect).delete(handle_image_delete))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -1900,7 +1851,6 @@ mod tests {
         Arc::new(ServiceState {
             instances: Mutex::new(HashMap::new()),
             persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
-            image_registry: Arc::new(capsem_core::image::ImageRegistry::new(std::path::Path::new("/tmp/capsem-test-svc"))),
             process_binary: PathBuf::from("/nonexistent/capsem-process"),
             assets_dir: PathBuf::from("/nonexistent/assets"),
             run_dir: PathBuf::from("/tmp/capsem-test-svc"),
@@ -1924,7 +1874,7 @@ mod tests {
                 base_version: "0.0.0".into(),
                 persistent: false,
                 env: None,
-                source_image: None,
+                forked_from: None,
             },
         );
     }
@@ -2185,7 +2135,8 @@ mod tests {
             version_override: None,
             persistent: false,
             env: None,
-            image: None,
+            from: None,
+            description: None,
         });
         // Will fail later (missing rootfs), but NOT for path length
         if let Err(e) = &result {
@@ -2204,7 +2155,8 @@ mod tests {
             version_override: None,
             persistent: false,
             env: None,
-            image: None,
+            from: None,
+            description: None,
         });
         // Fails for missing assets, not path length
         if let Err(e) = &result {
@@ -2257,34 +2209,6 @@ mod tests {
     // Image name validation (path traversal defense)
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn validate_image_name_valid() {
-        assert!(validate_image_name("my-fork").is_ok());
-        assert!(validate_image_name("snapshot_v2").is_ok());
-        assert!(validate_image_name("a").is_ok());
-    }
-
-    #[test]
-    fn validate_image_name_path_traversal() {
-        assert!(validate_image_name("../../etc").is_err());
-        assert!(validate_image_name("foo/bar").is_err());
-        assert!(validate_image_name("..").is_err());
-    }
-
-    #[test]
-    fn validate_image_name_empty_and_long() {
-        assert!(validate_image_name("").is_err());
-        assert!(validate_image_name(&"a".repeat(65)).is_err());
-        assert!(validate_image_name(&"a".repeat(64)).is_ok());
-    }
-
-    #[test]
-    fn validate_image_name_special_chars() {
-        assert!(validate_image_name("has space").is_err());
-        assert!(validate_image_name("-starts-hyphen").is_err());
-        assert!(validate_image_name("has.dot").is_err());
-    }
-
     // -----------------------------------------------------------------------
     // PersistentRegistry
     // -----------------------------------------------------------------------
@@ -2306,7 +2230,8 @@ mod tests {
             base_version: "0.1.0".into(),
             created_at: "12345".into(),
             session_dir: dir.join("mydev"),
-            source_image: None,
+            forked_from: None,
+            description: None,
             suspended: false,
             checkpoint_path: None,
         }).unwrap();
@@ -2337,7 +2262,8 @@ mod tests {
             base_version: "0.1.0".into(),
             created_at: "12345".into(),
             session_dir: dir.join("dup"),
-            source_image: None,
+            forked_from: None,
+            description: None,
             suspended: false,
             checkpoint_path: None,
         };
@@ -2363,7 +2289,8 @@ mod tests {
             base_version: "0.1.0".into(),
             created_at: "12345".into(),
             session_dir: dir.join("tmp"),
-            source_image: None,
+            forked_from: None,
+            description: None,
             suspended: false,
             checkpoint_path: None,
         }).unwrap();
@@ -2391,7 +2318,8 @@ mod tests {
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
                 session_dir: PathBuf::from("/tmp/taken"),
-                source_image: None,
+                forked_from: None,
+                description: None,
                 suspended: false,
                 checkpoint_path: None,
             });
@@ -2403,7 +2331,8 @@ mod tests {
             version_override: None,
             persistent: true,
             env: None,
-            image: None,
+            from: None,
+            description: None,
         });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -2421,7 +2350,8 @@ mod tests {
             version_override: None,
             persistent: true,
             env: None,
-            image: None,
+            from: None,
+            description: None,
         });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -2448,7 +2378,6 @@ mod tests {
         let state = Arc::new(ServiceState {
             instances: Mutex::new(HashMap::new()),
             persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
-            image_registry: Arc::new(capsem_core::image::ImageRegistry::new(dir.path())),
             process_binary: PathBuf::from("/nonexistent/capsem-process"),
             assets_dir: dir.path().join("assets"),
             run_dir: dir.path().to_path_buf(),
@@ -2459,81 +2388,8 @@ mod tests {
         (state, dir)
     }
 
-    fn seed_image(state: &ServiceState, name: &str) -> capsem_core::image::ImageEntry {
-        // Create a fake session dir with content, then fork it into an image
-        let session_dir = state.run_dir.join("seed-session");
-        let _ = std::fs::create_dir_all(session_dir.join("system"));
-        let _ = std::fs::create_dir_all(session_dir.join("workspace"));
-        std::fs::write(session_dir.join("system/rootfs.img"), b"test").unwrap();
-        capsem_core::image::create_image_from_session(
-            &state.image_registry, &session_dir, name,
-            Some("test image".into()), "seed-vm", None, "0.0.0",
-        ).unwrap()
-    }
-
     #[tokio::test]
-    async fn handle_image_list_empty() {
-        let (state, _dir) = make_test_state_with_tempdir();
-        // state is already Arc<ServiceState> from make_test_state*
-        let result = handle_image_list(State(state)).await.unwrap();
-        assert!(result.0.images.is_empty());
-    }
-
-    #[tokio::test]
-    async fn handle_image_list_returns_entries() {
-        let (state, _dir) = make_test_state_with_tempdir();
-        seed_image(&state, "img-a");
-        seed_image(&state, "img-b");
-        // state is already Arc<ServiceState> from make_test_state*
-        let result = handle_image_list(State(state)).await.unwrap();
-        assert_eq!(result.0.images.len(), 2);
-        let names: Vec<&str> = result.0.images.iter().map(|i| i.name.as_str()).collect();
-        assert!(names.contains(&"img-a"));
-        assert!(names.contains(&"img-b"));
-    }
-
-    #[tokio::test]
-    async fn handle_image_inspect_found() {
-        let (state, _dir) = make_test_state_with_tempdir();
-        seed_image(&state, "my-img");
-        // state is already Arc<ServiceState> from make_test_state*
-        let result = handle_image_inspect(State(state), Path("my-img".into())).await.unwrap();
-        assert_eq!(result.0.name, "my-img");
-        assert_eq!(result.0.description.as_deref(), Some("test image"));
-        assert_eq!(result.0.source_vm, "seed-vm");
-        assert_eq!(result.0.base_version, "0.0.0");
-    }
-
-    #[tokio::test]
-    async fn handle_image_inspect_not_found() {
-        let (state, _dir) = make_test_state_with_tempdir();
-        // state is already Arc<ServiceState> from make_test_state*
-        let err = handle_image_inspect(State(state), Path("ghost".into())).await.unwrap_err();
-        assert_eq!(err.0, StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn handle_image_delete_success() {
-        let (state, _dir) = make_test_state_with_tempdir();
-        seed_image(&state, "del-me");
-        // state is already Arc<ServiceState> from make_test_state*
-        let result = handle_image_delete(State(state.clone()), Path("del-me".into())).await.unwrap();
-        assert_eq!(result.0["success"], true);
-        // Verify gone
-        let list = handle_image_list(State(state)).await.unwrap();
-        assert!(list.0.images.is_empty());
-    }
-
-    #[tokio::test]
-    async fn handle_image_delete_not_found() {
-        let (state, _dir) = make_test_state_with_tempdir();
-        // state is already Arc<ServiceState> from make_test_state*
-        let err = handle_image_delete(State(state), Path("ghost".into())).await.unwrap_err();
-        assert_eq!(err.0, StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn handle_fork_from_running_instance() {
+    async fn handle_fork_creates_persistent_sandbox() {
         let (state, _dir) = make_test_state_with_tempdir();
         // Create a real session dir for the fake instance
         let session_dir = state.run_dir.join("sessions/fork-src");
@@ -2553,21 +2409,22 @@ mod tests {
                 base_version: "0.0.0".into(),
                 persistent: false,
                 env: None,
-                source_image: None,
+                forked_from: None,
             },
         );
-        // state is already Arc<ServiceState> from make_test_state*
         let result = handle_fork(
             State(state.clone()),
             Path("fork-src".into()),
-            Json(ForkRequest { name: "forked-img".into(), description: Some("test".into()) }),
+            Json(ForkRequest { name: "my-fork".into(), description: Some("test".into()) }),
         ).await.unwrap();
-        assert_eq!(result.0.name, "forked-img");
+        assert_eq!(result.0.name, "my-fork");
         assert!(result.0.size_bytes > 0);
-        // Verify it shows up in list
-        let list = handle_image_list(State(state)).await.unwrap();
-        assert_eq!(list.0.images.len(), 1);
-        assert_eq!(list.0.images[0].source_vm, "fork-src");
+        // Verify fork created a persistent sandbox, not an image
+        let registry = state.persistent_registry.lock().unwrap();
+        let entry = registry.get("my-fork").unwrap();
+        assert_eq!(entry.forked_from, Some("fork-src".into()));
+        assert_eq!(entry.description, Some("test".into()));
+        assert_eq!(entry.base_version, "0.0.0");
     }
 
     #[tokio::test]
@@ -2602,7 +2459,7 @@ mod tests {
                 base_version: "0.0.0".into(),
                 persistent: false,
                 env: None,
-                source_image: None,
+                forked_from: None,
             },
         );
         // state is already Arc<ServiceState> from make_test_state*
@@ -2637,7 +2494,8 @@ mod tests {
                 base_version: "0.0.0".into(),
                 created_at: "2026-01-01T00:00:00Z".into(),
                 session_dir: session_dir.clone(),
-                source_image: None,
+                forked_from: None,
+                description: None,
                 suspended: false,
                 checkpoint_path: None,
             });
@@ -2652,7 +2510,7 @@ mod tests {
     }
 
     #[test]
-    fn provision_rejects_nonexistent_image() {
+    fn provision_rejects_nonexistent_source_sandbox() {
         let (state, _dir) = make_test_state_with_tempdir();
         let result = state.provision_sandbox(ProvisionOptions {
             id: "vm1",
@@ -2661,11 +2519,12 @@ mod tests {
             version_override: None,
             persistent: false,
             env: None,
-            image: Some("ghost-img".into()),
+            from: Some("ghost-sandbox".into()),
+            description: None,
         });
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("not found"), "expected image not found, got: {err}");
+        assert!(err.contains("not found"), "expected sandbox not found, got: {err}");
     }
 
     // -----------------------------------------------------------------------
@@ -2687,7 +2546,8 @@ mod tests {
             base_version: "0.1.0".into(),
             created_at: "12345".into(),
             session_dir: dir.join("mutvm"),
-            source_image: None,
+            forked_from: None,
+            description: None,
             suspended: false,
             checkpoint_path: None,
         }).unwrap();
@@ -2721,7 +2581,8 @@ mod tests {
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/susp-vm"),
-                source_image: None,
+                forked_from: None,
+                description: None,
                 suspended: true,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
             });
@@ -2737,7 +2598,8 @@ mod tests {
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/stop-vm"),
-                source_image: None,
+                forked_from: None,
+                description: None,
                 suspended: false,
                 checkpoint_path: None,
             });
@@ -2765,7 +2627,8 @@ mod tests {
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/info-susp"),
-                source_image: None,
+                forked_from: None,
+                description: None,
                 suspended: true,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
             });
@@ -2794,7 +2657,7 @@ mod tests {
                 base_version: "0.0.0".into(),
                 persistent: false,
                 env: None,
-                source_image: None,
+                forked_from: None,
             });
         }
 
@@ -2827,7 +2690,8 @@ mod tests {
             base_version: "0.1.0".into(),
             created_at: "12345".into(),
             session_dir: dir.join("resumevm"),
-            source_image: None,
+            forked_from: None,
+            description: None,
             suspended: true,
             checkpoint_path: Some("checkpoint.vzsave".into()),
         }).unwrap();
@@ -2863,7 +2727,8 @@ mod tests {
             base_version: "0.1.0".into(),
             created_at: "12345".into(),
             session_dir: PathBuf::from("/tmp/jsonvm"),
-            source_image: None,
+            forked_from: None,
+            description: None,
             suspended: true,
             checkpoint_path: Some("checkpoint.vzsave".into()),
         };

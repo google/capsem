@@ -60,7 +60,7 @@ export interface ProvisionRequest {
   cpus: number;
   persistent: boolean;
   env?: Record<string, string>;
-  image?: string;
+  from?: string;
 }
 
 export interface ProvisionResponse {
@@ -113,12 +113,6 @@ export interface ForkRequest {
 export interface ForkResponse {
   name: string;
   size_bytes: number;
-}
-
-// GET /images
-export interface ImageInfo {
-  name: string;
-  size_bytes?: number;
 }
 
 // Error shape used by gateway and service

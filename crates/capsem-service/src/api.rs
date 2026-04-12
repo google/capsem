@@ -12,9 +12,10 @@ pub struct ProvisionRequest {
     /// Environment variables to inject into the guest at boot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
-    /// Image to boot from. If provided, the VM session will be cloned from this image.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
+    /// Sandbox to clone state from. If provided, the new sandbox's session will
+    /// be cloned from this existing persistent sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "image")]
+    pub from: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -28,24 +29,6 @@ pub struct ForkRequest {
 pub struct ForkResponse {
     pub name: String,
     pub size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ImageInfo {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub source_vm: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_image: Option<String>,
-    pub base_version: String,
-    pub created_at: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ImageListResponse {
-    pub images: Vec<ImageInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -68,6 +51,8 @@ pub struct SandboxInfo {
     pub cpus: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -200,10 +185,10 @@ mod tests {
 
     #[test]
     fn provision_request_env_omitted() {
-        let r = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None, image: None };
+        let r = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None, from: None };
         let json = serde_json::to_string(&r).unwrap();
         assert!(!json.contains("env"));
-        assert!(!json.contains("image"));
+        assert!(!json.contains("from"));
     }
 
     #[test]
@@ -215,10 +200,10 @@ mod tests {
     }
 
     #[test]
-    fn provision_request_with_image() {
-        let json = json!({"ram_mb": 2048, "cpus": 2, "image": "my-fork"});
+    fn provision_request_with_from() {
+        let json = json!({"ram_mb": 2048, "cpus": 2, "from": "my-fork"});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(r.image.as_deref(), Some("my-fork"));
+        assert_eq!(r.from.as_deref(), Some("my-fork"));
     }
 
     #[test]
@@ -245,8 +230,8 @@ mod tests {
     fn list_response_multiple() {
         let r = ListResponse {
             sandboxes: vec![
-                SandboxInfo { id: "a".into(), name: Some("a".into()), pid: 100, status: "Running".into(), persistent: true, ram_mb: Some(2048), cpus: Some(2), version: None },
-                SandboxInfo { id: "b".into(), name: None, pid: 200, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None },
+                SandboxInfo { id: "a".into(), name: Some("a".into()), pid: 100, status: "Running".into(), persistent: true, ram_mb: Some(2048), cpus: Some(2), version: None, forked_from: None },
+                SandboxInfo { id: "b".into(), name: None, pid: 200, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None },
             ],
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -260,7 +245,7 @@ mod tests {
 
     #[test]
     fn sandbox_info_optional_fields_omitted() {
-        let s = SandboxInfo { id: "x".into(), name: None, pid: 1, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None };
+        let s = SandboxInfo { id: "x".into(), name: None, pid: 1, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None };
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains("ram_mb"));
         assert!(!json.contains("cpus"));

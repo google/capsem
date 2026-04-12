@@ -11,8 +11,6 @@ pub mod mcp;
 pub mod net;
 pub mod session;
 pub mod vm;
-pub mod image;
-
 use std::path::Path;
 
 pub use capsem_proto;

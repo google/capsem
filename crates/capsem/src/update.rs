@@ -29,9 +29,7 @@ fn now_secs() -> u64 {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".capsem").join("update-check.json"))
+    crate::paths::capsem_home().ok().map(|d| d.join("update-check.json"))
 }
 
 /// Read cached update notice. Sync file read, no latency.
@@ -60,14 +58,16 @@ pub fn read_cached_update_notice() -> Option<String> {
     })
 }
 
-/// Write update check cache.
+/// Write update check cache atomically (write tmp + rename).
 fn write_cache(check: &UpdateCheck) -> Result<()> {
     let path = cache_path().context("HOME not set")?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(check)?;
-    std::fs::write(&path, json)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &json)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(())
 }
 
@@ -117,10 +117,11 @@ pub async fn refresh_update_cache_if_stale() {
 }
 
 /// Compare versions: is `latest` newer than `current`?
+/// Returns false for malformed versions (conservative: don't prompt for bad data).
 fn is_newer(latest: &str, current: &str) -> bool {
     match (semver::Version::parse(latest), semver::Version::parse(current)) {
         (Ok(l), Ok(c)) => l > c,
-        _ => latest != current, // Fallback to string comparison
+        _ => false,
     }
 }
 
@@ -204,11 +205,21 @@ pub async fn run_update(yes: bool) -> Result<()> {
     println!("Assets updated to v{}.", latest_version);
     println!("Binary update requires release infrastructure (WB6). Rebuild from source for now.");
 
-    // Cleanup old versions
+    // Pin the running binary's version so cleanup doesn't delete its assets.
+    // Until WB6 (binary swap), the binary is still `current` even after
+    // downloading `latest_version` assets.
+    let pinned_path = assets_base_dir.join("pinned.json");
+    let mut pinned: std::collections::HashSet<String> = std::fs::read_to_string(&pinned_path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default();
+    pinned.insert(current.to_string());
+    let _ = std::fs::write(&pinned_path, serde_json::to_string(&pinned).unwrap_or_default());
+
     let removed = capsem_core::asset_manager::cleanup_old_versions(
         &assets_base_dir,
         &latest_version,
-        None,
+        &[],
     )?;
     if !removed.is_empty() {
         println!("Cleaned up {} old asset version(s).", removed.len());
@@ -235,6 +246,28 @@ mod tests {
         assert!(is_newer("1.0.0", "0.99.99"));
         assert!(!is_newer("0.16.1", "0.16.1"));
         assert!(!is_newer("0.16.0", "0.16.1"));
+    }
+
+    #[test]
+    fn is_newer_rejects_garbage() {
+        // Malformed version from server should not trigger update
+        assert!(!is_newer("error", "0.16.1"));
+        assert!(!is_newer("", "0.16.1"));
+        assert!(!is_newer("not-a-version", "0.16.1"));
+    }
+
+    #[test]
+    fn is_newer_rejects_malformed_current() {
+        // If our own version is somehow malformed, don't update
+        assert!(!is_newer("0.17.0", "garbage"));
+    }
+
+    #[test]
+    fn is_newer_prerelease() {
+        // Pre-release of same version should not be "newer" than the release
+        assert!(!is_newer("0.17.0-beta.1", "0.17.0"));
+        // But pre-release of a higher version IS newer than current
+        assert!(is_newer("0.18.0-beta.1", "0.17.0"));
     }
 
     #[test]
