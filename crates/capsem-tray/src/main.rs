@@ -321,6 +321,7 @@ mod tests {
             service: "running".into(),
             vm_count,
             vms,
+            latency_ms: Some(5),
         }
     }
 

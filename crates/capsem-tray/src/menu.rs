@@ -61,9 +61,15 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     entries.push(MenuEntry::Separator);
     entries.push(MenuEntry::Item { id: "new-temp".into(), label: "New Temporary".into(), enabled: true });
     entries.push(MenuEntry::Item { id: "new-named".into(), label: "New Permanent...".into(), enabled: true });
-    entries.push(MenuEntry::Item { id: "open".into(), label: "Open Capsem".into(), enabled: true });
+    entries.push(MenuEntry::Item { id: "open".into(), label: "Open UI".into(), enabled: true });
     entries.push(MenuEntry::Separator);
     entries.push(MenuEntry::Item { id: "quit".into(), label: "Quit".into(), enabled: true });
+    entries.push(MenuEntry::Separator);
+    entries.push(MenuEntry::Item {
+        id: "status".into(),
+        label: format!("Connected -- {}ms", status.latency_ms.unwrap_or(0)),
+        enabled: false,
+    });
 
     entries
 }
@@ -94,6 +100,8 @@ pub(crate) fn unavailable_spec() -> Vec<MenuEntry> {
         MenuEntry::Item { id: "unavailable".into(), label: "Service unavailable".into(), enabled: false },
         MenuEntry::Separator,
         MenuEntry::Item { id: "quit".into(), label: "Quit".into(), enabled: true },
+        MenuEntry::Separator,
+        MenuEntry::Item { id: "status".into(), label: "Disconnected".into(), enabled: false },
     ]
 }
 
@@ -183,6 +191,7 @@ mod tests {
             service: "running".into(),
             vm_count,
             vms,
+            latency_ms: Some(5),
         }
     }
 
@@ -439,9 +448,12 @@ mod tests {
     fn unavailable_spec_has_disabled_status_and_quit() {
         let spec = unavailable_spec();
         let ids = collect_ids(&spec);
-        assert_eq!(ids, vec!["unavailable", "quit"]);
+        assert_eq!(ids, vec!["unavailable", "quit", "status"]);
         // "unavailable" is disabled
         assert!(matches!(&spec[0], MenuEntry::Item { enabled: false, .. }));
+        // status line at bottom is disabled and shows "Disconnected"
+        let status = spec.iter().find(|e| matches!(e, MenuEntry::Item { id, .. } if id == "status")).unwrap();
+        assert!(matches!(status, MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected"));
     }
 
     #[test]

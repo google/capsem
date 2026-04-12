@@ -11,6 +11,9 @@ pub struct StatusResponse {
     pub service: String,
     pub vm_count: u32,
     pub vms: Vec<VmSummary>,
+    /// Client-side measured latency (not from gateway). Set by the tray poller.
+    #[serde(skip)]
+    pub latency_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -122,8 +125,11 @@ impl GatewayClient {
     }
 
     pub async fn status(&self) -> Result<StatusResponse> {
+        let start = std::time::Instant::now();
         let resp = self.get("/status").await?;
-        resp.json().await.context("failed to parse status response")
+        let mut status: StatusResponse = resp.json().await.context("failed to parse status response")?;
+        status.latency_ms = Some(start.elapsed().as_millis() as u32);
+        Ok(status)
     }
 
     pub async fn stop_vm(&self, id: &str) -> Result<()> {
