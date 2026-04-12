@@ -281,15 +281,28 @@ fn main() {
     }
 
     // Step 4b: Activate Python venv if capsem-init created one.
-    // This ensures both the PTY shell and exec commands see the venv.
+    // capsem-init creates the venv in the background and touches a ready flag when done.
+    // Wait briefly for it to finish before checking.
     const VENV_DIR: &str = "/root/.venv";
-    if std::path::Path::new(VENV_DIR).join("bin/activate").exists() {
+    const VENV_READY: &str = "/run/capsem-venv-ready";
+    let venv_activate = std::path::Path::new(VENV_DIR).join("bin/activate");
+    if !venv_activate.exists() && !std::path::Path::new(VENV_READY).exists() {
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if std::path::Path::new(VENV_READY).exists() || venv_activate.exists() {
+                break;
+            }
+        }
+    }
+    if venv_activate.exists() {
         boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()));
         // Prepend venv bin to PATH if PATH exists in boot_env.
         if let Some((_, path_val)) = boot_env.iter_mut().find(|(k, _)| k == "PATH") {
             *path_val = format!("{VENV_DIR}/bin:{path_val}");
         }
         blog_line(&mut blog, "venv activated in boot_env");
+    } else {
+        blog_line(&mut blog, "WARNING: venv not found after waiting, skipping activation");
     }
 
     // Step 4c: Set hostname from CAPSEM_VM_NAME if present.
@@ -692,6 +705,10 @@ const GUEST_WORKSPACE_ROOT: &str = "/root";
 /// Returns ELOOP if the target is a symlink.
 fn write_nofollow(path: &str, data: &[u8], mode: u32) -> io::Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    // Create parent directories if they don't exist.
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)

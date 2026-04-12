@@ -16,7 +16,12 @@ INSTALL_DIR="$HOME/.capsem/bin"
 ASSETS_DST="$HOME/.capsem/assets"
 RUN_DIR="$HOME/.capsem/run"
 
-mkdir -p "$INSTALL_DIR" "$ASSETS_DST" "$RUN_DIR"
+mkdir -p "$INSTALL_DIR" "$RUN_DIR"
+# Remove dev symlink if present (just _ensure-service creates one)
+if [[ -L "$ASSETS_DST" ]]; then
+    rm "$ASSETS_DST"
+fi
+mkdir -p "$ASSETS_DST"
 
 # Copy binaries
 for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do

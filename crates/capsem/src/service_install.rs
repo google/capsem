@@ -171,6 +171,7 @@ pub fn plist_path() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join("Library/LaunchAgents/com.capsem.service.plist"))
 }
 
+
 #[cfg(target_os = "macos")]
 async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> Result<()> {
     let plist_dir = PathBuf::from(home).join("Library/LaunchAgents");
@@ -181,64 +182,98 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     std::fs::create_dir_all(&log_dir)
         .context("cannot create log directory")?;
 
+    let uid = nix::unistd::getuid();
+    let domain = format!("gui/{}", uid);
+
+    // Stop existing launchd jobs and kill ALL capsem processes.
+    // 1. Bootout (tells launchd to stop managing + kills managed processes)
+    for label in ["com.capsem.service", "com.capsem.tray"] {
+        let _ = tokio::process::Command::new("launchctl")
+            .args(["bootout", &format!("{domain}/{label}")])
+            .output().await;
+    }
+    // 2. Remove old plist files so launchd doesn't auto-start them
+    //    during the bootstrap of other services.
+    let _ = std::fs::remove_file(plist_dir.join("com.capsem.service.plist"));
+    let _ = std::fs::remove_file(plist_dir.join("com.capsem.tray.plist"));
+    // 3. Kill strays not managed by launchd (dev _ensure-service, manual launches)
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-9", "-x", "capsem-service"]).output().await;
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-9", "-x", "capsem-tray"]).output().await;
+    // 4. Wait until all are dead
+    for _ in 0..30 {
+        let tray = tokio::process::Command::new("pgrep")
+            .args(["-x", "capsem-tray"]).output().await;
+        if tray.map(|o| o.stdout.is_empty()).unwrap_or(true) { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // Install service plist
     let plist_content = generate_plist(
         &capsem_paths.service_bin,
         &capsem_paths.process_bin,
         &capsem_paths.assets_dir,
         home,
     );
-
     let plist_file = plist_dir.join("com.capsem.service.plist");
     std::fs::write(&plist_file, &plist_content)
-        .context("cannot write plist")?;
-
-    // Try modern bootstrap, fall back to legacy load
-    let uid = nix::unistd::getuid();
-    let domain = format!("gui/{}", uid);
-    let status = tokio::process::Command::new("launchctl")
-        .args(["bootstrap", &domain, &plist_file.to_string_lossy()])
-        .status()
-        .await?;
-
-    if !status.success() {
-        // Fallback to legacy load
-        let status = tokio::process::Command::new("launchctl")
-            .args(["load", &plist_file.to_string_lossy()])
-            .status()
-            .await?;
-        if !status.success() {
-            anyhow::bail!("launchctl load failed");
-        }
-    }
+        .context("cannot write service plist")?;
+    bootstrap_launchagent(&domain, &plist_file).await?;
 
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-async fn uninstall_launchagent() -> Result<()> {
-    let plist_file = plist_path().context("HOME not set")?;
-
-    if !plist_file.exists() {
-        println!("Service not installed.");
-        return Ok(());
-    }
-
-    // Try modern bootout, fall back to legacy unload
-    let uid = nix::unistd::getuid();
-    let target = format!("gui/{}/com.capsem.service", uid);
+async fn bootstrap_launchagent(domain: &str, plist_file: &Path) -> Result<()> {
     let status = tokio::process::Command::new("launchctl")
-        .args(["bootout", &target])
+        .args(["bootstrap", domain, &plist_file.to_string_lossy()])
         .status()
         .await?;
-
     if !status.success() {
-        let _ = tokio::process::Command::new("launchctl")
-            .args(["unload", &plist_file.to_string_lossy()])
+        let status = tokio::process::Command::new("launchctl")
+            .args(["load", &plist_file.to_string_lossy()])
             .status()
-            .await;
+            .await?;
+        if !status.success() {
+            anyhow::bail!("launchctl load failed for {}", plist_file.display());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+async fn uninstall_launchagent() -> Result<()> {
+    let uid = nix::unistd::getuid();
+
+    // Uninstall service
+    if let Some(plist_file) = plist_path() {
+        if plist_file.exists() {
+            let target = format!("gui/{}/com.capsem.service", uid);
+            let status = tokio::process::Command::new("launchctl")
+                .args(["bootout", &target])
+                .status()
+                .await?;
+            if !status.success() {
+                let _ = tokio::process::Command::new("launchctl")
+                    .args(["unload", &plist_file.to_string_lossy()])
+                    .status()
+                    .await;
+            }
+            std::fs::remove_file(&plist_file).ok();
+        }
     }
 
-    std::fs::remove_file(&plist_file).ok();
+    // Clean up stale tray plist if it exists (tray is spawned by the service)
+    let home = std::env::var("HOME").unwrap_or_default();
+    let tray_plist = PathBuf::from(&home).join("Library/LaunchAgents/com.capsem.tray.plist");
+    if tray_plist.exists() {
+        let _ = tokio::process::Command::new("launchctl")
+            .args(["bootout", &format!("gui/{}/com.capsem.tray", uid)])
+            .output().await;
+        std::fs::remove_file(&tray_plist).ok();
+    }
+
     Ok(())
 }
 

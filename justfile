@@ -69,10 +69,13 @@ _ensure-service: _sign
     [[ "$arch" == "arm64" ]] || arch="x86_64"
     mkdir -p ~/.capsem/run
     PIDFILE=~/.capsem/run/service.pid
-    # Kill ALL capsem-service processes (stale installed services, old dev sessions).
+    # Kill ALL capsem-service processes and their child VM processes.
     # The dev service must own the socket exclusively.
+    pkill -f "capsem-process.*--id" 2>/dev/null || true
     pkill -f "capsem-service.*--foreground" 2>/dev/null || true
     sleep 0.5
+    # Force-kill any VM processes that survived SIGTERM
+    pkill -9 -f "capsem-process.*--id" 2>/dev/null || true
     rm -f "$PIDFILE"
     rm -f ~/.capsem/run/service.sock
     # Symlink ~/.capsem/assets -> repo assets so installed tools (MCP, CLI)
@@ -359,26 +362,48 @@ _generate-settings:
 smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
-    echo "=== Rust: warnings-as-errors (all crates) ==="
-    cargo check --workspace
-    echo ""
-    echo "=== Dependency audit ==="
-    cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
+    SMOKE_LOG="{{justfile_directory()}}/target/smoke.log"
+    mkdir -p "$(dirname "$SMOKE_LOG")"
+    exec > >(tee "$SMOKE_LOG") 2>&1
+    SMOKE_START=$SECONDS
+    step() { STEP_START=$SECONDS; echo "=== $1 ==="; }
+    step_done() { echo "  -> $(( SECONDS - STEP_START ))s"; echo ""; }
+    step "Rust check + audit (parallel)"
+    cargo check --workspace &
+    CHECK_PID=$!
+    (cargo audit || echo "warnings found -- upstream Tauri/GTK deps, not actionable") &
+    AUDIT_PID=$!
     (cd frontend && pnpm audit) || echo "pnpm audit warnings (see above)"
-    echo ""
-    echo "=== capsem-doctor (in-VM diagnostics) ==="
-    {{cli_binary}} doctor
-    echo ""
-    echo "=== Injection test ==="
+    wait $CHECK_PID || { echo "cargo check failed"; exit 1; }
+    wait $AUDIT_PID
+    step_done
+    step "capsem-doctor --fast (in-VM diagnostics, no throughput)"
+    {{cli_binary}} doctor --fast
+    step_done
+    step "Injection test"
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
-    echo ""
-    echo "=== Integration test ==="
+    step_done
+    step "Integration test"
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
-    echo ""
-    echo "=== Python integration tests (MCP + service + CLI) ==="
-    uv run python -m pytest tests/capsem-mcp/ tests/capsem-service/ tests/capsem-cli/ tests/capsem-gateway/ -v --tb=short -m "gateway or integration or mcp"
-    echo ""
-    echo "Smoke test passed"
+    step_done
+    step "Python integration tests (MCP + service + CLI + gateway, parallel groups)"
+    # Pre-sign binaries so parallel test groups don't race on codesign
+    for b in {{service_binary}} {{process_binary}}; do
+        codesign --sign - --entitlements {{entitlements}} --force "$b" 2>/dev/null || true
+    done
+    uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" &
+    PID_MCP=$!
+    uv run python -m pytest tests/capsem-service/ tests/capsem-cli/ -v --tb=short -m "integration" &
+    PID_SVC=$!
+    uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway" &
+    PID_GW=$!
+    FAIL=0
+    wait $PID_MCP || FAIL=1
+    wait $PID_SVC || FAIL=1
+    wait $PID_GW || FAIL=1
+    [ $FAIL -eq 0 ] || { echo "Python tests failed"; exit 1; }
+    step_done
+    echo "Smoke test passed in $(( SECONDS - SMOKE_START ))s"
 
 # Gateway unit + integration tests (no VM needed)
 test-gateway:
@@ -412,8 +437,14 @@ coverage:
     open target/llvm-cov/html/index.html 2>/dev/null || true
 
 # Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
-bench: _ensure-setup _check-assets _sign
-    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
+bench: _ensure-setup _check-assets _pack-initrd _ensure-service
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, snapshots) ==="
+    {{cli_binary}} run "capsem-bench"
+    echo ""
+    echo "=== Host-side benchmarks (lifecycle, fork) ==="
+    uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
 
 # Smoke test then install to ~/.capsem/ (verifies everything works before installing)
 install: smoke
@@ -434,6 +465,8 @@ install: smoke
         # Detect shell profile
         if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$SHELL" == */zsh ]]; then
             PROFILE="$HOME/.zshrc"
+        elif [[ -f "$HOME/.bash_profile" ]]; then
+            PROFILE="$HOME/.bash_profile"
         else
             PROFILE="$HOME/.bashrc"
         fi
@@ -445,6 +478,9 @@ install: smoke
             echo "Run: source $PROFILE (or open a new terminal)"
         fi
     fi
+    # Register and start the service + tray via launchd
+    echo "=== Registering capsem service + tray ==="
+    "$HOME/.capsem/bin/capsem" service install
 
 # Run install e2e tests in Docker (Linux + systemd)
 test-install: _build-host

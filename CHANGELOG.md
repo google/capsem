@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **frontend: settings export/import** -- export all settings to JSON file, import from previously exported file. Import stages changes for review before saving. Validates version, skips corp-locked and unchanged settings.
 - **frontend: MCP server management UI** -- add/remove/enable/disable external MCP servers from the settings page. Form with name, URL, bearer token, and custom headers. Replaces the "edit config.toml" placeholder.
+- **smoke: per-step timing and log file** -- smoke recipe now logs to `target/smoke.log` with elapsed time per step and total. `capsem doctor --fast` skips the 64s throughput download test.
+- **smoke: parallel test groups** -- Python integration tests run MCP, service/CLI, and gateway groups concurrently (122s -> 58s). Pre-signs binaries to avoid codesign races.
+- **bench: host-side lifecycle and fork benchmarks** -- `just bench` now runs both in-VM benchmarks and host-side lifecycle/fork benchmarks from `test_lifecycle_benchmark.py`.
+
+### Fixed
+- **agent: venv activation race** -- capsem-pty-agent now waits up to 3s for capsem-init's background venv creation before checking `/root/.venv/bin/activate`. Previously the agent checked once and missed it, leaving `VIRTUAL_ENV` unset for the shell and all exec commands.
+- **agent: write_nofollow missing parent dirs** -- runtime `FileWrite` via `write_nofollow()` now creates parent directories before opening the file. Previously, writing to `/root/project/main.py` failed with "No such file or directory" if `/root/project/` didn't exist.
+- **service: handle_delete now waits for process death** -- `handle_delete` gives the VM process 500ms to flush its session DB, then SIGKILLs if still alive. Previously it was fire-and-forget: the HTTP 200 returned before the process died, leaving orphans when the service was restarted.
+- **service: handle_stop now waits for process death** -- same fix as delete. Prevents resume from racing the old process on the same socket (old process's shutdown timer would kill the new one).
+- **service: handle_run rollup race** -- session DB rollup (file events, net events, MCP calls) now completes before the HTTP response returns. Previously it was `tokio::spawn`'d fire-and-forget, so callers reading `main.db` immediately after `capsem run` saw empty counters.
+- **service: wait_for_process_exit verifies SIGKILL** -- after sending SIGKILL, now polls for up to 2s to confirm the process actually died. Logs a warning/error if it survives.
+- **service: socket path fallback for long run_dir paths** -- `instance_socket_path()` falls back to `/tmp/capsem/{hash}.sock` when the preferred `{run_dir}/instances/{id}.sock` path exceeds 90 bytes. Fixes "path must be shorter than SUN_LEN" crashes when tests use `/var/folders/...` temp dirs.
+- **install: dev symlink conflict** -- `simulate-install.sh` now removes the `~/.capsem/assets` dev symlink before copying real assets. Previously `cp` failed with "identical file" when the symlink pointed at the source.
+- **install: PATH added to correct shell profile** -- install now writes to `~/.bash_profile` (if it exists) instead of `~/.bashrc` on bash, since macOS Terminal opens login shells that don't source `~/.bashrc`.
+- **justfile: _ensure-service kills orphaned VM processes** -- kills `capsem-process` instances before killing the service, with a SIGKILL follow-up. Previously, service restart orphaned running VMs.
+- **test: codesign race in parallel test groups** -- `sign_binary()` now uses file locking to prevent concurrent test processes from corrupting binaries during `codesign --force`.
+- **test: fork timing gate relaxed** -- `test_winter_is_coming` fork gate raised from 0.5s to 2.0s. The proper gate (500ms over 3 runs) is in the dedicated fork benchmark.
 
 ### Fixed
 - **frontend: syntax highlighting race condition** -- file editor controls (settings.json, state.json, etc.) now reliably get Shiki syntax coloring. Previously the first FileEditorControl to mount could miss highlighting due to async Shiki init not re-triggering the render effect.

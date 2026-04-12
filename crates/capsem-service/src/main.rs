@@ -192,6 +192,29 @@ pub struct ProvisionOptions<'a> {
 }
 
 impl ServiceState {
+    /// Build the Unix socket path for a VM instance.
+    ///
+    /// Prefers `{run_dir}/instances/{id}.sock` but falls back to
+    /// `/tmp/capsem/{hash}.sock` when the path would exceed the macOS
+    /// 104-byte `SUN_LEN` limit (common with `/var/folders/...` temp dirs).
+    fn instance_socket_path(&self, id: &str) -> PathBuf {
+        const SUN_PATH_MAX: usize = 90;
+        let preferred = self.run_dir.join("instances").join(format!("{id}.sock"));
+        if preferred.as_os_str().len() < SUN_PATH_MAX {
+            return preferred;
+        }
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        id.hash(&mut h);
+        self.run_dir.hash(&mut h);
+        let dir = PathBuf::from("/tmp/capsem");
+        let _ = std::fs::create_dir_all(&dir);
+        let short = dir.join(format!("{:x}.sock", h.finish()));
+        tracing::info!(%id, original = %preferred.display(), short = %short.display(),
+                       "socket path too long, using /tmp/capsem/");
+        short
+    }
+
     fn next_job_id(&self) -> u64 {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
     }
@@ -277,16 +300,7 @@ impl ServiceState {
 
         info!(id, version, persistent, image, "provision_sandbox called");
 
-        let uds_path = self.run_dir.join("instances").join(format!("{}.sock", id));
-
-        const SUN_PATH_MAX: usize = if cfg!(target_os = "macos") { 104 } else { 108 };
-        let path_len = uds_path.as_os_str().len();
-        if path_len >= SUN_PATH_MAX {
-            return Err(anyhow!(
-                "VM name '{}' produces a socket path of {} bytes, exceeding the OS limit of {}. Use a shorter name.",
-                id, path_len, SUN_PATH_MAX - 1
-            ));
-        }
+        let uds_path = self.instance_socket_path(&id);
 
         // Persistent VMs go in persistent/, ephemeral in sessions/
         let session_dir = if persistent {
@@ -472,7 +486,7 @@ impl ServiceState {
 
         info!(name, version, "resume_sandbox: re-spawning process");
 
-        let uds_path = self.run_dir.join("instances").join(format!("{}.sock", name));
+        let uds_path = self.instance_socket_path(name);
         let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
 
         let assets_to_use = self.resolve_assets_dir(&version)?;
@@ -1097,8 +1111,16 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
             return;
         }
         if tokio::time::Instant::now() >= deadline {
+            tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
             let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            // Wait up to 2s for SIGKILL to take effect
+            for _ in 0..20 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
+                    return;
+                }
+            }
+            tracing::error!(pid, "VM process survived SIGKILL");
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1230,7 +1252,21 @@ async fn handle_stop(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id).await {
+    if let Some((session_dir, persistent, pid)) = shutdown_vm_process(&state, &id).await {
+        // Wait for process to actually exit before returning, so resume
+        // doesn't race with the old process on the same socket.
+        if pid > 0 {
+            for _ in 0..10 {
+                if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            if unsafe { nix::libc::kill(pid as i32, 0) } == 0 {
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
@@ -1245,8 +1281,29 @@ async fn handle_delete(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Try to shut down if running
-    let session_dir = if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id).await {
+    // Shut down if running, then ensure the process is dead before returning.
+    // shutdown_vm_process sends graceful Shutdown + spawns a background reaper.
+    // Give the process 500ms to flush session DB, then SIGKILL if still alive.
+    let session_dir = if let Some((session_dir, _, pid)) = shutdown_vm_process(&state, &id).await {
+        if pid > 0 {
+            // Wait up to 500ms for graceful exit (DB flush, cleanup)
+            for _ in 0..10 {
+                if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            // Force-kill if still alive
+            if unsafe { nix::libc::kill(pid as i32, 0) } == 0 {
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+                for _ in 0..10 {
+                    if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            }
+        }
         session_dir
     } else {
         // Not running -- check persistent registry for stopped VM
@@ -1486,7 +1543,7 @@ async fn handle_run(
     }
 
     // 3. Wait for VM socket to appear
-    let uds_path = state.run_dir.join("instances").join(format!("{}.sock", id));
+    let uds_path = state.instance_socket_path(&id);
     if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
         let _ = shutdown_vm_process(&state, &id).await;
         let dir = session_dir;
@@ -1517,28 +1574,26 @@ async fn handle_run(
         Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
     };
 
-    // 6. Roll up session counters in the background. Wait for the process to
-    //    exit first so the DbWriter has flushed all data to session.db.
+    // 6. Roll up session counters before returning, so callers see consistent
+    //    data in main.db. Wait for the process to exit so DbWriter has flushed.
     if let Some(idx) = index {
-        tokio::spawn(async move {
-            wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
-            let session_db_path = session_dir.join("session.db");
-            if session_db_path.exists() {
-                if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
-                    if let Ok(counts) = reader.net_event_counts() {
-                        let _ = idx.update_request_counts(
-                            &id, counts.total as u64, counts.allowed as u64, counts.denied as u64,
-                        );
-                    }
-                    let file_events = reader.file_event_count().unwrap_or(0);
-                    let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
-                    let _ = idx.update_session_summary(
-                        &id, 0, 0, 0.0, 0, mcp_calls, file_events,
+        wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
+        let session_db_path = session_dir.join("session.db");
+        if session_db_path.exists() {
+            if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
+                if let Ok(counts) = reader.net_event_counts() {
+                    let _ = idx.update_request_counts(
+                        &id, counts.total as u64, counts.allowed as u64, counts.denied as u64,
                     );
                 }
+                let file_events = reader.file_event_count().unwrap_or(0);
+                let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
+                let _ = idx.update_session_summary(
+                    &id, 0, 0, 0.0, 0, mcp_calls, file_events,
+                );
             }
-            let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
-        });
+        }
+        let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
     }
 
     response
@@ -2073,48 +2128,21 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn provision_rejects_vm_name_exceeding_uds_path_limit() {
+    fn long_vm_name_falls_back_to_tmp_socket() {
         let state = make_test_state();
-        // run_dir = /tmp/capsem-test-svc
-        // path   = /tmp/capsem-test-svc/instances/{name}.sock
-        // A 100-char name will blow past either OS limit.
+        // A 100-char name exceeds SUN_PATH_MAX via run_dir/instances/ path,
+        // but instance_socket_path should fall back to /tmp/capsem/.
         let long_name = "a".repeat(100);
-        let result = state.provision_sandbox(ProvisionOptions {
-            id: &long_name,
-            ram_mb: 2048,
-            cpus: 2,
-            version_override: None,
-            persistent: false,
-            env: None,
-            image: None,
-        });
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("socket path"), "expected socket path error, got: {err}");
+        let path = state.instance_socket_path(&long_name);
+        assert!(path.starts_with("/tmp/capsem/"), "expected /tmp/capsem/ fallback, got: {}", path.display());
+        assert!(path.as_os_str().len() < 104, "fallback path still too long: {}", path.as_os_str().len());
     }
 
     #[test]
-    fn provision_rejects_name_at_exact_boundary() {
+    fn short_vm_name_uses_run_dir() {
         let state = make_test_state();
-        // Compute the prefix: /tmp/capsem-test-svc/instances/ + .sock
-        let prefix = state.run_dir.join("instances").join("").as_os_str().len();
-        let suffix_len = ".sock".len();
-        let sun_path_max: usize = if cfg!(target_os = "macos") { 104 } else { 108 };
-        // Name length that makes total path == sun_path_max (one byte over usable limit)
-        let name_len = sun_path_max - prefix - suffix_len;
-        let boundary_name = "x".repeat(name_len);
-        let result = state.provision_sandbox(ProvisionOptions {
-            id: &boundary_name,
-            ram_mb: 2048,
-            cpus: 2,
-            version_override: None,
-            persistent: false,
-            env: None,
-            image: None,
-        });
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("socket path"), "expected socket path error at boundary, got: {err}");
+        let path = state.instance_socket_path("test-vm");
+        assert_eq!(path, state.run_dir.join("instances/test-vm.sock"));
     }
 
     #[test]

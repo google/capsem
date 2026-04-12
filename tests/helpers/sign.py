@@ -19,7 +19,8 @@ IS_MACOS = os.uname().sysname == "Darwin"
 def sign_binary(binary_path: Path) -> None:
     """Sign a binary with the virtualization entitlement.
 
-    No-op on Linux. Raises RuntimeError on macOS if signing fails.
+    No-op on Linux. Uses a file lock to prevent races when multiple
+    test processes sign concurrently.
     """
     if not IS_MACOS:
         return
@@ -30,19 +31,26 @@ def sign_binary(binary_path: Path) -> None:
     if not ENTITLEMENTS.exists():
         raise FileNotFoundError(f"Entitlements not found: {ENTITLEMENTS}")
 
-    result = subprocess.run(
-        [
-            "codesign", "--sign", "-",
-            "--entitlements", str(ENTITLEMENTS),
-            "--force",
-            str(binary_path),
-        ],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to sign {binary_path.name}: {result.stderr.strip()}"
+    import fcntl
+    lock_path = binary_path.with_suffix(".sign.lock")
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        # Skip if already validly signed
+        if verify_signed(binary_path):
+            return
+        result = subprocess.run(
+            [
+                "codesign", "--sign", "-",
+                "--entitlements", str(ENTITLEMENTS),
+                "--force",
+                str(binary_path),
+            ],
+            capture_output=True, text=True,
         )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to sign {binary_path.name}: {result.stderr.strip()}"
+            )
 
 
 def verify_signed(binary_path: Path) -> bool:

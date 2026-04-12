@@ -54,5 +54,6 @@ markers = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=6.0",
+    "pytest-xdist>=3.8.0",
     "websockets>=16.0",
 ]

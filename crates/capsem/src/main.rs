@@ -162,7 +162,11 @@ enum Commands {
     /// Show version information
     Version,
     /// Run diagnostic tests in a fresh VM
-    Doctor,
+    Doctor {
+        /// Skip slow tests (throughput download, etc.)
+        #[arg(long)]
+        fast: bool,
+    },
     /// Manage the capsem service daemon (install/uninstall/status)
     #[command(subcommand)]
     Service(ServiceCommands),
@@ -1060,7 +1064,7 @@ async fn main() -> Result<()> {
         | Commands::Update { .. } | Commands::Completions { .. } | Commands::Uninstall { .. } => {
             unreachable!("handled before UdsClient creation")
         }
-        Commands::Doctor => {
+        Commands::Doctor { fast } => {
             use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
             use tokio_unix_ipc::channel_from_std;
 
@@ -1140,8 +1144,12 @@ async fn main() -> Result<()> {
                                 }
 
                                 // Type the doctor command into the shell
-                                let cmd = b"capsem-doctor --durations=10\n";
-                                let _ = tx.send(ServiceToProcess::TerminalInput { data: cmd.to_vec() }).await;
+                                let cmd: Vec<u8> = if *fast {
+                                    b"capsem-doctor --durations=10 -k 'not throughput'\n".to_vec()
+                                } else {
+                                    b"capsem-doctor --durations=10\n".to_vec()
+                                };
+                                let _ = tx.send(ServiceToProcess::TerminalInput { data: cmd }).await;
 
                                 // Stream output until we see the sentinel line
                                 let mut stdout = tokio::io::stdout();
@@ -1644,7 +1652,7 @@ mod tests {
     #[test]
     fn parse_doctor() {
         let cli = Cli::parse_from(["capsem", "doctor"]);
-        assert!(matches!(cli.command, Commands::Doctor));
+        assert!(matches!(cli.command, Commands::Doctor { fast: false }));
     }
 
     #[test]

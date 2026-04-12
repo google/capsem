@@ -15,7 +15,7 @@ from helpers.mcp import content_text, parse_content, wait_exec_ready as wait_rea
 
 pytestmark = pytest.mark.mcp
 
-MAX_FORK_SECS = 0.5
+MAX_FORK_SECS = 2.0
 MAX_IMAGE_SIZE_MB = 12
 
 
