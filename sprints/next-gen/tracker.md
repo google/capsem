@@ -25,7 +25,7 @@ Restructured 2026-04-03 after codebase audit. S1 consolidates all foundation wor
 | S8 | Auto-nap + pressure monitoring | Not started | S5+S7 |
 | S9 | Linux suspend/resume (KVM ioctls, GIC state, memory dump) | Deferred (~11-15 days) | S5+S7 |
 
-S5+S7 combined into a single meta sprint: `sprints/vm-lifecycle/`. Covers guest system binaries (`shutdown`/`halt`/`poweroff`/`suspend`), VM identity injection, quiescence protocol (fsfreeze), Apple VZ pause/save/restore, agent reconnect after restore, and service orchestration. Guest-initiated lifecycle commands flow through the service's existing code paths.
+S5+S7 combined into a single meta sprint: `sprints/done/vm-lifecycle/`. Covers guest system binaries (`shutdown`/`halt`/`poweroff`/`suspend`), VM identity injection, quiescence protocol (fsfreeze), Apple VZ pause/save/restore, agent reconnect after restore, and service orchestration. Guest-initiated lifecycle commands flow through the service's existing code paths.
 
 ## Phase E: SSH + IDE
 
@@ -42,7 +42,7 @@ S5+S7 combined into a single meta sprint: `sprints/vm-lifecycle/`. Covers guest 
 | S13 | Auto-start + notifications | Not started | S12 |
 
 Sprint tracker: `sprints/tray/tracker.md`
-Gateway dependency: `sprints/gateway/tracker.md`
+Gateway dependency: `sprints/done/gateway/tracker.md`
 
 ## Phase G: Frontend Rebuild
 
@@ -92,9 +92,9 @@ Parallel tracks after S1: S2+S3, S5+S7, S12 can all start independently.
 
 - Original plan: `sprints/next-gen/plan.md`
 - S1 detailed tracker: `sprints/next-gen/sprint-01/tracker.md`
-- S5+S7 (vm-lifecycle) sprint: `sprints/vm-lifecycle/MASTER.md`
+- S5+S7 (vm-lifecycle) sprint: `sprints/done/vm-lifecycle/MASTER.md`
 - Spike results: `sprints/next-gen/spike-checkpoint/results.md`
-- Testing master: `sprints/testing/MASTER.md` (25 test sub-sprints, all done)
+- Testing master: `sprints/done/testing/MASTER.md` (25 test sub-sprints, all done)
 - Frontend rebuild: `sprints/frontend-rebuild/tracker.md` (S14 -- Preline + gateway + tabs)
-- Fork images sprint: `sprints/fork-images/tracker.md`
+- Fork images sprint: `sprints/done/fork-images/tracker.md`
 - Native installer sprint: `sprints/native-installer/tracker.md`

@@ -121,8 +121,8 @@ Replace mock data with real gateway HTTP:
 ## Reference
 
 - Worktree: `worktrees/capsem-ui` (branch: `frontend-ui`)
-- Gateway API: `sprints/gateway/tracker.md`
+- Gateway API: `sprints/done/gateway/tracker.md`
 - Design system: `skills/frontend-design/SKILL.md`
 - Preline reference: `skills/frontend-design/references/preline.md`
 - Testing: `skills/dev-testing-frontend/SKILL.md`
-- Original ui-now plan: `sprints/ui-now/tracker.md`
+- Original ui-now plan: `sprints/retired/ui-now/tracker.md`

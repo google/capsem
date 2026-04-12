@@ -250,8 +250,8 @@ Status: Done
 
 ## Reference
 
-- Gateway `/status` response: `sprints/gateway/tracker.md` SS4
-- Gateway auth flow: `sprints/gateway/tracker.md` SS2
+- Gateway `/status` response: `sprints/done/gateway/tracker.md` SS4
+- Gateway auth flow: `sprints/done/gateway/tracker.md` SS2
 - Service API types: `crates/capsem-service/src/api.rs` (SandboxInfo at line 57)
 - Rust patterns: `skills/dev-rust-patterns/SKILL.md`
 - Testing policy: `skills/dev-testing/SKILL.md`
