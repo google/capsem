@@ -1,9 +1,34 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import * as api from '../../api';
   import { mockLogEntries } from '../../mock.ts';
   import type { MockLogEntry } from '../../mock.ts';
 
   let { vmId }: { vmId: string } = $props();
+
+  let logEntries = $state<MockLogEntry[]>(mockLogEntries);
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+  onMount(async () => {
+    await fetchLogs();
+    pollInterval = setInterval(fetchLogs, 5000);
+  });
+
+  onDestroy(() => {
+    if (pollInterval) clearInterval(pollInterval);
+  });
+
+  async function fetchLogs() {
+    if (!api.isConnected()) return;
+    try {
+      const entries = await api.getVmLogs(vmId);
+      if (Array.isArray(entries) && entries.length > 0) {
+        logEntries = entries;
+      }
+    } catch {
+      // Keep existing data on error
+    }
+  }
 
   // Filters
   let levelFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');
@@ -11,12 +36,10 @@
   let searchText = $state('');
   let autoScroll = $state(true);
 
-  // All available sources from mock data
-  const sources = $derived([...new Set(mockLogEntries.map(e => e.source))].sort());
+  const sources = $derived([...new Set(logEntries.map(e => e.source))].sort());
 
-  // Filtered entries
   const filtered = $derived.by(() => {
-    let entries = mockLogEntries;
+    let entries = logEntries;
     if (levelFilter !== 'all') {
       entries = entries.filter(e => e.level === levelFilter);
     }

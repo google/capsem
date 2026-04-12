@@ -1,16 +1,76 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import * as api from '../../api';
   import { mockModelStats, mockToolCalls, mockNetworkEvents, mockFileEvents } from '../../mock.ts';
-  import type { MockToolCall, MockNetworkEvent, MockFileEvent } from '../../mock.ts';
+  import type { MockModelStats, MockToolCall, MockNetworkEvent, MockFileEvent } from '../../mock.ts';
+  import type { InspectResponse } from '../../types/gateway';
 
   let { vmId }: { vmId: string } = $props();
 
   type StatsTab = 'ai' | 'tools' | 'network' | 'files';
   let activeTab = $state<StatsTab>('ai');
 
-  const totalInput = $derived(mockModelStats.reduce((s, m) => s + m.inputTokens, 0));
-  const totalOutput = $derived(mockModelStats.reduce((s, m) => s + m.outputTokens, 0));
-  const totalCost = $derived(mockModelStats.reduce((s, m) => s + m.estimatedCostUsd, 0));
-  const totalCalls = $derived(mockModelStats.reduce((s, m) => s + m.callCount, 0));
+  // Live data (falls back to mock)
+  let modelStats = $state<MockModelStats[]>(mockModelStats);
+  let toolCalls = $state<MockToolCall[]>(mockToolCalls);
+  let networkEvents = $state<MockNetworkEvent[]>(mockNetworkEvents);
+  let fileEvents = $state<MockFileEvent[]>(mockFileEvents);
+  let loading = $state(false);
+
+  onMount(async () => {
+    if (!api.isConnected()) return;
+    loading = true;
+    try {
+      const [aiResult, toolResult, netResult, fileResult] = await Promise.allSettled([
+        api.inspectQuery(vmId, 'SELECT provider, model, input_tokens, output_tokens, cache_tokens, estimated_cost_usd, call_count FROM model_calls'),
+        api.inspectQuery(vmId, 'SELECT tool_name as tool, server, args, result, duration_ms as durationMs, timestamp FROM tool_calls ORDER BY timestamp DESC'),
+        api.inspectQuery(vmId, 'SELECT method, url, status_code as status, decision, duration_ms as durationMs, bytes_sent as bytesSent, bytes_received as bytesReceived, timestamp FROM http_requests ORDER BY timestamp DESC'),
+        api.inspectQuery(vmId, 'SELECT path, operation, size_bytes as sizeBytes, timestamp FROM file_events ORDER BY timestamp DESC'),
+      ]);
+      if (aiResult.status === 'fulfilled' && aiResult.value.rows.length > 0) {
+        modelStats = aiResult.value.rows.map((r: any) => ({
+          provider: String(r.provider ?? ''),
+          model: String(r.model ?? ''),
+          inputTokens: Number(r.input_tokens ?? 0),
+          outputTokens: Number(r.output_tokens ?? 0),
+          cacheTokens: Number(r.cache_tokens ?? 0),
+          estimatedCostUsd: Number(r.estimated_cost_usd ?? 0),
+          callCount: Number(r.call_count ?? 0),
+        }));
+      }
+      if (toolResult.status === 'fulfilled' && toolResult.value.rows.length > 0) {
+        toolCalls = toolResult.value.rows.map((r: any, i: number) => ({
+          id: `tc-${i}`, tool: String(r.tool ?? ''), server: String(r.server ?? ''),
+          args: String(r.args ?? ''), result: String(r.result ?? ''),
+          durationMs: Number(r.durationMs ?? 0), timestamp: String(r.timestamp ?? ''),
+        }));
+      }
+      if (netResult.status === 'fulfilled' && netResult.value.rows.length > 0) {
+        networkEvents = netResult.value.rows.map((r: any, i: number) => ({
+          id: `ne-${i}`, method: String(r.method ?? ''), url: String(r.url ?? ''),
+          status: Number(r.status ?? 0), decision: r.decision === 'denied' ? 'denied' : 'allowed',
+          durationMs: Number(r.durationMs ?? 0), bytesSent: Number(r.bytesSent ?? 0),
+          bytesReceived: Number(r.bytesReceived ?? 0), timestamp: String(r.timestamp ?? ''),
+        }));
+      }
+      if (fileResult.status === 'fulfilled' && fileResult.value.rows.length > 0) {
+        fileEvents = fileResult.value.rows.map((r: any, i: number) => ({
+          id: `fe-${i}`, path: String(r.path ?? ''), operation: r.operation as any,
+          sizeBytes: r.sizeBytes != null ? Number(r.sizeBytes) : null,
+          timestamp: String(r.timestamp ?? ''),
+        }));
+      }
+    } catch {
+      // Keep mock data on error
+    } finally {
+      loading = false;
+    }
+  });
+
+  const totalInput = $derived(modelStats.reduce((s, m) => s + m.inputTokens, 0));
+  const totalOutput = $derived(modelStats.reduce((s, m) => s + m.outputTokens, 0));
+  const totalCost = $derived(modelStats.reduce((s, m) => s + m.estimatedCostUsd, 0));
+  const totalCalls = $derived(modelStats.reduce((s, m) => s + m.callCount, 0));
 
   function formatDuration(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
@@ -93,7 +153,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each mockModelStats as model}
+            {#each modelStats as model}
               <tr class="border-b border-card-divider last:border-0">
                 <td class="px-4 py-2 text-foreground">{model.provider}</td>
                 <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{model.model}</td>
@@ -122,7 +182,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each mockToolCalls as call}
+            {#each toolCalls as call}
               <tr class="border-b border-card-divider last:border-0">
                 <td class="px-4 py-2 font-mono text-xs text-foreground">{call.tool}</td>
                 <td class="px-4 py-2 text-muted-foreground-1">{call.server}</td>
@@ -151,7 +211,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each mockNetworkEvents as event}
+            {#each networkEvents as event}
               <tr class="border-b border-card-divider last:border-0">
                 <td class="px-4 py-2 font-mono text-xs font-semibold text-foreground">{event.method}</td>
                 <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1 max-w-64 truncate">{event.url}</td>
@@ -190,7 +250,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each mockFileEvents as event}
+            {#each fileEvents as event}
               <tr class="border-b border-card-divider last:border-0">
                 <td class="px-4 py-2 font-mono text-xs text-foreground">{event.path}</td>
                 <td class="px-4 py-2 text-center">

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import TabBar from './TabBar.svelte';
   import Toolbar from './Toolbar.svelte';
   import NewTabPage from './NewTabPage.svelte';
@@ -10,10 +11,21 @@
   import FilesView from '../views/FilesView.svelte';
   import InspectorView from '../views/InspectorView.svelte';
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { gatewayStore } from '../../stores/gateway.svelte.ts';
+  import { vmStore } from '../../stores/vms.svelte.ts';
 
   let active = $derived(tabStore.active);
   const vmViews = ['terminal', 'stats', 'logs', 'files', 'inspector'] as const;
   let isVmView = $derived(active != null && active.vmId != null && vmViews.includes(active.view as any));
+
+  onMount(() => {
+    gatewayStore.init();
+    vmStore.startPolling();
+    return () => {
+      vmStore.destroy();
+      gatewayStore.destroy();
+    };
+  });
 </script>
 
 <div class="flex flex-col h-full">

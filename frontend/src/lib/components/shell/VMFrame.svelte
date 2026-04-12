@@ -4,6 +4,8 @@
   import type { ParentToIframeMsg } from '../../terminal/postmessage.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { gatewayStore } from '../../stores/gateway.svelte.ts';
+  import * as api from '../../api';
 
   let { vmId, tabId }: { vmId: string; tabId: string } = $props();
 
@@ -47,6 +49,13 @@
           fontSize: themeStore.fontSize,
           fontFamily: themeStore.fontFamily,
         });
+        // Send WebSocket ticket if gateway is connected
+        if (gatewayStore.connected) {
+          const wsUrl = api.getTerminalWsUrl(vmId);
+          // Extract just the base URL (without path and query) for the ticket
+          const base = api.getBaseUrl();
+          sendToIframe({ type: 'ws-ticket', ticket: wsUrl, gatewayUrl: base });
+        }
         break;
 
       case 'title-update':
@@ -64,7 +73,7 @@
         break;
 
       case 'terminal-resize':
-        // Will forward to gateway WebSocket in Sprint 05
+        // Resize events are handled by the iframe's WebSocket connection directly
         break;
 
       case 'error':

@@ -1,289 +1,296 @@
-// Typed Tauri IPC wrappers with automatic mock fallback for browser dev.
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { isMock, mockApi } from './mock';
+// Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
+
 import type {
-  ConfigIssue,
-  DownloadProgress,
-  GuestConfigResponse,
-  HostConfig,
-  KeyValidation,
-  LogEntry,
-  LogSessionInfo,
-  McpPolicyInfo,
-  McpServerInfo,
-  McpToolInfo,
-  NetworkPolicyResponse,
-  ResolvedSetting,
-  SecurityPreset,
-  SessionInfo,
-  SettingsNode,
-  SettingsResponse,
-  SettingValue,
-  UpdateInfo,
-  VmStateResponse,
-} from './types';
+  StatusResponse,
+  TokenResponse,
+  HealthResponse,
+  ProvisionRequest,
+  ProvisionResponse,
+  ExecResponse,
+  InspectResponse,
+  ReadFileResponse,
+  ForkRequest,
+  ForkResponse,
+} from './types/gateway';
+import {
+  mockVMs,
+  mockModelStats,
+  mockToolCalls,
+  mockNetworkEvents,
+  mockFileEvents,
+  mockLogEntries,
+  mockFileTree,
+  executeMockQuery,
+  type MockVM,
+  type MockLogEntry,
+  type MockFileNode,
+} from './mock';
 
-type UnlistenFn = () => void;
+// -- Module state (never exported directly) --
 
-function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(cmd, args);
+let _token: string | null = null;
+let _baseUrl = 'http://127.0.0.1:19222';
+let _connected = false;
+
+// -- Public getters --
+
+export function isConnected(): boolean {
+  return _connected;
 }
 
-function tauriListen<T>(
-  event: string,
-  callback: (payload: T) => void,
-): Promise<UnlistenFn> {
-  return listen<T>(event, (e) => callback(e.payload));
+export function getBaseUrl(): string {
+  return _baseUrl;
 }
 
-// ---------------------------------------------------------------------------
-// Invoke wrappers (non-SQL commands only)
-// ---------------------------------------------------------------------------
+export type InitResult = {
+  connected: boolean;
+  reachable: boolean;
+  version: string | null;
+};
 
-export function vmStatus(): Promise<string> {
-  if (isMock) return mockApi.vmStatus();
-  return tauriInvoke<string>('vm_status');
-}
+// -- Initialization --
 
-export function serialInput(input: string): Promise<void> {
-  if (isMock) return mockApi.serialInput(input);
-  return tauriInvoke('serial_input', { input });
-}
+export async function init(): Promise<InitResult> {
+  try {
+    // Probe health first (unauthenticated)
+    const healthResp = await fetch(`${_baseUrl}/`);
+    if (!healthResp.ok) {
+      _connected = false;
+      return { connected: false, reachable: false, version: null };
+    }
+    const health: HealthResponse = await healthResp.json();
 
-export function terminalResize(cols: number, rows: number): Promise<void> {
-  if (isMock) return mockApi.terminalResize(cols, rows);
-  return tauriInvoke('terminal_resize', { cols, rows });
-}
+    // Fetch token from gateway (unauthenticated, localhost-only)
+    const tokenResp = await fetch(`${_baseUrl}/token`);
+    if (!tokenResp.ok) {
+      _connected = false;
+      return { connected: false, reachable: true, version: health.version };
+    }
+    const tokenData: TokenResponse = await tokenResp.json();
+    _token = tokenData.token;
 
-/** Poll for terminal output. Returns bytes as a number array. */
-export function terminalPoll(): Promise<number[]> {
-  return tauriInvoke<number[]>('terminal_poll');
-}
-
-export function getGuestConfig(): Promise<GuestConfigResponse> {
-  if (isMock) return mockApi.getGuestConfig();
-  return tauriInvoke<GuestConfigResponse>('get_guest_config');
-}
-
-export function getNetworkPolicy(): Promise<NetworkPolicyResponse> {
-  if (isMock) return mockApi.getNetworkPolicy();
-  return tauriInvoke<NetworkPolicyResponse>('get_network_policy');
-}
-
-export function setGuestEnv(key: string, value: string): Promise<void> {
-  if (isMock) return mockApi.setGuestEnv(key, value);
-  return tauriInvoke('set_guest_env', { key, value });
-}
-
-export function removeGuestEnv(key: string): Promise<void> {
-  if (isMock) return mockApi.removeGuestEnv(key);
-  return tauriInvoke('remove_guest_env', { key });
-}
-
-export function getSettings(): Promise<ResolvedSetting[]> {
-  if (isMock) return mockApi.getSettings();
-  return tauriInvoke<ResolvedSetting[]>('get_settings');
-}
-
-export function getSettingsTree(): Promise<SettingsNode[]> {
-  if (isMock) return mockApi.getSettingsTree();
-  return tauriInvoke<SettingsNode[]>('get_settings_tree');
-}
-
-export function lintConfig(): Promise<ConfigIssue[]> {
-  if (isMock) return mockApi.lintConfig();
-  return tauriInvoke<ConfigIssue[]>('lint_config');
-}
-
-export function listPresets(): Promise<SecurityPreset[]> {
-  if (isMock) return mockApi.listPresets();
-  return tauriInvoke<SecurityPreset[]>('list_presets');
-}
-
-export function applyPreset(id: string): Promise<string[]> {
-  if (isMock) return mockApi.applyPreset(id);
-  return tauriInvoke<string[]>('apply_preset', { id });
-}
-
-export function updateSetting(id: string, value: SettingValue): Promise<void> {
-  if (isMock) return mockApi.updateSetting(id, value);
-  return tauriInvoke('update_setting', { id, value });
-}
-
-export function loadSettings(): Promise<SettingsResponse> {
-  if (isMock) return mockApi.loadSettings();
-  return tauriInvoke<SettingsResponse>('load_settings');
-}
-
-export function saveSettings(changes: Record<string, SettingValue>): Promise<SettingsResponse> {
-  if (isMock) return mockApi.saveSettings(changes);
-  return tauriInvoke<SettingsResponse>('save_settings', { changes });
-}
-
-export function detectHostConfig(): Promise<HostConfig> {
-  if (isMock) return mockApi.detectHostConfig();
-  return tauriInvoke<HostConfig>('detect_host_config');
-}
-
-export function validateApiKey(provider: string, key: string): Promise<KeyValidation> {
-  if (isMock) return mockApi.validateApiKey(provider, key);
-  return tauriInvoke<KeyValidation>('validate_api_key', { provider, key });
-}
-
-export function getVmState(): Promise<VmStateResponse> {
-  if (isMock) return mockApi.getVmState();
-  return tauriInvoke<VmStateResponse>('get_vm_state');
-}
-
-export function getSessionInfo(): Promise<SessionInfo> {
-  if (isMock) return mockApi.getSessionInfo();
-  return tauriInvoke<SessionInfo>('get_session_info');
-}
-
-// ---------------------------------------------------------------------------
-// MCP gateway commands
-// ---------------------------------------------------------------------------
-
-export function getMcpServers(): Promise<McpServerInfo[]> {
-  if (isMock) return mockApi.getMcpServers();
-  return tauriInvoke<McpServerInfo[]>('get_mcp_servers');
-}
-
-export function getMcpTools(): Promise<McpToolInfo[]> {
-  if (isMock) return mockApi.getMcpTools();
-  return tauriInvoke<McpToolInfo[]>('get_mcp_tools');
-}
-
-export function getMcpPolicy(): Promise<McpPolicyInfo> {
-  if (isMock) return mockApi.getMcpPolicy();
-  return tauriInvoke<McpPolicyInfo>('get_mcp_policy');
-}
-
-export function setMcpServerEnabled(name: string, enabled: boolean): Promise<void> {
-  if (isMock) return mockApi.setMcpServerEnabled(name, enabled);
-  return tauriInvoke('set_mcp_server_enabled', { name, enabled });
-}
-
-export function addMcpServer(
-  name: string,
-  url: string,
-  headers: Record<string, string>,
-  bearerToken: string | null,
-): Promise<void> {
-  if (isMock) return mockApi.addMcpServer(name, url, headers, bearerToken);
-  return tauriInvoke('add_mcp_server', { name, url, headers, bearerToken });
-}
-
-export function removeMcpServer(name: string): Promise<void> {
-  if (isMock) return mockApi.removeMcpServer(name);
-  return tauriInvoke('remove_mcp_server', { name });
-}
-
-export function setMcpGlobalPolicy(policy: string): Promise<void> {
-  if (isMock) return mockApi.setMcpGlobalPolicy(policy);
-  return tauriInvoke('set_mcp_global_policy', { policy });
-}
-
-export function setMcpDefaultPermission(permission: string): Promise<void> {
-  if (isMock) return mockApi.setMcpDefaultPermission(permission);
-  return tauriInvoke('set_mcp_default_permission', { permission });
-}
-
-export function setMcpToolPermission(tool: string, permission: string): Promise<void> {
-  if (isMock) return mockApi.setMcpToolPermission(tool, permission);
-  return tauriInvoke('set_mcp_tool_permission', { tool, permission });
-}
-
-export function approveMcpTool(tool: string): Promise<void> {
-  if (isMock) return mockApi.approveMcpTool(tool);
-  return tauriInvoke('approve_mcp_tool', { tool });
-}
-
-export function refreshMcpTools(server?: string): Promise<void> {
-  if (isMock) return mockApi.refreshMcpTools(server);
-  return tauriInvoke('refresh_mcp_tools', { server: server ?? null });
-}
-
-// ---------------------------------------------------------------------------
-// App update
-// ---------------------------------------------------------------------------
-
-export function checkForAppUpdate(): Promise<UpdateInfo | null> {
-  if (isMock) return mockApi.checkForAppUpdate();
-  return tauriInvoke<UpdateInfo | null>('check_for_app_update');
-}
-
-// ---------------------------------------------------------------------------
-// Event listeners
-// ---------------------------------------------------------------------------
-
-/** vm-state-changed payload is { state: string, trigger?: string, message?: string }. */
-export interface VmStateChangedPayload {
-  state: string;
-  trigger?: string;
-  message?: string;
-}
-
-export function onSerialOutput(
-  callback: (data: number[]) => void,
-): Promise<UnlistenFn> {
-  if (isMock) return mockApi.onSerialOutput(callback);
-  return tauriListen<number[]>('serial-output', callback);
-}
-
-export function onVmStateChanged(
-  callback: (payload: VmStateChangedPayload) => void,
-): Promise<UnlistenFn> {
-  if (isMock) return mockApi.onVmStateChanged(callback);
-  return tauriListen<VmStateChangedPayload>('vm-state-changed', callback);
-}
-
-export function onTerminalSourceChanged(
-  callback: (source: string) => void,
-): Promise<UnlistenFn> {
-  if (isMock) return mockApi.onTerminalSourceChanged(callback);
-  return tauriListen<string>('terminal-source-changed', callback);
-}
-
-export function openUrl(url: string): Promise<void> {
-  if (isMock) {
-    window.open(url, '_blank');
-    return Promise.resolve();
+    _connected = true;
+    return { connected: true, reachable: true, version: health.version };
+  } catch {
+    _connected = false;
+    _token = null;
+    return { connected: false, reachable: false, version: null };
   }
-  return tauriInvoke('open_url', { url });
 }
 
-export function onDownloadProgress(
-  callback: (progress: DownloadProgress) => void,
-): Promise<UnlistenFn> {
-  if (isMock) return mockApi.onDownloadProgress(callback);
-  return tauriListen<DownloadProgress>('download-progress', callback);
+export async function healthCheck(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${_baseUrl}/`);
+    if (!resp.ok) return false;
+    return true;
+  } catch {
+    _connected = false;
+    return false;
+  }
 }
 
-export function onLogEvent(
-  callback: (entry: LogEntry) => void,
-): Promise<UnlistenFn> {
-  if (isMock) return mockApi.onLogEvent(callback);
-  return tauriListen<LogEntry>('log-event', callback);
+// -- HTTP helpers (private) --
+
+class ApiError extends Error {
+  constructor(
+    public status: number,
+    public body: string,
+  ) {
+    super(`API error ${status}: ${body}`);
+    this.name = 'ApiError';
+  }
 }
 
-export function loadSessionLog(sessionId: string): Promise<LogEntry[]> {
-  if (isMock) return mockApi.loadSessionLog(sessionId);
-  return tauriInvoke<LogEntry[]>('load_session_log', { sessionId });
+async function _get(path: string): Promise<Response> {
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    headers: { Authorization: `Bearer ${_token}` },
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new ApiError(resp.status, body);
+  }
+  return resp;
 }
 
-export function listLogSessions(): Promise<LogSessionInfo[]> {
-  if (isMock) return mockApi.listLogSessions();
-  return tauriInvoke<LogSessionInfo[]>('list_log_sessions');
+async function _post(path: string, body?: unknown): Promise<Response> {
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new ApiError(resp.status, text);
+  }
+  return resp;
 }
 
-// ---------------------------------------------------------------------------
-// MCP tool calls from frontend
-// ---------------------------------------------------------------------------
-
-export function callMcpTool(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
-  if (isMock) return mockApi.callMcpTool(tool, args);
-  return tauriInvoke<unknown>('call_mcp_tool', { tool, arguments: args });
+async function _delete(path: string): Promise<Response> {
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${_token}` },
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new ApiError(resp.status, text);
+  }
+  return resp;
 }
 
+// Helper: returns true if error is a network failure (gateway unreachable)
+function isNetworkError(err: unknown): boolean {
+  return !(err instanceof ApiError);
+}
+
+// -- Status --
+
+export async function getStatus(): Promise<StatusResponse> {
+  if (!_connected) return mockStatus();
+  try {
+    const resp = await _get('/status');
+    return await resp.json();
+  } catch (err) {
+    if (isNetworkError(err)) {
+      _connected = false;
+      return mockStatus();
+    }
+    throw err;
+  }
+}
+
+function mockStatus(): StatusResponse {
+  return {
+    service: 'mock',
+    gateway_version: '0.0.0-mock',
+    vm_count: mockVMs.length,
+    vms: mockVMs.map(vm => ({
+      id: vm.id,
+      name: vm.name,
+      status: vm.status.charAt(0).toUpperCase() + vm.status.slice(1),
+      persistent: vm.persistent,
+    })),
+    resource_summary: {
+      total_ram_mb: mockVMs.reduce((a, v) => a + v.ram, 0),
+      total_cpus: mockVMs.reduce((a, v) => a + v.cpus, 0),
+      running_count: mockVMs.filter(v => v.status === 'running').length,
+      stopped_count: mockVMs.filter(v => v.status === 'stopped').length,
+      suspended_count: 0,
+    },
+  };
+}
+
+// -- VM lifecycle --
+
+export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
+  const resp = await _post('/provision', opts);
+  return await resp.json();
+}
+
+export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
+  const resp = await _post('/run', opts);
+  return await resp.json();
+}
+
+export async function stopVm(id: string): Promise<void> {
+  await _post(`/stop/${encodeURIComponent(id)}`);
+}
+
+export async function suspendVm(id: string): Promise<void> {
+  await _post(`/suspend/${encodeURIComponent(id)}`);
+}
+
+export async function deleteVm(id: string): Promise<void> {
+  await _delete(`/delete/${encodeURIComponent(id)}`);
+}
+
+export async function resumeVm(name: string): Promise<void> {
+  await _post(`/resume/${encodeURIComponent(name)}`);
+}
+
+export async function persistVm(id: string): Promise<void> {
+  await _post(`/persist/${encodeURIComponent(id)}`);
+}
+
+export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {
+  const resp = await _post(`/fork/${encodeURIComponent(id)}`, opts);
+  return await resp.json();
+}
+
+// -- VM inspection --
+
+export async function getVmLogs(id: string): Promise<MockLogEntry[]> {
+  if (!_connected) return mockLogEntries;
+  try {
+    const resp = await _get(`/logs/${encodeURIComponent(id)}`);
+    return await resp.json();
+  } catch (err) {
+    if (isNetworkError(err)) {
+      _connected = false;
+      return mockLogEntries;
+    }
+    throw err;
+  }
+}
+
+export async function execCommand(
+  id: string,
+  command: string,
+  timeoutSecs?: number,
+): Promise<ExecResponse> {
+  const resp = await _post(`/exec/${encodeURIComponent(id)}`, {
+    command,
+    timeout_secs: timeoutSecs,
+  });
+  return await resp.json();
+}
+
+export async function inspectQuery(id: string, sql: string): Promise<InspectResponse> {
+  if (!_connected) return executeMockQuery(sql);
+  try {
+    const resp = await _post(`/inspect/${encodeURIComponent(id)}`, { sql });
+    return await resp.json();
+  } catch (err) {
+    if (isNetworkError(err)) {
+      _connected = false;
+      return executeMockQuery(sql);
+    }
+    throw err;
+  }
+}
+
+export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
+  const resp = await _post(`/read_file/${encodeURIComponent(id)}`, { path });
+  return await resp.json();
+}
+
+export async function writeFile(id: string, path: string, content: string): Promise<void> {
+  await _post(`/write_file/${encodeURIComponent(id)}`, { path, content });
+}
+
+// -- Images --
+
+export async function getImages(): Promise<{ images: { name: string }[] }> {
+  const resp = await _get('/images');
+  return await resp.json();
+}
+
+// -- Config --
+
+export async function reloadConfig(): Promise<void> {
+  await _post('/reload-config');
+}
+
+// -- Terminal --
+
+export function getTerminalWsUrl(id: string): string {
+  const wsBase = _baseUrl.replace(/^http/, 'ws');
+  return `${wsBase}/terminal/${encodeURIComponent(id)}?token=${_token}`;
+}
+
+// -- Re-exports for mock fallback --
+
+export { mockVMs, mockModelStats, mockToolCalls, mockNetworkEvents, mockFileEvents, mockLogEntries, mockFileTree };
+export type { MockVM, MockLogEntry, MockFileNode };

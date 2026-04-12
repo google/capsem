@@ -1,8 +1,9 @@
 <script lang="ts">
   import Play from 'phosphor-svelte/lib/Play';
   import CaretDown from 'phosphor-svelte/lib/CaretDown';
+  import * as api from '../../api';
   import {
-    mockPresetQueries, mockQueryResults, validateSelectOnly, executeMockQuery,
+    mockPresetQueries, validateSelectOnly, executeMockQuery,
   } from '../../mock.ts';
   import type { MockQueryResult } from '../../mock.ts';
 
@@ -12,8 +13,9 @@
   let result = $state<MockQueryResult | null>(null);
   let error = $state<string | null>(null);
   let presetOpen = $state(false);
+  let running = $state(false);
 
-  function runQuery() {
+  async function runQuery() {
     error = null;
     result = null;
 
@@ -23,15 +25,28 @@
       return;
     }
 
-    result = executeMockQuery(sql);
+    running = true;
+    try {
+      result = await api.inspectQuery(vmId, sql);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Query failed';
+    } finally {
+      running = false;
+    }
   }
 
-  function selectPreset(preset: { label: string; sql: string }) {
+  async function selectPreset(preset: { label: string; sql: string }) {
     sql = preset.sql;
     presetOpen = false;
-    // Auto-run preset queries
     error = null;
-    result = mockQueryResults[preset.label] ?? executeMockQuery(preset.sql);
+    running = true;
+    try {
+      result = await api.inspectQuery(vmId, preset.sql);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Query failed';
+    } finally {
+      running = false;
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {

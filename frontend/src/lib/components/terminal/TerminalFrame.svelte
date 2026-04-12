@@ -16,6 +16,9 @@
   let resizeObserver: ResizeObserver | null = null;
   let resizeRafId = 0;
   let vmId: string | null = null;
+  let ws: WebSocket | null = null;
+  let wsConnected = false;
+  let mockEchoEnabled = true;
 
   function applySettings(msg: { terminalTheme: string; mode: string; fontSize?: number; fontFamily?: string }): void {
     if (!terminal) return;
@@ -54,8 +57,63 @@
         terminal?.paste(msg.text);
         break;
       case 'ws-ticket':
-        // Sprint 05: connect WebSocket with ticket
+        connectWebSocket(msg.ticket);
         break;
+    }
+  }
+
+  function connectWebSocket(url: string): void {
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+
+    try {
+      const socket = new WebSocket(url);
+      socket.binaryType = 'arraybuffer';
+
+      socket.onopen = () => {
+        wsConnected = true;
+        mockEchoEnabled = false;
+        if (terminal) {
+          terminal.clear();
+          // Send current terminal size as first message
+          if (fitAddon) {
+            const dims = fitAddon.proposeDimensions();
+            if (dims) {
+              socket.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+            }
+          }
+        }
+      };
+
+      socket.onmessage = (event: MessageEvent) => {
+        if (!terminal) return;
+        if (event.data instanceof ArrayBuffer) {
+          terminal.write(new Uint8Array(event.data));
+        } else {
+          terminal.write(event.data);
+        }
+      };
+
+      socket.onclose = () => {
+        wsConnected = false;
+        ws = null;
+        if (terminal) {
+          terminal.write('\r\n\x1b[1;31m[Connection closed]\x1b[0m\r\n');
+        }
+        sendToParent({ type: 'error', code: 'ws-closed', message: 'WebSocket connection closed' });
+      };
+
+      socket.onerror = () => {
+        wsConnected = false;
+        ws = null;
+        sendToParent({ type: 'error', code: 'ws-failed', message: 'WebSocket connection failed' });
+      };
+
+      ws = socket;
+    } catch {
+      sendToParent({ type: 'error', code: 'ws-failed', message: 'Failed to create WebSocket' });
     }
   }
 
@@ -103,9 +161,12 @@
     });
     resizeObserver.observe(containerEl);
 
-    // Report resize to parent
+    // Report resize to parent and WebSocket
     terminal.onResize(({ cols, rows }) => {
       sendToParent({ type: 'terminal-resize', cols, rows });
+      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
     });
 
     // Sanitize title changes before forwarding
@@ -125,9 +186,15 @@
       '\x1b[1;34mcapsem:~#\x1b[0m '
     ));
 
-    // Local echo for mock mode
     terminal.onData((data: string) => {
-      if (!terminal) return;
+      // WebSocket mode: send to gateway
+      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+        return;
+      }
+
+      // Mock echo mode (no gateway)
+      if (!mockEchoEnabled || !terminal) return;
       for (const ch of data) {
         if (ch === '\r') {
           terminal.write('\r\n\x1b[1;34mcapsem:~#\x1b[0m ');
@@ -151,6 +218,7 @@
     window.removeEventListener('message', onMessage);
     if (resizeRafId) cancelAnimationFrame(resizeRafId);
     resizeObserver?.disconnect();
+    if (ws) { ws.close(); ws = null; }
     terminal?.dispose();
   });
 </script>

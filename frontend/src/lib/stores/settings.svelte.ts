@@ -1,5 +1,6 @@
 // Settings store -- thin Svelte wrapper around SettingsModel.
-// Sprint 04: uses mock data. Sprint 05: wire to gateway API.
+// Uses mock data: the service does not expose a settings CRUD API yet.
+// TODO: wire to gateway API when service settings endpoints land.
 import { SettingsModel } from '../models/settings-model';
 import { buildMockSettingsResponse, recomputeEnabled, mockSettings } from '../mock-settings';
 import type {
@@ -63,7 +64,7 @@ class SettingsStore {
     this.loading = true;
     this.error = null;
     try {
-      // Sprint 05: const response = await loadSettings();
+      // TODO: wire to gateway API when service settings endpoints land
       const response = buildMockSettingsResponse();
       this.model = new SettingsModel(response);
     } catch (e) {
