@@ -30,6 +30,15 @@ pub(crate) enum MenuEntry {
 /// Compute the menu structure for a gateway status response.
 pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     let mut entries = Vec::new();
+
+    // Status line at the top
+    entries.push(MenuEntry::Item {
+        id: "status".into(),
+        label: format!("Connected -- {}ms", status.latency_ms.unwrap_or(0)),
+        enabled: false,
+    });
+    entries.push(MenuEntry::Separator);
+
     let named: Vec<&VmSummary> = status.vms.iter().filter(|v| v.persistent).collect();
     let ephemeral: Vec<&VmSummary> = status.vms.iter().filter(|v| !v.persistent).collect();
 
@@ -61,15 +70,9 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     entries.push(MenuEntry::Separator);
     entries.push(MenuEntry::Item { id: "new-temp".into(), label: "New Temporary".into(), enabled: true });
     entries.push(MenuEntry::Item { id: "new-named".into(), label: "New Permanent...".into(), enabled: true });
-    entries.push(MenuEntry::Item { id: "open".into(), label: "Open UI".into(), enabled: true });
+    entries.push(MenuEntry::Item { id: "open".into(), label: "Dashboard".into(), enabled: true });
     entries.push(MenuEntry::Separator);
     entries.push(MenuEntry::Item { id: "quit".into(), label: "Quit".into(), enabled: true });
-    entries.push(MenuEntry::Separator);
-    entries.push(MenuEntry::Item {
-        id: "status".into(),
-        label: format!("Connected -- {}ms", status.latency_ms.unwrap_or(0)),
-        enabled: false,
-    });
 
     entries
 }
@@ -97,11 +100,9 @@ fn vm_submenu_spec(vm: &VmSummary) -> MenuEntry {
 
 pub(crate) fn unavailable_spec() -> Vec<MenuEntry> {
     vec![
-        MenuEntry::Item { id: "unavailable".into(), label: "Service unavailable".into(), enabled: false },
+        MenuEntry::Item { id: "status".into(), label: "Disconnected".into(), enabled: false },
         MenuEntry::Separator,
         MenuEntry::Item { id: "quit".into(), label: "Quit".into(), enabled: true },
-        MenuEntry::Separator,
-        MenuEntry::Item { id: "status".into(), label: "Disconnected".into(), enabled: false },
     ]
 }
 
@@ -406,9 +407,11 @@ mod tests {
     #[test]
     fn spec_no_separator_when_only_one_section() {
         let spec = menu_spec(&make_status(vec![named_vm("n1", "dev", "running")]));
-        // Before the global separator, there should be no separator
+        // Between the status separator and the global actions separator,
+        // there should be no extra separator (only one VM section).
+        let header_pos = spec.iter().position(|e| matches!(e, MenuEntry::Item { id, .. } if id == "header-named")).unwrap();
         let global_sep = spec.iter().position(|e| matches!(e, MenuEntry::Item { id, .. } if id == "new-temp")).unwrap();
-        let vm_seps = spec[..global_sep - 1].iter().filter(|e| matches!(e, MenuEntry::Separator)).count();
+        let vm_seps = spec[header_pos..global_sep - 1].iter().filter(|e| matches!(e, MenuEntry::Separator)).count();
         assert_eq!(vm_seps, 0);
     }
 
@@ -445,15 +448,12 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_spec_has_disabled_status_and_quit() {
+    fn unavailable_spec_has_disconnected_and_quit() {
         let spec = unavailable_spec();
         let ids = collect_ids(&spec);
-        assert_eq!(ids, vec!["unavailable", "quit", "status"]);
-        // "unavailable" is disabled
-        assert!(matches!(&spec[0], MenuEntry::Item { enabled: false, .. }));
-        // status line at bottom is disabled and shows "Disconnected"
-        let status = spec.iter().find(|e| matches!(e, MenuEntry::Item { id, .. } if id == "status")).unwrap();
-        assert!(matches!(status, MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected"));
+        assert_eq!(ids, vec!["status", "quit"]);
+        // status shows "Disconnected" and is disabled
+        assert!(matches!(&spec[0], MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected"));
     }
 
     #[test]
