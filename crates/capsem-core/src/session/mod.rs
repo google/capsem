@@ -815,7 +815,7 @@ mod tests {
         let persistent: bool = conn.query_row(
             "SELECT persistent FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)
         ).unwrap();
-        assert_eq!(persistent, false);
+        assert!(!persistent);
     }
 
     #[test]

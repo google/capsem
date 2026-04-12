@@ -26,7 +26,22 @@ use vsock_io::{VSOCK_HOST_CID, vsock_connect_retry, write_all_fd};
 /// Get the parent process name (the AI agent that spawned us).
 fn get_parent_process_name() -> String {
     let ppid = nix::unistd::getppid();
-    procfs::process_name_for_pid(ppid.as_raw() as u32)
+    let raw = procfs::process_name_for_pid(ppid.as_raw() as u32);
+    sanitize_process_name(&raw)
+}
+
+/// Sanitize a process name for use in the \0CAPSEM_META framing line.
+/// Replaces control characters (including newlines and NUL) and spaces with
+/// underscores, and truncates to 128 chars to prevent oversized meta lines.
+fn sanitize_process_name(name: &str) -> String {
+    let mut s = name
+        .chars()
+        .map(|c| if c.is_control() || c == ' ' { '_' } else { c })
+        .collect::<String>();
+    if s.len() > 128 {
+        s.truncate(128);
+    }
+    s
 }
 
 fn main() {
@@ -200,6 +215,44 @@ mod tests {
         let name = "a".repeat(1000);
         let meta = format!("\0CAPSEM_META:{}\n", name);
         assert_eq!(meta.len(), 1000 + "\0CAPSEM_META:\n".len());
+    }
+
+    // -----------------------------------------------------------------------
+    // sanitize_process_name
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sanitize_strips_control_chars() {
+        assert_eq!(sanitize_process_name("clean"), "clean");
+        assert_eq!(sanitize_process_name("has space"), "has_space");
+        assert_eq!(sanitize_process_name("has\nnewline"), "has_newline");
+        assert_eq!(sanitize_process_name("has\rcarriage"), "has_carriage");
+        assert_eq!(sanitize_process_name("has\0nul"), "has_nul");
+        assert_eq!(sanitize_process_name("has\ttab"), "has_tab");
+    }
+
+    #[test]
+    fn sanitize_truncates_long_names() {
+        let long = "x".repeat(200);
+        let result = sanitize_process_name(&long);
+        assert_eq!(result.len(), 128);
+    }
+
+    #[test]
+    fn sanitize_preserves_slashes_and_dashes() {
+        // Process names like "claude/code-v4.0" should keep path chars
+        assert_eq!(sanitize_process_name("claude/code-v4.0"), "claude/code-v4.0");
+    }
+
+    #[test]
+    fn sanitize_meta_line_injection_blocked() {
+        // A newline in the process name would break \0CAPSEM_META:name\n framing
+        let evil = "evil\nCAPS_META:spoof";
+        let sanitized = sanitize_process_name(evil);
+        assert!(!sanitized.contains('\n'), "newline must be stripped");
+        let meta = format!("\0CAPSEM_META:{}\n", sanitized);
+        // Exactly one newline (the terminator)
+        assert_eq!(meta.matches('\n').count(), 1);
     }
 
     #[test]

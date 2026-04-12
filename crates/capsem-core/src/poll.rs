@@ -12,7 +12,7 @@ pub type PollOpts = capsem_proto::poll::RetryOpts;
 /// Poll an async predicate with exponential backoff until it returns `Some(T)`
 /// or the deadline expires.
 ///
-/// Returns `Ok(T)` on success, `Err(())` on timeout.
+/// Returns `Ok(T)` on success, `Err(TimedOut)` on timeout.
 ///
 /// ```ignore
 /// let result = poll_until(
@@ -22,7 +22,7 @@ pub type PollOpts = capsem_proto::poll::RetryOpts;
 ///     },
 /// ).await;
 /// ```
-pub async fn poll_until<T, F, Fut>(opts: PollOpts, mut f: F) -> Result<T, ()>
+pub async fn poll_until<T, F, Fut>(opts: PollOpts, mut f: F) -> Result<T, capsem_proto::poll::TimedOut>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Option<T>>,
@@ -49,7 +49,11 @@ where
                 timeout_ms = opts.timeout.as_millis() as u64,
                 "poll timed out"
             );
-            return Err(());
+            return Err(capsem_proto::poll::TimedOut {
+                label: opts.label,
+                attempts,
+                timeout: opts.timeout,
+            });
         }
         debug!(
             label = opts.label,

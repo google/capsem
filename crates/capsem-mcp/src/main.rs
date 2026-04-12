@@ -117,7 +117,7 @@ impl UdsClient {
                     UnixStream::connect(&uds).await.ok()
                 }
             },
-        ).await.map_err(|()| anyhow::anyhow!("Service failed to start within 5s"))?;
+        ).await.map_err(|e| anyhow::anyhow!("{e}"))?;
 
         info!("Service relaunched and responding");
         tokio::spawn(async move {

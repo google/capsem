@@ -1286,7 +1286,7 @@ mod tests {
         let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let data: serde_json::Value = serde_json::from_str(&text)
             .expect("snapshots_list must return valid JSON when format=json");
-        assert!(data["snapshots"].as_array().unwrap().len() >= 1);
+        assert!(!data["snapshots"].as_array().unwrap().is_empty());
     }
 
     /// Verifies that file tools without VirtioFS return a clean error, not a hang.

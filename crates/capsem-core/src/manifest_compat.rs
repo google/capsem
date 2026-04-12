@@ -215,7 +215,7 @@ mod tests {
         let hashes = extract_hashes(&v, "0.13.0", "arm64");
         // "vmlinuz" is NOT a key -- only "arm64/vmlinuz" is
         assert!(
-            hashes.get("vmlinuz").is_none(),
+            !hashes.contains_key("vmlinuz"),
             "bare 'vmlinuz' should not match arch-prefixed 'arm64/vmlinuz'"
         );
         assert_eq!(hashes.get("arm64/vmlinuz").unwrap(), "aaa111");

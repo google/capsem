@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn virtiofs_cmdline_append() {
         let base = "console=hvc0 ro loglevel=1";
-        let shares = vec![VirtioFsShare {
+        let shares = [VirtioFsShare {
             tag: "capsem".into(),
             host_path: "/tmp/session".into(),
             read_only: false,

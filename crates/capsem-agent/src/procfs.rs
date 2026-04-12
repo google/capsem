@@ -72,4 +72,36 @@ mod tests {
         let basename = bare.rsplit('/').next().unwrap_or(bare);
         assert_eq!(basename, "node");
     }
+
+    #[test]
+    fn basename_with_trailing_slash() {
+        // Trailing slash yields empty basename, rsplit returns ""
+        let path = "/usr/bin/";
+        let basename = path.rsplit('/').next().unwrap_or(path);
+        assert_eq!(basename, "");
+    }
+
+    #[test]
+    fn basename_root_only() {
+        let path = "/";
+        let basename = path.rsplit('/').next().unwrap_or(path);
+        assert_eq!(basename, "");
+    }
+
+    #[test]
+    fn pid_zero_returns_something() {
+        // PID 0 is the kernel scheduler -- /proc/0 may or may not exist.
+        // Should not panic regardless.
+        let name = process_name_for_pid(0);
+        assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn pid_one_returns_init_on_linux() {
+        if !std::path::Path::new("/proc/1/cmdline").exists() {
+            return; // Not Linux
+        }
+        let name = process_name_for_pid(1);
+        assert_ne!(name, "unknown");
+    }
 }

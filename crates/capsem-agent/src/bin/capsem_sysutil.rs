@@ -52,8 +52,8 @@ fn is_reboot_request(cmd: &str, args: &[String]) -> bool {
     if cmd == "reboot" {
         return true;
     }
-    // shutdown -r means reboot
-    args.iter().any(|a| a == "-r")
+    // Only "shutdown -r" means reboot. halt/poweroff don't support -r.
+    cmd == "shutdown" && args.iter().any(|a| a == "-r")
 }
 
 fn print_help(cmd: &str) {
@@ -172,5 +172,23 @@ mod tests {
         assert!(!is_reboot_request("shutdown", &["-h".into(), "now".into()]));
         assert!(!is_reboot_request("halt", &[]));
         assert!(!is_reboot_request("poweroff", &[]));
+    }
+
+    #[test]
+    fn reboot_flag_not_in_halt_or_poweroff() {
+        // -r should only trigger reboot when cmd is "shutdown"
+        assert!(!is_reboot_request("halt", &["-r".into()]));
+        assert!(!is_reboot_request("poweroff", &["-r".into()]));
+    }
+
+    #[test]
+    fn command_name_handles_empty_string() {
+        assert_eq!(command_name(""), "");
+    }
+
+    #[test]
+    fn command_name_multiple_slashes() {
+        assert_eq!(command_name("///shutdown"), "shutdown");
+        assert_eq!(command_name("/a/b/c/d/halt"), "halt");
     }
 }

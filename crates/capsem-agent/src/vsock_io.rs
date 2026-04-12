@@ -110,8 +110,8 @@ pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
             eprintln!("[capsem-agent] {label} connected (port {port})");
             fd
         }
-        Err(()) => {
-            eprintln!("[capsem-agent] {label} connect timed out after 30s");
+        Err(e) => {
+            eprintln!("[capsem-agent] {label} connect timed out: {e}");
             std::process::exit(1);
         }
     }

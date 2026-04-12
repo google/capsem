@@ -407,8 +407,8 @@ fn main() {
                             t_fd = new_t;
                             c_fd = new_c;
                         }
-                        Err(()) => {
-                            eprintln!("[capsem-agent] {}s reconnect timeout reached, exiting", RECONNECT_TIMEOUT_SECS);
+                        Err(e) => {
+                            eprintln!("[capsem-agent] reconnect failed: {e}");
                             let _ = nix::sys::signal::kill(child, Signal::SIGHUP);
                             process::exit(1);
                         }
@@ -647,7 +647,9 @@ fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost
         }
     };
 
-    // Forward child stdout and stderr to exec vsock fd.
+    // Forward child stdout and stderr to exec vsock fd as a merged stream.
+    // The host reads all exec output as opaque bytes (no stdout/stderr separation),
+    // so interleaving between the two is acceptable -- same as `docker exec` or `2>&1`.
     // Stderr is forwarded from a background thread; stdout is forwarded inline.
     let stderr_thread = child.stderr.take().map(|mut stderr| {
         let efd = exec_fd;
@@ -880,6 +882,14 @@ mod tests {
     fn make_pipe() -> (RawFd, RawFd) {
         let mut fds = [0 as RawFd; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        // Set CLOEXEC so child processes (e.g., sleep in control_loop tests)
+        // don't inherit these fds and prevent EOF detection.
+        for &fd in &fds {
+            unsafe {
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
         (fds[0], fds[1])
     }
 
@@ -1628,5 +1638,553 @@ mod tests {
         assert!(link.symlink_metadata().is_ok());
         std::fs::remove_file(&target).ok();
         std::fs::remove_file(&link).ok();
+    }
+
+    #[test]
+    fn delete_nofollow_deletes_regular_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-dn-regular");
+        std::fs::write(&path, b"delete me").unwrap();
+        delete_nofollow(path.to_str().unwrap()).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn delete_nofollow_nonexistent_returns_error() {
+        let result = delete_nofollow("/tmp/capsem-test-dn-nonexistent-xyzzy");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_nofollow_creates_parent_dirs() {
+        let dir = std::env::temp_dir();
+        let nested = dir.join("capsem-test-wn-nested/deep/path/file.txt");
+        let _ = std::fs::remove_dir_all(dir.join("capsem-test-wn-nested"));
+        write_nofollow(nested.to_str().unwrap(), b"nested", 0o644).unwrap();
+        assert_eq!(std::fs::read(&nested).unwrap(), b"nested");
+        std::fs::remove_dir_all(dir.join("capsem-test-wn-nested")).ok();
+    }
+
+    #[test]
+    fn write_nofollow_sets_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-wn-perms");
+        write_nofollow(path.to_str().unwrap(), b"test", 0o755).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_nofollow_truncates_existing() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-wn-truncate");
+        write_nofollow(path.to_str().unwrap(), b"long content here", 0o644).unwrap();
+        write_nofollow(path.to_str().unwrap(), b"short", 0o644).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"short");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_nofollow_nonexistent_returns_error() {
+        let result = read_nofollow("/tmp/capsem-test-rn-nonexistent-xyzzy");
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // Exec: merged stdout + stderr stream
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn exec_stdout_and_stderr_both_appear_in_merged_stream() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        // Generate distinct output on both stdout and stderr
+        std::thread::spawn(move || {
+            run_exec_on_fds(
+                exec_fd, &ctrl_tx, 50,
+                "echo STDOUT_MARKER; echo STDERR_MARKER >&2",
+                &[],
+            );
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+        let text = String::from_utf8_lossy(&output);
+
+        assert!(text.contains("STDOUT_MARKER"), "stdout missing from merged stream: {text}");
+        assert!(text.contains("STDERR_MARKER"), "stderr missing from merged stream: {text}");
+
+        let (_, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn exec_invalid_command_returns_nonzero() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(exec_fd, &ctrl_tx, 60, "nonexistent_command_xyz", &[]);
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut _output = Vec::new();
+        exec_host.read_to_end(&mut _output).unwrap();
+
+        let (_, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_ne!(exit_code, 0);
+    }
+
+    #[test]
+    fn exec_empty_command_succeeds() {
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(exec_fd, &ctrl_tx, 70, "true", &[]);
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+        assert!(output.is_empty(), "true should produce no output");
+
+        let (_, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn exec_fd_closed_before_exec_done() {
+        // Verify the agent closes exec_fd (EOF to host) before sending ExecDone.
+        // The host relies on this ordering to accumulate all output before the
+        // ExecDone arrives on the control channel.
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::io::IntoRawFd;
+        use std::io::Read;
+
+        let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+        let exec_fd = exec_guest.into_raw_fd();
+
+        std::thread::spawn(move || {
+            run_exec_on_fds(exec_fd, &ctrl_tx, 80, "echo ordering_test", &[]);
+        });
+
+        let _id = read_exec_started(&mut exec_host);
+
+        // Read until EOF -- this blocks until exec_fd is closed.
+        let mut output = Vec::new();
+        exec_host.read_to_end(&mut output).unwrap();
+
+        // EOF received. ExecDone should now be available (or arrive shortly).
+        let (done_id, exit_code) = recv_exec_done(&ctrl_rx);
+        assert_eq!(done_id, 80);
+        assert_eq!(exit_code, 0);
+        assert!(String::from_utf8_lossy(&output).contains("ordering_test"));
+    }
+
+    // -------------------------------------------------------------------
+    // Boot timing: additional edge cases
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn parse_boot_timing_empty_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-empty");
+        std::fs::write(&path, "").unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert!(result.is_empty());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn parse_boot_timing_rejects_long_names() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-longname");
+        let long_name = "a".repeat(65);
+        std::fs::write(&path, format!(
+            "{{\"name\":\"{long_name}\",\"duration_ms\":10}}\n\
+             {{\"name\":\"ok\",\"duration_ms\":20}}\n"
+        )).unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "ok");
+        std::fs::remove_file(&path).ok();
+    }
+
+    // -------------------------------------------------------------------
+    // Control message: frame boundary
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn recv_truncated_payload_returns_error() {
+        let (read_fd, write_fd) = make_pipe();
+        // Write a valid length (10 bytes) but only 5 bytes of payload
+        let len_bytes = 10u32.to_be_bytes();
+        write_all_fd(write_fd, &len_bytes).unwrap();
+        write_all_fd(write_fd, &[0u8; 5]).unwrap();
+        unsafe { libc::close(write_fd); }
+
+        let result = recv_host_msg(read_fd);
+        assert!(result.is_err());
+        unsafe { libc::close(read_fd); }
+    }
+
+    #[test]
+    fn send_recv_pong_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        send_guest_msg(write_fd, &GuestToHost::Pong).unwrap();
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
+        assert!(matches!(decoded, GuestToHost::Pong));
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn send_recv_file_content_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = GuestToHost::FileContent {
+            id: 42,
+            path: "/root/test.txt".to_string(),
+            data: b"file contents here".to_vec(),
+        };
+        send_guest_msg(write_fd, &msg).unwrap();
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
+        match decoded {
+            GuestToHost::FileContent { id, path, data } => {
+                assert_eq!(id, 42);
+                assert_eq!(path, "/root/test.txt");
+                assert_eq!(data, b"file contents here");
+            }
+            other => panic!("expected FileContent, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn send_recv_error_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = GuestToHost::Error {
+            id: 7,
+            message: "something went wrong".to_string(),
+        };
+        send_guest_msg(write_fd, &msg).unwrap();
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
+        match decoded {
+            GuestToHost::Error { id, message } => {
+                assert_eq!(id, 7);
+                assert_eq!(message, "something went wrong");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn send_recv_file_op_done_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        send_guest_msg(write_fd, &GuestToHost::FileOpDone { id: 99 }).unwrap();
+        let mut len_buf = [0u8; 4];
+        read_exact_fd(read_fd, &mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        read_exact_fd(read_fd, &mut payload).unwrap();
+        let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
+        match decoded {
+            GuestToHost::FileOpDone { id } => assert_eq!(id, 99),
+            other => panic!("expected FileOpDone, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    // -------------------------------------------------------------------
+    // Host message roundtrips: FileRead, FileDelete
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn file_read_roundtrip_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::FileRead {
+            id: 10,
+            path: "/root/readme.md".into(),
+        };
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        match decoded {
+            HostToGuest::FileRead { id, path } => {
+                assert_eq!(id, 10);
+                assert_eq!(path, "/root/readme.md");
+            }
+            other => panic!("expected FileRead, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    #[test]
+    fn file_delete_roundtrip_over_pipe() {
+        let (read_fd, write_fd) = make_pipe();
+        let msg = HostToGuest::FileDelete {
+            id: 11,
+            path: "/root/temp.txt".into(),
+        };
+        let frame = capsem_proto::encode_host_msg(&msg).unwrap();
+        write_all_fd(write_fd, &frame).unwrap();
+        let decoded = recv_host_msg(read_fd).unwrap();
+        match decoded {
+            HostToGuest::FileDelete { id, path } => {
+                assert_eq!(id, 11);
+                assert_eq!(path, "/root/temp.txt");
+            }
+            other => panic!("expected FileDelete, got {other:?}"),
+        }
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
+    }
+
+    // -------------------------------------------------------------------
+    // control_loop integration tests
+    // -------------------------------------------------------------------
+
+    /// Feed host messages into control_loop and collect guest responses.
+    fn run_control_loop_with_messages(
+        messages: Vec<HostToGuest>,
+    ) -> Vec<GuestToHost> {
+        let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
+        let pty = openpty(None, None).expect("openpty");
+        let master_fd = pty.master.as_raw_fd();
+        // Spawn a child so we have a real PID for control_loop.
+        let mut child = std::process::Command::new("sleep")
+            .arg("300")
+            .spawn()
+            .expect("spawn sleep");
+        let child_pid = Pid::from_raw(child.id() as i32);
+
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+
+        // Write all messages then close the write end so control_loop
+        // sees EOF and exits.
+        for msg in &messages {
+            let frame = capsem_proto::encode_host_msg(msg).unwrap();
+            write_all_fd(ctrl_write_fd, &frame).unwrap();
+        }
+        unsafe { libc::close(ctrl_write_fd); }
+
+        let handle = thread::spawn(move || {
+            control_loop(ctrl_read_fd, master_fd, child_pid, &[], ctrl_tx);
+        });
+
+        handle.join().unwrap();
+
+        // Kill the sleep process immediately using std (handles waitpid internally).
+        let _ = child.kill();
+        let _ = child.wait();
+        unsafe { libc::close(ctrl_read_fd); }
+
+        // Drain the channel.
+        let mut responses = Vec::new();
+        while let Ok(msg) = ctrl_rx.try_recv() {
+            responses.push(msg);
+        }
+        responses
+    }
+
+    #[test]
+    fn control_loop_ping_responds_with_pong() {
+        let responses = run_control_loop_with_messages(vec![HostToGuest::Ping]);
+        assert_eq!(responses.len(), 1);
+        assert!(matches!(responses[0], GuestToHost::Pong));
+    }
+
+    #[test]
+    fn control_loop_multiple_pings() {
+        let responses = run_control_loop_with_messages(vec![
+            HostToGuest::Ping,
+            HostToGuest::Ping,
+            HostToGuest::Ping,
+        ]);
+        assert_eq!(responses.len(), 3);
+        for r in &responses {
+            assert!(matches!(r, GuestToHost::Pong));
+        }
+    }
+
+    #[test]
+    fn control_loop_resize_changes_pty_winsize() {
+        let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
+        let pty = openpty(None, None).expect("openpty");
+        let master_fd = pty.master.as_raw_fd();
+        let mut child = std::process::Command::new("sleep")
+            .arg("300")
+            .spawn()
+            .expect("spawn sleep");
+        let child_pid = Pid::from_raw(child.id() as i32);
+        let (ctrl_tx, _ctrl_rx) = std::sync::mpsc::channel();
+
+        // Send resize then close.
+        let frame = capsem_proto::encode_host_msg(
+            &HostToGuest::Resize { cols: 132, rows: 43 }
+        ).unwrap();
+        write_all_fd(ctrl_write_fd, &frame).unwrap();
+        unsafe { libc::close(ctrl_write_fd); }
+
+        let master_fd_check = master_fd;
+        let handle = thread::spawn(move || {
+            control_loop(ctrl_read_fd, master_fd, child_pid, &[], ctrl_tx);
+        });
+        handle.join().unwrap();
+
+        // Verify the PTY was resized.
+        let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+        let ret = unsafe { libc::ioctl(master_fd_check, libc::TIOCGWINSZ, &mut ws) };
+        assert_eq!(ret, 0);
+        assert_eq!(ws.ws_col, 132);
+        assert_eq!(ws.ws_row, 43);
+
+        let _ = child.kill();
+        let _ = child.wait();
+        unsafe { libc::close(ctrl_read_fd); }
+    }
+
+    #[test]
+    fn control_loop_file_write_path_traversal_rejected() {
+        // Path traversal is rejected by validate_file_path (before workspace check),
+        // so this works on macOS even though /root doesn't exist.
+        let responses = run_control_loop_with_messages(vec![
+            HostToGuest::FileWrite {
+                id: 20,
+                path: "/etc/../etc/passwd".into(),
+                data: b"evil".to_vec(),
+                mode: 0o644,
+            },
+        ]);
+        assert_eq!(responses.len(), 1);
+        match &responses[0] {
+            GuestToHost::Error { id, message } => {
+                assert_eq!(*id, 20);
+                assert!(message.contains("rejected") || message.contains("traversal"),
+                    "got: {message}");
+            }
+            other => panic!("expected Error for traversal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_loop_file_read_rejected_outside_workspace() {
+        // /etc/hostname is outside /root workspace, rejected by validate_file_path_safe
+        // (or by workspace root canonicalization failure on macOS).
+        let responses = run_control_loop_with_messages(vec![
+            HostToGuest::FileRead {
+                id: 10,
+                path: "/etc/hostname".into(),
+            },
+        ]);
+        assert_eq!(responses.len(), 1);
+        match &responses[0] {
+            GuestToHost::Error { id, .. } => assert_eq!(*id, 10),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_loop_file_delete_rejected_outside_workspace() {
+        let responses = run_control_loop_with_messages(vec![
+            HostToGuest::FileDelete {
+                id: 30,
+                path: "/tmp/some-file".into(),
+            },
+        ]);
+        assert_eq!(responses.len(), 1);
+        match &responses[0] {
+            GuestToHost::Error { id, .. } => assert_eq!(*id, 30),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_loop_unhandled_message_does_not_crash() {
+        // BootConfig is unexpected during control_loop (it's a boot-phase message).
+        // control_loop should log it and continue.
+        let responses = run_control_loop_with_messages(vec![
+            HostToGuest::BootConfig { epoch_secs: 12345 },
+            HostToGuest::Ping,
+        ]);
+        // The BootConfig is just logged, only the Ping produces a response.
+        assert_eq!(responses.len(), 1);
+        assert!(matches!(responses[0], GuestToHost::Pong));
+    }
+
+    #[test]
+    fn control_loop_eof_exits_cleanly() {
+        // Empty message list = immediate EOF on the pipe = control_loop exits.
+        let responses = run_control_loop_with_messages(vec![]);
+        assert!(responses.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Boot timing: exact boundary
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn parse_boot_timing_name_at_exact_boundary() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-boundary");
+        let name_64 = "a".repeat(64); // exactly at limit, should pass
+        std::fs::write(&path, format!(
+            "{{\"name\":\"{name_64}\",\"duration_ms\":10}}\n"
+        )).unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, name_64);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn parse_boot_timing_duration_at_exact_boundary() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("capsem-test-boot-timing-dur-boundary");
+        // 600_000 is exactly at limit, should pass
+        std::fs::write(&path, "{\"name\":\"ok\",\"duration_ms\":600000}\n").unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].duration_ms, 600_000);
+
+        // 600_001 is over limit, should be rejected
+        std::fs::write(&path, "{\"name\":\"bad\",\"duration_ms\":600001}\n").unwrap();
+        let result = parse_boot_timing(path.to_str().unwrap());
+        assert!(result.is_empty());
+        std::fs::remove_file(&path).ok();
     }
 }

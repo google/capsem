@@ -300,7 +300,7 @@ impl ServiceState {
 
         info!(id, version, persistent, image, "provision_sandbox called");
 
-        let uds_path = self.instance_socket_path(&id);
+        let uds_path = self.instance_socket_path(id);
 
         // Persistent VMs go in persistent/, ephemeral in sessions/
         let session_dir = if persistent {
@@ -953,7 +953,7 @@ async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Res
                 if ready.exists() { Some(()) } else { None }
             }
         },
-    ).await.map_err(|()| format!("VM did not become ready within {timeout_secs}s"))
+    ).await.map_err(|e| format!("{e}"))
 }
 
 async fn handle_exec(

@@ -128,31 +128,26 @@ async fn get_process_name(client_port: u16) -> Option<String> {
         let port_hex = format!("{:04X}", client_port);
 
         let mut inode = None;
-        if let Ok(tcp_content) = std::fs::read_to_string("/proc/net/tcp") {
-            for line in tcp_content.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                // Index 1 is local_address (ip:port).
-                // Index 9 is inode.
-                if parts.len() >= 10 {
-                    let local_addr = parts[1];
-                    if local_addr.ends_with(&format!(":{}", port_hex)) {
-                        inode = Some(parts[9].to_string());
-                        break;
-                    }
-                }
+        // Search /proc/net/tcp and tcp6 for a socket matching our client port.
+        // Format: "local_address" is "IP:PORT" where PORT is uppercase hex.
+        // Use rsplit(':') for exact port match (ends_with could false-match
+        // if the hex port is a suffix of the IP hex).
+        for proc_path in &["/proc/net/tcp", "/proc/net/tcp6"] {
+            if inode.is_some() {
+                break;
             }
-        }
-
-        // In rare cases (e.g., IPv6), it might be in /proc/net/tcp6
-        if inode.is_none() {
-            if let Ok(tcp6_content) = std::fs::read_to_string("/proc/net/tcp6") {
-                for line in tcp6_content.lines().skip(1) {
+            if let Ok(content) = std::fs::read_to_string(proc_path) {
+                for line in content.lines().skip(1) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
+                    // Index 1 is local_address (ip:port).
+                    // Index 9 is inode.
                     if parts.len() >= 10 {
                         let local_addr = parts[1];
-                        if local_addr.ends_with(&format!(":{}", port_hex)) {
-                            inode = Some(parts[9].to_string());
-                            break;
+                        if let Some(port_part) = local_addr.rsplit(':').next() {
+                            if port_part == port_hex {
+                                inode = Some(parts[9].to_string());
+                                break;
+                            }
                         }
                     }
                 }
@@ -322,6 +317,47 @@ mod tests {
         
         let long_name = "A".repeat(200);
         assert_eq!(sanitize_process_name(&long_name).len(), 128);
+    }
+
+    #[test]
+    fn sanitize_blocks_meta_line_injection() {
+        // Newline in process name would split the \0CAPSEM_META:...\n frame
+        let evil = "evil\nCAPS_META:spoof";
+        let sanitized = sanitize_process_name(evil);
+        assert!(!sanitized.contains('\n'));
+        assert!(!sanitized.contains('\0'));
+        let meta = format!("\0CAPSEM_META:{}\n", sanitized);
+        assert_eq!(meta.matches('\n').count(), 1);
+    }
+
+    #[test]
+    fn port_hex_parsing_extracts_exact_port() {
+        // Simulate /proc/net/tcp format: local_address is "HEX_IP:HEX_PORT".
+        // Verify rsplit(':') extracts the port portion correctly.
+        let port_hex = format!("{:04X}", 443u16); // "01BB"
+
+        let line_match = "  0: 0100007F:01BB 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 12345 1";
+        let line_no_match = "  1: 0100007F:1234 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 99999 1";
+
+        let parts: Vec<&str> = line_match.split_whitespace().collect();
+        let port_part = parts[1].rsplit(':').next().unwrap();
+        assert_eq!(port_part, port_hex, "should match port 443");
+
+        let parts2: Vec<&str> = line_no_match.split_whitespace().collect();
+        let port_part2 = parts2[1].rsplit(':').next().unwrap();
+        assert_ne!(port_part2, port_hex, "should not match different port");
+        assert_eq!(port_part2, "1234");
+    }
+
+    #[test]
+    fn port_hex_parsing_ipv6_format() {
+        // /proc/net/tcp6 has longer IP hex but same colon-delimited port.
+        let port_hex = format!("{:04X}", 8080u16); // "1F90"
+        let line = "  0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 54321 1";
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let port_part = parts[1].rsplit(':').next().unwrap();
+        assert_eq!(port_part, port_hex);
     }
 
     #[tokio::test]

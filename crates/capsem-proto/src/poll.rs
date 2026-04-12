@@ -4,7 +4,26 @@
 //! and guest code. Lives in capsem-proto so both capsem-core (async, host)
 //! and capsem-agent (sync, guest) can use the same configuration and logic.
 
+use std::fmt;
 use std::time::{Duration, Instant};
+
+/// Error returned when [`retry_with_backoff`] exceeds its deadline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimedOut {
+    pub label: &'static str,
+    pub attempts: u32,
+    pub timeout: Duration,
+}
+
+impl fmt::Display for TimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: timed out after {} attempt(s) ({:.0?})",
+            self.label, self.attempts, self.timeout,
+        )
+    }
+}
 
 /// Configuration for retry with exponential backoff.
 ///
@@ -49,7 +68,7 @@ impl Default for RetryOpts {
 /// Synchronous retry with exponential backoff.
 ///
 /// Calls `f()` repeatedly until it returns `Some(T)` or the deadline expires.
-/// Returns `Ok(T)` on success, `Err(())` on timeout.
+/// Returns `Ok(T)` on success, `Err(TimedOut)` on timeout.
 ///
 /// ```ignore
 /// let fd = retry_with_backoff(
@@ -57,7 +76,7 @@ impl Default for RetryOpts {
 ///     || vsock_connect(cid, port).ok(),
 /// );
 /// ```
-pub fn retry_with_backoff<T, F>(opts: &RetryOpts, mut f: F) -> Result<T, ()>
+pub fn retry_with_backoff<T, F>(opts: &RetryOpts, mut f: F) -> Result<T, TimedOut>
 where
     F: FnMut() -> Option<T>,
 {
@@ -83,7 +102,11 @@ where
                 attempts,
                 opts.timeout,
             );
-            return Err(());
+            return Err(TimedOut {
+                label: opts.label,
+                attempts,
+                timeout: opts.timeout,
+            });
         }
         std::thread::sleep(delay);
         delay = (delay * 2).min(opts.max_delay);
@@ -127,7 +150,10 @@ mod tests {
             },
             || None::<()>,
         );
-        assert_eq!(result, Err(()));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.label, "test");
+        assert_eq!(err.timeout, Duration::from_millis(100));
     }
 
     #[test]
