@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **gateway: token endpoint for browser auth** -- `GET /token` returns the auth token, restricted to loopback IP (127.0.0.1/::1) via hardcoded peer IP check. Allows browser-based frontends to authenticate without filesystem access.
+- **gateway: WebSocket query-param auth** -- `/terminal/{id}` paths accept `?token=` query parameter as auth fallback for browser WebSocket connections (which cannot set custom headers). Only the `token` param is recognized; all others are silently dropped. Non-terminal paths ignore query params entirely.
 - **frontend: settings export/import** -- export all settings to JSON file, import from previously exported file. Import stages changes for review before saving. Validates version, skips corp-locked and unchanged settings.
 - **frontend: MCP server management UI** -- add/remove/enable/disable external MCP servers from the settings page. Form with name, URL, bearer token, and custom headers. Replaces the "edit config.toml" placeholder.
 - **smoke: per-step timing and log file** -- smoke recipe now logs to `target/smoke.log` with elapsed time per step and total. `capsem doctor --fast` skips the 64s throughput download test.

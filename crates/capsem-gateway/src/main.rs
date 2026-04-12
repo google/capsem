@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -76,6 +77,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/", get(handle_health))
+        .route("/token", get(handle_token))
         .route("/status", get(status::handle_status))
         .route("/terminal/{id}", get(terminal::handle_terminal_ws))
         .fallback(proxy::handle_proxy)
@@ -115,7 +117,10 @@ async fn main() -> Result<()> {
 
     // Graceful shutdown on SIGTERM/SIGINT
     let shutdown_auth = auth_state.clone();
-    axum::serve(listener, app)
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             info!("shutting down");
@@ -138,10 +143,26 @@ async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     }))
 }
 
+/// Return the auth token. Hardcoded to only accept requests from 127.0.0.1.
+async fn handle_token(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    if !addr.ip().is_loopback() {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "forbidden"})),
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({ "token": state.token })).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
+    use axum::extract::connect_info::ConnectInfo;
     use tower::ServiceExt;
 
     use crate::status::StatusCache;
@@ -194,6 +215,70 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["version"].as_str().unwrap(), env!("CARGO_PKG_VERSION"));
+    }
+
+    // --- Token endpoint ---
+
+    fn token_app() -> (axum::Router, Arc<AppState>) {
+        let state = Arc::new(AppState {
+            token: "test-secret-token-64chars-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            uds_path: "/tmp/test.sock".into(),
+            status_cache: StatusCache::new(),
+            auth_failures: AuthFailureTracker::new(),
+        });
+        let app = axum::Router::new()
+            .route("/token", axum::routing::get(handle_token))
+            .with_state(state.clone());
+        (app, state)
+    }
+
+    #[tokio::test]
+    async fn token_returns_token_from_loopback() {
+        let (app, state) = token_app();
+        let mut req = http::Request::builder()
+            .uri("/token")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["token"].as_str().unwrap(), state.token);
+    }
+
+    #[tokio::test]
+    async fn token_rejects_non_loopback_ip() {
+        let (app, _) = token_app();
+        let mut req = http::Request::builder()
+            .uri("/token")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([192, 168, 1, 100], 12345))));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "forbidden");
+    }
+
+    #[tokio::test]
+    async fn token_allows_ipv6_loopback() {
+        let (app, _) = token_app();
+        let mut req = http::Request::builder()
+            .uri("/token")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 12345))));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), http::StatusCode::OK);
     }
 
     // --- CORS restriction (issue #1) ---

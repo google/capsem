@@ -117,19 +117,34 @@ pub async fn auth_middleware(
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    // Health check is unauthenticated
-    if req.uri().path() == "/" && req.method() == http::Method::GET {
+    // Health check and token endpoint are unauthenticated (token has its own IP check)
+    let path = req.uri().path();
+    if req.method() == http::Method::GET && (path == "/" || path == "/token") {
         return next.run(req).await;
     }
 
-    let valid = req
+    let header_valid = req
         .headers()
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .is_some_and(|t| t == state.token);
 
-    if valid {
+    // For /terminal/ paths only: allow ?token= query param as fallback
+    // (browser WebSocket API cannot set custom headers).
+    // Only the "token" param is recognized; all others are dropped.
+    let query_valid = !header_valid
+        && path.starts_with("/terminal/")
+        && req
+            .uri()
+            .query()
+            .and_then(|q| {
+                q.split('&')
+                    .find_map(|pair| pair.strip_prefix("token="))
+            })
+            .is_some_and(|t| t == state.token);
+
+    if header_valid || query_valid {
         next.run(req).await
     } else {
         let throttled = state.auth_failures.record_failure().await;
@@ -173,8 +188,10 @@ mod tests {
         let state = test_state(token);
         Router::new()
             .route("/", get(|| async { "health" }))
+            .route("/token", get(|| async { "token" }))
             .route("/list", get(|| async { "ok" }))
             .route("/status", get(|| async { "status" }))
+            .route("/terminal/{id}", get(|| async { "terminal" }))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 auth_middleware,
@@ -525,6 +542,123 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn token_endpoint_exempt_from_auth() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Should pass through middleware without 401 (handler may still fail
+        // without ConnectInfo in unit test, but the point is it's not rejected
+        // by auth middleware).
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // --- WebSocket query-param auth (terminal paths only) ---
+
+    #[tokio::test]
+    async fn terminal_accepts_query_param_token() {
+        let app = test_app("my-secret");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/terminal/vm1?token=my-secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn terminal_rejects_wrong_query_param_token() {
+        let app = test_app("correct");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/terminal/vm1?token=wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn non_terminal_path_ignores_query_param_token() {
+        let app = test_app("tok");
+        // /list with ?token= should still require header auth
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/list?token=tok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn terminal_extra_query_params_ignored() {
+        let app = test_app("tok");
+        // Extra params present but only token is checked
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/terminal/vm1?evil=payload&token=tok&other=stuff")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn terminal_header_auth_still_works() {
+        let app = test_app("tok");
+        // Header auth should still work on terminal paths (no query needed)
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/terminal/vm1")
+                    .header("authorization", "Bearer tok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn post_to_token_requires_auth() {
+        let app = test_app("tok");
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // POST /token is not exempt (only GET is)
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
