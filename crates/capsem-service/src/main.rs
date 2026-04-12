@@ -1788,6 +1788,22 @@ fn find_sibling_binary(name: &str) -> PathBuf {
     PathBuf::from(format!("target/debug/{name}"))
 }
 
+/// Open a log file for a companion process, returning Stdio handles for stdout and stderr.
+/// Falls back to null if the file cannot be opened.
+fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdio, std::process::Stdio) {
+    match std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+        Ok(f) => {
+            let stdout = f
+                .try_clone()
+                .map(std::process::Stdio::from)
+                .unwrap_or_else(|_| std::process::Stdio::null());
+            let stderr = std::process::Stdio::from(f);
+            (stdout, stderr)
+        }
+        Err(_) => (std::process::Stdio::null(), std::process::Stdio::null()),
+    }
+}
+
 /// Spawn the gateway and tray as child processes of the service.
 async fn spawn_companions(
     service_sock: &std::path::Path,
@@ -1795,14 +1811,21 @@ async fn spawn_companions(
 ) -> Vec<tokio::process::Child> {
     let mut children = Vec::new();
 
+    // Log files for companion processes (~/Library/Logs/capsem/ on macOS)
+    let log_dir = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
+        .unwrap_or_else(|_| run_dir.join("logs"));
+    let _ = std::fs::create_dir_all(&log_dir);
+
     // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
     let gateway_bin = find_sibling_binary("capsem-gateway");
+    let (gw_out, gw_err) = companion_stdio(&log_dir.join("gateway.log"));
     info!(binary = %gateway_bin.display(), "spawning capsem-gateway");
     match tokio::process::Command::new(&gateway_bin)
         .arg("--uds-path")
         .arg(service_sock)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(gw_out)
+        .stderr(gw_err)
         .kill_on_drop(true)
         .spawn()
     {
@@ -1832,10 +1855,11 @@ async fn spawn_companions(
             #[cfg(target_os = "macos")]
             if token_path.exists() {
                 let tray_bin = find_sibling_binary("capsem-tray");
+                let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
                 info!(binary = %tray_bin.display(), "spawning capsem-tray");
                 match tokio::process::Command::new(&tray_bin)
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
+                    .stdout(tray_out)
+                    .stderr(tray_err)
                     .kill_on_drop(true)
                     .spawn()
                 {

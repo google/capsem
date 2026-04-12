@@ -52,6 +52,19 @@ fn main() -> Result<()> {
     let icon_active = icons::load_icon(TrayState::Active);
     let icon_error = icons::load_icon(TrayState::Error);
 
+    // Initialize NSApplication as Accessory (no dock icon, but participates
+    // in the event system so menu clicks are delivered).
+    #[cfg(target_os = "macos")]
+    let macos_app = {
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+        use objc2_foundation::MainThreadMarker;
+        let mtm = MainThreadMarker::new().expect("must be on main thread");
+        let app = NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        app.finishLaunching();
+        app
+    };
+
     // Build initial tray icon with idle state
     let initial_state = TrayState::Idle;
     let initial_menu = menu::build_unavailable_menu();
@@ -149,9 +162,30 @@ fn main() -> Result<()> {
             }
         }
 
-        // Sleep briefly to avoid busy-spinning. The macOS run loop doesn't
-        // provide a blocking wait that also drains our mpsc channels, so we
-        // poll at ~60 Hz which is negligible CPU.
+        // Drain pending NSEvents so macOS delivers status item clicks, menu
+        // popups, and redraws. CFRunLoopRunInMode alone doesn't drive
+        // NSApplication event dispatch. We pull events until none remain,
+        // then sleep 16ms to avoid busy-spinning (~60 Hz).
+        #[cfg(target_os = "macos")]
+        {
+            use objc2_app_kit::NSEventMask;
+            use objc2_foundation::NSDate;
+            let until = NSDate::dateWithTimeIntervalSinceNow(0.016);
+            loop {
+                let mode = unsafe { objc2_foundation::NSDefaultRunLoopMode };
+                let event = macos_app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                    NSEventMask::Any,
+                    Some(&until),
+                    mode,
+                    true,
+                );
+                match event {
+                    Some(event) => macos_app.sendEvent(&event),
+                    None => break,
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
 }

@@ -4,11 +4,11 @@ use tray_icon::Icon;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayState {
-    /// No VMs running (grey)
+    /// No VMs running / disconnected (grey)
     Idle,
-    /// VMs running (purple)
+    /// VMs running (black template -- OS adapts to light/dark)
     Active,
-    /// Gateway unreachable (red)
+    /// Gateway unreachable (grey, same as idle)
     Error,
 }
 
@@ -96,31 +96,16 @@ mod tests {
     }
 
     #[test]
-    fn idle_png_is_black_template() {
+    fn idle_png_is_grey() {
         let (_, _, rgba) = decode_png(IDLE_PNG);
-        // Template icon: black pixels with alpha (macOS adapts to light/dark)
+        // Grey icon: R ~= G ~= B for non-transparent pixels
         for chunk in rgba.chunks_exact(4) {
-            if chunk[3] > 0 {
+            if chunk[3] > 128 {
+                let max = chunk[0].max(chunk[1]).max(chunk[2]);
+                let min = chunk[0].min(chunk[1]).min(chunk[2]);
                 assert!(
-                    chunk[0] < 10 && chunk[1] < 10 && chunk[2] < 10,
-                    "template icon should be black, got r={} g={} b={}",
-                    chunk[0], chunk[1], chunk[2]
-                );
-                return;
-            }
-        }
-        panic!("no non-transparent pixels found");
-    }
-
-    #[test]
-    fn active_png_has_purple_pixels() {
-        let (_, _, rgba) = decode_png(ACTIVE_PNG);
-        // Purple: high red, low green, high blue
-        for chunk in rgba.chunks_exact(4) {
-            if chunk[3] > 200 {
-                assert!(
-                    chunk[0] > chunk[1] && chunk[2] > chunk[1],
-                    "expected purple (R>G, B>G), got r={} g={} b={}",
+                    max - min < 30,
+                    "idle icon should be grey (equal RGB), got r={} g={} b={}",
                     chunk[0], chunk[1], chunk[2]
                 );
                 return;
@@ -130,14 +115,33 @@ mod tests {
     }
 
     #[test]
-    fn error_png_has_red_pixels() {
-        let (_, _, rgba) = decode_png(ERROR_PNG);
-        // Red: high red, lower green and blue
+    fn active_png_is_black_template() {
+        let (_, _, rgba) = decode_png(ACTIVE_PNG);
+        // Black template icon: dark pixels with alpha (macOS adapts to light/dark)
         for chunk in rgba.chunks_exact(4) {
-            if chunk[3] > 200 {
+            if chunk[3] > 128 {
                 assert!(
-                    chunk[0] > chunk[1] && chunk[0] > chunk[2],
-                    "expected red-dominant, got r={} g={} b={}",
+                    chunk[0] < 30 && chunk[1] < 30 && chunk[2] < 30,
+                    "active template icon should be black, got r={} g={} b={}",
+                    chunk[0], chunk[1], chunk[2]
+                );
+                return;
+            }
+        }
+        panic!("no opaque pixels found");
+    }
+
+    #[test]
+    fn error_png_is_grey() {
+        let (_, _, rgba) = decode_png(ERROR_PNG);
+        // Grey icon (same as idle for now)
+        for chunk in rgba.chunks_exact(4) {
+            if chunk[3] > 128 {
+                let max = chunk[0].max(chunk[1]).max(chunk[2]);
+                let min = chunk[0].min(chunk[1]).min(chunk[2]);
+                assert!(
+                    max - min < 30,
+                    "error icon should be grey, got r={} g={} b={}",
                     chunk[0], chunk[1], chunk[2]
                 );
                 return;

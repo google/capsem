@@ -20,5 +20,9 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication", "NSEvent"] }
+objc2-foundation = "0.3"
+
 [lints]
 workspace = true

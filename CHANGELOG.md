@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **bench: host-side lifecycle and fork benchmarks** -- `just bench` now runs both in-VM benchmarks and host-side lifecycle/fork benchmarks from `test_lifecycle_benchmark.py`.
 
 ### Fixed
+- **tray: invisible menu bar icon** -- tray main loop used `thread::sleep(16ms)` which does not pump the macOS Cocoa run loop. `NSStatusItem` requires an active run loop to render. Replaced with `CFRunLoopRunInMode` which processes AppKit events at the same 60 Hz cadence.
+- **service: companion logs to files** -- gateway and tray child processes had stdout/stderr routed to `/dev/null`, making debugging impossible. Now logs to `~/Library/Logs/capsem/gateway.log` and `tray.log`, falling back to null if the file can't be opened.
+- **install: remove stale pgrep wait loop** -- service install no longer polls for capsem-tray death after `bootout` + `pkill -9`, removing up to 3s of unnecessary latency.
 - **agent: venv activation race** -- capsem-pty-agent now waits up to 3s for capsem-init's background venv creation before checking `/root/.venv/bin/activate`. Previously the agent checked once and missed it, leaving `VIRTUAL_ENV` unset for the shell and all exec commands.
 - **agent: write_nofollow missing parent dirs** -- runtime `FileWrite` via `write_nofollow()` now creates parent directories before opening the file. Previously, writing to `/root/project/main.py` failed with "No such file or directory" if `/root/project/` didn't exist.
 - **service: handle_delete now waits for process death** -- `handle_delete` gives the VM process 500ms to flush its session DB, then SIGKILLs if still alive. Previously it was fire-and-forget: the HTTP 200 returned before the process died, leaving orphans when the service was restarted.

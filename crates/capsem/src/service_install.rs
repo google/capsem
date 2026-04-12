@@ -3,6 +3,19 @@ use anyhow::{Context, Result};
 
 use crate::paths;
 
+/// Escape a string for safe embedding in XML `<string>` elements.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Escape a path for systemd ExecStart (spaces must be escaped).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn systemd_escape_path(p: &Path) -> String {
+    p.display().to_string().replace(' ', "\\x20")
+}
+
 /// Service installation status.
 pub struct ServiceStatus {
     pub installed: bool,
@@ -13,14 +26,17 @@ pub struct ServiceStatus {
 
 /// Generate a macOS LaunchAgent plist for capsem-service.
 ///
-/// All paths are absolute. Uses discover_paths() for binary locations.
+/// All paths are absolute and XML-escaped for safe embedding.
 pub fn generate_plist(
     service_bin: &Path,
     process_bin: &Path,
     assets_dir: &Path,
     home: &str,
 ) -> String {
-    let log_dir = format!("{}/Library/Logs/capsem", home);
+    let log_dir = xml_escape(&format!("{}/Library/Logs/capsem", home));
+    let service_bin = xml_escape(&service_bin.display().to_string());
+    let process_bin = xml_escape(&process_bin.display().to_string());
+    let assets_dir = xml_escape(&assets_dir.display().to_string());
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,22 +64,21 @@ pub fn generate_plist(
 </dict>
 </plist>
 "#,
-        service_bin = service_bin.display(),
-        process_bin = process_bin.display(),
-        assets_dir = assets_dir.display(),
-        log_dir = log_dir,
     )
 }
 
 /// Generate a systemd user unit file for capsem-service.
 ///
-/// All paths are absolute.
+/// All paths are absolute. Spaces are escaped with `\x20` per systemd syntax.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn generate_systemd_unit(
     service_bin: &Path,
     process_bin: &Path,
     assets_dir: &Path,
 ) -> String {
+    let service_bin = systemd_escape_path(service_bin);
+    let process_bin = systemd_escape_path(process_bin);
+    let assets_dir = systemd_escape_path(assets_dir);
     format!(
         r#"[Unit]
 Description=Capsem sandbox service
@@ -76,9 +91,6 @@ RestartSec=2
 [Install]
 WantedBy=default.target
 "#,
-        service_bin = service_bin.display(),
-        process_bin = process_bin.display(),
-        assets_dir = assets_dir.display(),
     )
 }
 
@@ -98,6 +110,12 @@ pub async fn install_service() -> Result<()> {
         anyhow::bail!(
             "capsem-service not found at {}",
             capsem_paths.service_bin.display()
+        );
+    }
+    if !capsem_paths.process_bin.exists() {
+        anyhow::bail!(
+            "capsem-process not found at {}",
+            capsem_paths.process_bin.display()
         );
     }
 
@@ -201,13 +219,20 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
         .args(["-9", "-x", "capsem-service"]).output().await;
     let _ = tokio::process::Command::new("pkill")
         .args(["-9", "-x", "capsem-tray"]).output().await;
-    // 4. Wait until all are dead
+    // 4. Wait until all are dead (prevents stale socket EADDRINUSE on bootstrap)
     for _ in 0..30 {
+        let svc = tokio::process::Command::new("pgrep")
+            .args(["-x", "capsem-service"]).output().await;
         let tray = tokio::process::Command::new("pgrep")
             .args(["-x", "capsem-tray"]).output().await;
-        if tray.map(|o| o.stdout.is_empty()).unwrap_or(true) { break; }
+        let svc_dead = svc.map(|o| o.stdout.is_empty()).unwrap_or(true);
+        let tray_dead = tray.map(|o| o.stdout.is_empty()).unwrap_or(true);
+        if svc_dead && tray_dead { break; }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    // 5. Remove stale socket so the new service can bind cleanly
+    let sock_path = PathBuf::from(home).join(".capsem/run/service.sock");
+    let _ = std::fs::remove_file(&sock_path);
 
     // Install service plist
     let plist_content = generate_plist(
@@ -457,5 +482,66 @@ mod tests {
         );
         assert!(unit.contains("[Install]"));
         assert!(unit.contains("WantedBy=default.target"));
+    }
+
+    // -- XML escaping ---------------------------------------------------------
+
+    #[test]
+    fn test_xml_escape_clean_path() {
+        assert_eq!(xml_escape("/usr/local/bin"), "/usr/local/bin");
+    }
+
+    #[test]
+    fn test_xml_escape_ampersand() {
+        assert_eq!(xml_escape("/Users/AT&T/bin"), "/Users/AT&amp;T/bin");
+    }
+
+    #[test]
+    fn test_xml_escape_angle_brackets() {
+        assert_eq!(xml_escape("a<b>c"), "a&lt;b&gt;c");
+    }
+
+    #[test]
+    fn test_plist_with_special_chars_in_path() {
+        let plist = generate_plist(
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-service"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-process"),
+            Path::new("/Users/AT&T Corp/.capsem/assets"),
+            "/Users/AT&T Corp",
+        );
+        // Must contain escaped ampersands, not raw &
+        assert!(plist.contains("AT&amp;T"), "plist must XML-escape ampersands");
+        assert!(!plist.contains("AT&T "), "plist must not have unescaped &");
+        // Must still be valid-ish XML (balanced tags)
+        assert!(plist.contains("</plist>"));
+    }
+
+    // -- systemd space escaping -----------------------------------------------
+
+    #[test]
+    fn test_systemd_escape_path_no_spaces() {
+        let p = Path::new("/home/user/.capsem/bin/capsem-service");
+        assert_eq!(systemd_escape_path(p), "/home/user/.capsem/bin/capsem-service");
+    }
+
+    #[test]
+    fn test_systemd_escape_path_with_spaces() {
+        let p = Path::new("/home/John Doe/.capsem/bin/capsem-service");
+        let escaped = systemd_escape_path(p);
+        assert_eq!(escaped, "/home/John\\x20Doe/.capsem/bin/capsem-service");
+        assert!(!escaped.contains(' '), "spaces must be escaped for systemd");
+    }
+
+    #[test]
+    fn test_systemd_unit_with_spaces_in_path() {
+        let unit = generate_systemd_unit(
+            Path::new("/home/John Doe/.capsem/bin/capsem-service"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-process"),
+            Path::new("/home/John Doe/.capsem/assets"),
+        );
+        let exec_line = unit.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
+        // Spaces must be escaped as \x20 in ExecStart
+        assert!(!exec_line.contains("John Doe"), "unescaped space in ExecStart: {}", exec_line);
+        assert!(exec_line.contains("John\\x20Doe"), "missing \\x20 escape: {}", exec_line);
     }
 }
