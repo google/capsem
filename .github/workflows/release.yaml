@@ -300,13 +300,56 @@ jobs:
           cd crates/capsem-app
           cargo tauri build --skip-stapling
 
+      - name: Build companion binaries
+        run: |
+          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-gateway -p capsem-tray
+
+      - name: Codesign companion binaries
+        if: env.APPLE_SIGNING_IDENTITY != ''
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+            codesign --sign "$APPLE_SIGNING_IDENTITY" --entitlements entitlements.plist --force "target/release/$bin"
+          done
+
+      - name: Build .pkg installer
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash scripts/build-pkg.sh \
+            "target/release/bundle/macos/Capsem.app" \
+            "target/release" \
+            "assets" \
+            "$VERSION" \
+            "${{ secrets.APPLE_SIGNING_IDENTITY }}"
+
+      - name: Notarize .pkg
+        if: env.APPLE_API_KEY != ''
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          xcrun notarytool submit "Capsem-$VERSION.pkg" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait --timeout 30m || echo "::warning::Notarization timed out (will complete async)"
+          # Staple the notarization ticket
+          xcrun stapler staple "Capsem-$VERSION.pkg" || echo "::warning::Stapling failed (notarization may still be in progress)"
+
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 
       - name: Collect macOS artifacts
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release-artifacts
           cp target/release/bundle/dmg/*.dmg release-artifacts/
+          if [ -f "Capsem-$VERSION.pkg" ]; then
+            cp "Capsem-$VERSION.pkg" release-artifacts/
+          fi
           cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
 
@@ -421,10 +464,21 @@ jobs:
           cd crates/capsem-app
           cargo tauri build --bundles ${{ matrix.bundles }}
 
+      - name: Build companion binaries
+        run: |
+          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-gateway -p capsem-tray
+
+      - name: Repack .deb with companion binaries
+        run: |
+          DEB_FILE=$(ls target/release/bundle/deb/*.deb)
+          bash scripts/repack-deb.sh "$DEB_FILE" "target/release"
+
       - name: Validate artifacts
         run: |
           echo "=== Validate deb ==="
           dpkg-deb --info target/release/bundle/deb/*.deb
+          echo "=== Verify companion binaries in deb ==="
+          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-gateway|capsem-tray"
 
       - name: Boot test (x86_64)
         if: matrix.arch == 'x86_64'

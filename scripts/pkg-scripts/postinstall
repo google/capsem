@@ -1,0 +1,59 @@
+#!/bin/bash
+# postinstall -- Runs after macOS .pkg installation.
+#
+# The .pkg installs files to /usr/local/share/capsem/. This script copies
+# them to the user's ~/.capsem/ directory, codesigns for Virtualization.framework,
+# registers the LaunchAgent, and runs initial setup.
+#
+# macOS runs postinstall as root with $USER set to the installing user.
+set -euo pipefail
+
+PKG_SHARE="/usr/local/share/capsem"
+USER_HOME=$(eval echo "~$USER")
+CAPSEM_DIR="$USER_HOME/.capsem"
+
+# Create user-level directory layout
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run"
+chown -R "$USER" "$CAPSEM_DIR"
+
+# Copy companion binaries from pkg payload
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+    src="$PKG_SHARE/bin/$bin"
+    if [ -f "$src" ]; then
+        cp "$src" "$CAPSEM_DIR/bin/$bin"
+        chmod 755 "$CAPSEM_DIR/bin/$bin"
+    fi
+done
+
+# Codesign all binaries with virtualization entitlements
+if [ -f "$PKG_SHARE/entitlements.plist" ]; then
+    for bin in "$CAPSEM_DIR/bin"/capsem*; do
+        codesign --sign - --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
+    done
+fi
+
+# Copy assets (manifest + versioned dir)
+if [ -d "$PKG_SHARE/assets" ]; then
+    cp -r "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
+fi
+
+# Fix ownership (we ran as root)
+chown -R "$USER" "$CAPSEM_DIR"
+
+# Add ~/.capsem/bin to PATH in shell profile
+CAPSEM_BIN="$CAPSEM_DIR/bin"
+for PROFILE in "$USER_HOME/.zshrc" "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
+    if [ -f "$PROFILE" ]; then
+        if ! grep -qF '.capsem/bin' "$PROFILE"; then
+            echo 'export PATH="$HOME/.capsem/bin:$PATH"' >> "$PROFILE"
+            chown "$USER" "$PROFILE"
+        fi
+        break
+    fi
+done
+
+# Register LaunchAgent and run setup as the installing user
+su "$USER" -c "$CAPSEM_DIR/bin/capsem service install" 2>/dev/null || true
+su "$USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected" 2>/dev/null || true
+
+exit 0

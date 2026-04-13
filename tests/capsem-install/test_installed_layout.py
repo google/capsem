@@ -37,7 +37,7 @@ class TestInstalledLayoutContract:
     # -- Binaries --
 
     def test_all_binaries_exist(self, installed_layout):
-        """All 4 binaries present in ~/.capsem/bin/."""
+        """All 6 binaries present in ~/.capsem/bin/."""
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"missing: {binary}"

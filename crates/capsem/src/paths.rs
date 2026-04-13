@@ -3,6 +3,12 @@ use anyhow::{Context, Result};
 
 use crate::service_install;
 
+/// Return the capsem home directory (~/.capsem).
+pub fn capsem_home() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    Ok(PathBuf::from(home).join(".capsem"))
+}
+
 /// Resolved paths for capsem binaries and assets.
 #[derive(Debug)]
 pub struct CapsemPaths {
@@ -74,6 +80,13 @@ mod tests {
     // -----------------------------------------------------------------------
     // assets_dir_from_home: the core path contract
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn capsem_home_under_home() {
+        let dir = capsem_home().unwrap();
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(dir, PathBuf::from(home).join(".capsem"));
+    }
 
     #[test]
     fn assets_dir_standard_home() {
@@ -166,7 +179,7 @@ mod tests {
     // must be what discover_paths + service startup consume.
     //
     // Layout:
-    //   ~/.capsem/bin/capsem{,-service,-process,-mcp}
+    //   ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}
     //   ~/.capsem/assets/manifest.json
     //   ~/.capsem/assets/v{VERSION}/{vmlinuz,initrd.img,rootfs.squashfs}
     //   ~/.capsem/run/                     (created at runtime)

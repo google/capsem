@@ -450,6 +450,17 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 install: smoke
     #!/bin/bash
     set -euo pipefail
+    # Stop existing service before overwriting binaries
+    if [ -f "$HOME/.capsem/bin/capsem" ]; then
+        echo "=== Stopping existing service ==="
+        "$HOME/.capsem/bin/capsem" service uninstall 2>/dev/null || true
+        pkill -9 -x capsem-service 2>/dev/null || true
+        pkill -9 -x capsem-gateway 2>/dev/null || true
+        pkill -9 -x capsem-tray 2>/dev/null || true
+        pkill -9 -x capsem-process 2>/dev/null || true
+        sleep 0.5
+        rm -f "$HOME/.capsem/run/service.sock"
+    fi
     echo "=== Installing to ~/.capsem/ ==="
     bash scripts/simulate-install.sh target/debug {{assets_dir}}
     # Sign on macOS (required for Virtualization.framework)
@@ -479,8 +490,29 @@ install: smoke
         fi
     fi
     # Register and start the service + tray via launchd
-    echo "=== Registering capsem service + tray ==="
+    echo "=== Registering capsem service ==="
     "$HOME/.capsem/bin/capsem" service install
+    # Post-install health check
+    echo "=== Verifying service health ==="
+    HEALTHY=false
+    for i in $(seq 1 30); do
+        if [ -S "$HOME/.capsem/run/service.sock" ] && \
+           curl -s --unix-socket "$HOME/.capsem/run/service.sock" --max-time 2 http://localhost/list >/dev/null 2>&1; then
+            echo "Service is responding."
+            HEALTHY=true
+            break
+        fi
+        sleep 0.5
+    done
+    if [ "$HEALTHY" != "true" ]; then
+        echo "WARNING: Service not responding after 15s."
+        echo "Check: ~/Library/Logs/capsem/service.log (macOS) or journalctl --user -u capsem (Linux)"
+    fi
+    # Auto-setup on first install
+    if [ ! -f "$HOME/.capsem/setup-state.json" ]; then
+        echo "=== Running initial setup ==="
+        "$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected
+    fi
 
 # Run install e2e tests in Docker (Linux + systemd)
 test-install: _build-host

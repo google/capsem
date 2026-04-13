@@ -32,26 +32,55 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
 
     // Stop and uninstall service
     println!("Stopping service...");
-    let _ = crate::service_install::uninstall_service().await;
+    if let Err(e) = crate::service_install::uninstall_service().await {
+        eprintln!("Warning: service uninstall failed: {}. Continuing anyway.", e);
+    }
 
-    // Kill any running processes
+    // Kill any running processes (SIGKILL to prevent respawn by KeepAlive)
     let _ = tokio::process::Command::new("pkill")
-        .args(["-f", "capsem-service"])
+        .args(["-9", "-x", "capsem-service"])
         .status()
         .await;
     let _ = tokio::process::Command::new("pkill")
-        .args(["-f", "capsem-process"])
+        .args(["-9", "-x", "capsem-process"])
         .status()
         .await;
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-9", "-x", "capsem-gateway"])
+        .status()
+        .await;
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-9", "-x", "capsem-tray"])
+        .status()
+        .await;
+
+    // Brief wait for processes to die before removing files
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Remove binaries from the detected install location
+    const CAPSEM_BINARIES: &[&str] = &[
+        "capsem", "capsem-service", "capsem-process", "capsem-mcp",
+        "capsem-gateway", "capsem-tray",
+    ];
     if let Some(bin_dir) = platform::install_bin_dir() {
         if bin_dir.exists() {
             println!("Removing binaries from {}...", bin_dir.display());
-            std::fs::remove_dir_all(&bin_dir).ok();
+            match platform::detect_install_layout() {
+                platform::InstallLayout::MacosPkg => {
+                    // NEVER remove_dir_all on a shared dir like /usr/local/bin.
+                    // Remove only known capsem binaries.
+                    for name in CAPSEM_BINARIES {
+                        std::fs::remove_file(bin_dir.join(name)).ok();
+                    }
+                }
+                _ => {
+                    // UserDir layout: ~/.capsem/bin/ is ours entirely
+                    std::fs::remove_dir_all(&bin_dir).ok();
+                }
+            }
         }
     } else {
-        // Fallback: remove ~/.capsem/bin if present
+        // Development layout: remove ~/.capsem/bin if present
         let bin_dir = capsem_dir.join("bin");
         if bin_dir.exists() {
             println!("Removing binaries...");

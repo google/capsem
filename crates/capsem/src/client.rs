@@ -358,7 +358,22 @@ impl UdsClient {
         };
 
         let res = sender.send_request(req).await?;
+        let status = res.status();
         let body_bytes = res.collect().await?.to_bytes();
+
+        // Check HTTP status before deserializing. Non-2xx responses are errors
+        // regardless of body shape (fixes untagged enum mismatch when T = Value).
+        if !status.is_success() {
+            if let Ok(err) = serde_json::from_slice::<ErrorResponse>(&body_bytes) {
+                return Err(anyhow::anyhow!(err.error));
+            }
+            return Err(anyhow::anyhow!(
+                "request failed ({}): {}",
+                status,
+                String::from_utf8_lossy(&body_bytes)
+            ));
+        }
+
         serde_json::from_slice(&body_bytes).map_err(|e| {
             anyhow::anyhow!(
                 "failed to parse response: {e}. Body: {:?}",

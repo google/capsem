@@ -546,6 +546,27 @@ async fn main() -> Result<()> {
         _ => {}
     }
 
+    // Auto-setup on first use: if setup-state.json doesn't exist, the user
+    // hasn't run `capsem setup` yet. Run non-interactive setup so service
+    // registration, asset download, and credential detection happen automatically.
+    // Skip when --uds-path is explicit (tests, CI, custom service).
+    if auto_launch {
+        let setup_done = paths::capsem_home()
+            .map(|d| d.join("setup-state.json").exists())
+            .unwrap_or(false);
+        if !setup_done {
+            eprintln!("First run detected. Running initial setup...");
+            eprintln!("(Run `capsem setup` to reconfigure later)\n");
+            setup::run_setup(setup::SetupOptions {
+                non_interactive: true,
+                preset: None,
+                force: false,
+                accept_detected: true,
+                corp_config: None,
+            }).await?;
+        }
+    }
+
     let client = UdsClient::new(uds_path, auto_launch);
 
     match &cli.command {

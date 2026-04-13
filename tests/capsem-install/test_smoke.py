@@ -32,7 +32,7 @@ class TestHarnessSmoke:
         )
 
     def test_installed_layout_has_binaries(self, installed_layout):
-        """All 4 binaries are present after simulate-install.sh."""
+        """All 6 binaries are present after simulate-install.sh."""
         from conftest import BINARIES, INSTALL_DIR
 
         for name in BINARIES:

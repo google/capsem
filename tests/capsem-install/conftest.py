@@ -21,7 +21,7 @@ ASSETS_DIR = Path.home() / ".capsem" / "assets"
 RUN_DIR = Path.home() / ".capsem" / "run"
 CAPSEM_DIR = Path.home() / ".capsem"
 
-BINARIES = ["capsem", "capsem-service", "capsem-process", "capsem-mcp"]
+BINARIES = ["capsem", "capsem-service", "capsem-process", "capsem-mcp", "capsem-gateway", "capsem-tray"]
 DEFAULT_TIMEOUT = 30
 
 
@@ -45,7 +45,7 @@ def get_build_hash() -> str:
 
 
 def _kill_service() -> None:
-    """Kill any running capsem-service process."""
+    """Kill any running capsem-service and companion processes."""
     pidfile = RUN_DIR / "service.pid"
     if pidfile.exists():
         try:
@@ -55,11 +55,12 @@ def _kill_service() -> None:
             pass
         pidfile.unlink(missing_ok=True)
 
-    # Also kill by name as fallback
-    subprocess.run(
-        ["pkill", "-f", "capsem-service"],
-        capture_output=True,
-    )
+    # Also kill by name as fallback (service + companions)
+    for proc_name in ["capsem-service", "capsem-gateway", "capsem-tray", "capsem-process"]:
+        subprocess.run(
+            ["pkill", "-f", proc_name],
+            capture_output=True,
+        )
 
     # Remove stale socket
     sock = RUN_DIR / "service.sock"
@@ -71,7 +72,7 @@ def installed_layout() -> Path:
     """Install capsem binaries via simulate-install.sh.
 
     Session-scoped: runs once, all tests share the installed layout.
-    Asserts all 4 binaries and the install directory exist.
+    Asserts all 6 binaries and the install directory exist.
     """
     # Find the source directories -- in Docker these are under /src/target/debug
     # and /src/assets respectively. Locally they may vary.
