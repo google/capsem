@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **CLI: simplified command structure** -- removed `service` subcommand group; `install`, `status`, `start`, `stop` are now top-level commands. Removed session-level `stop` (use `suspend` or `delete`) and `status` (use `info`). Removed `start` alias from `create`. Renamed all "sandbox" terminology to "session". Session identifier parameter shows as `<SESSION>` in help.
+- **CLI: enriched `list` output** -- table now shows NAME, STATUS, RAM, CPUs, and UPTIME columns instead of the old ID/STATUS/PERSIST/PID.
+- **CLI: enriched `info` output** -- shows formatted session details with telemetry (tokens, cost, tool calls, requests) instead of raw JSON. Use `--json` for machine-readable output.
+- **CLI: service start/stop** -- new `capsem start` and `capsem stop` commands to start/stop the background daemon via launchctl (macOS) or systemctl (Linux).
+- **MCP: tool descriptions updated** -- all tool descriptions now use "session" instead of "VM" or "sandbox".
+
+### Fixed
+- **tray: icon stays white template** -- tray icon no longer switches to a dark non-template icon when VMs are running. Always uses the template icon so macOS adapts it to menu bar appearance.
+- **tray: VM names no longer truncated** -- VM labels in the tray menu now show the full name or ID instead of truncating to 8 characters.
+- **tray: unified "New Session" action** -- replaced "New Temporary" and "New Permanent..." menu items with a single "New Session" that creates a session (save it to make it permanent).
+
 ### Added
 - **VM identity: fun temporary names** -- ephemeral VMs get memorable names like `tmp-brave-falcon` instead of opaque `vm-1712345678`. Persistent VMs keep user-chosen names. Shell prompt now shows the VM name (hostname) instead of static "capsem".
 - **VM identity: host timezone injection** -- guest VMs inherit the host's timezone at boot via `TZ` env var and `/etc/localtime`. `date` inside the VM now shows local time instead of UTC. Clock and timezone are also resynced on resume from suspend.

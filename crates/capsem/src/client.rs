@@ -53,8 +53,10 @@ pub struct ForkResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SandboxInfo {
+pub struct SessionInfo {
     pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
     pub pid: u32,
     pub status: String,
     #[serde(default)]
@@ -69,11 +71,36 @@ pub struct SandboxInfo {
     pub forked_from: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub uptime_secs: Option<u64>,
+    #[serde(default)]
+    pub total_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub total_output_tokens: Option<u64>,
+    #[serde(default)]
+    pub total_estimated_cost: Option<f64>,
+    #[serde(default)]
+    pub total_tool_calls: Option<u64>,
+    #[serde(default)]
+    pub total_mcp_calls: Option<u64>,
+    #[serde(default)]
+    pub total_requests: Option<u64>,
+    #[serde(default)]
+    pub allowed_requests: Option<u64>,
+    #[serde(default)]
+    pub denied_requests: Option<u64>,
+    #[serde(default)]
+    pub total_file_events: Option<u64>,
+    #[serde(default)]
+    pub model_call_count: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ListResponse {
-    pub sandboxes: Vec<SandboxInfo>,
+    #[serde(rename = "sandboxes")]
+    pub sessions: Vec<SessionInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -165,14 +192,14 @@ pub fn parse_env_vars(env: &[String]) -> Result<Option<HashMap<String, String>>>
     Ok(Some(map))
 }
 
-/// Validate that a sandbox ID is safe for path construction.
-/// Rejects IDs containing path separators or traversal sequences.
+/// Validate that a session identifier is safe for path construction.
+/// Rejects identifiers containing path separators or traversal sequences.
 pub fn validate_id(id: &str) -> Result<()> {
     if id.is_empty() {
-        anyhow::bail!("sandbox ID cannot be empty");
+        anyhow::bail!("session identifier cannot be empty");
     }
     if id.contains('/') || id.contains('\\') || id.contains("..") || id.contains('\0') {
-        anyhow::bail!("invalid sandbox ID: {}", id);
+        anyhow::bail!("invalid session identifier: {}", id);
     }
     Ok(())
 }
@@ -268,7 +295,7 @@ impl UdsClient {
                 Err(e) => {
                     return Err(anyhow::anyhow!(
                         "Service manager start failed: {}. \
-                         Check logs or reinstall with `capsem service install`",
+                         Check logs or reinstall with `capsem install`",
                         e
                     ));
                 }
@@ -427,7 +454,7 @@ mod tests {
     #[test]
     fn validate_id_rejects_empty() {
         let err = validate_id("").unwrap_err();
-        assert!(err.to_string().contains("cannot be empty"));
+        assert!(err.to_string().contains("cannot be empty"), "{}", err);
     }
 
     #[test]
@@ -651,19 +678,22 @@ mod tests {
     #[test]
     fn list_response_empty_serde() {
         let resp = ListResponse {
-            sandboxes: vec![],
+            sessions: vec![],
         };
         let json = serde_json::to_string(&resp).unwrap();
+        // Wire format uses "sandboxes" key
+        assert!(json.contains("sandboxes"));
         let resp2: ListResponse = serde_json::from_str(&json).unwrap();
-        assert!(resp2.sandboxes.is_empty());
+        assert!(resp2.sessions.is_empty());
     }
 
     #[test]
     fn list_response_with_entries() {
         let resp = ListResponse {
-            sandboxes: vec![
-                SandboxInfo {
+            sessions: vec![
+                SessionInfo {
                     id: "vm-1".into(),
+                    name: None,
                     pid: 100,
                     status: "Running".into(),
                     persistent: false,
@@ -672,9 +702,22 @@ mod tests {
                     version: Some("0.16.1".into()),
                     forked_from: None,
                     description: None,
+                    created_at: None,
+                    uptime_secs: Some(3600),
+                    total_input_tokens: None,
+                    total_output_tokens: None,
+                    total_estimated_cost: None,
+                    total_tool_calls: None,
+                    total_mcp_calls: None,
+                    total_requests: None,
+                    allowed_requests: None,
+                    denied_requests: None,
+                    total_file_events: None,
+                    model_call_count: None,
                 },
-                SandboxInfo {
+                SessionInfo {
                     id: "mydev".into(),
+                    name: Some("mydev".into()),
                     pid: 0,
                     status: "Stopped".into(),
                     persistent: true,
@@ -683,16 +726,28 @@ mod tests {
                     version: None,
                     forked_from: None,
                     description: None,
+                    created_at: None,
+                    uptime_secs: None,
+                    total_input_tokens: None,
+                    total_output_tokens: None,
+                    total_estimated_cost: None,
+                    total_tool_calls: None,
+                    total_mcp_calls: None,
+                    total_requests: None,
+                    allowed_requests: None,
+                    denied_requests: None,
+                    total_file_events: None,
+                    model_call_count: None,
                 },
             ],
         };
         let json = serde_json::to_string(&resp).unwrap();
         let resp2: ListResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp2.sandboxes.len(), 2);
-        assert_eq!(resp2.sandboxes[0].id, "vm-1");
-        assert!(!resp2.sandboxes[0].persistent);
-        assert_eq!(resp2.sandboxes[1].id, "mydev");
-        assert!(resp2.sandboxes[1].persistent);
+        assert_eq!(resp2.sessions.len(), 2);
+        assert_eq!(resp2.sessions[0].id, "vm-1");
+        assert!(!resp2.sessions[0].persistent);
+        assert_eq!(resp2.sessions[1].id, "mydev");
+        assert!(resp2.sessions[1].persistent);
     }
 
     #[test]
@@ -701,7 +756,7 @@ mod tests {
         let json = r#"{"sandboxes":[]}"#;
         let resp: ApiResponse<ListResponse> = serde_json::from_str(json).unwrap();
         let list = resp.into_result().unwrap();
-        assert!(list.sandboxes.is_empty());
+        assert!(list.sessions.is_empty());
     }
 
     #[test]
@@ -851,15 +906,20 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_info_defaults() {
+    fn session_info_defaults() {
         // Missing optional fields should deserialize with defaults
         let json = r#"{"id":"vm-1","pid":0,"status":"Running"}"#;
-        let info: SandboxInfo = serde_json::from_str(json).unwrap();
+        let info: SessionInfo = serde_json::from_str(json).unwrap();
         assert_eq!(info.id, "vm-1");
         assert!(!info.persistent);
         assert!(info.ram_mb.is_none());
         assert!(info.cpus.is_none());
         assert!(info.version.is_none());
+        assert!(info.name.is_none());
+        assert!(info.created_at.is_none());
+        assert!(info.uptime_secs.is_none());
+        assert!(info.total_input_tokens.is_none());
+        assert!(info.total_estimated_cost.is_none());
     }
 
 }

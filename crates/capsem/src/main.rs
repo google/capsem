@@ -16,7 +16,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use client::{
     ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
     ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
-    ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SandboxInfo, UdsClient,
+    ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
 };
 
 
@@ -58,34 +58,32 @@ const fn cli_styles() -> Styles {
 }
 
 const GROUPED_HELP: &str = "\
-\x1b[36;1;4mSandbox Commands:\x1b[0m
-  \x1b[32;1mcreate\x1b[0m       Create and boot a new sandbox
-  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a sandbox
-  \x1b[32;1mresume\x1b[0m       Resume a stopped sandbox or attach to a running one
-  \x1b[32;1mstop\x1b[0m         Stop a running sandbox
-  \x1b[32;1msuspend\x1b[0m      Suspend a running sandbox to disk
-  \x1b[32;1mrestart\x1b[0m      Restart a persistent sandbox (stop + resume)
-  \x1b[32;1mexec\x1b[0m         Execute a command in a running sandbox
-  \x1b[32;1mrun\x1b[0m          Run a command in a fresh sandbox (destroyed after)
-  \x1b[32;1mlist\x1b[0m         List all sandboxes (running + stopped persistent)
-  \x1b[32;1mstatus\x1b[0m       Show the status of a sandbox
-  \x1b[32;1minfo\x1b[0m         Show detailed information about a sandbox
-  \x1b[32;1mlogs\x1b[0m         Show logs from a sandbox
-  \x1b[32;1mdelete\x1b[0m       Delete a sandbox and all its state
-  \x1b[32;1mfork\x1b[0m         Fork a sandbox into a reusable snapshot
-  \x1b[32;1mpersist\x1b[0m      Promote an ephemeral sandbox to persistent
-  \x1b[32;1mpurge\x1b[0m        Destroy all temporary sandboxes
+\x1b[36;1;4mSession Commands:\x1b[0m
+  \x1b[32;1mcreate\x1b[0m       Create and boot a new session
+  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a session
+  \x1b[32;1mresume\x1b[0m       Resume a suspended session or attach to a running one
+  \x1b[32;1msuspend\x1b[0m      Suspend a running session to disk
+  \x1b[32;1mrestart\x1b[0m      Restart a persistent session (reboot)
+  \x1b[32;1mexec\x1b[0m         Execute a command in a running session
+  \x1b[32;1mrun\x1b[0m          Run a command in a fresh session (destroyed after)
+  \x1b[32;1mlist\x1b[0m         List all sessions (running + suspended persistent)
+  \x1b[32;1minfo\x1b[0m         Show detailed information about a session
+  \x1b[32;1mlogs\x1b[0m         Show logs from a session
+  \x1b[32;1mdelete\x1b[0m       Delete a session and all its state
+  \x1b[32;1mfork\x1b[0m         Fork a session into a reusable snapshot
+  \x1b[32;1mpersist\x1b[0m      Promote an ephemeral session to persistent
+  \x1b[32;1mpurge\x1b[0m        Destroy all temporary sessions
 
 \x1b[36;1;4mService:\x1b[0m
-  \x1b[32;1mservice\x1b[0m      Manage the capsem background daemon
-               \u{251c}\u{2500} \x1b[32;1minstall\x1b[0m    Install as a system service (LaunchAgent / systemd)
-               \u{251c}\u{2500} \x1b[32;1muninstall\x1b[0m  Remove the system service
-               \u{2514}\u{2500} \x1b[32;1mstatus\x1b[0m     Show service installation and runtime status
+  \x1b[32;1minstall\x1b[0m      Install as a system service (LaunchAgent / systemd)
+  \x1b[32;1mstatus\x1b[0m       Show service status
+  \x1b[32;1mstart\x1b[0m        Start the background service
+  \x1b[32;1mstop\x1b[0m         Stop the background service
 
 \x1b[36;1;4mMisc:\x1b[0m
   \x1b[32;1msetup\x1b[0m        Run the first-time setup wizard
   \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
-  \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh sandbox
+  \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh session
   \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
   \x1b[32;1mversion\x1b[0m      Show version and build information
   \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
@@ -114,25 +112,20 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     #[command(flatten)]
-    Sandbox(SandboxCommands),
-
-    /// Manage the capsem background daemon
-    #[command(subcommand)]
-    Service(ServiceCommands),
+    Session(SessionCommands),
 
     #[command(flatten)]
     Misc(MiscCommands),
 }
 
 #[derive(Subcommand)]
-enum SandboxCommands {
-    /// Create and boot a new sandbox
+enum SessionCommands {
+    /// Create and boot a new session
     ///
-    /// VMs are ephemeral by default and destroyed on stop. Use -n <name> to
-    /// create a persistent sandbox that survives stop/resume cycles.
-    #[command(alias = "start")]
+    /// Sessions are ephemeral by default and destroyed on delete. Use -n <name> to
+    /// create a persistent session that survives suspend/resume cycles.
     Create {
-        /// Name for the sandbox (makes it persistent -- "if you name it, you keep it")
+        /// Name for the session (makes it persistent -- "if you name it, you keep it")
         #[arg(short = 'n', long)]
         name: Option<String>,
         /// RAM in GB
@@ -144,60 +137,56 @@ enum SandboxCommands {
         /// Set environment variables (repeatable: -e KEY=VALUE)
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
-        /// Clone state from an existing persistent sandbox
+        /// Clone state from an existing persistent session
         #[arg(long, alias = "image")]
         from: Option<String>,
     },
-    /// Open an interactive shell in a sandbox
+    /// Open an interactive shell in a session
     ///
-    /// With no arguments, creates a temporary sandbox (destroyed on exit).
-    /// Pass an ID or --name to attach to an existing running sandbox.
+    /// With no arguments, creates a temporary session (destroyed on exit).
+    /// Pass a session name/ID or --name to attach to an existing running session.
     Shell {
-        /// Find by name (for persistent sandboxes)
+        /// Find by name (for persistent sessions)
         #[arg(short = 'n', long)]
         name: Option<String>,
-        /// ID of the sandbox (positional)
-        id: Option<String>,
+        /// Name or ID of the session (positional)
+        #[arg(value_name = "SESSION")]
+        session: Option<String>,
     },
-    /// Resume a stopped sandbox or attach to a running one
+    /// Resume a suspended session or attach to a running one
     #[command(alias = "attach")]
     Resume {
-        /// Name of the persistent sandbox
+        /// Name of the persistent session
         name: String,
     },
-    /// Stop a running sandbox
+    /// Suspend a running session to disk
     ///
-    /// Persistent sandboxes preserve their disk state; ephemeral ones are destroyed.
-    Stop {
-        /// ID or name of the sandbox
-        id: String,
-    },
-    /// Suspend a running sandbox to disk
-    ///
-    /// Saves RAM and CPU state. Only persistent sandboxes can be suspended.
+    /// Saves RAM and CPU state. Only persistent sessions can be suspended.
     Suspend {
-        /// ID or name of the sandbox
-        id: String,
+        /// Name or ID of the session
+        #[arg(value_name = "SESSION")]
+        session: String,
     },
-    /// Restart a persistent sandbox (stop + resume)
+    /// Restart a persistent session (reboot)
     Restart {
-        /// Name of the persistent sandbox
+        /// Name of the persistent session
         name: String,
     },
-    /// Execute a command in a running sandbox
+    /// Execute a command in a running session
     Exec {
-        /// ID or name of the sandbox
-        id: String,
+        /// Name or ID of the session
+        #[arg(value_name = "SESSION")]
+        session: String,
         /// Command to execute
         command: String,
         /// Timeout in seconds (default 30)
         #[arg(long, default_value_t = 30)]
         timeout: u64,
     },
-    /// Run a command in a fresh sandbox (destroyed after)
+    /// Run a command in a fresh session (destroyed after)
     ///
-    /// Creates a temporary sandbox, runs the command, prints output, and
-    /// destroys the sandbox. Useful for one-shot tasks and CI pipelines.
+    /// Creates a temporary session, runs the command, prints output, and
+    /// destroys the session. Useful for one-shot tasks and CI pipelines.
     Run {
         /// Command to execute
         command: String,
@@ -208,65 +197,68 @@ enum SandboxCommands {
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
     },
-    /// List all sandboxes (running + stopped persistent)
+    /// List all sessions (running + suspended persistent)
     #[command(alias = "ls")]
     List {
         /// Print only IDs, one per line (for scripting)
         #[arg(short, long)]
         quiet: bool,
     },
-    /// Show the status of a sandbox
-    Status {
-        /// ID or name of the sandbox
-        id: String,
-    },
-    /// Show detailed information about a sandbox
+    /// Show detailed information about a session
     Info {
-        /// ID or name of the sandbox
-        id: String,
+        /// Name or ID of the session
+        #[arg(value_name = "SESSION")]
+        session: String,
+        /// Output as JSON (for scripting)
+        #[arg(long)]
+        json: bool,
     },
-    /// Show logs from a sandbox
+    /// Show logs from a session
     ///
     /// Displays both serial console and process logs.
     Logs {
-        /// ID or name of the sandbox
-        id: String,
+        /// Name or ID of the session
+        #[arg(value_name = "SESSION")]
+        session: String,
         /// Show only the last N lines
         #[arg(long)]
         tail: Option<usize>,
     },
-    /// Delete a sandbox and all its state
+    /// Delete a session and all its state
     #[command(alias = "rm")]
     Delete {
-        /// ID or name of the sandbox
-        id: String,
+        /// Name or ID of the session
+        #[arg(value_name = "SESSION")]
+        session: String,
     },
-    /// Fork a sandbox into a new stopped sandbox
+    /// Fork a session into a new persistent session
     ///
-    /// Creates a point-in-time copy of the sandbox's disk state as a new
-    /// persistent sandbox. Boot it with `capsem resume <name>` or clone
+    /// Creates a point-in-time copy of the session's disk state as a new
+    /// persistent session. Boot it with `capsem resume <name>` or clone
     /// with `capsem create --from <name>`.
     Fork {
-        /// ID or name of the sandbox to fork
-        id: String,
-        /// Name for the new sandbox
+        /// Name or ID of the session to fork
+        #[arg(value_name = "SESSION")]
+        session: String,
+        /// Name for the new session
         name: String,
         /// Optional description
         #[arg(short, long)]
         description: Option<String>,
     },
-    /// Promote an ephemeral sandbox to persistent
+    /// Promote an ephemeral session to persistent
     Persist {
-        /// ID of the running ephemeral sandbox
-        id: String,
+        /// Name or ID of the running ephemeral session
+        #[arg(value_name = "SESSION")]
+        session: String,
         /// Name to assign
         name: String,
     },
-    /// Destroy all temporary sandboxes
+    /// Destroy all temporary sessions
     ///
-    /// Use --all to also destroy persistent sandboxes (requires confirmation).
+    /// Use --all to also destroy persistent sessions (requires confirmation).
     Purge {
-        /// Also destroy persistent sandboxes (requires confirmation)
+        /// Also destroy persistent sessions (requires confirmation)
         #[arg(long, default_value_t = false)]
         all: bool,
     },
@@ -298,9 +290,9 @@ enum MiscCommands {
         #[arg(long, short)]
         yes: bool,
     },
-    /// Run diagnostic tests in a fresh sandbox
+    /// Run diagnostic tests in a fresh session
     ///
-    /// Boots a temporary sandbox, runs the capsem-doctor test suite, and reports
+    /// Boots a temporary session, runs the capsem-doctor test suite, and reports
     /// results. Use --fast to skip slow network tests.
     Doctor {
         /// Skip slow tests (throughput download, etc.)
@@ -321,16 +313,102 @@ enum MiscCommands {
         #[arg(long, short)]
         yes: bool,
     },
-}
-
-#[derive(Subcommand)]
-enum ServiceCommands {
     /// Install capsem as a system service (LaunchAgent on macOS, systemd on Linux)
     Install,
-    /// Uninstall the capsem system service
-    Uninstall,
     /// Show service installation and runtime status
     Status,
+    /// Start the background service
+    Start,
+    /// Stop the background service
+    Stop,
+}
+
+fn format_uptime(secs: Option<u64>) -> String {
+    match secs {
+        None | Some(0) => "-".into(),
+        Some(s) => {
+            let days = s / 86400;
+            let hours = (s % 86400) / 3600;
+            let mins = (s % 3600) / 60;
+            if days > 0 {
+                format!("{}d {}h", days, hours)
+            } else if hours > 0 {
+                format!("{}h {:02}m", hours, mins)
+            } else {
+                format!("{}m", mins.max(1))
+            }
+        }
+    }
+}
+
+fn print_session_info(info: &SessionInfo) {
+    println!("Session: {}", info.id);
+    if let Some(name) = &info.name {
+        println!("Name:    {}", name);
+    }
+    println!("Status:  {}", info.status);
+    if info.pid > 0 {
+        println!("PID:     {}", info.pid);
+    }
+
+    if info.ram_mb.is_some() || info.cpus.is_some() || info.version.is_some() {
+        println!();
+        if let Some(ram) = info.ram_mb {
+            println!("RAM:     {} GB", ram / 1024);
+        }
+        if let Some(cpus) = info.cpus {
+            println!("CPUs:    {}", cpus);
+        }
+        if let Some(ver) = &info.version {
+            println!("Version: {}", ver);
+        }
+    }
+
+    if let Some(from) = &info.forked_from {
+        println!("Forked:  {}", from);
+    }
+    if let Some(desc) = &info.description {
+        println!("Desc:    {}", desc);
+    }
+
+    let has_telemetry = info.created_at.is_some()
+        || info.uptime_secs.is_some()
+        || info.total_input_tokens.is_some()
+        || info.total_tool_calls.is_some();
+    if has_telemetry {
+        println!();
+        println!("Telemetry:");
+        if let Some(created) = &info.created_at {
+            println!("  Created:       {}", created);
+        }
+        if let Some(secs) = info.uptime_secs {
+            println!("  Uptime:        {}", format_uptime(Some(secs)));
+        }
+        if let Some(inp) = info.total_input_tokens {
+            println!("  Input Tokens:  {}", inp);
+        }
+        if let Some(out) = info.total_output_tokens {
+            println!("  Output Tokens: {}", out);
+        }
+        if let Some(cost) = info.total_estimated_cost {
+            println!("  Est. Cost:     ${:.2}", cost);
+        }
+        if let Some(tc) = info.total_tool_calls {
+            println!("  Tool Calls:    {}", tc);
+        }
+        if let Some(mc) = info.total_mcp_calls {
+            println!("  MCP Calls:     {}", mc);
+        }
+        if info.total_requests.is_some() || info.allowed_requests.is_some() {
+            let total = info.total_requests.unwrap_or(0);
+            let allowed = info.allowed_requests.unwrap_or(0);
+            let denied = info.denied_requests.unwrap_or(0);
+            println!("  Requests:      {} ({} allowed, {} denied)", total, allowed, denied);
+        }
+        if let Some(fe) = info.total_file_events {
+            println!("  File Events:   {}", fe);
+        }
+    }
 }
 
 async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
@@ -342,7 +420,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     client::validate_id(id)?;
     let sock_path = run_dir.join("instances").join(format!("{}.sock", id));
     if !sock_path.exists() {
-        anyhow::bail!("Sandbox socket not found at: {}", sock_path.display());
+        anyhow::bail!("Session socket not found at: {}", sock_path.display());
     }
 
     let stream = tokio::net::UnixStream::connect(&sock_path).await.context("failed to connect to sandbox")?;
@@ -496,28 +574,31 @@ async fn main() -> Result<()> {
             );
             return Ok(());
         }
-        Commands::Service(cmd) => {
-            match cmd {
-                ServiceCommands::Install => {
-                    service_install::install_service().await?;
-                    println!("Service installed.");
-                }
-                ServiceCommands::Uninstall => {
-                    service_install::uninstall_service().await?;
-                    println!("Service uninstalled.");
-                }
-                ServiceCommands::Status => {
-                    let status = service_install::service_status().await?;
-                    println!("Installed: {}", status.installed);
-                    println!("Running:   {}", status.running);
-                    if let Some(pid) = status.pid {
-                        println!("PID:       {}", pid);
-                    }
-                    if let Some(path) = &status.unit_path {
-                        println!("Unit:      {}", path.display());
-                    }
-                }
+        Commands::Misc(MiscCommands::Install) => {
+            service_install::install_service().await?;
+            println!("Service installed.");
+            return Ok(());
+        }
+        Commands::Misc(MiscCommands::Status) => {
+            let status = service_install::service_status().await?;
+            println!("Installed: {}", status.installed);
+            println!("Running:   {}", status.running);
+            if let Some(pid) = status.pid {
+                println!("PID:       {}", pid);
             }
+            if let Some(path) = &status.unit_path {
+                println!("Unit:      {}", path.display());
+            }
+            return Ok(());
+        }
+        Commands::Misc(MiscCommands::Start) => {
+            service_install::start_service().await?;
+            println!("Service started.");
+            return Ok(());
+        }
+        Commands::Misc(MiscCommands::Stop) => {
+            service_install::stop_service().await?;
+            println!("Service stopped.");
             return Ok(());
         }
         Commands::Misc(MiscCommands::Completions { shell }) => {
@@ -570,7 +651,7 @@ async fn main() -> Result<()> {
     let client = UdsClient::new(uds_path, auto_launch);
 
     match &cli.command {
-        Commands::Sandbox(SandboxCommands::Create { name, ram, cpu, env, from }) => {
+        Commands::Session(SessionCommands::Create { name, ram, cpu, env, from }) => {
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
                 name: name.clone(),
@@ -590,48 +671,40 @@ async fn main() -> Result<()> {
                 println!("{}", info.id);
             }
         }
-        Commands::Sandbox(SandboxCommands::Fork { id, name, description }) => {
-            client::validate_id(id)?;
+        Commands::Session(SessionCommands::Fork { session, name, description }) => {
+            client::validate_id(session)?;
             let req = ForkRequest {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let resp: ApiResponse<ForkResponse> = client.post(&format!("/fork/{}", id), &req).await?;
+            let resp: ApiResponse<ForkResponse> = client.post(&format!("/fork/{}", session), &req).await?;
             let info = resp.into_result()?;
             let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
-            println!("Forked sandbox '{}' from '{}' ({:.1} MB)", info.name, id, size_mb);
+            println!("Forked session '{}' from '{}' ({:.1} MB)", info.name, session, size_mb);
         }
-        Commands::Sandbox(SandboxCommands::Resume { name }) => {
+        Commands::Session(SessionCommands::Resume { name }) => {
             client::validate_id(name)?;
             let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
         }
-        Commands::Sandbox(SandboxCommands::Stop { id }) => {
-            client::validate_id(id)?;
-            println!("Stopping sandbox: {}", id);
-            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", id), &serde_json::json!({})).await?;
+        Commands::Session(SessionCommands::Suspend { session }) => {
+            client::validate_id(session)?;
+            println!("Suspending session: {}", session);
+            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/suspend/{}", session), &serde_json::json!({})).await?;
             resp.into_result()?;
-            println!("Sandbox stopped.");
+            println!("Session suspended.");
         }
-        Commands::Sandbox(SandboxCommands::Suspend { id }) => {
-            client::validate_id(id)?;
-            println!("Suspending sandbox: {}", id);
-            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/suspend/{}", id), &serde_json::json!({})).await?;
-            resp.into_result()?;
-            println!("Sandbox suspended.");
-        }
-        Commands::Sandbox(SandboxCommands::Shell { name, id }) => {
-            let target = name.as_ref().or(id.as_ref());
+        Commands::Session(SessionCommands::Shell { name, session }) => {
+            let target = name.as_ref().or(session.as_ref());
             match target {
                 Some(t) => {
-                    // Attach to existing VM
                     client::validate_id(t)?;
                     run_shell(t, &run_dir).await?;
                 }
                 None => {
-                    // No args: create ephemeral VM, attach, destroy on exit
-                    println!("[!] Temporary VM. Use `capsem create -n <name>` for persistent.");
+                    // No args: create ephemeral session, attach, destroy on exit
+                    println!("[!] Temporary session. Use `capsem create -n <name>` for persistent.");
                     let req = ProvisionRequest {
                         name: None,
                         ram_mb: 4 * 1024,
@@ -644,7 +717,6 @@ async fn main() -> Result<()> {
                     let info = resp.into_result()?;
 
                     // Poll until the socket is connectable (not just present on disk).
-                    // The file appears at bind() time, but connect() fails until listen().
                     let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
                     let sp = socket_path.clone();
                     let _ = capsem_core::poll::poll_until(
@@ -667,43 +739,35 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Sandbox(SandboxCommands::List { quiet }) => {
+        Commands::Session(SessionCommands::List { quiet }) => {
             let resp: ApiResponse<ListResponse> = client.get("/list").await?;
             let resp = resp.into_result()?;
             if *quiet {
-                for s in resp.sandboxes {
+                for s in &resp.sessions {
                     println!("{}", s.id);
                 }
-            } else if resp.sandboxes.is_empty() {
-                println!("No sandboxes.");
+            } else if resp.sessions.is_empty() {
+                println!("No sessions.");
             } else {
-                println!("{:<20} {:<10} {:<10} {:<10}", "ID", "STATUS", "PERSIST", "PID");
-                for s in resp.sandboxes {
-                    let persist = if s.persistent { "yes" } else { "-" };
-                    let pid_str = if s.pid > 0 { s.pid.to_string() } else { "-".to_string() };
-                    println!("{:<20} {:<10} {:<10} {:<10}", s.id, s.status, persist, pid_str);
+                println!("{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                    "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME");
+                for s in &resp.sessions {
+                    let name = s.name.as_deref().unwrap_or("-");
+                    let ram = s.ram_mb.map(|mb| format!("{} GB", mb / 1024)).unwrap_or_else(|| "-".into());
+                    let cpus = s.cpus.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
+                    let uptime = format_uptime(s.uptime_secs);
+                    println!("{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                        s.id, name, s.status, ram, cpus, uptime);
                 }
             }
         }
-        Commands::Sandbox(SandboxCommands::Status { id }) => {
-            client::validate_id(id)?;
-            let resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", id)).await?;
-            let info = resp.into_result()?;
-            println!("ID: {}", info.id);
-            println!("PID: {}", info.pid);
-            println!("Status: {}", info.status);
-            println!("Persistent: {}", info.persistent);
-            if let Some(ram) = info.ram_mb { println!("RAM: {} MB", ram); }
-            if let Some(cpus) = info.cpus { println!("CPUs: {}", cpus); }
-            if let Some(ver) = &info.version { println!("Version: {}", ver); }
-        }
-        Commands::Sandbox(SandboxCommands::Exec { id, command, timeout }) => {
-            client::validate_id(id)?;
+        Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
+            client::validate_id(session)?;
             let req = ExecRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
             };
-            let resp: ApiResponse<ExecResponse> = client.post(&format!("/exec/{}", id), req).await?;
+            let resp: ApiResponse<ExecResponse> = client.post(&format!("/exec/{}", session), req).await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);
@@ -713,7 +777,7 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Sandbox(SandboxCommands::Run { command, timeout, env }) => {
+        Commands::Session(SessionCommands::Run { command, timeout, env }) => {
             let req = RunRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
@@ -729,29 +793,29 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Sandbox(SandboxCommands::Delete { id }) => {
-            client::validate_id(id)?;
-            println!("Deleting sandbox: {}", id);
-            let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/delete/{}", id)).await?;
+        Commands::Session(SessionCommands::Delete { session }) => {
+            client::validate_id(session)?;
+            println!("Deleting session: {}", session);
+            let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/delete/{}", session)).await?;
             resp.into_result()?;
-            println!("Sandbox deleted.");
+            println!("Session deleted.");
         }
-        Commands::Sandbox(SandboxCommands::Persist { id, name }) => {
-            client::validate_id(id)?;
+        Commands::Session(SessionCommands::Persist { session, name }) => {
+            client::validate_id(session)?;
             let req = PersistRequest { name: name.clone() };
-            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/persist/{}", id), &req).await?;
+            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/persist/{}", session), &req).await?;
             resp.into_result()?;
-            println!("[*] VM \"{}\" is now persistent as \"{}\"", id, name);
+            println!("[*] Session \"{}\" is now persistent as \"{}\"", session, name);
         }
-        Commands::Sandbox(SandboxCommands::Purge { all }) => {
+        Commands::Session(SessionCommands::Purge { all }) => {
             if *all {
                 // Confirmation prompt
                 use std::io::Write;
                 let list_resp: ApiResponse<ListResponse> = client.get("/list").await?;
                 let resp = list_resp.into_result()?;
-                let persistent_count = resp.sandboxes.iter().filter(|s| s.persistent).count();
-                let ephemeral_count = resp.sandboxes.iter().filter(|s| !s.persistent).count();
-                print!("[!] This will destroy {} persistent VMs and {} temporary VMs. Continue? [y/N] ",
+                let persistent_count = resp.sessions.iter().filter(|s| s.persistent).count();
+                let ephemeral_count = resp.sessions.iter().filter(|s| !s.persistent).count();
+                print!("[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
                     persistent_count, ephemeral_count);
                 std::io::stdout().flush()?;
                 let mut input = String::new();
@@ -766,22 +830,25 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<PurgeResponse> = client.post("/purge", &req).await?;
             let result = resp.into_result()?;
             if *all {
-                println!("[*] Purged {} VMs ({} persistent, {} temporary).",
+                println!("[*] Purged {} sessions ({} persistent, {} temporary).",
                     result.purged, result.persistent_purged, result.ephemeral_purged);
             } else {
-                println!("[*] Purged {} temporary VMs.", result.ephemeral_purged);
+                println!("[*] Purged {} temporary sessions.", result.ephemeral_purged);
             }
         }
-        Commands::Sandbox(SandboxCommands::Info { id }) => {
-            client::validate_id(id)?;
-            let resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", id)).await?;
+        Commands::Session(SessionCommands::Info { session, json }) => {
+            client::validate_id(session)?;
+            let resp: ApiResponse<SessionInfo> = client.get(&format!("/info/{}", session)).await?;
             let info = resp.into_result()?;
-            let json = serde_json::to_string_pretty(&info)?;
-            println!("{}", json);
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                print_session_info(&info);
+            }
         }
-        Commands::Sandbox(SandboxCommands::Logs { id, tail }) => {
-            client::validate_id(id)?;
-            let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", id)).await?;
+        Commands::Session(SessionCommands::Logs { session, tail }) => {
+            client::validate_id(session)?;
+            let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", session)).await?;
             let logs = resp.into_result()?;
 
             let tail_lines = |text: &str, n: usize| -> String {
@@ -794,7 +861,7 @@ async fn main() -> Result<()> {
             };
 
             if let Some(process_logs) = logs.process_logs {
-                println!("--- Process Logs ({}) ---", id);
+                println!("--- Process Logs ({}) ---", session);
                 let output = match tail {
                     Some(n) => tail_lines(&process_logs, *n),
                     None => process_logs,
@@ -803,14 +870,14 @@ async fn main() -> Result<()> {
             }
 
             if let Some(serial_logs) = logs.serial_logs {
-                println!("--- Serial Logs ({}) ---", id);
+                println!("--- Serial Logs ({}) ---", session);
                 let output = match tail {
                     Some(n) => tail_lines(&serial_logs, *n),
                     None => serial_logs,
                 };
                 println!("{}", output);
             } else if !logs.logs.is_empty() {
-                println!("--- Serial Logs ({}) ---", id);
+                println!("--- Serial Logs ({}) ---", session);
                 let output = match tail {
                     Some(n) => tail_lines(&logs.logs, *n),
                     None => logs.logs,
@@ -818,18 +885,17 @@ async fn main() -> Result<()> {
                 println!("{}", output);
             }
         }
-        Commands::Sandbox(SandboxCommands::Restart { name }) => {
+        Commands::Session(SessionCommands::Restart { name }) => {
             client::validate_id(name)?;
-            // Look up the VM to check it's persistent
-            let info_resp: ApiResponse<SandboxInfo> = client.get(&format!("/info/{}", name)).await?;
+            let info_resp: ApiResponse<SessionInfo> = client.get(&format!("/info/{}", name)).await?;
             let info = info_resp.into_result()?;
             if !info.persistent {
-                anyhow::bail!("Cannot restart ephemeral VM \"{}\". Only persistent VMs support restart.", name);
+                anyhow::bail!("Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.", name);
             }
 
             // Stop, then resume
             let stop_resp: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", name), &serde_json::json!({})).await?;
-            stop_resp.into_result().context("failed to stop VM during restart")?;
+            stop_resp.into_result().context("failed to stop session during restart")?;
             let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
@@ -840,7 +906,11 @@ async fn main() -> Result<()> {
             | MiscCommands::Update { .. }
             | MiscCommands::Completions { .. }
             | MiscCommands::Uninstall { .. }
-        ) | Commands::Service(_) => {
+            | MiscCommands::Install
+            | MiscCommands::Status
+            | MiscCommands::Start
+            | MiscCommands::Stop
+        ) => {
             unreachable!("handled before UdsClient creation")
         }
         Commands::Misc(MiscCommands::Doctor { fast }) => {
@@ -865,7 +935,7 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let vm_id = resp.into_result()?.id;
 
-            // Helper: always delete the VM, even on Ctrl-C or error
+            // Helper: always delete the session, even on Ctrl-C or error
             async fn delete_vm(client: &UdsClient, vm_id: &str) {
                 let _: Result<ApiResponse<serde_json::Value>, _> =
                     client.delete(&format!("/delete/{}", vm_id)).await;
@@ -874,7 +944,7 @@ async fn main() -> Result<()> {
             let ctrl_c = tokio::signal::ctrl_c();
             tokio::pin!(ctrl_c);
 
-            // Connect directly to VM socket for streaming output
+            // Connect directly to session socket for streaming output
             let sock_path = run_dir.join("instances").join(format!("{}.sock", vm_id));
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
             loop {
@@ -893,7 +963,7 @@ async fn main() -> Result<()> {
                                 while !ready {
                                     tokio::select! {
                                         _ = &mut ctrl_c => {
-                                            eprintln!("\nInterrupted, cleaning up VM...");
+                                            eprintln!("\nInterrupted, cleaning up session...");
                                             delete_vm(&client, &vm_id).await;
                                             std::process::exit(130);
                                         }
@@ -935,7 +1005,7 @@ async fn main() -> Result<()> {
                                 let exit_code = loop {
                                     tokio::select! {
                                         _ = &mut ctrl_c => {
-                                            eprintln!("\nInterrupted, cleaning up VM...");
+                                            eprintln!("\nInterrupted, cleaning up session...");
                                             break 130;
                                         }
                                         result = tokio::time::timeout(
@@ -991,14 +1061,14 @@ async fn main() -> Result<()> {
                 // Check Ctrl-C while waiting for socket
                 tokio::select! {
                     _ = &mut ctrl_c => {
-                        eprintln!("\nInterrupted, cleaning up VM...");
+                        eprintln!("\nInterrupted, cleaning up session...");
                         delete_vm(&client, &vm_id).await;
                         std::process::exit(130);
                     }
                     _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
                 }
                 if tokio::time::Instant::now() >= deadline {
-                    eprintln!("VM did not become ready within 30s");
+                    eprintln!("Session did not become ready within 30s");
                     delete_vm(&client, &vm_id).await;
                     std::process::exit(1);
                 }
@@ -1022,7 +1092,7 @@ mod tests {
     fn parse_create_with_name() {
         let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { name, ram, cpu, .. }) => {
+            Commands::Session(SessionCommands::Create { name, ram, cpu, .. }) => {
                 assert_eq!(name, Some("my-vm".into()));
                 assert_eq!(ram, 4);
                 assert_eq!(cpu, 4);
@@ -1035,7 +1105,7 @@ mod tests {
     fn parse_create_ephemeral() {
         let cli = Cli::parse_from(["capsem", "create"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { name, .. }) => {
+            Commands::Session(SessionCommands::Create { name, .. }) => {
                 assert_eq!(name, None);
             }
             _ => panic!("expected Create"),
@@ -1043,21 +1113,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_start_alias_for_create() {
-        let cli = Cli::parse_from(["capsem", "start", "-n", "dev"]);
-        match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { name, .. }) => {
-                assert_eq!(name, Some("dev".into()));
-            }
-            _ => panic!("expected Create via start alias"),
-        }
-    }
-
-    #[test]
     fn parse_create_with_resources() {
         let cli = Cli::parse_from(["capsem", "create", "--ram", "8", "--cpu", "2"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { ram, cpu, .. }) => {
+            Commands::Session(SessionCommands::Create { ram, cpu, .. }) => {
                 assert_eq!(ram, 8);
                 assert_eq!(cpu, 2);
             }
@@ -1069,7 +1128,7 @@ mod tests {
     fn parse_resume() {
         let cli = Cli::parse_from(["capsem", "resume", "mydev"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Resume { name }) => assert_eq!(name, "mydev"),
+            Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Resume"),
         }
     }
@@ -1078,17 +1137,8 @@ mod tests {
     fn parse_attach_alias_for_resume() {
         let cli = Cli::parse_from(["capsem", "attach", "mydev"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Resume { name }) => assert_eq!(name, "mydev"),
+            Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Resume via attach alias"),
-        }
-    }
-
-    #[test]
-    fn parse_stop() {
-        let cli = Cli::parse_from(["capsem", "stop", "vm-123"]);
-        match cli.command {
-            Commands::Sandbox(SandboxCommands::Stop { id }) => assert_eq!(id, "vm-123"),
-            _ => panic!("expected Stop"),
         }
     }
 
@@ -1096,7 +1146,7 @@ mod tests {
     fn parse_suspend() {
         let cli = Cli::parse_from(["capsem", "suspend", "vm-123"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Suspend { id }) => assert_eq!(id, "vm-123"),
+            Commands::Session(SessionCommands::Suspend { session }) => assert_eq!(session, "vm-123"),
             _ => panic!("expected Suspend"),
         }
     }
@@ -1105,8 +1155,8 @@ mod tests {
     fn parse_shell_positional() {
         let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Shell { id, name }) => {
-                assert_eq!(id, Some("my-vm".into()));
+            Commands::Session(SessionCommands::Shell { session, name }) => {
+                assert_eq!(session, Some("my-vm".into()));
                 assert_eq!(name, None);
             }
             _ => panic!("expected Shell"),
@@ -1117,9 +1167,9 @@ mod tests {
     fn parse_shell_by_name() {
         let cli = Cli::parse_from(["capsem", "shell", "-n", "mydev"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Shell { name, id }) => {
+            Commands::Session(SessionCommands::Shell { name, session }) => {
                 assert_eq!(name, Some("mydev".into()));
-                assert_eq!(id, None);
+                assert_eq!(session, None);
             }
             _ => panic!("expected Shell"),
         }
@@ -1127,12 +1177,12 @@ mod tests {
 
     #[test]
     fn parse_shell_bare() {
-        // Bare `capsem shell` = temp VM + auto-destroy
+        // Bare `capsem shell` = temp session + auto-destroy
         let cli = Cli::parse_from(["capsem", "shell"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Shell { name, id }) => {
+            Commands::Session(SessionCommands::Shell { name, session }) => {
                 assert_eq!(name, None);
-                assert_eq!(id, None);
+                assert_eq!(session, None);
             }
             _ => panic!("expected Shell"),
         }
@@ -1142,8 +1192,8 @@ mod tests {
     fn parse_persist() {
         let cli = Cli::parse_from(["capsem", "persist", "vm-123", "mydev"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Persist { id, name }) => {
-                assert_eq!(id, "vm-123");
+            Commands::Session(SessionCommands::Persist { session, name }) => {
+                assert_eq!(session, "vm-123");
                 assert_eq!(name, "mydev");
             }
             _ => panic!("expected Persist"),
@@ -1154,7 +1204,7 @@ mod tests {
     fn parse_purge() {
         let cli = Cli::parse_from(["capsem", "purge"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Purge { all }) => assert!(!all),
+            Commands::Session(SessionCommands::Purge { all }) => assert!(!all),
             _ => panic!("expected Purge"),
         }
     }
@@ -1163,7 +1213,7 @@ mod tests {
     fn parse_purge_all() {
         let cli = Cli::parse_from(["capsem", "purge", "--all"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Purge { all }) => assert!(all),
+            Commands::Session(SessionCommands::Purge { all }) => assert!(all),
             _ => panic!("expected Purge --all"),
         }
     }
@@ -1172,7 +1222,7 @@ mod tests {
     fn parse_run() {
         let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Run { command, timeout, env }) => {
+            Commands::Session(SessionCommands::Run { command, timeout, env }) => {
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, 60); // default
                 assert!(env.is_empty());
@@ -1185,7 +1235,7 @@ mod tests {
     fn parse_run_with_timeout() {
         let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Run { command, timeout, env }) => {
+            Commands::Session(SessionCommands::Run { command, timeout, env }) => {
                 assert_eq!(command, "ls -la");
                 assert_eq!(timeout, 120);
                 assert!(env.is_empty());
@@ -1197,14 +1247,14 @@ mod tests {
     #[test]
     fn parse_list() {
         let cli = Cli::parse_from(["capsem", "list"]);
-        assert!(matches!(cli.command, Commands::Sandbox(SandboxCommands::List { quiet: false })));
+        assert!(matches!(cli.command, Commands::Session(SessionCommands::List { quiet: false })));
     }
 
     #[test]
     fn parse_list_quiet() {
         let cli = Cli::parse_from(["capsem", "list", "-q"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::List { quiet }) => assert!(quiet),
+            Commands::Session(SessionCommands::List { quiet }) => assert!(quiet),
             _ => panic!("expected List"),
         }
     }
@@ -1213,18 +1263,16 @@ mod tests {
     fn parse_list_quiet_long() {
         let cli = Cli::parse_from(["capsem", "list", "--quiet"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::List { quiet }) => assert!(quiet),
+            Commands::Session(SessionCommands::List { quiet }) => assert!(quiet),
             _ => panic!("expected List"),
         }
     }
 
     #[test]
     fn parse_status() {
-        let cli = Cli::parse_from(["capsem", "status", "vm-1"]);
-        match cli.command {
-            Commands::Sandbox(SandboxCommands::Status { id }) => assert_eq!(id, "vm-1"),
-            _ => panic!("expected Status"),
-        }
+        // `capsem status` is now the service status command
+        let cli = Cli::parse_from(["capsem", "status"]);
+        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Status)));
     }
 
     #[test]
@@ -1257,8 +1305,8 @@ mod tests {
     fn parse_exec() {
         let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Exec { id, command, timeout }) => {
-                assert_eq!(id, "my-vm");
+            Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
+                assert_eq!(session, "my-vm");
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, 30); // default
             }
@@ -1270,8 +1318,8 @@ mod tests {
     fn parse_exec_with_timeout() {
         let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Exec { id, command, timeout }) => {
-                assert_eq!(id, "my-vm");
+            Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
+                assert_eq!(session, "my-vm");
                 assert_eq!(command, "make build");
                 assert_eq!(timeout, 120);
             }
@@ -1283,7 +1331,7 @@ mod tests {
     fn parse_delete() {
         let cli = Cli::parse_from(["capsem", "delete", "vm-123"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Delete { id }) => assert_eq!(id, "vm-123"),
+            Commands::Session(SessionCommands::Delete { session }) => assert_eq!(session, "vm-123"),
             _ => panic!("expected Delete"),
         }
     }
@@ -1292,8 +1340,23 @@ mod tests {
     fn parse_info() {
         let cli = Cli::parse_from(["capsem", "info", "vm-1"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Info { id }) => assert_eq!(id, "vm-1"),
+            Commands::Session(SessionCommands::Info { session, json }) => {
+                assert_eq!(session, "vm-1");
+                assert!(!json);
+            }
             _ => panic!("expected Info"),
+        }
+    }
+
+    #[test]
+    fn parse_info_json() {
+        let cli = Cli::parse_from(["capsem", "info", "--json", "vm-1"]);
+        match cli.command {
+            Commands::Session(SessionCommands::Info { session, json }) => {
+                assert_eq!(session, "vm-1");
+                assert!(json);
+            }
+            _ => panic!("expected Info --json"),
         }
     }
 
@@ -1301,8 +1364,8 @@ mod tests {
     fn parse_logs_with_tail() {
         let cli = Cli::parse_from(["capsem", "logs", "--tail", "50", "vm-1"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Logs { id, tail }) => {
-                assert_eq!(id, "vm-1");
+            Commands::Session(SessionCommands::Logs { session, tail }) => {
+                assert_eq!(session, "vm-1");
                 assert_eq!(tail, Some(50));
             }
             _ => panic!("expected Logs"),
@@ -1313,8 +1376,8 @@ mod tests {
     fn parse_logs_without_tail() {
         let cli = Cli::parse_from(["capsem", "logs", "vm-1"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Logs { id, tail }) => {
-                assert_eq!(id, "vm-1");
+            Commands::Session(SessionCommands::Logs { session, tail }) => {
+                assert_eq!(session, "vm-1");
                 assert_eq!(tail, None);
             }
             _ => panic!("expected Logs"),
@@ -1325,7 +1388,7 @@ mod tests {
     fn parse_restart() {
         let cli = Cli::parse_from(["capsem", "restart", "mydev"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Restart { name }) => assert_eq!(name, "mydev"),
+            Commands::Session(SessionCommands::Restart { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Restart"),
         }
     }
@@ -1340,7 +1403,7 @@ mod tests {
     fn parse_create_with_env() {
         let cli = Cli::parse_from(["capsem", "create", "-e", "FOO=bar", "-e", "BAZ=qux"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { env, .. }) => {
+            Commands::Session(SessionCommands::Create { env, .. }) => {
                 assert_eq!(env, vec!["FOO=bar", "BAZ=qux"]);
             }
             _ => panic!("expected Create"),
@@ -1351,7 +1414,7 @@ mod tests {
     fn parse_create_with_env_long() {
         let cli = Cli::parse_from(["capsem", "create", "--env", "API_KEY=secret123"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { env, .. }) => {
+            Commands::Session(SessionCommands::Create { env, .. }) => {
                 assert_eq!(env, vec!["API_KEY=secret123"]);
             }
             _ => panic!("expected Create"),
@@ -1362,7 +1425,7 @@ mod tests {
     fn parse_create_no_env() {
         let cli = Cli::parse_from(["capsem", "create"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { env, .. }) => {
+            Commands::Session(SessionCommands::Create { env, .. }) => {
                 assert!(env.is_empty());
             }
             _ => panic!("expected Create"),
@@ -1376,21 +1439,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_service_install() {
-        let cli = Cli::parse_from(["capsem", "service", "install"]);
-        assert!(matches!(cli.command, Commands::Service(ServiceCommands::Install)));
+    fn parse_install() {
+        let cli = Cli::parse_from(["capsem", "install"]);
+        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Install)));
     }
 
     #[test]
-    fn parse_service_uninstall() {
-        let cli = Cli::parse_from(["capsem", "service", "uninstall"]);
-        assert!(matches!(cli.command, Commands::Service(ServiceCommands::Uninstall)));
+    fn parse_start() {
+        let cli = Cli::parse_from(["capsem", "start"]);
+        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Start)));
     }
 
     #[test]
-    fn parse_service_status() {
-        let cli = Cli::parse_from(["capsem", "service", "status"]);
-        assert!(matches!(cli.command, Commands::Service(ServiceCommands::Status)));
+    fn parse_stop() {
+        let cli = Cli::parse_from(["capsem", "stop"]);
+        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Stop)));
     }
 
     #[test]
@@ -1501,8 +1564,8 @@ mod tests {
     fn parse_fork() {
         let cli = Cli::parse_from(["capsem", "fork", "my-vm", "my-image"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Fork { id, name, description }) => {
-                assert_eq!(id, "my-vm");
+            Commands::Session(SessionCommands::Fork { session, name, description }) => {
+                assert_eq!(session, "my-vm");
                 assert_eq!(name, "my-image");
                 assert_eq!(description, None);
             }
@@ -1514,8 +1577,8 @@ mod tests {
     fn parse_fork_with_description() {
         let cli = Cli::parse_from(["capsem", "fork", "vm1", "img1", "-d", "My description"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Fork { id, name, description }) => {
-                assert_eq!(id, "vm1");
+            Commands::Session(SessionCommands::Fork { session, name, description }) => {
+                assert_eq!(session, "vm1");
                 assert_eq!(name, "img1");
                 assert_eq!(description, Some("My description".into()));
             }
@@ -1525,10 +1588,10 @@ mod tests {
 
     #[test]
     fn parse_create_with_from() {
-        let cli = Cli::parse_from(["capsem", "create", "--from", "base-sandbox"]);
+        let cli = Cli::parse_from(["capsem", "create", "--from", "base-session"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { from, name, .. }) => {
-                assert_eq!(from, Some("base-sandbox".into()));
+            Commands::Session(SessionCommands::Create { from, name, .. }) => {
+                assert_eq!(from, Some("base-session".into()));
                 assert_eq!(name, None);
             }
             _ => panic!("expected Create with --from"),
@@ -1540,7 +1603,7 @@ mod tests {
         // --image is a backward-compat alias for --from
         let cli = Cli::parse_from(["capsem", "create", "--image", "old-img"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { from, .. }) => {
+            Commands::Session(SessionCommands::Create { from, .. }) => {
                 assert_eq!(from, Some("old-img".into()));
             }
             _ => panic!("expected Create with --image alias"),
@@ -1549,10 +1612,10 @@ mod tests {
 
     #[test]
     fn parse_create_with_name_and_from() {
-        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm", "--from", "my-src"]);
+        let cli = Cli::parse_from(["capsem", "create", "-n", "my-session", "--from", "my-src"]);
         match cli.command {
-            Commands::Sandbox(SandboxCommands::Create { name, from, .. }) => {
-                assert_eq!(name, Some("my-vm".into()));
+            Commands::Session(SessionCommands::Create { name, from, .. }) => {
+                assert_eq!(name, Some("my-session".into()));
                 assert_eq!(from, Some("my-src".into()));
             }
             _ => panic!("expected Create with name and --from"),

@@ -181,6 +181,95 @@ pub async fn service_status() -> Result<ServiceStatus> {
     })
 }
 
+/// Start the capsem service via the platform service manager.
+pub async fn start_service() -> Result<()> {
+    if !is_service_installed() {
+        anyhow::bail!("Service not installed. Run `capsem install` first.");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let uid = nix::unistd::getuid();
+        let target = format!("gui/{}/com.capsem.service", uid);
+        let status = tokio::process::Command::new("launchctl")
+            .args(["kickstart", "-k", &target])
+            .status()
+            .await?;
+        if !status.success() {
+            // Fallback: bootstrap the plist
+            if let Some(plist) = plist_path() {
+                let domain = format!("gui/{}", uid);
+                let _ = tokio::process::Command::new("launchctl")
+                    .args(["bootstrap", &domain, &plist.to_string_lossy()])
+                    .status()
+                    .await;
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let status = tokio::process::Command::new("systemctl")
+            .args(["--user", "start", "capsem"])
+            .status()
+            .await?;
+        if !status.success() {
+            anyhow::bail!("systemctl --user start capsem failed");
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        anyhow::bail!("service start not supported on this platform");
+    }
+
+    Ok(())
+}
+
+/// Stop the capsem service via the platform service manager.
+pub async fn stop_service() -> Result<()> {
+    if !is_service_installed() {
+        anyhow::bail!("Service not installed. Run `capsem install` first.");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let uid = nix::unistd::getuid();
+        let target = format!("gui/{}/com.capsem.service", uid);
+        let status = tokio::process::Command::new("launchctl")
+            .args(["kill", "SIGTERM", &target])
+            .status()
+            .await?;
+        if !status.success() {
+            // Fallback: unload/load cycle
+            if let Some(plist) = plist_path() {
+                let _ = tokio::process::Command::new("launchctl")
+                    .args(["unload", &plist.to_string_lossy()])
+                    .status()
+                    .await;
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let status = tokio::process::Command::new("systemctl")
+            .args(["--user", "stop", "capsem"])
+            .status()
+            .await?;
+        if !status.success() {
+            anyhow::bail!("systemctl --user stop capsem failed");
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        anyhow::bail!("service stop not supported on this platform");
+    }
+
+    Ok(())
+}
+
 // --- macOS LaunchAgent ---
 
 pub fn plist_path() -> Option<PathBuf> {

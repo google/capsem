@@ -45,6 +45,29 @@ pub struct VmSummary {
     pub name: Option<String>,
     pub status: String,
     pub persistent: bool,
+    // Telemetry (present for running VMs, absent for stopped)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uptime_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_estimated_cost: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tool_calls: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_mcp_calls: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub denied_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_file_events: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_call_count: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -97,11 +120,12 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 
 #[derive(Deserialize)]
 struct ListResponse {
-    sandboxes: Vec<SandboxInfo>,
+    #[serde(rename = "sandboxes")]
+    sessions: Vec<SessionInfo>,
 }
 
 #[derive(Deserialize)]
-struct SandboxInfo {
+struct SessionInfo {
     id: String,
     #[serde(default)]
     name: Option<String>,
@@ -113,6 +137,29 @@ struct SandboxInfo {
     ram_mb: Option<u64>,
     #[serde(default)]
     cpus: Option<u32>,
+    // Telemetry pass-through from service /list
+    #[serde(default)]
+    uptime_secs: Option<u64>,
+    #[serde(default)]
+    total_input_tokens: Option<u64>,
+    #[serde(default)]
+    total_output_tokens: Option<u64>,
+    #[serde(default)]
+    total_estimated_cost: Option<f64>,
+    #[serde(default)]
+    total_tool_calls: Option<u64>,
+    #[serde(default)]
+    total_mcp_calls: Option<u64>,
+    #[serde(default)]
+    total_requests: Option<u64>,
+    #[serde(default)]
+    allowed_requests: Option<u64>,
+    #[serde(default)]
+    denied_requests: Option<u64>,
+    #[serde(default)]
+    total_file_events: Option<u64>,
+    #[serde(default)]
+    model_call_count: Option<u64>,
 }
 
 async fn fetch_status(state: &AppState) -> StatusResponse {
@@ -132,22 +179,22 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         Err(_) => return unavailable,
     };
 
-    let mut vms = Vec::with_capacity(list.sandboxes.len());
+    let mut vms = Vec::with_capacity(list.sessions.len());
     let mut total_ram: u64 = 0;
     let mut total_cpus: u32 = 0;
     let mut running: usize = 0;
     let mut stopped: usize = 0;
     let mut suspended: usize = 0;
 
-    for sb in &list.sandboxes {
-        if let Some(ram) = sb.ram_mb {
+    for sess in &list.sessions {
+        if let Some(ram) = sess.ram_mb {
             total_ram += ram;
         }
-        if let Some(cpus) = sb.cpus {
+        if let Some(cpus) = sess.cpus {
             total_cpus += cpus;
         }
 
-        let status_lower = sb.status.to_lowercase();
+        let status_lower = sess.status.to_lowercase();
         if status_lower.contains("running") {
             running += 1;
         } else if status_lower.contains("suspended") {
@@ -157,10 +204,21 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         }
 
         vms.push(VmSummary {
-            id: sb.id.clone(),
-            name: sb.name.clone(),
-            status: sb.status.clone(),
-            persistent: sb.persistent,
+            id: sess.id.clone(),
+            name: sess.name.clone(),
+            status: sess.status.clone(),
+            persistent: sess.persistent,
+            uptime_secs: sess.uptime_secs,
+            total_input_tokens: sess.total_input_tokens,
+            total_output_tokens: sess.total_output_tokens,
+            total_estimated_cost: sess.total_estimated_cost,
+            total_tool_calls: sess.total_tool_calls,
+            total_mcp_calls: sess.total_mcp_calls,
+            total_requests: sess.total_requests,
+            allowed_requests: sess.allowed_requests,
+            denied_requests: sess.denied_requests,
+            total_file_events: sess.total_file_events,
+            model_call_count: sess.model_call_count,
         });
     }
 
@@ -212,12 +270,7 @@ mod tests {
             service: "running".into(),
             gateway_version: "0.1.0".into(),
             vm_count: 1,
-            vms: vec![VmSummary {
-                id: "abc123".into(),
-                name: Some("dev".into()),
-                status: "running".into(),
-                persistent: true,
-            }],
+            vms: vec![test_vm("abc123", Some("dev"), "running", true)],
             resource_summary: Some(ResourceSummary {
                 total_ram_mb: 2048,
                 total_cpus: 2,
@@ -257,9 +310,9 @@ mod tests {
             gateway_version: "0.1.0".into(),
             vm_count: 3,
             vms: vec![
-                VmSummary { id: "a".into(), name: Some("dev".into()), status: "running".into(), persistent: true },
-                VmSummary { id: "b".into(), name: None, status: "running".into(), persistent: false },
-                VmSummary { id: "c".into(), name: Some("ci".into()), status: "stopped".into(), persistent: true },
+                test_vm("a", Some("dev"), "running", true),
+                test_vm("b", None, "running", false),
+                test_vm("c", Some("ci"), "stopped", true),
             ],
             resource_summary: Some(ResourceSummary {
                 total_ram_mb: 6144,
@@ -281,12 +334,7 @@ mod tests {
 
     #[test]
     fn vm_summary_name_null_when_absent() {
-        let vm = VmSummary {
-            id: "x".into(),
-            name: None,
-            status: "running".into(),
-            persistent: false,
-        };
+        let vm = test_vm("x", None, "running", false);
         let json = serde_json::to_value(&vm).unwrap();
         assert!(json["name"].is_null());
         assert!(!json["persistent"].as_bool().unwrap());
@@ -296,19 +344,19 @@ mod tests {
     fn list_response_deserializes() {
         let json = r#"{"sandboxes":[{"id":"abc","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2}]}"#;
         let list: ListResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(list.sandboxes.len(), 1);
-        assert_eq!(list.sandboxes[0].id, "abc");
-        assert!(list.sandboxes[0].persistent);
-        assert_eq!(list.sandboxes[0].ram_mb, Some(2048));
+        assert_eq!(list.sessions.len(), 1);
+        assert_eq!(list.sessions[0].id, "abc");
+        assert!(list.sessions[0].persistent);
+        assert_eq!(list.sessions[0].ram_mb, Some(2048));
     }
 
     #[test]
     fn list_response_handles_missing_optional_fields() {
         let json = r#"{"sandboxes":[{"id":"abc","pid":123}]}"#;
         let list: ListResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(list.sandboxes[0].ram_mb, None);
-        assert_eq!(list.sandboxes[0].cpus, None);
-        assert!(!list.sandboxes[0].persistent);
+        assert_eq!(list.sessions[0].ram_mb, None);
+        assert_eq!(list.sessions[0].cpus, None);
+        assert!(!list.sessions[0].persistent);
     }
 
     #[tokio::test]
@@ -373,6 +421,26 @@ mod tests {
     // --- fetch_status with mock UDS ---
 
     use crate::AppState;
+
+    fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSummary {
+        VmSummary {
+            id: id.into(),
+            name: name.map(|s| s.into()),
+            status: status.into(),
+            persistent,
+            uptime_secs: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            total_estimated_cost: None,
+            total_tool_calls: None,
+            total_mcp_calls: None,
+            total_requests: None,
+            allowed_requests: None,
+            denied_requests: None,
+            total_file_events: None,
+            model_call_count: None,
+        }
+    }
 
     fn test_app_state(uds_path: &str) -> AppState {
         AppState {
@@ -536,5 +604,70 @@ mod tests {
         };
         let json = serde_json::to_value(&rs).unwrap();
         assert_eq!(json["suspended_count"], 2);
+    }
+
+    // --- Telemetry pass-through ---
+
+    #[test]
+    fn vm_summary_includes_telemetry_when_present() {
+        let mut vm = test_vm("t1", None, "running", false);
+        vm.uptime_secs = Some(300);
+        vm.total_input_tokens = Some(5000);
+        vm.total_estimated_cost = Some(1.23);
+        let json = serde_json::to_value(&vm).unwrap();
+        assert_eq!(json["uptime_secs"], 300);
+        assert_eq!(json["total_input_tokens"], 5000);
+        assert_eq!(json["total_estimated_cost"], 1.23);
+    }
+
+    #[test]
+    fn vm_summary_omits_absent_telemetry() {
+        let vm = test_vm("t2", None, "stopped", true);
+        let json = serde_json::to_value(&vm).unwrap();
+        assert!(json.get("uptime_secs").is_none());
+        assert!(json.get("total_input_tokens").is_none());
+        assert!(json.get("total_estimated_cost").is_none());
+    }
+
+    #[test]
+    fn list_response_deserializes_telemetry() {
+        let json = r#"{"sandboxes":[{"id":"vm1","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42}]}"#;
+        let list: ListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(list.sessions[0].uptime_secs, Some(60));
+        assert_eq!(list.sessions[0].total_input_tokens, Some(1000));
+        assert_eq!(list.sessions[0].total_output_tokens, Some(500));
+        assert_eq!(list.sessions[0].total_estimated_cost, Some(0.42));
+    }
+
+    #[tokio::test]
+    async fn fetch_status_passes_through_telemetry() {
+        let mock = axum::Router::new()
+            .route("/list", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "sandboxes": [{
+                        "id": "vm1", "pid": 100, "status": "Running", "persistent": false,
+                        "ram_mb": 2048, "cpus": 2,
+                        "uptime_secs": 120, "total_input_tokens": 3000,
+                        "total_output_tokens": 1000, "total_estimated_cost": 0.99,
+                        "total_tool_calls": 10, "model_call_count": 5
+                    }]
+                }))
+            }));
+        let (path, h, _d) = mock_uds(mock).await;
+
+        let state = test_app_state(&path);
+        let resp = fetch_status(&state).await;
+        assert_eq!(resp.vms.len(), 1);
+        let vm = &resp.vms[0];
+        assert_eq!(vm.uptime_secs, Some(120));
+        assert_eq!(vm.total_input_tokens, Some(3000));
+        assert_eq!(vm.total_output_tokens, Some(1000));
+        assert_eq!(vm.total_estimated_cost, Some(0.99));
+        assert_eq!(vm.total_tool_calls, Some(10));
+        assert_eq!(vm.model_call_count, Some(5));
+        // Fields not in JSON should be None
+        assert_eq!(vm.total_mcp_calls, None);
+        assert_eq!(vm.total_file_events, None);
+        h.abort();
     }
 }
