@@ -219,6 +219,16 @@ pub fn write_control_msg(file: &mut std::fs::File, msg: &HostToGuest) -> Result<
     Ok(())
 }
 
+/// Detect the host timezone by reading the `/etc/localtime` symlink.
+/// Returns the Olson timezone name (e.g., `America/Los_Angeles`).
+fn detect_host_timezone() -> Option<String> {
+    let target = std::fs::read_link("/etc/localtime").ok()?;
+    let s = target.to_str()?;
+    let marker = "/zoneinfo/";
+    let idx = s.find(marker)?;
+    Some(s[idx + marker.len()..].to_string())
+}
+
 /// Send the boot configuration as individual vsock messages.
 /// If `preloaded_guest_config` is provided, uses it instead of reading from disk.
 pub fn send_boot_config(
@@ -238,6 +248,26 @@ pub fn send_boot_config(
 
     // 1. Send BootConfig with clock.
     write_control_msg(file, &HostToGuest::BootConfig { epoch_secs })?;
+
+    // 1b. Inject host timezone (TZ env var + /etc/localtime binary).
+    if let Some(tz) = detect_host_timezone() {
+        info!("injecting host timezone: {tz}");
+        write_control_msg(
+            file,
+            &HostToGuest::SetEnv { key: "TZ".into(), value: tz },
+        )?;
+        if let Ok(tz_data) = std::fs::read("/etc/localtime") {
+            write_control_msg(
+                file,
+                &HostToGuest::FileWrite {
+                    id: 0,
+                    path: "/etc/localtime".into(),
+                    data: tz_data,
+                    mode: 0o644,
+                },
+            )?;
+        }
+    }
 
     // 2. Send metadata-driven env vars from settings registry.
     let guest_config = preloaded_guest_config

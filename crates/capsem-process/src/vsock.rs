@@ -105,7 +105,41 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     info!(category = "boot_timeline", from = "Booting", to = "Handshaking", trigger = "ready_received", "state transition");
 
     if is_restore {
-        info!("Abbreviated handshake for restored VM");
+        info!("Abbreviated handshake for restored VM -- resyncing clock and timezone");
+        let epoch_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let _ = write_control_msg(
+            &mut ctrl_file,
+            &HostToGuest::BootConfig { epoch_secs },
+        );
+        // Re-inject timezone in case host TZ changed since suspend.
+        if let Ok(link) = std::fs::read_link("/etc/localtime") {
+            if let Some(s) = link.to_str() {
+                if let Some(idx) = s.find("/zoneinfo/") {
+                    let tz = &s[idx + "/zoneinfo/".len()..];
+                    let _ = write_control_msg(
+                        &mut ctrl_file,
+                        &HostToGuest::SetEnv {
+                            key: "TZ".into(),
+                            value: tz.to_string(),
+                        },
+                    );
+                    if let Ok(tz_data) = std::fs::read("/etc/localtime") {
+                        let _ = write_control_msg(
+                            &mut ctrl_file,
+                            &HostToGuest::FileWrite {
+                                id: 0,
+                                path: "/etc/localtime".into(),
+                                data: tz_data,
+                                mode: 0o644,
+                            },
+                        );
+                    }
+                }
+            }
+        }
         let _ = write_control_msg(&mut ctrl_file, &HostToGuest::BootConfigDone);
     } else {
         send_boot_config(&mut ctrl_file, &cli_env, Some(guest_config))?;

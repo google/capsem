@@ -8,7 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **VM identity: fun temporary names** -- ephemeral VMs get memorable names like `tmp-brave-falcon` instead of opaque `vm-1712345678`. Persistent VMs keep user-chosen names. Shell prompt now shows the VM name (hostname) instead of static "capsem".
+- **VM identity: host timezone injection** -- guest VMs inherit the host's timezone at boot via `TZ` env var and `/etc/localtime`. `date` inside the VM now shows local time instead of UTC. Clock and timezone are also resynced on resume from suspend.
+- **service: settings endpoints** -- `GET /settings` returns the merged settings tree (user + corp + defaults) with issues and presets. `POST /settings` batch-updates settings atomically. `GET /settings/presets` lists security presets. `POST /settings/presets/{id}` applies a preset. `POST /settings/lint` validates config. All endpoints are thin wrappers around existing `capsem-core` functions.
+- **service: telemetry-enriched `/list`** -- running VMs in `GET /list` now include live telemetry (tokens, cost, tool calls, requests, file events) read from session.db. Shared `enrich_telemetry()` function used by both `/list` and `/info/{id}`.
+- **gateway: telemetry pass-through in `/status`** -- `VmSummary` now includes 11 optional telemetry fields forwarded from the service. Frontend gets per-VM stats in a single poll without per-VM API calls.
+- **frontend: dashboard global stats** -- NewTabPage shows 4 summary cards (sessions, total tokens, total cost, requests) from `GET /stats` cross-session aggregation.
+- **frontend: VM table telemetry columns** -- Uptime, Tokens, Cost columns in the sandbox table. Shows "--" for stopped VMs, live values for running.
+- **frontend: `getStats()` API** -- new API function with graceful offline handling (returns empty stats when disconnected).
+- **frontend: shared formatters** -- `format.ts` with `formatUptime`, `formatTokens`, `formatCost`, `formatDuration`, `formatBytes`, `formatTime`, `truncate`, `fmtAge`. StatsView refactored to use shared module.
 - **standalone installer: macOS .pkg build** -- `scripts/build-pkg.sh` assembles a .pkg from the Tauri .app, all 6 companion binaries, VM assets, and a postinstall script that copies to `~/.capsem/bin/`, codesigns, registers LaunchAgent, and runs setup. CI pipeline updated to build .pkg alongside .dmg.
+- **`just install` builds and installs from .pkg** -- on macOS, `just install` now builds a local .pkg via `build-pkg.sh` and installs it with `sudo installer -pkg`, exercising the real postinstall script (codesign, PATH, LaunchAgent, setup). Old simulate-install.sh path preserved as `just install-dev` for fast iteration.
+- **`just test-install` builds and installs from .deb** -- Docker e2e tests now build a real .deb (Tauri + `repack-deb.sh`), install with `dpkg -i` (exercising `deb-postinst.sh` with systemd registration and setup), then run the pytest suite against the installed layout. Previously used `simulate-install.sh` which bypassed the packaging layer entirely.
 - **standalone installer: Linux .deb repack** -- `scripts/repack-deb.sh` injects companion binaries and a postinst script into the Tauri .deb. Postinst symlinks system binaries to `~/.capsem/bin/`, registers systemd user unit, and runs setup.
 - **CLI: auto-setup on first use** -- running any sandbox command without prior `capsem setup` triggers non-interactive setup automatically (service registration, credential detection, asset download). Skipped when `--uds-path` is explicit.
 - **`just install`: graceful stop + health check** -- stops existing service before overwriting binaries, verifies service health after registration, auto-runs setup on first install.
@@ -16,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **CLI: delete nonexistent sandbox now returns error** -- HTTP status code was not checked before deserializing response body, causing 404 errors to be silently swallowed when `T = serde_json::Value` in the untagged `ApiResponse` enum.
 - **uninstall: kill and remove all 6 binaries** -- capsem-gateway and capsem-tray were missing from the CAPSEM_BINARIES list and pkill commands.
+- **install: .pkg and .deb packaging scripts fail on missing binaries** -- `build-pkg.sh` and `repack-deb.sh` printed a WARNING and continued when a companion binary was missing, potentially producing broken packages in CI. Now exit with error, matching `simulate-install.sh` behavior.
+- **install: setup-state.json atomic write** -- `save_state()` used `fs::write()` directly; a crash mid-write could corrupt the setup state. Now uses temp file + `fs::rename` for atomic updates.
+- **install: macOS .pkg postinstall user detection** -- postinstall script assumed `$USER` was always set correctly by macOS Installer.app. When installed via `sudo installer -pkg` (CLI), `$USER` is root. Now checks `$SUDO_USER` first, falls back to console owner via `stat /dev/console`.
+- **install: Linux .deb postinst XDG_RUNTIME_DIR** -- `deb-postinst.sh` ran `su $TARGET_USER -c "capsem service install"` without propagating `XDG_RUNTIME_DIR`, causing `systemctl --user` to fail. Now passes `XDG_RUNTIME_DIR=/run/user/$UID` explicitly.
 
 ### Changed
 - **image elimination: everything is a sandbox** -- removed the "image" concept entirely. `fork` now creates a stopped persistent sandbox instead of an image. `create --from <sandbox>` replaces `create --image`. Image registry, image CLI commands, and image MCP tools are all removed. `--image` remains as a hidden alias for `--from`. `SandboxInfo` API now includes `forked_from` and `description` fields. Session DB schema bumped to v6 (renames `source_image` to `forked_from`). Net reduction: ~500 lines and one abstraction layer.

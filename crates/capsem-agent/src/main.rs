@@ -417,7 +417,7 @@ fn main() {
                     eprintln!("[capsem-agent] reconnected successfully");
                     let _ = send_guest_msg(c_fd, &GuestToHost::Ready { version: env!("CARGO_PKG_VERSION").to_string() });
 
-                    // Drain abbreviated handshake
+                    // Drain abbreviated handshake, processing clock/timezone resync.
                     loop {
                         match recv_host_msg(c_fd) {
                             Ok(HostToGuest::BootConfigDone) => break,
@@ -425,7 +425,35 @@ fn main() {
                                 let _ = nix::sys::signal::kill(child, Signal::SIGTERM);
                                 process::exit(0);
                             }
-                            Ok(_) => {} // Ignore env/files on reconnect
+                            Ok(HostToGuest::BootConfig { epoch_secs }) => {
+                                if epoch_secs > 0 {
+                                    set_system_clock(epoch_secs);
+                                    eprintln!("[capsem-agent] resume: clock resynced to {epoch_secs}");
+                                }
+                            }
+                            Ok(HostToGuest::SetEnv { key, value }) => {
+                                std::env::set_var(&key, &value);
+                                eprintln!("[capsem-agent] resume: set {key}");
+                            }
+                            Ok(HostToGuest::FileWrite { path, data, mode, .. }) => {
+                                if let Some(parent) = std::path::Path::new(&path).parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                if let Err(e) = std::fs::write(&path, &data) {
+                                    eprintln!("[capsem-agent] resume: failed to write {path}: {e}");
+                                } else {
+                                    #[cfg(unix)]
+                                    {
+                                        use std::os::unix::fs::PermissionsExt;
+                                        let _ = std::fs::set_permissions(
+                                            &path,
+                                            std::fs::Permissions::from_mode(mode),
+                                        );
+                                    }
+                                    eprintln!("[capsem-agent] resume: wrote {path}");
+                                }
+                            }
+                            Ok(_) => {}
                             Err(_) => break, // vsock broke again
                         }
                     }

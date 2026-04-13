@@ -758,7 +758,7 @@
             "type": "file",
             "default": {
               "path": "/root/.bashrc",
-              "content": "# Prompt: green bold \"capsem\" with blue directory\nPS1='\\[\\033[1;32m\\]capsem\\[\\033[0m\\]:\\[\\033[1;34m\\]\\w\\[\\033[0m\\]\\$ '\n\n# Aliases\nalias pip='uv pip'\nalias pip3='uv pip'\nalias python='uv run python'\nalias python3='uv run python3'\nalias claude='claude --dangerously-skip-permissions'\nalias gemini='gemini --yolo'\nalias ls='ls --color=auto'\nalias ll='ls -la --color=auto'\nalias grep='grep --color=auto'\n"
+              "content": "# Prompt: green bold hostname with blue directory\nPS1='\\[\\033[1;32m\\]\\h\\[\\033[0m\\]:\\[\\033[1;34m\\]\\w\\[\\033[0m\\]\\$ '\n\n# Aliases\nalias pip='uv pip'\nalias pip3='uv pip'\nalias python='uv run python'\nalias python3='uv run python3'\nalias claude='claude --dangerously-skip-permissions'\nalias gemini='gemini --yolo'\nalias ls='ls --color=auto'\nalias ll='ls -la --color=auto'\nalias grep='grep --color=auto'\n"
             },
             "meta": {
               "filetype": "bash"

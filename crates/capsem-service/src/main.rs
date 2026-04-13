@@ -17,8 +17,33 @@ use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use tower_http::trace::TraceLayer;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use rand::Rng;
 
 mod api;
+
+/// Generate a fun temporary VM name like `tmp-brave-falcon`.
+fn generate_tmp_name() -> String {
+    const ADJECTIVES: &[&str] = &[
+        "brave", "calm", "clever", "daring", "eager", "fancy", "gentle",
+        "happy", "jolly", "keen", "lively", "lucky", "merry", "noble",
+        "plucky", "quick", "quiet", "sharp", "smart", "swift", "witty",
+        "zany", "bright", "bold", "proud", "fierce", "steady", "agile",
+        "cosmic", "epic", "grand", "mighty", "nimble", "stellar", "vivid",
+    ];
+    const NOUNS: &[&str] = &[
+        "phoenix", "falcon", "otter", "panda", "wolf", "tiger", "raven",
+        "cobra", "dolphin", "hawk", "lynx", "puma", "fox", "owl", "bear",
+        "jaguar", "eagle", "heron", "bison", "coral", "amber", "jade",
+        "onyx", "ruby", "opal", "ivory", "crimson", "indigo", "violet",
+        "bronze", "silver", "cedar", "maple", "willow", "aurora", "comet",
+        "nova", "nebula", "summit", "ridge", "canyon", "glacier", "thunder",
+        "blaze", "ember", "frost", "breeze",
+    ];
+    let mut rng = rand::thread_rng();
+    let adj = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
+    let noun = NOUNS[rng.gen_range(0..NOUNS.len())];
+    format!("tmp-{adj}-{noun}")
+}
 use api::*;
 
 #[derive(Parser, Debug)]
@@ -201,6 +226,16 @@ impl ServiceState {
         tracing::info!(%id, original = %preferred.display(), short = %short.display(),
                        "socket path too long, using /tmp/capsem/");
         short
+    }
+
+    /// Path to main.db (global session index).
+    /// Layout: run_dir = ~/.capsem/run, main.db lives at ~/.capsem/sessions/main.db.
+    fn main_db_path(&self) -> PathBuf {
+        self.run_dir
+            .parent()
+            .unwrap_or(self.run_dir.as_path())
+            .join("sessions")
+            .join("main.db")
     }
 
     fn next_job_id(&self) -> u64 {
@@ -702,9 +737,7 @@ async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<ProvisionRequest>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
-    let id = payload.name.clone().unwrap_or_else(|| {
-        format!("vm-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-    });
+    let id = payload.name.clone().unwrap_or_else(generate_tmp_name);
 
     match state.provision_sandbox(ProvisionOptions {
         id: &id,
@@ -729,27 +762,48 @@ async fn handle_provision(
     }
 }
 
+/// Attach live telemetry from session.db to a SandboxInfo.
+/// Shared by handle_list (all VMs) and handle_info (single VM).
+fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
+    let db_path = session_dir.join("session.db");
+    if let Ok(reader) = capsem_logger::DbReader::open(&db_path) {
+        if let Ok(stats) = reader.session_stats() {
+            info.total_input_tokens = Some(stats.total_input_tokens);
+            info.total_output_tokens = Some(stats.total_output_tokens);
+            info.total_estimated_cost = Some(stats.total_estimated_cost_usd);
+            info.total_tool_calls = Some(stats.total_tool_calls);
+            info.total_requests = Some(stats.net_total);
+            info.allowed_requests = Some(stats.net_allowed);
+            info.denied_requests = Some(stats.net_denied);
+            info.model_call_count = Some(stats.model_call_count);
+        }
+        if let Ok(fc) = reader.file_event_count() {
+            info.total_file_events = Some(fc as u64);
+        }
+        if let Ok(mcp) = reader.mcp_call_stats() {
+            info.total_mcp_calls = Some(mcp.total as u64);
+        }
+    }
+}
+
 async fn handle_list(
     State(state): State<Arc<ServiceState>>,
 ) -> Json<ListResponse> {
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
-    // Running instances
+    // Running instances (with live telemetry)
     {
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
-            sandboxes.push(SandboxInfo {
-                id: i.id.clone(),
-                name: if i.persistent { Some(i.id.clone()) } else { None },
-                pid: i.pid,
-                status: "Running".to_string(),
-                persistent: i.persistent,
-                ram_mb: Some(i.ram_mb),
-                cpus: Some(i.cpus),
-                version: Some(i.base_version.clone()),
-                forked_from: i.forked_from.clone(),
-                description: None,
-            });
+            let mut info = SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
+            info.name = if i.persistent { Some(i.id.clone()) } else { None };
+            info.ram_mb = Some(i.ram_mb);
+            info.cpus = Some(i.cpus);
+            info.version = Some(i.base_version.clone());
+            info.forked_from = i.forked_from.clone();
+            info.uptime_secs = Some(i.start_time.elapsed().as_secs());
+            enrich_telemetry(&mut info, &i.session_dir);
+            sandboxes.push(info);
         }
     }
 
@@ -759,23 +813,15 @@ async fn handle_list(
         let instances = state.instances.lock().unwrap();
         for entry in registry.list() {
             if !instances.contains_key(&entry.name) {
-                let status = if entry.suspended {
-                    "Suspended"
-                } else {
-                    "Stopped"
-                };
-                sandboxes.push(SandboxInfo {
-                    id: entry.name.clone(),
-                    name: Some(entry.name.clone()),
-                    pid: 0,
-                    status: status.to_string(),
-                    persistent: true,
-                    ram_mb: Some(entry.ram_mb),
-                    cpus: Some(entry.cpus),
-                    version: Some(entry.base_version.clone()),
-                    forked_from: entry.forked_from.clone(),
-                    description: entry.description.clone(),
-                });
+                let status = if entry.suspended { "Suspended" } else { "Stopped" };
+                let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
+                info.name = Some(entry.name.clone());
+                info.ram_mb = Some(entry.ram_mb);
+                info.cpus = Some(entry.cpus);
+                info.version = Some(entry.base_version.clone());
+                info.forked_from = entry.forked_from.clone();
+                info.description = entry.description.clone();
+                sandboxes.push(info);
             }
         }
     }
@@ -789,20 +835,25 @@ async fn handle_info(
 ) -> Result<Json<SandboxInfo>, AppError> {
     // Check running instances first
     {
-        let instances = state.instances.lock().unwrap();
-        if let Some(i) = instances.get(&id) {
-            return Ok(Json(SandboxInfo {
-                id: i.id.clone(),
-                name: if i.persistent { Some(i.id.clone()) } else { None },
-                pid: i.pid,
-                status: "Running".to_string(),
-                persistent: i.persistent,
-                ram_mb: Some(i.ram_mb),
-                cpus: Some(i.cpus),
-                version: Some(i.base_version.clone()),
-                forked_from: i.forked_from.clone(),
-                description: None,
-            }));
+        let (instance_data, session_dir) = {
+            let instances = state.instances.lock().unwrap();
+            match instances.get(&id) {
+                Some(i) => {
+                    let mut info = SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
+                    info.name = if i.persistent { Some(i.id.clone()) } else { None };
+                    info.ram_mb = Some(i.ram_mb);
+                    info.cpus = Some(i.cpus);
+                    info.version = Some(i.base_version.clone());
+                    info.forked_from = i.forked_from.clone();
+                    info.uptime_secs = Some(i.start_time.elapsed().as_secs());
+                    (Some(info), Some(i.session_dir.clone()))
+                }
+                None => (None, None),
+            }
+        };
+        if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
+            enrich_telemetry(&mut info, &dir);
+            return Ok(Json(info));
         }
     }
 
@@ -811,22 +862,46 @@ async fn handle_info(
         let registry = state.persistent_registry.lock().unwrap();
         if let Some(entry) = registry.get(&id) {
             let status = if entry.suspended { "Suspended" } else { "Stopped" };
-            return Ok(Json(SandboxInfo {
-                id: entry.name.clone(),
-                name: Some(entry.name.clone()),
-                pid: 0,
-                status: status.to_string(),
-                persistent: true,
-                ram_mb: Some(entry.ram_mb),
-                cpus: Some(entry.cpus),
-                version: Some(entry.base_version.clone()),
-                forked_from: entry.forked_from.clone(),
-                description: entry.description.clone(),
-            }));
+            let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
+            info.name = Some(entry.name.clone());
+            info.ram_mb = Some(entry.ram_mb);
+            info.cpus = Some(entry.cpus);
+            info.version = Some(entry.base_version.clone());
+            info.forked_from = entry.forked_from.clone();
+            info.description = entry.description.clone();
+            return Ok(Json(info));
         }
     }
 
     Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+}
+
+/// GET /stats -- return full main.db aggregation in one response.
+async fn handle_stats(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<StatsResponse>, AppError> {
+    let db_path = state.main_db_path();
+    let index = capsem_core::session::SessionIndex::open(&db_path)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open main.db: {e}")))?;
+
+    let global = index.global_stats()
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("global_stats: {e}")))?;
+    let sessions = index.recent(100)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("recent: {e}")))?;
+    let top_providers = index.top_providers(20)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("top_providers: {e}")))?;
+    let top_tools = index.top_tools(20)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("top_tools: {e}")))?;
+    let top_mcp_tools = index.top_mcp_tools(20)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("top_mcp_tools: {e}")))?;
+
+    Ok(Json(StatsResponse {
+        global,
+        sessions,
+        top_providers,
+        top_tools,
+        top_mcp_tools,
+    }))
 }
 
 async fn handle_logs(
@@ -1034,27 +1109,92 @@ async fn handle_reload_config(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Settings endpoints
+// ---------------------------------------------------------------------------
+
+/// GET /settings -- unified settings tree + issues + presets.
+async fn handle_get_settings() -> Json<serde_json::Value> {
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Json(serde_json::to_value(resp).unwrap_or_default())
+}
+
+/// POST /settings -- batch-update settings and return the refreshed tree.
+async fn handle_save_settings(
+    Json(raw): Json<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Convert JSON values to SettingValue via serde round-trip.
+    let mut changes = HashMap::new();
+    for (key, val) in raw {
+        let sv: capsem_core::net::policy_config::SettingValue =
+            serde_json::from_value(val.clone()).map_err(|e| {
+                AppError(StatusCode::BAD_REQUEST, format!("invalid value for {key}: {e}"))
+            })?;
+        changes.insert(key, sv);
+    }
+    capsem_core::net::policy_config::batch_update_settings(&changes)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+}
+
+/// GET /settings/presets -- list security presets.
+async fn handle_get_presets() -> Json<serde_json::Value> {
+    let presets = capsem_core::net::policy_config::security_presets();
+    Json(serde_json::to_value(presets).unwrap_or_default())
+}
+
+/// POST /settings/presets/{id} -- apply a security preset, return refreshed tree.
+async fn handle_apply_preset(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    capsem_core::net::policy_config::apply_preset(&id)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+}
+
+/// POST /settings/lint -- validate config and return issues.
+async fn handle_lint_config() -> Json<serde_json::Value> {
+    let issues = capsem_core::net::policy_config::load_merged_lint();
+    Json(serde_json::to_value(issues).unwrap_or_default())
+}
+
 async fn handle_inspect(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<InspectRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    // _main sentinel routes to the global session index (main.db).
+    if id == "_main" {
+        let db_path = state.main_db_path();
+        let index = capsem_core::session::SessionIndex::open(&db_path)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open main.db: {e}")))?;
+        let json_str = index.query_raw(&payload.sql, &[])
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+        return Ok((
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            json_str,
+        ));
+    }
+
     let db_path = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         i.session_dir.join("session.db")
     };
-    
+
     let reader = capsem_logger::DbReader::open(&db_path)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
-        
+
     let json_str = reader.query_raw(&payload.sql)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
-        
+
     Ok((
         axum::http::StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/json")],
-        json_str
+        json_str,
     ))
 }
 
@@ -1445,8 +1585,7 @@ async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
-    let id = format!("run-{}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+    let id = generate_tmp_name();
 
     let ram_bytes = payload.ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
@@ -1683,8 +1822,13 @@ async fn main() -> Result<()> {
         .route("/persist/{id}", post(handle_persist))
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
+        .route("/stats", get(handle_stats))
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))
+        .route("/settings", get(handle_get_settings).post(handle_save_settings))
+        .route("/settings/presets", get(handle_get_presets))
+        .route("/settings/presets/{id}", post(handle_apply_preset))
+        .route("/settings/lint", post(handle_lint_config))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -2749,5 +2893,229 @@ mod tests {
         let entry: PersistentVmEntry = serde_json::from_str(json).unwrap();
         assert!(!entry.suspended, "suspended should default to false");
         assert!(entry.checkpoint_path.is_none(), "checkpoint_path should default to None");
+    }
+
+    // -----------------------------------------------------------------------
+    // main_db_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn main_db_path_resolves_to_sessions_dir() {
+        let state = make_test_state();
+        // run_dir = /tmp/capsem-test-svc => parent = /tmp => main.db = /tmp/sessions/main.db
+        let path = state.main_db_path();
+        assert!(path.ends_with("sessions/main.db"), "got: {}", path.display());
+    }
+
+    // -----------------------------------------------------------------------
+    // SandboxInfo::new
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sandbox_info_new_defaults_telemetry_to_none() {
+        let info = SandboxInfo::new("test".into(), 1, "Running".into(), false);
+        assert_eq!(info.id, "test");
+        assert_eq!(info.pid, 1);
+        assert!(!info.persistent);
+        assert!(info.total_input_tokens.is_none());
+        assert!(info.total_estimated_cost.is_none());
+        assert!(info.model_call_count.is_none());
+        assert!(info.created_at.is_none());
+        assert!(info.uptime_secs.is_none());
+    }
+
+    #[test]
+    fn sandbox_info_telemetry_fields_serialize_when_present() {
+        let mut info = SandboxInfo::new("test".into(), 1, "Running".into(), false);
+        info.total_input_tokens = Some(1000);
+        info.total_estimated_cost = Some(0.42);
+        info.model_call_count = Some(5);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"total_input_tokens\":1000"));
+        assert!(json.contains("\"total_estimated_cost\":0.42"));
+        assert!(json.contains("\"model_call_count\":5"));
+    }
+
+    #[test]
+    fn sandbox_info_telemetry_fields_omitted_when_none() {
+        let info = SandboxInfo::new("test".into(), 1, "Running".into(), false);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("total_input_tokens"));
+        assert!(!json.contains("total_estimated_cost"));
+        assert!(!json.contains("model_call_count"));
+        assert!(!json.contains("uptime_secs"));
+    }
+
+    #[test]
+    fn sandbox_info_backwards_compatible_deserialization() {
+        // Old JSON without telemetry fields should still deserialize
+        let json = r#"{"id":"x","pid":1,"status":"Running","persistent":false}"#;
+        let info: SandboxInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.id, "x");
+        assert!(info.total_input_tokens.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // StatsResponse
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stats_response_serializes() {
+        let resp = StatsResponse {
+            global: capsem_core::session::GlobalStats {
+                total_sessions: 10,
+                total_input_tokens: 5000,
+                total_output_tokens: 2000,
+                total_estimated_cost: 1.50,
+                total_tool_calls: 100,
+                total_mcp_calls: 20,
+                total_file_events: 300,
+                total_requests: 400,
+                total_allowed: 380,
+                total_denied: 20,
+            },
+            sessions: vec![],
+            top_providers: vec![],
+            top_tools: vec![],
+            top_mcp_tools: vec![],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"total_sessions\":10"));
+        assert!(json.contains("\"total_estimated_cost\":1.5"));
+        assert!(json.contains("\"top_providers\":[]"));
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_list includes uptime_secs for running VMs
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_list_includes_uptime_for_running_vms() {
+        let state = make_test_state();
+        insert_fake_instance(&state, "vm-1", 100);
+        let resp = handle_list(State(state)).await;
+        let list = resp.0;
+        assert_eq!(list.sandboxes.len(), 1);
+        assert!(list.sandboxes[0].uptime_secs.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_stats with tempdir
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_stats_returns_global_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path().join("run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let sessions_dir = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // Create main.db with a test session
+        let idx = capsem_core::session::SessionIndex::open(&sessions_dir.join("main.db")).unwrap();
+        let record = capsem_core::session::SessionRecord {
+            id: "20260412-120000-abcd".into(),
+            mode: "virtiofs".into(),
+            command: Some("echo hello".into()),
+            status: "stopped".into(),
+            created_at: "2026-04-12T12:00:00Z".into(),
+            stopped_at: Some("2026-04-12T12:05:00Z".into()),
+            scratch_disk_size_gb: 16,
+            ram_bytes: 4294967296,
+            total_requests: 50,
+            allowed_requests: 45,
+            denied_requests: 5,
+            total_input_tokens: 10000,
+            total_output_tokens: 3000,
+            total_estimated_cost: 0.42,
+            total_tool_calls: 25,
+            total_mcp_calls: 5,
+            total_file_events: 100,
+            compressed_size_bytes: None,
+            vacuumed_at: None,
+            storage_mode: "virtiofs".into(),
+            rootfs_hash: None,
+            rootfs_version: None,
+            forked_from: None,
+            persistent: false,
+        };
+        idx.create_session(&record).unwrap();
+        drop(idx);
+
+        let (state, _dir) = make_test_state_with_tempdir_at(dir);
+        let result = handle_stats(State(state)).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap().0;
+        assert_eq!(resp.global.total_sessions, 1);
+        assert_eq!(resp.global.total_input_tokens, 10000);
+        assert_eq!(resp.global.total_estimated_cost, 0.42);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].id, "20260412-120000-abcd");
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings handler tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_get_settings_returns_tree() {
+        let Json(val) = handle_get_settings().await;
+        assert!(val.get("tree").is_some(), "response must have 'tree'");
+        assert!(val.get("issues").is_some(), "response must have 'issues'");
+        assert!(val.get("presets").is_some(), "response must have 'presets'");
+        assert!(val["tree"].is_array());
+        assert!(val["issues"].is_array());
+        assert!(val["presets"].is_array());
+    }
+
+    #[tokio::test]
+    async fn handle_get_presets_returns_list() {
+        let Json(val) = handle_get_presets().await;
+        let arr = val.as_array().expect("presets should be an array");
+        assert!(!arr.is_empty(), "should have at least one preset");
+        assert!(arr[0].get("id").is_some());
+        assert!(arr[0].get("name").is_some());
+        assert!(arr[0].get("settings").is_some());
+    }
+
+    #[tokio::test]
+    async fn handle_lint_config_returns_array() {
+        let Json(val) = handle_lint_config().await;
+        assert!(val.is_array(), "lint response should be an array");
+    }
+
+    #[tokio::test]
+    async fn handle_save_settings_rejects_unknown_key() {
+        let mut changes = HashMap::new();
+        changes.insert("nonexistent.setting.xyz".into(), serde_json::json!("value"));
+        let result = handle_save_settings(Json(changes)).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<ServiceState>, tempfile::TempDir) {
+        let run_dir = dir.path().join("run");
+        let dummy_hash = "a".repeat(64);
+        let manifest_json = format!(
+            r#"{{"latest":"0.0.0","releases":{{"0.0.0":{{"assets":[{{"filename":"dummy.img","hash":"{}","size":0}}]}}}}}}"#,
+            dummy_hash
+        );
+        let manifest = capsem_core::asset_manager::Manifest::from_json(&manifest_json).unwrap();
+        let am = capsem_core::asset_manager::AssetManager::from_manifest(
+            &manifest, "0.0.0", run_dir.join("assets"), None
+        ).unwrap();
+        let registry_path = run_dir.join("persistent_registry.json");
+        let state = Arc::new(ServiceState {
+            instances: Mutex::new(HashMap::new()),
+            persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
+            process_binary: PathBuf::from("/nonexistent/capsem-process"),
+            assets_dir: run_dir.join("assets"),
+            run_dir,
+            job_counter: AtomicU64::new(1),
+            asset_manager: Arc::new(am),
+            current_version: "0.0.0".into(),
+        });
+        (state, dir)
     }
 }
