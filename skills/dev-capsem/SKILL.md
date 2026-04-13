@@ -17,8 +17,10 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 | `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
 | `capsem-mcp` | MCP server for AI agents. Stdio, bridges to service. | `main.rs` (rmcp handler, UDS client) |
 | `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |
-| `capsem-app` | Optional Tauri GUI shell. IPC commands, state. | `commands.rs`, `state.rs`, `cli.rs` |
-| `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent + file I/O), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay) |
+| `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |
+| `capsem-app` | Thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). 2 IPC commands: `open_url`, `check_for_app_update`. Bundled `frontend/dist` as offline fallback. | `main.rs` |
+| `capsem-tray` | System tray. Polls gateway for VM status, quick actions (open dashboard, quit). | `main.rs`, `menu.rs` |
+| `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent + file I/O), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay), `sysutil.rs` (lifecycle multi-call: shutdown/halt/poweroff/reboot/suspend) |
 | `capsem-logger` | Session DB schema, queries, async writer. | `schema.rs`, `writer.rs`, `events.rs` |
 | `capsem-proto` | Shared protocol types. | `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost) |
 
@@ -30,11 +32,13 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 |------|------|-------|
 | `crates/` | Rust workspace | `/site-architecture` |
 | `frontend/` | Astro 5 + Svelte 5 + Tailwind v4 + Preline | `/frontend-design` |
-| `site/` | Starlight documentation site | `/site-infra` |
+| `site/` | Marketing website (Astro + Svelte 5) | `/site-marketing` |
+| `docs/` | Documentation site (Astro Starlight) | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
 | `guest/config/` | Guest TOML configs | `/build-images` |
 | `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
 | `assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
+| `graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
 | `config/` | defaults.toml, CA keypair | `/site-architecture` |
 | `scripts/` | preflight, integration test, doctor session | `/release-process` |
@@ -75,20 +79,21 @@ When working on a specific area, consult the relevant skill:
 | Skill | When |
 |-------|------|
 | `/frontend-design` | Design system, colors, Preline, Svelte 5 runes |
-| `/site-architecture` | System architecture, Tauri, key files |
+| `/site-architecture` | System architecture, service daemon, gateway, key files |
 | `/site-infra` | Astro Starlight docs site |
 
 ## Communication paths
 
 ```
-AI Agent  -> capsem-mcp (stdio) -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
-User CLI  -> capsem (HTTP/UDS)  -> capsem-service -> capsem-process -> vsock -> guest
-Tauri GUI -> Tauri IPC          -> capsem-core -> vsock -> guest
-Guest HTTPS -> iptables -> vsock:5002 -> Host MITM proxy -> upstream
-Guest MCP   -> vsock:5003 -> Host MCP gateway -> external MCP servers
+AI Agent    -> capsem-mcp (stdio)      -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
+User CLI    -> capsem (HTTP/UDS)       -> capsem-service -> capsem-process -> vsock -> guest
+Desktop UI  -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
+Tray app    -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
+Guest HTTPS -> iptables -> vsock:5002  -> Host MITM proxy -> upstream
+Guest MCP   -> vsock:5003             -> Host MCP gateway -> external MCP servers
 ```
 
-Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP), 5005 (exec output).
+Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP), 5004 (lifecycle/capsem-sysutil), 5005 (exec output).
 
 ## Config hierarchy
 
@@ -104,3 +109,14 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP), 5005 (exe
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - `capsem-core` owns all business logic. App crate and agent crate are thin shells.
 - **Fork images are first-class objects.** `capsem fork <vm> <image-name>` snapshots a VM into a reusable template. `capsem create --image <name>` boots from it. Images depend only on a base squashfs version (flat genealogy -- no image-to-image deps). Asset cleanup protects squashfs versions referenced by any image. Images live in `~/.capsem/images/`.
+
+## Installation
+
+`capsem setup` is the primary install path. On first use, auto-runs non-interactively (detects credentials, installs service, downloads assets). Users can re-run `capsem setup --force` to reconfigure.
+
+**Install layout** (`~/.capsem/`):
+- `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
+- `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+- `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/
+
+**Service registration**: LaunchAgent (macOS: `com.capsem.service`) / systemd user unit (Linux: `capsem.service`). Auto-restarts on crash. See `/dev-installation` for the full wizard flow.

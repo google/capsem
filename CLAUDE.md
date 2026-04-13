@@ -23,16 +23,17 @@ crates/capsem-service/    Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/    Per-VM process (boots VM, bridges vsock, job store)
 crates/capsem/            CLI client (start, list, shell, status)
 crates/capsem-mcp/        MCP server for AI agents (stdio, bridges to service)
-crates/capsem-app/        Tauri binary (GUI, commands, state)
 crates/capsem-agent/      Guest PTY agent (vsock bridge, cross-compiled)
 crates/capsem-proto/      Shared protocol types (host-guest, service-process IPC)
 crates/capsem-logger/     Session DB schema, queries, async writer
 frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + Preline
-site/                     Product website (Astro Starlight)
+site/                     Marketing website (Astro + Svelte 5)
+docs/                     Documentation site (Astro Starlight)
 src/capsem/builder/       capsem-builder CLI (config-driven image builder)
 guest/config/             Guest image configuration (TOML configs)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
+graphics/                 Brand icons and Tauri app icons (source of truth)
 skills/                   Shared AI agent skills (SKILL.md format)
 ```
 
@@ -70,9 +71,12 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Release | `/release-process` | CI, signing, notarization, changelog |
 | Installation | `/dev-installation` | Setup wizard, service registration, self-update, install tests |
 | Architecture | `/site-architecture` | System design, service architecture, vsock, key files |
+| Docs site | `/site-infra` | Writing/editing docs, Starlight, sidebar, release pages |
+| Marketing site | `/site-marketing` | Marketing website (capsem.org), copy, components, theme |
 
 ## Code Style
 
+- **Warnings are errors.** Fix every compiler/linter warning before considering code done. Never leave warnings. Frontend: `pnpm run check` uses `--fail-on-warnings`. Rust: all crates use `#[deny(warnings)]` -- treat clippy and rustc warnings as build failures.
 - **Reuse over reinvention.** Check `capsem-core` first. Extend existing abstractions.
 - **Minimize code.** Delete dead code, inline single-use helpers. Every line must earn its place.
 - **`capsem-core` is the shared library.** Service, process, CLI, and agent crates are thin shells. Business logic lives in core.
