@@ -11,20 +11,21 @@ import type {
   ReadFileResponse,
   ForkRequest,
   ForkResponse,
+  StatsResponse,
 } from './types/gateway';
-import {
-  mockVMs,
-  mockModelStats,
-  mockToolCalls,
-  mockNetworkEvents,
-  mockFileEvents,
-  mockLogEntries,
-  mockFileTree,
-  executeMockQuery,
-  type MockVM,
-  type MockLogEntry,
-  type MockFileNode,
-} from './mock';
+import type {
+  SettingsResponse,
+  SecurityPreset,
+  ConfigIssue,
+} from './types/settings';
+import type {
+  DownloadProgress,
+  McpServerInfo,
+  McpToolInfo,
+  McpPolicyInfo,
+  VmStateResponse,
+  VmLogEntry,
+} from './types';
 
 // -- Module state (never exported directly) --
 
@@ -56,6 +57,7 @@ export async function init(): Promise<InitResult> {
     const healthResp = await fetch(`${_baseUrl}/`);
     if (!healthResp.ok) {
       _connected = false;
+      
       return { connected: false, reachable: false, version: null };
     }
     const health: HealthResponse = await healthResp.json();
@@ -64,16 +66,20 @@ export async function init(): Promise<InitResult> {
     const tokenResp = await fetch(`${_baseUrl}/token`);
     if (!tokenResp.ok) {
       _connected = false;
+      
       return { connected: false, reachable: true, version: health.version };
     }
     const tokenData: TokenResponse = await tokenResp.json();
     _token = tokenData.token;
 
     _connected = true;
+    
+    _connectEventWs();
     return { connected: true, reachable: true, version: health.version };
   } catch {
     _connected = false;
     _token = null;
+    
     return { connected: false, reachable: false, version: null };
   }
 }
@@ -85,6 +91,7 @@ export async function healthCheck(): Promise<boolean> {
     return true;
   } catch {
     _connected = false;
+    
     return false;
   }
 }
@@ -148,35 +155,30 @@ function isNetworkError(err: unknown): boolean {
 // -- Status --
 
 export async function getStatus(): Promise<StatusResponse> {
-  if (!_connected) return mockStatus();
+  if (!_connected) return emptyStatus();
   try {
     const resp = await _get('/status');
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
       _connected = false;
-      return mockStatus();
+      return emptyStatus();
     }
     throw err;
   }
 }
 
-function mockStatus(): StatusResponse {
+function emptyStatus(): StatusResponse {
   return {
-    service: 'mock',
-    gateway_version: '0.0.0-mock',
-    vm_count: mockVMs.length,
-    vms: mockVMs.map(vm => ({
-      id: vm.id,
-      name: vm.name,
-      status: vm.status.charAt(0).toUpperCase() + vm.status.slice(1),
-      persistent: vm.persistent,
-    })),
+    service: 'offline',
+    gateway_version: '',
+    vm_count: 0,
+    vms: [],
     resource_summary: {
-      total_ram_mb: mockVMs.reduce((a, v) => a + v.ram, 0),
-      total_cpus: mockVMs.reduce((a, v) => a + v.cpus, 0),
-      running_count: mockVMs.filter(v => v.status === 'running').length,
-      stopped_count: mockVMs.filter(v => v.status === 'stopped').length,
+      total_ram_mb: 0,
+      total_cpus: 0,
+      running_count: 0,
+      stopped_count: 0,
       suspended_count: 0,
     },
   };
@@ -221,15 +223,15 @@ export async function forkVm(id: string, opts: ForkRequest): Promise<ForkRespons
 
 // -- VM inspection --
 
-export async function getVmLogs(id: string): Promise<MockLogEntry[]> {
-  if (!_connected) return mockLogEntries;
+export async function getVmLogs(id: string): Promise<VmLogEntry[]> {
+  if (!_connected) return [];
   try {
     const resp = await _get(`/logs/${encodeURIComponent(id)}`);
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
       _connected = false;
-      return mockLogEntries;
+      return [];
     }
     throw err;
   }
@@ -248,14 +250,14 @@ export async function execCommand(
 }
 
 export async function inspectQuery(id: string, sql: string): Promise<InspectResponse> {
-  if (!_connected) return executeMockQuery(sql);
+  if (!_connected) return { columns: [], rows: [] };
   try {
     const resp = await _post(`/inspect/${encodeURIComponent(id)}`, { sql });
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
       _connected = false;
-      return executeMockQuery(sql);
+      return { columns: [], rows: [] };
     }
     throw err;
   }
@@ -283,6 +285,34 @@ export async function reloadConfig(): Promise<void> {
   await _post('/reload-config');
 }
 
+// -- Stats --
+
+/** Fetch cross-session stats from main.db. */
+export async function getStats(): Promise<StatsResponse> {
+  if (!_connected) return emptyStats();
+  try {
+    const resp = await _get('/stats');
+    return await resp.json();
+  } catch (err) {
+    if (isNetworkError(err)) {
+      _connected = false;
+      return emptyStats();
+    }
+    throw err;
+  }
+}
+
+function emptyStats(): StatsResponse {
+  return {
+    global: {
+      total_sessions: 0, total_input_tokens: 0, total_output_tokens: 0,
+      total_estimated_cost: 0, total_tool_calls: 0, total_mcp_calls: 0,
+      total_file_events: 0, total_requests: 0, total_allowed: 0, total_denied: 0,
+    },
+    sessions: [], top_providers: [], top_tools: [], top_mcp_tools: [],
+  };
+}
+
 // -- Terminal --
 
 export function getTerminalWsUrl(id: string): string {
@@ -290,7 +320,367 @@ export function getTerminalWsUrl(id: string): string {
   return `${wsBase}/terminal/${encodeURIComponent(id)}?token=${_token}`;
 }
 
-// -- Re-exports for mock fallback --
+// Terminal WebSocket state (per-VM, lazy-connected).
+let _termWs: WebSocket | null = null;
+let _termBuffer: number[] = [];
+let _termWaiter: ((data: number[]) => void) | null = null;
+const _termSourceCallbacks: ((source: string) => void)[] = [];
 
-export { mockVMs, mockModelStats, mockToolCalls, mockNetworkEvents, mockFileEvents, mockLogEntries, mockFileTree };
-export type { MockVM, MockLogEntry, MockFileNode };
+/** Connect terminal WebSocket for a given VM. */
+export function connectTerminal(id: string) {
+  if (_termWs) {
+    _termWs.close();
+    _termWs = null;
+  }
+  _termBuffer = [];
+  const url = getTerminalWsUrl(id);
+  _termWs = new WebSocket(url);
+  _termWs.binaryType = 'arraybuffer';
+  _termWs.onopen = () => {
+    for (const cb of _termSourceCallbacks) cb('websocket');
+  };
+  _termWs.onmessage = (ev) => {
+    const data = Array.from(new Uint8Array(ev.data as ArrayBuffer));
+    if (_termWaiter) {
+      const w = _termWaiter;
+      _termWaiter = null;
+      w(data);
+    } else {
+      _termBuffer.push(...data);
+    }
+  };
+  _termWs.onclose = () => {
+    _termWs = null;
+  };
+}
+
+/** Send input data to the terminal. */
+export async function serialInput(data: string): Promise<void> {
+  if (_termWs?.readyState === WebSocket.OPEN) {
+    _termWs.send(new TextEncoder().encode(data));
+  }
+}
+
+/** Poll for terminal output (returns buffered data or waits for next message). */
+export async function terminalPoll(): Promise<number[]> {
+  if (_termBuffer.length > 0) {
+    const data = _termBuffer;
+    _termBuffer = [];
+    return data;
+  }
+  if (!_termWs || _termWs.readyState !== WebSocket.OPEN) {
+    throw new Error('terminal closed');
+  }
+  return new Promise((resolve, reject) => {
+    _termWaiter = resolve;
+    // Reject if WebSocket closes while waiting.
+    const ws = _termWs;
+    const onClose = () => {
+      if (_termWaiter === resolve) {
+        _termWaiter = null;
+        reject(new Error('terminal closed'));
+      }
+    };
+    ws?.addEventListener('close', onClose, { once: true });
+  });
+}
+
+/** Send a resize event to the terminal. */
+export async function terminalResize(cols: number, rows: number): Promise<void> {
+  if (_termWs?.readyState === WebSocket.OPEN) {
+    _termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+  }
+}
+
+/** Register a callback for terminal source changes (e.g., WebSocket connects). */
+export async function onTerminalSourceChanged(cb: (source: string) => void): Promise<() => void> {
+  _termSourceCallbacks.push(cb);
+  return () => {
+    const i = _termSourceCallbacks.indexOf(cb);
+    if (i >= 0) _termSourceCallbacks.splice(i, 1);
+  };
+}
+
+// -- VM state --
+
+/** Get the current VM state string. Returns 'not created' in mock mode. */
+export async function vmStatus(): Promise<string> {
+  if (!_connected) return 'not created';
+  try {
+    const status = await getStatus();
+    const running = status.vms.find(v => v.status.toLowerCase() === 'running');
+    if (running) return running.status.toLowerCase();
+    if (status.vms.length > 0) return status.vms[0].status.toLowerCase();
+    return 'not created';
+  } catch {
+    return 'not created';
+  }
+}
+
+/** Get VM state with transition history. */
+export async function getVmState(id?: string): Promise<VmStateResponse> {
+  if (!_connected) return { state: 'not created', elapsed_ms: 0, history: [] };
+  try {
+    const path = id ? `/info/${encodeURIComponent(id)}` : '/status';
+    const resp = await _get(path);
+    const data = await resp.json();
+    // /info/{id} returns full sandbox info; extract state + history.
+    if (id) {
+      return {
+        state: data.status ?? 'not created',
+        elapsed_ms: data.elapsed_ms ?? 0,
+        history: data.history ?? [],
+      };
+    }
+    // /status: synthesize from first VM.
+    const vm = data.vms?.[0];
+    return {
+      state: vm?.status?.toLowerCase() ?? 'not created',
+      elapsed_ms: 0,
+      history: [],
+    };
+  } catch {
+    return { state: 'not created', elapsed_ms: 0, history: [] };
+  }
+}
+
+// -- Real-time events (WebSocket /events) --
+
+interface VmStateEvent {
+  state: string;
+  trigger?: string;
+  message?: string;
+}
+
+let _eventWs: WebSocket | null = null;
+const _vmStateCallbacks: ((payload: VmStateEvent) => void)[] = [];
+const _downloadProgressCallbacks: ((progress: DownloadProgress) => void)[] = [];
+
+function _connectEventWs() {
+  if (_eventWs) return;
+  if (!_token) return;
+  const wsBase = _baseUrl.replace(/^http/, 'ws');
+  _eventWs = new WebSocket(`${wsBase}/events?token=${_token}`);
+  _eventWs.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data as string);
+      if (msg.type === 'vm-state-changed') {
+        for (const cb of _vmStateCallbacks) cb(msg.payload);
+      } else if (msg.type === 'download-progress') {
+        for (const cb of _downloadProgressCallbacks) cb(msg.payload);
+      }
+    } catch {
+      // Ignore malformed messages.
+    }
+  };
+  _eventWs.onclose = () => {
+    _eventWs = null;
+    // Auto-reconnect after 5s if still connected.
+    if (_connected) {
+      setTimeout(() => _connectEventWs(), 5000);
+    }
+  };
+}
+
+/** Subscribe to VM state change events. Returns an unsubscribe function. */
+export function onVmStateChanged(cb: (payload: VmStateEvent) => void): () => void {
+  _vmStateCallbacks.push(cb);
+  return () => {
+    const i = _vmStateCallbacks.indexOf(cb);
+    if (i >= 0) _vmStateCallbacks.splice(i, 1);
+  };
+}
+
+/** Subscribe to download progress events. Returns an unsubscribe function. */
+export function onDownloadProgress(cb: (progress: DownloadProgress) => void): () => void {
+  _downloadProgressCallbacks.push(cb);
+  return () => {
+    const i = _downloadProgressCallbacks.indexOf(cb);
+    if (i >= 0) _downloadProgressCallbacks.splice(i, 1);
+  };
+}
+
+// -- Settings --
+
+/** Load the merged settings tree (user + corp + defaults). */
+export async function getSettings(): Promise<SettingsResponse> {
+  const resp = await _get('/settings');
+  return await resp.json();
+}
+
+/** Save settings changes. Returns the updated settings tree. */
+export async function saveSettings(changes: Record<string, unknown>): Promise<SettingsResponse> {
+  const resp = await _post('/settings', changes);
+  return await resp.json();
+}
+
+/** List available security presets. */
+export async function getPresets(): Promise<SecurityPreset[]> {
+  const resp = await _get('/settings/presets');
+  return await resp.json();
+}
+
+/** Apply a security preset by ID. Returns updated settings. */
+export async function applyPreset(id: string): Promise<SettingsResponse> {
+  const resp = await _post(`/settings/presets/${encodeURIComponent(id)}`);
+  return await resp.json();
+}
+
+/** Validate config and return issues. */
+export async function lintConfig(): Promise<ConfigIssue[]> {
+  const resp = await _post('/settings/lint');
+  return await resp.json();
+}
+
+// -- MCP config (mutations via settings API) --
+
+/** Get MCP policy from settings. */
+export async function getMcpPolicy(): Promise<McpPolicyInfo> {
+  const resp = await _get('/settings');
+  const settings: SettingsResponse = await resp.json();
+  // Extract MCP policy from settings tree. The backend includes it in the response.
+  return _extractMcpPolicy(settings);
+}
+
+function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
+  // Walk tree looking for mcp policy values; use defaults if not found.
+  const policy: McpPolicyInfo = {
+    global_policy: null,
+    default_tool_permission: 'allow',
+    blocked_servers: [],
+    tool_permissions: {},
+  };
+  function walk(nodes: typeof settings.tree) {
+    for (const node of nodes) {
+      if (node.kind === 'leaf') {
+        if (node.id === 'mcp.policy.global') {
+          policy.global_policy = node.effective_value as string | null;
+        } else if (node.id === 'mcp.policy.default_tool_permission') {
+          policy.default_tool_permission = node.effective_value as string;
+        }
+      }
+      if (node.kind === 'group' && 'children' in node) {
+        walk(node.children);
+      }
+    }
+  }
+  walk(settings.tree);
+  return policy;
+}
+
+/** Enable/disable an MCP server via settings. */
+export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<void> {
+  await saveSettings({ [`mcp.servers.${name}.enabled`]: enabled });
+}
+
+/** Add an MCP server via settings. */
+export async function addMcpServer(
+  name: string,
+  url: string,
+  headers: Record<string, string>,
+  bearerToken: string | null,
+): Promise<void> {
+  const changes: Record<string, unknown> = {
+    [`mcp.servers.${name}.url`]: url,
+    [`mcp.servers.${name}.enabled`]: true,
+  };
+  if (Object.keys(headers).length > 0) {
+    changes[`mcp.servers.${name}.headers`] = headers;
+  }
+  if (bearerToken) {
+    changes[`mcp.servers.${name}.bearer_token`] = bearerToken;
+  }
+  await saveSettings(changes);
+}
+
+/** Remove an MCP server via settings. */
+export async function removeMcpServer(name: string): Promise<void> {
+  await saveSettings({ [`mcp.servers.${name}`]: null });
+}
+
+/** Set the MCP global policy via settings. */
+export async function setMcpGlobalPolicy(policy: string): Promise<void> {
+  await saveSettings({ 'mcp.policy.global': policy });
+}
+
+/** Set the MCP default tool permission via settings. */
+export async function setMcpDefaultPermission(permission: string): Promise<void> {
+  await saveSettings({ 'mcp.policy.default_tool_permission': permission });
+}
+
+/** Set a per-tool MCP permission via settings. */
+export async function setMcpToolPermission(tool: string, permission: string): Promise<void> {
+  await saveSettings({ [`mcp.policy.tools.${tool}`]: permission });
+}
+
+// -- MCP runtime --
+
+/** List configured MCP servers with tool counts (runtime). */
+export async function getMcpServers(): Promise<McpServerInfo[]> {
+  if (!_connected) return [];
+  try {
+    const resp = await _get('/mcp/servers');
+    return await resp.json();
+  } catch (err) {
+    if (isNetworkError(err)) return [];
+    throw err;
+  }
+}
+
+/** List discovered MCP tools with cache/approval status (runtime). */
+export async function getMcpTools(): Promise<McpToolInfo[]> {
+  if (!_connected) return [];
+  try {
+    const resp = await _get('/mcp/tools');
+    return await resp.json();
+  } catch (err) {
+    if (isNetworkError(err)) return [];
+    throw err;
+  }
+}
+
+/** Re-discover tools from MCP servers. */
+export async function refreshMcpTools(server?: string): Promise<void> {
+  await _post('/mcp/tools/refresh', server ? { server } : undefined);
+}
+
+/** Approve an MCP tool (writes tool cache). */
+export async function approveMcpTool(name: string): Promise<void> {
+  await _post(`/mcp/tools/${encodeURIComponent(name)}/approve`);
+}
+
+/** Call a built-in MCP file tool. */
+export async function callMcpTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  const resp = await _post(`/mcp/tools/${encodeURIComponent(name)}/call`, args);
+  return await resp.json();
+}
+
+// -- Validation --
+
+/** Validate an API key against a provider endpoint. */
+export async function validateApiKey(provider: string, key: string): Promise<{ valid: boolean; message: string }> {
+  try {
+    const resp = await _post('/settings/validate-key', { provider, key });
+    return await resp.json();
+  } catch {
+    return { valid: false, message: 'Validation failed (gateway unreachable)' };
+  }
+}
+
+// -- App actions --
+
+/** Open a URL in the system default browser. */
+export async function openUrl(url: string): Promise<void> {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+/** Check for app updates. Returns null if no update available. */
+export async function checkForAppUpdate(): Promise<{ version: string; current_version: string } | null> {
+  try {
+    const resp = await _get('/update/check');
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+

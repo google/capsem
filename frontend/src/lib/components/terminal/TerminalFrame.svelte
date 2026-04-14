@@ -12,13 +12,16 @@
   let containerEl: HTMLDivElement;
   let terminal: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
-  let renderer: 'webgl' | 'canvas' = 'canvas';
   let resizeObserver: ResizeObserver | null = null;
   let resizeRafId = 0;
   let vmId: string | null = null;
   let ws: WebSocket | null = null;
   let wsConnected = false;
-  let mockEchoEnabled = true;
+  let wsUrl: string | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempt = 0;
+  const MAX_RECONNECT_ATTEMPTS = 10;
+  let destroyed = false;
 
   function applySettings(msg: { terminalTheme: string; mode: string; fontSize?: number; fontFamily?: string }): void {
     if (!terminal) return;
@@ -62,33 +65,55 @@
     }
   }
 
+  function scheduleReconnect(): void {
+    if (destroyed || !wsUrl || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) return;
+    // Exponential backoff: 500ms, 1s, 2s, 4s, ... capped at 5s
+    const delay = Math.min(500 * Math.pow(2, reconnectAttempt), 5000);
+    reconnectAttempt++;
+    if (terminal) {
+      terminal.write(`\r\n\x1b[33m[Connecting... attempt ${reconnectAttempt}/${MAX_RECONNECT_ATTEMPTS}]\x1b[0m\r\n`);
+    }
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (!destroyed && wsUrl) connectWebSocket(wsUrl);
+    }, delay);
+  }
+
   function connectWebSocket(url: string): void {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (ws) {
       ws.close();
       ws = null;
     }
+    wsUrl = url;
 
     try {
       const socket = new WebSocket(url);
       socket.binaryType = 'arraybuffer';
+      let receivedData = false;
 
       socket.onopen = () => {
         wsConnected = true;
-        mockEchoEnabled = false;
+        reconnectAttempt = 0;
         if (terminal) {
           terminal.clear();
-          // Send current terminal size as first message
           if (fitAddon) {
             const dims = fitAddon.proposeDimensions();
             if (dims) {
               socket.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
             }
           }
+          // Nudge the shell to redraw its prompt (it was printed before we connected)
+          socket.send(new TextEncoder().encode('\n'));
         }
       };
 
       socket.onmessage = (event: MessageEvent) => {
         if (!terminal) return;
+        receivedData = true;
         if (event.data instanceof ArrayBuffer) {
           terminal.write(new Uint8Array(event.data));
         } else {
@@ -99,16 +124,19 @@
       socket.onclose = () => {
         wsConnected = false;
         ws = null;
-        if (terminal) {
-          terminal.write('\r\n\x1b[1;31m[Connection closed]\x1b[0m\r\n');
+        if (!receivedData && reconnectAttempt < MAX_RECONNECT_ATTEMPTS) {
+          // VM probably still booting -- retry
+          scheduleReconnect();
+        } else {
+          if (terminal) {
+            terminal.write('\r\n\x1b[1;31m[Connection closed]\x1b[0m\r\n');
+          }
+          sendToParent({ type: 'error', code: 'ws-closed', message: 'WebSocket connection closed' });
         }
-        sendToParent({ type: 'error', code: 'ws-closed', message: 'WebSocket connection closed' });
       };
 
       socket.onerror = () => {
-        wsConnected = false;
-        ws = null;
-        sendToParent({ type: 'error', code: 'ws-failed', message: 'WebSocket connection failed' });
+        // onerror is always followed by onclose, so reconnect logic runs there
       };
 
       ws = socket;
@@ -139,14 +167,10 @@
     // GPU-accelerated rendering with canvas fallback
     try {
       const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        webgl.dispose();
-        renderer = 'canvas';
-      });
+      webgl.onContextLoss(() => webgl.dispose());
       terminal.loadAddon(webgl);
-      renderer = 'webgl';
     } catch {
-      renderer = 'canvas';
+      // canvas fallback -- no action needed
     }
 
     fitAddon.fit();
@@ -175,36 +199,9 @@
       sendToParent({ type: 'title-update', title: sanitized });
     });
 
-    // Mock banner for Sprint 01
-    const enc = new TextEncoder();
-    terminal.write(enc.encode(
-      '\x1b[1;34mCAPSEM sandbox ready\x1b[0m\r\n' +
-      '\x1b[35mLinux 6.6.127 | aarch64\x1b[0m\r\n' +
-      '\r\n' +
-      'Renderer: ' + renderer + '\r\n' +
-      '\r\n' +
-      '\x1b[1;34mcapsem:~#\x1b[0m '
-    ));
-
     terminal.onData((data: string) => {
-      // WebSocket mode: send to gateway
       if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-        return;
-      }
-
-      // Mock echo mode (no gateway)
-      if (!mockEchoEnabled || !terminal) return;
-      for (const ch of data) {
-        if (ch === '\r') {
-          terminal.write('\r\n\x1b[1;34mcapsem:~#\x1b[0m ');
-        } else if (ch === '\x7f') {
-          terminal.write('\b \b');
-        } else if (ch === '\x03') {
-          terminal.write('^C\r\n\x1b[1;34mcapsem:~#\x1b[0m ');
-        } else {
-          terminal.write(ch);
-        }
+        ws.send(new TextEncoder().encode(data));
       }
     });
 
@@ -215,8 +212,10 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
     window.removeEventListener('message', onMessage);
     if (resizeRafId) cancelAnimationFrame(resizeRafId);
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     resizeObserver?.disconnect();
     if (ws) { ws.close(); ws = null; }
     terminal?.dispose();
