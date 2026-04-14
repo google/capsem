@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **frontend: tab names use VM name** -- provisioning and deep-link flows now show the VM's fun name (e.g. "tmp-agile-blaze") instead of the raw ID.
+- **frontend: snapshot stats query real VM** -- Snapshots tab in Stats view now queries the VM's session.db via `/inspect` instead of the local mock database.
+- **frontend: VM logs and service logs wired** -- VM Logs view parses NDJSON process logs into structured table with level/source/message columns and Process/Serial toggle. Service Logs view fetches from new `/service-logs` endpoint.
+- **frontend: detail panel restored** -- click any tool call, network request, or file event row in Stats to open a slide-out detail panel with Shiki syntax-highlighted JSON, headers, and request/response bodies.
+
 ### Changed
+- **frontend: removed URL bar** -- toolbar no longer shows the address/search bar; cleaner layout with just VM actions and view switcher.
+- **frontend: removed Inspector tab** -- Inspector view removed from the toolbar view switcher; available via hamburger menu if needed.
+- **frontend: removed status dot** -- connection indicator dot removed from toolbar.
+- **service: added /service-logs endpoint** -- returns last 100KB of service.log as plain text for the frontend Service Logs view.
+
+### Changed
+- **build: auto-prune stale cargo artifacts** -- `_clean-stale` now removes orphaned `.o`/`.rlib`/`.rmeta` files and incremental dirs older than 3 days when `target/` exceeds 10 GB. Runs automatically after `test`, `smoke`, and `install` to prevent unbounded growth (previously hit 72 GB from accumulated hash variants).
 - **CLI: simplified command structure** -- removed `service` subcommand group; `install`, `status`, `start`, `stop` are now top-level commands. Removed session-level `stop` (use `suspend` or `delete`) and `status` (use `info`). Removed `start` alias from `create`. Renamed all "sandbox" terminology to "session". Session identifier parameter shows as `<SESSION>` in help.
 - **CLI: enriched `list` output** -- table now shows NAME, STATUS, RAM, CPUs, and UPTIME columns instead of the old ID/STATUS/PERSIST/PID.
 - **CLI: enriched `info` output** -- shows formatted session details with telemetry (tokens, cost, tool calls, requests) instead of raw JSON. Use `--json` for machine-readable output.

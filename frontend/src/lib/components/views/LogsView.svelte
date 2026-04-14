@@ -1,12 +1,19 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import * as api from '../../api';
-  import { mockLogEntries } from '../../mock.ts';
-  import type { MockLogEntry } from '../../mock.ts';
 
   let { vmId }: { vmId: string } = $props();
 
-  let logEntries = $state<MockLogEntry[]>(mockLogEntries);
+  interface LogEntry {
+    timestamp: string;
+    level: string;
+    message: string;
+    source: string;
+  }
+
+  let entries = $state<LogEntry[]>([]);
+  let activeSource = $state<'process' | 'serial'>('process');
+  let serialText = $state('');
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
   onMount(async () => {
@@ -18,12 +25,32 @@
     if (pollInterval) clearInterval(pollInterval);
   });
 
+  function parseNdjson(text: string): LogEntry[] {
+    if (!text) return [];
+    return text.split('\n').filter(l => l.trim()).map((line, i) => {
+      try {
+        const obj = JSON.parse(line);
+        return {
+          timestamp: obj.timestamp ?? '',
+          level: (obj.level ?? 'info').toLowerCase(),
+          message: obj.fields?.message ?? JSON.stringify(obj.fields ?? {}),
+          source: obj.target ?? 'unknown',
+        };
+      } catch {
+        return { timestamp: '', level: 'info', message: line, source: 'raw' };
+      }
+    });
+  }
+
   async function fetchLogs() {
     if (!api.isConnected()) return;
     try {
-      const entries = await api.getVmLogs(vmId);
-      if (Array.isArray(entries) && entries.length > 0) {
-        logEntries = entries;
+      const raw = await api.getVmLogs(vmId);
+      if (raw.process_logs) {
+        entries = parseNdjson(raw.process_logs);
+      }
+      if (raw.serial_logs) {
+        serialText = raw.serial_logs;
       }
     } catch {
       // Keep existing data on error
@@ -32,50 +59,31 @@
 
   // Filters
   let levelFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');
-  let sourceFilter = $state<string>('all');
   let searchText = $state('');
   let autoScroll = $state(true);
 
-  const sources = $derived([...new Set(logEntries.map(e => e.source))].sort());
-
   const filtered = $derived.by(() => {
-    let entries = logEntries;
+    let result = entries;
     if (levelFilter !== 'all') {
-      entries = entries.filter(e => e.level === levelFilter);
-    }
-    if (sourceFilter !== 'all') {
-      entries = entries.filter(e => e.source === sourceFilter);
+      result = result.filter(e => e.level === levelFilter);
     }
     if (searchText.trim()) {
       const q = searchText.trim().toLowerCase();
-      entries = entries.filter(e => e.message.toLowerCase().includes(q) || e.source.toLowerCase().includes(q));
+      result = result.filter(e => e.message.toLowerCase().includes(q) || e.source.toLowerCase().includes(q));
     }
-    return entries;
+    return result;
   });
 
   let scrollContainer: HTMLDivElement | null = $state(null);
 
-  // Auto-scroll to bottom when entries change
   $effect(() => {
-    if (autoScroll && scrollContainer && filtered.length > 0) {
-      // Access filtered.length to create dependency
+    if (autoScroll && scrollContainer && (filtered.length > 0 || serialText)) {
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
   });
 
-  function formatRelativeTime(iso: string): string {
-    const now = Date.now();
-    const then = new Date(iso).getTime();
-    const diffMs = now - then;
-
-    if (diffMs < 0) return 'just now';
-    if (diffMs < 60_000) return `${Math.floor(diffMs / 1000)}s ago`;
-    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
-    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
-    return new Date(iso).toLocaleDateString();
-  }
-
   function formatTimestamp(iso: string): string {
+    if (!iso) return '';
     return new Date(iso).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
   }
 
@@ -89,82 +97,88 @@
 <div class="flex flex-col h-full">
   <!-- Filter bar -->
   <div class="flex items-center gap-x-3 border-b border-line-2 bg-layer px-4 py-2">
-    <!-- Level filter -->
-    <select
-      class="text-sm border border-line-2 rounded-lg bg-layer text-foreground px-2 py-1 focus:border-primary focus:ring-primary"
-      bind:value={levelFilter}
-    >
-      <option value="all">All levels</option>
-      <option value="info">Info</option>
-      <option value="warn">Warn</option>
-      <option value="error">Error</option>
-    </select>
+    <!-- Source toggle -->
+    <div class="flex items-center bg-background-1 rounded-lg p-0.5">
+      <button
+        type="button"
+        class="px-2.5 py-1 text-xs rounded-md transition-colors {activeSource === 'process' ? 'bg-layer text-foreground shadow-sm' : 'text-muted-foreground-1 hover:text-foreground'}"
+        onclick={() => activeSource = 'process'}
+      >Process</button>
+      <button
+        type="button"
+        class="px-2.5 py-1 text-xs rounded-md transition-colors {activeSource === 'serial' ? 'bg-layer text-foreground shadow-sm' : 'text-muted-foreground-1 hover:text-foreground'}"
+        onclick={() => activeSource = 'serial'}
+      >Serial</button>
+    </div>
 
-    <!-- Source filter -->
-    <select
-      class="text-sm border border-line-2 rounded-lg bg-layer text-foreground px-2 py-1 focus:border-primary focus:ring-primary"
-      bind:value={sourceFilter}
-    >
-      <option value="all">All sources</option>
-      {#each sources as source}
-        <option value={source}>{source}</option>
-      {/each}
-    </select>
+    {#if activeSource === 'process'}
+      <select
+        class="text-sm border border-line-2 rounded-lg bg-layer text-foreground px-2 py-1 focus:border-primary focus:ring-primary"
+        bind:value={levelFilter}
+      >
+        <option value="all">All levels</option>
+        <option value="info">Info</option>
+        <option value="warn">Warn</option>
+        <option value="error">Error</option>
+      </select>
 
-    <!-- Text search -->
-    <input
-      type="text"
-      class="flex-1 text-sm border border-line-2 rounded-lg bg-layer text-foreground px-3 py-1 placeholder:text-muted-foreground focus:border-primary focus:ring-primary"
-      placeholder="Search logs..."
-      bind:value={searchText}
-    />
-
-    <!-- Auto-scroll toggle -->
-    <label class="flex items-center gap-x-1.5 text-sm text-muted-foreground-1 cursor-pointer select-none">
       <input
-        type="checkbox"
-        class="rounded border-line-2 text-primary focus:ring-primary"
-        bind:checked={autoScroll}
+        type="text"
+        class="flex-1 text-sm border border-line-2 rounded-lg bg-layer text-foreground px-3 py-1 placeholder:text-muted-foreground focus:border-primary focus:ring-primary"
+        placeholder="Search logs..."
+        bind:value={searchText}
       />
+
+      <span class="text-xs text-muted-foreground">{filtered.length} entries</span>
+    {/if}
+
+    <div class="flex-1"></div>
+
+    <label class="flex items-center gap-x-1.5 text-sm text-muted-foreground-1 cursor-pointer select-none">
+      <input type="checkbox" class="rounded border-line-2 text-primary focus:ring-primary" bind:checked={autoScroll} />
       Auto-scroll
     </label>
-
-    <!-- Count -->
-    <span class="text-xs text-muted-foreground">{filtered.length} entries</span>
   </div>
 
   <!-- Log entries -->
-  <div
-    class="flex-1 overflow-auto font-mono text-sm"
-    bind:this={scrollContainer}
-  >
-    {#if filtered.length === 0}
-      <div class="flex items-center justify-center h-full">
-        <p class="text-muted-foreground">No log entries match filters</p>
-      </div>
+  <div class="flex-1 overflow-auto font-mono text-sm" bind:this={scrollContainer}>
+    {#if activeSource === 'process'}
+      {#if filtered.length === 0}
+        <div class="flex items-center justify-center h-full">
+          <p class="text-muted-foreground">No log entries{entries.length > 0 ? ' match filters' : ''}</p>
+        </div>
+      {:else}
+        <table class="w-full">
+          <tbody>
+            {#each filtered as entry}
+              <tr class="border-b border-line-2 hover:bg-muted-hover">
+                <td class="px-3 py-1.5 text-xs text-muted-foreground whitespace-nowrap w-24" title={entry.timestamp}>
+                  {formatTimestamp(entry.timestamp)}
+                </td>
+                <td class="px-2 py-1.5 w-16">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium uppercase {levelClasses[entry.level] ?? levelClasses.info}">
+                    {entry.level}
+                  </span>
+                </td>
+                <td class="px-2 py-1.5 text-xs text-muted-foreground-1 whitespace-nowrap w-32">
+                  {entry.source}
+                </td>
+                <td class="px-3 py-1.5 text-foreground">
+                  {entry.message}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
     {:else}
-      <table class="w-full">
-        <tbody>
-          {#each filtered as entry}
-            <tr class="border-b border-line-2 hover:bg-muted-hover">
-              <td class="px-3 py-1.5 text-xs text-muted-foreground whitespace-nowrap w-24" title={entry.timestamp}>
-                {formatTimestamp(entry.timestamp)}
-              </td>
-              <td class="px-2 py-1.5 w-16">
-                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium uppercase {levelClasses[entry.level]}">
-                  {entry.level}
-                </span>
-              </td>
-              <td class="px-2 py-1.5 text-xs text-muted-foreground-1 whitespace-nowrap w-32">
-                {entry.source}
-              </td>
-              <td class="px-3 py-1.5 text-foreground">
-                {entry.message}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      {#if serialText}
+        <pre class="px-4 py-3 text-foreground text-xs leading-relaxed whitespace-pre-wrap">{serialText}</pre>
+      {:else}
+        <div class="flex items-center justify-center h-full">
+          <p class="text-muted-foreground">No serial output</p>
+        </div>
+      {/if}
     {/if}
   </div>
 </div>

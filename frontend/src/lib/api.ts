@@ -24,7 +24,6 @@ import type {
   McpToolInfo,
   McpPolicyInfo,
   VmStateResponse,
-  VmLogEntry,
 } from './types';
 
 // -- Module state (never exported directly) --
@@ -223,15 +222,36 @@ export async function forkVm(id: string, opts: ForkRequest): Promise<ForkRespons
 
 // -- VM inspection --
 
-export async function getVmLogs(id: string): Promise<VmLogEntry[]> {
-  if (!_connected) return [];
+/** Raw log response from GET /logs/{id}. */
+export interface RawLogsResponse {
+  logs: string;
+  serial_logs: string | null;
+  process_logs: string | null;
+}
+
+export async function getVmLogs(id: string): Promise<RawLogsResponse> {
+  if (!_connected) return { logs: '', serial_logs: null, process_logs: null };
   try {
     const resp = await _get(`/logs/${encodeURIComponent(id)}`);
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
       _connected = false;
-      return [];
+      return { logs: '', serial_logs: null, process_logs: null };
+    }
+    throw err;
+  }
+}
+
+export async function getServiceLogs(): Promise<string> {
+  if (!_connected) return '';
+  try {
+    const resp = await _get('/service-logs');
+    return await resp.text();
+  } catch (err) {
+    if (isNetworkError(err)) {
+      _connected = false;
+      return '';
     }
     throw err;
   }

@@ -7,14 +7,13 @@
   import Stop from 'phosphor-svelte/lib/Stop';
   import Trash from 'phosphor-svelte/lib/Trash';
   import GitFork from 'phosphor-svelte/lib/GitFork';
-  import MagnifyingGlass from 'phosphor-svelte/lib/MagnifyingGlass';
+  import FloppyDisk from 'phosphor-svelte/lib/FloppyDisk';
   import List from 'phosphor-svelte/lib/List';
   import Info from 'phosphor-svelte/lib/Info';
   import GearSix from 'phosphor-svelte/lib/GearSix';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import ChartBar from 'phosphor-svelte/lib/ChartBar';
   import FolderSimple from 'phosphor-svelte/lib/FolderSimple';
-  import MagnifyingGlassPlus from 'phosphor-svelte/lib/MagnifyingGlassPlus';
   import Scroll from 'phosphor-svelte/lib/Scroll';
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
 
@@ -27,7 +26,6 @@
     { view: 'terminal', label: 'Terminal', icon: Terminal },
     { view: 'stats', label: 'Stats', icon: ChartBar },
     { view: 'files', label: 'Files', icon: FolderSimple },
-    { view: 'inspector', label: 'Inspector', icon: MagnifyingGlassPlus },
   ];
 
   function switchView(view: TabView) {
@@ -47,12 +45,13 @@
 <svelte:document onclick={onClickOutside} />
 
 <div class="flex items-center gap-x-2 bg-layer border-b border-line-2 px-2 py-1">
-  <!-- Left: VM actions -->
+  <!-- VM actions (only shown when viewing a VM) -->
+  {#if isVM}
   <div class="flex items-center gap-x-0.5">
     <button
       type="button"
       class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={!isVM || busy}
+      disabled={busy}
       aria-label="Restart"
       title="Restart VM"
       onclick={async () => { if (active?.vmId) { await vmStore.stop(active.vmId); } }}
@@ -62,7 +61,7 @@
     <button
       type="button"
       class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={!isVM || busy}
+      disabled={busy}
       aria-label="Stop"
       title="Stop VM"
       onclick={async () => { if (active?.vmId) await vmStore.stop(active.vmId); }}
@@ -71,8 +70,18 @@
     </button>
     <button
       type="button"
+      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
+      disabled={busy}
+      aria-label="Save"
+      title="Save VM (make persistent)"
+      onclick={async () => { if (active?.vmId) await vmStore.persist(active.vmId); }}
+    >
+      <FloppyDisk size={16} />
+    </button>
+    <button
+      type="button"
       class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-destructive hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={!isVM || busy}
+      disabled={busy}
       aria-label="Destroy"
       title="Destroy VM"
       onclick={async () => { if (active?.vmId) await vmStore.delete(active.vmId); }}
@@ -82,7 +91,7 @@
     <button
       type="button"
       class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={!isVM || busy}
+      disabled={busy}
       aria-label="Fork"
       title="Fork VM"
       onclick={async () => { if (active?.vmId) await vmStore.fork(active.vmId, { name: `fork-${Date.now()}` }); }}
@@ -90,17 +99,10 @@
       <GitFork size={16} />
     </button>
   </div>
+  {/if}
 
-  <!-- Center: search / address bar -->
-  <div class="flex-1 flex items-center gap-x-2 bg-background-1 rounded-lg px-3 py-1 min-w-0">
-    <span class="size-2 shrink-0 rounded-full {gatewayStore.connected ? 'bg-green-500' : gatewayStore.reachable ? 'bg-amber-500' : 'bg-muted-foreground'}" title={gatewayStore.connected ? 'Connected' : gatewayStore.reachable ? 'Gateway up, no auth' : 'Mock mode'}></span>
-    <MagnifyingGlass size={14} class="shrink-0 text-muted-foreground" />
-    {#if active}
-      <span class="text-xs text-muted-foreground-1 shrink-0">{active.view}</span>
-      <span class="text-xs text-muted-foreground">/</span>
-      <span class="text-xs text-foreground truncate">{active.title}</span>
-    {/if}
-  </div>
+  <!-- Spacer -->
+  <div class="flex-1"></div>
 
   <!-- Right: view switcher + menu -->
   {#if isVM}
@@ -149,7 +151,7 @@
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
-            onclick={() => { tabStore.add('logs', 'Service Logs'); menuOpen = false; }}
+            onclick={() => { tabStore.openSingleton('logs', 'Service Logs'); menuOpen = false; }}
           >
             <HardDrives size={16} />
             <span>Service Logs</span>
@@ -158,7 +160,7 @@
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
-            onclick={() => { tabStore.add('settings', 'Settings'); menuOpen = false; }}
+            onclick={() => { tabStore.openSingleton('settings', 'Settings'); menuOpen = false; }}
           >
             <GearSix size={16} />
             <span>Settings</span>
@@ -166,7 +168,7 @@
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
-            onclick={() => { tabStore.add('settings', 'About'); menuOpen = false; }}
+            onclick={() => { tabStore.openSingleton('settings', 'Settings'); menuOpen = false; }}
           >
             <Info size={16} />
             <span>About Capsem</span>

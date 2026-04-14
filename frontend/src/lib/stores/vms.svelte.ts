@@ -85,12 +85,23 @@ class VmStore {
     }
   }
 
-  async provision(opts: ProvisionRequest): Promise<string> {
+  async provision(opts: ProvisionRequest): Promise<{ id: string; name: string }> {
     this.loading = true;
     try {
       const result = await api.provisionVm(opts);
       await this.refresh();
-      return result.id;
+      const vm = this.vms.find(v => v.id === result.id);
+      return { id: result.id, name: vm?.name ?? result.id };
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async persist(id: string): Promise<void> {
+    this.loading = true;
+    try {
+      await api.persistVm(id);
+      await this.refresh();
     } finally {
       this.loading = false;
     }

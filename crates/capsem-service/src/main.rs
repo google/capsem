@@ -936,6 +936,35 @@ async fn handle_logs(
     }))
 }
 
+async fn handle_service_logs(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<String, AppError> {
+    let log_path = state.run_dir.join("service.log");
+
+    let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
+        let len = file.metadata().map_err(|e| e.to_string())?.len();
+        // Read last 100KB
+        let max = 100 * 1024u64;
+        if len > max {
+            file.seek(SeekFrom::End(-(max as i64))).map_err(|e| e.to_string())?;
+        }
+        let mut buf = String::new();
+        file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
+        // If we seeked into the middle, skip the first partial line
+        if len > max {
+            if let Some(pos) = buf.find('\n') {
+                buf = buf[pos + 1..].to_string();
+            }
+        }
+        Ok(buf)
+    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?
+      .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(text)
+}
+
 async fn send_ipc_command(uds_path: &std::path::Path, cmd: ServiceToProcess, timeout_secs: u64) -> Result<ProcessToService, String> {
     let stream = tokio::net::UnixStream::connect(uds_path).await
         .map_err(|e| format!("failed to connect to sandbox: {e}"))?;
@@ -1823,6 +1852,7 @@ async fn main() -> Result<()> {
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))
+        .route("/service-logs", get(handle_service_logs))
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))
         .route("/settings", get(handle_get_settings).post(handle_save_settings))

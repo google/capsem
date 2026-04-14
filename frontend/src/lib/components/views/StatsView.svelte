@@ -2,9 +2,11 @@
   import { onMount } from 'svelte';
   import * as api from '../../api';
   import { SNAPSHOT_STATS_SQL, SNAPSHOT_LIST_SQL } from '../../sql';
-  import { queryDb, queryOne, queryAll } from '../../db';
-  import type { ModelStats, ToolCallStat, NetworkEvent, FileEvent } from '../../types';
+  import type { ModelStats, ToolCallStat, NetworkEvent, FileEvent, DetailSelection } from '../../types';
   import { formatDuration, formatBytes, formatTime, truncate, fmtAge } from '../../format';
+  import { getShikiHighlighter, resolveShikiTheme } from '../../shiki.ts';
+  import { themeStore } from '../../stores/theme.svelte.ts';
+  import type { Highlighter } from 'shiki';
   import Brain from 'phosphor-svelte/lib/Brain';
   import Wrench from 'phosphor-svelte/lib/Wrench';
   import Globe from 'phosphor-svelte/lib/Globe';
@@ -34,6 +36,32 @@
   let fileEvents = $state<FileEvent[]>([]);
   let loading = $state(false);
 
+  // Detail panel
+  let detail = $state<DetailSelection | null>(null);
+  let shiki = $state<Highlighter | null>(null);
+
+
+  // Shiki is loaded in the main onMount below
+  function shikiHighlight(text: string, lang: string): string {
+    if (!shiki) return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
+    return shiki.codeToHtml(text, { lang, theme });
+  }
+
+  function formatAndHighlight(text: string | null | undefined, lang?: string): string {
+    if (!text) return '';
+    const trimmed = text.trim();
+    if (!trimmed) return '';
+    // Auto-detect JSON
+    const isJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+    const detectedLang = lang ?? (isJson ? 'json' : 'text');
+    let content = trimmed;
+    if (isJson) {
+      try { content = JSON.stringify(JSON.parse(trimmed), null, 2); } catch { /* keep original */ }
+    }
+    return shikiHighlight(content, detectedLang);
+  }
+
   // Snapshots
   interface SnapshotRow {
     id: number;
@@ -50,13 +78,14 @@
   let snapshotRows = $state<SnapshotRow[]>([]);
 
   onMount(async () => {
+    getShikiHighlighter().then(h => { shiki = h; });
     if (!api.isConnected()) return;
     loading = true;
     try {
       const [aiResult, toolResult, netResult, fileResult] = await Promise.allSettled([
         api.inspectQuery(vmId, 'SELECT provider, model, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, SUM(estimated_cost_usd) as estimated_cost_usd, COUNT(*) as call_count FROM model_calls GROUP BY provider, model'),
-        api.inspectQuery(vmId, 'SELECT tc.tool_name as tool, tc.origin as server, tc.arguments as args, tc.call_id, mc.timestamp FROM tool_calls tc JOIN model_calls mc ON tc.model_call_id = mc.id ORDER BY mc.timestamp DESC'),
-        api.inspectQuery(vmId, 'SELECT method, domain || path as url, status_code as status, decision, duration_ms as durationMs, bytes_sent as bytesSent, bytes_received as bytesReceived, timestamp FROM net_events ORDER BY timestamp DESC'),
+        api.inspectQuery(vmId, 'SELECT tc.tool_name as tool, tc.origin as server, tc.arguments as args, tc.call_id, mc.timestamp, tr.content_preview as result, tr.is_error FROM tool_calls tc JOIN model_calls mc ON tc.model_call_id = mc.id LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id ORDER BY mc.timestamp DESC'),
+        api.inspectQuery(vmId, 'SELECT method, domain, path, domain || path as url, status_code as status, decision, duration_ms as durationMs, bytes_sent as bytesSent, bytes_received as bytesReceived, timestamp, request_headers, response_headers, request_body_preview, response_body_preview, matched_rule FROM net_events ORDER BY timestamp DESC'),
         api.inspectQuery(vmId, 'SELECT path, action as operation, size as sizeBytes, timestamp FROM fs_events ORDER BY timestamp DESC'),
       ]);
       if (aiResult.status === 'fulfilled' && aiResult.value.rows.length > 0) {
@@ -73,16 +102,23 @@
       if (toolResult.status === 'fulfilled' && toolResult.value.rows.length > 0) {
         toolCalls = toObjects(toolResult.value).map((r: any, i: number) => ({
           id: `tc-${i}`, tool: String(r.tool ?? ''), server: String(r.server ?? ''),
-          args: String(r.args ?? ''), result: '',
+          args: String(r.args ?? ''), result: String(r.result ?? ''),
           durationMs: 0, timestamp: String(r.timestamp ?? ''),
+          isError: Number(r.is_error ?? 0),
         }));
       }
       if (netResult.status === 'fulfilled' && netResult.value.rows.length > 0) {
         networkEvents = toObjects(netResult.value).map((r: any, i: number) => ({
           id: `ne-${i}`, method: String(r.method ?? ''), url: String(r.url ?? ''),
+          domain: String(r.domain ?? ''), path: String(r.path ?? '/'),
           status: Number(r.status ?? 0), decision: r.decision === 'denied' ? 'denied' : 'allowed',
           durationMs: Number(r.durationMs ?? 0), bytesSent: Number(r.bytesSent ?? 0),
           bytesReceived: Number(r.bytesReceived ?? 0), timestamp: String(r.timestamp ?? ''),
+          requestHeaders: r.request_headers as string | null,
+          responseHeaders: r.response_headers as string | null,
+          requestBodyPreview: r.request_body_preview as string | null,
+          responseBodyPreview: r.response_body_preview as string | null,
+          matchedRule: r.matched_rule as string | null,
         }));
       }
       if (fileResult.status === 'fulfilled' && fileResult.value.rows.length > 0) {
@@ -95,14 +131,29 @@
 
       // Load snapshots
       const [snapStatsResult, snapListResult] = await Promise.allSettled([
-        queryDb(SNAPSHOT_STATS_SQL),
-        queryDb(SNAPSHOT_LIST_SQL),
+        api.inspectQuery(vmId, SNAPSHOT_STATS_SQL),
+        api.inspectQuery(vmId, SNAPSHOT_LIST_SQL),
       ]);
-      if (snapStatsResult.status === 'fulfilled') {
-        snapshotStats = queryOne(snapStatsResult.value);
+      if (snapStatsResult.status === 'fulfilled' && snapStatsResult.value.rows.length > 0) {
+        const row = toObjects(snapStatsResult.value)[0];
+        snapshotStats = {
+          total: Number(row.total ?? 0),
+          auto_count: Number(row.auto_count ?? 0),
+          manual_count: Number(row.manual_count ?? 0),
+        };
       }
-      if (snapListResult.status === 'fulfilled') {
-        snapshotRows = queryAll(snapListResult.value);
+      if (snapListResult.status === 'fulfilled' && snapListResult.value.rows.length > 0) {
+        snapshotRows = toObjects(snapListResult.value).map((r: any) => ({
+          id: Number(r.id),
+          timestamp: String(r.timestamp ?? ''),
+          slot: Number(r.slot ?? 0),
+          origin: String(r.origin ?? ''),
+          name: r.name != null ? String(r.name) : null,
+          files_count: Number(r.files_count ?? 0),
+          created: Number(r.created ?? 0),
+          modified: Number(r.modified ?? 0),
+          deleted: Number(r.deleted ?? 0),
+        }));
       }
     } catch {
       // Keep empty state on error
@@ -159,7 +210,7 @@
             {activeTab === item.id
               ? 'bg-muted text-foreground font-medium'
               : 'text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover'}"
-          onclick={() => activeTab = item.id}
+          onclick={() => { activeTab = item.id; detail = null; }}
         >
           <item.icon size={18} />
           {item.label}
@@ -256,7 +307,8 @@
           </thead>
           <tbody>
             {#each toolCalls as call}
-              <tr class="border-b border-card-divider last:border-0">
+              <tr class="border-b border-card-divider last:border-0 hover:bg-muted-hover cursor-pointer"
+                  onclick={() => detail = { type: 'tool', data: { tool_name: call.tool, origin: call.server, arguments: call.args, content_preview: call.result, is_error: call.isError, timestamp: call.timestamp } }}>
                 <td class="px-4 py-2 font-mono text-xs text-foreground">{call.tool}</td>
                 <td class="px-4 py-2 text-muted-foreground-1">{call.server}</td>
                 <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1 max-w-48 truncate">{truncate(call.args, 40)}</td>
@@ -304,7 +356,8 @@
           </thead>
           <tbody>
             {#each networkEvents as event}
-              <tr class="border-b border-card-divider last:border-0">
+              <tr class="border-b border-card-divider last:border-0 hover:bg-muted-hover cursor-pointer"
+                  onclick={() => detail = { type: 'net_event', data: { method: event.method, domain: event.domain, path: event.path, decision: event.decision, status_code: event.status, duration_ms: event.durationMs, matched_rule: event.matchedRule, request_headers: event.requestHeaders, request_body_preview: event.requestBodyPreview, response_headers: event.responseHeaders, response_body_preview: event.responseBodyPreview, timestamp: event.timestamp } }}>
                 <td class="px-4 py-2 font-mono text-xs font-semibold text-foreground">{event.method}</td>
                 <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1 max-w-64 truncate">{event.url}</td>
                 <td class="px-4 py-2 text-center">
@@ -362,7 +415,8 @@
           </thead>
           <tbody>
             {#each fileEvents as event}
-              <tr class="border-b border-card-divider last:border-0">
+              <tr class="border-b border-card-divider last:border-0 hover:bg-muted-hover cursor-pointer"
+                  onclick={() => detail = { type: 'file_event', data: { action: event.operation, path: event.path, size: event.sizeBytes, timestamp: event.timestamp } }}>
                 <td class="px-4 py-2 font-mono text-xs text-foreground">{event.path}</td>
                 <td class="px-4 py-2 text-center">
                   <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
@@ -447,4 +501,123 @@
     {/if}
     </div>
   </main>
+
+  <!-- Detail panel (slide from right) -->
+  {#if detail}
+    {@const d = detail.data}
+    <div class="w-[400px] shrink-0 border-s border-line-2 flex flex-col overflow-hidden bg-background">
+      <!-- Header -->
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-line-2 bg-surface">
+        <span class="text-xs font-semibold flex-1 truncate capitalize text-foreground">{detail.type.replace('_', ' ')}</span>
+        <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={() => detail = null} aria-label="Close detail panel">
+          <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Content -->
+      <div class="flex-1 overflow-auto p-3 text-xs space-y-3">
+        {#if detail.type === 'tool'}
+          <div>
+            <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+              {d.tool_name ?? 'Tool'}
+              {#if d.origin && d.origin !== 'native'}
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground-1 ml-1">{d.origin}</span>
+              {/if}
+            </div>
+          </div>
+          <div>
+            <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Arguments</div>
+            <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(d.arguments as string, 'json')}</div>
+          </div>
+          {#if d.content_preview !== undefined}
+            <div>
+              <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+                Result
+                {#if d.is_error}
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-destructive/10 text-destructive ml-1">error</span>
+                {/if}
+              </div>
+              {#if d.content_preview}
+                <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(d.content_preview as string, 'json')}</div>
+              {:else}
+                <div class="text-muted-foreground italic px-2 py-1">(empty)</div>
+              {/if}
+            </div>
+          {/if}
+
+        {:else if detail.type === 'net_event'}
+          <div class="space-y-1">
+            <div><span class="text-muted-foreground">Method:</span> <span class="font-mono text-foreground">{d.method ?? 'CONNECT'}</span></div>
+            <div><span class="text-muted-foreground">Domain:</span> <span class="font-mono text-foreground">{d.domain}</span></div>
+            <div><span class="text-muted-foreground">Path:</span> <span class="font-mono text-foreground">{d.path ?? '/'}</span></div>
+            <div>
+              <span class="text-muted-foreground">Decision:</span>
+              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium {d.decision === 'allowed' ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'}">{d.decision}</span>
+            </div>
+            {#if d.status_code}
+              <div><span class="text-muted-foreground">Status:</span> <span class="font-mono text-foreground">{d.status_code}</span></div>
+            {/if}
+            {#if d.duration_ms}
+              <div><span class="text-muted-foreground">Duration:</span> <span class="font-mono text-foreground">{d.duration_ms}ms</span></div>
+            {/if}
+            {#if d.matched_rule}
+              <div><span class="text-muted-foreground">Rule:</span> <span class="font-mono text-foreground">{d.matched_rule}</span></div>
+            {/if}
+          </div>
+          {#if d.request_headers}
+            <div>
+              <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Request Headers</div>
+              <div class="detail-shiki rounded overflow-auto max-h-40 bg-background-1">{@html formatAndHighlight(d.request_headers as string, 'bash')}</div>
+            </div>
+          {/if}
+          {#if d.request_body_preview}
+            <div>
+              <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Request Body</div>
+              <div class="detail-shiki rounded overflow-auto max-h-40 bg-background-1">{@html formatAndHighlight(d.request_body_preview as string, 'json')}</div>
+            </div>
+          {/if}
+          {#if d.response_headers}
+            <div>
+              <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Response Headers</div>
+              <div class="detail-shiki rounded overflow-auto max-h-40 bg-background-1">{@html formatAndHighlight(d.response_headers as string, 'bash')}</div>
+            </div>
+          {/if}
+          {#if d.response_body_preview}
+            <div>
+              <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Response Body</div>
+              <div class="detail-shiki rounded overflow-auto max-h-40 bg-background-1">{@html formatAndHighlight(d.response_body_preview as string, 'json')}</div>
+            </div>
+          {/if}
+
+        {:else if detail.type === 'file_event'}
+          <div class="space-y-1">
+            <div>
+              <span class="text-muted-foreground">Action:</span>
+              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium
+                {d.action === 'deleted' ? 'bg-destructive/10 text-destructive' : d.action === 'created' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground-1'}">{d.action}</span>
+            </div>
+            <div><span class="text-muted-foreground">Path:</span> <span class="font-mono text-foreground break-all">{d.path}</span></div>
+            {#if d.size != null}
+              <div><span class="text-muted-foreground">Size:</span> <span class="font-mono text-foreground">{formatBytes(d.size as number)}</span></div>
+            {/if}
+            {#if d.timestamp}
+              <div><span class="text-muted-foreground">Time:</span> <span class="font-mono text-foreground">{d.timestamp}</span></div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
 </div>
+
+<style>
+  .detail-shiki :global(pre.shiki) {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    background: transparent !important;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>

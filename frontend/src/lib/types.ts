@@ -99,27 +99,6 @@ export interface ResolvedSetting {
   metadata: SettingMetadata;
 }
 
-/** Response from get_session_info. */
-export interface SessionInfo {
-  session_id: string;
-  mode: string;
-  uptime_ms: number;
-  scratch_disk_size_gb: number;
-  ram_bytes: number;
-  total_requests: number;
-  allowed_requests: number;
-  denied_requests: number;
-  error_requests: number;
-  bytes_sent: number;
-  bytes_received: number;
-  model_call_count: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_usage_details: Record<string, number>;
-  total_tool_calls: number;
-  total_estimated_cost_usd: number;
-}
-
 /** Raw SQL query result (columnar format). */
 export interface QueryResult {
   columns: string[];
@@ -141,7 +120,7 @@ export interface UpdateInfo {
 }
 
 /** Sidebar view names. */
-export type ViewName = 'terminal' | 'stats' | 'settings' | 'wizard' | 'logs';
+export type ViewName = 'terminal' | 'stats' | 'settings' | 'logs';
 
 /** Stats panel tab names. */
 export type StatsTab = 'ai' | 'tools' | 'network' | 'files' | 'snapshots';
@@ -386,4 +365,85 @@ export interface SecurityPreset {
   description: string;
   settings: Record<string, SettingValue>;
   mcp: { default_tool_permission?: string } | null;
+}
+
+// ---------------------------------------------------------------------------
+// Stats / view data types (UI-side shapes after mapping DB rows)
+// ---------------------------------------------------------------------------
+
+/** Per-model aggregated stats. */
+export interface ModelStats {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  estimatedCostUsd: number;
+  callCount: number;
+}
+
+/** A tool call entry for the stats view. */
+export interface ToolCallStat {
+  id: string;
+  tool: string;
+  server: string;
+  args: string;
+  result: string;
+  durationMs: number;
+  timestamp: string;
+  isError?: number;
+}
+
+/** A network request entry for the stats view. */
+export interface NetworkEvent {
+  id: string;
+  method: string;
+  url: string;
+  domain: string;
+  path: string;
+  status: number;
+  decision: 'allowed' | 'denied';
+  durationMs: number;
+  bytesSent: number;
+  bytesReceived: number;
+  timestamp: string;
+  requestHeaders?: string | null;
+  responseHeaders?: string | null;
+  requestBodyPreview?: string | null;
+  responseBodyPreview?: string | null;
+  matchedRule?: string | null;
+}
+
+/** A file event entry for the stats view. */
+export interface FileEvent {
+  id: string;
+  path: string;
+  operation: 'created' | 'modified' | 'deleted';
+  sizeBytes: number | null;
+  timestamp: string;
+}
+
+/** A VM log entry (from gateway /logs endpoint). */
+export interface VmLogEntry {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'warn' | 'error';
+  source: string;
+  message: string;
+}
+
+/** A file tree node (from gateway file operations). */
+export interface FileNode {
+  name: string;
+  type: 'file' | 'directory';
+  path: string;
+  children?: FileNode[];
+  content?: string;
+  sizeBytes?: number;
+}
+
+/** A preset SQL query for the inspector. */
+export interface PresetQuery {
+  label: string;
+  sql: string;
 }
