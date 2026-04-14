@@ -44,6 +44,7 @@ class TestErrorPaths:
             service_bin.write_bytes(original)
             service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
 
+    @pytest.mark.live_system
     def test_missing_assets_dir(self, installed_layout, clean_state):
         """Missing assets directory gives clear error."""
         backup = ASSETS_DIR.parent / "assets_backup"
@@ -110,6 +111,7 @@ class TestErrorPaths:
         assert "capsem" in result.stdout
         assert "build" in result.stdout
 
+    @pytest.mark.live_system
     def test_service_status_works_without_install(self, installed_layout, clean_state):
         """capsem service status works even when not installed."""
         result = run_capsem("service", "status", timeout=10)

@@ -20,6 +20,7 @@ from conftest import (
 SYSTEMD_UNIT = Path.home() / ".config" / "systemd" / "user" / "capsem.service"
 
 
+@pytest.mark.live_system
 class TestServiceInstall:
     """capsem service install/uninstall/status commands."""
 

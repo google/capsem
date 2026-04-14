@@ -19,6 +19,7 @@ from conftest import (
 )
 
 
+@pytest.mark.live_system
 class TestLifecycle:
     """Full user journey in a single test."""
 

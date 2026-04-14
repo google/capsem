@@ -15,11 +15,11 @@
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
 #   /usr/local/share/capsem/bin/       -- 6 companion binaries
-#   /usr/local/share/capsem/assets/    -- VM assets (kernel, initrd, manifest)
+#   /usr/local/share/capsem/assets/    -- manifest.json only (heavy assets downloaded on first use)
 #   /usr/local/share/capsem/entitlements.plist
 #
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
-# registers the LaunchAgent, and runs capsem setup.
+# registers the LaunchAgent, and runs capsem setup (which downloads VM assets).
 set -euo pipefail
 
 APP_PATH="${1:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
@@ -47,7 +47,8 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem
         cp "$src" "$SHARE_DIR/bin/$bin"
         chmod 755 "$SHARE_DIR/bin/$bin"
     else
-        echo "WARNING: binary not found: $src"
+        echo "ERROR: binary not found: $src" >&2
+        exit 1
     fi
 done
 
@@ -56,17 +57,11 @@ if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM assets
+# VM assets: only bundle the manifest. The heavy assets (kernel, rootfs)
+# are downloaded on first use by `capsem setup` / auto-setup.
 mkdir -p "$SHARE_DIR/assets"
 if [ -f "$ASSETS_DIR/manifest.json" ]; then
     cp "$ASSETS_DIR/manifest.json" "$SHARE_DIR/assets/"
-fi
-# Copy arch-specific assets
-ARCH=$(uname -m)
-[[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
-if [ -d "$ASSETS_DIR/$ARCH" ]; then
-    mkdir -p "$SHARE_DIR/assets/v$VERSION"
-    cp -r "$ASSETS_DIR/$ARCH"/* "$SHARE_DIR/assets/v$VERSION/"
 fi
 
 echo "=== Building component package ==="
@@ -99,15 +94,21 @@ cat > "$WORK_DIR/welcome.html" <<'WELCOME_EOF'
 </html>
 WELCOME_EOF
 
+# Stamp version into distribution XML (append build timestamp for uniqueness)
+BUILD_TS=$(date +%s)
+PKG_VERSION="$VERSION.$BUILD_TS"
+sed "s/__VERSION__/$PKG_VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
+
 # Build the distribution .pkg (wraps component with UI)
 productbuild \
-    --distribution "$SCRIPT_DIR/pkg-distribution.xml" \
+    --distribution "$WORK_DIR/pkg-distribution.xml" \
     --resources "$WORK_DIR" \
     --package-path "$WORK_DIR" \
     "$WORK_DIR/Capsem-$VERSION-unsigned.pkg"
 
 # Sign if identity provided
-OUTPUT_PKG="Capsem-$VERSION.pkg"
+mkdir -p "$(dirname "$0")/../packages"
+OUTPUT_PKG="$(dirname "$0")/../packages/Capsem-$VERSION.pkg"
 if [ -n "$SIGNING_IDENTITY" ]; then
     echo "=== Signing .pkg ==="
     productsign \

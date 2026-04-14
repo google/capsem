@@ -38,13 +38,18 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem
         chmod 755 "$WORK_DIR/deb/usr/bin/$bin"
         echo "  Added: $bin"
     else
-        echo "  WARNING: binary not found: $src"
+        echo "  ERROR: binary not found: $src" >&2
+        exit 1
     fi
 done
 
 echo "=== Adding postinst script ==="
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
+
+# Stamp build timestamp into version so each build is seen as newer
+BUILD_TS=$(date +%s)
+sed -i "s/^Version: \(.*\)/Version: \1.$BUILD_TS/" "$WORK_DIR/deb/DEBIAN/control"
 
 echo "=== Repacking .deb ==="
 dpkg-deb -b "$WORK_DIR/deb" "$OUTPUT_DEB"

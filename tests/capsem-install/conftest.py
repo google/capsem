@@ -1,8 +1,11 @@
 """Shared fixtures for capsem install e2e tests.
 
-All tests depend on the `installed_layout` fixture which exercises the real
-install flow via simulate-install.sh. Tests run as the capsem user inside
-a Docker container with systemd as PID 1.
+Tests are split into two tiers:
+  - **packaging**: verify the installed layout, binaries, CLI commands that
+    don't need a running service. Run in Docker during `just test-install`.
+  - **live_system**: need a running service with VM assets (kernel, rootfs).
+    Only run on real systems (macOS or Linux with assets). Marked with
+    @pytest.mark.live_system and skipped when CAPSEM_DEB_INSTALLED=1.
 """
 
 from __future__ import annotations
@@ -15,6 +18,21 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "live_system: test requires a running service with VM assets (skipped in packaging tests)",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
+        skip = pytest.mark.skip(reason="live_system test -- requires VM assets, skipped in packaging test")
+        for item in items:
+            if "live_system" in item.keywords:
+                item.add_marker(skip)
 
 INSTALL_DIR = Path.home() / ".capsem" / "bin"
 ASSETS_DIR = Path.home() / ".capsem" / "assets"
@@ -69,13 +87,23 @@ def _kill_service() -> None:
 
 @pytest.fixture(scope="session")
 def installed_layout() -> Path:
-    """Install capsem binaries via simulate-install.sh.
+    """Verify or create the installed layout.
+
+    When CAPSEM_DEB_INSTALLED=1 (set by `just test-install` after dpkg -i),
+    the .deb was already installed -- just verify the layout.
+    Otherwise, fall back to simulate-install.sh for standalone use.
 
     Session-scoped: runs once, all tests share the installed layout.
-    Asserts all 6 binaries and the install directory exist.
     """
-    # Find the source directories -- in Docker these are under /src/target/debug
-    # and /src/assets respectively. Locally they may vary.
+    if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
+        # .deb already installed by dpkg -i in the justfile
+        for name in BINARIES:
+            binary = INSTALL_DIR / name
+            assert binary.exists(), f"binary not installed by dpkg: {binary}"
+            assert os.access(binary, os.X_OK), f"binary not executable: {binary}"
+        return INSTALL_DIR
+
+    # Fallback: simulate-install.sh for standalone pytest runs
     bin_src = os.environ.get("CAPSEM_BIN_SRC", "target/debug")
     assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
 
@@ -108,7 +136,10 @@ def clean_state():
     # Clear run dir but keep the directory
     if RUN_DIR.exists():
         for f in RUN_DIR.iterdir():
-            f.unlink(missing_ok=True)
+            if f.is_dir():
+                shutil.rmtree(f, ignore_errors=True)
+            else:
+                f.unlink(missing_ok=True)
     yield
     _kill_service()
 

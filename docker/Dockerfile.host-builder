@@ -55,6 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebkit2gtk-4.1-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \
+    libxdo-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Helper script to swap -dev libs for cross-compilation ----

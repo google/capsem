@@ -40,10 +40,13 @@ done
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 
-# Register systemd user unit and run setup (as the target user)
+# Register systemd user unit and run setup (as the target user).
+# XDG_RUNTIME_DIR is required for systemctl --user; su drops it.
+TARGET_UID=$(id -u "$TARGET_USER")
+XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
-    su "$TARGET_USER" -c "$CAPSEM_DIR/bin/capsem service install" 2>/dev/null || true
+    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
 fi
-su "$TARGET_USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected" 2>/dev/null || true
+su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected" 2>/dev/null || true
 
 exit 0

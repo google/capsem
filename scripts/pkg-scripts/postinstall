@@ -5,8 +5,21 @@
 # them to the user's ~/.capsem/ directory, codesigns for Virtualization.framework,
 # registers the LaunchAgent, and runs initial setup.
 #
-# macOS runs postinstall as root with $USER set to the installing user.
+# macOS Installer.app runs postinstall as root with $USER set to the
+# installing user. When called via `sudo installer -pkg`, $USER may be
+# root -- fall back to SUDO_USER, then the console owner.
 set -euo pipefail
+
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    USER="$SUDO_USER"
+fi
+if [ "$USER" = "root" ] || [ -z "${USER:-}" ]; then
+    USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
+    if [ -z "$USER" ] || [ "$USER" = "root" ]; then
+        echo "capsem: could not determine installing user, skipping per-user setup" >&2
+        exit 0
+    fi
+fi
 
 PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
@@ -53,7 +66,7 @@ for PROFILE in "$USER_HOME/.zshrc" "$USER_HOME/.bash_profile" "$USER_HOME/.bashr
 done
 
 # Register LaunchAgent and run setup as the installing user
-su "$USER" -c "$CAPSEM_DIR/bin/capsem service install" 2>/dev/null || true
+su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
 su "$USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected" 2>/dev/null || true
 
 exit 0

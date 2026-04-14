@@ -21,6 +21,7 @@ from conftest import (
 UPDATE_CACHE = CAPSEM_DIR / "update-check.json"
 
 
+@pytest.mark.live_system
 class TestSelfUpdate:
     """capsem update command."""
 

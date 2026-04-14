@@ -8,7 +8,7 @@
 #   _check-assets   verifies VM assets exist, tells you to run build-assets if not
 #
 #   shell           -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
-#   test            -> _install-tools + _check-assets + _pack-initrd + audit + cross-compile + test-install (ALL tests)
+#   test            -> _install-tools + _check-assets + _pack-initrd + audit + cross-compile + test-install + _clean-stale (ALL tests)
 #   build-assets    -> doctor + _install-tools + _clean-stale
 #   dev             -> _ensure-setup + _pnpm-install
 #   bench           -> _ensure-setup + _check-assets + _sign
@@ -16,9 +16,9 @@
 #   test-service    -> _check-assets + _pack-initrd (service HTTP API tests)
 #   test-cli        -> _check-assets + _pack-initrd (CLI integration tests)
 #   cut-release     -> test
-#   smoke           -> _check-assets + _pack-initrd + _ensure-service (fast path: audit + doctor + integration)
-#   install         -> smoke (verify first, then install to ~/.capsem/)
-#   test-install    -> _build-host (Docker e2e: systemd + install layout)
+#   smoke           -> _check-assets + _pack-initrd + _ensure-service + _clean-stale (fast path: audit + doctor + integration)
+#   install         -> _pnpm-install + _clean-stale (build .pkg/.deb for current platform, install it)
+#   test-install    -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
 #
 # Service daemon:
 #   run-service     -> _check-assets + _pack-initrd (start daemon, idempotent)
@@ -30,7 +30,7 @@
 #
 # Daily dev:          just shell   (service daemon + temp VM + shell, ~10s)
 #                     just ui      (service + Tauri GUI with hot-reload)
-# Local install:      just install (smoke test + install to ~/.capsem/)
+# Local install:      just install (build .pkg/.deb + install it)
 # Releases:           just cut-release (test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps (cargo update + pnpm update)
 # Disk cleanup:       just clean   (nuke target/ + frontend build, ~100 GB)
@@ -219,6 +219,9 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     echo "=== Install e2e tests (Docker + systemd) ==="
     just test-install
 
+    echo "=== Pruning stale build artifacts ==="
+    just _clean-stale
+
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 # See docker/Dockerfile.host-builder for contents.
 build-host-image:
@@ -235,7 +238,8 @@ _clean-host-image:
     #!/bin/bash
     set -euo pipefail
     docker rmi capsem-host-builder:latest 2>/dev/null || true
-    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup-arm64 capsem-rustup-x86_64; do
+    docker rmi capsem-install-test:latest 2>/dev/null || true
+    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup-arm64 capsem-rustup-x86_64 capsem-install-target capsem-install-cargo; do
         docker volume rm "$vol" 2>/dev/null || true
     done
     echo "Cleaned host builder image and volumes."
@@ -404,6 +408,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     [ $FAIL -eq 0 ] || { echo "Python tests failed"; exit 1; }
     step_done
     echo "Smoke test passed in $(( SECONDS - SMOKE_START ))s"
+    just _clean-stale
 
 # Gateway unit + integration tests (no VM needed)
 test-gateway:
@@ -446,52 +451,57 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
     echo "=== Host-side benchmarks (lifecycle, fork) ==="
     uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
 
-# Smoke test then install to ~/.capsem/ (verifies everything works before installing)
-install: smoke
+# Build the platform package (.pkg on macOS, .deb on Linux) and install it.
+# Builds release binaries, frontend, and Tauri app. Asks for sudo to install.
+# The postinstall script handles codesign, PATH, service registration, and setup.
+install: _pnpm-install
     #!/bin/bash
     set -euo pipefail
-    # Stop existing service before overwriting binaries
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    echo "=== Building release binaries ==="
+    cargo build --release {{host_crates}}
+    echo "=== Building frontend ==="
+    cd frontend && pnpm build && cd ..
+    # Load Tauri signing key if available (needed for updater artifacts).
+    # If absent, disable updater artifacts via config override.
+    TAURI_FLAGS=""
+    if [ -f "private/tauri/capsem.key" ]; then
+        export TAURI_SIGNING_PRIVATE_KEY=$(cat private/tauri/capsem.key)
+        export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$(cat private/tauri/password.txt 2>/dev/null || echo "")
+    else
+        TAURI_FLAGS="--config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+    fi
+    # Stop existing services before install
     if [ -f "$HOME/.capsem/bin/capsem" ]; then
-        echo "=== Stopping existing service ==="
-        "$HOME/.capsem/bin/capsem" service uninstall 2>/dev/null || true
-        pkill -9 -x capsem-service 2>/dev/null || true
-        pkill -9 -x capsem-gateway 2>/dev/null || true
-        pkill -9 -x capsem-tray 2>/dev/null || true
-        pkill -9 -x capsem-process 2>/dev/null || true
-        sleep 0.5
-        rm -f "$HOME/.capsem/run/service.sock"
+        "$HOME/.capsem/bin/capsem" stop 2>/dev/null || true
     fi
-    echo "=== Installing to ~/.capsem/ ==="
-    bash scripts/simulate-install.sh target/debug {{assets_dir}}
-    # Sign on macOS (required for Virtualization.framework)
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        for bin in "$HOME/.capsem/bin"/capsem*; do
-            codesign --sign - --entitlements {{entitlements}} --force "$bin"
-        done
+    pkill -9 -x capsem-service 2>/dev/null || true
+    pkill -9 -x capsem-gateway 2>/dev/null || true
+    pkill -9 -x capsem-tray 2>/dev/null || true
+    pkill -9 -x capsem-process 2>/dev/null || true
+    sleep 0.5
+    rm -f "$HOME/.capsem/run/service.sock"
+    OS=$(uname -s)
+    if [ "$OS" = "Darwin" ]; then
+        echo "=== Building Capsem.app ==="
+        eval cargo tauri build --bundles app $TAURI_FLAGS
+        echo "=== Assembling .pkg (v$VERSION) ==="
+        bash scripts/build-pkg.sh \
+            "target/release/bundle/macos/Capsem.app" \
+            "target/release" \
+            "{{assets_dir}}" \
+            "$VERSION"
+        PKG="packages/Capsem-$VERSION.pkg"
+        echo "=== Opening installer ==="
+        open -W "$PKG"
+    else
+        echo "=== Building .deb ==="
+        eval cargo tauri build --bundles deb $TAURI_FLAGS
+        DEB=$(ls target/release/bundle/deb/*.deb)
+        bash scripts/repack-deb.sh "$DEB" "target/release"
+        echo "=== Installing .deb ==="
+        sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
     fi
-    # Ensure ~/.capsem/bin is in PATH via shell profile
-    CAPSEM_BIN="$HOME/.capsem/bin"
-    if [[ ":$PATH:" != *":$CAPSEM_BIN:"* ]]; then
-        LINE='export PATH="$HOME/.capsem/bin:$PATH"'
-        # Detect shell profile
-        if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$SHELL" == */zsh ]]; then
-            PROFILE="$HOME/.zshrc"
-        elif [[ -f "$HOME/.bash_profile" ]]; then
-            PROFILE="$HOME/.bash_profile"
-        else
-            PROFILE="$HOME/.bashrc"
-        fi
-        if [[ -f "$PROFILE" ]] && grep -qF '.capsem/bin' "$PROFILE"; then
-            echo "PATH already configured in $PROFILE"
-        else
-            echo "$LINE" >> "$PROFILE"
-            echo "Added ~/.capsem/bin to PATH in $PROFILE"
-            echo "Run: source $PROFILE (or open a new terminal)"
-        fi
-    fi
-    # Register and start the service + tray via launchd
-    echo "=== Registering capsem service ==="
-    "$HOME/.capsem/bin/capsem" service install
     # Post-install health check
     echo "=== Verifying service health ==="
     HEALTHY=false
@@ -506,15 +516,18 @@ install: smoke
     done
     if [ "$HEALTHY" != "true" ]; then
         echo "WARNING: Service not responding after 15s."
-        echo "Check: ~/Library/Logs/capsem/service.log (macOS) or journalctl --user -u capsem (Linux)"
+        if [ "$OS" = "Darwin" ]; then
+            echo "Check: ~/Library/Logs/capsem/service.log"
+        else
+            echo "Check: journalctl --user -u capsem"
+        fi
     fi
-    # Auto-setup on first install
-    if [ ! -f "$HOME/.capsem/setup-state.json" ]; then
-        echo "=== Running initial setup ==="
-        "$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected
-    fi
+    echo "=== Pruning stale build artifacts ==="
+    just _clean-stale
 
-# Run install e2e tests in Docker (Linux + systemd)
+# Run install e2e tests in Docker (Linux + systemd).
+# Builds the real .deb (Tauri + repack), installs with dpkg -i (exercises
+# deb-postinst.sh), then runs the pytest suite against the installed layout.
 test-install: _build-host
     #!/bin/bash
     set -euo pipefail
@@ -530,7 +543,9 @@ test-install: _build-host
         --privileged --cgroupns=host \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
-        -v "$PWD":/src:ro \
+        -v "$PWD":/src \
+        -v capsem-install-target:/cargo-target \
+        -v capsem-install-cargo:/usr/local/cargo/registry \
         "$IMAGE" /usr/lib/systemd/systemd
     # Wait for systemd to be ready
     for i in $(seq 1 30); do
@@ -539,14 +554,26 @@ test-install: _build-host
         fi
         sleep 0.5
     done
-    echo "Building capsem binaries inside container..."
+    # Fix ownership for capsem user builds
+    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo"
+    echo "Building host binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo build {{host_crates}}"
-    echo "Running simulate-install.sh..."
+    echo "Building frontend..."
+    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src/frontend/node_modules 2>/dev/null || true"
+    docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
+        "cd /src/frontend && pnpm install && pnpm build"
+    echo "Building Tauri .deb..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && bash scripts/simulate-install.sh target/debug assets"
+        "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+    echo "Repacking .deb with companion binaries..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        'cd /src && DEB=$(ls /cargo-target/debug/bundle/deb/*.deb) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug'
+    echo "Installing .deb via dpkg..."
+    docker exec "$CONTAINER" bash -c \
+        "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
     echo "Running install e2e tests..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
+    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 "$CONTAINER" bash -c \
         "cd /src && uv run pytest tests/capsem-install/ -v --tb=short"
     EXIT_CODE=$?
     echo "Cleaning up container..."
@@ -768,13 +795,29 @@ _clean-stale:
     find target -path "*/release/rootfs.*" -delete 2>/dev/null || true
     find target -path "*/_up_" -type d -exec rm -rf {} + 2>/dev/null || true
     find target -path "*/llvm-cov-target/debug/rootfs.*" -delete 2>/dev/null || true
-    # Trim incremental caches if target/ exceeds 20 GB (prevents unbounded growth)
+    # Prune stale cargo artifacts older than 3 days.
+    # Cargo never garbage-collects old hash variants in deps/ or incremental/.
+    # Each Cargo.toml or feature change creates new copies; over a week this
+    # can balloon target/ to 70+ GB. Pruning >3d-old .o/.rlib/.rmeta/.d files
+    # removes orphaned artifacts while keeping anything from recent builds.
     if [ -d target ]; then
         TARGET_KB=$(du -sk target 2>/dev/null | cut -f1)
-        THRESHOLD=$((20 * 1024 * 1024))  # 20 GB in KB
+        THRESHOLD=$((10 * 1024 * 1024))  # 10 GB in KB
         if [ "$TARGET_KB" -gt "$THRESHOLD" ]; then
-            echo "target/ is $((TARGET_KB / 1024 / 1024)) GB (threshold: 20 GB) -- trimming incremental caches"
-            rm -rf target/debug/incremental target/release/incremental target/llvm-cov-target 2>/dev/null || true
+            BEFORE_KB=$TARGET_KB
+            # Stale object files, rlibs, rmeta, and dep-info (the bulk of bloat)
+            find target/debug/deps target/llvm-cov-target/debug/deps \
+                -maxdepth 1 -type f \( -name "*.o" -o -name "*.rlib" -o -name "*.rmeta" -o -name "*.d" \) \
+                -mtime +3 -delete 2>/dev/null || true
+            # Stale incremental compilation directories
+            find target/debug/incremental target/release/incremental target/llvm-cov-target/debug/incremental \
+                -maxdepth 1 -mindepth 1 -type d -mtime +3 \
+                -exec rm -rf {} + 2>/dev/null || true
+            AFTER_KB=$(du -sk target 2>/dev/null | cut -f1)
+            FREED_MB=$(( (BEFORE_KB - AFTER_KB) / 1024 ))
+            if [ "$FREED_MB" -gt 100 ]; then
+                echo "Pruned ${FREED_MB} MB of stale build artifacts from target/"
+            fi
         fi
     fi
 

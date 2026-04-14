@@ -57,6 +57,9 @@ worktrees/
 # VM assets (built by capsem-builder)
 assets/*
 
+# Built packages (.pkg, .deb)
+packages/
+
 # Tauri
 crates/capsem-app/gen/
 

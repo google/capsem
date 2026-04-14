@@ -55,8 +55,7 @@ impl SetupState {
 }
 
 fn capsem_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join(".capsem"))
+    crate::paths::capsem_home()
 }
 
 fn state_path() -> Result<PathBuf> {
@@ -75,8 +74,10 @@ fn save_state(state: &SetupState) -> Result<()> {
     let dir = capsem_dir()?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("setup-state.json");
+    let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_string_pretty(state)?;
-    std::fs::write(&path, json)?;
+    std::fs::write(&tmp, &json)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(())
 }
 
@@ -145,8 +146,10 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
         }
     }
 
-    // Step 6: Summary
-    step_summary(&cd, &mut state, &opts).await?;
+    // Step 6: Summary (guarded like other steps to avoid re-killing the service)
+    if opts.force || !state.is_step_done("summary") {
+        step_summary(&cd, &mut state, &opts).await?;
+    }
 
     save_state(&state)?;
     println!("\nSetup complete.");
@@ -385,5 +388,6 @@ async fn step_summary(
     }
 
     state.mark_done("summary");
+    save_state(state)?;
     Ok(())
 }

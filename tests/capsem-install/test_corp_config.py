@@ -49,6 +49,7 @@ class TestCorpProvisioning:
         content = CORP_TOML.read_text()
         assert "ai.anthropic.allow" in content
 
+    @pytest.mark.live_system
     def test_corp_config_validates_toml(self, installed_layout, clean_state, tmp_path):
         """Invalid TOML is rejected with clear error."""
         bad_file = tmp_path / "bad.toml"
@@ -61,6 +62,7 @@ class TestCorpProvisioning:
         # Should fail with an error about invalid TOML
         assert result.returncode != 0 or "invalid" in (result.stdout + result.stderr).lower()
 
+    @pytest.mark.live_system
     def test_corp_source_metadata_written(self, installed_layout, clean_state, tmp_path):
         """corp-source.json written with correct source path."""
         corp_file = tmp_path / "corp.toml"
@@ -75,6 +77,7 @@ class TestCorpProvisioning:
         assert source.get("file_path") == str(corp_file)
         assert source.get("refresh_interval_hours") == 12
 
+    @pytest.mark.live_system
     def test_corp_config_overwrites_previous(self, installed_layout, clean_state, tmp_path):
         """Re-provisioning replaces existing corp.toml."""
         # Write initial corp config directly

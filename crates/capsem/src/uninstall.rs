@@ -66,8 +66,8 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         if bin_dir.exists() {
             println!("Removing binaries from {}...", bin_dir.display());
             match platform::detect_install_layout() {
-                platform::InstallLayout::MacosPkg => {
-                    // NEVER remove_dir_all on a shared dir like /usr/local/bin.
+                platform::InstallLayout::MacosPkg | platform::InstallLayout::LinuxDeb => {
+                    // NEVER remove_dir_all on a shared dir like /usr/local/bin or /usr/bin.
                     // Remove only known capsem binaries.
                     for name in CAPSEM_BINARIES {
                         std::fs::remove_file(bin_dir.join(name)).ok();

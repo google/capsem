@@ -33,6 +33,7 @@ def _needs_cargo():
 class TestReinstall:
     """Verify reinstall replaces binaries."""
 
+    @pytest.mark.live_system
     def test_reinstall_replaces_binaries(self, clean_state, _needs_cargo):
         """Compile v1, install, recompile v2, install -- verify v2."""
         capsem_bin = INSTALL_DIR / "capsem"

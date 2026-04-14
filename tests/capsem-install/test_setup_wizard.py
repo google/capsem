@@ -29,6 +29,7 @@ def clean_setup_state():
     SETUP_STATE.unlink(missing_ok=True)
 
 
+@pytest.mark.live_system
 class TestSetupWizard:
     """capsem setup non-interactive mode."""
 

@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use crate::paths;
 
 /// Escape a string for safe embedding in XML `<string>` elements.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -27,6 +28,7 @@ pub struct ServiceStatus {
 /// Generate a macOS LaunchAgent plist for capsem-service.
 ///
 /// All paths are absolute and XML-escaped for safe embedding.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn generate_plist(
     service_bin: &Path,
     process_bin: &Path,

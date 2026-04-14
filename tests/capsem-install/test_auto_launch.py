@@ -26,6 +26,7 @@ from conftest import (
 class TestAutoLaunch:
     """Service auto-launches when CLI connects and no service is running."""
 
+    @pytest.mark.live_system
     def test_auto_launch_from_installed_layout(self, installed_layout, clean_state):
         """capsem list auto-starts service when socket is absent."""
         # Ensure no service running and no socket
@@ -47,6 +48,7 @@ class TestAutoLaunch:
             assert binary.exists(), f"sibling binary not found: {name}"
             assert os.access(binary, os.X_OK), f"not executable: {name}"
 
+    @pytest.mark.live_system
     def test_asset_resolution_installed_layout(self, installed_layout, clean_state):
         """Service finds assets at ~/.capsem/assets/ in installed layout."""
         # If assets were installed, service should start without --assets-dir
@@ -79,6 +81,7 @@ class TestAutoLaunch:
             service_bin.write_bytes(original)
             service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
 
+    @pytest.mark.live_system
     def test_auto_launch_missing_assets(self, installed_layout, clean_state):
         """Clear error when assets directory is empty or missing."""
         from conftest import ASSETS_DIR

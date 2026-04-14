@@ -1,14 +1,15 @@
 """Installed layout contract tests.
 
-Verifies that simulate-install.sh produces exactly the layout that the
-CLI auto-launch and service startup expect to consume. If any of these
-fail, `just install && capsem shell` is broken.
+Verifies that the installed layout matches what the CLI auto-launch and
+service startup expect. Works with both installation paths:
+  - .deb via dpkg (just test-install): CAPSEM_DEB_INSTALLED=1
+  - simulate-install.sh (standalone pytest): fallback
 
 Layout contract:
-  ~/.capsem/bin/capsem{,-service,-process,-mcp}   (executables)
-  ~/.capsem/assets/manifest.json                   (service reads this)
-  ~/.capsem/assets/v{VERSION}/*.squashfs           (service resolves via version)
-  ~/.capsem/run/                                   (created at runtime)
+  ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}  (executables or symlinks)
+  ~/.capsem/assets/manifest.json                                (service reads this)
+  ~/.capsem/assets/v{VERSION}/*.squashfs                        (service resolves via version)
+  ~/.capsem/run/                                                (created at runtime)
 """
 
 from __future__ import annotations
@@ -66,6 +67,8 @@ class TestInstalledLayoutContract:
     def test_manifest_json_exists(self, installed_layout):
         """manifest.json present at ~/.capsem/assets/manifest.json."""
         manifest = ASSETS_DIR / "manifest.json"
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest.exists():
+            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert manifest.exists(), (
             f"manifest.json missing at {manifest} -- service will fail to start"
         )
@@ -87,6 +90,8 @@ class TestInstalledLayoutContract:
         version = result.stdout.strip().split()[1]
 
         versioned_dir = ASSETS_DIR / f"v{version}"
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not versioned_dir.exists():
+            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert versioned_dir.exists(), (
             f"versioned asset dir missing: {versioned_dir}\n"
             f"service will fail to resolve assets for version {version}"

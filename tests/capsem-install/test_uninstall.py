@@ -18,6 +18,7 @@ from conftest import (
 class TestUninstall:
     """capsem uninstall removes everything."""
 
+    @pytest.mark.live_system
     def test_full_uninstall(self, installed_layout, clean_state):
         """Uninstall with --yes removes binaries and data."""
         # Verify install exists first

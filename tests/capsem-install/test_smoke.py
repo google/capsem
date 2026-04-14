@@ -38,6 +38,7 @@ class TestHarnessSmoke:
         for name in BINARIES:
             assert (INSTALL_DIR / name).exists(), f"missing: {name}"
 
+    @pytest.mark.live_system
     def test_capsem_version_has_build_hash(self, installed_layout):
         """capsem version includes the build hash."""
         from conftest import get_build_hash

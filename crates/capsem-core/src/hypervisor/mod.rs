@@ -6,7 +6,9 @@
 #[cfg(target_os = "macos")]
 pub mod apple_vz;
 
+// KVM backend under active development -- allow dead code until device model is complete.
 #[cfg(target_os = "linux")]
+#[allow(dead_code, unused_imports, unused_variables)]
 pub mod kvm;
 
 #[cfg(unix)]

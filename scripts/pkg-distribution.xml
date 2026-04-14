@@ -18,5 +18,5 @@
     <choice id="com.capsem.pkg" visible="false">
         <pkg-ref id="com.capsem.pkg"/>
     </choice>
-    <pkg-ref id="com.capsem.pkg" version="0" onConclusion="none">capsem.pkg</pkg-ref>
+    <pkg-ref id="com.capsem.pkg" version="__VERSION__" onConclusion="none">capsem.pkg</pkg-ref>
 </installer-gui-script>

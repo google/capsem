@@ -26,8 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for Python test runner
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Create non-root capsem user
-RUN useradd -m -s /bin/bash -u 1000 capsem \
+# Create non-root capsem user (UID 1000 may already exist from base image)
+RUN if getent passwd 1000 >/dev/null 2>&1; then \
+        userdel -r $(getent passwd 1000 | cut -d: -f1) 2>/dev/null || true; \
+    fi \
+    && useradd -m -s /bin/bash -u 1000 capsem \
     && echo "capsem ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/capsem
 
 # Enable lingering so systemd user session starts at boot
