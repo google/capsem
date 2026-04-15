@@ -122,15 +122,17 @@
                 <span>Restart</span>
               </button>
             {/if}
-            <button
-              type="button"
-              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-              disabled={busy}
-              onclick={() => openModal('stop')}
-            >
-              <Stop size={16} />
-              <span>Stop</span>
-            </button>
+            {#if isPersistent}
+              <button
+                type="button"
+                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                disabled={busy}
+                onclick={() => openModal('stop')}
+              >
+                <Stop size={16} />
+                <span>Stop</span>
+              </button>
+            {/if}
             {#if !isPersistent}
               <button
                 type="button"
