@@ -37,6 +37,7 @@
   }
 
   function onClickOutside(e: MouseEvent) {
+    if (!menuOpen) return;
     const target = e.target as HTMLElement;
     if (!target.closest('[data-menu]')) {
       menuOpen = false;
@@ -44,7 +45,7 @@
   }
 </script>
 
-<svelte:document onclick={onClickOutside} />
+<svelte:window onclick={onClickOutside} />
 
 <div class="flex items-center gap-x-2 bg-layer border-b border-line-2 px-2 py-1">
   <!-- Left: menu + view switcher -->
@@ -60,6 +61,8 @@
     </button>
 
     {#if menuOpen}
+      <!-- Backdrop: catches clicks outside the dropdown (including over iframes) -->
+      <div class="fixed inset-0 z-40" onclick={() => menuOpen = false}></div>
       <div class="absolute start-0 top-full mt-1 w-64 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
         <div class="p-1">
           <!-- VM section -->
