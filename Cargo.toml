@@ -11,12 +11,13 @@ members = [
     "crates/capsem",
     "crates/capsem-mcp",
     "crates/capsem-mcp-aggregator",
+    "crates/capsem-mcp-builtin",
     "crates/capsem-tray",
     "crates/capsem-gateway",
 ]
 
 [workspace.package]
-version = "0.16.1"
+version = "1.0.1776269479"
 
 # Always optimize blake3 -- its SIMD assembly is 100x faster than
 # unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.

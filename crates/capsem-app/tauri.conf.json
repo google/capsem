@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
   "productName": "Capsem",
-  "version": "0.16.1",
+  "version": "1.0.1776269479",
   "identifier": "com.capsem.capsem",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -14,6 +14,7 @@
       {
         "title": "Capsem",
         "label": "main",
+        "url": "http://127.0.0.1:19222",
         "width": 1200,
         "height": 800,
         "resizable": true,
@@ -28,11 +29,6 @@
     "active": true,
     "targets": ["app", "dmg", "deb"],
     "createUpdaterArtifacts": true,
-    "resources": {
-      "../../assets/current/vmlinuz": "vmlinuz",
-      "../../assets/current/initrd.img": "initrd.img",
-      "../../assets/manifest.json": "manifest.json"
-    },
     "macOS": {
       "entitlements": "../../entitlements.plist",
       "minimumSystemVersion": "13.0"

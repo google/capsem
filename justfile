@@ -47,6 +47,17 @@ assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-gateway -p capsem-tray"
 
+# Stamp version as 1.0.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
+_stamp-version:
+    #!/bin/bash
+    set -euo pipefail
+    CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    NEW="1.0.$(date +%s)"
+    echo "Stamping version: ${CURRENT} -> ${NEW}"
+    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
+    sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
+    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
+
 # Compile all host binaries
 _build-host:
     cargo build {{host_crates}}
@@ -454,7 +465,7 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 # Build the platform package (.pkg on macOS, .deb on Linux) and install it.
 # Builds release binaries, frontend, and Tauri app. Asks for sudo to install.
 # The postinstall script handles codesign, PATH, service registration, and setup.
-install: _pnpm-install
+install: _pnpm-install _stamp-version
     #!/bin/bash
     set -euo pipefail
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
@@ -620,28 +631,15 @@ release tag="":
     echo "=== Release $TAG published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
-# Bump patch version, commit, tag, push, and wait for CI to publish.
+# Stamp version, commit, tag, push, and wait for CI to publish.
 # Runs test first (all validation gates) to avoid burning tags on issues only CI would catch.
-cut-release: test
+cut-release: test _stamp-version
     #!/usr/bin/env bash
     set -euo pipefail
-    # Read current version from Cargo.toml
-    CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    # Increment patch segment
-    MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-    MINOR=$(echo "$CURRENT" | cut -d. -f2)
-    PATCH=$(echo "$CURRENT" | cut -d. -f3)
-    NEW_PATCH=$((PATCH + 1))
-    NEW="${MAJOR}.${MINOR}.${NEW_PATCH}"
+    NEW=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
     TAG="v${NEW}"
     TODAY=$(date +%Y-%m-%d)
-    echo "=== Cutting release $TAG (${CURRENT} -> ${NEW}) ==="
-    # Bump Cargo.toml
-    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
-    # Bump tauri.conf.json
-    sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
-    # Bump pyproject.toml
-    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
+    echo "=== Cutting release $TAG ==="
     # Stamp changelog: [Unreleased] -> [NEW] - TODAY
     sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
     # Extract latest release notes for the frontend boot screen
