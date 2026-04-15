@@ -3,6 +3,7 @@
   import type { TabView } from '../../stores/tabs.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
+  import Modal from './Modal.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Stop from 'phosphor-svelte/lib/Stop';
   import Trash from 'phosphor-svelte/lib/Trash';
@@ -23,6 +24,7 @@
   let menuOpen = $state(false);
   let busy = $derived(vmStore.loading);
   let activeVm = $derived(isVM && active?.vmId ? vmStore.vms.find(v => v.id === active!.vmId) : null);
+  let isPersistent = $derived(activeVm?.persistent ?? false);
 
   const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
     { view: 'terminal', label: 'Terminal', icon: Terminal },
@@ -36,16 +38,51 @@
     }
   }
 
-  function onClickOutside(e: MouseEvent) {
-    if (!menuOpen) return;
-    const target = e.target as HTMLElement;
-    if (!target.closest('[data-menu]')) {
-      menuOpen = false;
+  // --- Modal state ---
+  type ModalKind = 'stop' | 'destroy' | 'save' | 'fork' | null;
+  let modalKind = $state<ModalKind>(null);
+  let modalInput = $state('');
+
+  function openModal(kind: ModalKind) {
+    menuOpen = false;
+    if (kind === 'save') {
+      modalInput = active?.title ?? '';
+    } else if (kind === 'fork') {
+      modalInput = `${active?.title ?? 'vm'}-fork`;
+    }
+    modalKind = kind;
+  }
+
+  function closeModal() {
+    modalKind = null;
+    modalInput = '';
+  }
+
+  async function handleModalConfirm() {
+    if (!active?.vmId) return;
+    const id = active.vmId;
+    const kind = modalKind;
+    closeModal();
+    switch (kind) {
+      case 'stop':
+        await vmStore.stop(id);
+        break;
+      case 'destroy':
+        await vmStore.delete(id);
+        break;
+      case 'save':
+        if (modalInput.trim()) await vmStore.persist(id, modalInput.trim());
+        break;
+      case 'fork': {
+        if (!modalInput.trim()) break;
+        const result = await vmStore.fork(id, { name: modalInput.trim() });
+        const forked = vmStore.vms.find(v => v.name === result.name);
+        if (forked) tabStore.openVM(forked.id, forked.name ?? result.name);
+        break;
+      }
     }
   }
 </script>
-
-<svelte:window onclick={onClickOutside} />
 
 <div class="flex items-center gap-x-2 bg-layer border-b border-line-2 px-2 py-1">
   <!-- Left: menu + view switcher -->
@@ -61,7 +98,6 @@
     </button>
 
     {#if menuOpen}
-      <!-- Backdrop: catches clicks outside the dropdown (including over iframes) -->
       <div class="fixed inset-0 z-40" onclick={() => menuOpen = false}></div>
       <div class="absolute start-0 top-full mt-1 w-64 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
         <div class="p-1">
@@ -75,57 +111,42 @@
               <Scroll size={16} />
               <span>VM Logs</span>
             </button>
+            {#if isPersistent}
+              <button
+                type="button"
+                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                disabled={busy}
+                onclick={async () => { if (active?.vmId) { await vmStore.restart(active.vmId); } menuOpen = false; }}
+              >
+                <ArrowClockwise size={16} />
+                <span>Restart</span>
+              </button>
+            {/if}
             <button
               type="button"
               class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
               disabled={busy}
-              onclick={async () => { if (active?.vmId) { await vmStore.restart(active.vmId); } menuOpen = false; }}
-            >
-              <ArrowClockwise size={16} />
-              <span>Restart</span>
-            </button>
-            <button
-              type="button"
-              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-              disabled={busy}
-              onclick={async () => {
-                if (!active?.vmId) return;
-                if (!confirm(`Stop session "${active.title}"?`)) return;
-                await vmStore.stop(active.vmId);
-                menuOpen = false;
-              }}
+              onclick={() => openModal('stop')}
             >
               <Stop size={16} />
               <span>Stop</span>
             </button>
+            {#if !isPersistent}
+              <button
+                type="button"
+                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                disabled={busy}
+                onclick={() => openModal('save')}
+              >
+                <FloppyDisk size={16} />
+                <span>Save</span>
+              </button>
+            {/if}
             <button
               type="button"
               class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
               disabled={busy}
-              onclick={async () => {
-                if (!active?.vmId) return;
-                const name = prompt('Save session as:', active.title ?? '');
-                if (!name) return;
-                await vmStore.persist(active.vmId, name);
-                menuOpen = false;
-              }}
-            >
-              <FloppyDisk size={16} />
-              <span>Save</span>
-            </button>
-            <button
-              type="button"
-              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-              disabled={busy}
-              onclick={async () => {
-                if (!active?.vmId) return;
-                const name = prompt('Fork name:', `${active.title}-fork`);
-                if (!name) return;
-                const result = await vmStore.fork(active.vmId, { name });
-                const forked = vmStore.vms.find(v => v.name === result.name);
-                if (forked) tabStore.openVM(forked.id, forked.name ?? result.name);
-                menuOpen = false;
-              }}
+              onclick={() => openModal('fork')}
             >
               <GitFork size={16} />
               <span>Fork</span>
@@ -134,12 +155,7 @@
               type="button"
               class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
               disabled={busy}
-              onclick={async () => {
-                if (!active?.vmId) return;
-                if (!confirm(`Destroy session "${active.title}"? This cannot be undone.`)) return;
-                await vmStore.delete(active.vmId);
-                menuOpen = false;
-              }}
+              onclick={() => openModal('destroy')}
             >
               <Trash size={16} />
               <span>Destroy</span>
@@ -228,3 +244,61 @@
     </div>
   {/if}
 </div>
+
+<!-- Modals -->
+<Modal
+  open={modalKind === 'stop'}
+  title="Stop Session"
+  confirmLabel="Stop"
+  destructive
+  onconfirm={handleModalConfirm}
+  oncancel={closeModal}
+>
+  <p class="text-sm text-foreground">Stop <strong>{active?.title}</strong>?</p>
+  {#if !isPersistent}
+    <p class="text-xs text-muted-foreground-1 mt-2">This is an ephemeral session. It will be destroyed.</p>
+  {/if}
+</Modal>
+
+<Modal
+  open={modalKind === 'destroy'}
+  title="Destroy Session"
+  confirmLabel="Destroy"
+  destructive
+  onconfirm={handleModalConfirm}
+  oncancel={closeModal}
+>
+  <p class="text-sm text-foreground">Destroy <strong>{active?.title}</strong>? This cannot be undone.</p>
+</Modal>
+
+<Modal
+  open={modalKind === 'save'}
+  title="Save Session"
+  confirmLabel="Save"
+  onconfirm={handleModalConfirm}
+  oncancel={closeModal}
+>
+  <label for="save-name" class="text-xs font-medium text-foreground block mb-1">Name</label>
+  <input
+    id="save-name"
+    type="text"
+    class="w-full py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
+    bind:value={modalInput}
+  />
+</Modal>
+
+<Modal
+  open={modalKind === 'fork'}
+  title="Fork Session"
+  confirmLabel="Fork"
+  onconfirm={handleModalConfirm}
+  oncancel={closeModal}
+>
+  <label for="fork-name" class="text-xs font-medium text-foreground block mb-1">Name</label>
+  <input
+    id="fork-name"
+    type="text"
+    class="w-full py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
+    bind:value={modalInput}
+  />
+</Modal>

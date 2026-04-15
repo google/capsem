@@ -6,6 +6,7 @@
   import type { VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
+  import Modal from './Modal.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
@@ -71,16 +72,29 @@
     return statusColor[status] ?? 'bg-muted text-muted-foreground-1';
   }
 
-  async function handleStop(e: MouseEvent, vm: VmSummary) {
+  // --- Modal state ---
+  type DashModalKind = 'stop' | 'destroy' | null;
+  let dashModalKind = $state<DashModalKind>(null);
+  let dashModalVm = $state<VmSummary | null>(null);
+
+  function openDashModal(e: MouseEvent, kind: DashModalKind, vm: VmSummary) {
     e.stopPropagation();
-    if (!confirm(`Stop session "${vm.name ?? vm.id}"?`)) return;
-    await vmStore.stop(vm.id);
+    dashModalVm = vm;
+    dashModalKind = kind;
   }
 
-  async function handleDelete(e: MouseEvent, vm: VmSummary) {
-    e.stopPropagation();
-    if (!confirm(`Destroy session "${vm.name ?? vm.id}"? This cannot be undone.`)) return;
-    await vmStore.delete(vm.id);
+  function closeDashModal() {
+    dashModalKind = null;
+    dashModalVm = null;
+  }
+
+  async function handleDashModalConfirm() {
+    if (!dashModalVm) return;
+    const id = dashModalVm.id;
+    const kind = dashModalKind;
+    closeDashModal();
+    if (kind === 'stop') await vmStore.stop(id);
+    else if (kind === 'destroy') await vmStore.delete(id);
   }
 
   async function handleResume(e: MouseEvent, vm: VmSummary) {
@@ -168,7 +182,7 @@
                       <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={async (e: MouseEvent) => { e.stopPropagation(); await vmStore.restart(vm.id); }} aria-label="Restart" title="Restart">
                         <ArrowClockwise size={16} />
                       </button>
-                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handleStop(e, vm)} aria-label="Stop" title="Stop">
+                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'stop', vm)} aria-label="Stop" title="Stop">
                         <Pause size={16} />
                       </button>
                     {:else if vm.status === 'Stopped' || vm.status === 'Error'}
@@ -179,7 +193,7 @@
                       <div class="size-7"></div>
                       <div class="size-7"></div>
                     {/if}
-                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => handleDelete(e, vm)} aria-label="Delete" title="Delete">
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'destroy', vm)} aria-label="Delete" title="Delete">
                       <Trash size={16} />
                     </button>
                   </div>
@@ -228,3 +242,28 @@
     </div>
   {/if}
 </div>
+
+<Modal
+  open={dashModalKind === 'stop'}
+  title="Stop Session"
+  confirmLabel="Stop"
+  destructive
+  onconfirm={handleDashModalConfirm}
+  oncancel={closeDashModal}
+>
+  <p class="text-sm text-foreground">Stop <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>?</p>
+  {#if dashModalVm && !dashModalVm.persistent}
+    <p class="text-xs text-muted-foreground-1 mt-2">This is an ephemeral session. It will be destroyed.</p>
+  {/if}
+</Modal>
+
+<Modal
+  open={dashModalKind === 'destroy'}
+  title="Destroy Session"
+  confirmLabel="Destroy"
+  destructive
+  onconfirm={handleDashModalConfirm}
+  oncancel={closeDashModal}
+>
+  <p class="text-sm text-foreground">Destroy <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>? This cannot be undone.</p>
+</Modal>
