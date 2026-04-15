@@ -23,7 +23,7 @@
     <div class="flex items-center gap-x-2">
       <span class="text-sm font-medium text-foreground">{leaf.name}</span>
       {#if isEmpty && !disabled}
-        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 font-medium">required</span>
+        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 text-warning font-medium">required</span>
       {/if}
       {#if leaf.corp_locked}
         <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium">corp</span>
@@ -70,7 +70,7 @@
       </button>
     </div>
     {#if hasPrefixWarning}
-      <span class="text-xs text-amber-700 dark:text-amber-400">Token should start with {leaf.metadata.prefix}</span>
+      <span class="text-xs text-warning">Token should start with {leaf.metadata.prefix}</span>
     {/if}
   </div>
 </div>

@@ -108,7 +108,7 @@
   {#if issues.length > 0}
     <div class="flex flex-col gap-y-0.5 pb-1">
       {#each issues as issue}
-        <span class="text-xs {issue.severity === 'error' ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-400'}">
+        <span class="text-xs {issue.severity === 'error' ? 'text-destructive' : 'text-warning'}">
           {issue.message}
           {#if issue.docs_url}
             <a href={issue.docs_url} target="_blank" rel="noopener" class="underline ml-1">Get one</a>
@@ -122,7 +122,7 @@
 {#snippet actionControl(a: SettingsAction)}
   {#if a.action === ActionKind.PresetSelect}
     <div class="mt-4 first:mt-0 mb-2">
-      <h3 class="text-base font-semibold text-primary mb-1">{a.name}</h3>
+      <h3 class="text-sm font-medium text-foreground mb-1">{a.name}</h3>
       {#if a.description}
         <p class="text-xs text-muted-foreground-1 mb-2">{a.description}</p>
       {/if}
@@ -149,7 +149,7 @@
 <!-- Top-level group header (depth 0) -->
 {#if depth === 0}
   <div class="mb-6">
-    <h2 class="text-xl font-bold text-foreground">{group.name}</h2>
+    <h2 class="text-xl font-medium text-foreground">{group.name}</h2>
     {#if group.description}
       <p class="text-sm text-muted-foreground-1 mt-0.5">{group.description}</p>
     {/if}
@@ -181,7 +181,7 @@
   {#if depth > 0 && child.kind === 'action'}
     {@render actionControl(child)}
   {:else if depth > 0 && child.kind === 'leaf'}
-    <div class="border-b border-card-divider last:border-b-0">
+    <div class="px-4 border-b border-card-divider last:border-b-0">
       {@render leafControl(child)}
     </div>
   {:else if child.kind === 'group'}
@@ -231,7 +231,7 @@
           </button>
           <!-- Warning badge when collapsed and issues/missing key -->
           {#if !isExpanded && (headerIssues.length > 0 || missingKey)}
-            <span class="text-amber-700 dark:text-amber-400" title="{headerIssues.length} issue{headerIssues.length === 1 ? '' : 's'}">
+            <span class="text-warning" title="{headerIssues.length} issue{headerIssues.length === 1 ? '' : 's'}">
               <WarningCircle size={18} weight="fill" />
             </span>
           {/if}
@@ -246,9 +246,9 @@
         </div>
         <!-- Collapsed issue summary -->
         {#if !isExpanded && headerIssues.length > 0}
-          <div class="px-4 py-2 border-t border-card-divider bg-amber-50/50 dark:bg-amber-900/10">
+          <div class="px-4 py-2 border-t border-card-divider bg-warning/5">
             {#each headerIssues as issue}
-              <p class="text-xs text-yellow-700 dark:text-yellow-400">
+              <p class="text-xs text-warning">
                 {issue.message}
                 {#if issue.docs_url}
                   <a href={issue.docs_url} target="_blank" rel="noopener" class="underline ml-1">Get one</a>
@@ -271,7 +271,7 @@
               {:else if item.kind === 'group'}
                 <!-- Nested subgroup: section label like Appearance's "Interface"/"Terminal" -->
                 <div class="px-4 pt-4 pb-2">
-                  <h4 class="text-xs font-semibold text-muted-foreground-1 uppercase tracking-wider mb-1">{item.name}</h4>
+                  <h4 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-1">{item.name}</h4>
                   {#if item.description}
                     <p class="text-xs text-muted-foreground-1 mb-2">{item.description}</p>
                   {/if}
@@ -283,14 +283,19 @@
         {/if}
       </div>
     {:else}
-      <!-- Non-toggle subgroup: section label + card, matching Appearance pattern -->
-      <h3 class="text-xs font-semibold text-muted-foreground-1 uppercase tracking-wider mb-2 mt-6 first:mt-0">{child.name}</h3>
+      <!-- Non-toggle subgroup: card only when group has direct leaf/action children -->
+      {@const hasDirectLeaves = child.children.some(c => c.kind === 'leaf' || c.kind === 'action')}
+      <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6 first:mt-0">{child.name}</h3>
       {#if child.description}
         <p class="text-xs text-muted-foreground-1 mb-2">{child.description}</p>
       {/if}
-      <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-6">
+      {#if hasDirectLeaves}
+        <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-6">
+          <Self group={child} depth={depth + 1} />
+        </div>
+      {:else}
         <Self group={child} depth={depth + 1} />
-      </div>
+      {/if}
     {/if}
   {/if}
 {/each}
