@@ -1,5 +1,18 @@
 use std::collections::HashMap;
+use capsem_core::session::{
+    GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary,
+};
 use serde::{Deserialize, Serialize};
+
+/// Response for GET /stats -- full main.db dump in one call.
+#[derive(Serialize, Debug)]
+pub struct StatsResponse {
+    pub global: GlobalStats,
+    pub sessions: Vec<SessionRecord>,
+    pub top_providers: Vec<ProviderSummary>,
+    pub top_tools: Vec<ToolSummary>,
+    pub top_mcp_tools: Vec<McpToolSummary>,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionRequest {
@@ -55,6 +68,61 @@ pub struct SandboxInfo {
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    // -- Telemetry (populated for /info, omitted when absent) --
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uptime_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_estimated_cost: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tool_calls: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_mcp_calls: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub denied_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_file_events: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_call_count: Option<u64>,
+}
+
+impl SandboxInfo {
+    /// Construct with only the core fields; all telemetry fields default to None.
+    pub fn new(id: String, pid: u32, status: String, persistent: bool) -> Self {
+        Self {
+            id,
+            name: None,
+            pid,
+            status,
+            persistent,
+            ram_mb: None,
+            cpus: None,
+            version: None,
+            forked_from: None,
+            description: None,
+            created_at: None,
+            uptime_secs: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            total_estimated_cost: None,
+            total_tool_calls: None,
+            total_mcp_calls: None,
+            total_requests: None,
+            allowed_requests: None,
+            denied_requests: None,
+            total_file_events: None,
+            model_call_count: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -142,6 +210,44 @@ pub struct LogsResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ErrorResponse {
     pub error: String,
+}
+
+// ── MCP API types ──────────────────────────────────────────────────
+
+/// Response for GET /mcp/servers.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct McpServerInfoResponse {
+    pub name: String,
+    pub url: String,
+    pub has_bearer_token: bool,
+    pub custom_header_count: usize,
+    pub source: String,
+    pub enabled: bool,
+    pub running: bool,
+    pub tool_count: usize,
+    pub unsupported_stdio: bool,
+}
+
+/// Response for GET /mcp/tools.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct McpToolInfoResponse {
+    pub namespaced_name: String,
+    pub original_name: String,
+    pub description: Option<String>,
+    pub server_name: String,
+    pub annotations: Option<serde_json::Value>,
+    pub pin_hash: Option<String>,
+    pub approved: bool,
+    pub pin_changed: bool,
+}
+
+/// Response for GET /mcp/policy.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct McpPolicyInfoResponse {
+    pub global_policy: Option<String>,
+    pub default_tool_permission: String,
+    pub blocked_servers: Vec<String>,
+    pub tool_permissions: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -239,8 +345,8 @@ mod tests {
     fn list_response_multiple() {
         let r = ListResponse {
             sandboxes: vec![
-                SandboxInfo { id: "a".into(), name: Some("a".into()), pid: 100, status: "Running".into(), persistent: true, ram_mb: Some(2048), cpus: Some(2), version: None, forked_from: None, description: None },
-                SandboxInfo { id: "b".into(), name: None, pid: 200, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None, description: None },
+                { let mut s = SandboxInfo::new("a".into(), 100, "Running".into(), true); s.name = Some("a".into()); s.ram_mb = Some(2048); s.cpus = Some(2); s },
+                SandboxInfo::new("b".into(), 200, "Running".into(), false),
             ],
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -254,7 +360,7 @@ mod tests {
 
     #[test]
     fn sandbox_info_optional_fields_omitted() {
-        let s = SandboxInfo { id: "x".into(), name: None, pid: 1, status: "Running".into(), persistent: false, ram_mb: None, cpus: None, version: None, forked_from: None, description: None };
+        let s = SandboxInfo::new("x".into(), 1, "Running".into(), false);
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains("ram_mb"));
         assert!(!json.contains("cpus"));

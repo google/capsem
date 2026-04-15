@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 rmp-serde = { workspace = true }
 anyhow = { workspace = true }
 
@@ -12,5 +13,4 @@ anyhow = { workspace = true }
 workspace = true
 
 [dev-dependencies]
-serde_json = { workspace = true }
 tempfile = "3"

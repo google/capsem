@@ -1,0 +1,17 @@
+[package]
+name = "capsem-mcp-aggregator"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+capsem-core = { path = "../capsem-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest.workspace = true
+
+[lints]
+workspace = true

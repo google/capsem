@@ -10,6 +10,7 @@ members = [
     "crates/capsem-service",
     "crates/capsem",
     "crates/capsem-mcp",
+    "crates/capsem-mcp-aggregator",
     "crates/capsem-tray",
     "crates/capsem-gateway",
 ]

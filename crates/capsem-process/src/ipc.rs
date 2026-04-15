@@ -164,6 +164,90 @@ pub(crate) async fn handle_ipc_connection(
                     info!("Received Suspend command, forwarding to ctrl channel");
                     let _ = ctrl_tx.send(ServiceToProcess::Suspend { checkpoint_path }).await;
                 }
+                ServiceToProcess::McpListServers { id } => {
+                    let mcp = Arc::clone(&mcp_config);
+                    let ipc_tx_out = ipc_tx_out.clone();
+                    tokio::spawn(async move {
+                        match mcp.aggregator.list_servers().await {
+                            Ok(agg_servers) => {
+                                let servers = agg_servers.into_iter().map(|s| {
+                                    capsem_proto::ipc::McpServerStatus {
+                                        name: s.name,
+                                        url: s.url,
+                                        enabled: s.enabled,
+                                        source: s.source,
+                                        unsupported_stdio: s.unsupported_stdio,
+                                        connected: s.connected,
+                                        tool_count: s.tool_count,
+                                    }
+                                }).collect();
+                                let _ = ipc_tx_out.send(ProcessToService::McpServersResult { id, servers }).await;
+                            }
+                            Err(e) => {
+                                let _ = ipc_tx_out.send(ProcessToService::McpServersResult { id, servers: vec![] }).await;
+                                warn!(error = %e, "failed to list MCP servers");
+                            }
+                        }
+                    });
+                }
+                ServiceToProcess::McpListTools { id } => {
+                    let mcp = Arc::clone(&mcp_config);
+                    let ipc_tx_out = ipc_tx_out.clone();
+                    tokio::spawn(async move {
+                        match mcp.aggregator.list_tools().await {
+                            Ok(tools) => {
+                                let tools = tools.into_iter().map(|t| {
+                                    capsem_proto::ipc::McpToolStatus {
+                                        namespaced_name: t.namespaced_name,
+                                        original_name: t.original_name,
+                                        description: t.description,
+                                        server_name: t.server_name,
+                                        annotations: t.annotations.as_ref().map(|a| a.to_mcp_json()),
+                                    }
+                                }).collect();
+                                let _ = ipc_tx_out.send(ProcessToService::McpToolsResult { id, tools }).await;
+                            }
+                            Err(e) => {
+                                let _ = ipc_tx_out.send(ProcessToService::McpToolsResult { id, tools: vec![] }).await;
+                                warn!(error = %e, "failed to list MCP tools");
+                            }
+                        }
+                    });
+                }
+                ServiceToProcess::McpRefreshTools { id } => {
+                    let mcp = Arc::clone(&mcp_config);
+                    let ipc_tx_out = ipc_tx_out.clone();
+                    tokio::spawn(async move {
+                        // Reload config from disk and refresh aggregator.
+                        let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+                        let servers = capsem_core::mcp::build_server_list(
+                            &user_sf.mcp.clone().unwrap_or_default(),
+                            &corp_sf.mcp.clone().unwrap_or_default(),
+                        );
+                        match mcp.aggregator.refresh(servers).await {
+                            Ok(()) => {
+                                let _ = ipc_tx_out.send(ProcessToService::McpRefreshResult { id, success: true, error: None }).await;
+                            }
+                            Err(e) => {
+                                let _ = ipc_tx_out.send(ProcessToService::McpRefreshResult { id, success: false, error: Some(e.to_string()) }).await;
+                            }
+                        }
+                    });
+                }
+                ServiceToProcess::McpCallTool { id, namespaced_name, arguments } => {
+                    let mcp = Arc::clone(&mcp_config);
+                    let ipc_tx_out = ipc_tx_out.clone();
+                    tokio::spawn(async move {
+                        match mcp.aggregator.call_tool(&namespaced_name, arguments).await {
+                            Ok(result) => {
+                                let _ = ipc_tx_out.send(ProcessToService::McpCallToolResult { id, result: Some(result), error: None }).await;
+                            }
+                            Err(e) => {
+                                let _ = ipc_tx_out.send(ProcessToService::McpCallToolResult { id, result: None, error: Some(e.to_string()) }).await;
+                            }
+                        }
+                    });
+                }
                 ServiceToProcess::PrepareSnapshot
                 | ServiceToProcess::Unfreeze
                 | ServiceToProcess::Resume => {
@@ -194,6 +278,10 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::PrepareSnapshot
         | ServiceToProcess::Unfreeze
         | ServiceToProcess::Resume => IpcAction::Unexpected,
+        ServiceToProcess::McpListServers { .. }
+        | ServiceToProcess::McpListTools { .. }
+        | ServiceToProcess::McpRefreshTools { .. }
+        | ServiceToProcess::McpCallTool { .. } => IpcAction::Job,
     }
 }
 

@@ -12,18 +12,16 @@ use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use capsem_logger::{DbWriter, McpCall, WriteOp};
 
-use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
-
 use crate::net::domain_policy::DomainPolicy;
 
+use super::aggregator::AggregatorClient;
 use super::builtin_tools;
 use super::policy::{McpPolicy, ToolDecision};
-use super::server_manager::McpServerManager;
 use super::types::*;
 
 /// Maximum NDJSON line length (1MB). Reject lines larger than this.
@@ -31,7 +29,9 @@ const MAX_LINE_LEN: usize = 1_048_576;
 
 /// Shared configuration for the MCP gateway.
 pub struct McpGatewayConfig {
-    pub server_manager: Mutex<McpServerManager>,
+    /// Client handle for the isolated MCP aggregator subprocess.
+    /// Routes external server tool calls, resource reads, and prompt gets.
+    pub aggregator: AggregatorClient,
     pub db: Arc<DbWriter>,
     /// Double-Arc for atomic policy swap: outer RwLock protects inner Arc.
     /// New sessions clone the inner Arc for a consistent snapshot.
@@ -193,10 +193,11 @@ async fn handle_json_rpc(
             if config.workspace_dir.is_some() {
                 builtin.extend(super::file_tools::file_tool_defs());
             }
-            let mgr = config.server_manager.lock().await;
+            // Fetch external tools from the aggregator subprocess.
+            let external = config.aggregator.list_tools().await.unwrap_or_default();
             let tools: Vec<serde_json::Value> = builtin
                 .iter()
-                .chain(mgr.tool_catalog().iter())
+                .chain(external.iter())
                 .map(|t| {
                     let mut tool = serde_json::json!({
                         "name": t.namespaced_name,
@@ -372,32 +373,9 @@ async fn handle_json_rpc(
                 ToolDecision::Allow => {}
             }
 
-            // Clone peer and drop lock before the (potentially slow) RPC call.
-            let (peer, original_name) = {
-                let mgr = config.server_manager.lock().await;
-                match mgr.lookup_tool_peer(tool_name) {
-                    Ok(p) => p,
-                    Err(e) => return Some(JsonRpcResponse::err(
-                        req.id.clone(), -32603, format!("tool call failed: {e}"),
-                    )),
-                }
-            };
-
-            let args: Option<serde_json::Map<String, serde_json::Value>> = match arguments {
-                serde_json::Value::Object(map) if !map.is_empty() => Some(map),
-                _ => None,
-            };
-            let mut params = CallToolRequestParams::new(original_name.clone());
-            if let Some(args) = args {
-                params = params.with_arguments(args);
-            }
-
-            match peer.call_tool(params).await {
-                Ok(result) => {
-                    let result_json = serde_json::to_value(&result)
-                        .unwrap_or(serde_json::json!({}));
-                    Some(JsonRpcResponse::ok(req.id.clone(), result_json))
-                }
+            // Route to the aggregator subprocess.
+            match config.aggregator.call_tool(tool_name, arguments).await {
+                Ok(result) => Some(JsonRpcResponse::ok(req.id.clone(), result)),
                 Err(e) => Some(JsonRpcResponse::err(
                     req.id.clone(), -32603, format!("tool call failed: {e}"),
                 )),
@@ -405,9 +383,11 @@ async fn handle_json_rpc(
         }
 
         "resources/list" => {
-            let mgr = config.server_manager.lock().await;
-            let resources: Vec<serde_json::Value> = mgr
-                .resource_catalog()
+            let resources: Vec<serde_json::Value> = config
+                .aggregator
+                .list_resources()
+                .await
+                .unwrap_or_default()
                 .iter()
                 .map(|r| {
                     serde_json::json!({
@@ -433,33 +413,20 @@ async fn handle_json_rpc(
                 return Some(JsonRpcResponse::err(req.id.clone(), -32602, "missing resource URI"));
             }
 
-            let (peer, original_uri) = {
-                let mgr = config.server_manager.lock().await;
-                match mgr.lookup_resource_peer(uri) {
-                    Ok(p) => p,
-                    Err(e) => return Some(JsonRpcResponse::err(
-                        req.id.clone(), -32603, format!("resource read failed: {e}"),
-                    )),
-                }
-            };
-
-            let params = ReadResourceRequestParams::new(original_uri.clone());
-            Some(match peer.read_resource(params).await {
-                Ok(result) => {
-                    let result_json = serde_json::to_value(&result)
-                        .unwrap_or(serde_json::json!({}));
-                    JsonRpcResponse::ok(req.id.clone(), result_json)
-                }
-                Err(e) => JsonRpcResponse::err(
+            match config.aggregator.read_resource(uri).await {
+                Ok(result) => Some(JsonRpcResponse::ok(req.id.clone(), result)),
+                Err(e) => Some(JsonRpcResponse::err(
                     req.id.clone(), -32603, format!("resource read failed: {e}"),
-                ),
-            })
+                )),
+            }
         }
 
         "prompts/list" => {
-            let mgr = config.server_manager.lock().await;
-            let prompts: Vec<serde_json::Value> = mgr
-                .prompt_catalog()
+            let prompts: Vec<serde_json::Value> = config
+                .aggregator
+                .list_prompts()
+                .await
+                .unwrap_or_default()
                 .iter()
                 .map(|p| {
                     serde_json::json!({
@@ -488,33 +455,12 @@ async fn handle_json_rpc(
                 .cloned()
                 .unwrap_or(serde_json::json!({}));
 
-            let (peer, original_name) = {
-                let mgr = config.server_manager.lock().await;
-                match mgr.lookup_prompt_peer(prompt_name) {
-                    Ok(p) => p,
-                    Err(e) => return Some(JsonRpcResponse::err(
-                        req.id.clone(), -32603, format!("prompt get failed: {e}"),
-                    )),
-                }
-            };
-
-            let mut params = GetPromptRequestParams::new(original_name.clone());
-            if let serde_json::Value::Object(map) = arguments {
-                if !map.is_empty() {
-                    params = params.with_arguments(map);
-                }
-            }
-
-            Some(match peer.get_prompt(params).await {
-                Ok(result) => {
-                    let result_json = serde_json::to_value(&result)
-                        .unwrap_or(serde_json::json!({}));
-                    JsonRpcResponse::ok(req.id.clone(), result_json)
-                }
-                Err(e) => JsonRpcResponse::err(
+            match config.aggregator.get_prompt(prompt_name, arguments).await {
+                Ok(result) => Some(JsonRpcResponse::ok(req.id.clone(), result)),
+                Err(e) => Some(JsonRpcResponse::err(
                     req.id.clone(), -32603, format!("prompt get failed: {e}"),
-                ),
-            })
+                )),
+            }
         }
 
         _ => Some(JsonRpcResponse::err(req.id.clone(), -32601, format!("method not found: {}", req.method))),
@@ -604,7 +550,55 @@ async fn log_mcp_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::aggregator::*;
     use crate::net::domain_policy::DomainPolicy;
+
+    /// Create a test AggregatorClient with a background driver that returns
+    /// empty results (no external servers connected).
+    fn test_aggregator_client(rt: &tokio::runtime::Runtime) -> AggregatorClient {
+        let (client, mut rx) = AggregatorClient::channel(16);
+        rt.spawn(async move {
+            while let Some((req, resp_tx)) = rx.recv().await {
+                let body = match req.method {
+                    AggregatorMethod::ListServers => {
+                        AggregatorResult::Servers { servers: vec![] }
+                    }
+                    AggregatorMethod::ListTools => {
+                        AggregatorResult::Tools { tools: vec![] }
+                    }
+                    AggregatorMethod::ListResources => {
+                        AggregatorResult::Resources { resources: vec![] }
+                    }
+                    AggregatorMethod::ListPrompts => {
+                        AggregatorResult::Prompts { prompts: vec![] }
+                    }
+                    AggregatorMethod::CallTool { name, .. } => {
+                        AggregatorResult::Error {
+                            error: format!("no server for tool: {name}"),
+                        }
+                    }
+                    AggregatorMethod::ReadResource { uri, .. } => {
+                        AggregatorResult::Error {
+                            error: format!("no server for resource: {uri}"),
+                        }
+                    }
+                    AggregatorMethod::GetPrompt { name, .. } => {
+                        AggregatorResult::Error {
+                            error: format!("no server for prompt: {name}"),
+                        }
+                    }
+                    AggregatorMethod::Refresh { .. } => {
+                        AggregatorResult::Ok { ok: true }
+                    }
+                    AggregatorMethod::Shutdown => {
+                        AggregatorResult::Ok { ok: true }
+                    }
+                };
+                let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
+            }
+        });
+        client
+    }
 
     fn test_config(rt: &tokio::runtime::Runtime) -> McpGatewayConfig {
         let db = rt.block_on(async {
@@ -613,7 +607,7 @@ mod tests {
             Arc::new(DbWriter::open(&path, 64).unwrap())
         });
         McpGatewayConfig {
-            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
+            aggregator: test_aggregator_client(rt),
             db,
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
@@ -1080,7 +1074,7 @@ mod tests {
             Arc::new(DbWriter::open(&path, 64).unwrap())
         });
         let config = McpGatewayConfig {
-            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
+            aggregator: test_aggregator_client(&rt),
             db,
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
@@ -1121,7 +1115,7 @@ mod tests {
             Arc::new(DbWriter::open(&path, 64).unwrap())
         });
         let config = McpGatewayConfig {
-            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
+            aggregator: test_aggregator_client(&rt),
             db,
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
@@ -1194,7 +1188,7 @@ mod tests {
         });
 
         let config = McpGatewayConfig {
-            server_manager: Mutex::new(McpServerManager::new(vec![], reqwest::Client::new())),
+            aggregator: test_aggregator_client(rt),
             db,
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),

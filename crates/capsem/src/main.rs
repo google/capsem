@@ -80,6 +80,13 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mstart\x1b[0m        Start the background service
   \x1b[32;1mstop\x1b[0m         Stop the background service
 
+\x1b[36;1;4mMCP:\x1b[0m
+  \x1b[32;1mmcp servers\x1b[0m  List configured MCP servers with connection status
+  \x1b[32;1mmcp tools\x1b[0m    List discovered MCP tools across all servers
+  \x1b[32;1mmcp policy\x1b[0m   Show the merged MCP policy
+  \x1b[32;1mmcp refresh\x1b[0m  Re-discover tools from all MCP servers
+  \x1b[32;1mmcp call\x1b[0m     Call an MCP tool
+
 \x1b[36;1;4mMisc:\x1b[0m
   \x1b[32;1msetup\x1b[0m        Run the first-time setup wizard
   \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
@@ -114,8 +121,36 @@ enum Commands {
     #[command(flatten)]
     Session(SessionCommands),
 
+    /// Manage MCP (Model Context Protocol) servers and tools
+    #[command(subcommand)]
+    Mcp(McpCommands),
+
     #[command(flatten)]
     Misc(MiscCommands),
+}
+
+#[derive(Subcommand)]
+enum McpCommands {
+    /// List configured MCP servers with connection status
+    Servers,
+    /// List discovered MCP tools across all servers
+    Tools {
+        /// Filter by server name
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Show the merged MCP policy
+    Policy,
+    /// Re-discover tools from all MCP servers
+    Refresh,
+    /// Call an MCP tool by namespaced name
+    Call {
+        /// Namespaced tool name (e.g. github__search_repos)
+        name: String,
+        /// JSON arguments
+        #[arg(long, default_value = "{}")]
+        args: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -425,6 +460,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
 
     let stream = tokio::net::UnixStream::connect(&sock_path).await.context("failed to connect to sandbox")?;
     let std_stream = stream.into_std()?;
+    #[allow(unused_variables)]
     let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(std_stream)?;
     let tx = Arc::new(tx);
 
@@ -499,7 +535,11 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                 ProcessToService::ReadFileResult { .. } => {}
                 ProcessToService::ShutdownRequested { .. }
                 | ProcessToService::SuspendRequested { .. }
-                | ProcessToService::SnapshotReady { .. } => {}
+                | ProcessToService::SnapshotReady { .. }
+                | ProcessToService::McpServersResult { .. }
+                | ProcessToService::McpToolsResult { .. }
+                | ProcessToService::McpRefreshResult { .. }
+                | ProcessToService::McpCallToolResult { .. } => {}
             }
         }
     });
@@ -899,6 +939,68 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
+        }
+        Commands::Mcp(McpCommands::Servers) => {
+            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers").await?;
+            let servers = resp.into_result()?;
+            if servers.is_empty() {
+                println!("No MCP servers configured.");
+            } else {
+                println!("{:<20} {:<8} {:<10} {:<8} {}", "NAME", "ENABLED", "SOURCE", "TOOLS", "URL");
+                for s in &servers {
+                    println!(
+                        "{:<20} {:<8} {:<10} {:<8} {}",
+                        s["name"].as_str().unwrap_or("-"),
+                        if s["enabled"].as_bool().unwrap_or(false) { "yes" } else { "no" },
+                        s["source"].as_str().unwrap_or("-"),
+                        s["tool_count"].as_u64().unwrap_or(0),
+                        s["url"].as_str().unwrap_or("-"),
+                    );
+                }
+            }
+        }
+        Commands::Mcp(McpCommands::Tools { server }) => {
+            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/tools").await?;
+            let mut tools = resp.into_result()?;
+            if let Some(ref server_filter) = server {
+                tools.retain(|t| t["server_name"].as_str() == Some(server_filter));
+            }
+            if tools.is_empty() {
+                println!("No MCP tools discovered.");
+            } else {
+                println!("{:<40} {:<20} {:<10} {}", "TOOL", "SERVER", "APPROVED", "DESCRIPTION");
+                for t in &tools {
+                    let desc = t["description"].as_str().unwrap_or("-");
+                    let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
+                    println!(
+                        "{:<40} {:<20} {:<10} {}",
+                        t["namespaced_name"].as_str().unwrap_or("-"),
+                        t["server_name"].as_str().unwrap_or("-"),
+                        if t["approved"].as_bool().unwrap_or(false) { "yes" } else { "no" },
+                        short_desc,
+                    );
+                }
+            }
+        }
+        Commands::Mcp(McpCommands::Policy) => {
+            let resp: ApiResponse<serde_json::Value> = client.get("/mcp/policy").await?;
+            let policy = resp.into_result()?;
+            println!("{}", serde_json::to_string_pretty(&policy)?);
+        }
+        Commands::Mcp(McpCommands::Refresh) => {
+            let resp: ApiResponse<serde_json::Value> = client.post("/mcp/tools/refresh", &serde_json::json!({})).await?;
+            resp.into_result()?;
+            println!("MCP tools refreshed.");
+        }
+        Commands::Mcp(McpCommands::Call { name, args }) => {
+            let arguments: serde_json::Value = serde_json::from_str(args)
+                .context("invalid JSON arguments")?;
+            let resp: ApiResponse<serde_json::Value> = client.post(
+                &format!("/mcp/tools/{}/call", name),
+                &arguments,
+            ).await?;
+            let result = resp.into_result()?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Commands::Misc(
             MiscCommands::Version

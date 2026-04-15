@@ -29,6 +29,14 @@ pub enum ServiceToProcess {
     Suspend { checkpoint_path: String },
     /// Resume VM from checkpoint (warm restore).
     Resume,
+    /// Query MCP aggregator for server list with connection status.
+    McpListServers { id: u64 },
+    /// Query MCP aggregator for discovered tool catalog.
+    McpListTools { id: u64 },
+    /// Tell MCP aggregator to reconnect all servers with fresh config.
+    McpRefreshTools { id: u64 },
+    /// Call an MCP tool via the aggregator subprocess.
+    McpCallTool { id: u64, namespaced_name: String, arguments: serde_json::Value },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -52,6 +60,36 @@ pub enum ProcessToService {
     SuspendRequested { id: String },
     /// Guest quiescence complete: filesystem frozen, safe to snapshot.
     SnapshotReady { id: String },
+    /// Response to McpListServers.
+    McpServersResult { id: u64, servers: Vec<McpServerStatus> },
+    /// Response to McpListTools.
+    McpToolsResult { id: u64, tools: Vec<McpToolStatus> },
+    /// Response to McpRefreshTools.
+    McpRefreshResult { id: u64, success: bool, error: Option<String> },
+    /// Response to McpCallTool.
+    McpCallToolResult { id: u64, result: Option<serde_json::Value>, error: Option<String> },
+}
+
+/// Status of an MCP server as reported through IPC.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct McpServerStatus {
+    pub name: String,
+    pub url: String,
+    pub enabled: bool,
+    pub source: String,
+    pub unsupported_stdio: bool,
+    pub connected: bool,
+    pub tool_count: usize,
+}
+
+/// Status of an MCP tool as reported through IPC.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct McpToolStatus {
+    pub namespaced_name: String,
+    pub original_name: String,
+    pub description: Option<String>,
+    pub server_name: String,
+    pub annotations: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -401,6 +439,137 @@ mod tests {
         let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
         match msg2 {
             ProcessToService::SnapshotReady { id } => assert_eq!(id, "vm-snap"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // MCP IPC roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mcp_list_servers_roundtrip() {
+        let msg = ServiceToProcess::McpListServers { id: 10 };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::McpListServers { id } => assert_eq!(id, 10),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mcp_list_tools_roundtrip() {
+        let msg = ServiceToProcess::McpListTools { id: 20 };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::McpListTools { id } => assert_eq!(id, 20),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mcp_call_tool_roundtrip() {
+        let msg = ServiceToProcess::McpCallTool {
+            id: 30,
+            namespaced_name: "github__search".into(),
+            arguments: serde_json::json!({"q": "rust"}),
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ServiceToProcess::McpCallTool { id, namespaced_name, arguments } => {
+                assert_eq!(id, 30);
+                assert_eq!(namespaced_name, "github__search");
+                assert_eq!(arguments["q"], "rust");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mcp_servers_result_roundtrip() {
+        let msg = ProcessToService::McpServersResult {
+            id: 10,
+            servers: vec![McpServerStatus {
+                name: "github".into(),
+                url: "https://mcp.github.com".into(),
+                enabled: true,
+                source: "claude".into(),
+                unsupported_stdio: false,
+                connected: true,
+                tool_count: 5,
+            }],
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::McpServersResult { id, servers } => {
+                assert_eq!(id, 10);
+                assert_eq!(servers.len(), 1);
+                assert_eq!(servers[0].name, "github");
+                assert!(servers[0].connected);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mcp_tools_result_roundtrip() {
+        let msg = ProcessToService::McpToolsResult {
+            id: 20,
+            tools: vec![McpToolStatus {
+                namespaced_name: "github__search".into(),
+                original_name: "search".into(),
+                description: Some("Search repos".into()),
+                server_name: "github".into(),
+                annotations: None,
+            }],
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::McpToolsResult { id, tools } => {
+                assert_eq!(id, 20);
+                assert_eq!(tools[0].namespaced_name, "github__search");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mcp_call_tool_result_roundtrip() {
+        let msg = ProcessToService::McpCallToolResult {
+            id: 30,
+            result: Some(serde_json::json!({"content": []})),
+            error: None,
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::McpCallToolResult { id, result, error } => {
+                assert_eq!(id, 30);
+                assert!(result.is_some());
+                assert!(error.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mcp_refresh_result_roundtrip() {
+        let msg = ProcessToService::McpRefreshResult {
+            id: 40, success: true, error: None,
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::McpRefreshResult { id, success, error } => {
+                assert_eq!(id, 40);
+                assert!(success);
+                assert!(error.is_none());
+            }
             _ => panic!("wrong variant"),
         }
     }

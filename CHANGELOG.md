@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MCP aggregator subprocess** -- external MCP server connections now run in an isolated `capsem-mcp-aggregator` subprocess with only network access, no VM/DB/filesystem privileges. Spawned by capsem-process at boot.
+- **service MCP API endpoints** -- `GET /mcp/servers`, `GET /mcp/tools`, `GET /mcp/policy`, `POST /mcp/tools/refresh`, `POST /mcp/tools/{name}/approve`, `POST /mcp/tools/{name}/call` unblock the frontend and CLI.
+- **CLI `capsem mcp` subcommands** -- `capsem mcp servers`, `capsem mcp tools`, `capsem mcp policy`, `capsem mcp refresh`, `capsem mcp call`.
+- **debug MCP tools** -- `capsem_mcp_servers`, `capsem_mcp_tools`, `capsem_mcp_call` in capsem-mcp for AI agent MCP management.
+- **MCP IPC protocol** -- `McpListServers`, `McpListTools`, `McpRefreshTools`, `McpCallTool` service-to-process messages with corresponding result types.
+
+### Changed
+- **frontend: MCP settings wired to gateway** -- MCP server add/remove/toggle and default tool policy now persist via the settings API instead of local-only state. Servers, tools, and policy load from the gateway on mount.
+- **frontend: restart button works** -- toolbar restart button now stops then resumes the VM (was previously identical to stop).
+- **frontend: fork auto-opens tab** -- forking a VM from the toolbar now automatically opens the forked VM in a new tab.
+- **frontend: settings loading/error states** -- settings page shows a spinner while loading and an error banner with retry on failure.
+
 ### Fixed
 - **frontend: tab names use VM name** -- provisioning and deep-link flows now show the VM's fun name (e.g. "tmp-agile-blaze") instead of the raw ID.
 - **frontend: snapshot stats query real VM** -- Snapshots tab in Stats view now queries the VM's session.db via `/inspect` instead of the local mock database.

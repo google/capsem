@@ -197,11 +197,11 @@ async fn run_async_main_loop(
         });
     }
 
+    // Spawn the isolated MCP aggregator subprocess.
+    let aggregator_client = spawn_mcp_aggregator(&mcp_servers).await?;
+
     let mcp_config = Arc::new(capsem_core::mcp::gateway::McpGatewayConfig {
-        server_manager: tokio::sync::Mutex::new(capsem_core::mcp::server_manager::McpServerManager::new(
-            mcp_servers,
-            reqwest::Client::new(),
-        )),
+        aggregator: aggregator_client,
         db: Arc::clone(&db),
         policy: tokio::sync::RwLock::new(Arc::new(merged.mcp)),
         domain_policy: std::sync::RwLock::new(Arc::new(merged.domain)),
@@ -391,6 +391,151 @@ async fn run_async_main_loop(
             }
         });
     }
+}
+
+/// Spawn the isolated MCP aggregator subprocess and return a client handle.
+///
+/// The subprocess manages connections to external MCP servers. It communicates
+/// via NDJSON on stdin/stdout. Server definitions are sent as the first line.
+///
+/// If the aggregator binary is not found (dev builds), falls back to an in-process
+/// mock that returns empty results.
+async fn spawn_mcp_aggregator(
+    servers: &[capsem_core::mcp::types::McpServerDef],
+) -> Result<capsem_core::mcp::aggregator::AggregatorClient> {
+    use std::collections::HashMap;
+    use capsem_core::mcp::aggregator::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let (client, mut rx) = AggregatorClient::channel(64);
+
+    // Find the aggregator binary next to our own binary.
+    let exe_path = std::env::current_exe()?;
+    let bin_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
+    let aggregator_bin = bin_dir.join("capsem-mcp-aggregator");
+
+    if !aggregator_bin.exists() {
+        // Dev fallback: no aggregator binary. Return a client with an empty mock driver.
+        info!("aggregator binary not found at {}, using empty stub", aggregator_bin.display());
+        tokio::spawn(async move {
+            while let Some((req, resp_tx)) = rx.recv().await {
+                let body = match req.method {
+                    AggregatorMethod::ListServers => AggregatorResult::Servers { servers: vec![] },
+                    AggregatorMethod::ListTools => AggregatorResult::Tools { tools: vec![] },
+                    AggregatorMethod::ListResources => AggregatorResult::Resources { resources: vec![] },
+                    AggregatorMethod::ListPrompts => AggregatorResult::Prompts { prompts: vec![] },
+                    AggregatorMethod::CallTool { name, .. } => AggregatorResult::Error {
+                        error: format!("aggregator not available: {name}"),
+                    },
+                    AggregatorMethod::ReadResource { uri, .. } => AggregatorResult::Error {
+                        error: format!("aggregator not available: {uri}"),
+                    },
+                    AggregatorMethod::GetPrompt { name, .. } => AggregatorResult::Error {
+                        error: format!("aggregator not available: {name}"),
+                    },
+                    AggregatorMethod::Refresh { .. } | AggregatorMethod::Shutdown => {
+                        AggregatorResult::Ok { ok: true }
+                    }
+                };
+                let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
+            }
+        });
+        return Ok(client);
+    }
+
+    info!(bin = %aggregator_bin.display(), servers = servers.len(), "spawning MCP aggregator");
+
+    let mut child = tokio::process::Command::new(&aggregator_bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()?;
+
+    let mut child_stdin = child.stdin.take().unwrap();
+    let child_stdout = child.stdout.take().unwrap();
+
+    // Send server definitions as the first line.
+    let defs_json = serde_json::to_string(servers)?;
+    child_stdin.write_all(defs_json.as_bytes()).await?;
+    child_stdin.write_all(b"\n").await?;
+    child_stdin.flush().await?;
+
+    // Background driver: reads from client channel, writes to subprocess stdin,
+    // reads responses from subprocess stdout, routes back to callers.
+    let pending: Arc<tokio::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<AggregatorResponse>>>> =
+        Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+
+    // Reader task: reads NDJSON from subprocess stdout and routes to pending callers.
+    let pending_reader = Arc::clone(&pending);
+    let mut reader = BufReader::new(child_stdout);
+    tokio::spawn(async move {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => {
+                    info!("aggregator stdout closed");
+                    break;
+                }
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() { continue; }
+                    match serde_json::from_str::<AggregatorResponse>(trimmed) {
+                        Ok(resp) => {
+                            let mut map = pending_reader.lock().await;
+                            if let Some(tx) = map.remove(&resp.id) {
+                                let _ = tx.send(resp);
+                            }
+                        }
+                        Err(e) => {
+                            error!(error = %e, "failed to parse aggregator response");
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "failed to read from aggregator");
+                    break;
+                }
+            }
+        }
+    });
+
+    // Writer task: reads from client channel, writes to subprocess stdin.
+    let pending_writer = Arc::clone(&pending);
+    tokio::spawn(async move {
+        while let Some((req, resp_tx)) = rx.recv().await {
+            {
+                let mut map = pending_writer.lock().await;
+                map.insert(req.id, resp_tx);
+            }
+            let mut req_json = match serde_json::to_string(&req) {
+                Ok(j) => j,
+                Err(e) => {
+                    error!(error = %e, "failed to serialize aggregator request");
+                    continue;
+                }
+            };
+            req_json.push('\n');
+            if let Err(e) = child_stdin.write_all(req_json.as_bytes()).await {
+                error!(error = %e, "failed to write to aggregator");
+                break;
+            }
+            if let Err(e) = child_stdin.flush().await {
+                error!(error = %e, "failed to flush aggregator stdin");
+                break;
+            }
+        }
+    });
+
+    // Monitor child process.
+    tokio::spawn(async move {
+        match child.wait().await {
+            Ok(status) => info!(status = %status, "aggregator subprocess exited"),
+            Err(e) => error!(error = %e, "failed to wait on aggregator"),
+        }
+    });
+
+    Ok(client)
 }
 
 

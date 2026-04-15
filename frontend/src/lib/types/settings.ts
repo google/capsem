@@ -163,7 +163,7 @@ export interface McpServerInfo {
   enabled: boolean;
   builtin: boolean;
   tool_count: number;
-  healthy: boolean;
+  running: boolean;
 }
 
 /** MCP tool info from the MCP store. */

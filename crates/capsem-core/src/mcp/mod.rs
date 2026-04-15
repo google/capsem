@@ -1,3 +1,4 @@
+pub mod aggregator;
 pub mod builtin_tools;
 pub mod file_tools;
 pub mod gateway;

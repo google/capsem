@@ -306,6 +306,20 @@ struct InspectParams {
     sql: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct McpToolsParams {
+    /// Filter tools by server name (optional)
+    server: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct McpCallParams {
+    /// Namespaced tool name (e.g. github__search_repos)
+    name: String,
+    /// JSON arguments for the tool call
+    arguments: Option<Value>,
+}
+
 #[tool_router]
 impl CapsemHandler {
     #[tool(name = "capsem_list", description = "List all sessions (running and stopped persistent) with ID, name, status, RAM, CPUs, uptime, and telemetry")]
@@ -606,6 +620,34 @@ impl CapsemHandler {
             "mcp_version": mcp_version,
             "service": service_status,
         }).to_string())
+    }
+
+    #[tool(name = "capsem_mcp_servers", description = "List configured MCP servers with connection status and tool counts")]
+    async fn mcp_servers(&self) -> Result<String, String> {
+        let resp: Vec<Value> = self.client.request("GET", "/mcp/servers", None::<&()>).await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&resp).map_err(|e| e.to_string())
+    }
+
+    #[tool(name = "capsem_mcp_tools", description = "List discovered MCP tools across all connected servers. Filter by server name.")]
+    async fn mcp_tools(&self, Parameters(params): Parameters<McpToolsParams>) -> Result<String, String> {
+        let mut tools: Vec<Value> = self.client.request("GET", "/mcp/tools", None::<&()>).await
+            .map_err(|e| e.to_string())?;
+        if let Some(ref filter) = params.server {
+            tools.retain(|t| t["server_name"].as_str() == Some(filter));
+        }
+        serde_json::to_string_pretty(&tools).map_err(|e| e.to_string())
+    }
+
+    #[tool(name = "capsem_mcp_call", description = "Call an MCP tool by namespaced name (e.g. github__search_repos) with JSON arguments")]
+    async fn mcp_call(&self, Parameters(params): Parameters<McpCallParams>) -> Result<String, String> {
+        let args = params.arguments.unwrap_or(json!({}));
+        let resp: Value = self.client.request(
+            "POST",
+            &format!("/mcp/tools/{}/call", params.name),
+            Some(&args),
+        ).await.map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&resp).map_err(|e| e.to_string())
     }
 }
 
@@ -1071,6 +1113,7 @@ mod tests {
             "capsem_persist", "capsem_purge", "capsem_run", "capsem_vm_logs",
             "capsem_service_logs", "capsem_version",
             "capsem_fork",
+            "capsem_mcp_servers", "capsem_mcp_tools", "capsem_mcp_call",
         ];
         for name in &expected {
             assert!(names.contains(&name.to_string()), "Missing tool: {name}");

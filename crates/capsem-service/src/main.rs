@@ -1189,6 +1189,152 @@ async fn handle_lint_config() -> Json<serde_json::Value> {
     Json(serde_json::to_value(issues).unwrap_or_default())
 }
 
+// ---------------------------------------------------------------------------
+// MCP API Handlers
+// ---------------------------------------------------------------------------
+
+/// GET /mcp/servers -- list configured MCP servers with status.
+async fn handle_mcp_servers() -> Json<serde_json::Value> {
+    use capsem_core::mcp::{build_server_list, load_tool_cache};
+    use capsem_core::mcp::policy::McpUserConfig;
+
+    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+    let user_mcp = user_sf.mcp.unwrap_or_default();
+    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
+
+    let servers = build_server_list(&user_mcp, &corp_mcp);
+    let cache = load_tool_cache();
+
+    let resp: Vec<api::McpServerInfoResponse> = servers.iter().map(|s| {
+        let tool_count = cache.iter().filter(|t| t.server_name == s.name).count();
+        api::McpServerInfoResponse {
+            name: s.name.clone(),
+            url: s.url.clone(),
+            has_bearer_token: s.bearer_token.is_some(),
+            custom_header_count: s.headers.len(),
+            source: s.source.clone(),
+            enabled: s.enabled,
+            running: false, // Config-level only; runtime status requires IPC.
+            tool_count,
+            unsupported_stdio: s.unsupported_stdio,
+        }
+    }).collect();
+    Json(serde_json::to_value(resp).unwrap_or_default())
+}
+
+/// GET /mcp/tools -- list discovered MCP tools with pin/approval status.
+async fn handle_mcp_tools() -> Json<serde_json::Value> {
+    use capsem_core::mcp::load_tool_cache;
+
+    let cache = load_tool_cache();
+    let resp: Vec<api::McpToolInfoResponse> = cache.iter().map(|entry| {
+        api::McpToolInfoResponse {
+            namespaced_name: entry.namespaced_name.clone(),
+            original_name: entry.original_name.clone(),
+            description: entry.description.clone(),
+            server_name: entry.server_name.clone(),
+            annotations: entry.annotations.as_ref().map(|a| a.to_mcp_json()),
+            pin_hash: Some(entry.pin_hash.clone()),
+            approved: entry.approved,
+            pin_changed: false, // Would need live catalog comparison.
+        }
+    }).collect();
+    Json(serde_json::to_value(resp).unwrap_or_default())
+}
+
+/// GET /mcp/policy -- return the merged MCP policy.
+async fn handle_mcp_policy() -> Json<serde_json::Value> {
+    use capsem_core::mcp::policy::McpUserConfig;
+
+    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+    let user_mcp = user_sf.mcp.unwrap_or_default();
+    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
+
+    let resp = api::McpPolicyInfoResponse {
+        global_policy: user_mcp.global_policy.clone(),
+        default_tool_permission: user_mcp.default_tool_permission
+            .map(|d| format!("{d:?}").to_lowercase())
+            .unwrap_or_else(|| "allow".into()),
+        blocked_servers: {
+            let policy = user_mcp.to_policy(&corp_mcp);
+            policy.blocked_servers
+        },
+        tool_permissions: user_mcp.tool_permissions.iter()
+            .map(|(k, v)| (k.clone(), format!("{v:?}").to_lowercase()))
+            .collect(),
+    };
+    Json(serde_json::to_value(resp).unwrap_or_default())
+}
+
+/// POST /mcp/tools/refresh -- reload MCP servers from config.
+async fn handle_mcp_refresh(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Send McpRefreshTools to all running instances.
+    let uds_paths = {
+        let instances = state.instances.lock().unwrap();
+        instances.iter().map(|(_, info)| info.uds_path.clone()).collect::<Vec<_>>()
+    };
+    for uds_path in &uds_paths {
+        let id = state.next_job_id();
+        let _ = send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, 30).await;
+    }
+    Ok(Json(serde_json::json!({"success": true, "instances": uds_paths.len()})))
+}
+
+/// POST /mcp/tools/:name/approve -- approve a tool (mark approved in cache).
+async fn handle_mcp_approve(
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::mcp::{load_tool_cache, save_tool_cache};
+
+    let mut cache = load_tool_cache();
+    let found = cache.iter_mut().find(|e| e.namespaced_name == name);
+    match found {
+        Some(entry) => {
+            entry.approved = true;
+            save_tool_cache(&cache)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            Ok(Json(serde_json::json!({"approved": true})))
+        }
+        None => Err(AppError(StatusCode::NOT_FOUND, format!("tool not found: {name}"))),
+    }
+}
+
+/// POST /mcp/tools/:name/call -- call an MCP tool via a running VM's aggregator.
+async fn handle_mcp_call(
+    State(state): State<Arc<ServiceState>>,
+    Path(name): Path<String>,
+    Json(arguments): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Find any running instance to route the call through.
+    let uds_path = {
+        let instances = state.instances.lock().unwrap();
+        instances.values().next().map(|i| i.uds_path.clone())
+    };
+    let uds_path = uds_path
+        .ok_or_else(|| AppError(StatusCode::SERVICE_UNAVAILABLE, "no running sessions".into()))?;
+
+    let msg = ServiceToProcess::McpCallTool {
+        id: state.next_job_id(),
+        namespaced_name: name.clone(),
+        arguments,
+    };
+    let resp = send_ipc_command(&uds_path, msg, 60).await
+        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
+
+    match resp {
+        ProcessToService::McpCallToolResult { result, error, .. } => {
+            if let Some(err) = error {
+                Err(AppError(StatusCode::BAD_GATEWAY, err))
+            } else {
+                Ok(Json(result.unwrap_or(serde_json::Value::Null)))
+            }
+        }
+        _ => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response".into())),
+    }
+}
+
 async fn handle_inspect(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -1859,6 +2005,12 @@ async fn main() -> Result<()> {
         .route("/settings/presets", get(handle_get_presets))
         .route("/settings/presets/{id}", post(handle_apply_preset))
         .route("/settings/lint", post(handle_lint_config))
+        .route("/mcp/servers", get(handle_mcp_servers))
+        .route("/mcp/tools", get(handle_mcp_tools))
+        .route("/mcp/policy", get(handle_mcp_policy))
+        .route("/mcp/tools/refresh", post(handle_mcp_refresh))
+        .route("/mcp/tools/{name}/approve", post(handle_mcp_approve))
+        .route("/mcp/tools/{name}/call", post(handle_mcp_call))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
