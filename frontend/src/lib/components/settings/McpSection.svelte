@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { MOCK_MCP_TOOLS, MOCK_MCP_POLICY } from '../../mock-settings';
-  import type { McpToolInfo, McpServerInfo } from '../../types/settings';
+  import { settingsStore } from '../../stores/settings.svelte.ts';
+  import type { McpServerNode } from '../../types/settings';
+  import * as api from '../../api';
   import CaretDown from 'phosphor-svelte/lib/CaretDown';
   import Plus from 'phosphor-svelte/lib/Plus';
   import Trash from 'phosphor-svelte/lib/Trash';
   import X from 'phosphor-svelte/lib/X';
 
-  // --- Server list (mock state, will wire to gateway in Sprint 05) ---
-  let servers = $state<McpServerInfo[]>([]);
+  // MCP servers from the settings tree (loaded by SettingsPage onMount)
+  let servers = $derived(settingsStore.model?.mcpServers ?? []);
+  let userServers = $derived(servers.filter(s => !s.builtin));
+  let builtinServers = $derived(servers.filter(s => s.builtin));
 
   // --- Add server form ---
   let showAddForm = $state(false);
@@ -15,6 +18,7 @@
   let newUrl = $state('');
   let newBearerToken = $state('');
   let newHeaders = $state<{ key: string; value: string }[]>([]);
+  let saving = $state(false);
 
   let canAdd = $derived(newName.trim().length > 0 && newUrl.trim().length > 0);
 
@@ -34,29 +38,62 @@
     newHeaders = newHeaders.filter((_, i) => i !== index);
   }
 
-  function addServer() {
+  async function addServer() {
     if (!canAdd) return;
-    servers = [...servers, {
-      name: newName.trim(),
-      url: newUrl.trim(),
-      transport: 'http',
-      enabled: true,
-      builtin: false,
-      tool_count: 0,
-      healthy: true,
-    }];
-    resetForm();
+    saving = true;
+    try {
+      const headers: Record<string, string> = {};
+      for (const h of newHeaders) {
+        if (h.key.trim()) headers[h.key.trim()] = h.value;
+      }
+      await api.addMcpServer(
+        newName.trim(),
+        newUrl.trim(),
+        headers,
+        newBearerToken.trim() || null,
+      );
+      await api.reloadConfig();
+      resetForm();
+      await settingsStore.load();
+    } finally {
+      saving = false;
+    }
   }
 
-  function removeServer(name: string) {
-    servers = servers.filter(s => s.name !== name);
+  async function removeServer(name: string) {
+    saving = true;
+    try {
+      await api.removeMcpServer(name);
+      await api.reloadConfig();
+      await settingsStore.load();
+    } finally {
+      saving = false;
+    }
   }
 
-  function toggleServer(name: string) {
-    servers = servers.map(s =>
-      s.name === name ? { ...s, enabled: !s.enabled } : s,
-    );
+  async function toggleServer(name: string, currentlyEnabled: boolean) {
+    saving = true;
+    try {
+      await api.setMcpServerEnabled(name, !currentlyEnabled);
+      await api.reloadConfig();
+      await settingsStore.load();
+    } finally {
+      saving = false;
+    }
   }
+
+  async function handlePolicyChange(e: Event) {
+    const value = (e.target as HTMLSelectElement).value;
+    await api.setMcpDefaultPermission(value);
+    await api.reloadConfig();
+    await settingsStore.load();
+  }
+
+  // Policy from settings tree
+  let defaultPermission = $derived.by(() => {
+    const leaf = settingsStore.findLeaf('mcp.policy.default_tool_permission');
+    return (leaf?.effective_value as string) ?? 'allow';
+  });
 
   // --- Expand/collapse ---
   let expandedGroups = $state<Set<string>>(new Set());
@@ -67,10 +104,6 @@
     else next.add(key);
     expandedGroups = next;
   }
-
-  // Group builtin tools by category
-  let httpTools = $derived(MOCK_MCP_TOOLS.filter(t => t.server_name === 'builtin' && (t.namespaced_name.startsWith('fetch') || t.namespaced_name.startsWith('grep_http') || t.namespaced_name.startsWith('http_'))));
-  let snapshotTools = $derived(MOCK_MCP_TOOLS.filter(t => t.server_name === 'builtin' && t.namespaced_name.startsWith('snapshots_')));
 </script>
 
 <div class="space-y-6">
@@ -91,73 +124,56 @@
         </div>
         <select
           class="py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary w-32"
-          value={MOCK_MCP_POLICY.default_tool_permission}
+          value={defaultPermission}
+          onchange={handlePolicyChange}
         >
           <option value="allow">Allow</option>
           <option value="warn">Warn</option>
           <option value="block">Block</option>
         </select>
       </div>
-      {#if MOCK_MCP_POLICY.blocked_servers.length > 0}
-        <div class="p-4">
-          <p class="text-sm font-medium text-foreground mb-1">Blocked servers</p>
-          <div class="flex flex-wrap gap-1.5">
-            {#each MOCK_MCP_POLICY.blocked_servers as server}
-              <span class="bg-destructive/10 text-destructive-foreground text-xs px-2 py-1 rounded-md font-mono">{server}</span>
-            {/each}
-          </div>
-        </div>
-      {/if}
     </div>
   </div>
 
-  <!-- Built-in Tools -->
-  <div>
-    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Built-in Tools</h3>
-
-    {#snippet toolGroup(title: string, tools: McpToolInfo[], groupKey: string)}
-      {@const isExpanded = expandedGroups.has(groupKey)}
-      <div class="bg-card border border-card-line rounded-xl overflow-hidden mb-3">
-        <button
-          type="button"
-          class="w-full flex items-center justify-between px-4 py-3 hover:bg-muted-hover transition-colors"
-          onclick={() => toggleGroup(groupKey)}
-        >
-          <div class="flex items-center gap-x-2">
-            <span class="text-sm font-semibold text-foreground">{title}</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1">{tools.length}</span>
+  <!-- Built-in Servers -->
+  {#if builtinServers.length > 0}
+    <div>
+      <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Built-in</h3>
+      {#each builtinServers as server (server.key)}
+        <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3">
+            <div class="flex items-center gap-x-3 min-w-0">
+              <span class="text-sm font-semibold text-foreground font-mono truncate">{server.name}</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.transport}</span>
+            </div>
+            <div class="flex items-center gap-x-2 shrink-0">
+              <button
+                type="button"
+                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
+                  {server.enabled ? 'bg-primary' : 'bg-muted'}
+                  {server.corp_locked ? 'opacity-50 cursor-not-allowed' : ''}"
+                role="switch"
+                aria-label="{server.enabled ? 'Disable' : 'Enable'} {server.name}"
+                aria-checked={server.enabled}
+                disabled={server.corp_locked || saving}
+                onclick={() => toggleServer(server.key, server.enabled)}
+              >
+                <span
+                  class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200
+                    {server.enabled ? 'translate-x-4' : 'translate-x-0'}"
+                ></span>
+              </button>
+            </div>
           </div>
-          <CaretDown size={14} class="text-muted-foreground-1 transition-transform duration-300 {isExpanded ? 'rotate-180' : ''}" />
-        </button>
-        {#if isExpanded}
-          <div class="divide-y divide-card-divider">
-            {#each tools as tool (tool.namespaced_name)}
-              <div class="px-4 py-2.5 flex items-start justify-between gap-x-3">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-x-2">
-                    <span class="text-sm font-medium text-foreground font-mono">{tool.original_name}</span>
-                    {#if tool.annotations?.read_only_hint}
-                      <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">read-only</span>
-                    {/if}
-                    {#if tool.annotations?.destructive_hint}
-                      <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive-foreground">destructive</span>
-                    {/if}
-                  </div>
-                  <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{tool.description}</p>
-                </div>
-                <span class="text-xs shrink-0 mt-0.5 {tool.approved ? 'text-primary' : 'text-destructive-foreground'}">
-                  {tool.approved ? 'Allowed' : 'Blocked'}
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/snippet}
-
-    {@render toolGroup('HTTP', httpTools, 'tools-http')}
-    {@render toolGroup('Snapshots', snapshotTools, 'tools-snapshots')}
-  </div>
+          {#if server.description}
+            <div class="px-4 pb-3">
+              <p class="text-xs text-muted-foreground-1">{server.description}</p>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <!-- External Servers -->
   <div>
@@ -275,7 +291,7 @@
             <button
               type="button"
               class="py-2 px-4 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!canAdd}
+              disabled={!canAdd || saving}
               onclick={addServer}
             >
               Add Server
@@ -286,7 +302,7 @@
     {/if}
 
     <!-- Server list -->
-    {#if servers.length === 0 && !showAddForm}
+    {#if userServers.length === 0 && !showAddForm}
       <div class="bg-card border border-card-line rounded-xl p-6 text-center">
         <p class="text-sm text-muted-foreground-1">No external MCP servers configured.</p>
         <button
@@ -298,41 +314,37 @@
         </button>
       </div>
     {:else}
-      {#each servers as server (server.name)}
+      {#each userServers as server (server.key)}
         <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3">
             <div class="flex items-center gap-x-3 min-w-0">
               <span class="text-sm font-semibold text-foreground font-mono truncate">{server.name}</span>
               <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.transport}</span>
-              {#if server.tool_count > 0}
-                <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary shrink-0">
-                  {server.tool_count} tool{server.tool_count === 1 ? '' : 's'}
-                </span>
-              {/if}
             </div>
             <div class="flex items-center gap-x-2 shrink-0">
-              <!-- Enable/disable toggle -->
               <button
                 type="button"
                 class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
-                  {server.enabled ? 'bg-primary' : 'bg-muted'}"
+                  {server.enabled ? 'bg-primary' : 'bg-muted'}
+                  {server.corp_locked ? 'opacity-50 cursor-not-allowed' : ''}"
                 role="switch"
                 aria-label="{server.enabled ? 'Disable' : 'Enable'} {server.name}"
                 aria-checked={server.enabled}
-                onclick={() => toggleServer(server.name)}
+                disabled={server.corp_locked || saving}
+                onclick={() => toggleServer(server.key, server.enabled)}
               >
                 <span
                   class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200
                     {server.enabled ? 'translate-x-4' : 'translate-x-0'}"
                 ></span>
               </button>
-              <!-- Delete -->
-              {#if !server.builtin}
+              {#if !server.corp_locked}
                 <button
                   type="button"
                   class="p-1.5 rounded-md text-muted-foreground-1 hover:text-destructive-foreground hover:bg-muted-hover transition-colors"
                   title="Remove server"
-                  onclick={() => removeServer(server.name)}
+                  disabled={saving}
+                  onclick={() => removeServer(server.key)}
                 >
                   <Trash size={14} />
                 </button>

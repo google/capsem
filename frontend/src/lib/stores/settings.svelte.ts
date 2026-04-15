@@ -1,8 +1,7 @@
 // Settings store -- thin Svelte wrapper around SettingsModel.
-// Uses mock data: the service does not expose a settings CRUD API yet.
-// TODO: wire to gateway API when service settings endpoints land.
+// Wired to gateway settings API.
 import { SettingsModel } from '../models/settings-model';
-import { buildMockSettingsResponse, recomputeEnabled, mockSettings } from '../mock-settings';
+import { getSettings, saveSettings, applyPreset, reloadConfig } from '../api';
 import type {
   ConfigIssue,
   SecurityPreset,
@@ -64,8 +63,7 @@ class SettingsStore {
     this.loading = true;
     this.error = null;
     try {
-      // TODO: wire to gateway API when service settings endpoints land
-      const response = buildMockSettingsResponse();
+      const response = await getSettings();
       this.model = new SettingsModel(response);
     } catch (e) {
       console.error('Failed to load settings:', e);
@@ -82,23 +80,15 @@ class SettingsStore {
     this.model?.stage(id, value);
   }
 
-  /** Persist all pending changes. Sprint 04: optimistic update on mock data. */
+  /** Persist all pending changes via the gateway settings API. */
   async save() {
     if (!this.model?.isDirty) return;
     const changes = this.model.getPendingAsRecord();
     this.loading = true;
     try {
-      // Sprint 05: const response = await saveSettings(changes);
-      // Sprint 04: optimistically apply changes to mock data and rebuild
-      for (const [id, value] of Object.entries(changes)) {
-        const setting = mockSettings.find(s => s.id === id);
-        if (setting) {
-          setting.effective_value = value;
-        }
-      }
-      recomputeEnabled();
-      const response = buildMockSettingsResponse();
+      const response = await saveSettings(changes);
       this.model = new SettingsModel(response);
+      await reloadConfig().catch(() => {});
     } catch (e) {
       this.error = String(e);
     } finally {
@@ -145,19 +135,11 @@ class SettingsStore {
   async applySecurityPreset(id: string) {
     this.applyingPreset = id;
     try {
-      // Sprint 05: await applyPreset(id);
-      // Sprint 04: apply preset changes to mock data
-      const preset = this.model?.presets.find(p => p.id === id);
-      if (preset) {
-        for (const [settingId, value] of Object.entries(preset.settings)) {
-          const setting = mockSettings.find(s => s.id === settingId);
-          if (setting) {
-            setting.effective_value = value;
-          }
-        }
-        recomputeEnabled();
-      }
-      await this.load();
+      const response = await applyPreset(id);
+      this.model = new SettingsModel(response);
+      await reloadConfig().catch(() => {});
+    } catch (e) {
+      this.error = String(e);
     } finally {
       this.applyingPreset = null;
     }

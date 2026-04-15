@@ -3,6 +3,7 @@ export type TabView = 'new-tab' | 'overview' | 'terminal' | 'stats' | 'files' | 
 export interface Tab {
   id: string;
   title: string;
+  subtitle?: string;
   view: TabView;
   vmId?: string;
 }
@@ -84,9 +85,23 @@ class TabStore {
     if (tab) tab.title = title;
   }
 
+  updateSubtitle(id: string, subtitle: string) {
+    const tab = this.tabs.find(t => t.id === id);
+    if (tab) tab.subtitle = subtitle;
+  }
+
   updateView(id: string, view: TabView) {
     const tab = this.tabs.find(t => t.id === id);
     if (tab) tab.view = view;
+  }
+
+  openSingleton(view: TabView, title: string) {
+    const existing = this.tabs.find(t => t.view === view && !t.vmId);
+    if (existing) {
+      this.activeId = existing.id;
+    } else {
+      this.add(view, title);
+    }
   }
 
   openVM(vmId: string, vmName: string) {

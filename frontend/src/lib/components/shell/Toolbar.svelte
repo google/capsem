@@ -16,11 +16,13 @@
   import FolderSimple from 'phosphor-svelte/lib/FolderSimple';
   import Scroll from 'phosphor-svelte/lib/Scroll';
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
+  import { formatTokens, formatCost } from '../../format';
 
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
   let menuOpen = $state(false);
   let busy = $derived(vmStore.loading);
+  let activeVm = $derived(isVM && active?.vmId ? vmStore.vms.find(v => v.id === active!.vmId) : null);
 
   const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
     { view: 'terminal', label: 'Terminal', icon: Terminal },
@@ -45,85 +47,7 @@
 <svelte:document onclick={onClickOutside} />
 
 <div class="flex items-center gap-x-2 bg-layer border-b border-line-2 px-2 py-1">
-  <!-- VM actions (only shown when viewing a VM) -->
-  {#if isVM}
-  <div class="flex items-center gap-x-0.5">
-    <button
-      type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={busy}
-      aria-label="Restart"
-      title="Restart VM"
-      onclick={async () => { if (active?.vmId) { await vmStore.stop(active.vmId); } }}
-    >
-      <ArrowClockwise size={16} />
-    </button>
-    <button
-      type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={busy}
-      aria-label="Stop"
-      title="Stop VM"
-      onclick={async () => { if (active?.vmId) await vmStore.stop(active.vmId); }}
-    >
-      <Stop size={16} />
-    </button>
-    <button
-      type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={busy}
-      aria-label="Save"
-      title="Save VM (make persistent)"
-      onclick={async () => { if (active?.vmId) await vmStore.persist(active.vmId); }}
-    >
-      <FloppyDisk size={16} />
-    </button>
-    <button
-      type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-destructive hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={busy}
-      aria-label="Destroy"
-      title="Destroy VM"
-      onclick={async () => { if (active?.vmId) await vmStore.delete(active.vmId); }}
-    >
-      <Trash size={16} />
-    </button>
-    <button
-      type="button"
-      class="size-7 inline-flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-muted-hover disabled:opacity-40 disabled:pointer-events-none"
-      disabled={busy}
-      aria-label="Fork"
-      title="Fork VM"
-      onclick={async () => { if (active?.vmId) await vmStore.fork(active.vmId, { name: `fork-${Date.now()}` }); }}
-    >
-      <GitFork size={16} />
-    </button>
-  </div>
-  {/if}
-
-  <!-- Spacer -->
-  <div class="flex-1"></div>
-
-  <!-- Right: view switcher + menu -->
-  {#if isVM}
-    <div class="flex items-center bg-background-1 rounded-lg p-0.5">
-      {#each vmViewButtons as btn}
-        <button
-          type="button"
-          class="inline-flex items-center gap-x-1 px-2 py-1 text-xs rounded-md transition-colors
-            {active?.view === btn.view
-              ? 'bg-layer text-foreground shadow-sm'
-              : 'text-muted-foreground-1 hover:text-foreground'}"
-          onclick={() => switchView(btn.view)}
-          title={btn.label}
-        >
-          <btn.icon size={14} />
-          <span class="hidden sm:inline">{btn.label}</span>
-        </button>
-      {/each}
-    </div>
-  {/if}
-
+  <!-- Left: menu + view switcher -->
   <div class="relative" data-menu>
     <button
       type="button"
@@ -136,8 +60,9 @@
     </button>
 
     {#if menuOpen}
-      <div class="absolute end-0 top-full mt-1 w-64 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
+      <div class="absolute start-0 top-full mt-1 w-64 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
         <div class="p-1">
+          <!-- VM section -->
           {#if isVM}
             <button
               type="button"
@@ -147,7 +72,61 @@
               <Scroll size={16} />
               <span>VM Logs</span>
             </button>
+            <button
+              type="button"
+              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+              disabled={busy}
+              onclick={async () => { if (active?.vmId) { await vmStore.restart(active.vmId); } menuOpen = false; }}
+            >
+              <ArrowClockwise size={16} />
+              <span>Restart</span>
+            </button>
+            <button
+              type="button"
+              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+              disabled={busy}
+              onclick={async () => { if (active?.vmId) await vmStore.stop(active.vmId); menuOpen = false; }}
+            >
+              <Stop size={16} />
+              <span>Stop</span>
+            </button>
+            <button
+              type="button"
+              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+              disabled={busy}
+              onclick={async () => { if (active?.vmId) await vmStore.persist(active.vmId); menuOpen = false; }}
+            >
+              <FloppyDisk size={16} />
+              <span>Save</span>
+            </button>
+            <button
+              type="button"
+              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+              disabled={busy}
+              onclick={async () => {
+                if (!active?.vmId) return;
+                const result = await vmStore.fork(active.vmId, { name: `fork-${Date.now()}` });
+                const forked = vmStore.vms.find(v => v.name === result.name);
+                if (forked) tabStore.openVM(forked.id, forked.name ?? result.name);
+                menuOpen = false;
+              }}
+            >
+              <GitFork size={16} />
+              <span>Fork</span>
+            </button>
+            <button
+              type="button"
+              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+              disabled={busy}
+              onclick={async () => { if (active?.vmId) await vmStore.delete(active.vmId); menuOpen = false; }}
+            >
+              <Trash size={16} />
+              <span>Destroy</span>
+            </button>
+            <div class="border-t border-dropdown-border my-1"></div>
           {/if}
+
+          <!-- Service section -->
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
@@ -156,7 +135,6 @@
             <HardDrives size={16} />
             <span>Service Logs</span>
           </button>
-          <div class="border-t border-dropdown-border my-1"></div>
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
@@ -192,4 +170,40 @@
       </div>
     {/if}
   </div>
+
+  <!-- Left: view switcher -->
+  {#if isVM}
+    <div class="flex items-center bg-background-1 rounded-lg p-0.5">
+      {#each vmViewButtons as btn}
+        <button
+          type="button"
+          class="inline-flex items-center gap-x-1 px-2 py-1 text-xs rounded-md transition-colors
+            {active?.view === btn.view
+              ? 'bg-layer text-foreground shadow-sm'
+              : 'text-muted-foreground-1 hover:text-foreground'}"
+          onclick={() => switchView(btn.view)}
+          title={btn.label}
+        >
+          <btn.icon size={14} />
+          <span class="hidden sm:inline">{btn.label}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  <!-- Center: window name / shell title -->
+  <div class="flex-1 min-w-0 text-center">
+    {#if isVM && active?.subtitle}
+      <span class="text-xs text-muted-foreground-1 truncate inline-block max-w-full">{active.subtitle}</span>
+    {/if}
+  </div>
+
+  <!-- Right: stats -->
+  {#if isVM && activeVm}
+    <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
+      <span title="Tokens">{formatTokens((activeVm.total_input_tokens ?? 0) + (activeVm.total_output_tokens ?? 0))} tok</span>
+      <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
+      <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
+    </div>
+  {/if}
 </div>

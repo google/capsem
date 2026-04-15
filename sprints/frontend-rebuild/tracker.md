@@ -46,7 +46,7 @@ Broken into 7 focused sprints. Sprints 2-4 can run in parallel after Sprint 1. S
 | [02](sprint-02/tracker.md) | Stats, Logs, Service Logs | 01 | Done |
 | [03](sprint-03/tracker.md) | Complex views: Files, Inspector | 01 | Done |
 | [04](sprint-04/tracker.md) | Settings system | 01 | Done |
-| [05](sprint-05/tracker.md) | Gateway wiring | 01-04 | Not started |
+| [05](sprint-05/tracker.md) | Gateway wiring | 01-04 | In progress |
 | [06](sprint-06/tracker.md) | Polish / shortcuts / a11y | 05 | Not started |
 | [07](sprint-07/tracker.md) | CI + ship | 06 | Not started |
 

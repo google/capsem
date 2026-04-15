@@ -32,6 +32,14 @@
     sendToIframe({ type: 'theme-change', mode, terminalTheme: termTheme, fontSize, fontFamily });
   });
 
+  // Refocus terminal when this tab becomes active again.
+  // Use requestAnimationFrame so the browser has painted the unhidden container first.
+  $effect(() => {
+    if (tabStore.activeId === tabId) {
+      requestAnimationFrame(() => sendToIframe({ type: 'focus' }));
+    }
+  });
+
   function onMessage(event: MessageEvent): void {
     // Only accept messages from our iframe
     if (event.source !== iframeRef?.contentWindow) return;
@@ -52,14 +60,13 @@
         // Send WebSocket ticket if gateway is connected
         if (gatewayStore.connected) {
           const wsUrl = api.getTerminalWsUrl(vmId);
-          // Extract just the base URL (without path and query) for the ticket
           const base = api.getBaseUrl();
           sendToIframe({ type: 'ws-ticket', ticket: wsUrl, gatewayUrl: base });
         }
         break;
 
       case 'title-update':
-        tabStore.updateTitle(tabId, msg.title);
+        tabStore.updateSubtitle(tabId, msg.title);
         break;
 
       case 'clipboard-copy':
@@ -91,7 +98,8 @@
   });
 </script>
 
-<div class="w-full h-full">
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div class="w-full h-full" role="presentation" onclick={() => sendToIframe({ type: 'focus' })}>
   <iframe
     bind:this={iframeRef}
     sandbox={sandboxAttr}

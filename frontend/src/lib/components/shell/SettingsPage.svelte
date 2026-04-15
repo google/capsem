@@ -27,7 +27,7 @@
   // Dynamic sections from settings tree (exclude 'appearance' -- handled by custom UI)
   let dynamicSections = $derived.by(() => {
     const sections = settingsStore.model?.sections ?? [];
-    return sections.filter(s => s.key !== 'appearance' && s.key !== 'app');
+    return sections.filter(s => s.key !== 'appearance' && s.key !== 'app' && s.key !== 'mcp');
   });
 
   // Active dynamic group (if sidebar selected a dynamic section)
@@ -120,6 +120,22 @@
 
   <!-- Content (one panel per section) -->
   <main class="flex-1 overflow-y-auto relative">
+    {#if settingsStore.loading && !settingsStore.model}
+      <div class="flex items-center justify-center h-full">
+        <div class="animate-spin size-6 border-2 border-primary border-t-transparent rounded-full"></div>
+      </div>
+    {:else if settingsStore.error && !settingsStore.model}
+      <div class="flex flex-col items-center justify-center h-full gap-y-4">
+        <p class="text-sm text-destructive-foreground">{settingsStore.error}</p>
+        <button
+          type="button"
+          class="py-2 px-4 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors"
+          onclick={() => settingsStore.load()}
+        >
+          Retry
+        </button>
+      </div>
+    {:else}
     <div class="py-6 px-8">
 
       {#if activeSection === 'appearance'}
@@ -406,6 +422,7 @@
           Save
         </button>
       </div>
+    {/if}
     {/if}
   </main>
 </div>

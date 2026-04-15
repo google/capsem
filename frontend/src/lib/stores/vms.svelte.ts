@@ -55,6 +55,19 @@ class VmStore {
     }
   }
 
+  async restart(id: string): Promise<void> {
+    this.loading = true;
+    try {
+      const vm = this.vms.find(v => v.id === id);
+      const name = vm?.name;
+      await api.stopVm(id);
+      if (name) await api.resumeVm(name);
+      await this.refresh();
+    } finally {
+      this.loading = false;
+    }
+  }
+
   async suspend(id: string): Promise<void> {
     this.loading = true;
     try {
