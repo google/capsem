@@ -446,7 +446,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(10));
-            if ctrl_ping_tx.send(HostToGuest::Ping).is_err() {
+            let epoch_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if ctrl_ping_tx.send(HostToGuest::Ping { epoch_secs }).is_err() {
                 break;
             }
         }
@@ -494,7 +498,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         std::process::exit(0);
                     });
                 }
-                ServiceToProcess::Ping => { let _ = ctrl_cmd_tx.send(HostToGuest::Ping); }
+                ServiceToProcess::Ping => {
+                    let epoch_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let _ = ctrl_cmd_tx.send(HostToGuest::Ping { epoch_secs });
+                }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     info!("Suspend requested, pausing VM...");
                     let vm_clone = Arc::clone(&vm_for_cmd);

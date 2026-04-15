@@ -107,8 +107,8 @@ pub enum HostToGuest {
     /// Execute command in guest PTY.
     Exec { id: u64, command: String },
     // -- Heartbeat --
-    /// Liveness check.
-    Ping,
+    /// Liveness check + clock resync (handles Mac sleep drift).
+    Ping { epoch_secs: u64 },
     // -- File operations (reserved) --
     /// Inject file into guest workspace.
     FileWrite {
@@ -450,10 +450,10 @@ mod tests {
 
     #[test]
     fn roundtrip_ping() {
-        let msg = HostToGuest::Ping;
+        let msg = HostToGuest::Ping { epoch_secs: 0 };
         let frame = encode_host_msg(&msg).unwrap();
         let decoded = decode_host_msg(&frame[4..]).unwrap();
-        assert!(matches!(decoded, HostToGuest::Ping));
+        assert!(matches!(decoded, HostToGuest::Ping { epoch_secs: 0 }));
     }
 
     #[test]
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn frame_length_prefix_is_correct() {
-        let msg = HostToGuest::Ping;
+        let msg = HostToGuest::Ping { epoch_secs: 0 };
         let frame = encode_host_msg(&msg).unwrap();
         let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
         assert_eq!(len, frame.len() - 4);
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn frame_length_prefix_is_big_endian() {
-        let msg = HostToGuest::Ping;
+        let msg = HostToGuest::Ping { epoch_secs: 0 };
         let frame = encode_host_msg(&msg).unwrap();
         let payload_len = frame.len() - 4;
         let expected = (payload_len as u32).to_be_bytes();
@@ -760,14 +760,14 @@ mod tests {
 
     #[test]
     fn different_messages_produce_different_bytes() {
-        let ping = encode_host_msg(&HostToGuest::Ping).unwrap();
+        let ping = encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
         let pong = encode_guest_msg(&GuestToHost::Pong).unwrap();
         assert_ne!(ping, pong);
     }
 
     #[test]
     fn rmp_payload_is_compact() {
-        let frame = encode_host_msg(&HostToGuest::Ping).unwrap();
+        let frame = encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
         let payload_len = frame.len() - 4;
         assert!(
             payload_len < 50,
@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn host_msg_fails_to_decode_as_guest() {
-        let msg = HostToGuest::Ping;
+        let msg = HostToGuest::Ping { epoch_secs: 0 };
         let frame = encode_host_msg(&msg).unwrap();
         let result = decode_guest_msg(&frame[4..]);
         // Ping only exists in HostToGuest, not GuestToHost, so this must fail.
@@ -881,7 +881,7 @@ mod tests {
                 id: u64::MAX,
                 command: "echo hello".into(),
             },
-            HostToGuest::Ping,
+            HostToGuest::Ping { epoch_secs: 0 },
             HostToGuest::FileWrite {
                 id: u64::MAX,
                 path: "/test".into(),
@@ -1405,7 +1405,7 @@ mod tests {
     #[test]
     fn decode_host_msg_truncated_msgpack() {
         // Encode a valid message, then truncate
-        let msg = HostToGuest::Ping;
+        let msg = HostToGuest::Ping { epoch_secs: 0 };
         let frame = encode_host_msg(&msg).unwrap();
         let payload = &frame[4..]; // skip length prefix
         if payload.len() > 2 {

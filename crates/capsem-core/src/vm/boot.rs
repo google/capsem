@@ -403,10 +403,10 @@ mod tests {
     #[test]
     fn write_read_control_msg_ping() {
         let (mut reader, mut writer) = pipe_files();
-        write_control_msg(&mut writer, &HostToGuest::Ping).unwrap();
+        write_control_msg(&mut writer, &HostToGuest::Ping { epoch_secs: 0 }).unwrap();
         // read_control_msg reads GuestToHost, not HostToGuest, so we test
         // the raw frame encode/decode instead
-        let frame = encode_host_msg(&HostToGuest::Ping).unwrap();
+        let frame = encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
         writer.write_all(&frame).unwrap();
         drop(writer);
 

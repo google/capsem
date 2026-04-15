@@ -795,7 +795,10 @@ fn control_loop(
                     }
                 }
             }
-            Ok(HostToGuest::Ping) => {
+            Ok(HostToGuest::Ping { epoch_secs }) => {
+                if epoch_secs > 0 {
+                    set_system_clock(epoch_secs);
+                }
                 if ctrl_tx.send(GuestToHost::Pong).is_err() {
                     eprintln!("[capsem-agent] control write channel closed");
                     break;
@@ -1126,12 +1129,12 @@ mod tests {
         let (read_fd, write_fd) = make_pipe();
 
         // Send host messages.
-        let ping_frame = capsem_proto::encode_host_msg(&HostToGuest::Ping).unwrap();
+        let ping_frame = capsem_proto::encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
         write_all_fd(write_fd, &ping_frame).unwrap();
         let resize_frame = capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 80, rows: 24 }).unwrap();
         write_all_fd(write_fd, &resize_frame).unwrap();
 
-        assert!(matches!(recv_host_msg(read_fd).unwrap(), HostToGuest::Ping));
+        assert!(matches!(recv_host_msg(read_fd).unwrap(), HostToGuest::Ping { .. }));
         match recv_host_msg(read_fd).unwrap() {
             HostToGuest::Resize { cols, rows } => {
                 assert_eq!(cols, 80);
@@ -2051,7 +2054,7 @@ mod tests {
 
     #[test]
     fn control_loop_ping_responds_with_pong() {
-        let responses = run_control_loop_with_messages(vec![HostToGuest::Ping]);
+        let responses = run_control_loop_with_messages(vec![HostToGuest::Ping { epoch_secs: 0 }]);
         assert_eq!(responses.len(), 1);
         assert!(matches!(responses[0], GuestToHost::Pong));
     }
@@ -2059,9 +2062,9 @@ mod tests {
     #[test]
     fn control_loop_multiple_pings() {
         let responses = run_control_loop_with_messages(vec![
-            HostToGuest::Ping,
-            HostToGuest::Ping,
-            HostToGuest::Ping,
+            HostToGuest::Ping { epoch_secs: 0 },
+            HostToGuest::Ping { epoch_secs: 0 },
+            HostToGuest::Ping { epoch_secs: 0 },
         ]);
         assert_eq!(responses.len(), 3);
         for r in &responses {
@@ -2167,7 +2170,7 @@ mod tests {
         // control_loop should log it and continue.
         let responses = run_control_loop_with_messages(vec![
             HostToGuest::BootConfig { epoch_secs: 12345 },
-            HostToGuest::Ping,
+            HostToGuest::Ping { epoch_secs: 0 },
         ]);
         // The BootConfig is just logged, only the Ping produces a response.
         assert_eq!(responses.len(), 1);

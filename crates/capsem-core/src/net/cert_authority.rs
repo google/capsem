@@ -40,7 +40,7 @@ impl CertAuthority {
     /// Get or mint a `CertifiedKey` for the given domain.
     ///
     /// Uses a `RwLock` cache: read-lock for cache hits, write-lock only on miss.
-    /// Leaf certs are ECDSA P-256, valid 24 hours, with SAN=domain.
+    /// Leaf certs are ECDSA P-256, valid from 2026-01-01 to now+1y, with SAN=domain.
     pub fn certified_key_for_domain(&self, domain: &str) -> anyhow::Result<Arc<CertifiedKey>> {
         // Fast path: cache hit under read lock.
         {
@@ -76,8 +76,11 @@ impl CertAuthority {
         params.distinguished_name
             .push(rcgen::DnType::CommonName, domain);
         params.subject_alt_names = vec![SanType::DnsName(domain.try_into()?)];
-        params.not_before = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
-        params.not_after = time::OffsetDateTime::now_utc() + time::Duration::hours(24);
+        params.not_before = time::Date::from_calendar_date(2026, time::Month::January, 1)
+            .unwrap()
+            .midnight()
+            .assume_utc();
+        params.not_after = time::OffsetDateTime::now_utc() + time::Duration::days(365);
         params.is_ca = IsCa::NoCa;
         params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
 

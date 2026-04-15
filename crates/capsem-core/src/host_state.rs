@@ -448,8 +448,8 @@ mod tests {
 
     #[test]
     fn ping_only_in_running() {
-        assert!(validate_host_msg(&HostToGuest::Ping, HostState::Running).is_ok());
-        assert!(validate_host_msg(&HostToGuest::Ping, HostState::Created).is_err());
+        assert!(validate_host_msg(&HostToGuest::Ping { epoch_secs: 0 }, HostState::Running).is_ok());
+        assert!(validate_host_msg(&HostToGuest::Ping { epoch_secs: 0 }, HostState::Created).is_err());
     }
 
     #[test]
