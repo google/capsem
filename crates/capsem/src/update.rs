@@ -50,11 +50,15 @@ pub fn read_cached_update_notice() -> Option<String> {
     }
 
     let current = env!("CARGO_PKG_VERSION");
-    check.latest_version.map(|latest| {
-        format!(
-            "Update available: {} -> {}. Run `capsem update` to upgrade.",
-            current, latest
-        )
+    check.latest_version.and_then(|latest| {
+        if is_newer(&latest, current) {
+            Some(format!(
+                "Update available: {} -> {}. Run `capsem update` to upgrade.",
+                current, latest
+            ))
+        } else {
+            None
+        }
     })
 }
 

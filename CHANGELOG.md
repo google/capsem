@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **frontend: fork auto-opens tab** -- forking a VM automatically opens it in a new tab.
 
 ### Added
+- **Host-side command recording (3 layers)** -- records all shell commands from the host for tamper-proof auditing:
+  - Layer 1 (exec_events): structured API-path commands logged to session.db at dispatch time
+  - Layer 2 (pty.log): raw PTY transcript with timestamps and direction tags, 20MB rotation
+  - Layer 3 (audit_events): kernel execve syscalls via auditd, streamed over vsock:5006 to session.db
+- **`capsem history` CLI** -- `capsem history <session>` with `--layer`, `--search`, `--tail`, `--json` flags
+- **History API endpoints** -- `GET /history/{id}`, `/history/{id}/processes`, `/history/{id}/counts`, `/history/{id}/transcript`
+- **Cross-session history index** -- `exec_count` and `audit_event_count` columns in main.db sessions table
+- **Kernel audit support** -- CONFIG_AUDIT + CONFIG_AUDITSYSCALL in guest kernel, auditd started in capsem-init with immutable rules
 - **MCP aggregator subprocess** -- external MCP server connections now run in an isolated `capsem-mcp-aggregator` subprocess with only network access, no VM/DB/filesystem privileges. Spawned by capsem-process at boot.
 - **service MCP API endpoints** -- `GET /mcp/servers`, `GET /mcp/tools`, `GET /mcp/policy`, `POST /mcp/tools/refresh`, `POST /mcp/tools/{name}/approve`, `POST /mcp/tools/{name}/call` unblock the frontend and CLI.
 - **CLI `capsem mcp` subcommands** -- `capsem mcp servers`, `capsem mcp tools`, `capsem mcp policy`, `capsem mcp refresh`, `capsem mcp call`.
@@ -28,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **frontend: settings loading/error states** -- settings page shows a spinner while loading and an error banner with retry on failure.
 
 ### Fixed
+- **Stale update cache suggests downgrade** -- `read_cached_update_notice` now re-validates with `is_newer` before displaying, preventing bogus "Update available: 1.0.x -> 0.16.x" notices after a version scheme change.
 - **MITM cert "not yet valid" after Mac sleep** -- leaf certificates now use a fixed `notBefore` of 2026-01-01 instead of `now - 1h`, preventing cert validation failures when the guest clock drifts. Ping messages now carry `epoch_secs` so the guest clock resyncs every 10s heartbeat, covering Mac sleep/wake and long-running VMs.
 - **frontend: tab names use VM name** -- provisioning and deep-link flows now show the VM's fun name (e.g. "tmp-agile-blaze") instead of the raw ID.
 - **frontend: snapshot stats query real VM** -- Snapshots tab in Stats view now queries the VM's session.db via `/inspect` instead of the local mock database.
