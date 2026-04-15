@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Version in help and status** -- `capsem --help` and `capsem status` now show the current version.
+
 ### Changed
+- **MCP builtin tools refactored to standalone server** -- HTTP tools (fetch_http, grep_http, http_headers) and snapshot tools (snapshots_changes, snapshots_list, snapshots_revert, etc.) extracted from gateway into `capsem-mcp-builtin`, a stdio MCP server subprocess managed by the aggregator like any external server. Gateway dispatch simplified to route all tool calls uniformly through the aggregator.
+- **MCP aggregator IPC switched to MessagePack** -- NDJSON protocol replaced with length-prefixed msgpack frames for better performance and binary safety.
+- **MCP server definitions support stdio transport** -- `McpServerDef` gains `command`, `args`, `env` fields. Auto-detected stdio servers from Claude/Gemini configs are now connectable (previously display-only). `unsupported_stdio` field removed.
+- **MCP server renamed from "Capsem" to "local"** -- the builtin server is now named "local" in both the settings tree and runtime API for consistency.
+- **frontend: MCP section with collapsible server cards** -- each server card expands to show its tools with per-tool allow/ask/block permission selectors. Runtime status badges (running/stopped, tool count) from mcpStore. Refresh button in header.
 - **frontend: MCP settings wired to gateway** -- MCP server add/remove/toggle and policy now persist via the settings API. Config reload broadcasts to running VMs immediately.
 - **frontend: toolbar redesign** -- hamburger menu on left with view switcher, VM actions moved to dropdown menu, live stats (tokens, tool calls, cost) on the right. Shell OSC title shows in center.
 - **frontend: settings page loading states** -- spinner while loading, error banner with retry on failure.
@@ -23,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **History API endpoints** -- `GET /history/{id}`, `/history/{id}/processes`, `/history/{id}/counts`, `/history/{id}/transcript`
 - **Cross-session history index** -- `exec_count` and `audit_event_count` columns in main.db sessions table
 - **Kernel audit support** -- CONFIG_AUDIT + CONFIG_AUDITSYSCALL in guest kernel, auditd started in capsem-init with immutable rules
+- **`capsem-mcp-builtin` crate** -- standalone stdio MCP server binary for local tools (HTTP + snapshot). Spawned by the aggregator as "local" server, tools discovered and cached like any external server.
 - **MCP aggregator subprocess** -- external MCP server connections now run in an isolated `capsem-mcp-aggregator` subprocess with only network access, no VM/DB/filesystem privileges. Spawned by capsem-process at boot.
 - **service MCP API endpoints** -- `GET /mcp/servers`, `GET /mcp/tools`, `GET /mcp/policy`, `POST /mcp/tools/refresh`, `POST /mcp/tools/{name}/approve`, `POST /mcp/tools/{name}/call` unblock the frontend and CLI.
 - **CLI `capsem mcp` subcommands** -- `capsem mcp servers`, `capsem mcp tools`, `capsem mcp policy`, `capsem mcp refresh`, `capsem mcp call`.

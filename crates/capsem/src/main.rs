@@ -15,7 +15,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use client::{
     ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
-    ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
+    HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
     ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
 };
 
@@ -102,7 +102,7 @@ const GROUPED_HELP: &str = "\
     about = "Sandboxes AI agents in air-gapped Linux VMs",
     long_about = None,
     styles = cli_styles(),
-    help_template = "{about-with-newline}\n{usage-heading} {usage}\n{after-help}\n\n\x1b[36;1;4mOptions:\x1b[0m\n{options}",
+    help_template = "{about-with-newline}Version: {version}\n\n{usage-heading} {usage}\n{after-help}\n\n\x1b[36;1;4mOptions:\x1b[0m\n{options}",
     disable_help_subcommand = true,
     subcommand_help_heading = None,
     after_help = GROUPED_HELP,
@@ -296,6 +296,30 @@ enum SessionCommands {
         /// Also destroy persistent sessions (requires confirmation)
         #[arg(long, default_value_t = false)]
         all: bool,
+    },
+    /// Show command history for a session
+    ///
+    /// Merges structured exec events (Layer 1) and kernel audit events (Layer 3),
+    /// sorted by timestamp. Supports filtering by layer, search text, and process.
+    History {
+        /// Name or ID of the session
+        #[arg(value_name = "SESSION")]
+        session: String,
+        /// Show only the last N commands
+        #[arg(long, default_value_t = 500)]
+        tail: usize,
+        /// Show all history (no limit)
+        #[arg(long, default_value_t = false)]
+        all: bool,
+        /// Filter by command text
+        #[arg(long)]
+        search: Option<String>,
+        /// Filter by layer: all, exec, audit
+        #[arg(long, default_value = "all")]
+        layer: String,
+        /// Output as JSON (for scripting)
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -621,6 +645,7 @@ async fn main() -> Result<()> {
         }
         Commands::Misc(MiscCommands::Status) => {
             let status = service_install::service_status().await?;
+            println!("Version:   {}", env!("CARGO_PKG_VERSION"));
             println!("Installed: {}", status.installed);
             println!("Running:   {}", status.running);
             if let Some(pid) = status.pid {
@@ -923,6 +948,55 @@ async fn main() -> Result<()> {
                     None => logs.logs,
                 };
                 println!("{}", output);
+            }
+        }
+        Commands::Session(SessionCommands::History { session, tail, all, search, layer, json }) => {
+            client::validate_id(session)?;
+            let limit = if *all { 100_000 } else { *tail };
+            let mut url = format!("/history/{}?limit={}&layer={}", session, limit, layer);
+            if let Some(q) = search {
+                url.push_str(&format!("&search={}", q.replace(' ', "%20").replace('&', "%26")));
+            }
+            let resp: ApiResponse<HistoryResponse> = client.get(&url).await?;
+            let history = resp.into_result()?;
+
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&history)?);
+            } else {
+                println!(" {:<22} {:<7} {:<5} {:<10} {}", "TIMESTAMP", "LAYER", "EXIT", "PROCESS", "COMMAND");
+                for entry in &history.commands {
+                    let exit = entry.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
+                    let process = match entry.layer.as_str() {
+                        "exec" => entry.details.get("process_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("api")
+                            .to_string(),
+                        "audit" => {
+                            let parent = entry.details.get("parent_exe")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let exe = entry.details.get("exe")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if parent.is_empty() {
+                                exe.rsplit('/').next().unwrap_or(exe).to_string()
+                            } else {
+                                format!("{}>{}", parent.rsplit('/').next().unwrap_or(parent), exe.rsplit('/').next().unwrap_or(exe))
+                            }
+                        }
+                        _ => "-".to_string(),
+                    };
+                    // Truncate command to terminal width
+                    let cmd = if entry.command.len() > 80 {
+                        format!("{}...", &entry.command[..77])
+                    } else {
+                        entry.command.clone()
+                    };
+                    println!(" {:<22} {:<7} {:<5} {:<10} {}", entry.timestamp, entry.layer, exit, process, cmd);
+                }
+                if history.has_more {
+                    println!(" Showing {} of {} commands. Use --all for full history.", history.commands.len(), history.total);
+                }
             }
         }
         Commands::Session(SessionCommands::Restart { name }) => {
