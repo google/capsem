@@ -88,7 +88,12 @@
               type="button"
               class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
               disabled={busy}
-              onclick={async () => { if (active?.vmId) await vmStore.stop(active.vmId); menuOpen = false; }}
+              onclick={async () => {
+                if (!active?.vmId) return;
+                if (!confirm(`Stop session "${active.title}"?`)) return;
+                await vmStore.stop(active.vmId);
+                menuOpen = false;
+              }}
             >
               <Stop size={16} />
               <span>Stop</span>
@@ -97,7 +102,13 @@
               type="button"
               class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
               disabled={busy}
-              onclick={async () => { if (active?.vmId) await vmStore.persist(active.vmId); menuOpen = false; }}
+              onclick={async () => {
+                if (!active?.vmId) return;
+                const name = prompt('Save session as:', active.title ?? '');
+                if (!name) return;
+                await vmStore.persist(active.vmId, name);
+                menuOpen = false;
+              }}
             >
               <FloppyDisk size={16} />
               <span>Save</span>
@@ -108,7 +119,9 @@
               disabled={busy}
               onclick={async () => {
                 if (!active?.vmId) return;
-                const result = await vmStore.fork(active.vmId, { name: `fork-${Date.now()}` });
+                const name = prompt('Fork name:', `${active.title}-fork`);
+                if (!name) return;
+                const result = await vmStore.fork(active.vmId, { name });
                 const forked = vmStore.vms.find(v => v.name === result.name);
                 if (forked) tabStore.openVM(forked.id, forked.name ?? result.name);
                 menuOpen = false;
@@ -121,7 +134,12 @@
               type="button"
               class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
               disabled={busy}
-              onclick={async () => { if (active?.vmId) await vmStore.delete(active.vmId); menuOpen = false; }}
+              onclick={async () => {
+                if (!active?.vmId) return;
+                if (!confirm(`Destroy session "${active.title}"? This cannot be undone.`)) return;
+                await vmStore.delete(active.vmId);
+                menuOpen = false;
+              }}
             >
               <Trash size={16} />
               <span>Destroy</span>

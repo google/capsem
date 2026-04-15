@@ -211,8 +211,8 @@ export async function resumeVm(name: string): Promise<void> {
   await _post(`/resume/${encodeURIComponent(name)}`);
 }
 
-export async function persistVm(id: string): Promise<void> {
-  await _post(`/persist/${encodeURIComponent(id)}`);
+export async function persistVm(id: string, name: string): Promise<void> {
+  await _post(`/persist/${encodeURIComponent(id)}`, { name });
 }
 
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {

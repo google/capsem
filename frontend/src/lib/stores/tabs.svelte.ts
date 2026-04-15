@@ -16,7 +16,7 @@ function genId(): string {
 function createTab(view: TabView = 'new-tab', title?: string, vmId?: string): Tab {
   return {
     id: genId(),
-    title: title ?? 'New Tab',
+    title: title ?? 'Dashboard',
     view,
     vmId,
   };

@@ -110,10 +110,10 @@ class VmStore {
     }
   }
 
-  async persist(id: string): Promise<void> {
+  async persist(id: string, name: string): Promise<void> {
     this.loading = true;
     try {
-      await api.persistVm(id);
+      await api.persistVm(id, name);
       await this.refresh();
     } finally {
       this.loading = false;

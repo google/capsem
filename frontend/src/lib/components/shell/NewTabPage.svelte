@@ -73,11 +73,13 @@
 
   async function handleStop(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
+    if (!confirm(`Stop session "${vm.name ?? vm.id}"?`)) return;
     await vmStore.stop(vm.id);
   }
 
   async function handleDelete(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
+    if (!confirm(`Destroy session "${vm.name ?? vm.id}"? This cannot be undone.`)) return;
     await vmStore.delete(vm.id);
   }
 
@@ -163,7 +165,7 @@
                 <td class="p-3 whitespace-nowrap">
                   <div class="flex items-center gap-x-1">
                     {#if vm.status === 'Running'}
-                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handleStop(e, vm)} aria-label="Restart" title="Restart">
+                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={async (e: MouseEvent) => { e.stopPropagation(); await vmStore.restart(vm.id); }} aria-label="Restart" title="Restart">
                         <ArrowClockwise size={16} />
                       </button>
                       <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handleStop(e, vm)} aria-label="Stop" title="Stop">
