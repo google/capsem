@@ -83,6 +83,8 @@ pub enum HostToGuest {
     // -- Heartbeat --
     /// Liveness check.
     Ping,
+    /// Heartbeat with clock sync.
+    Heartbeat { epoch_secs: u64 },
     // -- File operations (reserved) --
     /// Inject file into guest workspace.
     FileWrite {
@@ -361,6 +363,17 @@ mod tests {
         let frame = encode_host_msg(&msg).unwrap();
         let decoded = decode_host_msg(&frame[4..]).unwrap();
         assert!(matches!(decoded, HostToGuest::Ping));
+    }
+
+    #[test]
+    fn roundtrip_heartbeat() {
+        let msg = HostToGuest::Heartbeat { epoch_secs: 123456789 };
+        let frame = encode_host_msg(&msg).unwrap();
+        let decoded = decode_host_msg(&frame[4..]).unwrap();
+        match decoded {
+            HostToGuest::Heartbeat { epoch_secs } => assert_eq!(epoch_secs, 123456789),
+            other => panic!("expected Heartbeat, got {other:?}"),
+        }
     }
 
     #[test]
@@ -732,6 +745,7 @@ mod tests {
                 command: "echo hello".into(),
             },
             HostToGuest::Ping,
+            HostToGuest::Heartbeat { epoch_secs: u64::MAX },
             HostToGuest::FileWrite {
                 path: "/test".into(),
                 data: vec![0; 10],

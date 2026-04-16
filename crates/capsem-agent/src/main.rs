@@ -624,8 +624,10 @@ fn control_loop(
             Ok(HostToGuest::Ping) => {
                 if let Err(e) = send_guest_msg(control_fd, &GuestToHost::Pong) {
                     eprintln!("[capsem-agent] failed to send Pong: {e}");
-                    break;
                 }
+            }
+            Ok(HostToGuest::Heartbeat { epoch_secs }) => {
+                set_system_clock(epoch_secs);
             }
             Ok(HostToGuest::Exec { id, command }) => {
                 eprintln!("[capsem-agent] exec[{id}]: {command}");

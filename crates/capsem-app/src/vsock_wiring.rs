@@ -94,13 +94,17 @@ pub(crate) async fn vsock_terminal_to_events(
 
 /// Handle vsock control channel: read incoming messages, handle heartbeat.
 pub(crate) async fn vsock_control_handler(app_handle: tauri::AppHandle, control_fd: RawFd) {
+    use capsem_core::{HostToGuest, encode_host_msg};
+    use std::io::Write;
+
     let (tx, mut rx) = tokio::sync::mpsc::channel::<GuestToHost>(32);
 
+    // Reader thread.
     std::thread::spawn(move || {
         let mut file = match clone_fd(control_fd) {
             Ok(f) => f,
             Err(e) => {
-                warn!("vsock control: failed to clone fd: {e}");
+                warn!("vsock control: failed to clone fd for reading: {e}");
                 return;
             }
         };
@@ -131,51 +135,88 @@ pub(crate) async fn vsock_control_handler(app_handle: tauri::AppHandle, control_
         }
     });
 
-    while let Some(msg) = rx.recv().await {
-        {
-            let state = app_handle.state::<AppState>();
-            let vm_id = state.active_session_id.lock().unwrap().clone();
-            if let Some(ref id) = vm_id {
-                let vms = state.vms.lock().unwrap();
-                if let Some(instance) = vms.get(id) {
-                    if let Err(e) = validate_guest_msg(&msg, instance.state_machine.state()) {
-                        warn!("vsock: rejected control message: {e}");
-                        continue;
+    let mut write_file = match clone_fd(control_fd) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("vsock control: failed to clone fd for writing: {e}");
+            return;
+        }
+    };
+
+    let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(30));
+    // Skip the immediate tick.
+    heartbeat_interval.tick().await;
+
+    loop {
+        tokio::select! {
+            msg_opt = rx.recv() => {
+                let msg = match msg_opt {
+                    Some(m) => m,
+                    None => break,
+                };
+
+                {
+                    let state = app_handle.state::<AppState>();
+                    let vm_id = state.active_session_id.lock().unwrap().clone();
+                    if let Some(ref id) = vm_id {
+                        let vms = state.vms.lock().unwrap();
+                        if let Some(instance) = vms.get(id) {
+                            if let Err(e) = validate_guest_msg(&msg, instance.state_machine.state()) {
+                                warn!("vsock: rejected control message: {e}");
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                match msg {
+                    GuestToHost::Pong => {
+                        info!("vsock: heartbeat pong received");
+                    }
+                    GuestToHost::ExecDone { id, exit_code } => {
+                        info!("vsock: exec done (id={id}, exit_code={exit_code})");
+                    }
+                    GuestToHost::BootTiming { ref stages } => {
+                        let clean: Vec<_> = stages.iter()
+                            .filter(|s| s.name.len() <= 64
+                                && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                                && s.duration_ms <= 600_000)
+                            .take(32)
+                            .collect();
+                        if clean.len() != stages.len() {
+                            warn!("boot timing: dropped {} invalid entries", stages.len() - clean.len());
+                        }
+                        for s in &clean {
+                            info!(stage = %s.name, duration_ms = s.duration_ms, "boot timing");
+                        }
+                        let total: u64 = clean.iter().map(|s| s.duration_ms).sum();
+                        info!(total_ms = total, "boot timing total");
+                        let _ = app_handle.emit("boot-timing", serde_json::json!({
+                            "stages": clean.iter().map(|s| {
+                                serde_json::json!({"name": s.name, "duration_ms": s.duration_ms})
+                            }).collect::<Vec<_>>(),
+                            "total_ms": total,
+                        }));
+                    }
+                    other => {
+                        info!("vsock: unhandled control message: {other:?}");
                     }
                 }
             }
-        }
-        match msg {
-            GuestToHost::Pong => {
-                info!("vsock: heartbeat pong received");
-            }
-            GuestToHost::ExecDone { id, exit_code } => {
-                info!("vsock: exec done (id={id}, exit_code={exit_code})");
-            }
-            GuestToHost::BootTiming { ref stages } => {
-                let clean: Vec<_> = stages.iter()
-                    .filter(|s| s.name.len() <= 64
-                        && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                        && s.duration_ms <= 600_000)
-                    .take(32)
-                    .collect();
-                if clean.len() != stages.len() {
-                    warn!("boot timing: dropped {} invalid entries", stages.len() - clean.len());
+            _ = heartbeat_interval.tick() => {
+                let epoch_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                let ping = HostToGuest::Heartbeat { epoch_secs };
+                if let Ok(frame) = encode_host_msg(&ping) {
+                    if let Err(e) = write_file.write_all(&frame) {
+                        warn!("vsock control: failed to send heartbeat: {e}");
+                        break;
+                    }
+                    let _ = write_file.flush();
                 }
-                for s in &clean {
-                    info!(stage = %s.name, duration_ms = s.duration_ms, "boot timing");
-                }
-                let total: u64 = clean.iter().map(|s| s.duration_ms).sum();
-                info!(total_ms = total, "boot timing total");
-                let _ = app_handle.emit("boot-timing", serde_json::json!({
-                    "stages": clean.iter().map(|s| {
-                        serde_json::json!({"name": s.name, "duration_ms": s.duration_ms})
-                    }).collect::<Vec<_>>(),
-                    "total_ms": total,
-                }));
-            }
-            other => {
-                info!("vsock: unhandled control message: {other:?}");
             }
         }
     }
