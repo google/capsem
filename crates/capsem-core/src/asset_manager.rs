@@ -217,7 +217,18 @@ impl ManifestV2 {
         let resolve_one = |name: &str| -> Result<PathBuf> {
             let entry = arch_assets.get(name)
                 .with_context(|| format!("{} not found in asset release {} / {}", name, asset_version, arch))?;
-            Ok(base_dir.join(hash_filename(name, &entry.hash)))
+            let hname = hash_filename(name, &entry.hash);
+            // Check flat layout first (base_dir/{hash}), then arch subdir (base_dir/{arch}/{hash})
+            let flat = base_dir.join(&hname);
+            if flat.exists() {
+                return Ok(flat);
+            }
+            let arch_path = base_dir.join(arch).join(&hname);
+            if arch_path.exists() {
+                return Ok(arch_path);
+            }
+            // Return the flat path (caller will report the error)
+            Ok(flat)
         };
 
         Ok(ResolvedAssets {
@@ -247,14 +258,6 @@ impl ManifestV2 {
             self.binaries.current = other.binaries.current.clone();
         }
     }
-}
-
-/// Check if a JSON string is a v2 manifest (has `"format": 2`).
-pub fn is_v2_manifest(content: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(content)
-        .ok()
-        .and_then(|v| v.get("format")?.as_u64())
-        .map_or(false, |f| f == 2)
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +298,6 @@ pub fn release_url(version: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Remove hash-named asset files not referenced by any non-deprecated release.
-/// Also removes legacy `v*/` directories.
 ///
 /// Returns paths that were removed.
 pub fn cleanup_unused_assets(
@@ -325,18 +327,12 @@ pub fn cleanup_unused_assets(
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        // Skip manifest.json and hidden/temp files
-        if name_str == "manifest.json" || name_str == "pinned.json"
-            || name_str.starts_with('.') || name_str.ends_with(".tmp")
-        {
+        if name_str == "manifest.json" || name_str.starts_with('.') || name_str.ends_with(".tmp") {
             continue;
         }
 
-        // Remove legacy v* directories
-        if entry.file_type()?.is_dir() && name_str.starts_with('v') {
-            info!(path = %entry.path().display(), "removing legacy versioned asset dir");
-            std::fs::remove_dir_all(entry.path())?;
-            removed.push(entry.path());
+        // Skip directories (arch subdirs like arm64/, x86_64/)
+        if entry.file_type()?.is_dir() {
             continue;
         }
 
@@ -442,13 +438,6 @@ mod tests {
     }
 
     #[test]
-    fn is_v2_manifest_detection() {
-        assert!(is_v2_manifest(SAMPLE_V2_MANIFEST));
-        assert!(!is_v2_manifest(r#"{"latest":"0.9.0","releases":{}}"#));
-        assert!(!is_v2_manifest("not json"));
-    }
-
-    #[test]
     fn manifest_rejects_wrong_format() {
         let json = SAMPLE_V2_MANIFEST.replace("\"format\": 2", "\"format\": 99");
         assert!(ManifestV2::from_json(&json).is_err());
@@ -466,6 +455,40 @@ mod tests {
         assert_eq!(m1.binaries.releases.len(), 2);
         assert_eq!(m1.assets.current, "2026.0416.1");
         assert_eq!(m1.binaries.current, "1.0.1776300000");
+    }
+
+    #[test]
+    fn manifest_resolve_finds_files_in_arch_subdir() {
+        // Simulates installed/dev layout: base_dir/arm64/vmlinuz-{hash}
+        let dir = tempfile::tempdir().unwrap();
+        let arm64 = dir.path().join("arm64");
+        std::fs::create_dir(&arm64).unwrap();
+        std::fs::write(arm64.join("vmlinuz-a65f925ebe0b0cc7"), b"k").unwrap();
+        std::fs::write(arm64.join("initrd-cba052ee1e3fc7de.img"), b"i").unwrap();
+        std::fs::write(arm64.join("rootfs-b8199dc4a83069b9.squashfs"), b"r").unwrap();
+
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
+        assert!(resolved.kernel.exists(), "kernel not found: {:?}", resolved.kernel);
+        assert!(resolved.initrd.exists(), "initrd not found: {:?}", resolved.initrd);
+        assert!(resolved.rootfs.exists(), "rootfs not found: {:?}", resolved.rootfs);
+        // Must resolve to the arch subdir, not the flat path
+        assert!(resolved.kernel.to_str().unwrap().contains("arm64/"));
+    }
+
+    #[test]
+    fn manifest_resolve_finds_files_flat() {
+        // Simulates flat layout: base_dir/vmlinuz-{hash}
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("vmlinuz-a65f925ebe0b0cc7"), b"k").unwrap();
+        std::fs::write(dir.path().join("initrd-cba052ee1e3fc7de.img"), b"i").unwrap();
+        std::fs::write(dir.path().join("rootfs-b8199dc4a83069b9.squashfs"), b"r").unwrap();
+
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
+        assert!(resolved.kernel.exists());
+        assert!(resolved.initrd.exists());
+        assert!(resolved.rootfs.exists());
     }
 
     #[test]
@@ -524,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_removes_unreferenced_and_legacy_dirs() {
+    fn cleanup_removes_unreferenced_files() {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path();
 
@@ -532,18 +555,15 @@ mod tests {
         std::fs::write(base.join("vmlinuz-a65f925ebe0b0cc7"), b"kernel").unwrap();
         // Create an unreferenced hash-named file
         std::fs::write(base.join("vmlinuz-deadbeef12345678"), b"old").unwrap();
-        // Create a legacy v* directory
-        std::fs::create_dir(base.join("v0.16.1")).unwrap();
         // Create manifest.json (should be preserved)
         std::fs::write(base.join("manifest.json"), b"{}").unwrap();
 
         let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
         let removed = cleanup_unused_assets(base, &m).unwrap();
 
-        assert_eq!(removed.len(), 2);
+        assert_eq!(removed.len(), 1);
         assert!(base.join("vmlinuz-a65f925ebe0b0cc7").exists());
         assert!(!base.join("vmlinuz-deadbeef12345678").exists());
-        assert!(!base.join("v0.16.1").exists());
         assert!(base.join("manifest.json").exists());
     }
 

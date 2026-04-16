@@ -654,6 +654,31 @@ async fn main() -> Result<()> {
             if let Some(path) = &status.unit_path {
                 println!("Unit:      {}", path.display());
             }
+            // Show asset info from manifest
+            if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
+                let manifest_path = assets_dir.join("manifest.json");
+                match std::fs::read_to_string(&manifest_path)
+                    .ok()
+                    .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
+                {
+                    Some(m) => {
+                        let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+                        println!("Assets:    {} ({})", m.assets.current, arch);
+                        match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
+                            Ok(resolved) => {
+                                let k = if resolved.kernel.exists() { "ok" } else { "MISSING" };
+                                let i = if resolved.initrd.exists() { "ok" } else { "MISSING" };
+                                let r = if resolved.rootfs.exists() { "ok" } else { "MISSING" };
+                                println!("  kernel:  {} ({})", resolved.kernel.display(), k);
+                                println!("  initrd:  {} ({})", resolved.initrd.display(), i);
+                                println!("  rootfs:  {} ({})", resolved.rootfs.display(), r);
+                            }
+                            Err(e) => println!("  resolve: {}", e),
+                        }
+                    }
+                    None => println!("Assets:    no manifest found"),
+                }
+            }
             return Ok(());
         }
         Commands::Misc(MiscCommands::Start) => {

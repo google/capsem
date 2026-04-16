@@ -101,6 +101,7 @@ _ensure-service: _sign
         fi
     elif [ -d ~/.capsem/assets ]; then
         # Real directory from install -- replace with symlink for dev
+        rm -rf ~/.capsem/assets.installed
         mv ~/.capsem/assets ~/.capsem/assets.installed
         ln -sfn "$DEV_ASSETS" ~/.capsem/assets
         echo "Saved ~/.capsem/assets.installed, symlinked ~/.capsem/assets -> $DEV_ASSETS"
@@ -465,7 +466,7 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 # Build the platform package (.pkg on macOS, .deb on Linux) and install it.
 # Builds release binaries, frontend, and Tauri app. Asks for sudo to install.
 # The postinstall script handles codesign, PATH, service registration, and setup.
-install: _pnpm-install _stamp-version
+install: _pnpm-install _stamp-version _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
@@ -1024,6 +1025,8 @@ _pack-initrd:
     fi
     # Generate manifest.json from B3SUMS + file sizes
     python3 "$ROOT/scripts/gen_manifest.py" "$ASSETS" "$ROOT/Cargo.toml"
+    # Create hash-named copies so dev layout matches installed layout.
+    python3 "$ROOT/scripts/create_hash_assets.py" "$ASSETS"
     # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
     echo "initrd repacked (with agent + net-proxy + mcp-server + sysutil + doctor)"

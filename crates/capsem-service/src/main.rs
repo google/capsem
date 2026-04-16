@@ -629,11 +629,13 @@ impl ServiceState {
     fn resolve_asset_paths(&self) -> Result<capsem_core::asset_manager::ResolvedAssets> {
         let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
 
+        // Resolve from v2 manifest (works for both dev and installed --
+        // dev creates hash-named symlinks, installed has hash-named files)
         if let Some(ref manifest) = self.manifest {
             return manifest.resolve(&self.current_version, arch, &self.assets_dir);
         }
 
-        // Dev mode: logical names in arch subdir or flat
+        // No manifest: use logical names as fallback
         let base = if self.assets_dir.join(arch).join("rootfs.squashfs").exists() {
             self.assets_dir.join(arch)
         } else {
@@ -741,6 +743,70 @@ async fn handle_fork(
         name: name.clone(),
         size_bytes,
     }))
+}
+
+async fn handle_list_images(
+    State(state): State<Arc<ServiceState>>,
+) -> Json<serde_json::Value> {
+    let registry = state.persistent_registry.lock().unwrap();
+    let mut images = Vec::new();
+    for entry in registry.data.vms.values() {
+        images.push(serde_json::json!({
+            "name": entry.name,
+            "description": entry.description,
+            "created_at": entry.created_at,
+            "base_version": entry.base_version,
+            "forked_from": entry.forked_from,
+        }));
+    }
+    Json(serde_json::json!({ "images": images }))
+}
+
+async fn handle_inspect_image(
+    State(state): State<Arc<ServiceState>>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let registry = state.persistent_registry.lock().unwrap();
+    if let Some(entry) = registry.get(&name) {
+        let size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir)
+            .unwrap_or(0);
+            
+        Ok(Json(serde_json::json!({
+            "name": entry.name,
+            "description": entry.description,
+            "created_at": entry.created_at,
+            "base_version": entry.base_version,
+            "forked_from": entry.forked_from,
+            "source_vm": entry.forked_from, // compat for MCP tests
+            "session_dir": entry.session_dir,
+            "ram_mb": entry.ram_mb,
+            "cpus": entry.cpus,
+            "size_bytes": size_bytes,
+        })))
+    } else {
+        Err(AppError(StatusCode::NOT_FOUND, format!("image '{}' not found", name)))
+    }
+}
+
+async fn handle_delete_image(
+    State(state): State<Arc<ServiceState>>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut registry = state.persistent_registry.lock().unwrap();
+    if registry.get(&name).is_some() {
+        let entry = registry.data.vms.remove(&name).unwrap();
+        let _ = registry.save();
+        
+        // Asynchronously delete the session directory
+        let dir = entry.session_dir;
+        tokio::task::spawn_blocking(move || {
+            let _ = std::fs::remove_dir_all(dir);
+        });
+        
+        Ok(Json(serde_json::json!({ "ok": true })))
+    } else {
+        Err(AppError(StatusCode::NOT_FOUND, format!("image '{}' not found", name)))
+    }
 }
 
 async fn handle_provision(
@@ -1213,6 +1279,133 @@ async fn handle_apply_preset(
 async fn handle_lint_config() -> Json<serde_json::Value> {
     let issues = capsem_core::net::policy_config::load_merged_lint();
     Json(serde_json::to_value(issues).unwrap_or_default())
+}
+
+/// POST /settings/validate-key -- validate an API key against a provider endpoint.
+async fn handle_validate_key(
+    Json(payload): Json<ValidateKeyRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = capsem_core::host_config::validate_api_key(&payload.provider, &payload.key)
+        .await
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(serde_json::to_value(result).unwrap_or_default()))
+}
+
+// ---------------------------------------------------------------------------
+// Setup / Onboarding API Handlers
+// ---------------------------------------------------------------------------
+
+/// GET /setup/state -- return onboarding state from setup-state.json.
+async fn handle_get_setup_state() -> Json<serde_json::Value> {
+    let state = match capsem_core::setup_state::default_state_path() {
+        Some(path) => capsem_core::setup_state::load_state(&path),
+        None => capsem_core::setup_state::SetupState::default(),
+    };
+    // Include asset readiness in the response
+    Json(json!({
+        "schema_version": state.schema_version,
+        "completed_steps": state.completed_steps,
+        "security_preset": state.security_preset,
+        "providers_done": state.providers_done,
+        "repositories_done": state.repositories_done,
+        "service_installed": state.service_installed,
+        "onboarding_completed": state.onboarding_completed,
+        "corp_config_source": state.corp_config_source,
+    }))
+}
+
+/// GET /setup/detect -- detect host config, write to settings, return summary.
+async fn handle_detect_host_config() -> Json<serde_json::Value> {
+    // Detection involves blocking I/O (file reads, subprocess calls for gh token).
+    let summary = tokio::task::spawn_blocking(|| {
+        capsem_core::host_config::detect_and_write_to_settings()
+    })
+    .await
+    .unwrap_or_else(|_| capsem_core::host_config::DetectedConfigSummary::from(
+        &capsem_core::host_config::HostConfig::default()
+    ));
+    Json(serde_json::to_value(summary).unwrap_or_default())
+}
+
+/// POST /setup/complete -- mark GUI onboarding as completed.
+async fn handle_complete_onboarding() -> Result<Json<serde_json::Value>, AppError> {
+    let path = capsem_core::setup_state::default_state_path()
+        .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+    let mut state = capsem_core::setup_state::load_state(&path);
+    state.onboarding_completed = true;
+    capsem_core::setup_state::save_state(&path, &state)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "success": true })))
+}
+
+/// GET /setup/assets -- query asset download status.
+async fn handle_asset_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Json<serde_json::Value> {
+    let assets_dir = state.assets_dir.clone();
+
+    // Check which expected assets exist on disk (blocking I/O)
+    let asset_list = tokio::task::spawn_blocking(move || -> Vec<serde_json::Value> {
+        // Expected asset files for a working install
+        let expected = ["vmlinuz", "initrd.img", "rootfs.squashfs"];
+        expected.iter().map(|name| {
+            let path = assets_dir.join(name);
+            let status = if path.exists() { "present" } else { "missing" };
+            json!({ "name": name, "status": status })
+        }).collect()
+    })
+    .await
+    .unwrap_or_default();
+
+    let all_ready = asset_list.iter().all(|a| {
+        a.get("status").and_then(|s| s.as_str()) == Some("present")
+    });
+
+    Json(json!({
+        "ready": all_ready,
+        "downloading": false,
+        "assets": asset_list,
+    }))
+}
+
+/// POST /setup/assets/download -- trigger background asset download.
+/// NOTE: Full download integration depends on the asset pipeline fix in progress.
+/// Currently returns a stub response.
+async fn handle_trigger_download(
+    State(_state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // TODO: Wire to AssetManager download once asset pipeline is fixed.
+    Ok(Json(json!({
+        "started": false,
+        "reason": "asset pipeline not yet wired -- run `capsem update` from the terminal"
+    })))
+}
+
+/// POST /setup/corp-config -- apply corporate config from URL or inline TOML.
+async fn handle_corp_config(
+    Json(payload): Json<CorpConfigRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::net::policy_config::corp_provision;
+
+    let capsem_dir = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".capsem"))
+        .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+
+    if let Some(source) = &payload.source {
+        // Use the existing provision function which handles fetch + install
+        corp_provision::provision_from_source(&capsem_dir, source)
+            .await
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    } else if let Some(toml_content) = &payload.toml {
+        corp_provision::validate_corp_toml(toml_content)
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        corp_provision::install_inline_corp_config(&capsem_dir, toml_content)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    } else {
+        return Err(AppError(StatusCode::BAD_REQUEST, "provide either 'source' (URL) or 'toml' (inline content)".into()));
+    }
+
+    Ok(Json(json!({ "success": true })))
 }
 
 // ---------------------------------------------------------------------------
@@ -2014,41 +2207,6 @@ async fn handle_run(
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 
-async fn supervise_companion(name: &str, binary: PathBuf, run_dir: PathBuf, extra_args: Vec<String>) {
-    if !binary.exists() {
-        tracing::error!(name, path = %binary.display(), "companion binary not found, skipping");
-        return;
-    }
-    tracing::info!(name, path = %binary.display(), "starting companion process");
-
-    loop {
-        let mut cmd = tokio::process::Command::new(&binary);
-        // Put the run_dir in the environment so companions know where to write their state
-        cmd.env("CAPSEM_RUN_DIR", &run_dir);
-        cmd.args(&extra_args);
-        
-        match cmd.spawn() {
-            Ok(mut child) => {
-                match child.wait().await {
-                    Ok(status) => {
-                        tracing::warn!(name, %status, "companion process exited");
-                    }
-                    Err(e) => {
-                        tracing::error!(name, error = %e, "companion process wait failed");
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!(name, error = %e, "failed to spawn companion process");
-            }
-        }
-        
-        // Wait before restarting to avoid tight loops on immediate crashes
-        tracing::info!(name, "restarting companion process in 2 seconds");
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -2106,22 +2264,28 @@ async fn main() -> Result<()> {
 
     let manifest = manifest_path.and_then(|path| {
         let content = std::fs::read_to_string(&path).ok()?;
-        if capsem_core::asset_manager::is_v2_manifest(&content) {
-            match capsem_core::asset_manager::ManifestV2::from_json(&content) {
-                Ok(m) => {
-                    info!(asset_version = %m.assets.current, "loaded v2 manifest");
-                    Some(Arc::new(m))
-                }
-                Err(e) => {
-                    warn!(error = %e, "failed to parse v2 manifest, falling back to dev mode");
-                    None
-                }
+        match capsem_core::asset_manager::ManifestV2::from_json(&content) {
+            Ok(m) => {
+                info!(asset_version = %m.assets.current, "loaded manifest");
+                Some(Arc::new(m))
             }
-        } else {
-            info!("v1 manifest detected, using dev mode asset resolution");
-            None
+            Err(e) => {
+                warn!(error = %e, "failed to parse manifest");
+                None
+            }
         }
     });
+
+    // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files)
+    if let Some(ref m) = manifest {
+        match capsem_core::asset_manager::cleanup_unused_assets(&assets_base_dir, m) {
+            Ok(removed) if !removed.is_empty() => {
+                info!(count = removed.len(), "cleaned up stale assets");
+            }
+            Err(e) => warn!(error = %e, "asset cleanup failed"),
+            _ => {}
+        }
+    }
 
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path);
@@ -2138,25 +2302,7 @@ async fn main() -> Result<()> {
         current_version,
     });
 
-    // Spawn companions (gateway + tray) and supervise them
-    if let Some(gateway_bin) = args.gateway_binary {
-        let run_dir = run_dir.clone();
-        let mut gw_args = Vec::new();
-        if let Some(port) = args.gateway_port {
-            gw_args.push("--port".to_string());
-            gw_args.push(port.to_string());
-        }
-        tokio::spawn(async move {
-            supervise_companion("capsem-gateway", gateway_bin, run_dir, gw_args).await;
-        });
-    }
-    if let Some(tray_bin) = args.tray_binary {
-        let run_dir = run_dir.clone();
-        tokio::spawn(async move {
-            supervise_companion("capsem-tray", tray_bin, run_dir, Vec::new()).await;
-        });
-    }
-
+    // Check for running instances to reattach
     info!("scanning for existing sandboxes in {}", instances_dir.display());
     if let Ok(entries) = std::fs::read_dir(&instances_dir) {
         for entry in entries.flatten() {
@@ -2202,10 +2348,19 @@ async fn main() -> Result<()> {
         .route("/service-logs", get(handle_service_logs))
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))
+        .route("/images", get(handle_list_images))
+        .route("/images/{name}", get(handle_inspect_image).delete(handle_delete_image))
         .route("/settings", get(handle_get_settings).post(handle_save_settings))
         .route("/settings/presets", get(handle_get_presets))
         .route("/settings/presets/{id}", post(handle_apply_preset))
         .route("/settings/lint", post(handle_lint_config))
+        .route("/settings/validate-key", post(handle_validate_key))
+        .route("/setup/state", get(handle_get_setup_state))
+        .route("/setup/detect", get(handle_detect_host_config))
+        .route("/setup/complete", post(handle_complete_onboarding))
+        .route("/setup/assets", get(handle_asset_status))
+        .route("/setup/assets/download", post(handle_trigger_download))
+        .route("/setup/corp-config", post(handle_corp_config))
         .route("/mcp/servers", get(handle_mcp_servers))
         .route("/mcp/tools", get(handle_mcp_tools))
         .route("/mcp/policy", get(handle_mcp_policy))
@@ -2226,7 +2381,7 @@ async fn main() -> Result<()> {
     // Spawn companion processes (gateway + tray) as children.
     // They are killed automatically when the service exits because we hold
     // the Child handles and drop them on shutdown.
-    let mut children = spawn_companions(&service_sock, &run_dir).await;
+    let mut children = spawn_companions(&service_sock, &run_dir, args.gateway_binary, args.gateway_port, args.tray_binary).await;
 
     axum::serve(uds, app)
         .with_graceful_shutdown(async {
@@ -2294,6 +2449,9 @@ fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdio, std::pro
 async fn spawn_companions(
     service_sock: &std::path::Path,
     run_dir: &std::path::Path,
+    gateway_bin: Option<PathBuf>,
+    gateway_port: Option<u16>,
+    tray_bin: Option<PathBuf>,
 ) -> Vec<tokio::process::Child> {
     let mut children = Vec::new();
 
@@ -2304,12 +2462,17 @@ async fn spawn_companions(
     let _ = std::fs::create_dir_all(&log_dir);
 
     // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
-    let gateway_bin = find_sibling_binary("capsem-gateway");
+    let gateway_bin = gateway_bin.unwrap_or_else(|| find_sibling_binary("capsem-gateway"));
     let (gw_out, gw_err) = companion_stdio(&log_dir.join("gateway.log"));
     info!(binary = %gateway_bin.display(), "spawning capsem-gateway");
-    match tokio::process::Command::new(&gateway_bin)
-        .arg("--uds-path")
-        .arg(service_sock)
+    
+    let mut gw_cmd = tokio::process::Command::new(&gateway_bin);
+    gw_cmd.arg("--uds-path").arg(service_sock);
+    if let Some(port) = gateway_port {
+        gw_cmd.arg("--port").arg(port.to_string());
+    }
+    
+    match gw_cmd
         .stdout(gw_out)
         .stderr(gw_err)
         .kill_on_drop(true)
@@ -2340,7 +2503,7 @@ async fn spawn_companions(
             // 2. Spawn capsem-tray (menu bar) -- only on macOS, only after gateway ready
             #[cfg(target_os = "macos")]
             if token_path.exists() {
-                let tray_bin = find_sibling_binary("capsem-tray");
+                let tray_bin = tray_bin.unwrap_or_else(|| find_sibling_binary("capsem-tray"));
                 let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
                 info!(binary = %tray_bin.display(), "spawning capsem-tray");
                 match tokio::process::Command::new(&tray_bin)
