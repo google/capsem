@@ -20,7 +20,6 @@ use capsem_logger::{DbWriter, McpCall, WriteOp};
 use crate::net::domain_policy::DomainPolicy;
 
 use super::aggregator::AggregatorClient;
-use super::builtin_tools;
 use super::policy::{McpPolicy, ToolDecision};
 use super::types::*;
 
@@ -29,21 +28,15 @@ const MAX_LINE_LEN: usize = 1_048_576;
 
 /// Shared configuration for the MCP gateway.
 pub struct McpGatewayConfig {
-    /// Client handle for the isolated MCP aggregator subprocess.
-    /// Routes external server tool calls, resource reads, and prompt gets.
+    /// Client handle for the MCP aggregator subprocess.
+    /// Routes all tool calls (local + external) through the aggregator.
     pub aggregator: AggregatorClient,
     pub db: Arc<DbWriter>,
     /// Double-Arc for atomic policy swap: outer RwLock protects inner Arc.
     /// New sessions clone the inner Arc for a consistent snapshot.
     pub policy: RwLock<Arc<McpPolicy>>,
-    /// Domain policy for built-in HTTP tools (hot-reloadable).
+    /// Domain policy (retained for hot-reload, passed to aggregator on refresh).
     pub domain_policy: std::sync::RwLock<Arc<DomainPolicy>>,
-    /// HTTP client for built-in tools.
-    pub http_client: reqwest::Client,
-    /// Auto-snapshot scheduler for file tools (VirtioFS mode only).
-    pub auto_snapshots: Option<Arc<tokio::sync::Mutex<crate::auto_snapshot::AutoSnapshotScheduler>>>,
-    /// Workspace directory for file tools (VirtioFS mode only).
-    pub workspace_dir: Option<std::path::PathBuf>,
 }
 
 /// Serve a single MCP session over a vsock connection.
@@ -188,16 +181,10 @@ async fn handle_json_rpc(
         "notifications/initialized" => None,
 
         "tools/list" => {
-            // Prepend built-in tools (HTTP + file) before external server tools.
-            let mut builtin = builtin_tools::builtin_tool_defs();
-            if config.workspace_dir.is_some() {
-                builtin.extend(super::file_tools::file_tool_defs());
-            }
-            // Fetch external tools from the aggregator subprocess.
-            let external = config.aggregator.list_tools().await.unwrap_or_default();
-            let tools: Vec<serde_json::Value> = builtin
+            // All tools (local + external) come from the aggregator.
+            let all_tools = config.aggregator.list_tools().await.unwrap_or_default();
+            let tools: Vec<serde_json::Value> = all_tools
                 .iter()
-                .chain(external.iter())
                 .map(|t| {
                     let mut tool = serde_json::json!({
                         "name": t.namespaced_name,
@@ -229,132 +216,7 @@ async fn handle_json_rpc(
                 .cloned()
                 .unwrap_or(serde_json::json!({}));
 
-            // Route file tools (VirtioFS mode only).
-            // File tools do blocking I/O (directory cloning, walkdir, blake3 hashing,
-            // subprocess execution) so they MUST run off the tokio worker threads.
-            if super::file_tools::is_file_tool(tool_name) {
-                if let (Some(ref sched), Some(ref ws)) = (&config.auto_snapshots, &config.workspace_dir) {
-                    let decision = policy.evaluate("builtin", Some(tool_name));
-                    match decision {
-                        ToolDecision::Block => {
-                            return Some(JsonRpcResponse::err(
-                                req.id.clone(),
-                                -32600,
-                                format!("tool blocked by policy: {tool_name}"),
-                            ));
-                        }
-                        ToolDecision::Warn => {
-                            debug!(tool = tool_name, "MCP file tool warned by policy");
-                        }
-                        ToolDecision::Allow => {}
-                    }
-                    let sched = Arc::clone(sched);
-                    let ws = ws.clone();
-                    let arguments = arguments.clone();
-                    let tool_name = tool_name.to_string();
-                    let req_id = req.id.clone();
-                    let req_id_fallback = req.id.clone();
-                    let db = Arc::clone(&config.db);
-                    let resp = tokio::task::spawn_blocking(move || {
-                        let rt = tokio::runtime::Handle::current();
-                        rt.block_on(async {
-                            let mut sched = sched.lock().await;
-                            match tool_name.as_str() {
-                                "snapshots_changes" => {
-                                    super::file_tools::handle_list_changed_files(&arguments, &sched, &ws, req_id)
-                                }
-                                "snapshots_list" => {
-                                    super::file_tools::handle_list_snapshots(&arguments, &sched, &ws, req_id)
-                                }
-                                "snapshots_revert" => {
-                                    super::file_tools::handle_revert_file(&arguments, &sched, &ws, req_id, Some(&db))
-                                }
-                                "snapshots_create" => {
-                                    let resp = super::file_tools::handle_snapshot(&arguments, &mut sched, req_id);
-                                    // Log manual snapshot to session DB for the stats UI.
-                                    if resp.error.is_none() {
-                                        if let Some(last_slot) = sched.list_snapshots().into_iter()
-                                            .filter(|s| s.origin == crate::auto_snapshot::SnapshotOrigin::Manual)
-                                            .max_by_key(|s| s.slot)
-                                        {
-                                            let stop_id = db.reader().ok()
-                                                .and_then(|r| r.query_raw("SELECT COALESCE(MAX(id),0) FROM fs_events").ok())
-                                                .and_then(|json| {
-                                                    let v: serde_json::Value = serde_json::from_str(&json).ok()?;
-                                                    v["rows"].get(0)?.get(0)?.as_i64()
-                                                })
-                                                .unwrap_or(0);
-                                            // start=0: manual snapshots span the full session so
-                                            // forked sessions inherit complete change history.
-                                            db.try_write(capsem_logger::WriteOp::SnapshotEvent(
-                                                capsem_logger::SnapshotEvent {
-                                                    timestamp: last_slot.timestamp,
-                                                    slot: last_slot.slot,
-                                                    origin: "manual".into(),
-                                                    name: last_slot.name.clone(),
-                                                    files_count: last_slot.files_count,
-                                                    start_fs_event_id: 0,
-                                                    stop_fs_event_id: stop_id,
-                                                },
-                                            ));
-                                        }
-                                    }
-                                    resp
-                                }
-                                "snapshots_delete" => {
-                                    super::file_tools::handle_delete_snapshot(&arguments, &sched, req_id)
-                                }
-                                "snapshots_history" => {
-                                    super::file_tools::handle_snapshots_history(&arguments, &sched, &ws, req_id)
-                                }
-                                "snapshots_compact" => {
-                                    super::file_tools::handle_snapshots_compact(&arguments, &mut sched, req_id)
-                                }
-                                _ => JsonRpcResponse::err(req_id, -32602, format!("unknown file tool: {tool_name}")),
-                            }
-                        })
-                    }).await.unwrap_or_else(|e| {
-                        JsonRpcResponse::err(req_id_fallback, -32603, format!("file tool task failed: {e}"))
-                    });
-                    return Some(resp);
-                } else {
-                    return Some(JsonRpcResponse::err(
-                        req.id.clone(),
-                        -32603,
-                        "file tools unavailable (not in VirtioFS mode)",
-                    ));
-                }
-            }
-
-            // Route built-in HTTP tools (no namespace prefix needed).
-            if builtin_tools::is_builtin_tool(tool_name) {
-                let decision = policy.evaluate("builtin", Some(tool_name));
-                match decision {
-                    ToolDecision::Block => {
-                        return Some(JsonRpcResponse::err(
-                            req.id.clone(),
-                            -32600,
-                            format!("tool blocked by policy: {tool_name}"),
-                        ));
-                    }
-                    ToolDecision::Warn => {
-                        debug!(tool = tool_name, "MCP tool call warned by policy");
-                    }
-                    ToolDecision::Allow => {}
-                }
-
-                let dp = config.domain_policy.read().unwrap().clone();
-                return Some(builtin_tools::call_builtin_tool(
-                    tool_name,
-                    &arguments,
-                    &config.http_client,
-                    &dp,
-                    req.id.clone(),
-                    &config.db,
-                ).await);
-            }
-
-            // External server tools: parse namespace prefix.
+            // Policy check: parse namespace to get server name.
             let (server_name, _local_name) = parse_namespaced(tool_name)
                 .unwrap_or(("", tool_name));
 
@@ -373,7 +235,7 @@ async fn handle_json_rpc(
                 ToolDecision::Allow => {}
             }
 
-            // Route to the aggregator subprocess.
+            // All tools route through the aggregator (local + external).
             match config.aggregator.call_tool(tool_name, arguments).await {
                 Ok(result) => Some(JsonRpcResponse::ok(req.id.clone(), result)),
                 Err(e) => Some(JsonRpcResponse::err(
@@ -482,7 +344,6 @@ async fn log_mcp_call(
         .and_then(|n| n.as_str());
 
     let server_name = match tool_name {
-        Some(t) if builtin_tools::is_builtin_tool(t) || super::file_tools::is_file_tool(t) => "builtin",
         Some(t) => parse_namespaced(t).map(|(s, _)| s).unwrap_or("gateway"),
         None => "gateway",
     };
@@ -611,9 +472,6 @@ mod tests {
             db,
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
-            http_client: reqwest::Client::new(),
-            auto_snapshots: None,
-            workspace_dir: None,
         }
     }
 
@@ -670,8 +528,12 @@ mod tests {
         assert!(resp.is_none(), "notifications should not produce a response");
     }
 
+    // Tests for direct builtin/file tool dispatch removed -- those tools
+    // now route through the aggregator subprocess (capsem-mcp-builtin).
+    // See crates/capsem-mcp-builtin/ for tool-level tests.
+
     #[test]
-    fn handle_tools_list_returns_builtin_tools() {
+    fn handle_tools_list_returns_empty_from_mock_aggregator() {
         let req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
             id: Some(serde_json::json!(1)),
@@ -686,14 +548,8 @@ mod tests {
         let resp = resp.unwrap();
         assert!(resp.error.is_none());
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        // 3 built-in tools, no external servers
-        assert_eq!(tools.len(), 3);
-        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert!(names.contains(&"fetch_http"));
-        assert!(names.contains(&"grep_http"));
-        assert!(names.contains(&"http_headers"));
-        // Names must NOT have the builtin__ prefix
-        assert!(!names.iter().any(|n| n.starts_with("builtin__")));
+        // Mock aggregator returns empty tool list
+        assert!(tools.is_empty());
     }
 
     #[test]
@@ -721,30 +577,6 @@ mod tests {
     }
 
     #[test]
-    fn handle_builtin_tool_call_routes_to_builtin() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "fetch_http",
-                "arguments": {"url": "https://evil-unknown-domain.xyz"}
-            })),
-        };
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let config = test_config(&rt);
-        let policy = McpPolicy::new();
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        // Should route to builtin handler (domain blocked by policy, returns isError)
-        assert!(resp.error.is_none()); // tool errors use isError in result
-        let result = resp.result.unwrap();
-        assert_eq!(result["isError"], true);
-        assert!(result["content"][0]["text"].as_str().unwrap().contains("blocked"));
-    }
-
-    #[test]
     fn max_line_len_is_1mb() {
         assert_eq!(MAX_LINE_LEN, 1_048_576);
     }
@@ -758,61 +590,6 @@ mod tests {
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         assert_eq!(name, "claude");
-    }
-
-    #[test]
-    fn handle_tools_list_includes_annotations() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/list".into(),
-            params: None,
-        };
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let config = test_config(&rt);
-        let policy = McpPolicy::new();
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        // All 3 builtins must have annotations with camelCase keys
-        for tool in &tools {
-            let ann = tool.get("annotations").unwrap_or_else(|| {
-                panic!("tool '{}' missing annotations", tool["name"]);
-            });
-            let obj = ann.as_object().unwrap();
-            assert!(obj.contains_key("readOnlyHint"), "missing readOnlyHint in {}", tool["name"]);
-            assert!(obj.contains_key("destructiveHint"), "missing destructiveHint in {}", tool["name"]);
-            assert!(obj.contains_key("idempotentHint"), "missing idempotentHint in {}", tool["name"]);
-            assert!(obj.contains_key("openWorldHint"), "missing openWorldHint in {}", tool["name"]);
-            // Must NOT have snake_case keys (wire format violation)
-            assert!(!obj.contains_key("read_only_hint"), "snake_case key in wire format: {}", tool["name"]);
-        }
-    }
-
-    #[test]
-    fn handle_tools_list_builtin_annotations_correct() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/list".into(),
-            params: None,
-        };
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let config = test_config(&rt);
-        let policy = McpPolicy::new();
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        // All 3 builtins are read-only, non-destructive, idempotent, open-world
-        for tool in &tools {
-            let ann = tool.get("annotations").unwrap();
-            assert_eq!(ann["readOnlyHint"], true, "{} should be read-only", tool["name"]);
-            assert_eq!(ann["destructiveHint"], false, "{} should not be destructive", tool["name"]);
-            assert_eq!(ann["idempotentHint"], true, "{} should be idempotent", tool["name"]);
-            assert_eq!(ann["openWorldHint"], true, "{} should be open-world", tool["name"]);
-        }
     }
 
     #[test]
@@ -953,31 +730,6 @@ mod tests {
     }
 
     #[test]
-    fn handle_builtin_tool_blocked_by_server_policy() {
-        // Blocking "builtin" server should block all built-in tools.
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "grep_http",
-                "arguments": {"url": "https://example.com", "pattern": "test"}
-            })),
-        };
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let config = test_config(&rt);
-        let policy = McpPolicy {
-            blocked_servers: vec!["builtin".to_string()],
-            ..McpPolicy::new()
-        };
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        assert!(resp.error.is_some());
-        assert!(resp.error.as_ref().unwrap().message.contains("blocked by policy"));
-    }
-
-    #[test]
     fn handle_resources_list_empty() {
         let req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -1015,132 +767,6 @@ mod tests {
     }
 
     #[test]
-    fn file_tool_returns_error_without_virtiofs() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "snapshots_create",
-                "arguments": {"name": "test"}
-            })),
-        };
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let config = test_config(&rt);
-        let policy = McpPolicy::new();
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        assert!(resp.error.is_some());
-        let err = resp.error.as_ref().unwrap();
-        assert_eq!(err.code, -32603);
-        assert!(err.message.contains("not in VirtioFS mode"));
-    }
-
-    #[test]
-    fn tools_list_excludes_file_tools_without_virtiofs() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/list".into(),
-            params: None,
-        };
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let config = test_config(&rt);
-        let policy = McpPolicy::new();
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        for file_tool in super::super::file_tools::FILE_TOOL_NAMES {
-            assert!(!names.contains(file_tool), "file tool {file_tool} should not appear without VirtioFS");
-        }
-    }
-
-    #[test]
-    fn tools_list_includes_file_tools_with_virtiofs() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/list".into(),
-            params: None,
-        };
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let db = rt.block_on(async {
-            let path = dir.path().join("test.db");
-            Arc::new(DbWriter::open(&path, 64).unwrap())
-        });
-        let config = McpGatewayConfig {
-            aggregator: test_aggregator_client(&rt),
-            db,
-            policy: RwLock::new(Arc::new(McpPolicy::new())),
-            domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
-            http_client: reqwest::Client::new(),
-            auto_snapshots: None,
-            workspace_dir: Some(dir.path().to_path_buf()),
-        };
-        let policy = McpPolicy::new();
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        // 3 HTTP builtins + 7 file tools = 10
-        assert_eq!(tools.len(), 10);
-        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        for file_tool in super::super::file_tools::FILE_TOOL_NAMES {
-            assert!(names.contains(file_tool), "file tool {file_tool} missing from tools/list");
-        }
-    }
-
-    #[test]
-    fn file_tool_succeeds_with_virtiofs() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let session_dir = dir.path().join("session");
-        std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
-        std::fs::create_dir_all(session_dir.join("auto_snapshots")).unwrap();
-
-        let scheduler = crate::auto_snapshot::AutoSnapshotScheduler::new(
-            session_dir.clone(),
-            10,
-            12,
-            std::time::Duration::from_secs(300),
-        );
-        let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
-
-        let db = rt.block_on(async {
-            let path = dir.path().join("test.db");
-            Arc::new(DbWriter::open(&path, 64).unwrap())
-        });
-        let config = McpGatewayConfig {
-            aggregator: test_aggregator_client(&rt),
-            db,
-            policy: RwLock::new(Arc::new(McpPolicy::new())),
-            domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
-            http_client: reqwest::Client::new(),
-            auto_snapshots: Some(scheduler),
-            workspace_dir: Some(session_dir.join("workspace")),
-        };
-
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "snapshots_create",
-                "arguments": {"name": "test_snap"}
-            })),
-        };
-
-        let policy = McpPolicy::new();
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        assert!(resp.error.is_none(), "snapshot should succeed: {:?}", resp.error);
-    }
-
-    #[test]
     fn truncate_preview_utf8_safe() {
         // Build a string where byte 200 falls inside a 4-byte emoji.
         // Each emoji is 4 bytes, 50 emojis = 200 bytes exactly, but
@@ -1163,147 +789,6 @@ mod tests {
         // floor_char_boundary(200) should be 199 (before the emoji at 199..203)
         assert_eq!(truncated.len(), 199);
         assert!(truncated.is_char_boundary(truncated.len()));
-    }
-
-    /// Test config with auto-snapshots enabled (VirtioFS mode).
-    fn test_config_with_snapshots(rt: &tokio::runtime::Runtime) -> (McpGatewayConfig, tempfile::TempDir) {
-        use crate::auto_snapshot::AutoSnapshotScheduler;
-
-        let dir = tempfile::tempdir().unwrap();
-        let session = dir.path().to_path_buf();
-        std::fs::create_dir_all(session.join("workspace")).unwrap();
-        std::fs::create_dir_all(session.join("system")).unwrap();
-        std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
-
-        // Write a file so snapshots have content.
-        std::fs::write(session.join("workspace/test.txt"), "hello").unwrap();
-
-        let scheduler = AutoSnapshotScheduler::new(
-            session.clone(), 3, 4, std::time::Duration::from_secs(300),
-        );
-
-        let db = rt.block_on(async {
-            let path = session.join("test.db");
-            Arc::new(DbWriter::open(&path, 64).unwrap())
-        });
-
-        let config = McpGatewayConfig {
-            aggregator: test_aggregator_client(rt),
-            db,
-            policy: RwLock::new(Arc::new(McpPolicy::new())),
-            domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
-            http_client: reqwest::Client::new(),
-            auto_snapshots: Some(Arc::new(tokio::sync::Mutex::new(scheduler))),
-            workspace_dir: Some(session.join("workspace")),
-        };
-        (config, dir)
-    }
-
-    /// Verifies that snapshot_create runs via spawn_blocking and returns
-    /// without deadlocking. This is the regression test for the blocking-in-async
-    /// bug where file tools ran on tokio worker threads.
-    #[test]
-    fn snapshot_create_does_not_block_runtime() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let (config, _dir) = test_config_with_snapshots(&rt);
-        let policy = McpPolicy::new();
-
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "snapshots_create",
-                "arguments": {"name": "test_snap"}
-            })),
-        };
-
-        // This must complete within 5 seconds. Before the spawn_blocking fix,
-        // this could deadlock or stall the runtime indefinitely.
-        let resp = rt.block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                handle_json_rpc(&req, &config, &policy, "test"),
-            ).await
-        });
-
-        let resp = resp.expect("snapshot_create timed out -- possible deadlock")
-            .expect("should return Some for tools/call");
-        assert!(resp.error.is_none(), "snapshot_create should succeed: {:?}", resp.error);
-
-        let result = resp.result.unwrap();
-        let text = result["content"][0]["text"].as_str().unwrap();
-        let data: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(data["name"], "test_snap");
-        assert!(data["checkpoint"].as_str().unwrap().starts_with("cp-"));
-    }
-
-    /// Verifies snapshots_list returns JSON through the gateway spawn_blocking path.
-    #[test]
-    fn snapshot_list_via_gateway_returns_json() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let (config, _dir) = test_config_with_snapshots(&rt);
-        let policy = McpPolicy::new();
-
-        // Create a snapshot first.
-        let create_req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "snapshots_create",
-                "arguments": {"name": "list_test"}
-            })),
-        };
-        let resp = rt.block_on(handle_json_rpc(&create_req, &config, &policy, "test"));
-        assert!(resp.unwrap().error.is_none());
-
-        // List with format:json.
-        let list_req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(2)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "snapshots_list",
-                "arguments": {"format": "json"}
-            })),
-        };
-        let resp = rt.block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                handle_json_rpc(&list_req, &config, &policy, "test"),
-            ).await
-        });
-        let resp = resp.expect("snapshots_list timed out").unwrap();
-        assert!(resp.error.is_none());
-
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let data: serde_json::Value = serde_json::from_str(&text)
-            .expect("snapshots_list must return valid JSON when format=json");
-        assert!(!data["snapshots"].as_array().unwrap().is_empty());
-    }
-
-    /// Verifies that file tools without VirtioFS return a clean error, not a hang.
-    #[test]
-    fn file_tool_without_virtiofs_returns_error() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let config = test_config(&rt); // no auto_snapshots
-        let policy = McpPolicy::new();
-
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".into(),
-            params: Some(serde_json::json!({
-                "name": "snapshots_create",
-                "arguments": {"name": "test"}
-            })),
-        };
-
-        let resp = rt.block_on(handle_json_rpc(&req, &config, &policy, "test"));
-        let resp = resp.unwrap();
-        assert!(resp.error.is_some());
-        assert!(resp.error.unwrap().message.contains("not in VirtioFS mode"));
     }
 
     #[test]

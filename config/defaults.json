@@ -933,11 +933,10 @@
     }
   },
   "mcp": {
-    "capsem": {
-      "name": "Capsem",
-      "description": "Built-in Capsem MCP server for file and snapshot tools",
+    "local": {
+      "name": "Local",
+      "description": "Built-in local tools: HTTP fetch, workspace snapshots",
       "transport": "stdio",
-      "command": "/run/capsem-mcp-server",
       "builtin": true
     }
   }

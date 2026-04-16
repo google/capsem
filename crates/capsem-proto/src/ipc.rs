@@ -77,7 +77,7 @@ pub struct McpServerStatus {
     pub url: String,
     pub enabled: bool,
     pub source: String,
-    pub unsupported_stdio: bool,
+    pub is_stdio: bool,
     pub connected: bool,
     pub tool_count: usize,
 }
@@ -497,7 +497,7 @@ mod tests {
                 url: "https://mcp.github.com".into(),
                 enabled: true,
                 source: "claude".into(),
-                unsupported_stdio: false,
+                is_stdio: false,
                 connected: true,
                 tool_count: 5,
             }],

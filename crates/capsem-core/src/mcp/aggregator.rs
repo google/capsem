@@ -12,9 +12,53 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
 use super::types::{McpPromptDef, McpResourceDef, McpServerDef, McpToolDef};
+
+// ── Length-prefixed MessagePack framing ────────────────────────────
+//
+// Wire format: [4 bytes big-endian payload length] [N bytes msgpack]
+// Max frame size: 16 MB.
+
+const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
+
+/// Write a length-prefixed msgpack frame.
+pub async fn write_frame<W, T>(writer: &mut W, msg: &T) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+    T: Serialize,
+{
+    let payload = rmp_serde::to_vec_named(msg).context("msgpack serialize")?;
+    let len = payload.len() as u32;
+    writer.write_all(&len.to_be_bytes()).await.context("write frame length")?;
+    writer.write_all(&payload).await.context("write frame payload")?;
+    writer.flush().await.context("flush frame")?;
+    Ok(())
+}
+
+/// Read a length-prefixed msgpack frame. Returns None on EOF.
+pub async fn read_frame<R, T>(reader: &mut R) -> Result<Option<T>>
+where
+    R: AsyncReadExt + Unpin,
+    T: for<'de> Deserialize<'de>,
+{
+    let mut len_buf = [0u8; 4];
+    match reader.read_exact(&mut len_buf).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e).context("read frame length"),
+    }
+    let len = u32::from_be_bytes(len_buf);
+    if len > MAX_FRAME_SIZE {
+        anyhow::bail!("frame too large: {len} bytes (max {MAX_FRAME_SIZE})");
+    }
+    let mut buf = vec![0u8; len as usize];
+    reader.read_exact(&mut buf).await.context("read frame payload")?;
+    let msg: T = rmp_serde::from_slice(&buf).context("msgpack deserialize")?;
+    Ok(Some(msg))
+}
 
 // ── Request (process -> aggregator) ─────────────────────────────────
 
@@ -131,7 +175,9 @@ pub struct AggregatorServerStatus {
     pub url: String,
     pub enabled: bool,
     pub source: String,
-    pub unsupported_stdio: bool,
+    /// True if this server uses stdio transport (subprocess).
+    #[serde(default)]
+    pub is_stdio: bool,
     pub connected: bool,
     pub tool_count: usize,
     pub resource_count: usize,
@@ -299,14 +345,19 @@ impl AggregatorClient {
 mod tests {
     use super::*;
 
+    /// Roundtrip helper: serialize to msgpack and back.
+    fn msgpack_roundtrip<T: Serialize + for<'de> Deserialize<'de>>(val: &T) -> T {
+        let bytes = rmp_serde::to_vec_named(val).unwrap();
+        rmp_serde::from_slice(&bytes).unwrap()
+    }
+
     #[test]
     fn request_list_servers_roundtrip() {
         let req = AggregatorRequest {
             id: 1,
             method: AggregatorMethod::ListServers,
         };
-        let json = serde_json::to_string(&req).unwrap();
-        let decoded: AggregatorRequest = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&req);
         assert_eq!(decoded.id, 1);
         assert!(matches!(decoded.method, AggregatorMethod::ListServers));
     }
@@ -320,8 +371,7 @@ mod tests {
                 arguments: serde_json::json!({"query": "rust"}),
             },
         };
-        let json = serde_json::to_string(&req).unwrap();
-        let decoded: AggregatorRequest = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&req);
         assert_eq!(decoded.id, 42);
         if let AggregatorMethod::CallTool { name, arguments } = decoded.method {
             assert_eq!(name, "github__search_repos");
@@ -337,9 +387,7 @@ mod tests {
             id: 99,
             method: AggregatorMethod::Shutdown,
         };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("shutdown"));
-        let decoded: AggregatorRequest = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&req);
         assert!(matches!(decoded.method, AggregatorMethod::Shutdown));
     }
 
@@ -351,16 +399,17 @@ mod tests {
                 servers: vec![McpServerDef {
                     name: "test".into(),
                     url: "https://mcp.example.com".into(),
+                    command: None,
+                    args: vec![],
+                    env: Default::default(),
                     headers: Default::default(),
                     bearer_token: None,
                     enabled: true,
                     source: "manual".into(),
-                    unsupported_stdio: false,
                 }],
             },
         };
-        let json = serde_json::to_string(&req).unwrap();
-        let decoded: AggregatorRequest = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&req);
         if let AggregatorMethod::Refresh { servers } = decoded.method {
             assert_eq!(servers.len(), 1);
             assert_eq!(servers[0].name, "test");
@@ -379,7 +428,7 @@ mod tests {
                     url: "https://mcp.github.com".into(),
                     enabled: true,
                     source: "claude".into(),
-                    unsupported_stdio: false,
+                    is_stdio: false,
                     connected: true,
                     tool_count: 5,
                     resource_count: 0,
@@ -387,8 +436,7 @@ mod tests {
                 }],
             },
         };
-        let json = serde_json::to_string(&resp).unwrap();
-        let decoded: AggregatorResponse = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&resp);
         assert_eq!(decoded.id, 1);
         if let AggregatorResult::Servers { servers } = decoded.body {
             assert_eq!(servers[0].name, "github");
@@ -406,8 +454,7 @@ mod tests {
                 error: "server not found".into(),
             },
         };
-        let json = serde_json::to_string(&resp).unwrap();
-        let decoded: AggregatorResponse = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&resp);
         if let AggregatorResult::Error { error } = decoded.body {
             assert_eq!(error, "server not found");
         } else {
@@ -421,8 +468,7 @@ mod tests {
             id: 3,
             body: AggregatorResult::Ok { ok: true },
         };
-        let json = serde_json::to_string(&resp).unwrap();
-        let decoded: AggregatorResponse = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&resp);
         if let AggregatorResult::Ok { ok } = decoded.body {
             assert!(ok);
         } else {
@@ -438,8 +484,7 @@ mod tests {
                 result: serde_json::json!({"content": [{"type": "text", "text": "hello"}]}),
             },
         };
-        let json = serde_json::to_string(&resp).unwrap();
-        let decoded: AggregatorResponse = serde_json::from_str(&json).unwrap();
+        let decoded = msgpack_roundtrip(&resp);
         if let AggregatorResult::CallResult { result } = decoded.body {
             assert_eq!(result["content"][0]["text"], "hello");
         } else {

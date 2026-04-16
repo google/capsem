@@ -2,7 +2,8 @@
 // Source: config/defaults.json -- same IDs, types, metadata, and tree hierarchy.
 // Do not simplify or fabricate data; this must match what the backend produces.
 
-import type { ResolvedSetting, SettingsNode, SettingsResponse, McpServerInfo, McpToolInfo, McpPolicyInfo } from './types/settings';
+import type { ResolvedSetting, SettingsNode, SettingsResponse } from './types/settings';
+import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from './types';
 
 // Helper: creates a mock setting with sensible defaults for empty fields.
 function ms(overrides: Partial<ResolvedSetting> & { id: string; category: string; name: string; setting_type: ResolvedSetting['setting_type'] }): ResolvedSetting {

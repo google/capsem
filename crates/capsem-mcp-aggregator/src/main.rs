@@ -1,12 +1,15 @@
 //! MCP aggregator subprocess.
 //!
 //! Low-privilege process that manages connections to external MCP servers.
-//! Communicates with capsem-process via NDJSON on stdin/stdout.
+//! Communicates with capsem-process via length-prefixed MessagePack frames
+//! on stdin/stdout.
 //!
 //! Protocol:
-//! 1. First line on stdin: JSON array of McpServerDef (server definitions)
+//! 1. First frame on stdin: msgpack Vec<McpServerDef> (server definitions)
 //! 2. Aggregator connects to all enabled HTTP servers
-//! 3. Enters NDJSON request/response loop (one JSON message per line)
+//! 3. Enters frame-based request/response loop
+//!
+//! Frame format: [4 bytes big-endian payload length] [N bytes msgpack]
 //!
 //! This subprocess intentionally has NO access to the VM, session DB,
 //! filesystem, or service IPC. It only has network access to reach
@@ -15,16 +18,12 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
+use tokio::sync::Mutex;
 
 use capsem_core::mcp::aggregator::*;
 use capsem_core::mcp::server_manager::McpServerManager;
 use capsem_core::mcp::types::McpServerDef;
-
-/// Maximum NDJSON line length (1 MB).
-const MAX_LINE_LEN: usize = 1_048_576;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -38,20 +37,14 @@ async fn main() -> Result<()> {
 
     info!("capsem-mcp-aggregator starting");
 
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-    let mut reader = BufReader::with_capacity(MAX_LINE_LEN, stdin);
-    let mut writer = stdout;
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
 
-    // Step 1: Read server definitions from first line on stdin.
-    let mut init_line = String::new();
-    reader
-        .read_line(&mut init_line)
+    // Step 1: Read server definitions from first frame on stdin.
+    let defs: Vec<McpServerDef> = read_frame(&mut stdin)
         .await
-        .context("failed to read server definitions from stdin")?;
-
-    let defs: Vec<McpServerDef> = serde_json::from_str(init_line.trim())
-        .context("failed to parse server definitions")?;
+        .context("failed to read server definitions")?
+        .context("stdin closed before server definitions")?;
 
     info!(count = defs.len(), "received server definitions");
 
@@ -70,61 +63,32 @@ async fn main() -> Result<()> {
 
     info!("aggregator ready, entering request loop");
 
-    // Step 3: NDJSON request/response loop.
-    let mut line_buf = String::new();
+    // Step 3: MessagePack frame request/response loop.
     loop {
-        line_buf.clear();
-        let n = reader
-            .read_line(&mut line_buf)
-            .await
-            .context("failed to read from stdin")?;
-
-        if n == 0 {
-            // EOF -- parent closed stdin, shut down gracefully.
-            info!("stdin closed, shutting down");
-            let mut mgr = manager.lock().await;
-            mgr.shutdown_all().await;
-            break;
-        }
-
-        let trimmed = line_buf.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let req: AggregatorRequest = match serde_json::from_str(trimmed) {
-            Ok(r) => r,
+        let req: AggregatorRequest = match read_frame(&mut stdin).await {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                // EOF -- parent closed stdin, shut down gracefully.
+                info!("stdin closed, shutting down");
+                let mut mgr = manager.lock().await;
+                mgr.shutdown_all().await;
+                break;
+            }
             Err(e) => {
-                error!(error = %e, line = trimmed, "failed to parse request");
+                error!(error = %e, "failed to read request frame");
                 continue;
             }
         };
 
+        let is_shutdown = matches!(req.method, AggregatorMethod::Shutdown);
         let resp = handle_request(&manager, req).await;
 
-        let mut resp_json = serde_json::to_string(&resp)
-            .unwrap_or_else(|e| {
-                // Should never happen, but don't crash.
-                format!(
-                    r#"{{"id":{},"error":"serialization failed: {}"}}"#,
-                    resp.id, e
-                )
-            });
-        resp_json.push('\n');
-
-        if let Err(e) = writer.write_all(resp_json.as_bytes()).await {
-            error!(error = %e, "failed to write response");
-            break;
-        }
-        if let Err(e) = writer.flush().await {
-            error!(error = %e, "failed to flush stdout");
+        if let Err(e) = write_frame(&mut stdout, &resp).await {
+            error!(error = %e, "failed to write response frame");
             break;
         }
 
-        // Check if this was a shutdown request.
-        if matches!(resp.body, AggregatorResult::Ok { .. })
-            && trimmed.contains("\"shutdown\"")
-        {
+        if is_shutdown {
             info!("shutdown acknowledged, exiting");
             break;
         }
@@ -150,7 +114,7 @@ async fn handle_request(
                     url: d.url.clone(),
                     enabled: d.enabled,
                     source: d.source.clone(),
-                    unsupported_stdio: d.unsupported_stdio,
+                    is_stdio: d.is_stdio(),
                     connected: mgr.is_running(&d.name),
                     tool_count: mgr.tool_count_for_server(&d.name),
                     resource_count: mgr

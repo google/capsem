@@ -162,8 +162,18 @@ fn default_run_ram() -> u64 { 2048 }
 fn default_run_cpus() -> u32 { 2 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct AssetHealth {
+    pub ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    pub missing: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ListResponse {
     pub sandboxes: Vec<SandboxInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_health: Option<AssetHealth>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -225,7 +235,7 @@ pub struct McpServerInfoResponse {
     pub enabled: bool,
     pub running: bool,
     pub tool_count: usize,
-    pub unsupported_stdio: bool,
+    pub is_stdio: bool,
 }
 
 /// Response for GET /mcp/tools.
@@ -260,6 +270,67 @@ pub struct InspectRequest {
 pub struct InspectResponse {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<serde_json::Value>>,
+}
+
+/// Query parameters for GET /history/{id}.
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+pub struct HistoryQuery {
+    #[serde(default = "default_history_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
+    pub search: Option<String>,
+    #[serde(default = "default_history_layer")]
+    pub layer: String,
+}
+
+#[allow(dead_code)]
+fn default_history_limit() -> usize { 500 }
+#[allow(dead_code)]
+fn default_history_layer() -> String { "all".to_string() }
+
+/// Response for GET /history/{id}.
+#[derive(Serialize, Debug)]
+#[allow(dead_code)]
+pub struct HistoryResponse {
+    pub commands: Vec<capsem_logger::HistoryEntry>,
+    pub total: u64,
+    pub has_more: bool,
+}
+
+/// Response for GET /history/{id}/processes.
+#[derive(Serialize, Debug)]
+#[allow(dead_code)]
+pub struct HistoryProcessesResponse {
+    pub processes: Vec<capsem_logger::ProcessEntry>,
+}
+
+/// Response for GET /history/{id}/counts.
+#[derive(Serialize, Debug)]
+#[allow(dead_code)]
+pub struct HistoryCountsResponse {
+    pub exec_count: u64,
+    pub audit_count: u64,
+}
+
+/// Query parameters for GET /history/{id}/transcript.
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+pub struct TranscriptQuery {
+    #[serde(default = "default_tail_lines")]
+    pub tail_lines: usize,
+}
+
+#[allow(dead_code)]
+fn default_tail_lines() -> usize { 500 }
+
+/// Response for GET /history/{id}/transcript.
+#[derive(Serialize, Debug)]
+#[allow(dead_code)]
+pub struct TranscriptResponse {
+    pub content: String,
+    pub bytes: usize,
 }
 
 #[cfg(test)]
@@ -335,7 +406,7 @@ mod tests {
 
     #[test]
     fn list_response_empty() {
-        let r = ListResponse { sandboxes: vec![] };
+        let r = ListResponse { sandboxes: vec![], asset_health: None };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ListResponse = serde_json::from_str(&json).unwrap();
         assert!(r2.sandboxes.is_empty());
@@ -348,6 +419,7 @@ mod tests {
                 { let mut s = SandboxInfo::new("a".into(), 100, "Running".into(), true); s.name = Some("a".into()); s.ram_mb = Some(2048); s.cpus = Some(2); s },
                 SandboxInfo::new("b".into(), 200, "Running".into(), false),
             ],
+            asset_health: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ListResponse = serde_json::from_str(&json).unwrap();

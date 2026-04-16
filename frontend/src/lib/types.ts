@@ -218,7 +218,7 @@ export interface McpServerInfo {
   enabled: boolean;
   running: boolean;
   tool_count: number;
-  unsupported_stdio: boolean;
+  is_stdio: boolean;
 }
 
 /** Info about a discovered MCP tool. */

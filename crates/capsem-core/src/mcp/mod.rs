@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::mcp::policy::McpUserConfig;
 use crate::mcp::types::{McpServerDef, McpToolDef, ToolAnnotations};
@@ -55,8 +55,45 @@ pub fn build_server_list(
     user_config: &McpUserConfig,
     corp_config: &McpUserConfig,
 ) -> Vec<McpServerDef> {
+    build_server_list_with_builtin(user_config, corp_config, None, HashMap::new())
+}
+
+/// Build the server list, optionally including the local builtin server.
+///
+/// When `builtin_binary` is Some, a "local" server entry is prepended that
+/// spawns the capsem-mcp-builtin binary via stdio transport.
+///
+/// `builtin_env` passes environment variables to the subprocess (session dir,
+/// domain policy, DB path).
+pub fn build_server_list_with_builtin(
+    user_config: &McpUserConfig,
+    corp_config: &McpUserConfig,
+    builtin_binary: Option<&std::path::Path>,
+    builtin_env: HashMap<String, String>,
+) -> Vec<McpServerDef> {
     let mut servers = Vec::new();
     let mut seen = std::collections::HashSet::new();
+
+    // 0. Local builtin server (stdio subprocess)
+    if let Some(bin) = builtin_binary {
+        if bin.exists() {
+            servers.push(McpServerDef {
+                name: "local".to_string(),
+                url: String::new(),
+                command: Some(bin.to_string_lossy().to_string()),
+                args: vec![],
+                env: builtin_env,
+                headers: std::collections::HashMap::new(),
+                bearer_token: None,
+                enabled: true,
+                source: "builtin".to_string(),
+            });
+            seen.insert("local".to_string());
+            info!(bin = %bin.display(), "added local builtin MCP server");
+        } else {
+            warn!(bin = %bin.display(), "builtin MCP server binary not found, skipping");
+        }
+    }
 
     // 1. Auto-detected servers (claude, gemini configs)
     for mut def in detect_host_mcp_servers() {
@@ -102,11 +139,13 @@ pub fn build_server_list(
             let mut def = McpServerDef {
                 name: manual.name.clone(),
                 url: manual.url.clone(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
                 headers: manual.headers.clone(),
                 bearer_token: manual.bearer_token.clone(),
                 enabled: manual.enabled,
                 source: "manual".to_string(),
-                unsupported_stdio: false,
             };
             // Apply enabled overrides
             if let Some(&enabled) = corp_config.server_enabled.get(&def.name) {
@@ -131,11 +170,13 @@ pub fn build_server_list(
             servers.push(McpServerDef {
                 name: corp_server.name.clone(),
                 url: corp_server.url.clone(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
                 headers: corp_server.headers.clone(),
                 bearer_token: corp_server.bearer_token.clone(),
                 enabled: corp_server.enabled,
                 source: "corp".to_string(),
-                unsupported_stdio: false,
             });
         }
     }
@@ -332,7 +373,7 @@ fn dirs_home() -> Option<std::path::PathBuf> {
 ///
 /// Handles two formats:
 /// - HTTP servers: `{ "url": "https://..." }` -> connectable MCP server
-/// - Stdio servers: `{ "command": "npx", "args": [...] }` -> flagged as unsupported_stdio
+/// - Stdio servers: `{ "command": "npx", "args": [...] }` -> stdio transport
 fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServerDef>> {
     let content = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
@@ -368,16 +409,18 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
             defs.push(McpServerDef {
                 name: name.clone(),
                 url: url.to_string(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
                 headers,
                 bearer_token,
                 enabled: true,
                 source: source.to_string(),
-                unsupported_stdio: false,
             });
             continue;
         }
 
-        // Check for stdio server (command field) -- flag as unsupported
+        // Check for stdio server (command field)
         if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
             let args: Vec<String> = config
                 .get("args")
@@ -389,22 +432,27 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
                 })
                 .unwrap_or_default();
 
-            // Store the command in url field for display purposes
-            let display_command = if args.is_empty() {
-                command.to_string()
-            } else {
-                format!("{} {}", command, args.join(" "))
-            };
+            let env: HashMap<String, String> = config
+                .get("env")
+                .and_then(|v| v.as_object())
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default();
 
-            debug!(name, source, command, "detected stdio MCP server (unsupported)");
+            debug!(name, source, command, "detected stdio MCP server");
             defs.push(McpServerDef {
                 name: name.clone(),
-                url: display_command,
+                url: String::new(),
+                command: Some(command.to_string()),
+                args,
+                env,
                 headers: HashMap::new(),
                 bearer_token: None,
                 enabled: true,
                 source: source.to_string(),
-                unsupported_stdio: true,
             });
         }
     }
@@ -765,8 +813,8 @@ mod tests {
         let defs = parse_mcp_servers_from_file(&path, "claude").unwrap();
         assert_eq!(defs.len(), 1); // capsem filtered out
         assert_eq!(defs[0].name, "github");
-        assert!(defs[0].unsupported_stdio);
-        assert_eq!(defs[0].url, "npx -y @github/mcp-server"); // display command
+        assert!(defs[0].is_stdio());
+        assert_eq!(defs[0].command.as_deref(), Some("npx"));
         assert_eq!(defs[0].source, "claude");
     }
 
@@ -785,7 +833,7 @@ mod tests {
         assert_eq!(defs[0].name, "api");
         assert_eq!(defs[0].url, "https://mcp.example.com/v1");
         assert_eq!(defs[0].bearer_token.as_deref(), Some("tok_123"));
-        assert!(!defs[0].unsupported_stdio);
+        assert!(!defs[0].is_stdio());
     }
 
     #[test]
@@ -805,8 +853,8 @@ mod tests {
         assert_eq!(defs.len(), 2);
         let http = defs.iter().find(|d| d.name == "http-server").unwrap();
         let stdio = defs.iter().find(|d| d.name == "stdio-server").unwrap();
-        assert!(!http.unsupported_stdio);
-        assert!(stdio.unsupported_stdio);
+        assert!(!http.is_stdio());
+        assert!(stdio.is_stdio());
     }
 
     #[test]

@@ -6,11 +6,25 @@ use serde::{Deserialize, Serialize};
 pub const NS_SEP: &str = "__";
 
 /// A host-side MCP server definition (from user config or auto-detected).
+///
+/// Transport is determined by which fields are set:
+/// - `command` is Some => stdio transport (spawn subprocess)
+/// - `url` is non-empty => HTTP transport
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerDef {
     pub name: String,
-    /// HTTP endpoint URL for the MCP server.
+    /// HTTP endpoint URL for the MCP server (empty for stdio servers).
+    #[serde(default)]
     pub url: String,
+    /// Binary path for stdio-transport servers (None for HTTP servers).
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Command-line arguments for stdio-transport servers.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variables to pass to stdio-transport servers.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     /// Custom HTTP headers to send with every request.
     #[serde(default)]
     pub headers: HashMap<String, String>,
@@ -18,11 +32,15 @@ pub struct McpServerDef {
     #[serde(default)]
     pub bearer_token: Option<String>,
     pub enabled: bool,
-    /// Where this definition came from: "claude", "gemini", "manual".
+    /// Where this definition came from: "claude", "gemini", "manual", "builtin".
     pub source: String,
-    /// True if this was auto-detected as a stdio/command server (display-only, not connectable).
-    #[serde(default)]
-    pub unsupported_stdio: bool,
+}
+
+impl McpServerDef {
+    /// True if this server uses stdio transport (subprocess).
+    pub fn is_stdio(&self) -> bool {
+        self.command.is_some()
+    }
 }
 
 /// MCP tool annotations (per MCP spec 2024-11-05).

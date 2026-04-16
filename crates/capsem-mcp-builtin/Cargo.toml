@@ -1,18 +1,23 @@
 [package]
-name = "capsem-mcp-aggregator"
+name = "capsem-mcp-builtin"
 version.workspace = true
 edition = "2021"
 
 [dependencies]
 capsem-core = { path = "../capsem-core" }
+capsem-logger = { path = "../capsem-logger" }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-rmp-serde.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reqwest.workspace = true
+regex.workspace = true
+scraper = "0.25"
+walkdir = "2"
+blake3 = "1"
 
 [lints]
 workspace = true

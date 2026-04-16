@@ -41,7 +41,7 @@ cp -R "$APP_PATH" "$WORK_DIR/payload/Applications/Capsem.app"
 # Companion binaries
 SHARE_DIR="$WORK_DIR/payload/usr/local/share/capsem"
 mkdir -p "$SHARE_DIR/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$SHARE_DIR/bin/$bin"

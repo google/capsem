@@ -1,16 +1,48 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { slide } from 'svelte/transition';
   import { settingsStore } from '../../stores/settings.svelte.ts';
-  import type { McpServerNode } from '../../types/settings';
+  import { mcpStore } from '../../stores/mcp.svelte.ts';
+  import type { McpServerInfo, McpToolInfo } from '../../types';
   import * as api from '../../api';
+  import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import CaretDown from 'phosphor-svelte/lib/CaretDown';
   import Plus from 'phosphor-svelte/lib/Plus';
   import Trash from 'phosphor-svelte/lib/Trash';
+  import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
   import X from 'phosphor-svelte/lib/X';
 
   // MCP servers from the settings tree (loaded by SettingsPage onMount)
   let servers = $derived(settingsStore.model?.mcpServers ?? []);
   let userServers = $derived(servers.filter(s => !s.builtin));
   let builtinServers = $derived(servers.filter(s => s.builtin));
+
+  // Runtime status lookup by server name
+  let runtimeByName = $derived.by(() => {
+    const map = new Map<string, McpServerInfo>();
+    for (const s of mcpStore.servers) map.set(s.name, s);
+    return map;
+  });
+
+  // --- Expand/collapse ---
+  let expandedGroups = $state<Set<string>>(new Set());
+
+  function toggleGroup(key: string) {
+    const next = new Set(expandedGroups);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    expandedGroups = next;
+  }
+
+  // --- Per-tool permission ---
+  function toolPermission(toolName: string): string {
+    return mcpStore.policy.tool_permissions[toolName] ?? defaultPermission;
+  }
+
+  async function handleToolPermission(toolName: string, e: Event) {
+    const value = (e.target as HTMLSelectElement).value;
+    await mcpStore.setToolPermission(toolName, value);
+  }
 
   // --- Add server form ---
   let showAddForm = $state(false);
@@ -21,6 +53,10 @@
   let saving = $state(false);
 
   let canAdd = $derived(newName.trim().length > 0 && newUrl.trim().length > 0);
+
+  onMount(() => {
+    mcpStore.load();
+  });
 
   function resetForm() {
     newName = '';
@@ -55,6 +91,7 @@
       await api.reloadConfig();
       resetForm();
       await settingsStore.load();
+      await mcpStore.load();
     } finally {
       saving = false;
     }
@@ -66,6 +103,7 @@
       await api.removeMcpServer(name);
       await api.reloadConfig();
       await settingsStore.load();
+      await mcpStore.load();
     } finally {
       saving = false;
     }
@@ -77,6 +115,7 @@
       await api.setMcpServerEnabled(name, !currentlyEnabled);
       await api.reloadConfig();
       await settingsStore.load();
+      await mcpStore.load();
     } finally {
       saving = false;
     }
@@ -87,6 +126,7 @@
     await api.setMcpDefaultPermission(value);
     await api.reloadConfig();
     await settingsStore.load();
+    await mcpStore.load();
   }
 
   // Policy from settings tree
@@ -94,29 +134,69 @@
     const leaf = settingsStore.findLeaf('mcp.policy.default_tool_permission');
     return (leaf?.effective_value as string) ?? 'allow';
   });
-
-  // --- Expand/collapse ---
-  let expandedGroups = $state<Set<string>>(new Set());
-
-  function toggleGroup(key: string) {
-    const next = new Set(expandedGroups);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    expandedGroups = next;
-  }
 </script>
+
+{#snippet toolList(tools: McpToolInfo[])}
+  <div transition:slide={{ duration: 300 }} class="divide-y divide-card-divider border-t border-card-divider">
+    {#each tools as tool (tool.namespaced_name)}
+      <div class="px-4 py-3 flex items-start justify-between gap-x-3">
+        <div class="min-w-0">
+          <div class="flex items-center gap-x-2 flex-wrap">
+            <span class="text-sm font-mono text-foreground">{tool.original_name}</span>
+            {#if tool.annotations?.read_only_hint}
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">read-only</span>
+            {/if}
+            {#if tool.annotations?.destructive_hint}
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive">destructive</span>
+            {/if}
+            {#if tool.pin_changed}
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 text-warning inline-flex items-center gap-x-0.5">
+                <WarningCircle size={10} /> changed
+              </span>
+            {/if}
+          </div>
+          {#if tool.description}
+            <p class="text-xs text-muted-foreground-1 mt-1">{tool.description}</p>
+          {/if}
+        </div>
+        <div class="shrink-0 mt-0.5">
+          <select
+            class="py-1 px-2 text-xs rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
+            value={toolPermission(tool.namespaced_name)}
+            onchange={(e) => handleToolPermission(tool.namespaced_name, e)}
+          >
+            <option value="allow">Allow</option>
+            <option value="ask">Ask</option>
+            <option value="block">Block</option>
+          </select>
+        </div>
+      </div>
+    {/each}
+  </div>
+{/snippet}
 
 <div class="space-y-6">
   <!-- Header -->
-  <div>
-    <div class="mb-6">
+  <div class="flex items-center justify-between">
+    <div>
       <h2 class="text-xl font-medium text-foreground">MCP Servers</h2>
       <p class="text-sm text-muted-foreground-1 mt-0.5">Model Context Protocol servers available to AI agents inside the sandbox.</p>
     </div>
+    <button
+      type="button"
+      class="p-2 rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover transition-colors disabled:opacity-40"
+      title="Refresh tools"
+      disabled={mcpStore.loading}
+      onclick={() => mcpStore.refresh()}
+    >
+      <ArrowClockwise size={18} class={mcpStore.loading ? 'animate-spin' : ''} />
+    </button>
+  </div>
 
-    <!-- Policy -->
+  <!-- Policy -->
+  <div>
     <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Policy</h3>
-    <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-6">
+    <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
       <div class="flex items-center justify-between p-4">
         <div>
           <p class="text-sm font-medium text-foreground">Default tool permission</p>
@@ -140,13 +220,35 @@
     <div>
       <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Built-in</h3>
       {#each builtinServers as server (server.key)}
+        {@const runtime = runtimeByName.get(server.key)}
+        {@const tools = mcpStore.toolsByServer[server.key] ?? []}
+        {@const isExpanded = expandedGroups.has(server.key)}
         <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3">
-            <div class="flex items-center gap-x-3 min-w-0">
+            <button
+              type="button"
+              class="flex items-center gap-x-3 min-w-0 flex-1 text-left"
+              onclick={() => toggleGroup(server.key)}
+            >
               <span class="text-sm font-semibold text-foreground font-mono truncate">{server.name}</span>
               <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.transport}</span>
-            </div>
-            <div class="flex items-center gap-x-2 shrink-0">
+              {#if runtime}
+                <span class="flex items-center gap-x-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0
+                  {runtime.running ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground-1'}">
+                  <span class="size-1.5 rounded-full {runtime.running ? 'bg-primary' : 'bg-muted-foreground-1'}"></span>
+                  {runtime.running ? 'Running' : 'Stopped'}
+                </span>
+              {/if}
+              {#if tools.length > 0}
+                <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">
+                  {tools.length} tool{tools.length === 1 ? '' : 's'}
+                </span>
+              {/if}
+              {#if tools.length > 0}
+                <CaretDown size={14} class="text-muted-foreground-1 transition-transform duration-300 shrink-0 {isExpanded ? 'rotate-180' : ''}" />
+              {/if}
+            </button>
+            <div class="flex items-center gap-x-2 shrink-0 ml-2">
               <button
                 type="button"
                 class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
@@ -165,10 +267,13 @@
               </button>
             </div>
           </div>
-          {#if server.description}
+          {#if server.description && !isExpanded}
             <div class="px-4 pb-3">
               <p class="text-xs text-muted-foreground-1">{server.description}</p>
             </div>
+          {/if}
+          {#if isExpanded && tools.length > 0}
+            {@render toolList(tools)}
           {/if}
         </div>
       {/each}
@@ -177,7 +282,7 @@
 
   <!-- External Servers -->
   <div>
-    <div class="flex items-center justify-between mb-2 mt-6">
+    <div class="flex items-center justify-between mb-2">
       <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider">External Servers</h3>
       {#if !showAddForm}
         <button
@@ -315,13 +420,35 @@
       </div>
     {:else}
       {#each userServers as server (server.key)}
+        {@const runtime = runtimeByName.get(server.key)}
+        {@const tools = mcpStore.toolsByServer[server.key] ?? []}
+        {@const isExpanded = expandedGroups.has(server.key)}
         <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3">
-            <div class="flex items-center gap-x-3 min-w-0">
+            <button
+              type="button"
+              class="flex items-center gap-x-3 min-w-0 flex-1 text-left"
+              onclick={() => toggleGroup(server.key)}
+            >
               <span class="text-sm font-semibold text-foreground font-mono truncate">{server.name}</span>
               <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.transport}</span>
-            </div>
-            <div class="flex items-center gap-x-2 shrink-0">
+              {#if runtime}
+                <span class="flex items-center gap-x-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0
+                  {runtime.running ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground-1'}">
+                  <span class="size-1.5 rounded-full {runtime.running ? 'bg-primary' : 'bg-muted-foreground-1'}"></span>
+                  {runtime.running ? 'Running' : 'Stopped'}
+                </span>
+              {/if}
+              {#if tools.length > 0}
+                <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">
+                  {tools.length} tool{tools.length === 1 ? '' : 's'}
+                </span>
+              {/if}
+              {#if tools.length > 0}
+                <CaretDown size={14} class="text-muted-foreground-1 transition-transform duration-300 shrink-0 {isExpanded ? 'rotate-180' : ''}" />
+              {/if}
+            </button>
+            <div class="flex items-center gap-x-2 shrink-0 ml-2">
               <button
                 type="button"
                 class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
@@ -351,10 +478,13 @@
               {/if}
             </div>
           </div>
-          {#if server.url}
+          {#if server.url && !isExpanded}
             <div class="px-4 pb-3">
               <p class="text-xs text-muted-foreground-1 font-mono truncate">{server.url}</p>
             </div>
+          {/if}
+          {#if isExpanded && tools.length > 0}
+            {@render toolList(tools)}
           {/if}
         </div>
       {/each}

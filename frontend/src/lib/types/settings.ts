@@ -155,43 +155,6 @@ export interface SecurityPreset {
   mcp: { default_tool_permission?: string } | null;
 }
 
-/** MCP server info from the MCP store. */
-export interface McpServerInfo {
-  name: string;
-  url?: string;
-  transport: string;
-  enabled: boolean;
-  builtin: boolean;
-  tool_count: number;
-  running: boolean;
-}
-
-/** MCP tool info from the MCP store. */
-export interface McpToolInfo {
-  namespaced_name: string;
-  original_name: string;
-  description: string;
-  server_name: string;
-  annotations: {
-    title?: string;
-    read_only_hint?: boolean;
-    destructive_hint?: boolean;
-    idempotent_hint?: boolean;
-    open_world_hint?: boolean;
-  };
-  pin_hash: string | null;
-  approved: boolean;
-  pin_changed: boolean;
-}
-
-/** MCP policy info from the MCP store. */
-export interface McpPolicyInfo {
-  global_policy: string;
-  default_tool_permission: string;
-  blocked_servers: string[];
-  tool_permissions: Record<string, string>;
-}
-
 /** Info about an available update. */
 export interface UpdateInfo {
   version: string;

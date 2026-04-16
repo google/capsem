@@ -1,8 +1,8 @@
 //! Manages host-side MCP server connections via rmcp.
 //!
-//! Each server is a Streamable HTTP endpoint. The manager connects via rmcp's
-//! `StreamableHttpClientTransport`, which handles JSON-RPC, SSE, and session
-//! lifecycle internally. We just connect, query catalogs, and route calls.
+//! Supports two transport types:
+//! - HTTP: Streamable HTTP endpoint via `StreamableHttpClientTransport`
+//! - Stdio: Subprocess via `TokioChildProcess` (for local/builtin servers)
 
 use std::collections::HashMap;
 
@@ -11,6 +11,7 @@ use rmcp::model::{
     CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams,
 };
 use rmcp::service::{Peer, RunningService};
+use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
 };
@@ -54,20 +55,21 @@ impl McpServerManager {
         }
     }
 
-    /// Connect to all enabled HTTP servers, run MCP initialize handshake,
+    /// Connect to all enabled servers (HTTP and stdio), run MCP handshake,
     /// then query each to build the unified catalog.
     pub async fn initialize_all(&mut self) -> Result<()> {
         let defs: Vec<McpServerDef> = self
             .definitions
             .iter()
-            .filter(|d| d.enabled && !d.unsupported_stdio)
+            .filter(|d| d.enabled)
             .cloned()
             .collect();
 
         for def in &defs {
             match self.connect_and_initialize(def).await {
                 Ok(()) => {
-                    info!(server = %def.name, "MCP server initialized");
+                    let transport = if def.is_stdio() { "stdio" } else { "http" };
+                    info!(server = %def.name, transport, "MCP server initialized");
                 }
                 Err(e) => {
                     warn!(server = %def.name, error = %e, "failed to initialize MCP server");
@@ -89,33 +91,11 @@ impl McpServerManager {
     /// Public within the crate for testing (errors propagate, unlike initialize_all
     /// which warns and continues).
     pub(crate) async fn connect_and_initialize(&mut self, def: &McpServerDef) -> Result<()> {
-        // Build transport config
-        let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
-        if let Some(ref token) = def.bearer_token {
-            // rmcp's reqwest impl calls bearer_auth() which prepends "Bearer " automatically
-            config = config.auth_header(token.clone());
-        }
-        if !def.headers.is_empty() {
-            let mut headers = HashMap::new();
-            for (key, val) in &def.headers {
-                let name: http::header::HeaderName = key.parse()
-                    .with_context(|| format!("invalid header name: {key}"))?;
-                let value: http::header::HeaderValue = val.parse()
-                    .with_context(|| format!("invalid header value for {key}"))?;
-                headers.insert(name, value);
-            }
-            config = config.custom_headers(headers);
-        }
-
-        let transport = StreamableHttpClientTransport::with_client(
-            self.http_client.clone(),
-            config,
-        );
-
-        // rmcp's serve() does the full MCP handshake (initialize + notifications/initialized)
-        let client = ().serve(transport)
-            .await
-            .with_context(|| format!("failed to connect to MCP server '{}'", def.name))?;
+        let client = if def.is_stdio() {
+            self.connect_stdio(def).await?
+        } else {
+            self.connect_http(def).await?
+        };
 
         // Fetch tools with automatic pagination
         match client.list_all_tools().await {
@@ -210,6 +190,51 @@ impl McpServerManager {
 
         self.running.insert(def.name.clone(), RunningServer { client });
         Ok(())
+    }
+
+    /// Connect to an HTTP MCP server.
+    async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
+        let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
+        if let Some(ref token) = def.bearer_token {
+            config = config.auth_header(token.clone());
+        }
+        if !def.headers.is_empty() {
+            let mut headers = HashMap::new();
+            for (key, val) in &def.headers {
+                let name: http::header::HeaderName = key.parse()
+                    .with_context(|| format!("invalid header name: {key}"))?;
+                let value: http::header::HeaderValue = val.parse()
+                    .with_context(|| format!("invalid header value for {key}"))?;
+                headers.insert(name, value);
+            }
+            config = config.custom_headers(headers);
+        }
+        let transport = StreamableHttpClientTransport::with_client(
+            self.http_client.clone(),
+            config,
+        );
+        ().serve(transport)
+            .await
+            .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
+    }
+
+    /// Spawn and connect to a stdio MCP server subprocess.
+    async fn connect_stdio(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
+        let command = def.command.as_deref()
+            .ok_or_else(|| anyhow::anyhow!("stdio server '{}' has no command", def.name))?;
+
+        let mut cmd = tokio::process::Command::new(command);
+        cmd.args(&def.args);
+        for (k, v) in &def.env {
+            cmd.env(k, v);
+        }
+
+        let transport = TokioChildProcess::new(cmd)
+            .with_context(|| format!("failed to spawn stdio MCP server '{}'", def.name))?;
+
+        ().serve(transport)
+            .await
+            .with_context(|| format!("failed to initialize stdio MCP server '{}'", def.name))
     }
 
     /// Get the aggregated, namespaced tool catalog.
@@ -361,7 +386,9 @@ mod tests {
             bearer_token: None,
             enabled: true,
             source: "test".to_string(),
-            unsupported_stdio: false,
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
         }
     }
 
@@ -384,12 +411,12 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_stdio_server_stored() {
+    fn stdio_server_stored() {
         let mut def = test_server_def();
-        def.unsupported_stdio = true;
+        def.command = Some("/usr/bin/my-mcp-server".to_string());
         let mgr = McpServerManager::new(vec![def], reqwest::Client::new());
         assert_eq!(mgr.definitions().len(), 1);
-        assert!(mgr.definitions()[0].unsupported_stdio);
+        assert!(mgr.definitions()[0].is_stdio());
     }
 
     #[test]
@@ -455,7 +482,9 @@ mod tests {
             bearer_token: None,
             enabled: true,
             source: "test".to_string(),
-            unsupported_stdio: false,
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
         };
         let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
         // Call connect_and_initialize directly -- errors surface immediately
@@ -491,7 +520,7 @@ mod tests {
         let servers = build_server_list(&user_mcp, &corp_mcp);
         let http_servers: Vec<_> = servers
             .iter()
-            .filter(|s| s.enabled && !s.unsupported_stdio)
+            .filter(|s| s.enabled && !s.is_stdio())
             .collect();
 
         if http_servers.is_empty() {

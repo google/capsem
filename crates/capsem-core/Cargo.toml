@@ -42,7 +42,7 @@ flate2 = "1"
 regex = { workspace = true }
 scraper = "0.25"
 
-rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process", "reqwest"] }
 ego-tree = "0.10"
 notify = "7"
 walkdir = "2"
