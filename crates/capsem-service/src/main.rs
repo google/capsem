@@ -825,8 +825,8 @@ fn list_dir_recursive(
 
     for item in items {
         let name = item.file_name().to_string_lossy().into_owned();
-        // Skip hidden files and the system directory
-        if name.starts_with('.') || name == "system" {
+        // Skip the system directory (rootfs overlay, not user content)
+        if name == "system" {
             continue;
         }
         let rel_path = if rel_prefix.is_empty() {
@@ -4227,7 +4227,7 @@ mod tests {
     }
 
     #[test]
-    fn list_dir_skips_hidden_and_system() {
+    fn list_dir_skips_system_but_shows_hidden() {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path();
         std::fs::create_dir_all(ws.join(".hidden")).unwrap();
@@ -4236,8 +4236,11 @@ mod tests {
 
         let magika = test_magika();
         let entries = list_dir_recursive(ws, "", 1, 1, &magika);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "visible.txt");
+        // .hidden + visible.txt shown; system/ filtered out
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|e| e.name == ".hidden"));
+        assert!(entries.iter().any(|e| e.name == "visible.txt"));
+        assert!(!entries.iter().any(|e| e.name == "system"));
     }
 
     #[test]
