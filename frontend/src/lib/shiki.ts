@@ -24,7 +24,11 @@ const ALL_SHIKI_THEME_IDS = [...new Set(
   Object.values(SHIKI_THEMES).flatMap(t => [t.dark, t.light])
 )];
 
-const LANGS = ['rust', 'toml', 'markdown', 'json', 'typescript', 'javascript', 'python', 'bash', 'yaml'] as const;
+const LANGS = [
+  'rust', 'toml', 'markdown', 'json', 'typescript', 'javascript', 'python', 'bash', 'yaml',
+  'html', 'css', 'sql', 'go', 'c', 'cpp', 'java', 'xml', 'dockerfile', 'makefile', 'ini', 'csv',
+  'svelte', 'tsx', 'jsx', 'graphql', 'ruby', 'php', 'swift', 'kotlin', 'lua', 'r',
+] as const;
 
 let instance: Highlighter | null = null;
 let initPromise: Promise<Highlighter> | null = null;
@@ -49,14 +53,38 @@ export function resolveShikiTheme(terminalTheme: string, mode: 'light' | 'dark')
   return mode === 'dark' ? entry.dark : entry.light;
 }
 
-/** Detect language from file extension or filetype hint. */
-export function detectShikiLang(filetypeOrPath: string): string {
-  const ext = filetypeOrPath.includes('.') ? filetypeOrPath.split('.').pop()?.toLowerCase() ?? '' : filetypeOrPath;
+/** Detect language from file extension, filetype hint, or content sniffing. */
+export function detectShikiLang(filetypeOrPath: string, content?: string): string {
+  const ext = filetypeOrPath.includes('.') ? filetypeOrPath.split('.').pop()?.toLowerCase() ?? '' : filetypeOrPath.toLowerCase();
   const map: Record<string, string> = {
-    rs: 'rust', toml: 'toml', md: 'markdown', json: 'json',
-    ts: 'typescript', js: 'javascript', py: 'python',
-    sh: 'bash', bash: 'bash', yaml: 'yaml', yml: 'yaml',
-    conf: 'bash', // close enough for config files
+    rs: 'rust', toml: 'toml', md: 'markdown', json: 'json', jsonc: 'json',
+    ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx',
+    py: 'python', sh: 'bash', bash: 'bash', zsh: 'bash',
+    yaml: 'yaml', yml: 'yaml', xml: 'xml', svg: 'xml',
+    html: 'html', htm: 'html', css: 'css', scss: 'css',
+    sql: 'sql', go: 'go', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp',
+    java: 'java', kt: 'kotlin', swift: 'swift', rb: 'ruby', php: 'php',
+    lua: 'lua', r: 'r', R: 'r', csv: 'csv',
+    dockerfile: 'dockerfile', makefile: 'makefile',
+    ini: 'ini', cfg: 'ini', env: 'ini',
+    graphql: 'graphql', gql: 'graphql',
+    svelte: 'svelte',
+    conf: 'bash',
+    // Magika labels (no dot, passed as-is)
+    rust: 'rust', python: 'python', javascript: 'javascript', typescript: 'typescript',
+    markdown: 'markdown',
   };
-  return map[ext] ?? 'text';
+  const result = map[ext];
+  if (result) return result;
+
+  // Content sniffing fallback
+  if (content) {
+    const trimmed = content.trimStart();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json';
+    if (trimmed.startsWith('<?xml') || trimmed.startsWith('<!DOCTYPE')) return 'xml';
+    if (trimmed.startsWith('<')) return 'html';
+    if (trimmed.startsWith('#!')) return 'bash';
+  }
+
+  return 'text';
 }

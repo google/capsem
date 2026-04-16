@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import type { Highlighter } from 'shiki';
   import type { FileEntry } from '../../types';
   import { themeStore } from '../../stores/theme.svelte.ts';
@@ -17,20 +17,36 @@
   let highlighter: Highlighter | null = $state(null);
   let highlightedHtml = $state('');
   let copied = $state(false);
+  let blobUrl = $state<string | null>(null);
 
   onMount(async () => {
     highlighter = await getShikiHighlighter();
   });
 
+  // Manage blob URL lifecycle
   $effect(() => {
-    if (!content || !highlighter || !entry) {
+    // Revoke previous URL
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl);
+      blobUrl = null;
+    }
+    if (blob && (isImage || isSvg)) {
+      blobUrl = URL.createObjectURL(blob);
+    }
+  });
+
+  onDestroy(() => {
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+  });
+
+  $effect(() => {
+    if (!content || !highlighter || !entry || isImage || isSvg) {
       highlightedHtml = '';
       return;
     }
-    // Use Magika label for better language detection when available
     const langHint = entry.label ?? entry.name;
     highlightedHtml = highlighter.codeToHtml(content, {
-      lang: detectShikiLang(langHint),
+      lang: detectShikiLang(langHint, content),
       theme: resolveShikiTheme(themeStore.terminalTheme, themeStore.mode),
     });
   });
@@ -44,7 +60,21 @@
     }));
   });
 
-  let isBinary = $derived(entry != null && entry.type === 'file' && entry.is_text === false);
+  let isImage = $derived(
+    entry != null && entry.type === 'file' &&
+    entry.mime != null && entry.mime.startsWith('image/') &&
+    entry.is_text !== true && entry.label !== 'svg'
+  );
+
+  let isSvg = $derived(
+    entry != null && entry.type === 'file' &&
+    (entry.label === 'svg' || entry.mime === 'image/svg+xml')
+  );
+
+  let isBinary = $derived(
+    entry != null && entry.type === 'file' &&
+    entry.is_text === false && !isImage && !isSvg
+  );
 
   async function copyToClipboard() {
     if (!content) return;
@@ -68,10 +98,6 @@
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
-
-  function downloadBinary() {
-    downloadFile();
-  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -89,7 +115,7 @@
           <span class="text-xs text-muted-foreground mr-1">{formatBytes(entry.size)}</span>
         {/if}
         {#if entry.type === 'file'}
-          {#if !isBinary && content}
+          {#if !isBinary && !isImage && content}
             <button
               type="button"
               class="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted-hover transition-colors"
@@ -118,14 +144,22 @@
     </div>
 
     <div class="flex-1 overflow-auto shiki-wrapper">
-      {#if isBinary}
+      {#if (isImage || isSvg) && blobUrl}
+        <div class="flex items-center justify-center h-full p-6 bg-background">
+          <img
+            src={blobUrl}
+            alt={entry.name}
+            class="max-w-full max-h-full object-contain rounded-md"
+          />
+        </div>
+      {:else if isBinary}
         <div class="flex flex-col items-center justify-center h-full gap-y-3">
           <p class="text-muted-foreground">Binary file ({formatBytes(entry.size)})</p>
           {#if blob}
             <button
               type="button"
               class="inline-flex items-center gap-x-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors"
-              onclick={downloadBinary}
+              onclick={downloadFile}
             >
               <DownloadSimple size={16} />
               Download

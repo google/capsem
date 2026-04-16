@@ -54,7 +54,6 @@ struct Args {
     #[arg(long)] process_binary: Option<PathBuf>,
     #[arg(long)] gateway_binary: Option<PathBuf>,
     #[arg(long)] gateway_port: Option<u16>,
-    #[arg(long)] frontend_dir: Option<PathBuf>,
     #[arg(long)] tray_binary: Option<PathBuf>,
     #[arg(long)] assets_dir: Option<PathBuf>,
 }
@@ -869,13 +868,8 @@ fn list_dir_recursive(
                 children,
             });
         } else if meta.is_file() {
-            // Magika detection only at depth 1 (top-level files)
-            let (mime, label, is_text) = if current_depth <= 1 {
-                let (lbl, mime_str, _group, text) = identify_file_sync(magika, &base.join(&name));
-                (Some(mime_str), Some(lbl), Some(text))
-            } else {
-                (None, None, None)
-            };
+            let (lbl, mime_str, _group, text) = identify_file_sync(magika, &base.join(&name));
+            let (mime, label, is_text) = (Some(mime_str), Some(lbl), Some(text));
             entries.push(FileListEntry {
                 name,
                 path: rel_path,
@@ -898,10 +892,9 @@ async fn handle_list_files(
     Query(params): Query<FileListQuery>,
 ) -> Result<Json<FileListResponse>, AppError> {
     let depth = params.depth.min(6);
-    let rel_path = if let Some(ref p) = params.path {
-        sanitize_file_path(p)?
-    } else {
-        String::new()
+    let rel_path = match params.path.as_deref() {
+        Some(p) if !p.is_empty() => sanitize_file_path(p)?,
+        _ => String::new(),
     };
 
     let (workspace_root, target) = if rel_path.is_empty() {
@@ -2770,7 +2763,6 @@ async fn main() -> Result<()> {
         &run_dir,
         args.gateway_binary,
         args.gateway_port,
-        args.frontend_dir.or_else(find_frontend_dir),
         args.tray_binary,
     )
     .await;
@@ -2809,29 +2801,6 @@ async fn shutdown_signal() {
     }
 }
 
-fn find_frontend_dir() -> Option<PathBuf> {
-    // 1. Try project root development path
-    if let Ok(cwd) = std::env::current_dir() {
-        let dev_path = cwd.join("frontend/dist");
-        if dev_path.exists() {
-            return Some(dev_path);
-        }
-    }
-    // 2. Try sibling path (production install layout)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            // Check for frontend/ next to the bin/ dir
-            if let Some(grandparent) = parent.parent() {
-                let install_path = grandparent.join("assets/frontend");
-                if install_path.exists() {
-                    return Some(install_path);
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Find a sibling binary next to the current executable, falling back to
 /// target/debug/ for development builds.
 fn find_sibling_binary(name: &str) -> PathBuf {
@@ -2866,7 +2835,6 @@ async fn spawn_companions(
     run_dir: &std::path::Path,
     gateway_bin: Option<PathBuf>,
     gateway_port: Option<u16>,
-    frontend_dir: Option<PathBuf>,
     tray_bin: Option<PathBuf>,
 ) -> Vec<tokio::process::Child> {
     let mut children = Vec::new();
@@ -2887,10 +2855,6 @@ async fn spawn_companions(
     if let Some(port) = gateway_port {
         gw_cmd.arg("--port").arg(port.to_string());
     }
-    if let Some(ref dir) = frontend_dir {
-        gw_cmd.arg("--frontend-dir").arg(dir);
-    }
-    
     match gw_cmd
         .stdout(gw_out)
         .stderr(gw_err)
