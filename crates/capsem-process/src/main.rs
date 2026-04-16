@@ -1,6 +1,7 @@
 mod helpers;
 mod ipc;
 mod job_store;
+mod pty_log;
 mod terminal;
 mod vsock;
 
@@ -15,7 +16,7 @@ use capsem_core::{
 use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 
 use helpers::query_max_fs_event_id;
@@ -28,6 +29,10 @@ struct Args {
     #[arg(long)] id: String,
     #[arg(long)] assets_dir: PathBuf,
     #[arg(long)] rootfs: PathBuf,
+    /// Explicit kernel path (overrides assets_dir/vmlinuz)
+    #[arg(long)] kernel: Option<PathBuf>,
+    /// Explicit initrd path (overrides assets_dir/initrd.img)
+    #[arg(long)] initrd: Option<PathBuf>,
     #[arg(long)] session_dir: PathBuf,
     #[arg(long, default_value_t = 2)] cpus: u32,
     #[arg(long, default_value_t = 2048)] ram_mb: u64,
@@ -57,6 +62,8 @@ fn main() -> Result<()> {
 
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {
         assets: &args.assets_dir,
+        kernel_override: args.kernel.as_deref(),
+        initrd_override: args.initrd.as_deref(),
         rootfs_override: Some(&args.rootfs),
         cmdline: "console=hvc0 ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1",
         scratch_disk_path: None,
@@ -149,9 +156,19 @@ async fn run_async_main_loop(
         Arc::clone(&db),
         merged.network.clone(),
     )?);
-    let mcp_servers = capsem_core::mcp::build_server_list(
+    // Locate the builtin MCP server binary next to our own binary.
+    let builtin_bin = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
+    let mut builtin_env = std::collections::HashMap::new();
+    builtin_env.insert("CAPSEM_SESSION_DIR".into(), args.session_dir.to_string_lossy().to_string());
+    let db_path = args.session_dir.join("session.db");
+    builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
+    let mcp_servers = capsem_core::mcp::build_server_list_with_builtin(
         &user_sf.mcp.clone().unwrap_or_default(),
         &corp_sf.mcp.clone().unwrap_or_default(),
+        builtin_bin.as_deref(),
+        builtin_env,
     );
     let snap_auto_max = snap_settings.iter()
         .find(|s| s.id == "vm.snapshots.auto_max")
@@ -200,14 +217,42 @@ async fn run_async_main_loop(
     // Spawn the isolated MCP aggregator subprocess.
     let aggregator_client = spawn_mcp_aggregator(&mcp_servers).await?;
 
+    // Persist the aggregator's discovered tool catalog to the cache file
+    // so the service's GET /mcp/tools endpoint can serve it.
+    if let Ok(tools) = aggregator_client.list_tools().await {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_default();
+        // Merge with existing cache to preserve approval state.
+        let existing = capsem_core::mcp::load_tool_cache();
+        let cache_entries: Vec<capsem_core::mcp::ToolCacheEntry> = tools.iter().map(|t| {
+            let pin_hash = capsem_core::mcp::compute_tool_hash(t);
+            let prev = existing.iter().find(|e| e.namespaced_name == t.namespaced_name);
+            capsem_core::mcp::ToolCacheEntry {
+                namespaced_name: t.namespaced_name.clone(),
+                original_name: t.original_name.clone(),
+                description: t.description.clone(),
+                server_name: t.server_name.clone(),
+                annotations: t.annotations.clone(),
+                pin_hash: pin_hash.clone(),
+                first_seen: prev.map(|p| p.first_seen.clone()).unwrap_or_else(|| now.clone()),
+                last_seen: now.clone(),
+                approved: prev.map(|p| p.approved && p.pin_hash == pin_hash).unwrap_or(false),
+            }
+        }).collect();
+        if let Err(e) = capsem_core::mcp::save_tool_cache(&cache_entries) {
+            warn!(error = %e, "failed to write tool cache");
+        } else {
+            info!(tools = cache_entries.len(), "wrote tool cache");
+        }
+    }
+
     let mcp_config = Arc::new(capsem_core::mcp::gateway::McpGatewayConfig {
         aggregator: aggregator_client,
         db: Arc::clone(&db),
         policy: tokio::sync::RwLock::new(Arc::new(merged.mcp)),
         domain_policy: std::sync::RwLock::new(Arc::new(merged.domain)),
-        http_client: reqwest::Client::new(),
-        auto_snapshots: Some(Arc::clone(&scheduler)),
-        workspace_dir: Some(args.session_dir.join("workspace")),
     });
 
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
@@ -302,6 +347,14 @@ async fn run_async_main_loop(
     let vm_for_vsock = Arc::clone(&vm);
     let vm_ready_vsock = Arc::clone(&vm_ready);
     let uds_path_vsock = uds_path.clone();
+    let db_for_vsock = Arc::clone(&db);
+    let pty_log = match pty_log::PtyLog::open(&session_dir.join("pty.log")) {
+        Ok(pl) => Some(Arc::new(pl)),
+        Err(e) => {
+            warn!("failed to open pty.log: {e}");
+            None
+        }
+    };
     tokio::spawn(async move {
         if let Err(e) = vsock::setup_vsock(VsockOptions {
             vm_id: args.id.clone(),
@@ -321,6 +374,8 @@ async fn run_async_main_loop(
             is_restore,
             vm_ready: vm_ready_vsock,
             uds_path: uds_path_vsock,
+            db: db_for_vsock,
+            pty_log,
         }).await {
             error!("vsock failed: {e:#}");
         }
@@ -396,7 +451,9 @@ async fn run_async_main_loop(
 /// Spawn the isolated MCP aggregator subprocess and return a client handle.
 ///
 /// The subprocess manages connections to external MCP servers. It communicates
-/// via NDJSON on stdin/stdout. Server definitions are sent as the first line.
+/// via length-prefixed MessagePack frames on stdin/stdout.
+///
+/// Frame format: [4 bytes big-endian payload length] [N bytes msgpack]
 ///
 /// If the aggregator binary is not found (dev builds), falls back to an in-process
 /// mock that returns empty results.
@@ -405,7 +462,6 @@ async fn spawn_mcp_aggregator(
 ) -> Result<capsem_core::mcp::aggregator::AggregatorClient> {
     use std::collections::HashMap;
     use capsem_core::mcp::aggregator::*;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let (client, mut rx) = AggregatorClient::channel(64);
 
@@ -452,55 +508,41 @@ async fn spawn_mcp_aggregator(
         .spawn()?;
 
     let mut child_stdin = child.stdin.take().unwrap();
-    let child_stdout = child.stdout.take().unwrap();
+    let mut child_stdout = child.stdout.take().unwrap();
 
-    // Send server definitions as the first line.
-    let defs_json = serde_json::to_string(servers)?;
-    child_stdin.write_all(defs_json.as_bytes()).await?;
-    child_stdin.write_all(b"\n").await?;
-    child_stdin.flush().await?;
+    // Send server definitions as the first frame.
+    let defs_vec = servers.to_vec();
+    write_frame(&mut child_stdin, &defs_vec).await?;
 
     // Background driver: reads from client channel, writes to subprocess stdin,
     // reads responses from subprocess stdout, routes back to callers.
     let pending: Arc<tokio::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<AggregatorResponse>>>> =
         Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
-    // Reader task: reads NDJSON from subprocess stdout and routes to pending callers.
+    // Reader task: reads msgpack frames from subprocess stdout and routes to pending callers.
     let pending_reader = Arc::clone(&pending);
-    let mut reader = BufReader::new(child_stdout);
     tokio::spawn(async move {
-        let mut line = String::new();
         loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => {
+            match read_frame::<_, AggregatorResponse>(&mut child_stdout).await {
+                Ok(Some(resp)) => {
+                    let mut map = pending_reader.lock().await;
+                    if let Some(tx) = map.remove(&resp.id) {
+                        let _ = tx.send(resp);
+                    }
+                }
+                Ok(None) => {
                     info!("aggregator stdout closed");
                     break;
                 }
-                Ok(_) => {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() { continue; }
-                    match serde_json::from_str::<AggregatorResponse>(trimmed) {
-                        Ok(resp) => {
-                            let mut map = pending_reader.lock().await;
-                            if let Some(tx) = map.remove(&resp.id) {
-                                let _ = tx.send(resp);
-                            }
-                        }
-                        Err(e) => {
-                            error!(error = %e, "failed to parse aggregator response");
-                        }
-                    }
-                }
                 Err(e) => {
-                    error!(error = %e, "failed to read from aggregator");
+                    error!(error = %e, "failed to read aggregator response frame");
                     break;
                 }
             }
         }
     });
 
-    // Writer task: reads from client channel, writes to subprocess stdin.
+    // Writer task: reads from client channel, writes msgpack frames to subprocess stdin.
     let pending_writer = Arc::clone(&pending);
     tokio::spawn(async move {
         while let Some((req, resp_tx)) = rx.recv().await {
@@ -508,20 +550,8 @@ async fn spawn_mcp_aggregator(
                 let mut map = pending_writer.lock().await;
                 map.insert(req.id, resp_tx);
             }
-            let mut req_json = match serde_json::to_string(&req) {
-                Ok(j) => j,
-                Err(e) => {
-                    error!(error = %e, "failed to serialize aggregator request");
-                    continue;
-                }
-            };
-            req_json.push('\n');
-            if let Err(e) = child_stdin.write_all(req_json.as_bytes()).await {
-                error!(error = %e, "failed to write to aggregator");
-                break;
-            }
-            if let Err(e) = child_stdin.flush().await {
-                error!(error = %e, "failed to flush aggregator stdin");
+            if let Err(e) = write_frame(&mut child_stdin, &req).await {
+                error!(error = %e, "failed to write aggregator request frame");
                 break;
             }
         }

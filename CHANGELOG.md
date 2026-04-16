@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Version in help and status** -- `capsem --help` and `capsem status` now show the current version.
+- **v2 manifest with orthogonal versioning** -- binary version (`1.0.{timestamp}`) and asset version (`YYYY.MMDD.patch`) are now independent. The v2 manifest has separate `assets` and `binaries` sections with `min_binary`/`min_assets` compatibility ranges, deprecation tracking, and release dates. Assets use hash-based flat filenames for natural dedup.
+- **Kernel/initrd path overrides** -- `capsem-process` accepts `--kernel` and `--initrd` to override the default `assets_dir/vmlinuz` and `assets_dir/initrd.img` paths, enabling hash-based asset resolution.
 
 ### Changed
 - **MCP builtin tools refactored to standalone server** -- HTTP tools (fetch_http, grep_http, http_headers) and snapshot tools (snapshots_changes, snapshots_list, snapshots_revert, etc.) extracted from gateway into `capsem-mcp-builtin`, a stdio MCP server subprocess managed by the aggregator like any external server. Gateway dispatch simplified to route all tool calls uniformly through the aggregator.

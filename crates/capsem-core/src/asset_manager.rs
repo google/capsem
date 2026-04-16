@@ -3,9 +3,20 @@
 //! VM assets (rootfs) are too large to bundle in the DMG. The asset manager
 //! downloads them on first launch and verifies integrity via blake3 hashes.
 //!
-//! Asset storage: `~/.capsem/assets/v{version}/` (versioned subdirectories)
-//! Hash source: manifest.json in app bundle (multi-version rolling manifest),
-//!              with backward compatibility for legacy B3SUMS files.
+//! ## Versioning
+//!
+//! Binary version (`1.0.{timestamp}`) and asset version (`YYYY.MMDD.patch`)
+//! are independent. The v2 manifest tracks both with compatibility ranges
+//! (`min_binary`, `min_assets`).
+//!
+//! ## Storage
+//!
+//! v2 layout: flat `~/.capsem/assets/` with hash-based filenames
+//! (`vmlinuz-{hash16}`, `rootfs-{hash16}.squashfs`). Same hash = same file =
+//! natural dedup across asset versions.
+//!
+//! v1 layout (legacy): `~/.capsem/assets/v{version}/` subdirectories.
+//! Migrated to v2 on first startup.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,6 +76,14 @@ fn validate_filename(filename: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate a blake3 hash string (exactly 64 hex characters).
+fn validate_hash(hash: &str) -> Result<()> {
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("invalid blake3 hash (expected 64 hex chars): {hash}");
+    }
+    Ok(())
+}
+
 impl Manifest {
     /// Parse a manifest from JSON.
     pub fn from_json(content: &str) -> Result<Self> {
@@ -79,14 +98,7 @@ impl Manifest {
             }
             for asset in &entry.assets {
                 validate_filename(&asset.filename)?;
-                if asset.hash.len() != 64 || !asset.hash.chars().all(|c| c.is_ascii_hexdigit()) {
-                    bail!(
-                        "invalid blake3 hash for {}/{}: {}",
-                        version,
-                        asset.filename,
-                        asset.hash
-                    );
-                }
+                validate_hash(&asset.hash)?;
             }
         }
         if manifest.releases.is_empty() {
@@ -185,6 +197,201 @@ impl Manifest {
 }
 
 // ---------------------------------------------------------------------------
+// Manifest v2 types (orthogonal binary + asset versioning)
+// ---------------------------------------------------------------------------
+
+/// A single asset entry in a v2 release (keyed by logical name in the map).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetEntry {
+    pub hash: String,
+    pub size: u64,
+}
+
+/// An asset release in the v2 manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetRelease {
+    pub date: String,
+    #[serde(default)]
+    pub deprecated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecated_date: Option<String>,
+    /// Oldest binary version compatible with these assets.
+    pub min_binary: String,
+    /// Per-arch asset maps: arch -> { logical_name -> AssetEntry }.
+    pub arches: HashMap<String, HashMap<String, AssetEntry>>,
+}
+
+/// A binary release in the v2 manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BinaryRelease {
+    pub date: String,
+    #[serde(default)]
+    pub deprecated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecated_date: Option<String>,
+    /// Oldest asset version this binary can boot.
+    pub min_assets: String,
+}
+
+/// The assets section of a v2 manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetsSection {
+    pub current: String,
+    pub releases: HashMap<String, AssetRelease>,
+}
+
+/// The binaries section of a v2 manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BinariesSection {
+    pub current: String,
+    pub releases: HashMap<String, BinaryRelease>,
+}
+
+/// v2 manifest with orthogonal binary and asset version tracks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManifestV2 {
+    pub format: u32,
+    pub assets: AssetsSection,
+    pub binaries: BinariesSection,
+}
+
+/// Resolved file paths for booting a VM.
+#[derive(Debug, Clone)]
+pub struct ResolvedAssets {
+    pub kernel: PathBuf,
+    pub initrd: PathBuf,
+    pub rootfs: PathBuf,
+    pub asset_version: String,
+}
+
+/// Derive a hash-based filename from a logical asset name and its blake3 hash.
+///
+/// Splits on the first `.` to get stem and extension:
+/// - `"vmlinuz"` + `"2c0bd752..."` -> `"vmlinuz-2c0bd752db929642"`
+/// - `"initrd.img"` + `"e5e910e9..."` -> `"initrd-e5e910e9ab38b873.img"`
+/// - `"rootfs.squashfs"` + `"89eb92b8..."` -> `"rootfs-89eb92b83534d9d0.squashfs"`
+pub fn hash_filename(logical_name: &str, hash: &str) -> String {
+    let prefix = &hash[..16.min(hash.len())];
+    if let Some(dot_pos) = logical_name.find('.') {
+        let stem = &logical_name[..dot_pos];
+        let ext = &logical_name[dot_pos..];
+        format!("{stem}-{prefix}{ext}")
+    } else {
+        format!("{logical_name}-{prefix}")
+    }
+}
+
+impl ManifestV2 {
+    /// Parse a v2 manifest from JSON.
+    pub fn from_json(content: &str) -> Result<Self> {
+        let manifest: ManifestV2 = serde_json::from_str(content)
+            .context("failed to parse v2 manifest JSON")?;
+        if manifest.format != 2 {
+            bail!("expected manifest format 2, got {}", manifest.format);
+        }
+        validate_version(&manifest.assets.current)?;
+        validate_version(&manifest.binaries.current)?;
+        for (version, release) in &manifest.assets.releases {
+            validate_version(version)?;
+            for (_arch, assets) in &release.arches {
+                if assets.is_empty() {
+                    bail!("asset release {version} has empty arch entry");
+                }
+                for (name, entry) in assets {
+                    validate_filename(name)?;
+                    validate_hash(&entry.hash)?;
+                }
+            }
+        }
+        for (version, _release) in &manifest.binaries.releases {
+            validate_version(version)?;
+        }
+        Ok(manifest)
+    }
+
+    /// Resolve asset file paths for a given binary version and architecture.
+    ///
+    /// Finds the best compatible asset release and returns hash-based file paths.
+    pub fn resolve(
+        &self,
+        binary_version: &str,
+        arch: &str,
+        base_dir: &Path,
+    ) -> Result<ResolvedAssets> {
+        // Find the asset version to use: prefer assets.current.
+        // If the binary specifies min_assets, verify compatibility.
+        let asset_version = if let Some(bin_rel) = self.binaries.releases.get(binary_version) {
+            let min = &bin_rel.min_assets;
+            if self.assets.current >= *min {
+                self.assets.current.clone()
+            } else {
+                // Current assets are too old for this binary -- find newest compatible
+                let mut best: Option<&str> = None;
+                for (v, _rel) in &self.assets.releases {
+                    if v.as_str() >= min.as_str() {
+                        if best.is_none() || v.as_str() > best.unwrap() {
+                            best = Some(v.as_str());
+                        }
+                    }
+                }
+                best.map(String::from).unwrap_or_else(|| self.assets.current.clone())
+            }
+        } else {
+            // Binary version not in manifest -- use current assets
+            self.assets.current.clone()
+        };
+
+        let release = self.assets.releases.get(&asset_version)
+            .with_context(|| format!("asset version {} not found in manifest", asset_version))?;
+        let arch_assets = release.arches.get(arch)
+            .with_context(|| format!("arch {} not found in asset release {}", arch, asset_version))?;
+
+        let resolve_one = |name: &str| -> Result<PathBuf> {
+            let entry = arch_assets.get(name)
+                .with_context(|| format!("{} not found in asset release {} / {}", name, asset_version, arch))?;
+            Ok(base_dir.join(hash_filename(name, &entry.hash)))
+        };
+
+        Ok(ResolvedAssets {
+            kernel: resolve_one("vmlinuz")?,
+            initrd: resolve_one("initrd.img")?,
+            rootfs: resolve_one("rootfs.squashfs")?,
+            asset_version,
+        })
+    }
+
+    /// Merge another v2 manifest into this one, preserving existing entries.
+    pub fn merge(&mut self, other: &ManifestV2) {
+        // Merge asset releases
+        for (version, entry) in &other.assets.releases {
+            self.assets.releases
+                .entry(version.clone())
+                .or_insert_with(|| entry.clone());
+        }
+        if other.assets.current > self.assets.current {
+            self.assets.current = other.assets.current.clone();
+        }
+        // Merge binary releases
+        for (version, entry) in &other.binaries.releases {
+            self.binaries.releases
+                .entry(version.clone())
+                .or_insert_with(|| entry.clone());
+        }
+        if other.binaries.current > self.binaries.current {
+            self.binaries.current = other.binaries.current.clone();
+        }
+    }
+}
+
+/// Check if a JSON string is a v2 manifest (has `"format": 2`).
+pub fn is_v2_manifest(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|v| v.get("format")?.as_u64())
+        .map_or(false, |f| f == 2)
+}
+
+// ---------------------------------------------------------------------------
 // Asset status and download types
 // ---------------------------------------------------------------------------
 
@@ -263,14 +470,23 @@ impl AssetManager {
         arch: Option<&str>,
     ) -> Result<Self> {
         validate_version(version)?;
-        let entries = manifest
-            .entries_for(version)
-            .with_context(|| format!("version {version} not found in manifest"))?;
+        
+        // Try requested version, fall back to "latest" if missing.
+        let (target_version, entries) = match manifest.entries_for(version) {
+            Some(e) => (version, e),
+            None => {
+                warn!(version, latest = %manifest.latest, "requested version not in manifest, falling back to latest");
+                let entries = manifest.entries_for(&manifest.latest)
+                    .with_context(|| format!("latest version {} not found in manifest", manifest.latest))?;
+                (manifest.latest.as_str(), entries)
+            }
+        };
+
         if entries.is_empty() {
-            bail!("no assets for version {version}");
+            bail!("no assets for version {target_version}");
         }
-        let assets_dir = assets_base_dir.join(format!("v{version}"));
-        let base_url = release_url(version);
+        let assets_dir = assets_base_dir.join(format!("v{target_version}"));
+        let base_url = release_url(target_version);
         Ok(Self {
             assets_dir,
             base_url,
@@ -563,9 +779,7 @@ pub fn parse_b3sums(content: &str) -> Result<Vec<ManifestEntry>> {
         }
         let hash = parts[0].trim().to_string();
         let filename = parts[1].trim().to_string();
-        if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            bail!("invalid blake3 hash in B3SUMS: {hash}");
-        }
+        validate_hash(&hash)?;
         entries.push(ManifestEntry { hash, filename });
     }
     Ok(entries)
@@ -1351,10 +1565,12 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
     }
 
     #[test]
-    fn from_manifest_missing_version() {
+    fn from_manifest_missing_version_falls_back_to_latest() {
         let dir = tempfile::tempdir().unwrap();
         let manifest = Manifest::from_json(SAMPLE_MANIFEST_JSON).unwrap();
-        assert!(AssetManager::from_manifest(&manifest, "99.99.99", dir.path().to_path_buf(), None).is_err());
+        // Missing version falls back to manifest.latest, not an error.
+        let mgr = AssetManager::from_manifest(&manifest, "99.99.99", dir.path().to_path_buf(), None).unwrap();
+        assert!(mgr.assets_dir().ends_with(format!("v{}", manifest.latest)));
     }
 
     #[test]
@@ -1553,5 +1769,119 @@ b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee  rootfs.squashf
         let dir = tempfile::tempdir().unwrap();
         let migrated = migrate_flat_layout(dir.path(), "0.9.0").unwrap();
         assert!(!migrated);
+    }
+
+    // -----------------------------------------------------------------------
+    // v2 manifest types
+    // -----------------------------------------------------------------------
+
+    const SAMPLE_V2_MANIFEST: &str = r#"{
+        "format": 2,
+        "assets": {
+            "current": "2026.0415.1",
+            "releases": {
+                "2026.0415.1": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_binary": "1.0.0",
+                    "arches": {
+                        "arm64": {
+                            "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
+                            "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
+                            "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
+                        }
+                    }
+                }
+            }
+        },
+        "binaries": {
+            "current": "1.0.1776269479",
+            "releases": {
+                "1.0.1776269479": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_assets": "2026.0415.1"
+                }
+            }
+        }
+    }"#;
+
+    #[test]
+    fn v2_manifest_parse() {
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        assert_eq!(m.format, 2);
+        assert_eq!(m.assets.current, "2026.0415.1");
+        assert_eq!(m.binaries.current, "1.0.1776269479");
+        assert_eq!(m.assets.releases.len(), 1);
+        assert_eq!(m.binaries.releases.len(), 1);
+        let rel = &m.assets.releases["2026.0415.1"];
+        assert!(!rel.deprecated);
+        assert_eq!(rel.min_binary, "1.0.0");
+        let arm64 = &rel.arches["arm64"];
+        assert_eq!(arm64.len(), 3);
+        assert_eq!(arm64["vmlinuz"].size, 7797248);
+    }
+
+    #[test]
+    fn v2_manifest_resolve() {
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
+        assert_eq!(resolved.asset_version, "2026.0415.1");
+        assert!(resolved.kernel.to_str().unwrap().contains("vmlinuz-a65f925ebe0b0cc7"));
+        assert!(resolved.initrd.to_str().unwrap().contains("initrd-cba052ee1e3fc7de.img"));
+        assert!(resolved.rootfs.to_str().unwrap().contains("rootfs-b8199dc4a8306.squashfs")
+            || resolved.rootfs.to_str().unwrap().contains("rootfs-b8199dc4a83069b9.squashfs"));
+    }
+
+    #[test]
+    fn v2_manifest_resolve_unknown_binary_uses_current_assets() {
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = m.resolve("1.0.9999999999", "arm64", dir.path()).unwrap();
+        assert_eq!(resolved.asset_version, "2026.0415.1");
+    }
+
+    #[test]
+    fn hash_filename_cases() {
+        assert_eq!(
+            hash_filename("vmlinuz", "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"),
+            "vmlinuz-a65f925ebe0b0cc7"
+        );
+        assert_eq!(
+            hash_filename("initrd.img", "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456"),
+            "initrd-cba052ee1e3fc7de.img"
+        );
+        assert_eq!(
+            hash_filename("rootfs.squashfs", "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"),
+            "rootfs-b8199dc4a83069b9.squashfs"
+        );
+    }
+
+    #[test]
+    fn is_v2_manifest_detection() {
+        assert!(is_v2_manifest(SAMPLE_V2_MANIFEST));
+        assert!(!is_v2_manifest(SAMPLE_MANIFEST_JSON));
+        assert!(!is_v2_manifest("not json"));
+    }
+
+    #[test]
+    fn v2_manifest_rejects_wrong_format() {
+        let json = SAMPLE_V2_MANIFEST.replace("\"format\": 2", "\"format\": 99");
+        assert!(ManifestV2::from_json(&json).is_err());
+    }
+
+    #[test]
+    fn v2_manifest_merge() {
+        let mut m1 = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let json2 = SAMPLE_V2_MANIFEST
+            .replace("2026.0415.1", "2026.0416.1")
+            .replace("1.0.1776269479", "1.0.1776300000");
+        let m2 = ManifestV2::from_json(&json2).unwrap();
+        m1.merge(&m2);
+        assert_eq!(m1.assets.releases.len(), 2);
+        assert_eq!(m1.binaries.releases.len(), 2);
+        assert_eq!(m1.assets.current, "2026.0416.1");
+        assert_eq!(m1.binaries.current, "1.0.1776300000");
     }
 }

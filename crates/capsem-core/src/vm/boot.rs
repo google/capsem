@@ -61,6 +61,8 @@ pub fn create_net_state_with_policy(
 
 pub struct BootOptions<'a> {
     pub assets: &'a Path,
+    pub kernel_override: Option<&'a Path>,
+    pub initrd_override: Option<&'a Path>,
     pub rootfs_override: Option<&'a Path>,
     pub cmdline: &'a str,
     pub scratch_disk_path: Option<&'a Path>,
@@ -82,6 +84,8 @@ pub fn boot_vm(
 ) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>, HostStateMachine)> {
     let BootOptions {
         assets,
+        kernel_override,
+        initrd_override,
         rootfs_override,
         cmdline,
         scratch_disk_path,
@@ -106,7 +110,9 @@ pub fn boot_vm(
         let _span = debug_span!("config_build").entered();
         info!("[boot-audit] building VmConfig");
 
-        let kernel_path = assets.join("vmlinuz");
+        let kernel_path = kernel_override
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| assets.join("vmlinuz"));
         info!("[boot-audit] kernel: {} (exists={})", kernel_path.display(), kernel_path.exists());
 
         let mut builder = VmConfig::builder()
@@ -124,7 +130,9 @@ pub fn boot_vm(
             builder = builder.expected_kernel_hash(hash);
         }
 
-        let initrd_path = assets.join("initrd.img");
+        let initrd_path = initrd_override
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| assets.join("initrd.img"));
         if initrd_path.exists() {
             info!("[boot-audit] initrd: {} (exists=true)", initrd_path.display());
             builder = builder.initrd_path(initrd_path);
