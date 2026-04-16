@@ -483,9 +483,11 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     else
         TAURI_FLAGS="--config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     fi
-    # Stop existing services before install
-    if [ -f "$HOME/.capsem/bin/capsem" ]; then
-        "$HOME/.capsem/bin/capsem" stop 2>/dev/null || true
+    # Unload LaunchAgent first so macOS doesn't respawn while we install
+    PLIST="$HOME/Library/LaunchAgents/com.capsem.service.plist"
+    if [ -f "$PLIST" ]; then
+        launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || \
+            launchctl unload "$PLIST" 2>/dev/null || true
     fi
     pkill -9 -x capsem-service 2>/dev/null || true
     pkill -9 -x capsem-gateway 2>/dev/null || true
@@ -493,6 +495,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     pkill -9 -x capsem-process 2>/dev/null || true
     sleep 0.5
     rm -f "$HOME/.capsem/run/service.sock"
+    rm -f "$HOME/.capsem/run/gateway.token"
+    rm -f "$HOME/.capsem/run/gateway.port"
     OS=$(uname -s)
     if [ "$OS" = "Darwin" ]; then
         echo "=== Building Capsem.app ==="

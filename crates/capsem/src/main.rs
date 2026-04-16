@@ -654,6 +654,38 @@ async fn main() -> Result<()> {
             if let Some(path) = &status.unit_path {
                 println!("Unit:      {}", path.display());
             }
+            // Check service + gateway connectivity
+            if status.running {
+                let home = crate::paths::capsem_home().unwrap_or_default();
+                let sock = home.join("run/service.sock");
+                let svc_ok = tokio::net::UnixStream::connect(&sock).await.is_ok();
+                println!("Service:   {}", if svc_ok { "ok (socket responds)" } else { "STALE (socket dead)" });
+
+                let token_path = home.join("run/gateway.token");
+                let port_path = home.join("run/gateway.port");
+                match (std::fs::read_to_string(&token_path), std::fs::read_to_string(&port_path)) {
+                    (Ok(token), Ok(port_str)) => {
+                        let token = token.trim();
+                        let port = port_str.trim();
+                        let url = format!("http://127.0.0.1:{}/list", port);
+                        let gw_ok = reqwest::Client::new()
+                            .get(&url)
+                            .header("Authorization", format!("Bearer {}", token))
+                            .timeout(std::time::Duration::from_secs(2))
+                            .send()
+                            .await
+                            .map(|r| r.status().is_success())
+                            .unwrap_or(false);
+                        if gw_ok {
+                            println!("Gateway:   ok (port {}, token valid)", port);
+                        } else {
+                            println!("Gateway:   MISMATCH (port {} or token stale -- restart service)", port);
+                        }
+                    }
+                    _ => println!("Gateway:   no token/port files"),
+                }
+            }
+
             // Show asset info from manifest
             if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
                 let manifest_path = assets_dir.join("manifest.json");
