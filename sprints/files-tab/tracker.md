@@ -115,10 +115,10 @@
 - [ ] Drag-and-drop binary file (PNG) -- uploads, downloads identical
 - [ ] Path traversal blocked (test via browser dev tools)
 - [ ] XSS filename sanitized (test via browser dev tools)
-- [ ] `cargo test -p capsem-service` passes
-- [ ] `cd frontend && pnpm test` passes
-- [ ] `cd frontend && pnpm run check` passes (zero warnings)
-- [ ] Commit: `chore: files tab integration tests and polish`
+- [x] `cargo test -p capsem-service` passes
+- [x] `cd frontend && pnpm test` passes
+- [x] `cd frontend && pnpm run check` passes (zero warnings)
+- [x] Commit: `chore: files tab integration tests and polish`
 
 ## Notes
 
