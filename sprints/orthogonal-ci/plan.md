@@ -125,7 +125,17 @@ Currently stubbed (see `crates/capsem/src/update.rs:159`). Needs:
 - [ ] Document when assets need a new release vs when they don't
 - [ ] Document compatibility with binary versions
 
-### 11. Asset upload format
+### 11. Multi-arch manifest and hash assets
+
+Local dev (`_pack-initrd`) only builds and hashes the host arch. CI must:
+
+- [ ] Build assets for both arm64 and x86_64
+- [ ] `gen_manifest.py` / `generate_checksums()` produces manifest with both arches
+- [ ] `create_hash_assets.py` creates hash-named files for both arches
+- [ ] `just cross-compile` (if it touches assets) regenerates manifest for all arches
+- [ ] Verify `ManifestV2::resolve()` works for both arches from a single manifest
+
+### 12. Asset upload format
 
 CI currently uploads assets with arch-prefixed names (`arm64-rootfs.squashfs`). With hash-based filenames, the upload naming needs to match what `capsem update` downloads:
 
