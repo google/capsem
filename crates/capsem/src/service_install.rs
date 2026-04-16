@@ -32,12 +32,16 @@ pub struct ServiceStatus {
 pub fn generate_plist(
     service_bin: &Path,
     process_bin: &Path,
+    gateway_bin: &Path,
+    tray_bin: &Path,
     assets_dir: &Path,
     home: &str,
 ) -> String {
     let log_dir = xml_escape(&format!("{}/Library/Logs/capsem", home));
     let service_bin = xml_escape(&service_bin.display().to_string());
     let process_bin = xml_escape(&process_bin.display().to_string());
+    let gateway_bin = xml_escape(&gateway_bin.display().to_string());
+    let tray_bin = xml_escape(&tray_bin.display().to_string());
     let assets_dir = xml_escape(&assets_dir.display().to_string());
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -54,6 +58,10 @@ pub fn generate_plist(
         <string>{assets_dir}</string>
         <string>--process-binary</string>
         <string>{process_bin}</string>
+        <string>--gateway-binary</string>
+        <string>{gateway_bin}</string>
+        <string>--tray-binary</string>
+        <string>{tray_bin}</string>
     </array>
     <key>KeepAlive</key>
     <true/>
@@ -76,17 +84,21 @@ pub fn generate_plist(
 pub fn generate_systemd_unit(
     service_bin: &Path,
     process_bin: &Path,
+    gateway_bin: &Path,
+    tray_bin: &Path,
     assets_dir: &Path,
 ) -> String {
     let service_bin = systemd_escape_path(service_bin);
     let process_bin = systemd_escape_path(process_bin);
+    let gateway_bin = systemd_escape_path(gateway_bin);
+    let tray_bin = systemd_escape_path(tray_bin);
     let assets_dir = systemd_escape_path(assets_dir);
     format!(
         r#"[Unit]
 Description=Capsem sandbox service
 
 [Service]
-ExecStart={service_bin} --foreground --assets-dir {assets_dir} --process-binary {process_bin}
+ExecStart={service_bin} --foreground --assets-dir {assets_dir} --process-binary {process_bin} --gateway-binary {gateway_bin} --tray-binary {tray_bin}
 Restart=always
 RestartSec=2
 
@@ -329,6 +341,8 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     let plist_content = generate_plist(
         &capsem_paths.service_bin,
         &capsem_paths.process_bin,
+        &capsem_paths.gateway_bin,
+        &capsem_paths.tray_bin,
         &capsem_paths.assets_dir,
         home,
     );
@@ -410,6 +424,8 @@ async fn install_systemd_unit(capsem_paths: &paths::CapsemPaths, home: &str) -> 
     let unit_content = generate_systemd_unit(
         &capsem_paths.service_bin,
         &capsem_paths.process_bin,
+        &capsem_paths.gateway_bin,
+        &capsem_paths.tray_bin,
         &capsem_paths.assets_dir,
     );
 
@@ -470,11 +486,14 @@ async fn check_running() -> (bool, Option<u32>) {
     };
     let sock = PathBuf::from(&home).join(".capsem/run/service.sock");
     if tokio::net::UnixStream::connect(&sock).await.is_ok() {
-        // Try to get PID from pidfile
-        let pidfile = PathBuf::from(&home).join(".capsem/run/service.pid");
-        let pid = std::fs::read_to_string(&pidfile)
+        // Get actual PID via pgrep (pidfile may be stale)
+        let pid = tokio::process::Command::new("pgrep")
+            .args(["-x", "capsem-service"])
+            .output()
+            .await
             .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok());
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.lines().next().and_then(|l| l.trim().parse::<u32>().ok()));
         return (true, pid);
     }
     (false, None)
@@ -490,6 +509,8 @@ mod tests {
         let plist = generate_plist(
             Path::new("/Users/test/.capsem/bin/capsem-service"),
             Path::new("/Users/test/.capsem/bin/capsem-process"),
+            Path::new("/Users/test/.capsem/bin/capsem-gateway"),
+            Path::new("/Users/test/.capsem/bin/capsem-tray"),
             Path::new("/Users/test/.capsem/assets"),
             "/Users/test",
         );
@@ -508,6 +529,8 @@ mod tests {
         let plist = generate_plist(
             Path::new("/usr/local/bin/capsem-service"),
             Path::new("/usr/local/bin/capsem-process"),
+            Path::new("/usr/local/bin/capsem-gateway"),
+            Path::new("/usr/local/bin/capsem-tray"),
             Path::new("/home/test/.capsem/assets"),
             "/home/test",
         );
@@ -525,6 +548,8 @@ mod tests {
         let plist = generate_plist(
             Path::new("/bin/capsem-service"),
             Path::new("/bin/capsem-process"),
+            Path::new("/bin/capsem-gateway"),
+            Path::new("/bin/capsem-tray"),
             Path::new("/assets"),
             "/home",
         );
@@ -538,6 +563,8 @@ mod tests {
         let unit = generate_systemd_unit(
             Path::new("/home/test/.capsem/bin/capsem-service"),
             Path::new("/home/test/.capsem/bin/capsem-process"),
+            Path::new("/home/test/.capsem/bin/capsem-gateway"),
+            Path::new("/home/test/.capsem/bin/capsem-tray"),
             Path::new("/home/test/.capsem/assets"),
         );
         // ExecStart line should have absolute path
@@ -558,6 +585,8 @@ mod tests {
         let unit = generate_systemd_unit(
             Path::new("/bin/svc"),
             Path::new("/bin/proc"),
+            Path::new("/bin/gw"),
+            Path::new("/bin/tray"),
             Path::new("/assets"),
         );
         assert!(unit.contains("Restart=always"));
@@ -569,6 +598,8 @@ mod tests {
         let unit = generate_systemd_unit(
             Path::new("/bin/svc"),
             Path::new("/bin/proc"),
+            Path::new("/bin/gw"),
+            Path::new("/bin/tray"),
             Path::new("/assets"),
         );
         assert!(unit.contains("[Install]"));
@@ -597,6 +628,8 @@ mod tests {
         let plist = generate_plist(
             Path::new("/Users/AT&T Corp/.capsem/bin/capsem-service"),
             Path::new("/Users/AT&T Corp/.capsem/bin/capsem-process"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-gateway"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-tray"),
             Path::new("/Users/AT&T Corp/.capsem/assets"),
             "/Users/AT&T Corp",
         );

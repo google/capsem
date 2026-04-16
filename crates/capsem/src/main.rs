@@ -664,8 +664,7 @@ async fn main() -> Result<()> {
                 let svc_version = async {
                     let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
                     let (reader, mut writer) = tokio::io::split(stream);
-                    writer.write_all(b"GET /version HTTP/1.0\r\nHost: localhost\r\n\r\n").await.ok()?;
-                    writer.shutdown().await.ok()?;
+                    writer.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.ok()?;
                     let mut buf = Vec::new();
                     tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf).await.ok()?;
                     let body = String::from_utf8_lossy(&buf);
