@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Files API: path sanitization and Magika init** -- allowlist-based `sanitize_file_path` (strips XSS, null bytes, unicode, rejects `..` traversal), `resolve_workspace_path` (canonicalize + starts_with check), and shared `Mutex<magika::Session>` in `ServiceState` for AI-powered file type detection.
 - **Orthogonal asset versioning** -- binary version (`1.0.{timestamp}`) and asset version (`YYYY.MMDD.patch`) are fully independent. The v2 manifest has separate `assets` and `binaries` sections with `min_binary`/`min_assets` compatibility ranges, deprecation tracking, and release dates. Assets use hash-based filenames (`rootfs-{hash16}.squashfs`) via hardlinks for zero-cost dedup.
 - **`capsem status` shows full system health** -- version, service/gateway connectivity and version sync (catches stale processes), asset version with per-file ok/MISSING status.
 - **Service `/version` endpoint** -- returns the running service binary version for staleness detection.

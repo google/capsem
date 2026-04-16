@@ -176,6 +176,9 @@ struct ServiceState {
     /// v2 manifest (None in dev mode where assets use logical names)
     manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
     current_version: String,
+    /// Magika file-type detection session (thread-safe, shared)
+    #[allow(dead_code)]
+    magika: Mutex<magika::Session>,
 }
 
 struct InstanceInfo {
@@ -665,6 +668,124 @@ impl IntoResponse for AppError {
             }),
         )
             .into_response()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Files API -- path security + Magika helpers
+// ---------------------------------------------------------------------------
+
+/// Allowlist-based path sanitization for the files API.
+/// Strips any character NOT in `[a-zA-Z0-9._\-/]`, collapses consecutive
+/// slashes, strips leading `/`, and rejects `..` or empty results.
+#[allow(dead_code)]
+fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-' || *c == '/')
+        .collect();
+    // Collapse consecutive slashes
+    let mut collapsed = String::with_capacity(cleaned.len());
+    let mut prev_slash = false;
+    for ch in cleaned.chars() {
+        if ch == '/' {
+            if !prev_slash {
+                collapsed.push(ch);
+            }
+            prev_slash = true;
+        } else {
+            collapsed.push(ch);
+            prev_slash = false;
+        }
+    }
+    // Strip leading slashes
+    let trimmed = collapsed.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return Err(AppError(StatusCode::BAD_REQUEST, "empty path after sanitization".into()));
+    }
+    if trimmed.contains("..") {
+        return Err(AppError(StatusCode::BAD_REQUEST, "path traversal rejected".into()));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Resolve a sanitized relative path to an absolute workspace path on the host.
+/// Returns (workspace_root, resolved_path). Verifies the resolved path is
+/// inside the workspace via canonicalize + starts_with.
+#[allow(dead_code)]
+fn resolve_workspace_path(
+    state: &ServiceState,
+    id: &str,
+    sanitized: &str,
+) -> Result<(PathBuf, PathBuf), AppError> {
+    let session_dir = {
+        let instances = state.instances.lock().unwrap();
+        if let Some(info) = instances.get(id) {
+            info.session_dir.clone()
+        } else {
+            drop(instances);
+            // Check persistent registry for stopped VMs
+            let reg = state.persistent_registry.lock().unwrap();
+            reg.data.vms.get(id)
+                .or_else(|| reg.data.vms.values().find(|e| e.name == id))
+                .map(|e| e.session_dir.clone())
+                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+        }
+    };
+    let workspace_root = capsem_core::guest_share_dir(&session_dir).join("workspace");
+    let target = workspace_root.join(sanitized);
+
+    // Canonicalize requires the path to exist for files; for listing we may
+    // also target the workspace root itself. Use the parent if target doesn't exist.
+    let canonical = if target.exists() {
+        target.canonicalize()
+    } else {
+        // For upload: parent must exist and be inside workspace
+        if let Some(parent) = target.parent() {
+            if parent.exists() {
+                let canon_parent = parent.canonicalize()
+                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
+                let ws_canon = workspace_root.canonicalize()
+                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize workspace: {e}")))?;
+                if !canon_parent.starts_with(&ws_canon) {
+                    return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
+                }
+                return Ok((workspace_root, target));
+            }
+        }
+        return Ok((workspace_root, target));
+    }.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
+
+    let ws_canon = workspace_root.canonicalize()
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize workspace: {e}")))?;
+    if !canonical.starts_with(&ws_canon) {
+        return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
+    }
+    Ok((workspace_root, canonical))
+}
+
+/// Extract file-type info from Magika `FileType`.
+#[allow(dead_code)]
+fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bool) {
+    let info = ft.info();
+    (
+        info.label.to_string(),
+        info.mime_type.to_string(),
+        info.group.to_string(),
+        info.is_text,
+    )
+}
+
+/// Identify a file using Magika. Runs in spawn_blocking since Session is &mut self.
+#[allow(dead_code)]
+fn identify_file_sync(
+    magika: &Mutex<magika::Session>,
+    path: &std::path::Path,
+) -> (String, String, String, bool) {
+    let mut session = magika.lock().unwrap();
+    match session.identify_file_sync(path) {
+        Ok(ft) => extract_magika_info(&ft),
+        Err(_) => ("unknown".into(), "application/octet-stream".into(), "unknown".into(), false),
     }
 }
 
@@ -2292,6 +2413,12 @@ async fn main() -> Result<()> {
     let persistent_registry = PersistentRegistry::load(registry_path);
     info!(persistent_vms = persistent_registry.data.vms.len(), "loaded persistent VM registry");
 
+    let magika_session = magika::Session::builder()
+        .with_inter_threads(1)
+        .with_intra_threads(1)
+        .build()
+        .expect("failed to init magika file-type detection");
+
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
@@ -2301,6 +2428,7 @@ async fn main() -> Result<()> {
         job_counter: AtomicU64::new(1),
         manifest,
         current_version,
+        magika: Mutex::new(magika_session),
     });
 
     // Check for running instances to reattach
@@ -2574,6 +2702,16 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
 
+    fn test_magika() -> Mutex<magika::Session> {
+        Mutex::new(
+            magika::Session::builder()
+                .with_inter_threads(1)
+                .with_intra_threads(1)
+                .build()
+                .expect("magika init"),
+        )
+    }
+
     fn make_test_state() -> Arc<ServiceState> {
         let registry_path = PathBuf::from("/tmp/capsem-test-svc/persistent_registry.json");
         Arc::new(ServiceState {
@@ -2585,6 +2723,7 @@ mod tests {
             job_counter: AtomicU64::new(1),
             manifest: None,
             current_version: "0.0.0".into(),
+            magika: test_magika(),
         })
     }
 
@@ -3103,6 +3242,7 @@ mod tests {
             job_counter: AtomicU64::new(1),
             manifest: None,
             current_version: "0.0.0".into(),
+            magika: test_magika(),
         });
         (state, dir)
     }
@@ -3679,7 +3819,150 @@ mod tests {
             job_counter: AtomicU64::new(1),
             manifest: None,
             current_version: "0.0.0".into(),
+            magika: test_magika(),
         });
         (state, dir)
+    }
+
+    // -----------------------------------------------------------------------
+    // sanitize_file_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sanitize_strips_script_tags() {
+        let r = sanitize_file_path("<script>alert(1)</script>.txt").unwrap();
+        assert_eq!(r, "scriptalert1/script.txt");
+    }
+
+    #[test]
+    fn sanitize_strips_null_bytes() {
+        let r = sanitize_file_path("foo\0bar.txt").unwrap();
+        assert_eq!(r, "foobar.txt");
+    }
+
+    #[test]
+    fn sanitize_strips_unicode() {
+        let r = sanitize_file_path("foo\u{200B}bar.txt").unwrap();
+        assert_eq!(r, "foobar.txt");
+    }
+
+    #[test]
+    fn sanitize_rejects_dot_dot() {
+        let r = sanitize_file_path("../etc/passwd");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn sanitize_rejects_embedded_dot_dot() {
+        let r = sanitize_file_path("foo/../../etc/passwd");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn sanitize_collapses_slashes() {
+        let r = sanitize_file_path("foo///bar.txt").unwrap();
+        assert_eq!(r, "foo/bar.txt");
+    }
+
+    #[test]
+    fn sanitize_strips_leading_slash() {
+        let r = sanitize_file_path("/src/main.rs").unwrap();
+        assert_eq!(r, "src/main.rs");
+    }
+
+    #[test]
+    fn sanitize_rejects_empty() {
+        let r = sanitize_file_path("");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn sanitize_preserves_valid_path() {
+        let r = sanitize_file_path("src/main.rs").unwrap();
+        assert_eq!(r, "src/main.rs");
+    }
+
+    #[test]
+    fn sanitize_preserves_hyphens_underscores_dots() {
+        let r = sanitize_file_path("my-file_v2.0.tar.gz").unwrap();
+        assert_eq!(r, "my-file_v2.0.tar.gz");
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_workspace_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_rejects_unknown_vm() {
+        let state = make_test_state();
+        let r = resolve_workspace_path(&state, "nonexistent", "src/main.rs");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn resolve_rejects_symlink_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("session");
+        let workspace = session_dir.join("guest/workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        // Create a symlink that points outside workspace
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, workspace.join("escape")).unwrap();
+
+        let (state, _dir2) = make_test_state_with_tempdir();
+        state.instances.lock().unwrap().insert(
+            "test-vm".into(),
+            InstanceInfo {
+                id: "test-vm".into(),
+                pid: 1,
+                uds_path: PathBuf::from("/tmp/test.sock"),
+                session_dir,
+                ram_mb: 2048,
+                cpus: 2,
+                start_time: std::time::Instant::now(),
+                base_version: "0.0.0".into(),
+                persistent: false,
+                env: None,
+                forked_from: None,
+            },
+        );
+
+        let r = resolve_workspace_path(&state, "test-vm", "escape/secret.txt");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn resolve_valid_path_inside_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("session");
+        let workspace = session_dir.join("guest/workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("hello.txt"), "world").unwrap();
+
+        let (state, _dir2) = make_test_state_with_tempdir();
+        state.instances.lock().unwrap().insert(
+            "test-vm".into(),
+            InstanceInfo {
+                id: "test-vm".into(),
+                pid: 1,
+                uds_path: PathBuf::from("/tmp/test.sock"),
+                session_dir,
+                ram_mb: 2048,
+                cpus: 2,
+                start_time: std::time::Instant::now(),
+                base_version: "0.0.0".into(),
+                persistent: false,
+                env: None,
+                forked_from: None,
+            },
+        );
+
+        let r = resolve_workspace_path(&state, "test-vm", "hello.txt");
+        assert!(r.is_ok());
+        let (ws_root, resolved) = r.unwrap();
+        assert!(resolved.starts_with(ws_root.canonicalize().unwrap()));
     }
 }
