@@ -177,7 +177,6 @@ struct ServiceState {
     manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
     current_version: String,
     /// Magika file-type detection session (thread-safe, shared)
-    #[allow(dead_code)]
     magika: Mutex<magika::Session>,
 }
 
@@ -678,7 +677,6 @@ impl IntoResponse for AppError {
 /// Allowlist-based path sanitization for the files API.
 /// Strips any character NOT in `[a-zA-Z0-9._\-/]`, collapses consecutive
 /// slashes, strips leading `/`, and rejects `..` or empty results.
-#[allow(dead_code)]
 fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
     let cleaned: String = raw
         .chars()
@@ -712,7 +710,6 @@ fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
 /// Resolve a sanitized relative path to an absolute workspace path on the host.
 /// Returns (workspace_root, resolved_path). Verifies the resolved path is
 /// inside the workspace via canonicalize + starts_with.
-#[allow(dead_code)]
 fn resolve_workspace_path(
     state: &ServiceState,
     id: &str,
@@ -765,7 +762,6 @@ fn resolve_workspace_path(
 }
 
 /// Extract file-type info from Magika `FileType`.
-#[allow(dead_code)]
 fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bool) {
     let info = ft.info();
     (
@@ -777,7 +773,6 @@ fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bool) 
 }
 
 /// Identify a file using Magika. Runs in spawn_blocking since Session is &mut self.
-#[allow(dead_code)]
 fn identify_file_sync(
     magika: &Mutex<magika::Session>,
     path: &std::path::Path,
@@ -787,6 +782,174 @@ fn identify_file_sync(
         Ok(ft) => extract_magika_info(&ft),
         Err(_) => ("unknown".into(), "application/octet-stream".into(), "unknown".into(), false),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Files API Handlers (host-side VirtioFS)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct FileListQuery {
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default = "default_file_depth")]
+    depth: u32,
+}
+
+fn default_file_depth() -> u32 { 1 }
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct FileContentQuery {
+    path: String,
+}
+
+/// Recursively list a directory up to `max_depth`.
+fn list_dir_recursive(
+    base: &std::path::Path,
+    rel_prefix: &str,
+    current_depth: u32,
+    max_depth: u32,
+    magika: &Mutex<magika::Session>,
+) -> Vec<FileListEntry> {
+    let mut entries = Vec::new();
+    let read = match std::fs::read_dir(base) {
+        Ok(r) => r,
+        Err(_) => return entries,
+    };
+
+    let mut items: Vec<_> = read.flatten().collect();
+    items.sort_by(|a, b| {
+        let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        b_is_dir.cmp(&a_is_dir).then_with(|| a.file_name().cmp(&b.file_name()))
+    });
+
+    for item in items {
+        let name = item.file_name().to_string_lossy().into_owned();
+        // Skip hidden files and the system directory
+        if name.starts_with('.') || name == "system" {
+            continue;
+        }
+        let rel_path = if rel_prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{rel_prefix}/{name}")
+        };
+        let meta = match item.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let mtime = meta.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        if meta.is_dir() {
+            let children = if current_depth < max_depth {
+                Some(list_dir_recursive(
+                    &base.join(&name),
+                    &rel_path,
+                    current_depth + 1,
+                    max_depth,
+                    magika,
+                ))
+            } else {
+                None
+            };
+            entries.push(FileListEntry {
+                name,
+                path: rel_path,
+                entry_type: "directory".into(),
+                size: 0,
+                mtime,
+                mime: None,
+                label: None,
+                is_text: None,
+                children,
+            });
+        } else if meta.is_file() {
+            // Magika detection only at depth 1 (top-level files)
+            let (mime, label, is_text) = if current_depth <= 1 {
+                let (lbl, mime_str, _group, text) = identify_file_sync(magika, &base.join(&name));
+                (Some(mime_str), Some(lbl), Some(text))
+            } else {
+                (None, None, None)
+            };
+            entries.push(FileListEntry {
+                name,
+                path: rel_path,
+                entry_type: "file".into(),
+                size: meta.len(),
+                mtime,
+                mime,
+                label,
+                is_text,
+                children: None,
+            });
+        }
+    }
+    entries
+}
+
+async fn handle_list_files(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<FileListQuery>,
+) -> Result<Json<FileListResponse>, AppError> {
+    let depth = params.depth.min(6);
+    let rel_path = if let Some(ref p) = params.path {
+        sanitize_file_path(p)?
+    } else {
+        String::new()
+    };
+
+    let (workspace_root, target) = if rel_path.is_empty() {
+        // List workspace root -- get session_dir directly
+        let session_dir = {
+            let instances = state.instances.lock().unwrap();
+            if let Some(info) = instances.get(&id) {
+                info.session_dir.clone()
+            } else {
+                drop(instances);
+                let reg = state.persistent_registry.lock().unwrap();
+                reg.data.vms.get(&id)
+                    .or_else(|| reg.data.vms.values().find(|e| e.name == id))
+                    .map(|e| e.session_dir.clone())
+                    .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+            }
+        };
+        let ws = capsem_core::guest_share_dir(&session_dir).join("workspace");
+        (ws.clone(), ws)
+    } else {
+        resolve_workspace_path(&state, &id, &rel_path)?
+    };
+
+    if !target.exists() {
+        return Err(AppError(StatusCode::NOT_FOUND, "path not found".into()));
+    }
+
+    // Compute relative prefix for the listing
+    let rel_prefix = target.strip_prefix(&workspace_root)
+        .unwrap_or(std::path::Path::new(""))
+        .to_string_lossy()
+        .into_owned();
+
+    // read_dir + metadata are blocking I/O -- run in spawn_blocking
+    let magika = state.magika.lock().unwrap();
+    // We can't send MutexGuard across threads; re-acquire inside spawn_blocking
+    drop(magika);
+    let magika_ref = {
+        // Clone Arc to move into blocking task
+        let state_clone = Arc::clone(&state);
+        let target = target.clone();
+        tokio::task::spawn_blocking(move || {
+            list_dir_recursive(&target, &rel_prefix, 1, depth, &state_clone.magika)
+        }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?
+    };
+
+    Ok(Json(FileListResponse { entries: magika_ref }))
 }
 
 // ---------------------------------------------------------------------------
@@ -2503,6 +2666,7 @@ async fn main() -> Result<()> {
         .route("/history/{id}/processes", get(handle_history_processes))
         .route("/history/{id}/counts", get(handle_history_counts))
         .route("/history/{id}/transcript", get(handle_history_transcript))
+        .route("/files/{id}", get(handle_list_files))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -3964,5 +4128,81 @@ mod tests {
         assert!(r.is_ok());
         let (ws_root, resolved) = r.unwrap();
         assert!(resolved.starts_with(ws_root.canonicalize().unwrap()));
+    }
+
+    // -----------------------------------------------------------------------
+    // list_dir_recursive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn list_dir_returns_correct_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        std::fs::create_dir_all(ws.join("src")).unwrap();
+        std::fs::write(ws.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(ws.join("README.md"), "# Hello").unwrap();
+
+        let magika = test_magika();
+        let entries = list_dir_recursive(ws, "", 1, 2, &magika);
+
+        // Should have src/ dir and README.md file
+        assert!(entries.len() >= 2);
+        let dir_entry = entries.iter().find(|e| e.name == "src").unwrap();
+        assert_eq!(dir_entry.entry_type, "directory");
+        assert!(dir_entry.children.is_some());
+        let children = dir_entry.children.as_ref().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "main.rs");
+        assert_eq!(children[0].entry_type, "file");
+
+        let file_entry = entries.iter().find(|e| e.name == "README.md").unwrap();
+        assert_eq!(file_entry.entry_type, "file");
+        assert!(file_entry.size > 0);
+    }
+
+    #[test]
+    fn list_dir_respects_depth_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        std::fs::create_dir_all(ws.join("a/b/c")).unwrap();
+        std::fs::write(ws.join("a/b/c/deep.txt"), "deep").unwrap();
+
+        let magika = test_magika();
+        // depth 1: should list "a" but not recurse into "a/b"
+        let entries = list_dir_recursive(ws, "", 1, 1, &magika);
+        let a = entries.iter().find(|e| e.name == "a").unwrap();
+        assert!(a.children.is_none());
+    }
+
+    #[test]
+    fn list_dir_skips_hidden_and_system() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        std::fs::create_dir_all(ws.join(".hidden")).unwrap();
+        std::fs::create_dir_all(ws.join("system")).unwrap();
+        std::fs::write(ws.join("visible.txt"), "yes").unwrap();
+
+        let magika = test_magika();
+        let entries = list_dir_recursive(ws, "", 1, 1, &magika);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "visible.txt");
+    }
+
+    #[test]
+    fn list_dir_sorts_dirs_first_then_alphabetical() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        std::fs::write(ws.join("zebra.txt"), "z").unwrap();
+        std::fs::create_dir_all(ws.join("alpha")).unwrap();
+        std::fs::write(ws.join("apple.txt"), "a").unwrap();
+        std::fs::create_dir_all(ws.join("beta")).unwrap();
+
+        let magika = test_magika();
+        let entries = list_dir_recursive(ws, "", 1, 1, &magika);
+        // Dirs first (alpha, beta), then files (apple.txt, zebra.txt)
+        assert_eq!(entries[0].name, "alpha");
+        assert_eq!(entries[1].name, "beta");
+        assert_eq!(entries[2].name, "apple.txt");
+        assert_eq!(entries[3].name, "zebra.txt");
     }
 }

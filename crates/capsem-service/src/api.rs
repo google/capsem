@@ -198,6 +198,43 @@ pub struct WriteFileRequest {
     pub content: String, // Base64 or plain text? For now let's assume plain text or base64 if we detect it.
 }
 
+// ── Files API types (host-side VirtioFS) ─────────────────────────────
+
+/// A single entry in a file listing.
+#[derive(Serialize, Debug, Clone)]
+pub struct FileListEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    pub size: u64,
+    pub mtime: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_text: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<FileListEntry>>,
+}
+
+/// Response for GET /files/{id}.
+#[derive(Serialize, Debug)]
+pub struct FileListResponse {
+    pub entries: Vec<FileListEntry>,
+}
+
+/// Response for POST /files/{id}/content (upload).
+#[derive(Serialize, Debug)]
+#[allow(dead_code)]
+pub struct UploadResponse {
+    pub success: bool,
+    pub size: u64,
+}
+
+// ── Legacy vsock file I/O types ──────────────────────────────────────
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ReadFileRequest {
     pub path: String,
@@ -331,6 +368,24 @@ fn default_tail_lines() -> usize { 500 }
 pub struct TranscriptResponse {
     pub content: String,
     pub bytes: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Setup / Onboarding types
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, Debug)]
+pub struct ValidateKeyRequest {
+    pub provider: String,
+    pub key: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct CorpConfigRequest {
+    /// URL to fetch corp config from (e.g. https://corp.example.com/capsem.toml)
+    pub source: Option<String>,
+    /// Inline TOML content
+    pub toml: Option<String>,
 }
 
 #[cfg(test)]

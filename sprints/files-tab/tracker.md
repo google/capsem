@@ -17,20 +17,20 @@
 
 ## T2: Backend -- List Directory Endpoint
 
-- [ ] Add `FileListEntry` struct to api.rs (name, path, type, size, mtime, mime, label, is_text)
-- [ ] Add `FileListResponse` struct to api.rs (entries: Vec<FileListEntry>)
-- [ ] Implement `handle_list_files(state, id, query_params)` handler
-- [ ] Recursive `read_dir` + `metadata()` up to max depth (default 1, max 6)
-- [ ] Magika detection on files at depth 1 only (first ~8KB)
-- [ ] Skip hidden files (dot-prefix), filter out `system/` directory
-- [ ] Sort: directories first, then alphabetical
-- [ ] Register route: `.route("/files/{id}", get(handle_list_files))` at ~L2337
-- [ ] Test: list returns correct tree structure
-- [ ] Test: respects depth limit
-- [ ] Test: returns 404 for nonexistent VM
-- [ ] Test: path traversal blocked (400/403)
-- [ ] cargo test -p capsem-service passes
-- [ ] Commit: `feat: GET /files/{id} directory listing endpoint`
+- [x] Add `FileListEntry` struct to api.rs (name, path, type, size, mtime, mime, label, is_text)
+- [x] Add `FileListResponse` struct to api.rs (entries: Vec<FileListEntry>)
+- [x] Implement `handle_list_files(state, id, query_params)` handler
+- [x] Recursive `read_dir` + `metadata()` up to max depth (default 1, max 6)
+- [x] Magika detection on files at depth 1 only (first ~8KB)
+- [x] Skip hidden files (dot-prefix), filter out `system/` directory
+- [x] Sort: directories first, then alphabetical
+- [x] Register route: `.route("/files/{id}", get(handle_list_files))` at ~L2337
+- [x] Test: list returns correct tree structure
+- [x] Test: respects depth limit
+- [x] Test: returns 404 for nonexistent VM
+- [x] Test: path traversal blocked (400/403)
+- [x] cargo test -p capsem-service passes
+- [x] Commit: `feat: GET /files/{id} directory listing endpoint`
 
 ## T3: Backend -- Download + Upload Endpoints
 
