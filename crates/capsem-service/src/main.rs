@@ -799,7 +799,6 @@ struct FileListQuery {
 fn default_file_depth() -> u32 { 1 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct FileContentQuery {
     path: String,
 }
@@ -950,6 +949,94 @@ async fn handle_list_files(
     };
 
     Ok(Json(FileListResponse { entries: magika_ref }))
+}
+
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
+async fn handle_download_file(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<FileContentQuery>,
+) -> Result<axum::response::Response, AppError> {
+    let sanitized = sanitize_file_path(&params.path)?;
+    let (_ws_root, resolved) = resolve_workspace_path(&state, &id, &sanitized)?;
+
+    if !resolved.is_file() {
+        return Err(AppError(StatusCode::NOT_FOUND, "file not found".into()));
+    }
+
+    let meta = std::fs::metadata(&resolved)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("metadata: {e}")))?;
+    if meta.len() > MAX_FILE_SIZE {
+        return Err(AppError(StatusCode::PAYLOAD_TOO_LARGE, format!(
+            "file too large: {} bytes (max {})", meta.len(), MAX_FILE_SIZE
+        )));
+    }
+
+    // Read file and detect type in spawn_blocking
+    let state_clone = Arc::clone(&state);
+    let resolved_clone = resolved.clone();
+    let (data, mime, filename) = tokio::task::spawn_blocking(move || {
+        let data = std::fs::read(&resolved_clone)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
+        let (_, mime_str, _, _) = identify_file_sync(&state_clone.magika, &resolved_clone);
+        let name = resolved_clone.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "download".into());
+        // Sanitize the filename for Content-Disposition
+        let safe_name: String = name.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+            .collect();
+        Ok::<_, AppError>((data, mime_str, safe_name))
+    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+
+    use axum::response::IntoResponse;
+    Ok((
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, mime),
+            (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\"")),
+            (axum::http::header::CONTENT_LENGTH, data.len().to_string()),
+        ],
+        data,
+    ).into_response())
+}
+
+async fn handle_upload_file(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<FileContentQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<UploadResponse>, AppError> {
+    let sanitized = sanitize_file_path(&params.path)?;
+    let (_ws_root, target) = resolve_workspace_path(&state, &id, &sanitized)?;
+
+    let size = body.len() as u64;
+
+    // Write file in spawn_blocking (blocking I/O)
+    tokio::task::spawn_blocking(move || {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir: {e}")))?;
+        }
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o644)
+            .open(&target)
+            .and_then(|f| {
+                use std::io::Write;
+                let mut f = f;
+                f.write_all(&body)?;
+                Ok(())
+            })
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
+        Ok::<_, AppError>(())
+    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+
+    Ok(Json(UploadResponse { success: true, size }))
 }
 
 // ---------------------------------------------------------------------------
@@ -2667,6 +2754,7 @@ async fn main() -> Result<()> {
         .route("/history/{id}/counts", get(handle_history_counts))
         .route("/history/{id}/transcript", get(handle_history_transcript))
         .route("/files/{id}", get(handle_list_files))
+        .route("/files/{id}/content", get(handle_download_file).post(handle_upload_file))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -4204,5 +4292,108 @@ mod tests {
         assert_eq!(entries[1].name, "beta");
         assert_eq!(entries[2].name, "apple.txt");
         assert_eq!(entries[3].name, "zebra.txt");
+    }
+
+    // -----------------------------------------------------------------------
+    // Download / Upload via resolve_workspace_path
+    // -----------------------------------------------------------------------
+
+    fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &str) {
+        let session_dir = dir.join("session");
+        let workspace = session_dir.join("guest/workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        state.instances.lock().unwrap().insert(
+            vm_id.into(),
+            InstanceInfo {
+                id: vm_id.into(),
+                pid: 1,
+                uds_path: PathBuf::from("/tmp/test.sock"),
+                session_dir,
+                ram_mb: 2048,
+                cpus: 2,
+                start_time: std::time::Instant::now(),
+                base_version: "0.0.0".into(),
+                persistent: false,
+                env: None,
+                forked_from: None,
+            },
+        );
+    }
+
+    #[test]
+    fn download_reads_correct_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _dir2) = make_test_state_with_tempdir();
+        setup_vm_with_workspace(&state, dir.path(), "dl-vm");
+
+        let ws = dir.path().join("session/guest/workspace");
+        let content = b"hello world\nline 2\n";
+        std::fs::write(ws.join("test.txt"), content).unwrap();
+
+        let (_, resolved) = resolve_workspace_path(&state, "dl-vm", "test.txt").unwrap();
+        let data = std::fs::read(&resolved).unwrap();
+        assert_eq!(data, content);
+    }
+
+    #[test]
+    fn download_binary_preserves_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _dir2) = make_test_state_with_tempdir();
+        setup_vm_with_workspace(&state, dir.path(), "bin-vm");
+
+        let ws = dir.path().join("session/guest/workspace");
+        let binary: Vec<u8> = (0..256).map(|i| i as u8).collect();
+        std::fs::write(ws.join("data.bin"), &binary).unwrap();
+
+        let (_, resolved) = resolve_workspace_path(&state, "bin-vm", "data.bin").unwrap();
+        let data = std::fs::read(&resolved).unwrap();
+        assert_eq!(data, binary);
+    }
+
+    #[test]
+    fn upload_creates_file_with_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _dir2) = make_test_state_with_tempdir();
+        setup_vm_with_workspace(&state, dir.path(), "up-vm");
+
+        let ws = dir.path().join("session/guest/workspace");
+        let (_, target) = resolve_workspace_path(&state, "up-vm", "new.txt").unwrap();
+        std::fs::write(&target, b"uploaded").unwrap();
+
+        assert_eq!(std::fs::read_to_string(ws.join("new.txt")).unwrap(), "uploaded");
+    }
+
+    #[test]
+    fn upload_creates_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _dir2) = make_test_state_with_tempdir();
+        setup_vm_with_workspace(&state, dir.path(), "mkdir-vm");
+
+        let ws = dir.path().join("session/guest/workspace");
+        // resolve_workspace_path should succeed even for non-existing nested paths
+        let (_, target) = resolve_workspace_path(&state, "mkdir-vm", "deep/nested/file.txt").unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"deep content").unwrap();
+
+        assert_eq!(std::fs::read_to_string(ws.join("deep/nested/file.txt")).unwrap(), "deep content");
+    }
+
+    #[test]
+    fn upload_path_traversal_blocked() {
+        let r = sanitize_file_path("../../etc/passwd");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn download_nonexistent_file_resolve_ok_but_not_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _dir2) = make_test_state_with_tempdir();
+        setup_vm_with_workspace(&state, dir.path(), "404-vm");
+
+        // Resolving a non-existent file path still works (for upload target)
+        let result = resolve_workspace_path(&state, "404-vm", "nonexistent.txt");
+        assert!(result.is_ok());
+        let (_, resolved) = result.unwrap();
+        assert!(!resolved.exists());
     }
 }

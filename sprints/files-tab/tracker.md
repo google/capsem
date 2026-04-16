@@ -34,21 +34,21 @@
 
 ## T3: Backend -- Download + Upload Endpoints
 
-- [ ] Implement `handle_download_file(state, id, query_params)` handler
-- [ ] Return raw bytes with Content-Type from Magika, Content-Disposition with sanitized filename
-- [ ] Reject files >10MB (413)
-- [ ] Implement `handle_upload_file(state, id, query_params, body)` handler
-- [ ] Accept raw bytes, write to workspace path, create_dir_all for parents, mode 0o644
-- [ ] Return JSON `{ success: true, size: N }`
-- [ ] Register routes: `.route("/files/{id}/content", get(handle_download_file).post(handle_upload_file))`
-- [ ] Test: download returns correct bytes and headers
-- [ ] Test: download binary file preserves content
-- [ ] Test: upload creates file with correct content
-- [ ] Test: upload creates parent directories
-- [ ] Test: upload path traversal blocked
-- [ ] Test: download 404 for nonexistent file
-- [ ] cargo test -p capsem-service passes
-- [ ] Commit: `feat: file download and upload endpoints via host-side VirtioFS`
+- [x] Implement `handle_download_file(state, id, query_params)` handler
+- [x] Return raw bytes with Content-Type from Magika, Content-Disposition with sanitized filename
+- [x] Reject files >10MB (413)
+- [x] Implement `handle_upload_file(state, id, query_params, body)` handler
+- [x] Accept raw bytes, write to workspace path, create_dir_all for parents, mode 0o644
+- [x] Return JSON `{ success: true, size: N }`
+- [x] Register routes: `.route("/files/{id}/content", get(handle_download_file).post(handle_upload_file))`
+- [x] Test: download returns correct bytes and headers
+- [x] Test: download binary file preserves content
+- [x] Test: upload creates file with correct content
+- [x] Test: upload creates parent directories
+- [x] Test: upload path traversal blocked
+- [x] Test: download 404 for nonexistent file
+- [x] cargo test -p capsem-service passes
+- [x] Commit: `feat: file download and upload endpoints via host-side VirtioFS`
 
 ## T4: Frontend -- API Functions + Types
 

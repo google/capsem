@@ -227,7 +227,6 @@ pub struct FileListResponse {
 
 /// Response for POST /files/{id}/content (upload).
 #[derive(Serialize, Debug)]
-#[allow(dead_code)]
 pub struct UploadResponse {
     pub success: bool,
     pub size: u64,
