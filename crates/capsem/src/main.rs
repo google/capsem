@@ -654,32 +654,72 @@ async fn main() -> Result<()> {
             if let Some(path) = &status.unit_path {
                 println!("Unit:      {}", path.display());
             }
-            // Check service + gateway connectivity
+            // Check service + gateway connectivity and version sync
             if status.running {
                 let home = crate::paths::capsem_home().unwrap_or_default();
                 let sock = home.join("run/service.sock");
-                let svc_ok = tokio::net::UnixStream::connect(&sock).await.is_ok();
-                println!("Service:   {}", if svc_ok { "ok (socket responds)" } else { "STALE (socket dead)" });
+                let my_version = env!("CARGO_PKG_VERSION");
 
-                let token_path = home.join("run/gateway.token");
+                // Check service version via UDS
+                let svc_version = async {
+                    let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
+                    let (reader, mut writer) = tokio::io::split(stream);
+                    writer.write_all(b"GET /version HTTP/1.0\r\nHost: localhost\r\n\r\n").await.ok()?;
+                    writer.shutdown().await.ok()?;
+                    let mut buf = Vec::new();
+                    tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf).await.ok()?;
+                    let body = String::from_utf8_lossy(&buf);
+                    let json_start = body.find('{')?;
+                    let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
+                    v.get("version")?.as_str().map(String::from)
+                }.await;
+
+                match svc_version {
+                    Some(ref v) if v == my_version => println!("Service:   ok (v{})", v),
+                    Some(ref v) => println!("Service:   STALE (running v{}, binary is v{}) -- restart service", v, my_version),
+                    None => println!("Service:   STALE (socket dead or no /version endpoint)"),
+                }
+
                 let port_path = home.join("run/gateway.port");
-                match (std::fs::read_to_string(&token_path), std::fs::read_to_string(&port_path)) {
-                    (Ok(token), Ok(port_str)) => {
-                        let token = token.trim();
+                let token_path = home.join("run/gateway.token");
+                match (std::fs::read_to_string(&port_path), std::fs::read_to_string(&token_path)) {
+                    (Ok(port_str), Ok(token)) => {
                         let port = port_str.trim();
-                        let url = format!("http://127.0.0.1:{}/list", port);
-                        let gw_ok = reqwest::Client::new()
-                            .get(&url)
+                        let token = token.trim();
+                        let client = reqwest::Client::new();
+
+                        // Check gateway version (unauthenticated health endpoint)
+                        let health_url = format!("http://127.0.0.1:{}/", port);
+                        let gw_version: Option<String> = async {
+                            let r = client.get(&health_url)
+                                .timeout(std::time::Duration::from_secs(2))
+                                .send().await.ok()?;
+                            let v: serde_json::Value = r.json().await.ok()?;
+                            v.get("version")?.as_str().map(String::from)
+                        }.await;
+
+                        // Check token validity (authenticated endpoint)
+                        let auth_url = format!("http://127.0.0.1:{}/list", port);
+                        let token_ok = client.get(&auth_url)
                             .header("Authorization", format!("Bearer {}", token))
                             .timeout(std::time::Duration::from_secs(2))
-                            .send()
-                            .await
+                            .send().await
                             .map(|r| r.status().is_success())
                             .unwrap_or(false);
-                        if gw_ok {
-                            println!("Gateway:   ok (port {}, token valid)", port);
-                        } else {
-                            println!("Gateway:   MISMATCH (port {} or token stale -- restart service)", port);
+
+                        match (gw_version, token_ok) {
+                            (Some(ref v), true) if v == my_version => {
+                                println!("Gateway:   ok (port {}, v{})", port, v);
+                            }
+                            (Some(ref v), true) => {
+                                println!("Gateway:   STALE (running v{}, binary is v{}) -- restart service", v, my_version);
+                            }
+                            (Some(_), false) => {
+                                println!("Gateway:   token MISMATCH (port {}) -- restart service", port);
+                            }
+                            (None, _) => {
+                                println!("Gateway:   DOWN (port {} not responding)", port);
+                            }
                         }
                     }
                     _ => println!("Gateway:   no token/port files"),

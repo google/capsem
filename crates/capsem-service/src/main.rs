@@ -54,6 +54,7 @@ struct Args {
     #[arg(long)] process_binary: Option<PathBuf>,
     #[arg(long)] gateway_binary: Option<PathBuf>,
     #[arg(long)] gateway_port: Option<u16>,
+    #[arg(long)] frontend_dir: Option<PathBuf>,
     #[arg(long)] tray_binary: Option<PathBuf>,
     #[arg(long)] assets_dir: Option<PathBuf>,
 }
@@ -2329,6 +2330,9 @@ async fn main() -> Result<()> {
     }
 
     let app = Router::new()
+        .route("/version", get(|| async {
+            Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
+        }))
         .route("/provision", post(handle_provision))
         .route("/list", get(handle_list))
         .route("/info/{id}", get(handle_info))
@@ -2381,7 +2385,15 @@ async fn main() -> Result<()> {
     // Spawn companion processes (gateway + tray) as children.
     // They are killed automatically when the service exits because we hold
     // the Child handles and drop them on shutdown.
-    let mut children = spawn_companions(&service_sock, &run_dir, args.gateway_binary, args.gateway_port, args.tray_binary).await;
+    let mut children = spawn_companions(
+        &service_sock,
+        &run_dir,
+        args.gateway_binary,
+        args.gateway_port,
+        args.frontend_dir,
+        args.tray_binary,
+    )
+    .await;
 
     axum::serve(uds, app)
         .with_graceful_shutdown(async {
@@ -2415,6 +2427,30 @@ async fn shutdown_signal() {
     {
         ctrl_c.await.ok();
     }
+}
+
+#[allow(dead_code)]
+fn find_frontend_dir() -> Option<PathBuf> {
+    // 1. Try project root development path
+    if let Ok(cwd) = std::env::current_dir() {
+        let dev_path = cwd.join("frontend/dist");
+        if dev_path.exists() {
+            return Some(dev_path);
+        }
+    }
+    // 2. Try sibling path (production install layout)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            // Check for frontend/ next to the bin/ dir
+            if let Some(grandparent) = parent.parent() {
+                let install_path = grandparent.join("assets/frontend");
+                if install_path.exists() {
+                    return Some(install_path);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Find a sibling binary next to the current executable, falling back to
@@ -2451,6 +2487,7 @@ async fn spawn_companions(
     run_dir: &std::path::Path,
     gateway_bin: Option<PathBuf>,
     gateway_port: Option<u16>,
+    frontend_dir: Option<PathBuf>,
     tray_bin: Option<PathBuf>,
 ) -> Vec<tokio::process::Child> {
     let mut children = Vec::new();
@@ -2470,6 +2507,9 @@ async fn spawn_companions(
     gw_cmd.arg("--uds-path").arg(service_sock);
     if let Some(port) = gateway_port {
         gw_cmd.arg("--port").arg(port.to_string());
+    }
+    if let Some(ref dir) = frontend_dir {
+        gw_cmd.arg("--frontend-dir").arg(dir);
     }
     
     match gw_cmd
