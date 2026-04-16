@@ -11,11 +11,18 @@ Split the single release pipeline into two independent CI workflows: one for bin
 - The v2 manifest (from the asset refactor sprint) already has separate `assets` and `binaries` sections with compatibility ranges (`min_binary`, `min_assets`). The CI just needs to produce them independently.
 - Faster releases: binary-only releases skip the 10+ minute image build. Asset-only releases skip the full test suite for Rust code.
 
-## Prerequisites
+## Prerequisites (all done)
 
-- v2 manifest format landed (asset refactor sprint)
-- Hash-based flat asset layout deployed
-- `min_binary` / `min_assets` compatibility ranges working
+- [x] v2 manifest format (`ManifestV2` in `asset_manager.rs`)
+- [x] Hash-based asset filenames via hardlinks (`scripts/create_hash_assets.py`)
+- [x] `min_binary` / `min_assets` compatibility ranges in manifest
+- [x] `gen_manifest.py` and `generate_checksums()` produce v2 format
+- [x] Service resolves assets via `ManifestV2::resolve()` (arch subdir + flat fallback)
+- [x] `capsem-process` accepts `--kernel`/`--initrd`/`--rootfs` individual paths
+- [x] `capsem status` shows asset version and per-file health
+- [x] `_pack-initrd` creates hash-named hardlinks and skips docker when binaries are current
+- [x] CI `release.yaml` accumulates v2 manifests
+- [x] `just install` depends on `_check-assets` + `_pack-initrd`
 
 ## Key Decisions
 
@@ -73,20 +80,25 @@ Split the single release pipeline into two independent CI workflows: one for bin
 
 ### 6. `capsem update` -- independent updates
 
+Currently stubbed (see `crates/capsem/src/update.rs:159`). Needs:
+
+- [ ] Fetch v2 manifest from GitHub Releases
 - [ ] Check for binary updates and asset updates separately
 - [ ] Binary-only update: download new binary, keep existing assets
-- [ ] Asset-only update: download new asset files (hash-named), keep existing binary
+- [ ] Asset-only update: download hash-named asset files to `~/.capsem/assets/{arch}/`
 - [ ] Both: download both
-- [ ] Compatibility check: new binary's `min_assets` <= installed asset version, and vice versa
+- [ ] Compatibility check: new binary's `min_assets` <= installed asset version
 - [ ] Warn user if their assets are deprecated or incompatible with the new binary
+- [ ] `cleanup_unused_assets()` after successful download
 
-### 7. Installer (`service_install.rs`, `build-pkg.sh`)
+### 7. Installer and first-launch setup
 
-- [ ] Installer no longer bundles assets in the DMG/pkg
-- [ ] First-launch setup downloads assets from GitHub Releases (setup.rs `step_welcome` is currently a stub)
-- [ ] `capsem update` asset download rewritten for v2 manifest + hash-based filenames (update.rs `run_update` uses stubs)
-- [ ] Installed service uses flat hash-based asset directory
-- [ ] Verify `--assets-dir` in launchd/systemd unit points to `~/.capsem/assets/` (flat)
+- [ ] `capsem setup` downloads assets on first launch (setup.rs `step_welcome` is currently a stub -- see line 173)
+- [ ] Download uses v2 manifest to determine which hash-named files to fetch
+- [ ] Downloaded files go to `~/.capsem/assets/{arch}/{hash_filename}`
+- [ ] Progress reporting during download (channel-based, like the old `BackgroundProgress`)
+- [ ] `build-pkg.sh` bundles only `manifest.json` (already the case)
+- [ ] Verify launchd unit `--assets-dir` resolves correctly for both symlink (dev) and real dir (installed)
 
 ### 8. Documentation site (`docs/`)
 
@@ -112,6 +124,15 @@ Split the single release pipeline into two independent CI workflows: one for bin
 - [ ] Document `cut-asset-release` workflow
 - [ ] Document when assets need a new release vs when they don't
 - [ ] Document compatibility with binary versions
+
+### 11. Asset upload format
+
+CI currently uploads assets with arch-prefixed names (`arm64-rootfs.squashfs`). With hash-based filenames, the upload naming needs to match what `capsem update` downloads:
+
+- [ ] CI uploads hash-named files: `arm64-rootfs-{hash16}.squashfs` (or keep arch prefix separate)
+- [ ] `capsem update` download URL construction matches the upload naming
+- [ ] Manifest `release_url()` still works (currently `https://github.com/google/capsem/releases/download/v{version}`)
+- [ ] Decide: one GitHub Release per asset version, or assets attached to binary releases?
 
 ## Non-Goals
 
