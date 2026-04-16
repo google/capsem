@@ -568,23 +568,30 @@ jobs:
           "
           cp unified-assets/manifest.json release-artifacts/manifest.json
 
-      # Accumulate manifest.json: merge new version's entry with previous releases.
+      # Accumulate v2 manifest: merge asset and binary releases from previous manifest.
       - name: Build accumulated manifest
         run: |
           gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
           if [ -f /tmp/prev-manifest/manifest.json ]; then
             python3 -c "
-          import json, sys
+          import json
           with open('release-artifacts/manifest.json') as f:
               new = json.load(f)
           with open('/tmp/prev-manifest/manifest.json') as f:
               prev = json.load(f)
-          for ver, entry in prev.get('releases', {}).items():
-              if ver not in new['releases']:
-                  new['releases'][ver] = entry
+          # v2 format: merge assets.releases and binaries.releases separately
+          if prev.get('format') == 2:
+              for ver, entry in prev.get('assets', {}).get('releases', {}).items():
+                  new['assets']['releases'].setdefault(ver, entry)
+              for ver, entry in prev.get('binaries', {}).get('releases', {}).items():
+                  new['binaries']['releases'].setdefault(ver, entry)
+              a_count = len(new['assets']['releases'])
+              b_count = len(new['binaries']['releases'])
+              print(f'Merged v2 manifest: {a_count} asset releases, {b_count} binary releases')
+          else:
+              print('Previous manifest is v1, skipping merge (clean start)')
           with open('release-artifacts/manifest.json', 'w') as f:
               json.dump(new, f, indent=2)
-          print(f'Merged manifest: {len(new[\"releases\"])} releases')
           "
           else
             echo "No previous manifest found, using fresh manifest"

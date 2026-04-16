@@ -958,9 +958,29 @@ _pack-initrd:
         echo "ERROR: initrd.img not found. Run 'just build-assets' first."
         exit 1
     fi
-    echo "=== Cross-compile agent ==="
-    uv run capsem-builder agent --arch "$arch"
-    echo ""
+    # Cross-compile guest binaries only if missing or source changed
+    RELEASE_DIR="$ROOT/target/linux-agent/$arch"
+    NEED_BUILD=false
+    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-sysutil; do
+        if [ ! -f "$RELEASE_DIR/$b" ]; then
+            NEED_BUILD=true
+            break
+        fi
+    done
+    # Also rebuild if any agent source is newer than the binaries
+    if [ "$NEED_BUILD" = "false" ] && [ -f "$RELEASE_DIR/capsem-pty-agent" ]; then
+        NEWEST_SRC=$(find "$ROOT/crates/capsem-agent" "$ROOT/crates/capsem-proto" -name '*.rs' -newer "$RELEASE_DIR/capsem-pty-agent" 2>/dev/null | head -1)
+        if [ -n "$NEWEST_SRC" ]; then
+            NEED_BUILD=true
+        fi
+    fi
+    if [ "$NEED_BUILD" = "true" ]; then
+        echo "=== Cross-compile agent ==="
+        uv run capsem-builder agent --arch "$arch"
+        echo ""
+    else
+        echo "=== Agent binaries up to date, skipping cross-compile ==="
+    fi
     echo "=== Repack initrd ==="
     WORKDIR=$(mktemp -d)
     cd "$WORKDIR"

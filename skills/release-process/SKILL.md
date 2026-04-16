@@ -27,7 +27,7 @@ Runs `test` (all tests including integration, cross-compile, benchmarks), then b
 
 1. Bump version in both `Cargo.toml` (workspace) and `crates/capsem-app/tauri.conf.json`
 2. Move `[Unreleased]` changelog items into `[X.Y.Z] - YYYY-MM-DD`
-3. Create/update release page at `site/src/content/docs/releases/<major>-<minor>.md`
+3. Create/update release page at `docs/src/content/docs/releases/<major>-<minor>.md`
 4. `scripts/preflight.sh` then `just test`
 5. Commit, tag `vX.Y.Z`, push both
 
@@ -56,13 +56,13 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
 
 ### CI invariants (hard-won lessons)
 
-- **Per-arch VM assets use arch-prefixed names on GitHub.** CI uploads with `gh release upload "$f#${arch}-${base}"`, renaming `vmlinuz` to `arm64-vmlinuz`, `rootfs.squashfs` to `arm64-rootfs.squashfs`, etc. The manifest keeps bare filenames in its per-arch structure; `AssetManager.arch_prefix` handles the URL translation at download time. If you change the upload naming, update `AssetManager.download_url()` in `asset_manager.rs`.
+- **Per-arch VM assets use arch-prefixed names on GitHub.** CI uploads with `gh release upload "$f#${arch}-${base}"`, renaming `vmlinuz` to `arm64-vmlinuz`, etc. The v2 manifest keeps bare filenames in per-arch `arches` maps.
 - **Use justfile recipes in CI.** `build-assets` must call `just build-kernel` and `just build-rootfs`, not reimplement the builder commands. Drift between the justfile and CI caused v0.14.2-v0.14.4 to ship without vmlinuz/initrd.img.
 - **Build both kernel and rootfs.** The builder defaults to `--template rootfs` only. The kernel template must be built explicitly.
 - **`assets/current` must be a real directory, not a symlink.** `generate_checksums()` creates a symlink, but GitHub Actions strips symlinks from artifacts. After calling `generate_checksums`, replace the symlink with `rm -rf assets/current && cp -r assets/arm64 assets/current`.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
 - **Verify assets before Tauri build.** The `Verify assets layout` step lists assets/arm64/ and assets/current/ to catch missing files early. Tauri's build.rs resolves `../../assets/current/vmlinuz` relative to `crates/capsem-app/`.
-- **`pyproject.toml` version must match.** Three files must be bumped in sync: `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just cut-release` handles this automatically.
+- **Three files hold the binary version.** `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just _stamp-version` handles all three automatically. `just cut-release` and `just install` both call it.
 - **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
 - **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.
@@ -129,18 +129,18 @@ hdiutil attach /tmp/verify/Capsem*.dmg -nobrowse -readonly
 
 ## Documentation site
 
-The product website uses Astro Starlight. Docs live in `site/src/content/docs/`.
+The product website uses Astro Starlight. Docs live in `docs/src/content/docs/`.
 
 ### Writing style
 Tight and to the point. One topic per page. Tables over prose for configs and test cases. No filler.
 
 ### Structure
-- `site/src/content/docs/<category>/<topic>.md`
+- `docs/src/content/docs/<category>/<topic>.md`
 - Categories: `security/`, `testing/`, `releases/`, `architecture/`
 - Frontmatter: `title` and `description` required. `sidebar: { order: N }` for ordering.
 
 ### Release pages
-- Path: `site/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots)
+- Path: `docs/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots)
 - Each page consolidates all patch releases for that minor
 - Higher `sidebar.order` = newer = listed first
 
@@ -161,7 +161,7 @@ Run the host-side benchmarks to generate versioned data files and update the res
 # Generate benchmarks/fork/data_{version}.json and benchmarks/lifecycle/data_{version}.json
 uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 
-# Update site/src/content/docs/benchmarks/results.md with new numbers
+# Update docs/src/content/docs/benchmarks/results.md with new numbers
 # (manual -- copy from the benchmark summary tables)
 ```
 
@@ -173,7 +173,14 @@ Keep a Changelog format in `CHANGELOG.md`. Every user-visible change gets an ent
 
 ## Versioning
 
-SemVer. Single source of truth: `workspace.package.version` in root `Cargo.toml`. Keep `crates/capsem-app/tauri.conf.json` in sync manually.
+Binary and asset versions are **orthogonal**:
+
+- **Binary**: `1.0.{unix_timestamp}` -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`
+- **Assets**: `YYYY.MMDD.patch` -- auto-derived by `gen_manifest.py` from the build date
+
+Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.
+
+The v2 manifest links them via `min_binary` (oldest binary for these assets) and `min_assets` (oldest assets for this binary). See `/asset-pipeline` for manifest format.
 
 ## Commits
 

@@ -635,8 +635,13 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
         b3sums_lines.append(f"{b3hash}  {filepath}")
     (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
 
-    # Build per-arch manifest
-    releases: dict[str, Any] = {}
+    # Build v2 manifest with separate assets/binaries sections
+    import datetime
+    today = datetime.date.today()
+    date_prefix = today.strftime("%Y.%m%d")
+    asset_version = f"{date_prefix}.1"
+
+    arch_assets: dict[str, dict[str, dict]] = {}
     for filepath in all_files:
         full_path = output_dir / filepath
         b3hash = hashes[filepath]
@@ -644,17 +649,38 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
 
         if "/" in filepath:
             arch_name, filename = filepath.split("/", 1)
-            arch_assets = releases.setdefault(arch_name, {"assets": []})
-            arch_assets["assets"].append({
-                "filename": filename, "hash": b3hash, "size": size,
-            })
         else:
-            flat_assets = releases.setdefault("assets", [])
-            flat_assets.append({
-                "filename": filepath, "hash": b3hash, "size": size,
-            })
+            arch_name = "unknown"
+            filename = filepath
 
-    manifest = {"latest": version, "releases": {version: releases}}
+        arch_assets.setdefault(arch_name, {})[filename] = {
+            "hash": b3hash, "size": size,
+        }
+
+    manifest = {
+        "format": 2,
+        "assets": {
+            "current": asset_version,
+            "releases": {
+                asset_version: {
+                    "date": today.isoformat(),
+                    "deprecated": False,
+                    "min_binary": "1.0.0",
+                    "arches": arch_assets,
+                },
+            },
+        },
+        "binaries": {
+            "current": version,
+            "releases": {
+                version: {
+                    "date": today.isoformat(),
+                    "deprecated": False,
+                    "min_assets": asset_version,
+                },
+            },
+        },
+    }
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 

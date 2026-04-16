@@ -7,14 +7,21 @@ description: Asset building, manifest format, hash verification, and boot-time r
 
 How VM assets (kernel, initrd, rootfs) are built, checksummed, resolved, and verified at boot.
 
+## Versioning
+
+Binary and asset versions are **independent**:
+- **Binary**: `1.0.{unix_timestamp}` -- changes every build
+- **Assets**: `YYYY.MMDD.patch` -- changes only on kernel/rootfs/initrd rebuilds
+
+The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
+
 ## Key Commands
 
 | Command | When to use |
 |---------|-------------|
 | `just build-assets` | Full rebuild: kernel + rootfs + checksums (slow, needs docker) |
-| `just run` | Daily driver: repack initrd, build, sign, boot (~10s) |
-| `just run "capsem-doctor"` | Verify VM boots correctly after changes |
-| `capsem-builder build guest/ --arch arm64 --template rootfs` | Build one template for one arch |
+| `just shell` | Daily driver: repack initrd, build, sign, boot (~10s) |
+| `just shell "capsem-doctor"` | Verify VM boots correctly after changes |
 
 ## File Locations
 
@@ -22,52 +29,83 @@ How VM assets (kernel, initrd, rootfs) are built, checksummed, resolved, and ver
 |------|-------|
 | Guest config (TOML) | `guest/config/` |
 | Guest artifacts | `guest/artifacts/` |
-| Jinja templates | `src/capsem/builder/templates/` |
-| Built assets | `assets/{arch}/vmlinuz, initrd.img, rootfs.squashfs` |
+| Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.squashfs` |
+| Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
 | Checksums | `assets/B3SUMS` |
-| Builder CLI | `src/capsem/builder/cli.py` |
-| Builder docker logic | `src/capsem/builder/docker.py` |
 | Manifest regenerator | `scripts/gen_manifest.py` |
-| Compile-time hash extraction | `crates/capsem-app/build.rs` |
-| Runtime asset resolution | `crates/capsem-app/src/assets.rs` |
-| Boot config + hash verification | `crates/capsem-core/src/vm/config.rs` |
-| Asset download manager | `crates/capsem-core/src/asset_manager.rs` |
-| Shared hash extraction logic | `crates/capsem-core/src/manifest_compat.rs` |
+| Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |
+| Hash extraction for build.rs | `crates/capsem-core/src/manifest_compat.rs` |
 
-## Manifest Format
-
-Per-arch nested format (filenames are **bare**, not arch-prefixed):
+## Manifest Format (v2)
 
 ```json
 {
-  "releases": {
-    "0.12.1": {
-      "arm64": {
-        "assets": [
-          {"filename": "vmlinuz", "hash": "<64-char blake3>", "size": 7797248}
-        ]
+  "format": 2,
+  "assets": {
+    "current": "2026.0415.1",
+    "releases": {
+      "2026.0415.1": {
+        "date": "2026-04-15",
+        "deprecated": false,
+        "min_binary": "1.0.0",
+        "arches": {
+          "arm64": {
+            "vmlinuz": { "hash": "<64-char blake3>", "size": 7797248 },
+            "initrd.img": { "hash": "...", "size": 2270154 },
+            "rootfs.squashfs": { "hash": "...", "size": 454230016 }
+          }
+        }
+      }
+    }
+  },
+  "binaries": {
+    "current": "1.0.1776269479",
+    "releases": {
+      "1.0.1776269479": {
+        "date": "2026-04-15",
+        "deprecated": false,
+        "min_assets": "2026.0415.1"
       }
     }
   }
 }
 ```
 
-Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_manifest.py` (initrd repack). Both detect arch subdirs and produce per-arch format.
+Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_manifest.py` (initrd repack). Both produce v2 format.
+
+## Disk Layouts
+
+**Dev** (repo `assets/` dir -- logical names, per-arch subdirs):
+```
+assets/arm64/vmlinuz
+assets/arm64/initrd.img
+assets/arm64/rootfs.squashfs
+assets/manifest.json
+```
+
+**Installed** (`~/.capsem/assets/` -- flat, hash-based filenames):
+```
+manifest.json
+vmlinuz-2c0bd752db929642
+initrd-e5e910e9ab38b873.img
+rootfs-89eb92b83534d9d0.squashfs
+```
+
+Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across versions = natural dedup.
 
 ## Boot-Time Resolution
 
-1. **Find assets dir**: env var -> .app bundle -> `./assets` -> `../../assets`. Checks `{dir}/{arch}/vmlinuz` first, then flat.
-2. **Find rootfs**: bundled -> `~/.capsem/assets/v{version}/` -> legacy flat
-3. **Download if missing**: manifest-driven download with BLAKE3 verification and HTTP resume. CI uploads per-arch assets with arch prefixes (`arm64-rootfs.squashfs`, `x86_64-vmlinuz`). The manifest keeps bare filenames; `AssetManager.arch_prefix` prepends `{arch}-` when constructing download URLs. Local storage uses bare filenames in `~/.capsem/assets/v{version}/`.
-4. **Hash check at boot**: `VmConfig::builder().build()` verifies BLAKE3 of kernel, initrd, rootfs against compile-time hashes. Mismatch prevents boot.
+1. **Dev mode**: Service detects arch subdirs, passes `--kernel assets/{arch}/vmlinuz` etc. to capsem-process
+2. **Installed mode**: Service reads v2 manifest, resolves `ManifestV2::resolve(binary_version, arch, base_dir)` to get hash-based file paths, passes `--kernel`, `--initrd`, `--rootfs` individually to capsem-process
+3. **Hash check at boot**: `VmConfig::builder().build()` verifies BLAKE3 against compile-time hashes if available
+
+## Cleanup
+
+`cleanup_unused_assets(base_dir, manifest)` removes hash-named files not referenced by any non-deprecated asset release. Also removes legacy `v*/` directories.
 
 ## Common Issues
 
-**Hash mismatch at boot**: Assets on disk don't match the hashes baked into the binary. Happens when assets are rebuilt without recompiling the app. Fix: `just run` (repacks initrd, regenerates manifest, touches build.rs to force recompile).
+**Hash mismatch at boot**: Assets on disk don't match the hashes baked into the binary. Fix: `just shell` (repacks initrd, regenerates manifest, touches build.rs to force recompile).
 
-**Manifest not found**: `create_asset_manager()` checks both the resolved assets dir and its parent. Per-arch layout puts `manifest.json` at `assets/manifest.json` while resolved dir is `assets/arm64/`.
-
-**Hashes silently skipped**: If `build.rs` can't extract hashes (manifest missing, wrong version, wrong format), `option_env!()` returns `None` and verification is skipped. The `manifest_compat` tests guard against this.
-
-**Wrong arch assets**: Impossible at runtime. `host_arch()` is compile-time, and `build.rs` extracts hashes for the target arch only. A binary built for arm64 will only look for arm64 assets.
+**Hashes silently skipped**: If `build.rs` can't extract hashes (manifest missing, wrong format), `option_env!()` returns `None` and verification is skipped.
