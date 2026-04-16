@@ -64,17 +64,17 @@
 
 ## T5: Frontend -- Replace Find-Based Tree
 
-- [ ] Replace `onMount` in FilesView.svelte: call `api.listFiles(vmId, '/', 4)` instead of `execCommand('find ...')`
-- [ ] Remove `buildTreeFromPaths()` function (response is pre-structured)
-- [ ] Map `FileEntry` to existing `FileNode` shape or update FileTree to accept FileEntry directly
-- [ ] Add refresh button in header bar (ArrowClockwise icon from phosphor-svelte)
-- [ ] Add error state: show message when listing fails
-- [ ] Add loading state with spinner/skeleton
-- [ ] Update FileTree.svelte to show file sizes next to names
-- [ ] Update file selection to use `getFileContent()` instead of `readFile()`
-- [ ] pnpm run check passes
+- [x] Replace `onMount` in FilesView.svelte: call `api.listFiles(vmId, '/', 4)` instead of `execCommand('find ...')`
+- [x] Remove `buildTreeFromPaths()` function (response is pre-structured)
+- [x] Map `FileEntry` to existing `FileNode` shape or update FileTree to accept FileEntry directly
+- [x] Add refresh button in header bar (ArrowClockwise icon from phosphor-svelte)
+- [x] Add error state: show message when listing fails
+- [x] Add loading state with spinner/skeleton
+- [x] Update FileTree.svelte to show file sizes next to names
+- [x] Update file selection to use `getFileContent()` instead of `readFile()`
+- [x] pnpm run check passes
 - [ ] Visual test: Files tab loads tree with real sizes for a running VM
-- [ ] Commit: `feat: replace find-based file tree with host-side listing`
+- [x] Commit: `feat: replace find-based file tree with host-side listing`
 
 ## T6: Frontend -- Copy + Download Buttons
 

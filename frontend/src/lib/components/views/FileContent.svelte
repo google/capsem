@@ -1,11 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Highlighter } from 'shiki';
-  import type { MockFileNode } from '../../mock.ts';
+  import type { FileEntry } from '../../types';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { getShikiHighlighter, resolveShikiTheme, detectShikiLang } from '../../shiki.ts';
+  import { formatBytes } from '../../format';
 
-  let { node }: { node: MockFileNode | null } = $props();
+  let { entry, content, blob }: {
+    entry: FileEntry | null;
+    content: string | null;
+    blob: Blob | null;
+  } = $props();
 
   let highlighter: Highlighter | null = $state(null);
   let highlightedHtml = $state('');
@@ -15,35 +20,33 @@
   });
 
   $effect(() => {
-    if (!node?.content || !highlighter) {
+    if (!content || !highlighter || !entry) {
       highlightedHtml = '';
       return;
     }
-    highlightedHtml = highlighter.codeToHtml(node.content, {
-      lang: detectShikiLang(node.name),
+    // Use Magika label for better language detection when available
+    const langHint = entry.label ?? entry.name;
+    highlightedHtml = highlighter.codeToHtml(content, {
+      lang: detectShikiLang(langHint),
       theme: resolveShikiTheme(themeStore.terminalTheme, themeStore.mode),
     });
   });
 
   let breadcrumbs = $derived.by(() => {
-    if (!node) return [];
-    const parts = node.path.split('/').filter(Boolean);
+    if (!entry) return [];
+    const parts = entry.path.split('/').filter(Boolean);
     return parts.map((part, i) => ({
       label: part,
-      path: '/' + parts.slice(0, i + 1).join('/'),
+      path: parts.slice(0, i + 1).join('/'),
     }));
   });
 
-  function formatSize(bytes: number | undefined): string {
-    if (bytes == null) return '';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
+  let isText = $derived(entry?.is_text !== false);
+  let isBinary = $derived(entry != null && entry.type === 'file' && entry.is_text === false);
 </script>
 
 <div class="flex flex-col h-full">
-  {#if node}
+  {#if entry}
     <div class="flex items-center gap-x-1 px-4 py-2 border-b border-line-2 bg-layer text-sm">
       {#each breadcrumbs as crumb, i}
         {#if i > 0}
@@ -51,23 +54,27 @@
         {/if}
         <span class="{i === breadcrumbs.length - 1 ? 'text-foreground font-medium' : 'text-muted-foreground-1'}">{crumb.label}</span>
       {/each}
-      {#if node.sizeBytes != null}
-        <span class="ml-auto text-xs text-muted-foreground">{formatSize(node.sizeBytes)}</span>
+      {#if entry.size > 0}
+        <span class="ml-auto text-xs text-muted-foreground">{formatBytes(entry.size)}</span>
       {/if}
     </div>
 
     <div class="flex-1 overflow-auto shiki-wrapper">
-      {#if node.content && highlightedHtml}
+      {#if isBinary}
+        <div class="flex items-center justify-center h-full">
+          <p class="text-muted-foreground">Binary file ({formatBytes(entry.size)})</p>
+        </div>
+      {:else if content && highlightedHtml}
         {@html highlightedHtml}
-      {:else if node.content}
-        <pre class="px-4 py-2 font-mono text-sm text-foreground whitespace-pre">{node.content}</pre>
-      {:else if node.type === 'directory'}
+      {:else if content}
+        <pre class="px-4 py-2 font-mono text-sm text-foreground whitespace-pre">{content}</pre>
+      {:else if entry.type === 'directory'}
         <div class="flex items-center justify-center h-full">
           <p class="text-muted-foreground">Select a file to view its contents</p>
         </div>
       {:else}
         <div class="flex items-center justify-center h-full">
-          <p class="text-muted-foreground">No content available</p>
+          <p class="text-muted-foreground">Loading...</p>
         </div>
       {/if}
     </div>
