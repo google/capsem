@@ -83,7 +83,8 @@ Split the single release pipeline into two independent CI workflows: one for bin
 ### 7. Installer (`service_install.rs`, `build-pkg.sh`)
 
 - [ ] Installer no longer bundles assets in the DMG/pkg
-- [ ] First-launch setup downloads assets separately (already works via setup wizard)
+- [ ] First-launch setup downloads assets from GitHub Releases (setup.rs `step_welcome` is currently a stub)
+- [ ] `capsem update` asset download rewritten for v2 manifest + hash-based filenames (update.rs `run_update` uses stubs)
 - [ ] Installed service uses flat hash-based asset directory
 - [ ] Verify `--assets-dir` in launchd/systemd unit points to `~/.capsem/assets/` (flat)
 
