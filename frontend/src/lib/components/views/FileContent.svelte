@@ -5,6 +5,8 @@
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { getShikiHighlighter, resolveShikiTheme, detectShikiLang } from '../../shiki.ts';
   import { formatBytes } from '../../format';
+  import Copy from 'phosphor-svelte/lib/Copy';
+  import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
 
   let { entry, content, blob }: {
     entry: FileEntry | null;
@@ -14,6 +16,7 @@
 
   let highlighter: Highlighter | null = $state(null);
   let highlightedHtml = $state('');
+  let copied = $state(false);
 
   onMount(async () => {
     highlighter = await getShikiHighlighter();
@@ -41,8 +44,34 @@
     }));
   });
 
-  let isText = $derived(entry?.is_text !== false);
   let isBinary = $derived(entry != null && entry.type === 'file' && entry.is_text === false);
+
+  async function copyToClipboard() {
+    if (!content) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      copied = true;
+      setTimeout(() => { copied = false; }, 1500);
+    } catch {
+      // Clipboard API not available
+    }
+  }
+
+  function downloadFile() {
+    if (!blob || !entry) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = entry.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadBinary() {
+    downloadFile();
+  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -54,15 +83,54 @@
         {/if}
         <span class="{i === breadcrumbs.length - 1 ? 'text-foreground font-medium' : 'text-muted-foreground-1'}">{crumb.label}</span>
       {/each}
-      {#if entry.size > 0}
-        <span class="ml-auto text-xs text-muted-foreground">{formatBytes(entry.size)}</span>
-      {/if}
+
+      <div class="ml-auto flex items-center gap-x-1">
+        {#if entry.size > 0}
+          <span class="text-xs text-muted-foreground mr-1">{formatBytes(entry.size)}</span>
+        {/if}
+        {#if entry.type === 'file'}
+          {#if !isBinary && content}
+            <button
+              type="button"
+              class="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted-hover transition-colors"
+              onclick={copyToClipboard}
+              title="Copy to clipboard"
+            >
+              {#if copied}
+                <span class="text-xs text-primary">Copied!</span>
+              {:else}
+                <Copy size={14} />
+              {/if}
+            </button>
+          {/if}
+          {#if blob}
+            <button
+              type="button"
+              class="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted-hover transition-colors"
+              onclick={downloadFile}
+              title="Download"
+            >
+              <DownloadSimple size={14} />
+            </button>
+          {/if}
+        {/if}
+      </div>
     </div>
 
     <div class="flex-1 overflow-auto shiki-wrapper">
       {#if isBinary}
-        <div class="flex items-center justify-center h-full">
+        <div class="flex flex-col items-center justify-center h-full gap-y-3">
           <p class="text-muted-foreground">Binary file ({formatBytes(entry.size)})</p>
+          {#if blob}
+            <button
+              type="button"
+              class="inline-flex items-center gap-x-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors"
+              onclick={downloadBinary}
+            >
+              <DownloadSimple size={16} />
+              Download
+            </button>
+          {/if}
         </div>
       {:else if content && highlightedHtml}
         {@html highlightedHtml}

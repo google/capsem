@@ -78,16 +78,16 @@
 
 ## T6: Frontend -- Copy + Download Buttons
 
-- [ ] Add Copy button (CopySimple icon) to FileContent.svelte breadcrumb bar
-- [ ] Implement copy: `navigator.clipboard.writeText(content)`
-- [ ] Add brief "Copied!" feedback (tooltip or text flash)
-- [ ] Add Download button (DownloadSimple icon) to FileContent.svelte breadcrumb bar
-- [ ] Implement download: `URL.createObjectURL(blob)` + temp `<a download="filename">` click
-- [ ] Handle binary files: if `!is_text`, show "Binary file (X KB) -- click to download" instead of Shiki
-- [ ] Use Magika `label` field to improve Shiki language detection where available
-- [ ] pnpm run check passes
+- [x] Add Copy button (CopySimple icon) to FileContent.svelte breadcrumb bar
+- [x] Implement copy: `navigator.clipboard.writeText(content)`
+- [x] Add brief "Copied!" feedback (tooltip or text flash)
+- [x] Add Download button (DownloadSimple icon) to FileContent.svelte breadcrumb bar
+- [x] Implement download: `URL.createObjectURL(blob)` + temp `<a download="filename">` click
+- [x] Handle binary files: if `!is_text`, show "Binary file (X KB) -- click to download" instead of Shiki
+- [x] Use Magika `label` field to improve Shiki language detection where available
+- [x] pnpm run check passes
 - [ ] Visual test: buttons appear, copy works, download saves correct file
-- [ ] Commit: `feat: copy and download buttons in file viewer`
+- [x] Commit: `feat: copy and download buttons in file viewer`
 
 ## T7: Frontend -- Drag-and-Drop Upload
 
