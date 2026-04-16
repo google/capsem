@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use tracing::{info, error};
+use tracing::{info, warn, error};
 use axum::{
     routing::{get, post, delete},
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
     Json, Router,
 };
@@ -52,6 +52,9 @@ struct Args {
     #[arg(long)] foreground: bool,
     #[arg(long)] uds_path: Option<PathBuf>,
     #[arg(long)] process_binary: Option<PathBuf>,
+    #[arg(long)] gateway_binary: Option<PathBuf>,
+    #[arg(long)] gateway_port: Option<u16>,
+    #[arg(long)] tray_binary: Option<PathBuf>,
     #[arg(long)] assets_dir: Option<PathBuf>,
 }
 
@@ -169,8 +172,8 @@ struct ServiceState {
     assets_dir: PathBuf,
     run_dir: PathBuf,
     job_counter: AtomicU64,
-    #[allow(dead_code)]
-    asset_manager: Arc<capsem_core::asset_manager::AssetManager>,
+    /// v2 manifest (None in dev mode where assets use logical names)
+    manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
     current_version: String,
 }
 
@@ -346,19 +349,18 @@ impl ServiceState {
                 .context("failed to clone sandbox state")?;
         }
 
-        let assets_to_use = self.resolve_assets_dir(&version)?;
-        let rootfs = assets_to_use.join("rootfs.squashfs");
-        if !rootfs.exists() {
-            let entries = std::fs::read_dir(&assets_to_use)
+        let resolved = self.resolve_asset_paths()?;
+        if !resolved.rootfs.exists() {
+            let entries = std::fs::read_dir(&self.assets_dir)
                 .map(|d| d.map(|e| e.unwrap().file_name()).collect::<Vec<_>>())
                 .unwrap_or_default();
-            error!(assets_path = %assets_to_use.display(), ?entries, "rootfs.squashfs NOT FOUND");
-            return Err(anyhow!("rootfs.squashfs not found in {}. Dir entries: {:?}", assets_to_use.display(), entries));
+            error!(rootfs = %resolved.rootfs.display(), ?entries, "rootfs NOT FOUND");
+            return Err(anyhow!("rootfs not found at {}. Dir entries: {:?}", resolved.rootfs.display(), entries));
         }
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
-        
-        info!(id, version, assets = %assets_to_use.display(), "spawning capsem-process");
+
+        info!(id, version, asset_version = %resolved.asset_version, "spawning capsem-process");
 
         let mut child_cmd = tokio::process::Command::new(&self.process_binary);
         if !self.process_binary.exists() {
@@ -396,8 +398,10 @@ impl ServiceState {
         let mut child = child_cmd
             .env("RUST_LOG", "capsem=info")
             .arg("--id").arg(id)
-            .arg("--assets-dir").arg(&assets_to_use)
-            .arg("--rootfs").arg(&rootfs)
+            .arg("--assets-dir").arg(&self.assets_dir)
+            .arg("--rootfs").arg(&resolved.rootfs)
+            .arg("--kernel").arg(&resolved.kernel)
+            .arg("--initrd").arg(&resolved.initrd)
             .arg("--session-dir").arg(&session_dir)
             .arg("--cpus").arg(cpus.to_string())
             .arg("--ram-mb").arg(ram_mb.to_string())
@@ -408,7 +412,7 @@ impl ServiceState {
             .context("failed to spawn capsem-process")?;
 
         let pid = child.id().unwrap_or(0);
-        info!(id, pid, version, "capsem-process spawned");
+        info!(id, pid, version, asset_version = %resolved.asset_version, "capsem-process spawned");
 
         let id_clone = id.to_string();
         let state_clone = Arc::clone(self);
@@ -514,10 +518,9 @@ impl ServiceState {
         let uds_path = self.instance_socket_path(name);
         let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
 
-        let assets_to_use = self.resolve_assets_dir(&version)?;
-        let rootfs = assets_to_use.join("rootfs.squashfs");
-        if !rootfs.exists() {
-            return Err(anyhow!("rootfs.squashfs not found in {}", assets_to_use.display()));
+        let resolved = self.resolve_asset_paths()?;
+        if !resolved.rootfs.exists() {
+            return Err(anyhow!("rootfs not found at {}", resolved.rootfs.display()));
         }
 
         let process_log_path = entry.session_dir.join("process.log");
@@ -561,8 +564,10 @@ impl ServiceState {
         let mut child = child_cmd
             .env("RUST_LOG", "capsem=info")
             .arg("--id").arg(name)
-            .arg("--assets-dir").arg(&assets_to_use)
-            .arg("--rootfs").arg(&rootfs)
+            .arg("--assets-dir").arg(&self.assets_dir)
+            .arg("--rootfs").arg(&resolved.rootfs)
+            .arg("--kernel").arg(&resolved.kernel)
+            .arg("--initrd").arg(&resolved.initrd)
             .arg("--session-dir").arg(&entry.session_dir)
             .arg("--cpus").arg(cpus.to_string())
             .arg("--ram-mb").arg(ram_mb.to_string())
@@ -617,24 +622,29 @@ impl ServiceState {
         Ok(name.to_string())
     }
 
-    /// Resolve versioned assets directory.
-    fn resolve_assets_dir(&self, version: &str) -> Result<PathBuf> {
-        let v_assets_dir = self.assets_dir.join(format!("v{}", version));
-        let mut assets_to_use = if v_assets_dir.exists() {
-            v_assets_dir
+    /// Resolve asset file paths for a VM.
+    ///
+    /// In v2 mode (manifest present): resolves hash-based filenames from manifest.
+    /// In dev mode (no manifest): finds assets by logical name in arch subdirs.
+    fn resolve_asset_paths(&self) -> Result<capsem_core::asset_manager::ResolvedAssets> {
+        let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+
+        if let Some(ref manifest) = self.manifest {
+            return manifest.resolve(&self.current_version, arch, &self.assets_dir);
+        }
+
+        // Dev mode: logical names in arch subdir or flat
+        let base = if self.assets_dir.join(arch).join("rootfs.squashfs").exists() {
+            self.assets_dir.join(arch)
         } else {
             self.assets_dir.clone()
         };
-
-        if !assets_to_use.join("rootfs.squashfs").exists() {
-            let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
-            let arch_dir = assets_to_use.join(arch);
-            if arch_dir.join("rootfs.squashfs").exists() {
-                assets_to_use = arch_dir;
-            }
-        }
-
-        Ok(assets_to_use)
+        Ok(capsem_core::asset_manager::ResolvedAssets {
+            kernel: base.join("vmlinuz"),
+            initrd: base.join("initrd.img"),
+            rootfs: base.join("rootfs.squashfs"),
+            asset_version: "dev".to_string(),
+        })
     }
 }
 
@@ -826,7 +836,23 @@ async fn handle_list(
         }
     }
 
-    Json(ListResponse { sandboxes })
+    // Check asset health
+    let asset_health = match state.resolve_asset_paths() {
+        Ok(resolved) => {
+            let mut missing = Vec::new();
+            if !resolved.kernel.exists() { missing.push("vmlinuz".to_string()); }
+            if !resolved.initrd.exists() { missing.push("initrd.img".to_string()); }
+            if !resolved.rootfs.exists() { missing.push("rootfs.squashfs".to_string()); }
+            Some(AssetHealth {
+                ready: missing.is_empty(),
+                version: Some(resolved.asset_version),
+                missing,
+            })
+        }
+        Err(_) => None,
+    };
+
+    Json(ListResponse { sandboxes, asset_health })
 }
 
 async fn handle_info(
@@ -1195,14 +1221,20 @@ async fn handle_lint_config() -> Json<serde_json::Value> {
 
 /// GET /mcp/servers -- list configured MCP servers with status.
 async fn handle_mcp_servers() -> Json<serde_json::Value> {
-    use capsem_core::mcp::{build_server_list, load_tool_cache};
+    use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
     use capsem_core::mcp::policy::McpUserConfig;
 
     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
     let user_mcp = user_sf.mcp.unwrap_or_default();
     let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
 
-    let servers = build_server_list(&user_mcp, &corp_mcp);
+    // Include the "local" builtin server if the binary exists.
+    let builtin_bin = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
+    let servers = build_server_list_with_builtin(
+        &user_mcp, &corp_mcp, builtin_bin.as_deref(), std::collections::HashMap::new(),
+    );
     let cache = load_tool_cache();
 
     let resp: Vec<api::McpServerInfoResponse> = servers.iter().map(|s| {
@@ -1216,7 +1248,7 @@ async fn handle_mcp_servers() -> Json<serde_json::Value> {
             enabled: s.enabled,
             running: false, // Config-level only; runtime status requires IPC.
             tool_count,
-            unsupported_stdio: s.unsupported_stdio,
+            is_stdio: s.is_stdio(),
         }
     }).collect();
     Json(serde_json::to_value(resp).unwrap_or_default())
@@ -1371,6 +1403,111 @@ async fn handle_inspect(
         [(axum::http::header::CONTENT_TYPE, "application/json")],
         json_str,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// History endpoints
+// ---------------------------------------------------------------------------
+
+/// Helper: resolve session_dir from instance ID (running or persistent).
+fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
+    let instances = state.instances.lock().unwrap();
+    if let Some(i) = instances.get(id) {
+        return Ok(i.session_dir.clone());
+    }
+    drop(instances);
+    let registry = state.persistent_registry.lock().unwrap();
+    if let Some(entry) = registry.get(id) {
+        return Ok(entry.session_dir.clone());
+    }
+    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+}
+
+/// GET /history/{id} -- unified command history (exec + audit events).
+async fn handle_history(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<api::HistoryQuery>,
+) -> Result<Json<api::HistoryResponse>, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+
+    let reader = capsem_logger::DbReader::open(&db_path)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
+
+    let (commands, total) = reader.history(
+        params.limit,
+        params.offset,
+        params.search.as_deref(),
+        &params.layer,
+    ).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+
+    let has_more = (params.offset + commands.len()) < total as usize;
+    Ok(Json(api::HistoryResponse { commands, total, has_more }))
+}
+
+/// GET /history/{id}/processes -- process-centric view of audit events.
+async fn handle_history_processes(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::HistoryProcessesResponse>, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+
+    let reader = capsem_logger::DbReader::open(&db_path)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
+
+    let processes = reader.history_processes(100)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+
+    Ok(Json(api::HistoryProcessesResponse { processes }))
+}
+
+/// GET /history/{id}/counts -- exec and audit event counts.
+async fn handle_history_counts(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::HistoryCountsResponse>, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+
+    let reader = capsem_logger::DbReader::open(&db_path)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
+
+    let counts = reader.history_counts()
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+
+    Ok(Json(api::HistoryCountsResponse {
+        exec_count: counts.exec_count,
+        audit_count: counts.audit_count,
+    }))
+}
+
+/// GET /history/{id}/transcript -- raw PTY output (base64-encoded).
+async fn handle_history_transcript(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(_params): Query<api::TranscriptQuery>,
+) -> Result<Json<api::TranscriptResponse>, AppError> {
+    use base64::Engine;
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let pty_log_path = session_dir.join("pty.log");
+
+    if !pty_log_path.exists() {
+        return Ok(Json(api::TranscriptResponse {
+            content: String::new(),
+            bytes: 0,
+        }));
+    }
+
+    let output = std::fs::read(&pty_log_path)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to read pty.log: {e}")))?;
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&output);
+    Ok(Json(api::TranscriptResponse {
+        bytes: output.len(),
+        content: encoded,
+    }))
 }
 
 /// Wait for a process to exit, force-killing after timeout.
@@ -1810,6 +1947,8 @@ async fn handle_run(
             rootfs_version: Some(state.current_version.clone()),
             forked_from: None,
             persistent: false,
+            exec_count: 0,
+            audit_event_count: 0,
         };
         if let Err(e) = idx.create_session(&record) {
             tracing::warn!("failed to register session in main.db: {e}");
@@ -1875,6 +2014,41 @@ async fn handle_run(
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 
+async fn supervise_companion(name: &str, binary: PathBuf, run_dir: PathBuf, extra_args: Vec<String>) {
+    if !binary.exists() {
+        tracing::error!(name, path = %binary.display(), "companion binary not found, skipping");
+        return;
+    }
+    tracing::info!(name, path = %binary.display(), "starting companion process");
+
+    loop {
+        let mut cmd = tokio::process::Command::new(&binary);
+        // Put the run_dir in the environment so companions know where to write their state
+        cmd.env("CAPSEM_RUN_DIR", &run_dir);
+        cmd.args(&extra_args);
+        
+        match cmd.spawn() {
+            Ok(mut child) => {
+                match child.wait().await {
+                    Ok(status) => {
+                        tracing::warn!(name, %status, "companion process exited");
+                    }
+                    Err(e) => {
+                        tracing::error!(name, error = %e, "companion process wait failed");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(name, error = %e, "failed to spawn companion process");
+            }
+        }
+        
+        // Wait before restarting to avoid tight loops on immediate crashes
+        tracing::info!(name, "restarting companion process in 2 seconds");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -1920,26 +2094,34 @@ async fn main() -> Result<()> {
     let process_binary = args.process_binary.unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
     let assets_base_dir = args.assets_dir.unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
 
-    // Determine arch for manifest lookup
-    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
-
-    // Initialize AssetManager from manifest.json. 
-    let manifest_path = if assets_base_dir.join("manifest.json").exists() {
-        assets_base_dir.join("manifest.json")
-    } else {
-        assets_base_dir.parent().unwrap().join("manifest.json")
-    };
-    
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .context(format!("failed to read manifest from {}", manifest_path.display()))?;
-    
-    let manifest = capsem_core::asset_manager::Manifest::from_json_for_arch(&manifest_content, arch)
-        .or_else(|_| capsem_core::asset_manager::Manifest::from_json(&manifest_content))?;
+    // Load v2 manifest if available. In dev mode (no manifest or v1), use None.
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    
-    let asset_manager = capsem_core::asset_manager::AssetManager::from_manifest(
-        &manifest, &current_version, assets_base_dir.clone(), Some(arch)
-    )?;
+    let manifest_path = if assets_base_dir.join("manifest.json").exists() {
+        Some(assets_base_dir.join("manifest.json"))
+    } else if assets_base_dir.parent().unwrap().join("manifest.json").exists() {
+        Some(assets_base_dir.parent().unwrap().join("manifest.json"))
+    } else {
+        None
+    };
+
+    let manifest = manifest_path.and_then(|path| {
+        let content = std::fs::read_to_string(&path).ok()?;
+        if capsem_core::asset_manager::is_v2_manifest(&content) {
+            match capsem_core::asset_manager::ManifestV2::from_json(&content) {
+                Ok(m) => {
+                    info!(asset_version = %m.assets.current, "loaded v2 manifest");
+                    Some(Arc::new(m))
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to parse v2 manifest, falling back to dev mode");
+                    None
+                }
+            }
+        } else {
+            info!("v1 manifest detected, using dev mode asset resolution");
+            None
+        }
+    });
 
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path);
@@ -1948,13 +2130,32 @@ async fn main() -> Result<()> {
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
-        process_binary,
+        process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        asset_manager: Arc::new(asset_manager),
+        manifest,
         current_version,
     });
+
+    // Spawn companions (gateway + tray) and supervise them
+    if let Some(gateway_bin) = args.gateway_binary {
+        let run_dir = run_dir.clone();
+        let mut gw_args = Vec::new();
+        if let Some(port) = args.gateway_port {
+            gw_args.push("--port".to_string());
+            gw_args.push(port.to_string());
+        }
+        tokio::spawn(async move {
+            supervise_companion("capsem-gateway", gateway_bin, run_dir, gw_args).await;
+        });
+    }
+    if let Some(tray_bin) = args.tray_binary {
+        let run_dir = run_dir.clone();
+        tokio::spawn(async move {
+            supervise_companion("capsem-tray", tray_bin, run_dir, Vec::new()).await;
+        });
+    }
 
     info!("scanning for existing sandboxes in {}", instances_dir.display());
     if let Ok(entries) = std::fs::read_dir(&instances_dir) {
@@ -2011,6 +2212,10 @@ async fn main() -> Result<()> {
         .route("/mcp/tools/refresh", post(handle_mcp_refresh))
         .route("/mcp/tools/{name}/approve", post(handle_mcp_approve))
         .route("/mcp/tools/{name}/call", post(handle_mcp_call))
+        .route("/history/{id}", get(handle_history))
+        .route("/history/{id}/processes", get(handle_history_processes))
+        .route("/history/{id}/counts", get(handle_history_counts))
+        .route("/history/{id}/transcript", get(handle_history_transcript))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -2168,15 +2373,6 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     fn make_test_state() -> Arc<ServiceState> {
-        let dummy_hash = "a".repeat(64);
-        let manifest_json = format!(
-            r#"{{"latest":"0.0.0","releases":{{"0.0.0":{{"assets":[{{"filename":"dummy.img","hash":"{}","size":0}}]}}}}}}"#,
-            dummy_hash
-        );
-        let manifest = capsem_core::asset_manager::Manifest::from_json(&manifest_json).unwrap();
-        let am = capsem_core::asset_manager::AssetManager::from_manifest(
-            &manifest, "0.0.0", PathBuf::from("/tmp/capsem-test-assets"), None
-        ).unwrap();
         let registry_path = PathBuf::from("/tmp/capsem-test-svc/persistent_registry.json");
         Arc::new(ServiceState {
             instances: Mutex::new(HashMap::new()),
@@ -2185,7 +2381,7 @@ mod tests {
             assets_dir: PathBuf::from("/nonexistent/assets"),
             run_dir: PathBuf::from("/tmp/capsem-test-svc"),
             job_counter: AtomicU64::new(1),
-            asset_manager: Arc::new(am),
+            manifest: None,
             current_version: "0.0.0".into(),
         })
     }
@@ -2695,15 +2891,6 @@ mod tests {
 
     fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let dummy_hash = "a".repeat(64);
-        let manifest_json = format!(
-            r#"{{"latest":"0.0.0","releases":{{"0.0.0":{{"assets":[{{"filename":"dummy.img","hash":"{}","size":0}}]}}}}}}"#,
-            dummy_hash
-        );
-        let manifest = capsem_core::asset_manager::Manifest::from_json(&manifest_json).unwrap();
-        let am = capsem_core::asset_manager::AssetManager::from_manifest(
-            &manifest, "0.0.0", dir.path().join("assets"), None
-        ).unwrap();
         let registry_path = dir.path().join("persistent_registry.json");
         let state = Arc::new(ServiceState {
             instances: Mutex::new(HashMap::new()),
@@ -2712,7 +2899,7 @@ mod tests {
             assets_dir: dir.path().join("assets"),
             run_dir: dir.path().to_path_buf(),
             job_counter: AtomicU64::new(1),
-            asset_manager: Arc::new(am),
+            manifest: None,
             current_version: "0.0.0".into(),
         });
         (state, dir)
@@ -3220,6 +3407,8 @@ mod tests {
             rootfs_version: None,
             forked_from: None,
             persistent: false,
+            exec_count: 0,
+            audit_event_count: 0,
         };
         idx.create_session(&record).unwrap();
         drop(idx);
@@ -3278,15 +3467,6 @@ mod tests {
 
     fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<ServiceState>, tempfile::TempDir) {
         let run_dir = dir.path().join("run");
-        let dummy_hash = "a".repeat(64);
-        let manifest_json = format!(
-            r#"{{"latest":"0.0.0","releases":{{"0.0.0":{{"assets":[{{"filename":"dummy.img","hash":"{}","size":0}}]}}}}}}"#,
-            dummy_hash
-        );
-        let manifest = capsem_core::asset_manager::Manifest::from_json(&manifest_json).unwrap();
-        let am = capsem_core::asset_manager::AssetManager::from_manifest(
-            &manifest, "0.0.0", run_dir.join("assets"), None
-        ).unwrap();
         let registry_path = run_dir.join("persistent_registry.json");
         let state = Arc::new(ServiceState {
             instances: Mutex::new(HashMap::new()),
@@ -3295,7 +3475,7 @@ mod tests {
             assets_dir: run_dir.join("assets"),
             run_dir,
             job_counter: AtomicU64::new(1),
-            asset_manager: Arc::new(am),
+            manifest: None,
             current_version: "0.0.0".into(),
         });
         (state, dir)
