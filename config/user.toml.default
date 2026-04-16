@@ -18,6 +18,9 @@
 # "ai.openai.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }
 # "ai.openai.api_key" = { value = "", modified = "2026-04-21T00:00:00Z" }
 # "ai.openai.domains" = { value = "*.openai.com", modified = "2026-04-21T00:00:00Z" }
+# "ai.ollama.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }
+# "ai.ollama.api_key" = { value = "", modified = "2026-04-21T00:00:00Z" }
+# "ai.ollama.domains" = { value = "host.docker.internal, llama.local, *.llama.local", modified = "2026-04-21T00:00:00Z" }
 # "ai.google.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }
 # "ai.google.api_key" = { value = "", modified = "2026-04-21T00:00:00Z" }
 # "ai.google.domains" = { value = "*.googleapis.com", modified = "2026-04-21T00:00:00Z" }

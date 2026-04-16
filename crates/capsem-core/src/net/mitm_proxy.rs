@@ -59,6 +59,9 @@ pub struct MitmProxyConfig {
 
 /// Detect AI provider from domain name.
 fn detect_ai_provider(domain: &str) -> Option<ProviderKind> {
+    if domain.ends_with("llama.local") || domain == "host.docker.internal" || domain == "llama.local" {
+        return Some(ProviderKind::OpenAi);
+    }
     match domain {
         "api.anthropic.com" => Some(ProviderKind::Anthropic),
         "api.openai.com" => Some(ProviderKind::OpenAi),
@@ -442,8 +445,19 @@ async fn handle_request(
     let mut sender = if let Some(s) = reusable {
         s
     } else {
-        let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
-        let upstream_tcp = match tokio::net::TcpStream::connect(format!("{domain}:443")).await {
+        let (alias_target, is_plaintext) = if let Some(alias) = policy.host_aliases.get(domain) {
+            if let Some(stripped) = alias.strip_prefix("http://") {
+                (stripped.to_string(), true)
+            } else if let Some(stripped) = alias.strip_prefix("https://") {
+                (stripped.to_string(), false)
+            } else {
+                (alias.to_string(), false)
+            }
+        } else {
+            (format!("{domain}:443"), false)
+        };
+
+        let upstream_tcp = match tokio::net::TcpStream::connect(&alias_target).await {
             Ok(tcp) => {
                 let _ = tcp.set_nodelay(true);
                 tcp
@@ -452,29 +466,49 @@ async fn handle_request(
                 return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
             }
         };
-        let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {
-            Ok(sn) => sn,
-            Err(e) => {
-                return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
-            }
-        };
-        let upstream_tls_stream = match connector.connect(server_name, upstream_tcp).await {
-            Ok(tls) => tls,
-            Err(e) => {
-                return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
-            }
-        };
-        let upstream_io = TokioIo::new(upstream_tls_stream);
-        let (sender, conn) = match hyper::client::conn::http1::handshake(upstream_io).await {
-            Ok(pair) => pair,
-            Err(e) => {
-                return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
-            }
-        };
-        tokio::spawn(async move {
-            let _ = conn.await;
-        });
-        sender
+
+        if is_plaintext {
+            let upstream_io = TokioIo::new(upstream_tcp);
+            let (sender, conn) = match hyper::client::conn::http1::handshake(upstream_io).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                }
+            };
+            tokio::spawn(async move {
+                let _ = conn.await;
+            });
+            sender
+        } else {
+            let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
+            let host_part = alias_target.split(':').next().unwrap_or(&alias_target);
+            let server_name = match rustls::pki_types::ServerName::try_from(host_part.to_string()) {
+                Ok(sn) => sn,
+                Err(_) => {
+                    match rustls::pki_types::ServerName::try_from(domain.to_string()) {
+                        Ok(sn) => sn,
+                        Err(e) => return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time)),
+                    }
+                }
+            };
+            let upstream_tls_stream = match connector.connect(server_name, upstream_tcp).await {
+                Ok(tls) => tls,
+                Err(e) => {
+                    return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                }
+            };
+            let upstream_io = TokioIo::new(upstream_tls_stream);
+            let (sender, conn) = match hyper::client::conn::http1::handshake(upstream_io).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                }
+            };
+            tokio::spawn(async move {
+                let _ = conn.await;
+            });
+            sender
+        }
     };
 
     // Build upstream request with original headers.
@@ -491,7 +525,15 @@ async fn handle_request(
         }
         builder = builder.header(name.clone(), value.clone());
     }
-    builder = builder.header("host", domain);
+    
+    // Use alias target for Host header if present, otherwise the original domain.
+    let host_header = if let Some(alias) = policy.host_aliases.get(domain) {
+        alias.strip_prefix("http://").or_else(|| alias.strip_prefix("https://")).unwrap_or(alias).to_string()
+    } else {
+        domain.to_string()
+    };
+    builder = builder.header("host", host_header);
+    
     // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
     builder = builder.header("accept-encoding", "gzip");
 

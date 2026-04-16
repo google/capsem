@@ -612,8 +612,36 @@ impl MergedPolicies {
         let resolved = resolve_settings(user, corp);
         let mcp_user = user.mcp.clone().unwrap_or_default();
         let mcp_corp = corp.mcp.clone().unwrap_or_default();
+
+        let mut host_aliases = HashMap::new();
+        if let Some(user_aliases) = &user.host_aliases {
+            host_aliases.extend(user_aliases.clone());
+        }
+        if let Some(corp_aliases) = &corp.host_aliases {
+            host_aliases.extend(corp_aliases.clone());
+        }
+        
+        // Auto-map Ollama domains to local plaintext endpoint
+        let ollama_domains = resolved
+            .iter()
+            .find(|s| s.id == "ai.ollama.domains")
+            .and_then(|s| s.effective_value.as_text())
+            .unwrap_or("");
+        
+        for domain in parse_domain_list(ollama_domains) {
+            // Strip wildcard for routing if present
+            let key = if let Some(stripped) = domain.strip_prefix("*.") {
+                stripped.to_string()
+            } else {
+                domain.clone()
+            };
+            if !host_aliases.contains_key(&key) {
+                host_aliases.insert(key, "http://127.0.0.1:11434".to_string());
+            }
+        }
+
         Self {
-            network: build_network_policy(&resolved),
+            network: build_network_policy(&resolved, host_aliases),
             domain: settings_to_domain_policy(&resolved),
             http: settings_to_http_policy(&resolved),
             mcp: mcp_user.to_policy(&mcp_corp),
@@ -635,7 +663,7 @@ impl MergedPolicies {
 /// - Disabled toggles with domains get read=false, write=false
 /// - Enabled toggles with domains get read=true, write=true
 /// - Default action maps to default_allow_read and default_allow_write
-pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy::NetworkPolicy {
+pub fn build_network_policy(resolved: &[ResolvedSetting], host_aliases: HashMap<String, String>) -> crate::net::policy::NetworkPolicy {
     use crate::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
 
     let mut rules = Vec::new();
@@ -772,6 +800,7 @@ pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy:
     let mut policy = NetworkPolicy::new(rules, default_allow_read, default_allow_write);
     policy.log_bodies = log_bodies;
     policy.max_body_capture = max_body_capture;
+    policy.host_aliases = host_aliases;
     policy
 }
 

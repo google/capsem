@@ -314,6 +314,9 @@ pub struct SettingsFile {
     /// MCP server configuration (optional section in user.toml / corp.toml).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
+    /// User-friendly alias mapping (e.g., "ollama.local" = "http://127.0.0.1:11434")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_aliases: Option<HashMap<String, String>>,
 }
 
 /// Where a setting's effective value came from.

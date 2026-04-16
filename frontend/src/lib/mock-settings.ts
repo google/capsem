@@ -38,6 +38,9 @@ export let mockSettings: ResolvedSetting[] = [
   ms({ id: 'ai.google.api_key', category: 'Google AI', name: 'Google AI API Key', setting_type: 'apikey', description: 'API key for Google AI. Injected as GEMINI_API_KEY env var.', default_value: '', effective_value: '', enabled_by: 'ai.google.allow', enabled: false, metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://aistudio.google.com/apikey', prefix: 'AIza' } }),
   ms({ id: 'ai.google.domains', category: 'Google AI', name: 'Google AI Domains', setting_type: 'text', description: 'Comma-separated domain patterns.', default_value: '*.googleapis.com', effective_value: '*.googleapis.com', enabled_by: 'ai.google.allow', enabled: false }),
   ms({ id: 'ai.google.gemini.settings_json', category: 'Gemini CLI', name: 'Gemini CLI settings.json', setting_type: 'file', description: 'Content for /root/.gemini/settings.json.', default_value: { path: '/root/.gemini/settings.json', content: '{"homeDirectoryWarningDismissed":true,"general":{"disableAutoUpdate":true},"telemetry":{"enabled":false}}' }, effective_value: { path: '/root/.gemini/settings.json', content: '{"homeDirectoryWarningDismissed":true,"general":{"disableAutoUpdate":true},"telemetry":{"enabled":false}}' }, enabled_by: 'ai.google.allow', enabled: false, metadata: { domains: [], choices: [], min: null, max: null, rules: {}, filetype: 'json' } }),
+  ms({ id: 'ai.ollama.allow', category: 'Ollama', name: 'Allow Ollama', setting_type: 'bool', description: 'Enable API access to Ollama (host.docker.internal).', default_value: true, effective_value: true, metadata: { domains: [], choices: [], min: null, max: null, rules: { default: { domains: [], path: null, get: true, post: true, put: false, delete: false, other: false } } } }),
+  ms({ id: 'ai.ollama.api_key', category: 'Ollama', name: 'Ollama API Key', setting_type: 'apikey', description: 'API key for Ollama. Injected as OLLAMA_API_KEY env var.', default_value: '', effective_value: '', enabled_by: 'ai.ollama.allow', enabled: false }),
+  ms({ id: 'ai.ollama.domains', category: 'Ollama', name: 'Ollama Domains', setting_type: 'text', description: 'Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.', default_value: 'host.docker.internal, llama.local, *.llama.local', effective_value: 'host.docker.internal, llama.local, *.llama.local', enabled_by: 'ai.ollama.allow', enabled: false }),
   ms({ id: 'ai.openai.allow', category: 'OpenAI', name: 'Allow OpenAI', setting_type: 'bool', description: 'Enable API access to OpenAI (*.openai.com).', default_value: true, effective_value: true, metadata: { domains: [], choices: [], min: null, max: null, rules: { default: { domains: [], path: null, get: true, post: true, put: false, delete: false, other: false } } } }),
   ms({ id: 'ai.openai.api_key', category: 'OpenAI', name: 'OpenAI API Key', setting_type: 'apikey', description: 'API key for OpenAI. Injected as OPENAI_API_KEY env var.', default_value: '', effective_value: '', enabled_by: 'ai.openai.allow', enabled: false, metadata: { domains: [], choices: [], min: null, max: null, rules: {}, docs_url: 'https://platform.openai.com/api-keys', prefix: 'sk-' } }),
   ms({ id: 'ai.openai.domains', category: 'OpenAI', name: 'OpenAI Domains', setting_type: 'text', description: 'Comma-separated domain patterns.', default_value: '*.openai.com', effective_value: '*.openai.com', enabled_by: 'ai.openai.allow', enabled: false }),
@@ -134,6 +137,11 @@ export function buildMockTree(): SettingsNode[] {
         { kind: 'group', enabled: true, key: 'ai.google.gemini', name: 'Gemini CLI', description: 'Gemini CLI configuration files', collapsed: false, children: [
           leaf(find('ai.google.gemini.settings_json')),
         ]},
+      ]},
+      { kind: 'group', enabled: true, key: 'ai.ollama', name: 'Ollama', description: 'Local open-source models via Ollama or llama.cpp', enabled_by: 'ai.ollama.allow', collapsed: false, children: [
+        leaf(find('ai.ollama.allow')),
+        leaf(find('ai.ollama.api_key')),
+        leaf(find('ai.ollama.domains')),
       ]},
       { kind: 'group', enabled: true, key: 'ai.openai', name: 'OpenAI', description: 'OpenAI API provider', enabled_by: 'ai.openai.allow', collapsed: false, children: [
         leaf(find('ai.openai.allow')),
