@@ -3,6 +3,7 @@
   import FileTree from './FileTree.svelte';
   import FileContent from './FileContent.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
+  import UploadSimple from 'phosphor-svelte/lib/UploadSimple';
   import * as api from '../../api';
   import type { FileEntry } from '../../types';
 
@@ -15,6 +16,9 @@
   let fileBlob = $state<Blob | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
+  let dragActive = $state(false);
+  let uploadStatus = $state<string | null>(null);
+  let dragCounter = $state(0);
 
   function findEntry(tree: FileEntry[], path: string): FileEntry | undefined {
     for (const node of tree) {
@@ -62,7 +66,6 @@
 
   async function refresh() {
     await loadTree();
-    // Keep selection if still valid
     if (selectedPath) {
       const found = findEntry(fileTree, selectedPath);
       if (!found) {
@@ -74,18 +77,109 @@
     }
   }
 
+  // Determine upload target directory from selection
+  function getUploadDir(): string {
+    if (selectedEntry?.type === 'directory') return selectedEntry.path;
+    if (selectedEntry?.path) {
+      const lastSlash = selectedEntry.path.lastIndexOf('/');
+      return lastSlash > 0 ? selectedEntry.path.substring(0, lastSlash) : '';
+    }
+    return '';
+  }
+
+  function handleDragEnter(e: DragEvent) {
+    e.preventDefault();
+    dragCounter += 1;
+    if (e.dataTransfer?.types.includes('Files')) {
+      dragActive = true;
+    }
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    e.preventDefault();
+    dragCounter -= 1;
+    if (dragCounter <= 0) {
+      dragActive = false;
+      dragCounter = 0;
+    }
+  }
+
+  async function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    dragActive = false;
+    dragCounter = 0;
+
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+
+    const dir = getUploadDir();
+    let uploaded = 0;
+    let failed = 0;
+
+    uploadStatus = `Uploading ${files.length} file${files.length > 1 ? 's' : ''}...`;
+
+    for (const file of files) {
+      const sanitized = api.sanitizePath(file.name);
+      if (!sanitized) {
+        failed++;
+        continue;
+      }
+      const targetPath = dir ? `${dir}/${sanitized}` : sanitized;
+      try {
+        await api.uploadFile(vmId, targetPath, file);
+        uploaded++;
+      } catch {
+        failed++;
+      }
+    }
+
+    if (failed > 0) {
+      uploadStatus = `Uploaded ${uploaded}, failed ${failed}`;
+    } else {
+      uploadStatus = `Uploaded ${uploaded} file${uploaded > 1 ? 's' : ''}`;
+    }
+    setTimeout(() => { uploadStatus = null; }, 3000);
+
+    await refresh();
+  }
+
   onMount(() => {
     loadTree();
   });
 </script>
 
-<div class="flex h-full">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="flex h-full relative"
+  ondragenter={handleDragEnter}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
+  {#if dragActive}
+    <div class="absolute inset-0 z-50 flex items-center justify-center bg-background/80 border-2 border-dashed border-primary rounded-lg pointer-events-none">
+      <div class="flex flex-col items-center gap-y-2">
+        <UploadSimple size={32} class="text-primary" />
+        <p class="text-sm font-medium text-primary">Drop files to upload</p>
+      </div>
+    </div>
+  {/if}
+
   <!-- Tree pane -->
   <div class="w-64 shrink-0 border-r border-line-2 overflow-auto bg-layer">
     <div class="flex items-center justify-between px-3 py-2 border-b border-line-2">
       <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Files</span>
       <div class="flex items-center gap-x-1">
-        {#if loading}
+        {#if uploadStatus}
+          <span class="text-xs text-primary">{uploadStatus}</span>
+        {:else if loading}
           <span class="text-xs text-muted-foreground">Loading...</span>
         {/if}
         <button

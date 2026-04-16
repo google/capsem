@@ -91,19 +91,19 @@
 
 ## T7: Frontend -- Drag-and-Drop Upload
 
-- [ ] Add `dragenter`/`dragover`/`dragleave`/`drop` handlers to FilesView.svelte root div
-- [ ] Add `dragActive` state for visual overlay
-- [ ] Style overlay: dashed border, primary color, "Drop files to upload" text (Preline CSS classes)
-- [ ] On drop: extract files from DataTransfer
-- [ ] Sanitize dropped filenames with `sanitizePath()`
-- [ ] Determine target: selected directory path or workspace root
-- [ ] Call `api.uploadFile(vmId, targetPath, file)` for each dropped file
-- [ ] Show upload progress/status (inline message or brief toast)
-- [ ] Refresh tree after successful upload
-- [ ] Handle errors (file too large, upload failed) with user-visible message
-- [ ] pnpm run check passes
+- [x] Add `dragenter`/`dragover`/`dragleave`/`drop` handlers to FilesView.svelte root div
+- [x] Add `dragActive` state for visual overlay
+- [x] Style overlay: dashed border, primary color, "Drop files to upload" text (Preline CSS classes)
+- [x] On drop: extract files from DataTransfer
+- [x] Sanitize dropped filenames with `sanitizePath()`
+- [x] Determine target: selected directory path or workspace root
+- [x] Call `api.uploadFile(vmId, targetPath, file)` for each dropped file
+- [x] Show upload progress/status (inline message or brief toast)
+- [x] Refresh tree after successful upload
+- [x] Handle errors (file too large, upload failed) with user-visible message
+- [x] pnpm run check passes
 - [ ] Visual test: drag file from Finder, overlay appears, file uploads and shows in tree
-- [ ] Commit: `feat: drag-and-drop file upload in Files tab`
+- [x] Commit: `feat: drag-and-drop file upload in Files tab`
 
 ## T8: Integration Testing + Polish
 
