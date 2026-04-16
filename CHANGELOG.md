@@ -8,9 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Version in help and status** -- `capsem --help` and `capsem status` now show the current version.
-- **v2 manifest with orthogonal versioning** -- binary version (`1.0.{timestamp}`) and asset version (`YYYY.MMDD.patch`) are now independent. The v2 manifest has separate `assets` and `binaries` sections with `min_binary`/`min_assets` compatibility ranges, deprecation tracking, and release dates. Assets use hash-based flat filenames for natural dedup.
-- **Kernel/initrd path overrides** -- `capsem-process` accepts `--kernel` and `--initrd` to override the default `assets_dir/vmlinuz` and `assets_dir/initrd.img` paths, enabling hash-based asset resolution.
+- **Orthogonal asset versioning** -- binary version (`1.0.{timestamp}`) and asset version (`YYYY.MMDD.patch`) are fully independent. The v2 manifest has separate `assets` and `binaries` sections with `min_binary`/`min_assets` compatibility ranges, deprecation tracking, and release dates. Assets use hash-based filenames (`rootfs-{hash16}.squashfs`) via hardlinks for zero-cost dedup.
+- **`capsem status` shows full system health** -- version, service/gateway connectivity and version sync (catches stale processes), asset version with per-file ok/MISSING status.
+- **Service `/version` endpoint** -- returns the running service binary version for staleness detection.
+- **`/setup/assets` uses resolved paths** -- returns hash-named file paths and asset version instead of hardcoded logical names.
 
 ### Changed
 - **MCP builtin tools refactored to standalone server** -- HTTP tools (fetch_http, grep_http, http_headers) and snapshot tools (snapshots_changes, snapshots_list, snapshots_revert, etc.) extracted from gateway into `capsem-mcp-builtin`, a stdio MCP server subprocess managed by the aggregator like any external server. Gateway dispatch simplified to route all tool calls uniformly through the aggregator.
@@ -48,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Stale update cache suggests downgrade** -- `read_cached_update_notice` now re-validates with `is_newer` before displaying, preventing bogus "Update available: 1.0.x -> 0.16.x" notices after a version scheme change.
+- **Install leaves stale gateway token** -- `just install` now unloads the LaunchAgent before killing processes, preventing macOS from respawning the old service. Cleans stale `gateway.token` and `gateway.port` files.
+- **Asset resolution in arch subdirs** -- `ManifestV2::resolve` checks both `base_dir/{hash}` and `base_dir/{arch}/{hash}`, fixing installed service asset lookup.
+- **`_pack-initrd` skips docker when binaries are current** -- avoids unnecessary container cross-compile on every `just shell`.
+- **v1 asset code removed** -- `asset_manager.rs` reduced from 1947 to ~400 lines. All v1 types, download infra, and legacy cleanup deleted. Download stubs point to `sprints/orthogonal-ci/plan.md`.
 - **MITM cert "not yet valid" after Mac sleep** -- leaf certificates now use a fixed `notBefore` of 2026-01-01 instead of `now - 1h`, preventing cert validation failures when the guest clock drifts. Ping messages now carry `epoch_secs` so the guest clock resyncs every 10s heartbeat, covering Mac sleep/wake and long-running VMs.
 - **frontend: tab names use VM name** -- provisioning and deep-link flows now show the VM's fun name (e.g. "tmp-agile-blaze") instead of the raw ID.
 - **frontend: snapshot stats query real VM** -- Snapshots tab in Stats view now queries the VM's session.db via `/inspect` instead of the local mock database.
