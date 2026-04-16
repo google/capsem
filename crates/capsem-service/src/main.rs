@@ -1343,30 +1343,30 @@ async fn handle_complete_onboarding() -> Result<Json<serde_json::Value>, AppErro
 async fn handle_asset_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Json<serde_json::Value> {
-    let assets_dir = state.assets_dir.clone();
-
-    // Check which expected assets exist on disk (blocking I/O)
-    let asset_list = tokio::task::spawn_blocking(move || -> Vec<serde_json::Value> {
-        // Expected asset files for a working install
-        let expected = ["vmlinuz", "initrd.img", "rootfs.squashfs"];
-        expected.iter().map(|name| {
-            let path = assets_dir.join(name);
-            let status = if path.exists() { "present" } else { "missing" };
-            json!({ "name": name, "status": status })
-        }).collect()
-    })
-    .await
-    .unwrap_or_default();
-
-    let all_ready = asset_list.iter().all(|a| {
-        a.get("status").and_then(|s| s.as_str()) == Some("present")
-    });
-
-    Json(json!({
-        "ready": all_ready,
-        "downloading": false,
-        "assets": asset_list,
-    }))
+    match state.resolve_asset_paths() {
+        Ok(resolved) => {
+            let assets = vec![
+                json!({ "name": "vmlinuz", "path": resolved.kernel.display().to_string(), "status": if resolved.kernel.exists() { "present" } else { "missing" } }),
+                json!({ "name": "initrd.img", "path": resolved.initrd.display().to_string(), "status": if resolved.initrd.exists() { "present" } else { "missing" } }),
+                json!({ "name": "rootfs.squashfs", "path": resolved.rootfs.display().to_string(), "status": if resolved.rootfs.exists() { "present" } else { "missing" } }),
+            ];
+            let all_ready = assets.iter().all(|a| a["status"] == "present");
+            Json(json!({
+                "ready": all_ready,
+                "downloading": false,
+                "asset_version": resolved.asset_version,
+                "assets": assets,
+            }))
+        }
+        Err(e) => {
+            Json(json!({
+                "ready": false,
+                "downloading": false,
+                "error": e.to_string(),
+                "assets": [],
+            }))
+        }
+    }
 }
 
 /// POST /setup/assets/download -- trigger background asset download.
@@ -2390,7 +2390,7 @@ async fn main() -> Result<()> {
         &run_dir,
         args.gateway_binary,
         args.gateway_port,
-        args.frontend_dir,
+        args.frontend_dir.or_else(find_frontend_dir),
         args.tray_binary,
     )
     .await;
@@ -2429,7 +2429,6 @@ async fn shutdown_signal() {
     }
 }
 
-#[allow(dead_code)]
 fn find_frontend_dir() -> Option<PathBuf> {
     // 1. Try project root development path
     if let Ok(cwd) = std::env::current_dir() {
