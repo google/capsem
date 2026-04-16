@@ -442,6 +442,37 @@ export interface FileNode {
   sizeBytes?: number;
 }
 
+/** A file entry from the host-side files API (GET /files/{id}). */
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size: number;
+  mtime: number;
+  mime?: string;
+  label?: string;
+  is_text?: boolean;
+  children?: FileEntry[];
+}
+
+/** Response from GET /files/{id}. */
+export interface FileListResponse {
+  entries: FileEntry[];
+}
+
+/** Response from POST /files/{id}/content (upload). */
+export interface FileUploadResponse {
+  success: boolean;
+  size: number;
+}
+
+/** Result from getFileContent(). */
+export interface FileContentResult {
+  text: string;
+  blob: Blob;
+  size: number;
+}
+
 /** A preset SQL query for the inspector. */
 export interface PresetQuery {
   label: string;

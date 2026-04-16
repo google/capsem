@@ -52,15 +52,15 @@
 
 ## T4: Frontend -- API Functions + Types
 
-- [ ] Add `sanitizePath(path: string): string` to api.ts -- `[a-zA-Z0-9._\-/]` allowlist
-- [ ] Add `listFiles(id, path?, depth?)` to api.ts -- calls `GET /files/{id}`
-- [ ] Add `getFileContent(id, path)` to api.ts -- fetches as blob, returns `{ text, blob, size }`
-- [ ] Add `uploadFile(id, path, content: Blob | string)` to api.ts -- POST raw bytes
-- [ ] Add `FileEntry` interface to types.ts (name, path, type, size, mtime, mime?, label?, is_text?, children?)
-- [ ] Add `FileListResponse` interface to types.ts
-- [ ] Update imports in api.ts (add new types to import block)
-- [ ] pnpm run check passes
-- [ ] Commit: `feat: frontend API client for files endpoints`
+- [x] Add `sanitizePath(path: string): string` to api.ts -- `[a-zA-Z0-9._\-/]` allowlist
+- [x] Add `listFiles(id, path?, depth?)` to api.ts -- calls `GET /files/{id}`
+- [x] Add `getFileContent(id, path)` to api.ts -- fetches as blob, returns `{ text, blob, size }`
+- [x] Add `uploadFile(id, path, content: Blob | string)` to api.ts -- POST raw bytes
+- [x] Add `FileEntry` interface to types.ts (name, path, type, size, mtime, mime?, label?, is_text?, children?)
+- [x] Add `FileListResponse` interface to types.ts
+- [x] Update imports in api.ts (add new types to import block)
+- [x] pnpm run check passes
+- [x] Commit: `feat: frontend API client for files endpoints`
 
 ## T5: Frontend -- Replace Find-Based Tree
 

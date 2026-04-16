@@ -24,13 +24,35 @@ import type {
   McpToolInfo,
   McpPolicyInfo,
   VmStateResponse,
+  FileListResponse,
+  FileContentResult,
+  FileUploadResponse,
 } from './types';
 
 // -- Module state (never exported directly) --
 
 let _token: string | null = null;
-let _baseUrl = 'http://127.0.0.1:19222';
 let _connected = false;
+
+// Derive gateway base URL:
+// - When served by the gateway, window.location.origin IS the gateway.
+// - In dev mode (Astro dev server on :5173), use the default gateway port.
+// - In Tauri (tauri://), use the default gateway port.
+const _GATEWAY_DEFAULT = 'http://127.0.0.1:19222';
+
+function _detectBaseUrl(): string {
+  if (typeof window === 'undefined') return _GATEWAY_DEFAULT;
+  const { origin, port } = window.location;
+  // Astro dev server -- API requests must go to the gateway, not the dev server
+  if (port === '5173') return _GATEWAY_DEFAULT;
+  // Same-origin localhost: we are served by the gateway
+  if (origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost')) {
+    return origin;
+  }
+  return _GATEWAY_DEFAULT;
+}
+
+let _baseUrl = _detectBaseUrl();
 
 // -- Public getters --
 
@@ -51,9 +73,10 @@ export type InitResult = {
 // -- Initialization --
 
 export async function init(): Promise<InitResult> {
+  console.log('[api] init() baseUrl=%s', _baseUrl);
   try {
     // Probe health first (unauthenticated)
-    const healthResp = await fetch(`${_baseUrl}/`);
+    const healthResp = await fetch(`${_baseUrl}/health`);
     if (!healthResp.ok) {
       _connected = false;
       
@@ -72,7 +95,7 @@ export async function init(): Promise<InitResult> {
     _token = tokenData.token;
 
     _connected = true;
-    
+    console.log('[api] init OK: connected, token acquired, version=%s', health.version);
     _connectEventWs();
     return { connected: true, reachable: true, version: health.version };
   } catch {
@@ -85,7 +108,7 @@ export async function init(): Promise<InitResult> {
 
 export async function healthCheck(): Promise<boolean> {
   try {
-    const resp = await fetch(`${_baseUrl}/`);
+    const resp = await fetch(`${_baseUrl}/health`);
     if (!resp.ok) return false;
     return true;
   } catch {
@@ -154,7 +177,10 @@ function isNetworkError(err: unknown): boolean {
 // -- Status --
 
 export async function getStatus(): Promise<StatusResponse> {
-  if (!_connected) return emptyStatus();
+  if (!_connected) {
+    console.log('[api] getStatus() skipped: not connected');
+    return emptyStatus();
+  }
   try {
     const resp = await _get('/status');
     return await resp.json();
@@ -186,8 +212,11 @@ function emptyStatus(): StatusResponse {
 // -- VM lifecycle --
 
 export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
+  console.log('[api] provisionVm(%o) connected=%s', opts, _connected);
   const resp = await _post('/provision', opts);
-  return await resp.json();
+  const result = await resp.json();
+  console.log('[api] provisionVm result:', result);
+  return result;
 }
 
 export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
@@ -687,6 +716,30 @@ export async function validateApiKey(provider: string, key: string): Promise<{ v
   }
 }
 
+// -- Setup / Onboarding --
+
+import type {
+  SetupStateResponse,
+  DetectedConfigSummary,
+} from './types/onboarding';
+
+/** Get setup/onboarding state (setup-state.json). */
+export async function getSetupState(): Promise<SetupStateResponse> {
+  const resp = await _get('/setup/state');
+  return await resp.json();
+}
+
+/** Run host detection, write found values to settings, return summary. */
+export async function runDetection(): Promise<DetectedConfigSummary> {
+  const resp = await _get('/setup/detect');
+  return await resp.json();
+}
+
+/** Mark GUI onboarding as completed. */
+export async function completeOnboarding(): Promise<void> {
+  await _post('/setup/complete');
+}
+
 // -- App actions --
 
 /** Open a URL in the system default browser. */
@@ -702,5 +755,57 @@ export async function checkForAppUpdate(): Promise<{ version: string; current_ve
   } catch {
     return null;
   }
+}
+
+// -- Files API (host-side VirtioFS) --
+
+/** Sanitize a file path: allowlist [a-zA-Z0-9._\-/], strip leading slashes. */
+export function sanitizePath(raw: string): string {
+  return raw.replace(/[^a-zA-Z0-9._\-/]/g, '').replace(/\/+/g, '/').replace(/^\//, '');
+}
+
+/** List files in a VM workspace directory. */
+export async function listFiles(id: string, path?: string, depth?: number): Promise<FileListResponse> {
+  const params = new URLSearchParams();
+  if (path) params.set('path', sanitizePath(path));
+  if (depth != null) params.set('depth', String(depth));
+  const qs = params.toString();
+  const url = `/files/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`;
+  const resp = await _get(url);
+  return await resp.json();
+}
+
+/** Download a file from a VM workspace. Returns text, blob, and size. */
+export async function getFileContent(id: string, path: string): Promise<FileContentResult> {
+  const sanitized = sanitizePath(path);
+  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
+    headers: { Authorization: `Bearer ${_token}` },
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new ApiError(resp.status, body);
+  }
+  const blob = await resp.blob();
+  const text = await blob.text();
+  return { text, blob, size: blob.size };
+}
+
+/** Upload a file to a VM workspace. */
+export async function uploadFile(id: string, path: string, content: Blob | string): Promise<FileUploadResponse> {
+  const sanitized = sanitizePath(path);
+  const body = typeof content === 'string' ? new Blob([content]) : content;
+  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      'Content-Type': 'application/octet-stream',
+    },
+    body,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new ApiError(resp.status, text);
+  }
+  return await resp.json();
 }
 
