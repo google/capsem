@@ -1,6 +1,6 @@
 # Sprint: Files Tab
 
-## Status: In Progress
+## Status: Complete
 
 ## T1: Backend -- Path Security + Magika Init
 
@@ -21,8 +21,8 @@
 - [x] Add `FileListResponse` struct to api.rs (entries: Vec<FileListEntry>)
 - [x] Implement `handle_list_files(state, id, query_params)` handler
 - [x] Recursive `read_dir` + `metadata()` up to max depth (default 1, max 6)
-- [x] Magika detection on files at depth 1 only (first ~8KB)
-- [x] Skip hidden files (dot-prefix), filter out `system/` directory
+- [x] Magika detection on all files at every depth
+- [x] Filter out `system/` directory, show hidden (dot) files
 - [x] Sort: directories first, then alphabetical
 - [x] Register route: `.route("/files/{id}", get(handle_list_files))` at ~L2337
 - [x] Test: list returns correct tree structure
@@ -127,6 +127,14 @@
 - Existing `read_file`/`write_file` vsock endpoints remain for MCP tools (capsem_read_file, capsem_write_file)
 - Preline JS components (HSTreeView, HSFileUpload, HSCopyMarkup) were evaluated and rejected -- using pure Svelte + Preline CSS instead
 - SCP is planned separately for large file transfers beyond the 10MB API limit
+
+### Post-sprint fixes
+
+- **Magika at all depths** -- removed depth-1 gate; identify_file_sync is fast (<1ms per file)
+- **Image/SVG inline preview** -- isImage/isSvg derived states; blob URL with lifecycle management; `<img>` rendering
+- **Show hidden directories** -- removed dot-prefix filter; only `system/` is skipped
+- **Shiki language expansion** -- 9 -> 30+ languages; content-sniffing fallback for extensionless files
+- **Syntax highlighting fix** -- fixed blob URL $effect read-write loop; added try-catch + console.error around Shiki init and codeToHtml
 
 ### Magika integration notes
 
