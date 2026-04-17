@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`capsem-app` reverted to thin webview shell** -- 578-line `main.rs` + 9 helper files (`assets.rs`, `boot.rs`, `cli.rs`, `commands/`, `gui.rs`, `logging.rs`, `session_mgmt.rs`, `state.rs`, `vsock_wiring.rs`) collapsed to a 185-line `main.rs` with 3 IPC commands: `log_frontend`, `open_url`, `check_for_app_update`. Drops `capsem-core`, `capsem-logger`, `anyhow`, `reqwest`, `rmp-serde`, and the macOS `objc2-*` deps from the app. All VM/MCP/MITM logic stays in the service daemon; the app only hosts the webview and deep-link handling.
+- **Terminal iframe owns its WebSocket lifecycle** -- replaces the parent/iframe `ready`/`vm-id`/`ws-ticket` postMessage handshake with URL-param init (`/vm/terminal/index.html?vm=…&theme=…&mode=…&fontSize=…&fontFamily=…`). The iframe fetches its own gateway token, manages WebSocket lifecycle + exponential-backoff reconnect with fresh tokens. Parent→iframe postMessage now covers only runtime signals (`theme-change`, `focus`, `clipboard-paste`). Removes `MsgReady`, `MsgVmId`, `MsgWsTicket`, `MsgWsConnected` from the contract.
+- **Frontend logging to Rust tracing** -- new `frontend/src/lib/tauri-log.ts` patches `console.*` + `window.onerror` + `onunhandledrejection` to forward via `invoke('log_frontend')` from `@tauri-apps/api/core`. Webview logs now land in `~/.capsem/logs/<timestamp>.jsonl` alongside backend events, target `frontend`. No-op outside the Tauri webview (detects via `__TAURI_INTERNALS__`, not the opt-in `window.isTauri` global).
+- **Frontend build timestamp in toolbar** -- `__BUILD_TS__` set at Vite build time, displayed right-side of toolbar. Makes stale-bundle issues obvious at a glance.
+- **`just build-ui [release]` recipe** -- frontend build + `cargo build -p capsem-ui` in lockstep. Required because `tauri::generate_context!()` embeds the frontend bundle at cargo compile time; rebuilding only the frontend has no effect on an already-compiled binary. Documented in `CLAUDE.md`, `/dev-just`, and `/frontend-design`.
+- **`just run-ui -- [args]`** -- `build-ui` then launch `./target/debug/capsem-ui` with passthrough args (e.g., `just run-ui -- --connect <vm-id>`).
+
+### Fixed
+- **Terminal iframe src must end in `index.html`** -- Tauri's custom protocol on macOS does not auto-append `index.html` for trailing-slash paths the way Vite/Astro dev server does. `/vm/terminal/` silently 404'd in the Tauri webview while working in Chrome dev mode.
+- **CSP re-enabled without blocking Astro hydration** -- production CSP on the terminal iframe now includes `'unsafe-inline'` for `script-src` (Astro emits inline hydration scripts in prod). `connect-src` stays locked to gateway + localhost, which is the meaningful defense against a compromised terminal exfiltrating data.
+
+### Added (existing work, continued)
 - **Files API: path sanitization and Magika init** -- allowlist-based `sanitize_file_path` (strips XSS, null bytes, unicode, rejects `..` traversal), `resolve_workspace_path` (canonicalize + starts_with check), and shared `Mutex<magika::Session>` in `ServiceState` for AI-powered file type detection.
 - **GET /files/{id} directory listing** -- recursive host-side VirtioFS directory listing with file metadata (size, mtime), Magika file-type detection (label, MIME, is_text) at all depths, hidden file filtering, configurable depth (1-6).
 - **GET/POST /files/{id}/content** -- binary-safe file download (raw bytes + Magika MIME type + Content-Disposition) and upload (raw bytes, create_dir_all, mode 0644) via host-side VirtioFS. 10MB limit enforced server-side.

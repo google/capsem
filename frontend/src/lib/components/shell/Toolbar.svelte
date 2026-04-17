@@ -3,15 +3,18 @@
   import type { TabView } from '../../stores/tabs.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
+  import { onboardingStore } from '../../stores/onboarding.svelte.ts';
   import Modal from './Modal.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Stop from 'phosphor-svelte/lib/Stop';
   import Trash from 'phosphor-svelte/lib/Trash';
   import GitFork from 'phosphor-svelte/lib/GitFork';
   import FloppyDisk from 'phosphor-svelte/lib/FloppyDisk';
-  import List from 'phosphor-svelte/lib/List';
+  import DotsThreeVertical from 'phosphor-svelte/lib/DotsThreeVertical';
   import Info from 'phosphor-svelte/lib/Info';
   import GearSix from 'phosphor-svelte/lib/GearSix';
+  import MagicWand from 'phosphor-svelte/lib/MagicWand';
+  import Pause from 'phosphor-svelte/lib/Pause';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import ChartBar from 'phosphor-svelte/lib/ChartBar';
   import FolderSimple from 'phosphor-svelte/lib/FolderSimple';
@@ -22,7 +25,7 @@
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
   let menuOpen = $state(false);
-  let busy = $derived(vmStore.loading);
+  let busy = $derived(vmStore.acting);
   let activeVm = $derived(isVM && active?.vmId ? vmStore.vms.find(v => v.id === active!.vmId) : null);
   let isPersistent = $derived(activeVm?.persistent ?? false);
 
@@ -94,11 +97,11 @@
       aria-label="Menu"
       title="Menu"
     >
-      <List size={16} />
+      <DotsThreeVertical size={16} weight="bold" />
     </button>
 
     {#if menuOpen}
-      <div class="fixed inset-0 z-40" onclick={() => menuOpen = false}></div>
+      <button type="button" class="fixed inset-0 z-40 cursor-default border-none bg-transparent p-0 m-0" onclick={() => menuOpen = false} aria-label="Close menu"></button>
       <div class="absolute start-0 top-full mt-1 w-64 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
         <div class="p-1">
           <!-- VM section -->
@@ -111,57 +114,69 @@
               <Scroll size={16} />
               <span>VM Logs</span>
             </button>
-            {#if isPersistent}
-              <button
-                type="button"
-                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-                disabled={busy}
-                onclick={async () => { if (active?.vmId) { await vmStore.restart(active.vmId); } menuOpen = false; }}
-              >
-                <ArrowClockwise size={16} />
-                <span>Restart</span>
-              </button>
-            {/if}
-            {#if isPersistent}
-              <button
-                type="button"
-                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-                disabled={busy}
-                onclick={() => openModal('stop')}
-              >
-                <Stop size={16} />
-                <span>Stop</span>
-              </button>
-            {/if}
             {#if !isPersistent}
+              <!-- Ephemeral: save + destroy -->
+              {#if activeVm?.status === 'Running'}
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={busy}
+                  onclick={() => openModal('save')}
+                >
+                  <FloppyDisk size={16} />
+                  <span>Save</span>
+                </button>
+              {/if}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
                 disabled={busy}
-                onclick={() => openModal('save')}
+                onclick={() => openModal('destroy')}
               >
-                <FloppyDisk size={16} />
-                <span>Save</span>
+                <Trash size={16} />
+                <span>Destroy</span>
+              </button>
+            {:else}
+              <!-- Persistent: restart, pause, fork, delete -->
+              {#if activeVm?.status === 'Running'}
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={busy}
+                  onclick={async () => { if (active?.vmId) { await vmStore.restart(active.vmId); } menuOpen = false; }}
+                >
+                  <ArrowClockwise size={16} />
+                  <span>Restart</span>
+                </button>
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={busy}
+                  onclick={async () => { if (active?.vmId) { await vmStore.suspend(active.vmId); } menuOpen = false; }}
+                >
+                  <Pause size={16} />
+                  <span>Pause</span>
+                </button>
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={busy}
+                  onclick={() => openModal('fork')}
+                >
+                  <GitFork size={16} />
+                  <span>Fork</span>
+                </button>
+              {/if}
+              <button
+                type="button"
+                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                disabled={busy}
+                onclick={() => openModal('destroy')}
+              >
+                <Trash size={16} />
+                <span>Delete</span>
               </button>
             {/if}
-            <button
-              type="button"
-              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-              disabled={busy}
-              onclick={() => openModal('fork')}
-            >
-              <GitFork size={16} />
-              <span>Fork</span>
-            </button>
-            <button
-              type="button"
-              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-              disabled={busy}
-              onclick={() => openModal('destroy')}
-            >
-              <Trash size={16} />
-              <span>Destroy</span>
-            </button>
             <div class="border-t border-dropdown-border my-1"></div>
           {/if}
 
@@ -173,6 +188,14 @@
           >
             <HardDrives size={16} />
             <span>Service Logs</span>
+          </button>
+          <button
+            type="button"
+            class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
+            onclick={() => { onboardingStore.needsOnboarding = true; onboardingStore.loading = false; onboardingStore.currentStep = 0; menuOpen = false; }}
+          >
+            <MagicWand size={16} />
+            <span>Setup Wizard</span>
           </button>
           <button
             type="button"
@@ -237,14 +260,15 @@
     {/if}
   </div>
 
-  <!-- Right: stats -->
-  {#if isVM && activeVm}
-    <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
+  <!-- Right: stats + build timestamp -->
+  <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
+    {#if isVM && activeVm}
       <span title="Tokens">{formatTokens((activeVm.total_input_tokens ?? 0) + (activeVm.total_output_tokens ?? 0))} tok</span>
       <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
       <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
-    </div>
-  {/if}
+    {/if}
+    <span title="Frontend build" class="opacity-60 font-mono">build {__BUILD_TS__}</span>
+  </div>
 </div>
 
 <!-- Modals -->

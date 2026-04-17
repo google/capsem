@@ -136,6 +136,38 @@ ui: _ensure-setup _pnpm-install run-service
 dev-frontend: _pnpm-install
     cd frontend && pnpm run dev
 
+# Build the Tauri desktop app (capsem-ui) with a fresh frontend bundle.
+# IMPORTANT: the Tauri binary embeds frontend/dist at cargo compile time via
+# tauri::generate_context!(), so rebuilding only the frontend has no effect
+# on the running binary. This recipe keeps the two in lockstep.
+#   just build-ui          # debug binary at ./target/debug/capsem-ui
+#   just build-ui release  # release binary at ./target/release/capsem-ui
+build-ui profile="debug": _pnpm-install
+    #!/bin/bash
+    set -euo pipefail
+    echo "=== Frontend build ==="
+    cd frontend && pnpm run build && cd ..
+    echo ""
+    echo "=== capsem-ui ({{profile}}) build ==="
+    if [[ "{{profile}}" == "release" ]]; then
+        cargo build -p capsem-ui --release
+        echo ""
+        echo "Built ./target/release/capsem-ui"
+    else
+        cargo build -p capsem-ui
+        echo ""
+        echo "Built ./target/debug/capsem-ui"
+    fi
+
+# Run the Tauri desktop app after a clean frontend+binary rebuild.
+# Pass extra args after `--`: `just run-ui -- --connect <vm-id>`.
+run-ui *ARGS: build-ui
+    #!/bin/bash
+    set -euo pipefail
+    pkill -f "target/(debug|release)/capsem-ui" 2>/dev/null || true
+    sleep 1
+    ./target/debug/capsem-ui {{ARGS}}
+
 # Start service daemon + boot temporary VM + shell (~10s after first build)
 shell: _check-assets _pack-initrd _ensure-service
     {{cli_binary}} shell
@@ -470,7 +502,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-    echo "=== Building release binaries ==="
+    export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
+    echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
     cargo build --release {{host_crates}}
     echo "=== Building frontend ==="
     cd frontend && pnpm build && cd ..

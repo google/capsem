@@ -12,6 +12,17 @@ description: Capsem frontend design system. Use when building UI components, sty
 - **Tailwind v4** -- utility-first CSS (via Vite plugin, `@source` directives in `global.css`)
 - **Preline** -- CSS-only: semantic design tokens and component CSS patterns. **Do NOT use Preline JS plugins.** All interactivity is implemented in pure Svelte 5 runes + TypeScript. Use Preline only for its token system (`bg-primary`, `text-foreground`, etc.) and CSS component patterns (class strings from the docs). Never import `preline` JS, never call `HSStaticMethods`, never use `data-hs-*` attributes or `hs-*-active:` variants.
 
+## Loading into capsem-app (Tauri)
+
+`tauri::generate_context!()` bakes `frontend/dist/**` into the `capsem-ui` binary at cargo compile time (via the `custom-protocol` feature). This means:
+
+- `pnpm run build` alone has **no effect** on a running `./target/**/capsem-ui` -- the bundle is embedded in the binary.
+- After any `frontend/` change you intend to test in the desktop app, run `just build-ui` (chains frontend build + `cargo build -p capsem-ui`).
+- `just ui` (`cargo tauri dev`) bypasses this by loading `http://localhost:5173` -- good for iteration, but the production code path goes through the embedded bundle.
+- The Toolbar shows `build YYYY-MM-DD HH:MM:SS` as a quick visual sanity check -- if it's stale after you rebuilt, you forgot `cargo build -p capsem-ui`.
+
+Also: iframe `src` for bundled pages **must end in `index.html`** (e.g. `/vm/terminal/index.html`). Tauri's custom protocol on macOS does not auto-append `index.html` for trailing-slash paths the way Vite/Astro dev server does. A `/vm/terminal/` src loads fine in Chrome dev mode and silently 404s in the Tauri app.
+
 ## Design principles
 
 **Simplicity and correctness above all else.** Every line of frontend code must earn its place.
@@ -71,6 +82,17 @@ Use Preline's semantic token classes for all UI components. Read `references/pre
 - **Text hierarchy**: `text-foreground` (primary), `text-muted-foreground-1` (secondary), `text-muted-foreground` (tertiary)
 
 Do NOT use raw Tailwind colors (`bg-gray-200`, `text-blue-600`) for UI chrome. Always use semantic tokens so themes work.
+
+### Settings section layout (SettingsSection.svelte)
+
+The Appearance section in `SettingsPage.svelte` is the reference pattern. All dynamic settings sections must match it:
+
+- **Section title**: `<h2 class="text-xl font-medium text-foreground">` (not `font-bold`)
+- **Subsection headings**: `<h3 class="text-xs font-semibold text-foreground uppercase tracking-wider">` (use `text-foreground`, not `text-muted-foreground-1`)
+- **Cards wrap leaf items only**: A non-toggle group wraps children in `bg-card border border-card-line rounded-xl` ONLY when it has direct leaf/action children. Groups containing only subgroups render flat (heading + children, no card). This prevents nested grey card boxes.
+- **Leaf padding**: All leaf items inside cards use `px-4` for horizontal padding, matching the Appearance rows.
+- **Toggle-gated groups**: Standalone cards with `bg-card border border-card-line rounded-xl mb-3`. Never nest inside another card wrapper.
+- **Warning/error colors**: Use `text-warning` / `text-destructive` and `bg-warning/5` / `bg-destructive/10`. Never raw Tailwind colors (`text-amber-700`, `text-red-700`, `bg-amber-50`).
 
 ## Custom design tokens (`global.css`)
 

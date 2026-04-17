@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { initTauriLog } from '../../tauri-log';
   import TabBar from './TabBar.svelte';
   import Toolbar from './Toolbar.svelte';
   import NewTabPage from './NewTabPage.svelte';
@@ -10,11 +11,15 @@
   import ServiceLogsView from '../views/ServiceLogsView.svelte';
   import FilesView from '../views/FilesView.svelte';
   import InspectorView from '../views/InspectorView.svelte';
+  import OnboardingWizard from '../onboarding/OnboardingWizard.svelte';
+  import CreateSandboxDialog from './CreateSandboxDialog.svelte';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
+  import { onboardingStore } from '../../stores/onboarding.svelte.ts';
 
   const vmViews = ['terminal', 'stats', 'logs', 'files', 'inspector'] as const;
+
 
   async function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
@@ -28,26 +33,39 @@
     }
   }
 
+  initTauriLog();
+
   onMount(() => {
-    gatewayStore.init();
-    vmStore.startPolling();
+    (async () => {
+      await gatewayStore.init();
+      vmStore.startPolling();
 
-    const params = new URLSearchParams(window.location.search);
-    const connectId = params.get('connect');
-    const action = params.get('action');
+      // Check if onboarding wizard should show
+      if (gatewayStore.connected) {
+        await onboardingStore.checkOnboarding();
+      }
 
-    if (connectId) {
-      const vm = vmStore.vms.find(v => v.id === connectId);
-      tabStore.openVM(connectId, vm?.name ?? connectId);
-    }
+      const params = new URLSearchParams(window.location.search);
+      const connectId = params.get('connect');
+      const action = params.get('action');
+      console.log('[app] init: origin=%s connect=%s action=%s', window.location.origin, connectId, action);
 
-    if (connectId || action) {
-      history.replaceState(null, '', window.location.pathname);
-    }
+      if (connectId) {
+        console.log('[app] deep-link from URL: connect=%s', connectId);
+        const vm = vmStore.vms.find(v => v.id === connectId);
+        tabStore.openVM(connectId, vm?.name ?? connectId);
+      }
 
-    (window as any).__capsemDeepLink = (p: { connect?: string }) => {
+      if (connectId || action) {
+        history.replaceState(null, '', window.location.pathname);
+      }
+    })();
+
+    (window as any).__capsemDeepLink = (p: { connect?: string, action?: string }) => {
+      console.log('[app] __capsemDeepLink called:', p);
       if (p.connect) {
         const vm = vmStore.vms.find(v => v.id === p.connect);
+        console.log('[app] deep-link: opening VM tab connect=%s vm=%s', p.connect, vm?.name ?? 'unknown');
         tabStore.openVM(p.connect, vm?.name ?? p.connect);
       }
     };
@@ -55,6 +73,7 @@
     return () => {
       vmStore.destroy();
       gatewayStore.destroy();
+      onboardingStore.destroy();
       delete (window as any).__capsemDeepLink;
     };
   });
@@ -91,7 +110,7 @@
         {/if}
       </div>
     {:else}
-      {#each tabStore.tabs as tab (tab.id)}
+      {#each tabStore.stableTabs as tab (tab.id)}
         {@const isActive = tab.id === tabStore.activeId}
         {@const isVM = tab.vmId != null && vmViews.includes(tab.view as any)}
         <div class="absolute inset-0" hidden={!isActive}>
@@ -122,4 +141,10 @@
     {/if}
   </div>
 
+  <!-- Onboarding wizard: fixed overlay, renders on top of everything -->
+  {#if onboardingStore.needsOnboarding && !onboardingStore.loading}
+    <OnboardingWizard />
+  {/if}
+
+  <CreateSandboxDialog />
 </div>

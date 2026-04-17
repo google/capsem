@@ -4,36 +4,52 @@
   import type { ParentToIframeMsg } from '../../terminal/postmessage.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
-  import { gatewayStore } from '../../stores/gateway.svelte.ts';
-  import * as api from '../../api';
 
   let { vmId, tabId }: { vmId: string; tabId: string } = $props();
 
   let iframeRef: HTMLIFrameElement | null = $state(null);
 
-  // SECURITY: In production, sandbox MUST be "allow-scripts" only.
-  // "allow-same-origin" is added in dev because Vite's module scripts
-  // require same-origin access. The production static build serves from
-  // the same origin so CORS is not an issue.
-  // INVARIANT: Never ship allow-same-origin. It collapses the sandbox.
-  const DEV = (import.meta as any).env?.DEV ?? false;
-  const sandboxAttr = DEV ? 'allow-scripts allow-same-origin' : 'allow-scripts';
+  // allow-same-origin required so the iframe can fetch the gateway token
+  // (tauri://localhost origin is CORS-whitelisted by the gateway) and open
+  // a WebSocket without an opaque origin. Isolation comes from the sandbox
+  // attribute + Tauri protocol boundary.
+  const sandboxAttr = 'allow-scripts allow-same-origin';
+
+  // Initial state baked into the iframe URL. vmId is the tab's identity, so
+  // this is computed once per tab -- if vmId changes, the tab is a different
+  // tab (keyed by tab.id in the parent #each), and the iframe remounts.
+  const src = buildSrc();
+
+  function buildSrc(): string {
+    const p = new URLSearchParams();
+    p.set('vm', vmId);
+    p.set('mode', themeStore.mode);
+    p.set('theme', themeStore.resolvedTerminalTheme);
+    p.set('fontSize', String(themeStore.fontSize));
+    if (themeStore.fontFamily) p.set('fontFamily', themeStore.fontFamily);
+    // Explicit index.html -- Tauri v2 custom protocol on macOS does not
+    // auto-append index.html for trailing-slash paths. Dev server (Astro/Vite)
+    // does, which is why this worked in Chrome but not in Tauri.
+    return `/vm/terminal/index.html?${p.toString()}`;
+  }
 
   function sendToIframe(msg: ParentToIframeMsg): void {
     iframeRef?.contentWindow?.postMessage(msg, '*');
   }
 
-  // Forward theme + font changes to iframe
+  // Runtime theme changes flow to the iframe (fire-and-forget; if iframe isn't
+  // mounted yet, it already has the current state from its URL params).
   $effect(() => {
-    const mode = themeStore.mode;
-    const termTheme = themeStore.resolvedTerminalTheme;
-    const fontSize = themeStore.fontSize;
-    const fontFamily = themeStore.fontFamily;
-    sendToIframe({ type: 'theme-change', mode, terminalTheme: termTheme, fontSize, fontFamily });
+    sendToIframe({
+      type: 'theme-change',
+      mode: themeStore.mode,
+      terminalTheme: themeStore.resolvedTerminalTheme,
+      fontSize: themeStore.fontSize,
+      fontFamily: themeStore.fontFamily,
+    });
   });
 
-  // Refocus terminal when this tab becomes active again.
-  // Use requestAnimationFrame so the browser has painted the unhidden container first.
+  // Focus the terminal whenever this tab becomes active.
   $effect(() => {
     if (tabStore.activeId === tabId) {
       requestAnimationFrame(() => sendToIframe({ type: 'focus' }));
@@ -41,50 +57,26 @@
   });
 
   function onMessage(event: MessageEvent): void {
-    // Only accept messages from our iframe
     if (event.source !== iframeRef?.contentWindow) return;
-
     const msg = parseIframeMessage(event.data);
     if (!msg) return;
 
     switch (msg.type) {
-      case 'ready':
-        sendToIframe({ type: 'vm-id', vmId });
-        sendToIframe({
-          type: 'theme-change',
-          mode: themeStore.mode,
-          terminalTheme: themeStore.resolvedTerminalTheme,
-          fontSize: themeStore.fontSize,
-          fontFamily: themeStore.fontFamily,
-        });
-        // Send WebSocket ticket if gateway is connected
-        if (gatewayStore.connected) {
-          const wsUrl = api.getTerminalWsUrl(vmId);
-          const base = api.getBaseUrl();
-          sendToIframe({ type: 'ws-ticket', ticket: wsUrl, gatewayUrl: base });
-        }
-        break;
-
       case 'title-update':
         tabStore.updateSubtitle(tabId, msg.title);
         break;
-
       case 'clipboard-copy':
         navigator.clipboard.writeText(msg.text).catch(() => {});
         break;
-
       case 'clipboard-request':
         navigator.clipboard.readText()
           .then(text => sendToIframe({ type: 'clipboard-paste', text }))
           .catch(() => {});
         break;
-
-      case 'terminal-resize':
-        // Resize events are handled by the iframe's WebSocket connection directly
-        break;
-
+      case 'connected':
+      case 'disconnected':
       case 'error':
-        console.warn(`VM ${vmId}: ${msg.code}: ${msg.message}`);
+        // Status signals -- we could surface these in the tab UI later.
         break;
     }
   }
@@ -103,7 +95,7 @@
   <iframe
     bind:this={iframeRef}
     sandbox={sandboxAttr}
-    src="/vm/terminal/"
+    {src}
     title="Terminal: {vmId}"
     referrerpolicy="no-referrer"
     class="w-full h-full border-0"

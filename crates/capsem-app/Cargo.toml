@@ -8,36 +8,21 @@ name = "capsem-ui"
 path = "src/main.rs"
 
 [dependencies]
-capsem-core = { path = "../capsem-core" }
-capsem-logger = { path = "../capsem-logger" }
 tauri = { version = "2", features = ["custom-protocol"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
-anyhow = { workspace = true }
+tauri-plugin-single-instance = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
-rmp-serde = { workspace = true }
-reqwest = { workspace = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-core-foundation-sys = "0.8"
-objc2 = { workspace = true }
-objc2-virtualization = { workspace = true }
-objc2-foundation = { workspace = true }
-objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSView"] }
 
 [lints]
 workspace = true
 
-[dev-dependencies]
-tempfile = "3"
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-serde_json = { workspace = true }

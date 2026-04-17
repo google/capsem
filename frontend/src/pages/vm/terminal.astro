@@ -1,0 +1,38 @@
+---
+// Iframe entry point for VM terminals.
+// No Layout -- this page IS the iframe document. No Preline, no global.css.
+//
+// Initial config (vm id, theme, fontSize, fontFamily) arrives via URL query
+// params; runtime changes arrive via postMessage. The iframe owns its own
+// gateway token and WebSocket lifecycle -- see TerminalFrame.svelte.
+//
+// Isolation: sandbox="allow-scripts allow-same-origin" on the parent iframe
+// + the CSP below. Astro emits inline hydration scripts in prod, hence
+// script-src needs 'unsafe-inline'. The real protection here is connect-src:
+// the iframe can only open connections back to the gateway, nowhere else.
+
+import TerminalFrame from "../../lib/components/terminal/TerminalFrame.svelte";
+
+const isProd = import.meta.env.PROD;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {isProd && (
+      <meta
+        http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self' 'unsafe-inline' tauri://localhost https://tauri.localhost; style-src 'self' 'unsafe-inline' tauri://localhost https://tauri.localhost; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* tauri://localhost https://tauri.localhost; worker-src blob:; font-src 'self' tauri://localhost https://tauri.localhost; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"
+      />
+    )}
+    <title>Terminal</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    </style>
+  </head>
+  <body>
+    <TerminalFrame client:only="svelte" />
+  </body>
+</html>

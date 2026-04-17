@@ -74,6 +74,12 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Docs site | `/site-infra` | Writing/editing docs, Starlight, sidebar, release pages |
 | Marketing site | `/site-marketing` | Marketing website (capsem.org), copy, components, theme |
 
+## Desktop app (capsem-app)
+
+- Thin Tauri webview shell -- only IPC commands are `log_frontend`, `open_url`, `check_for_app_update`. No VM logic, no capsem-core dep. All UI state flows through the gateway at `http://127.0.0.1:19222`.
+- **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build-ui` (frontend build + `cargo build -p capsem-ui`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
+- Iframe `src` for bundled pages must be explicit (`/vm/terminal/index.html`). The Tauri custom protocol on macOS does not auto-append `index.html` the way dev servers do.
+
 ## Code Style
 
 - **Warnings are errors.** Fix every compiler/linter warning before considering code done. Never leave warnings. Frontend: `pnpm run check` uses `--fail-on-warnings`. Rust: all crates use `#[deny(warnings)]` -- treat clippy and rustc warnings as build failures.

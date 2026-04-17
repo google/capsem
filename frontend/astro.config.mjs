@@ -9,6 +9,9 @@ export default defineConfig({
   integrations: [svelte()],
   vite: {
     envPrefix: ['VITE_', 'TAURI_'],
+    define: {
+      __BUILD_TS__: JSON.stringify(new Date().toISOString().replace('T', ' ').slice(0, 19)),
+    },
     plugins: [tailwindcss(), releaseNotes()],
   },
 });
