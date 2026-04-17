@@ -19,45 +19,19 @@
   let copied = $state(false);
   let blobUrl = $state<string | null>(null);
 
-  onMount(async () => {
-    highlighter = await getShikiHighlighter();
-  });
+  // Track previous blob URL for cleanup without reading $state in the effect
+  let prevBlobUrl: string | null = null;
 
-  // Manage blob URL lifecycle
-  $effect(() => {
-    // Revoke previous URL
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
-      blobUrl = null;
-    }
-    if (blob && (isImage || isSvg)) {
-      blobUrl = URL.createObjectURL(blob);
+  onMount(async () => {
+    try {
+      highlighter = await getShikiHighlighter();
+    } catch (e) {
+      console.error('[FileContent] Shiki init failed:', e);
     }
   });
 
   onDestroy(() => {
-    if (blobUrl) URL.revokeObjectURL(blobUrl);
-  });
-
-  $effect(() => {
-    if (!content || !highlighter || !entry || isImage || isSvg) {
-      highlightedHtml = '';
-      return;
-    }
-    const langHint = entry.label ?? entry.name;
-    highlightedHtml = highlighter.codeToHtml(content, {
-      lang: detectShikiLang(langHint, content),
-      theme: resolveShikiTheme(themeStore.terminalTheme, themeStore.mode),
-    });
-  });
-
-  let breadcrumbs = $derived.by(() => {
-    if (!entry) return [];
-    const parts = entry.path.split('/').filter(Boolean);
-    return parts.map((part, i) => ({
-      label: part,
-      path: parts.slice(0, i + 1).join('/'),
-    }));
+    if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
   });
 
   let isImage = $derived(
@@ -75,6 +49,53 @@
     entry != null && entry.type === 'file' &&
     entry.is_text === false && !isImage && !isSvg
   );
+
+  // Blob URL for image/SVG preview
+  $effect(() => {
+    // Read deps
+    const currentBlob = blob;
+    const needsUrl = isImage || isSvg;
+
+    // Cleanup previous
+    if (prevBlobUrl) {
+      URL.revokeObjectURL(prevBlobUrl);
+      prevBlobUrl = null;
+    }
+
+    if (currentBlob && needsUrl) {
+      const url = URL.createObjectURL(currentBlob);
+      prevBlobUrl = url;
+      blobUrl = url;
+    } else {
+      blobUrl = null;
+    }
+  });
+
+  // Syntax highlighting
+  $effect(() => {
+    if (!content || !highlighter || !entry || isImage || isSvg) {
+      highlightedHtml = '';
+      return;
+    }
+    try {
+      const langHint = entry.label ?? entry.name;
+      const lang = detectShikiLang(langHint, content);
+      const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
+      highlightedHtml = highlighter.codeToHtml(content, { lang, theme });
+    } catch (e) {
+      console.error('[FileContent] Shiki highlight failed:', e);
+      highlightedHtml = '';
+    }
+  });
+
+  let breadcrumbs = $derived.by(() => {
+    if (!entry) return [];
+    const parts = entry.path.split('/').filter(Boolean);
+    return parts.map((part, i) => ({
+      label: part,
+      path: parts.slice(0, i + 1).join('/'),
+    }));
+  });
 
   async function copyToClipboard() {
     if (!content) return;
