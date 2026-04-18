@@ -68,6 +68,96 @@ fn grep_log_fields(val: &mut Value, pattern: &str) {
     }
 }
 
+/// Render a service response to the shape MCP expects.
+///
+/// If the underlying request failed, returns the error string. Otherwise,
+/// inspects the JSON value for an embedded `{"error": "..."}` field (the
+/// service's error shape) and returns it as an Err; else pretty-prints the
+/// JSON value. This centralizes the dispatch boilerplate that was duplicated
+/// in every tool method.
+fn format_service_response(result: Result<Value>) -> Result<String, String> {
+    match result {
+        Ok(val) => {
+            if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                return Err(err.to_string());
+            }
+            Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Body for POST /provision.
+fn build_create_body(params: &CreateParams) -> Value {
+    let persistent = params.name.is_some();
+    let mut body = json!({
+        "name": params.name,
+        "persistent": persistent,
+    });
+    if let Some(ram) = params.ram_mb {
+        body["ram_mb"] = json!(ram);
+    }
+    if let Some(cpus) = params.cpu_count {
+        body["cpus"] = json!(cpus);
+    }
+    if let Some(ref env) = params.env {
+        body["env"] = json!(env);
+    }
+    if let Some(ref from) = params.from {
+        body["from"] = json!(from);
+    }
+    body
+}
+
+/// Body for POST /run (fresh temporary session).
+fn build_run_body(params: &RunParams) -> Value {
+    let mut body = json!({
+        "command": params.command,
+        "timeout_secs": params.timeout.unwrap_or(60),
+    });
+    if let Some(ref env) = params.env {
+        body["env"] = json!(env);
+    }
+    body
+}
+
+/// Body for POST /fork/{id}.
+fn build_fork_body(params: &ForkParams) -> Value {
+    json!({
+        "name": params.name,
+        "description": params.description,
+    })
+}
+
+/// Body for POST /persist/{id}.
+fn build_persist_body(params: &PersistParams) -> Value {
+    json!({ "name": params.name })
+}
+
+/// Body for POST /purge.
+fn build_purge_body(params: &PurgeParams) -> Value {
+    json!({ "all": params.all.unwrap_or(false) })
+}
+
+/// Body for POST /read_file/{id}.
+fn build_read_file_body(params: &FileReadParams) -> Value {
+    json!({ "path": params.path })
+}
+
+/// Resolve the UDS path following the env-var precedence used by main().
+fn resolve_uds_path(override_val: Option<&str>, run_dir: &std::path::Path) -> PathBuf {
+    override_val
+        .map(PathBuf::from)
+        .unwrap_or_else(|| run_dir.join("service.sock"))
+}
+
+/// Resolve the capsem run directory from HOME + optional override.
+fn resolve_run_dir(home: &str, override_val: Option<&str>) -> PathBuf {
+    override_val
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(home).join(".capsem/run"))
+}
+
 struct UdsClient {
     uds_path: PathBuf,
 }
@@ -324,15 +414,8 @@ struct McpCallParams {
 impl CapsemHandler {
     #[tool(name = "capsem_list", description = "List all sessions (running and stopped persistent) with ID, name, status, RAM, CPUs, uptime, and telemetry")]
     async fn list(&self) -> Result<String, String> {
-        match self.client.request::<Value, Value>("GET", "/list", None).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let resp = self.client.request::<Value, Value>("GET", "/list", None).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_vm_logs", description = "Get serial and process logs for a session. Use grep to filter lines, tail to limit to last N lines")]
@@ -357,9 +440,7 @@ impl CapsemHandler {
     #[tool(name = "capsem_service_logs", description = "Get the latest capsem-service logs (last ~100KB). Use grep to filter lines, tail to limit to last N lines")]
     async fn service_logs(&self, Parameters(params): Parameters<ServiceLogsParams>) -> Result<String, String> {
         let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-        let run_dir = std::env::var("CAPSEM_RUN_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(&home).join(".capsem/run"));
+        let run_dir = resolve_run_dir(&home, std::env::var("CAPSEM_RUN_DIR").ok().as_deref());
         let log_path = run_dir.join("service.log");
 
         if !log_path.exists() {
@@ -390,91 +471,39 @@ impl CapsemHandler {
     #[tool(name = "capsem_create", description = "Create a new session. Named sessions are persistent. Returns session ID. RAM/CPU default to the user's configured VM settings (vm.resources.ram_gb / cpu_count) when unspecified. If name already exists, returns error -- use capsem_resume instead")]
     async fn create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, String> {
         info!(?params, "capsem_create tool called");
-        let persistent = params.name.is_some();
-        let mut body = json!({
-            "name": params.name,
-            "persistent": persistent,
-        });
-        if let Some(ram) = params.ram_mb {
-            body["ram_mb"] = json!(ram);
+        let body = build_create_body(&params);
+        let resp = self.client.request::<Value, Value>("POST", "/provision", Some(body)).await;
+        if let Err(ref e) = resp {
+            error!(error = %e, "provision request failed");
         }
-        if let Some(cpus) = params.cpu_count {
-            body["cpus"] = json!(cpus);
-        }
-        if let Some(env) = params.env {
-            body["env"] = json!(env);
-        }
-        if let Some(from) = params.from {
-            body["from"] = json!(from);
-        }
-        match self.client.request::<Value, Value>("POST", "/provision", Some(body)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => {
-                error!(error = %e, "provision request failed");
-                Err(e.to_string())
-            }
-        }
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_info", description = "Get session details: ID, name, status, persistent, RAM, CPUs, version, and telemetry")]
     async fn info(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
-        match self.client.request::<Value, Value>("GET", &format!("/info/{}", params.id), None).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let resp = self.client.request::<Value, Value>("GET", &format!("/info/{}", params.id), None).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_exec", description = "Run a shell command inside a session. Returns stdout, stderr, exit_code. Default 30s timeout")]
     async fn exec(&self, Parameters(params): Parameters<ExecParams>) -> Result<String, String> {
         let body = build_exec_body(&params);
-        match self.client.request::<Value, Value>("POST", &format!("/exec/{}", params.id), Some(body)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let resp = self.client.request::<Value, Value>("POST", &format!("/exec/{}", params.id), Some(body)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_read_file", description = "Read a file from a session's guest filesystem. Returns file content as text")]
     async fn read_file(&self, Parameters(params): Parameters<FileReadParams>) -> Result<String, String> {
-        let body = json!({
-            "path": params.path,
-        });
-        match self.client.request::<Value, Value>("POST", &format!("/read_file/{}", params.id), Some(body)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let body = build_read_file_body(&params);
+        let resp = self.client.request::<Value, Value>("POST", &format!("/read_file/{}", params.id), Some(body)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_write_file", description = "Write a file to a session's guest filesystem")]
     async fn write_file(&self, Parameters(params): Parameters<FileWriteParams>) -> Result<String, String> {
-        match self.client.request::<FileWriteParams, Value>("POST", &format!("/write_file/{}", params.id), Some(params)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let path = format!("/write_file/{}", params.id);
+        let resp = self.client.request::<FileWriteParams, Value>("POST", &path, Some(params)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_inspect_schema", description = "Get CREATE TABLE statements for all telemetry DB tables. Call before capsem_inspect")]
@@ -484,133 +513,62 @@ impl CapsemHandler {
 
     #[tool(name = "capsem_inspect", description = "Run a SQL query against a session's telemetry database. Returns columns and rows")]
     async fn inspect(&self, Parameters(params): Parameters<InspectParams>) -> Result<String, String> {
-        match self.client.request::<InspectParams, Value>("POST", &format!("/inspect/{}", params.id), Some(params)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let path = format!("/inspect/{}", params.id);
+        let resp = self.client.request::<InspectParams, Value>("POST", &path, Some(params)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_delete", description = "Delete a session permanently. Destroys all state including persistent data")]
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
-        match self.client.request::<Value, Value>("DELETE", &format!("/delete/{}", params.id), None).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let resp = self.client.request::<Value, Value>("DELETE", &format!("/delete/{}", params.id), None).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_stop", description = "Stop a session. Persistent sessions preserve their state; ephemeral sessions are destroyed")]
     async fn stop(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
-        match self.client.request::<Value, Value>("POST", &format!("/stop/{}", params.id), Some(json!({}))).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let resp = self.client.request::<Value, Value>("POST", &format!("/stop/{}", params.id), Some(json!({}))).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_suspend", description = "Suspend a session. Saves RAM and CPU state. Requires persistent session")]
     async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
-        match self.client.request::<Value, Value>("POST", &format!("/suspend/{}", params.id), Some(json!({}))).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let resp = self.client.request::<Value, Value>("POST", &format!("/suspend/{}", params.id), Some(json!({}))).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_resume", description = "Resume a stopped persistent session or get ID of a running one. Returns session ID")]
     async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
-        match self.client.request::<Value, Value>("POST", &format!("/resume/{}", params.name), Some(json!({}))).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let resp = self.client.request::<Value, Value>("POST", &format!("/resume/{}", params.name), Some(json!({}))).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_persist", description = "Convert a running ephemeral session to a persistent named session")]
     async fn persist(&self, Parameters(params): Parameters<PersistParams>) -> Result<String, String> {
-        let body = json!({ "name": params.name });
-        match self.client.request::<Value, Value>("POST", &format!("/persist/{}", params.id), Some(body)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let body = build_persist_body(&params);
+        let resp = self.client.request::<Value, Value>("POST", &format!("/persist/{}", params.id), Some(body)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_purge", description = "Kill all temporary sessions. Set all=true to also destroy persistent sessions")]
     async fn purge(&self, Parameters(params): Parameters<PurgeParams>) -> Result<String, String> {
-        let body = json!({ "all": params.all.unwrap_or(false) });
-        match self.client.request::<Value, Value>("POST", "/purge", Some(body)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let body = build_purge_body(&params);
+        let resp = self.client.request::<Value, Value>("POST", "/purge", Some(body)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_run", description = "Run a command in a fresh temporary session. Session is auto-provisioned and destroyed. Returns stdout, stderr, exit_code")]
     async fn run(&self, Parameters(params): Parameters<RunParams>) -> Result<String, String> {
-        let mut body = json!({
-            "command": params.command,
-            "timeout_secs": params.timeout.unwrap_or(60),
-        });
-        if let Some(env) = params.env {
-            body["env"] = json!(env);
-        }
-        match self.client.request::<Value, Value>("POST", "/run", Some(body)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let body = build_run_body(&params);
+        let resp = self.client.request::<Value, Value>("POST", "/run", Some(body)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_fork", description = "Fork a running or stopped session into a new stopped persistent session")]
     async fn fork(&self, Parameters(params): Parameters<ForkParams>) -> Result<String, String> {
         info!(?params, "capsem_fork tool called");
-        let body = json!({
-            "name": params.name,
-            "description": params.description,
-        });
-        match self.client.request::<Value, Value>("POST", &format!("/fork/{}", params.id), Some(body)).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        let body = build_fork_body(&params);
+        let resp = self.client.request::<Value, Value>("POST", &format!("/fork/{}", params.id), Some(body)).await;
+        format_service_response(resp)
     }
 
     #[tool(name = "capsem_version", description = "Get capsem version info: MCP server version and service connectivity")]
@@ -660,10 +618,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 #[tokio::main]
 async fn main() -> Result<()> {
     let home = std::env::var("HOME")?;
-    let run_dir = std::env::var("CAPSEM_RUN_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(&home).join(".capsem/run"));
-    
+    let run_dir = resolve_run_dir(&home, std::env::var("CAPSEM_RUN_DIR").ok().as_deref());
+
     let _ = std::fs::create_dir_all(&run_dir);
     
     let log_file = std::fs::OpenOptions::new()
@@ -681,9 +637,7 @@ async fn main() -> Result<()> {
 
     info!("capsem-mcp starting");
 
-    let uds_path = std::env::var("CAPSEM_UDS_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| run_dir.join("service.sock"));
+    let uds_path = resolve_uds_path(std::env::var("CAPSEM_UDS_PATH").ok().as_deref(), &run_dir);
     info!(?uds_path, "connecting to service");
     let client = Arc::new(UdsClient::new(uds_path));
 
@@ -1278,5 +1232,248 @@ mod tests {
         for table in ["net_events", "model_calls", "tool_calls", "tool_responses", "mcp_calls", "fs_events", "snapshot_events"] {
             assert!(schema.contains(table), "Missing table in schema: {table}");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // format_service_response: the common dispatch shape
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_service_response_ok_pretty_prints() {
+        let out = format_service_response(Ok(json!({"id": "vm-1", "status": "running"}))).unwrap();
+        assert!(out.contains("\"id\""));
+        assert!(out.contains("\"vm-1\""));
+        assert!(out.contains('\n'), "pretty print should be multi-line");
+    }
+
+    #[test]
+    fn format_service_response_ok_with_embedded_error_is_err() {
+        let err = format_service_response(Ok(json!({"error": "vm not found"}))).unwrap_err();
+        assert_eq!(err, "vm not found");
+    }
+
+    #[test]
+    fn format_service_response_ok_with_non_string_error_field_is_ok() {
+        // If the "error" field isn't a string, it's not the service's error shape; keep as-is.
+        let out = format_service_response(Ok(json!({"error": 500, "msg": "fail"}))).unwrap();
+        assert!(out.contains("\"error\""));
+        assert!(out.contains("500"));
+    }
+
+    #[test]
+    fn format_service_response_err_returns_message() {
+        let err = format_service_response(Err(anyhow::anyhow!("conn reset"))).unwrap_err();
+        assert!(err.contains("conn reset"));
+    }
+
+    #[test]
+    fn format_service_response_null_value_is_ok() {
+        let out = format_service_response(Ok(Value::Null)).unwrap();
+        assert_eq!(out, "null");
+    }
+
+    #[test]
+    fn format_service_response_array_value_is_ok() {
+        let out = format_service_response(Ok(json!([1, 2, 3]))).unwrap();
+        assert!(out.contains('1'));
+        assert!(out.contains('2'));
+        assert!(out.contains('3'));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_create_body
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn create_body_named_is_persistent() {
+        let p = CreateParams { name: Some("dev".into()), ..Default::default() };
+        let body = build_create_body(&p);
+        assert_eq!(body["name"], "dev");
+        assert_eq!(body["persistent"], true);
+    }
+
+    #[test]
+    fn create_body_unnamed_is_ephemeral() {
+        let p = CreateParams::default();
+        let body = build_create_body(&p);
+        assert_eq!(body["persistent"], false);
+        assert!(body["name"].is_null());
+    }
+
+    #[test]
+    fn create_body_includes_resources_when_present() {
+        let p = CreateParams {
+            name: Some("dev".into()),
+            ram_mb: Some(4096),
+            cpu_count: Some(4),
+            ..Default::default()
+        };
+        let body = build_create_body(&p);
+        assert_eq!(body["ram_mb"], 4096);
+        assert_eq!(body["cpus"], 4);
+    }
+
+    #[test]
+    fn create_body_omits_resources_when_absent() {
+        let p = CreateParams { name: Some("dev".into()), ..Default::default() };
+        let body = build_create_body(&p);
+        assert!(body.get("ram_mb").is_none());
+        assert!(body.get("cpus").is_none());
+    }
+
+    #[test]
+    fn create_body_includes_env_when_present() {
+        let mut env = HashMap::new();
+        env.insert("API_KEY".to_string(), "sk-123".to_string());
+        let p = CreateParams {
+            name: Some("dev".into()),
+            env: Some(env),
+            ..Default::default()
+        };
+        let body = build_create_body(&p);
+        assert_eq!(body["env"]["API_KEY"], "sk-123");
+    }
+
+    #[test]
+    fn create_body_includes_from_clone_source() {
+        let p = CreateParams {
+            name: Some("new".into()),
+            from: Some("src-vm".into()),
+            ..Default::default()
+        };
+        let body = build_create_body(&p);
+        assert_eq!(body["from"], "src-vm");
+    }
+
+    // -----------------------------------------------------------------------
+    // build_run_body
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn run_body_default_timeout_is_60() {
+        let p = RunParams { command: "echo".into(), timeout: None, env: None };
+        let body = build_run_body(&p);
+        assert_eq!(body["command"], "echo");
+        assert_eq!(body["timeout_secs"], 60);
+    }
+
+    #[test]
+    fn run_body_custom_timeout() {
+        let p = RunParams { command: "make build".into(), timeout: Some(900), env: None };
+        let body = build_run_body(&p);
+        assert_eq!(body["timeout_secs"], 900);
+    }
+
+    #[test]
+    fn run_body_with_env() {
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        let p = RunParams { command: "env".into(), timeout: None, env: Some(env) };
+        let body = build_run_body(&p);
+        assert_eq!(body["env"]["FOO"], "bar");
+    }
+
+    #[test]
+    fn run_body_without_env_omits_key() {
+        let p = RunParams { command: "env".into(), timeout: None, env: None };
+        let body = build_run_body(&p);
+        assert!(body.get("env").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // build_fork_body
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fork_body_with_description() {
+        let p = ForkParams {
+            id: "vm-1".into(),
+            name: "fork-a".into(),
+            description: Some("dev copy".into()),
+        };
+        let body = build_fork_body(&p);
+        assert_eq!(body["name"], "fork-a");
+        assert_eq!(body["description"], "dev copy");
+    }
+
+    #[test]
+    fn fork_body_without_description() {
+        let p = ForkParams { id: "vm-1".into(), name: "fork-a".into(), description: None };
+        let body = build_fork_body(&p);
+        assert_eq!(body["name"], "fork-a");
+        assert!(body["description"].is_null());
+    }
+
+    // -----------------------------------------------------------------------
+    // build_persist_body / build_purge_body / build_read_file_body
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn persist_body_contains_name() {
+        let p = PersistParams { id: "vm-1".into(), name: "promoted".into() };
+        let body = build_persist_body(&p);
+        assert_eq!(body["name"], "promoted");
+        // id is in URL path, not body
+        assert!(body.get("id").is_none());
+    }
+
+    #[test]
+    fn purge_body_all_defaults_to_false() {
+        let p = PurgeParams { all: None };
+        let body = build_purge_body(&p);
+        assert_eq!(body["all"], false);
+    }
+
+    #[test]
+    fn purge_body_all_true_preserved() {
+        let p = PurgeParams { all: Some(true) };
+        let body = build_purge_body(&p);
+        assert_eq!(body["all"], true);
+    }
+
+    #[test]
+    fn read_file_body_contains_path_only() {
+        let p = FileReadParams { id: "vm-1".into(), path: "/etc/hostname".into() };
+        let body = build_read_file_body(&p);
+        assert_eq!(body["path"], "/etc/hostname");
+        assert!(body.get("id").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_uds_path / resolve_run_dir
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_uds_path_prefers_override() {
+        let run_dir = std::path::Path::new("/ignored/run");
+        assert_eq!(
+            resolve_uds_path(Some("/tmp/custom.sock"), run_dir),
+            PathBuf::from("/tmp/custom.sock"),
+        );
+    }
+
+    #[test]
+    fn resolve_uds_path_falls_back_to_run_dir() {
+        let run_dir = std::path::Path::new("/home/u/.capsem/run");
+        assert_eq!(
+            resolve_uds_path(None, run_dir),
+            PathBuf::from("/home/u/.capsem/run/service.sock"),
+        );
+    }
+
+    #[test]
+    fn resolve_run_dir_prefers_override() {
+        assert_eq!(
+            resolve_run_dir("/home/u", Some("/tmp/run")),
+            PathBuf::from("/tmp/run"),
+        );
+    }
+
+    #[test]
+    fn resolve_run_dir_default_under_home() {
+        assert_eq!(
+            resolve_run_dir("/home/u", None),
+            PathBuf::from("/home/u/.capsem/run"),
+        );
     }
 }
