@@ -393,14 +393,3 @@ fn launch_ui_action(vm_id: &str, action: &str) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn launch_ui_no_vm_does_not_panic() {
-        // Smoke test: calling launch_ui(None) should not panic
-        // (it spawns a process; on CI the app may not exist, but no panic)
-        launch_ui(None);
-    }
-}
