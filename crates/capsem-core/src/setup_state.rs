@@ -10,6 +10,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// Persistent state written to ~/.capsem/setup-state.json.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -45,12 +46,30 @@ impl SetupState {
     }
 }
 
-/// Load setup state from a JSON file. Returns default if missing or invalid.
+/// Load setup state from a JSON file. Returns default if the file is missing
+/// or unreadable; also returns default (with a warning log) if the file exists
+/// but fails to parse -- a corrupt state file silently resetting the user's
+/// progress is worse than surfacing the problem via logs.
 pub fn load_state(path: &Path) -> SetupState {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return SetupState::default(),
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "failed to read setup-state.json; resetting to defaults");
+            return SetupState::default();
+        }
+    };
+    match serde_json::from_str(&contents) {
+        Ok(state) => state,
+        Err(e) => {
+            warn!(
+                path = %path.display(),
+                error = %e,
+                "setup-state.json is corrupt; resetting to defaults (setup will re-run all steps)",
+            );
+            SetupState::default()
+        }
+    }
 }
 
 /// Save setup state to a JSON file (atomic write via temp file).
@@ -104,6 +123,33 @@ mod tests {
         assert!(!loaded.is_step_done("summary"));
         assert_eq!(loaded.security_preset.as_deref(), Some("medium"));
         assert!(loaded.onboarding_completed);
+    }
+
+    #[test]
+    fn load_state_returns_default_on_corrupt_json() {
+        // A corrupt state file must not panic and must not propagate the parse
+        // error; it should return Default and emit a warn-level log (not
+        // asserted here, but pinned in the function's doc comment).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("setup-state.json");
+        std::fs::write(&path, b"{ this is not valid json").unwrap();
+
+        let loaded = load_state(&path);
+        assert_eq!(loaded.schema_version, 0);
+        assert!(loaded.completed_steps.is_empty());
+        assert!(loaded.security_preset.is_none());
+    }
+
+    #[test]
+    fn load_state_returns_default_on_non_object_json() {
+        // Valid JSON but wrong shape (array instead of object) should also be
+        // treated as corrupt and reset -- not silently accepted as empty.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("setup-state.json");
+        std::fs::write(&path, b"[]").unwrap();
+
+        let loaded = load_state(&path);
+        assert_eq!(loaded.schema_version, 0);
     }
 
     #[test]
