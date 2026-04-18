@@ -34,5 +34,19 @@ class UdsHttpClient:
     def get(self, path, timeout=60):
         return self._curl("GET", path, timeout=timeout)
 
+    def get_text(self, path, timeout=60):
+        """GET returning raw text (for endpoints that don't return JSON, e.g. /service-logs)."""
+        cmd = [
+            "curl", "-s", "-S",
+            "--unix-socket", self.socket_path,
+            "-X", "GET",
+            "--max-time", str(timeout),
+            f"http://localhost{path}",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+        if result.returncode != 0:
+            raise ConnectionError(f"curl failed: {result.stderr}")
+        return result.stdout
+
     def delete(self, path, timeout=60):
         return self._curl("DELETE", path, timeout=timeout)
