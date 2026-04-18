@@ -88,12 +88,6 @@ class TestProxyEndpointCoverage:
         assert resp is not None
         assert resp.get("name") == "snapshot1"
 
-    def test_get_images(self, gw_client):
-        """GET /images returns image list."""
-        resp = gw_client.get("/images")
-        assert resp is not None
-        assert "images" in resp
-
     def test_get_logs(self, gw_client):
         """GET /logs/{id} returns boot logs."""
         resp = gw_client.get("/logs/vm-001")

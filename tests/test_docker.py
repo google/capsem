@@ -999,17 +999,16 @@ class TestGenerateChecksums:
         generate_checksums(tmp_path, "0.13.0")
         # B3SUMS was written
         assert (tmp_path / "B3SUMS").exists()
-        # manifest.json was written
+        # manifest.json was written (v2 format: orthogonal assets vs binaries).
         manifest = json.loads((tmp_path / "manifest.json").read_text())
-        assert manifest["latest"] == "0.13.0"
-        assert "0.13.0" in manifest["releases"]
+        assert manifest["format"] == 2
+        assert manifest["binaries"]["current"] == "0.13.0"
+        assert "0.13.0" in manifest["binaries"]["releases"]
+        asset_version = manifest["assets"]["current"]
+        assert asset_version in manifest["assets"]["releases"]
 
     def test_manifest_per_arch_structure(self, tmp_path):
-        """Per-arch layout produces release[arch][assets] with bare filenames.
-
-        build.rs looks up: releases[version][arch_key]["assets"][i]["filename"]
-        where filename must be bare (e.g. "vmlinuz", NOT "arm64/vmlinuz").
-        """
+        """Per-arch layout produces releases[v].arches[arch][filename]={hash,size}."""
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
         (arm64 / "vmlinuz").write_bytes(b"kernel")
@@ -1017,27 +1016,29 @@ class TestGenerateChecksums:
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())
-        release = manifest["releases"]["0.13.0"]
-        assert "arm64" in release, "per-arch key 'arm64' missing from release"
-        arm64_assets = release["arm64"]["assets"]
-        filenames = {a["filename"] for a in arm64_assets}
-        assert filenames == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
-        # No filename should contain '/' (build.rs matches bare names)
-        for asset in arm64_assets:
-            assert "/" not in asset["filename"], f"bare filename expected, got: {asset['filename']}"
-            assert len(asset["hash"]) == 64  # blake3 hex digest
-            assert asset["size"] > 0
+        asset_version = manifest["assets"]["current"]
+        release = manifest["assets"]["releases"][asset_version]
+        assert "arm64" in release["arches"], "per-arch key 'arm64' missing"
+        arm64_entries = release["arches"]["arm64"]
+        assert set(arm64_entries) == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
+        for filename, entry in arm64_entries.items():
+            assert "/" not in filename
+            assert len(entry["hash"]) == 64  # blake3 hex digest
+            assert entry["size"] > 0
 
     def test_manifest_flat_fallback(self, tmp_path):
-        """When no arch subdirs exist, produces flat format with bare filenames."""
+        """Flat layout (no arch subdirs) still populates an arches entry."""
         (tmp_path / "vmlinuz").write_bytes(b"kernel")
         (tmp_path / "initrd.img").write_bytes(b"initrd")
         (tmp_path / "rootfs.squashfs").write_bytes(b"rootfs")
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())
-        release = manifest["releases"]["0.13.0"]
-        assert "assets" in release
-        filenames = {a["filename"] for a in release["assets"]}
+        asset_version = manifest["assets"]["current"]
+        arches = manifest["assets"]["releases"][asset_version]["arches"]
+        # Flat layout stores entries under a single "unknown" arch key.
+        assert len(arches) == 1
+        (only_arch,) = arches
+        filenames = set(arches[only_arch])
         assert filenames == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
 
     def test_manifest_multi_arch(self, tmp_path):
@@ -1050,14 +1051,13 @@ class TestGenerateChecksums:
             (d / "rootfs.squashfs").write_bytes(f"rootfs-{arch}".encode())
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())
-        release = manifest["releases"]["0.13.0"]
-        assert "arm64" in release
-        assert "x86_64" in release
-        assert len(release["arm64"]["assets"]) == 3
-        assert len(release["x86_64"]["assets"]) == 3
-        # Each arch has distinct hashes
-        arm_hashes = {a["hash"] for a in release["arm64"]["assets"]}
-        x86_hashes = {a["hash"] for a in release["x86_64"]["assets"]}
+        asset_version = manifest["assets"]["current"]
+        arches = manifest["assets"]["releases"][asset_version]["arches"]
+        assert set(arches) == {"arm64", "x86_64"}
+        for arch in ("arm64", "x86_64"):
+            assert set(arches[arch]) == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
+        arm_hashes = {entry["hash"] for entry in arches["arm64"].values()}
+        x86_hashes = {entry["hash"] for entry in arches["x86_64"].values()}
         assert arm_hashes.isdisjoint(x86_hashes)
 
 
@@ -1090,17 +1090,17 @@ class TestContainerCompileAgent:
         )
 
         assert len(binaries) == len(GUEST_BINARIES)
-        # Single container call (build + cp + file in one step)
-        assert mock_run.call_count == 1
-        cmd = mock_run.call_args_list[0][0][0]
-        assert "docker" in cmd
-        assert "--platform" in cmd
-        assert "linux/arm64" in cmd
+        # Two calls: `docker image inspect` pre-check, then the actual `docker run`.
+        assert mock_run.call_count == 2
+        run_cmd = mock_run.call_args_list[-1][0][0]
+        assert "docker" in run_cmd
+        assert "--platform" in run_cmd
+        assert "linux/arm64" in run_cmd
         # Per-arch target volume
-        assert "capsem-agent-target-arm64" in str(cmd)
+        assert "capsem-agent-target-arm64" in str(run_cmd)
         # Cargo cache volumes
-        assert "capsem-cargo-registry" in str(cmd)
-        assert "capsem-cargo-git" in str(cmd)
+        assert "capsem-cargo-registry" in str(run_cmd)
+        assert "capsem-cargo-git" in str(run_cmd)
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
@@ -1119,7 +1119,9 @@ class TestContainerCompileAgent:
 
         container_compile_agent("x86_64-unknown-linux-musl", repo_root, output_dir)
 
-        cmd = mock_run.call_args_list[0][0][0]
+        # Last call is the actual `docker run`; prior calls may include
+        # `docker image inspect` preflight.
+        cmd = mock_run.call_args_list[-1][0][0]
         assert "docker" in cmd
         assert "linux/amd64" in cmd
         assert "capsem-agent-target-x86_64" in str(cmd)
@@ -1179,15 +1181,19 @@ class TestContainerCompileAgentShellScript:
             tmp_path / "repo",
             tmp_path / "output",
         )
-        cmd = mock_run.call_args[0][0]
-        return cmd[-1]  # bash -c argument is the last element
+        # Find the `docker run` invocation (skip any `docker image inspect` pre-check).
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            if "run" in cmd:
+                return cmd[-1]  # bash -c argument is the last element
+        raise AssertionError("no `docker run` call recorded")
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
     def test_shell_excludes_crates_from_symlinks(self, _det, mock_run, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, tmp_path)
-        assert "[ $b != crates ]" in script
+        assert '[ "$b" != crates ]' in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
@@ -1201,14 +1207,14 @@ class TestContainerCompileAgentShellScript:
     def test_shell_excludes_target_from_symlinks(self, _det, mock_run, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, tmp_path)
-        assert "[ $b != target ]" in script
+        assert '[ "$b" != target ]' in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
     def test_shell_excludes_cargo_lock_from_symlinks(self, _det, mock_run, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, tmp_path)
-        assert "[ $b != Cargo.lock ]" in script
+        assert '[ "$b" != Cargo.lock ]' in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")

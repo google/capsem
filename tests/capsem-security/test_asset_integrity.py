@@ -18,72 +18,55 @@ def _host_arch():
     return "arm64" if os.uname().machine == "arm64" else "x86_64"
 
 
-def test_manifest_hash_matches_kernel():
-    """b3sum of vmlinuz matches hash in manifest.json."""
-    arch = _host_arch()
-    kernel = ASSETS_DIR / arch / "vmlinuz"
+def _arch_manifest(arch):
+    """Return the per-arch asset entries from manifest.json (v2) or skip."""
     manifest = ASSETS_DIR / "manifest.json"
+    if not manifest.exists():
+        pytest.skip("Missing manifest")
+    data = json.loads(manifest.read_text())
+    current = data.get("assets", {}).get("current")
+    if current is None:
+        pytest.skip("manifest missing assets.current")
+    arches = data["assets"]["releases"].get(current, {}).get("arches", {})
+    entries = arches.get(arch)
+    if entries is None:
+        pytest.skip(f"manifest has no {arch} entry for version {current}")
+    return entries
 
-    if not kernel.exists() or not manifest.exists():
-        pytest.skip("Missing kernel or manifest")
 
-    result = subprocess.run(["b3sum", "--no-names", str(kernel)], capture_output=True, text=True)
+def _b3sum(path):
+    result = subprocess.run(["b3sum", "--no-names", str(path)], capture_output=True, text=True)
     if result.returncode != 0:
         pytest.skip("b3sum not available")
-    actual_hash = result.stdout.strip()
+    return result.stdout.strip()
 
-    data = json.loads(manifest.read_text())
-    version = data["latest"]
-    assets = data["releases"][version].get(arch, {}).get("assets", [])
-    manifest_hash = next((a["hash"] for a in assets if a["filename"] == "vmlinuz"), None)
 
-    assert manifest_hash is not None, "vmlinuz hash not found in manifest"
+def _check(filename):
+    arch = _host_arch()
+    asset = ASSETS_DIR / arch / filename
+    if not asset.exists():
+        pytest.skip(f"Missing asset {asset}")
+
+    actual_hash = _b3sum(asset)
+    entries = _arch_manifest(arch)
+    entry = entries.get(filename)
+    assert entry is not None, f"{filename} hash not found in manifest for {arch}"
+    manifest_hash = entry["hash"]
     assert actual_hash == manifest_hash, (
-        f"Hash mismatch: actual={actual_hash}, manifest={manifest_hash}"
+        f"Hash mismatch for {filename}: actual={actual_hash}, manifest={manifest_hash}"
     )
+
+
+def test_manifest_hash_matches_kernel():
+    """b3sum of vmlinuz matches hash in manifest.json."""
+    _check("vmlinuz")
 
 
 def test_manifest_hash_matches_rootfs():
     """b3sum of rootfs.squashfs matches hash in manifest.json."""
-    arch = _host_arch()
-    rootfs = ASSETS_DIR / arch / "rootfs.squashfs"
-    manifest = ASSETS_DIR / "manifest.json"
-
-    if not rootfs.exists() or not manifest.exists():
-        pytest.skip("Missing rootfs or manifest")
-
-    result = subprocess.run(["b3sum", "--no-names", str(rootfs)], capture_output=True, text=True)
-    if result.returncode != 0:
-        pytest.skip("b3sum not available")
-    actual_hash = result.stdout.strip()
-
-    data = json.loads(manifest.read_text())
-    version = data["latest"]
-    assets = data["releases"][version].get(arch, {}).get("assets", [])
-    manifest_hash = next((a["hash"] for a in assets if a["filename"] == "rootfs.squashfs"), None)
-
-    assert manifest_hash is not None, "rootfs hash not found in manifest"
-    assert actual_hash == manifest_hash
+    _check("rootfs.squashfs")
 
 
 def test_manifest_hash_matches_initrd():
     """b3sum of initrd.img matches hash in manifest.json."""
-    arch = _host_arch()
-    initrd = ASSETS_DIR / arch / "initrd.img"
-    manifest = ASSETS_DIR / "manifest.json"
-
-    if not initrd.exists() or not manifest.exists():
-        pytest.skip("Missing initrd or manifest")
-
-    result = subprocess.run(["b3sum", "--no-names", str(initrd)], capture_output=True, text=True)
-    if result.returncode != 0:
-        pytest.skip("b3sum not available")
-    actual_hash = result.stdout.strip()
-
-    data = json.loads(manifest.read_text())
-    version = data["latest"]
-    assets = data["releases"][version].get(arch, {}).get("assets", [])
-    manifest_hash = next((a["hash"] for a in assets if a["filename"] == "initrd.img"), None)
-
-    assert manifest_hash is not None, "initrd hash not found in manifest"
-    assert actual_hash == manifest_hash
+    _check("initrd.img")

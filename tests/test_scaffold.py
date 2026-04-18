@@ -32,7 +32,7 @@ class TestScanBaseConfig:
         assert "openai" in result["providers"]
         assert "apt" in result["packages"]
         assert "python" in result["packages"]
-        assert "capsem" in result["mcp"]
+        assert "local" in result["mcp"]
 
     def test_provider_has_name(self):
         result = scan_base_config(PROJECT_ROOT / "guest")
@@ -45,7 +45,7 @@ class TestScanBaseConfig:
 
     def test_mcp_has_description(self):
         result = scan_base_config(PROJECT_ROOT / "guest")
-        assert len(result["mcp"]["capsem"]) > 0
+        assert len(result["mcp"]["local"]) > 0
 
     def test_empty_dir(self, tmp_path):
         config = tmp_path / "config"
@@ -116,7 +116,7 @@ class TestNewImageAll:
     def test_copies_mcp(self, tmp_path):
         target = tmp_path / "my-image"
         new_image(target, PROJECT_ROOT / "guest", name="test")
-        assert (target / "config" / "mcp" / "capsem.toml").is_file()
+        assert (target / "config" / "mcp" / "local.toml").is_file()
 
     def test_copies_security(self, tmp_path):
         target = tmp_path / "my-image"

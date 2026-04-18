@@ -207,7 +207,7 @@ class TestStopResumeE2E:
         env_val = f"lifecycle-{uuid.uuid4().hex[:8]}"
         client.post("/provision", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
-            "env": [f"{env_key}={env_val}"],
+            "env": {env_key: env_val},
         })
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 

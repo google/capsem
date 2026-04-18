@@ -19,7 +19,7 @@ def _name(prefix="fio"):
 def vm(service):
     """A single exec-ready VM for all file I/O tests."""
     name = _name()
-    service.cli_ok("start", "--rm", "--name", name)
+    service.cli_ok("create", "-n", name)
     assert service.wait_exec_ready(name), f"VM {name} never exec-ready"
     yield name
     service.cli("delete", name)

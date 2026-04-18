@@ -20,7 +20,7 @@ class TestStartExecDelete:
 
     def test_start_exec_delete(self, service):
         name = _name()
-        service.cli_ok("start", "--rm", "--name", name)
+        service.cli_ok("create", "-n", name)
         assert service.wait_exec_ready(name), f"VM {name} never exec-ready"
 
         r = service.cli_ok("exec", name, "echo capsem-works")
@@ -30,7 +30,7 @@ class TestStartExecDelete:
 
     def test_exec_multiline(self, service):
         name = _name()
-        service.cli_ok("start", "--rm", "--name", name)
+        service.cli_ok("create", "-n", name)
         assert service.wait_exec_ready(name)
 
         r = service.cli_ok("exec", name, "printf 'line1\\nline2\\nline3'")
@@ -42,7 +42,7 @@ class TestStartExecDelete:
 
     def test_exec_exit_code_nonzero(self, service):
         name = _name()
-        service.cli_ok("start", "--rm", "--name", name)
+        service.cli_ok("create", "-n", name)
         assert service.wait_exec_ready(name)
 
         r = service.cli("exec", name, "exit 42")
@@ -53,7 +53,7 @@ class TestStartExecDelete:
 
     def test_exec_stderr(self, service):
         name = _name()
-        service.cli_ok("start", "--rm", "--name", name)
+        service.cli_ok("create", "-n", name)
         assert service.wait_exec_ready(name)
 
         r = service.cli_ok("exec", name, "echo err-msg >&2")
@@ -64,7 +64,7 @@ class TestStartExecDelete:
 
     def test_exec_pipe(self, service):
         name = _name()
-        service.cli_ok("start", "--rm", "--name", name)
+        service.cli_ok("create", "-n", name)
         assert service.wait_exec_ready(name)
 
         r = service.cli_ok("exec", name, "echo abc123 | grep -o abc")
@@ -74,7 +74,7 @@ class TestStartExecDelete:
 
     def test_exec_env_var(self, service):
         name = _name()
-        service.cli_ok("start", "--rm", "--name", name)
+        service.cli_ok("create", "-n", name)
         assert service.wait_exec_ready(name)
 
         r = service.cli_ok("exec", name, "export X=works && echo $X")
@@ -85,7 +85,7 @@ class TestStartExecDelete:
     def test_exec_uname_linux(self, service):
         """VM must be running Linux."""
         name = _name()
-        service.cli_ok("start", "--rm", "--name", name)
+        service.cli_ok("create", "-n", name)
         assert service.wait_exec_ready(name)
 
         r = service.cli_ok("exec", name, "uname -s")
@@ -103,7 +103,7 @@ class TestList:
 
     def test_list_shows_created_vm(self, service):
         name = _name("lst")
-        service.cli_ok("start", "--name", name)
+        service.cli_ok("create", "-n", name)
         try:
             r = service.cli_ok("list")
             assert name in r.stdout
@@ -112,7 +112,7 @@ class TestList:
 
     def test_list_omits_deleted_vm(self, service):
         name = _name("del")
-        service.cli_ok("start", "--name", name)
+        service.cli_ok("create", "-n", name)
         service.cli_ok("delete", name)
         r = service.cli_ok("list")
         assert name not in r.stdout
@@ -122,7 +122,7 @@ class TestInfo:
 
     def test_info_shows_vm(self, service):
         name = _name("inf")
-        service.cli_ok("start", "--name", name)
+        service.cli_ok("create", "-n", name)
         try:
             r = service.cli_ok("info", name)
             assert name in r.stdout

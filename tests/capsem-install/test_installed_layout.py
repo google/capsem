@@ -74,13 +74,14 @@ class TestInstalledLayoutContract:
         )
 
     def test_manifest_json_is_valid(self, installed_layout):
-        """manifest.json parses as JSON with expected structure."""
+        """manifest.json parses as JSON with expected v2 structure."""
         manifest = ASSETS_DIR / "manifest.json"
         if not manifest.exists():
             pytest.skip("no manifest.json")
         data = json.loads(manifest.read_text())
-        assert "latest" in data, "manifest missing 'latest' field"
-        assert "releases" in data, "manifest missing 'releases' field"
+        assert data.get("format") == 2, f"expected format=2, got {data.get('format')!r}"
+        assert "assets" in data and "releases" in data["assets"], "manifest missing assets.releases"
+        assert "binaries" in data and "releases" in data["binaries"], "manifest missing binaries.releases"
 
     def test_versioned_assets_exist(self, installed_layout):
         """Assets exist under v{VERSION}/ matching the installed binary version."""
@@ -105,7 +106,7 @@ class TestInstalledLayoutContract:
         )
 
     def test_version_in_manifest_matches_binary(self, installed_layout):
-        """The manifest must contain a release entry for the installed version."""
+        """The manifest must contain a binary release entry for the installed version."""
         manifest_path = ASSETS_DIR / "manifest.json"
         if not manifest_path.exists():
             pytest.skip("no manifest.json")
@@ -114,10 +115,10 @@ class TestInstalledLayoutContract:
         result = run_capsem("version", timeout=5)
         version = result.stdout.strip().split()[1]
 
-        releases = data.get("releases", {})
-        # The version should be in releases, or the manifest.latest should be usable
-        assert version in releases or data.get("latest") == version, (
-            f"installed version {version} not in manifest releases: {list(releases.keys())}"
+        binary_releases = data.get("binaries", {}).get("releases", {})
+        assert version in binary_releases, (
+            f"installed version {version} not in manifest binaries.releases: "
+            f"{sorted(binary_releases)}"
         )
 
     # -- Directories --

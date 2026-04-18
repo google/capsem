@@ -10,7 +10,7 @@ pytestmark = pytest.mark.isolation
 def test_write_in_a_absent_in_b(multi_vm_env):
     """File written in VM-A does not exist in VM-B."""
     client, vm_a, vm_b, _ = multi_vm_env
-    path = f"/tmp/iso-{uuid.uuid4().hex[:8]}.txt"
+    path = f"/root/iso-{uuid.uuid4().hex[:8]}.txt"
     client.post(f"/write_file/{vm_a}", {"path": path, "content": "only-in-a"})
 
     resp = client.post(f"/read_file/{vm_b}", {"path": path})
@@ -22,7 +22,7 @@ def test_write_in_a_absent_in_b(multi_vm_env):
 def test_same_path_different_content(multi_vm_env):
     """Same path in two VMs holds different content."""
     client, vm_a, vm_b, _ = multi_vm_env
-    path = "/tmp/shared-name.txt"
+    path = "/root/shared-name.txt"
     client.post(f"/write_file/{vm_a}", {"path": path, "content": "content-a"})
     client.post(f"/write_file/{vm_b}", {"path": path, "content": "content-b"})
 
@@ -35,7 +35,7 @@ def test_same_path_different_content(multi_vm_env):
 def test_delete_b_file_persists_in_a(multi_vm_env):
     """Deleting VM-B does not affect files in VM-A."""
     client, vm_a, _, _ = multi_vm_env
-    path = f"/tmp/persist-{uuid.uuid4().hex[:8]}.txt"
+    path = f"/root/persist-{uuid.uuid4().hex[:8]}.txt"
     client.post(f"/write_file/{vm_a}", {"path": path, "content": "survives"})
 
     # VM-B deletion happens in other tests or can be simulated

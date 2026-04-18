@@ -139,8 +139,8 @@ FAKE_RELEASE_JSON = r"""
 {
   "assets": [
     {
-      "name": "Capsem_1.0.0_aarch64.dmg",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_aarch64.dmg"
+      "name": "Capsem_1.0.0_aarch64.pkg",
+      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_aarch64.pkg"
     },
     {
       "name": "Capsem_1.0.0_amd64.deb",
@@ -170,10 +170,11 @@ ENDJSON
         """)
         return _run_shell(script)
 
-    def test_darwin_dmg(self):
+    def test_darwin_pkg(self):
+        """macOS installer downloads the signed/notarized .pkg (DMG dropped)."""
         r = self._run("darwin", "arm64")
         assert r.returncode == 0
-        assert r.stdout.strip().endswith("_aarch64.dmg")
+        assert r.stdout.strip().endswith("_aarch64.pkg")
 
     def test_linux_amd64_deb(self):
         r = self._run("linux", "amd64")

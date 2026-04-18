@@ -106,19 +106,6 @@ class TestInfo:
             run_cli("delete", name, uds_path=uds_path)
 
 
-class TestStatus:
-
-    def test_status_shows_running(self, uds_path):
-        name = f"st-{uuid.uuid4().hex[:4]}"
-        _provision_vm(uds_path, name)
-        try:
-            stdout, stderr, rc = run_cli("status", name, uds_path=uds_path)
-            assert rc == 0, f"status failed: {stderr}"
-            assert "Running" in stdout or name in stdout
-        finally:
-            run_cli("delete", name, uds_path=uds_path)
-
-
 class TestDelete:
 
     def test_delete(self, uds_path):
@@ -159,17 +146,6 @@ class TestAliases:
             assert name in ls_out
         finally:
             run_cli("delete", name, uds_path=uds_path)
-
-
-class TestStop:
-
-    def test_stop_via_cli(self, uds_path):
-        """capsem stop routes to the stop endpoint."""
-        name = f"stp-{uuid.uuid4().hex[:4]}"
-        _provision_vm(uds_path, name)
-        stdout, stderr, rc = run_cli("stop", name, uds_path=uds_path)
-        assert rc == 0, f"stop failed: {stderr}"
-        assert "stopped" in stdout.lower() or "Stopped" in stdout
 
 
 class TestPurge:
