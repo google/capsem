@@ -32,10 +32,13 @@ class TestManifest:
         if not manifest.exists():
             pytest.skip("No manifest.json")
         data = json.loads(manifest.read_text())
-        assert "latest" in data
-        assert "releases" in data
+        # v2 manifest: orthogonal asset vs binary versioning.
+        assert data.get("format") == 2, f"expected manifest format=2, got {data.get('format')!r}"
+        assert "assets" in data and "releases" in data["assets"]
+        assert "binaries" in data and "releases" in data["binaries"]
+        assert "current" in data["assets"], "assets.current pointer missing"
 
-    def test_manifest_version_matches_cargo(self):
+    def test_manifest_binary_version_matches_cargo(self):
         manifest = ASSETS_DIR / "manifest.json"
         cargo_toml = PROJECT_ROOT / "Cargo.toml"
         if not manifest.exists():
@@ -51,8 +54,11 @@ class TestManifest:
         else:
             pytest.skip("Could not find version in Cargo.toml")
 
-        assert data["latest"] == cargo_version, (
-            f"manifest latest={data['latest']} != Cargo.toml version={cargo_version}"
+        # Cargo version = BINARY version (asset version evolves independently).
+        binary_releases = data.get("binaries", {}).get("releases", {})
+        assert cargo_version in binary_releases, (
+            f"Cargo version {cargo_version} not in manifest binaries.releases "
+            f"(have: {sorted(binary_releases)})"
         )
 
     def test_manifest_has_host_arch(self):
@@ -61,9 +67,10 @@ class TestManifest:
             pytest.skip("No manifest.json")
         data = json.loads(manifest.read_text())
         arch = _host_arch()
-        latest = data["latest"]
-        assert arch in data["releases"].get(latest, {}), (
-            f"No {arch} entry in manifest for version {latest}"
+        current = data["assets"]["current"]
+        arches = data["assets"]["releases"].get(current, {}).get("arches", {})
+        assert arch in arches, (
+            f"No {arch} entry in manifest for asset version {current} (have: {sorted(arches)})"
         )
 
 

@@ -265,7 +265,10 @@ impl ServiceState {
                 } else {
                     // Ephemeral VMs: clean up everything
                     info!(id, "ephemeral VM process died, removing session files");
-                    let _ = std::fs::remove_dir_all(&info.session_dir);
+                    if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
+                        warn!(id, path = %info.session_dir.display(), error = %e,
+                              "failed to remove ephemeral session dir -- orphaned on disk");
+                    }
                 }
                 let _ = std::fs::remove_file(&info.uds_path);
                 let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
@@ -448,9 +451,19 @@ impl ServiceState {
             }
 
             // Remove from active instances so the service knows this VM is gone.
-            // Session directory cleanup is handled by the caller (handle_stop,
-            // handle_run, handle_purge) to avoid racing with telemetry reads.
-            state_clone.instances.lock().unwrap().remove(&id_clone);
+            // If the VM was ephemeral and died without going through handle_stop/
+            // handle_run/handle_purge (crash, SIGTERM, OOM), nothing else will ever
+            // remove its session dir -- cleanup_stale_instances has nothing to find
+            // because we just removed the map entry. Do the cleanup here.
+            let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
+            if let Some(info) = removed {
+                if !info.persistent {
+                    if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
+                        warn!(id = %id_clone, path = %info.session_dir.display(),
+                              error = %e, "failed to remove ephemeral session dir on process exit");
+                    }
+                }
+            }
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
