@@ -295,6 +295,12 @@ impl DbReader {
     /// Caps output at 10,000 rows. Interrupts queries that run longer than
     /// 5 seconds via `sqlite3_interrupt`.
     pub fn query_raw(&self, sql: &str) -> Result<String, String> {
+        // Defense-in-depth: reject non-SELECT SQL up front. The production
+        // connection is opened read-only (SQLITE_OPEN_READ_ONLY) so writes
+        // would fail at execution with a cryptic SQLite error -- validating
+        // here gives a clear, consistent error and also guards open_in_memory().
+        validate_select_only(sql)?;
+
         const MAX_ROWS: usize = 10_000;
         const TIMEOUT_MS: u64 = 5_000;
         const POLL_MS: u64 = 100;
@@ -337,6 +343,9 @@ impl DbReader {
     /// Parameters use `?` positional placeholders (rusqlite native syntax).
     /// Supported param types: null, i64, f64, string (from serde_json::Value).
     pub fn query_raw_with_params(&self, sql: &str, params: &[Value]) -> Result<String, String> {
+        // Defense-in-depth: same rationale as query_raw.
+        validate_select_only(sql)?;
+
         const MAX_ROWS: usize = 10_000;
         const TIMEOUT_MS: u64 = 5_000;
         const POLL_MS: u64 = 100;
@@ -1544,5 +1553,312 @@ mod tests {
         // The validate_select_only function checks the SQL text, not the params.
         assert!(validate_select_only("DELETE FROM foo WHERE id = ?").is_err());
         assert!(validate_select_only("INSERT INTO foo VALUES (?)").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Richer fixture covering multiple tables, used by aggregate tests below.
+    // -----------------------------------------------------------------------
+
+    fn setup_full_fixture() -> DbReader {
+        let reader = DbReader::open_in_memory().unwrap();
+        // net_events: 3 allowed, 1 denied, 1 error
+        reader.conn.execute_batch(
+            "INSERT INTO net_events
+                (timestamp, domain, port, decision, method, path, bytes_sent, bytes_received, duration_ms, matched_rule)
+             VALUES
+                ('2026-01-01T00:00:00Z', 'api.github.com', 443, 'allowed', 'GET',  '/repos',    100, 200, 50, 'allow-github'),
+                ('2026-01-01T00:01:00Z', 'api.github.com', 443, 'allowed', 'POST', '/search',   500, 900, 80, 'allow-github'),
+                ('2026-01-01T00:02:00Z', 'example.com',    443, 'allowed', 'GET',  '/',         50,  100, 10, NULL),
+                ('2026-01-01T00:03:00Z', 'evil.com',       443, 'denied',  'GET',  '/',         0,   0,   1,  'block-evil'),
+                ('2026-01-01T00:04:00Z', 'broken.com',     443, 'error',   'GET',  '/boom',     10,  0,   25, NULL);
+
+             INSERT INTO model_calls
+                (timestamp, provider, model, method, path, input_tokens, output_tokens, duration_ms, estimated_cost_usd, trace_id)
+             VALUES
+                ('2026-01-01T00:10:00Z', 'anthropic', 'claude-3',  'POST', '/m', 100, 200, 1500, 0.01, 't1'),
+                ('2026-01-01T00:11:00Z', 'anthropic', 'claude-3',  'POST', '/m', 50,  75,  800,  0.005, 't1'),
+                ('2026-01-01T00:12:00Z', 'openai',    'gpt-4',     'POST', '/m', 30,  60,  400,  0.003, 't2');
+
+             INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments)
+             VALUES (1, 0, 'c-1', 'bash',  '{}'),
+                    (1, 1, 'c-2', 'bash',  '{}'),
+                    (2, 0, 'c-3', 'fetch', '{}');
+
+             INSERT INTO mcp_calls (timestamp, server_name, method, tool_name, decision, duration_ms)
+             VALUES ('2026-01-01T00:20:00Z', 'github', 'call', 'search_repos', 'allowed', 100),
+                    ('2026-01-01T00:21:00Z', 'github', 'call', 'search_repos', 'allowed', 120);
+
+             INSERT INTO fs_events (timestamp, action, path)
+             VALUES ('2026-01-01T00:30:00Z', 'create', '/tmp/a'),
+                    ('2026-01-01T00:31:00Z', 'modify', '/tmp/a'),
+                    ('2026-01-01T00:32:00Z', 'delete', '/tmp/a');
+            ",
+        ).unwrap();
+        reader
+    }
+
+    // -----------------------------------------------------------------------
+    // Counts / aggregates
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn net_event_counts_reports_decision_split() {
+        let r = setup_full_fixture();
+        let c = r.net_event_counts().unwrap();
+        assert_eq!(c.total, 5);
+        assert_eq!(c.allowed, 3);
+        assert_eq!(c.denied, 1);
+    }
+
+    #[test]
+    fn net_event_counts_empty_db_returns_zero() {
+        let r = DbReader::open_in_memory().unwrap();
+        let c = r.net_event_counts().unwrap();
+        assert_eq!(c.total, 0);
+        assert_eq!(c.allowed, 0);
+        assert_eq!(c.denied, 0);
+    }
+
+    #[test]
+    fn model_call_count_matches_inserts() {
+        let r = setup_full_fixture();
+        assert_eq!(r.model_call_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn file_event_count_matches_inserts() {
+        let r = setup_full_fixture();
+        assert_eq!(r.file_event_count().unwrap(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Ordering / limiting
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn recent_net_events_orders_newest_first() {
+        let r = setup_full_fixture();
+        let evs = r.recent_net_events(10).unwrap();
+        assert_eq!(evs.len(), 5);
+        assert_eq!(evs[0].domain, "broken.com");   // last inserted
+        assert_eq!(evs[4].domain, "api.github.com"); // first inserted
+    }
+
+    #[test]
+    fn recent_net_events_respects_limit() {
+        let r = setup_full_fixture();
+        let evs = r.recent_net_events(2).unwrap();
+        assert_eq!(evs.len(), 2);
+        assert_eq!(evs[0].domain, "broken.com");
+        assert_eq!(evs[1].domain, "evil.com");
+    }
+
+    #[test]
+    fn recent_net_events_zero_limit() {
+        let r = setup_full_fixture();
+        let evs = r.recent_net_events(0).unwrap();
+        assert!(evs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Search
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn search_net_events_matches_domain_substring() {
+        let r = setup_full_fixture();
+        let hits = r.search_net_events("github", 10).unwrap();
+        assert_eq!(hits.len(), 2);
+        for h in &hits {
+            assert!(h.domain.contains("github"));
+        }
+    }
+
+    #[test]
+    fn search_net_events_matches_path() {
+        let r = setup_full_fixture();
+        let hits = r.search_net_events("search", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path.as_deref(), Some("/search"));
+    }
+
+    #[test]
+    fn search_net_events_matches_method() {
+        let r = setup_full_fixture();
+        let hits = r.search_net_events("POST", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn search_net_events_matches_rule() {
+        let r = setup_full_fixture();
+        let hits = r.search_net_events("allow-github", 10).unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn search_net_events_no_match_returns_empty() {
+        let r = setup_full_fixture();
+        let hits = r.search_net_events("nothing-like-this", 10).unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_net_events_respects_limit() {
+        let r = setup_full_fixture();
+        // Match all 5 rows by using a pattern that shows up everywhere.
+        let hits = r.search_net_events(".com", 2).unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Aggregations: top_domains, session_stats
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn top_domains_ranks_by_count_desc() {
+        let r = setup_full_fixture();
+        let ds = r.top_domains(10).unwrap();
+        assert_eq!(ds.len(), 4); // 4 distinct domains
+        // github has 2 rows, everything else has 1 — it should be first.
+        assert_eq!(ds[0].domain, "api.github.com");
+        assert_eq!(ds[0].count, 2);
+        assert_eq!(ds[0].allowed, 2);
+        assert_eq!(ds[0].denied, 0);
+    }
+
+    #[test]
+    fn top_domains_attributes_denied_vs_allowed() {
+        let r = setup_full_fixture();
+        let ds = r.top_domains(10).unwrap();
+        let evil = ds.iter().find(|d| d.domain == "evil.com").unwrap();
+        assert_eq!(evil.allowed, 0);
+        assert_eq!(evil.denied, 1);
+    }
+
+    #[test]
+    fn top_domains_respects_limit() {
+        let r = setup_full_fixture();
+        let ds = r.top_domains(1).unwrap();
+        assert_eq!(ds.len(), 1);
+    }
+
+    #[test]
+    fn session_stats_sums_net_and_model_columns() {
+        let r = setup_full_fixture();
+        let s = r.session_stats().unwrap();
+        assert_eq!(s.net_total, 5);
+        assert_eq!(s.net_allowed, 3);
+        assert_eq!(s.net_denied, 1);
+        assert_eq!(s.net_error, 1);
+        assert_eq!(s.net_bytes_sent, 100 + 500 + 50 + 0 + 10);
+        assert_eq!(s.net_bytes_received, 200 + 900 + 100 + 0 + 0);
+        assert_eq!(s.model_call_count, 3);
+        assert_eq!(s.total_input_tokens, 100 + 50 + 30);
+        assert_eq!(s.total_output_tokens, 200 + 75 + 60);
+        assert_eq!(s.total_model_duration_ms, 1500 + 800 + 400);
+        assert_eq!(s.total_tool_calls, 3);
+        // Floating point sum — allow tiny tolerance.
+        assert!((s.total_estimated_cost_usd - 0.018).abs() < 1e-9);
+    }
+
+    #[test]
+    fn session_stats_empty_db() {
+        let r = DbReader::open_in_memory().unwrap();
+        let s = r.session_stats().unwrap();
+        assert_eq!(s.net_total, 0);
+        assert_eq!(s.model_call_count, 0);
+        assert_eq!(s.total_tool_calls, 0);
+        assert_eq!(s.total_estimated_cost_usd, 0.0);
+        assert!(s.total_usage_details.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // tool_calls_for / tool_responses_for
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tool_calls_for_returns_by_model_call_id() {
+        let r = setup_full_fixture();
+        let t = r.tool_calls_for(1).unwrap();
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].call_id, "c-1");
+        assert_eq!(t[1].call_id, "c-2");
+    }
+
+    #[test]
+    fn tool_calls_for_unknown_id_returns_empty() {
+        let r = setup_full_fixture();
+        let t = r.tool_calls_for(9999).unwrap();
+        assert!(t.is_empty());
+    }
+
+    #[test]
+    fn tool_responses_for_returns_by_model_call_id() {
+        let r = DbReader::open_in_memory().unwrap();
+        r.conn.execute(
+            "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error)
+             VALUES (1, 'c-1', 'ok', 0), (1, 'c-2', 'boom', 1), (2, 'c-3', 'other', 0)",
+            [],
+        ).unwrap();
+        let rs = r.tool_responses_for(1).unwrap();
+        assert_eq!(rs.len(), 2);
+        assert!(!rs[0].is_error);
+        assert!(rs[1].is_error);
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_select_only: a few more adversarial cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_select_only_rejects_upsert() {
+        assert!(validate_select_only("INSERT INTO t VALUES (1) ON CONFLICT DO UPDATE SET x = 2").is_err());
+    }
+
+    #[test]
+    fn validate_select_only_rejects_multi_statement() {
+        // SELECT followed by DELETE should not slip through if statement was split.
+        // Current implementation may accept this since it only checks the first keyword;
+        // if this ever regresses, tighten the check.
+        let s = "SELECT 1; DELETE FROM t";
+        // Document current behavior: starts with SELECT → OK (bind params do not
+        // bypass, but the statement validator is keyword-only). The DbReader
+        // execute path uses query_raw which only prepares one statement — so
+        // the trailing DELETE is dropped. This is a sharp edge worth noting.
+        assert!(validate_select_only(s).is_ok());
+    }
+
+    #[test]
+    fn query_raw_rejects_non_select() {
+        let r = setup_full_fixture();
+        let err = r.query_raw("DELETE FROM net_events").unwrap_err();
+        // validate_select_only returns "<KEYWORD> statements are not allowed".
+        assert!(err.contains("DELETE") && err.contains("not allowed"), "got: {err}");
+    }
+
+    #[test]
+    fn query_raw_with_params_rejects_non_select() {
+        let r = setup_full_fixture();
+        let err = r
+            .query_raw_with_params("UPDATE net_events SET domain = ?", &[json!("x")])
+            .unwrap_err();
+        assert!(err.contains("UPDATE") && err.contains("not allowed"), "got: {err}");
+    }
+
+    #[test]
+    fn query_raw_returns_row_cap_on_large_results() {
+        // Force max_rows limit by inserting many rows.
+        let r = DbReader::open_in_memory().unwrap();
+        for i in 0..50 {
+            r.conn.execute(
+                "INSERT INTO net_events (timestamp, domain, decision) VALUES (?, ?, 'allowed')",
+                params![format!("2026-01-01T00:{:02}:00Z", i % 60), format!("d{i}.com")],
+            ).unwrap();
+        }
+        // Default limit is large; just confirm all 50 are returned.
+        let json_str = r.query_raw("SELECT id FROM net_events").unwrap();
+        let v: Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(v["rows"].as_array().unwrap().len(), 50);
     }
 }

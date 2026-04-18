@@ -1216,8 +1216,14 @@ fn query_raw_syntax_error() {
     let result = reader.query_raw("SELEC broken");
     assert!(result.is_err());
     let err = result.unwrap_err();
+    // query_raw now validates the SQL keyword up-front, so typos like "SELEC"
+    // are caught at validation time with "unsupported statement type: SELEC"
+    // rather than reaching the SQLite parser. Accept either shape.
     assert!(
-        err.contains("near") || err.contains("syntax") || err.contains("error"),
+        err.contains("near")
+            || err.contains("syntax")
+            || err.contains("error")
+            || err.contains("unsupported"),
         "unexpected error: {err}"
     );
 }
