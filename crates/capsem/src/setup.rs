@@ -27,33 +27,29 @@ fn capsem_dir() -> Result<PathBuf> {
     crate::paths::capsem_home()
 }
 
-fn state_path() -> Result<PathBuf> {
-    Ok(capsem_dir()?.join("setup-state.json"))
+fn state_path_in(capsem_dir: &Path) -> PathBuf {
+    capsem_dir.join("setup-state.json")
 }
 
-fn load_state() -> SetupState {
-    state_path()
-        .ok()
-        .map(|p| capsem_core::setup_state::load_state(&p))
-        .unwrap_or_default()
+fn load_state_from(capsem_dir: &Path) -> SetupState {
+    capsem_core::setup_state::load_state(&state_path_in(capsem_dir))
 }
 
-fn save_state(state: &SetupState) -> Result<()> {
-    let path = state_path()?;
-    capsem_core::setup_state::save_state(&path, state)
+fn save_state_to(capsem_dir: &Path, state: &SetupState) -> Result<()> {
+    capsem_core::setup_state::save_state(&state_path_in(capsem_dir), state)
 }
 
 /// Run the setup wizard.
 pub async fn run_setup(opts: SetupOptions) -> Result<()> {
+    let cd = capsem_dir()?;
+    std::fs::create_dir_all(&cd)?;
+
     let mut state = if opts.force {
         SetupState::default()
     } else {
-        load_state()
+        load_state_from(&cd)
     };
     state.schema_version = 2;
-
-    let cd = capsem_dir()?;
-    std::fs::create_dir_all(&cd)?;
 
     // Step 0: Corp config provisioning
     if let Some(ref source) = opts.corp_config {
@@ -67,24 +63,24 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
 
     // Step 1: Welcome + start background asset download
     let bg_download = if opts.force || !state.is_step_done("welcome") {
-        step_welcome(&mut state).await?
+        step_welcome(&cd, &mut state).await?
     } else {
         None
     };
 
     // Step 3: Security preset
     if opts.force || !state.is_step_done("security_preset") {
-        step_security_preset(&mut state, &opts, &corp_settings)?;
+        step_security_preset(&cd, &mut state, &opts, &corp_settings)?;
     }
 
     // Step 4: AI Providers
     if opts.force || !state.is_step_done("providers") {
-        step_providers(&mut state, &opts, &corp_settings)?;
+        step_providers(&cd, &mut state, &opts, &corp_settings)?;
     }
 
     // Step 5: Repositories
     if opts.force || !state.is_step_done("repositories") {
-        step_repositories(&mut state, &opts, &corp_settings)?;
+        step_repositories(&cd, &mut state, &opts, &corp_settings)?;
     }
 
     // Wait for background download to finish before summary
@@ -106,7 +102,7 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
         step_summary(&cd, &mut state, &opts).await?;
     }
 
-    save_state(&state)?;
+    save_state_to(&cd, &state)?;
     println!("\nSetup complete.");
     Ok(())
 }
@@ -159,14 +155,14 @@ async fn step_corp_config(capsem_dir: &Path, source: &str, state: &mut SetupStat
     println!("  Corp config installed.");
     state.corp_config_source = Some(source.to_string());
     state.mark_done("corp_config");
-    save_state(state)?;
+    save_state_to(capsem_dir, state)?;
     Ok(())
 }
 
 /// Type alias for the background download join handle.
 type BgDownloadHandle = tokio::task::JoinHandle<anyhow::Result<()>>;
 
-async fn step_welcome(state: &mut SetupState) -> Result<Option<BgDownloadHandle>> {
+async fn step_welcome(capsem_dir: &Path, state: &mut SetupState) -> Result<Option<BgDownloadHandle>> {
     println!("[2/6] Welcome to Capsem!");
     println!("  Capsem sandboxes AI agents in air-gapped Linux VMs.");
 
@@ -175,11 +171,12 @@ async fn step_welcome(state: &mut SetupState) -> Result<Option<BgDownloadHandle>
     println!("  Assets: use `just build-assets` to build VM images.");
 
     state.mark_done("welcome");
-    save_state(state)?;
+    save_state_to(capsem_dir, state)?;
     Ok(None)
 }
 
 fn step_security_preset(
+    capsem_dir: &Path,
     state: &mut SetupState,
     opts: &SetupOptions,
     corp: &policy_config::SettingsFile,
@@ -212,11 +209,12 @@ fn step_security_preset(
     }
 
     state.mark_done("security_preset");
-    save_state(state)?;
+    save_state_to(capsem_dir, state)?;
     Ok(())
 }
 
 fn step_providers(
+    capsem_dir: &Path,
     state: &mut SetupState,
     opts: &SetupOptions,
     _corp: &policy_config::SettingsFile,
@@ -261,11 +259,12 @@ fn step_providers(
 
     state.providers_done = true;
     state.mark_done("providers");
-    save_state(state)?;
+    save_state_to(capsem_dir, state)?;
     Ok(())
 }
 
 fn step_repositories(
+    capsem_dir: &Path,
     state: &mut SetupState,
     _opts: &SetupOptions,
     _corp: &policy_config::SettingsFile,
@@ -287,7 +286,7 @@ fn step_repositories(
 
     state.repositories_done = true;
     state.mark_done("repositories");
-    save_state(state)?;
+    save_state_to(capsem_dir, state)?;
     Ok(())
 }
 
@@ -320,6 +319,188 @@ async fn step_summary(
     }
 
     state.mark_done("summary");
-    save_state(state)?;
+    save_state_to(capsem_dir, state)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn tmp_dir() -> TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    // ---- state_path_in ------------------------------------------------
+
+    #[test]
+    fn state_path_is_under_capsem_dir() {
+        let d = tmp_dir();
+        let p = state_path_in(d.path());
+        assert_eq!(p, d.path().join("setup-state.json"));
+    }
+
+    // ---- load_state_from / save_state_to -------------------------------
+
+    #[test]
+    fn load_state_from_missing_dir_returns_default() {
+        // Directory that's never had setup-state.json written.
+        let d = tmp_dir();
+        let s = load_state_from(d.path());
+        assert_eq!(s.schema_version, 0);
+        assert!(s.completed_steps.is_empty());
+        assert!(s.security_preset.is_none());
+        assert!(!s.providers_done);
+        assert!(!s.onboarding_completed);
+    }
+
+    #[test]
+    fn load_state_from_nonexistent_dir_also_returns_default() {
+        // Not just empty dir -- nonexistent parent.
+        let s = load_state_from(Path::new("/tmp/definitely-does-not-exist-capsem-test"));
+        assert_eq!(s.schema_version, 0);
+    }
+
+    #[test]
+    fn save_state_to_creates_parent_dirs() {
+        let d = tmp_dir();
+        // Write to a subdir that doesn't exist yet -- save_state should mkdir -p.
+        let sub = d.path().join("deep").join("nested");
+        let mut s = SetupState::default();
+        s.schema_version = 2;
+        s.mark_done("corp_config");
+        s.security_preset = Some("high".into());
+        save_state_to(&sub, &s).unwrap();
+        assert!(sub.join("setup-state.json").exists(), "file was not written");
+    }
+
+    #[test]
+    fn save_then_load_roundtrips_fields() {
+        let d = tmp_dir();
+        let mut s = SetupState::default();
+        s.schema_version = 2;
+        s.mark_done("welcome");
+        s.mark_done("providers");
+        s.security_preset = Some("medium".into());
+        s.providers_done = true;
+        s.corp_config_source = Some("/tmp/corp.toml".into());
+        save_state_to(d.path(), &s).unwrap();
+
+        let loaded = load_state_from(d.path());
+        assert_eq!(loaded.schema_version, 2);
+        assert!(loaded.is_step_done("welcome"));
+        assert!(loaded.is_step_done("providers"));
+        assert_eq!(loaded.security_preset.as_deref(), Some("medium"));
+        assert!(loaded.providers_done);
+        assert_eq!(loaded.corp_config_source.as_deref(), Some("/tmp/corp.toml"));
+    }
+
+    #[test]
+    fn save_state_is_atomic_overwrite() {
+        let d = tmp_dir();
+        // First write
+        let mut s = SetupState::default();
+        s.security_preset = Some("medium".into());
+        save_state_to(d.path(), &s).unwrap();
+        // Overwrite with different state
+        s.security_preset = Some("high".into());
+        s.mark_done("summary");
+        save_state_to(d.path(), &s).unwrap();
+        // No temp file left behind.
+        assert!(!d.path().join("setup-state.json.tmp").exists());
+        let loaded = load_state_from(d.path());
+        assert_eq!(loaded.security_preset.as_deref(), Some("high"));
+        assert!(loaded.is_step_done("summary"));
+    }
+
+    #[test]
+    fn load_state_from_corrupt_file_returns_default() {
+        let d = tmp_dir();
+        std::fs::write(state_path_in(d.path()), b"not valid json at all").unwrap();
+        // load should silently return default -- no panic, no error propagation.
+        let s = load_state_from(d.path());
+        assert_eq!(s.schema_version, 0);
+    }
+
+    // ---- step_corp_config (happy path + validation error) -------------
+
+    #[tokio::test]
+    async fn corp_config_from_local_file_marks_step_done() {
+        let d = tmp_dir();
+        let corp_toml = r#"
+[metadata]
+version = 1
+org = "Test Co"
+
+[policy]
+default_action = "allow"
+"#;
+        let corp_path = d.path().join("corp.toml");
+        std::fs::write(&corp_path, corp_toml).unwrap();
+
+        let mut state = SetupState::default();
+        step_corp_config(d.path(), corp_path.to_str().unwrap(), &mut state)
+            .await
+            .expect("corp config should install cleanly");
+
+        assert!(state.is_step_done("corp_config"));
+        assert_eq!(state.corp_config_source.as_deref(), corp_path.to_str());
+
+        // save_state_to wrote it through; load should see the same thing.
+        let loaded = load_state_from(d.path());
+        assert!(loaded.is_step_done("corp_config"));
+        assert_eq!(
+            loaded.corp_config_source.as_deref(),
+            corp_path.to_str(),
+            "persisted state must reflect the corp source",
+        );
+    }
+
+    #[tokio::test]
+    async fn corp_config_rejects_invalid_toml() {
+        let d = tmp_dir();
+        let corp_path = d.path().join("bad.toml");
+        std::fs::write(&corp_path, b"this is not = [valid toml").unwrap();
+
+        let mut state = SetupState::default();
+        let err = step_corp_config(d.path(), corp_path.to_str().unwrap(), &mut state)
+            .await
+            .expect_err("invalid TOML should produce error");
+        assert!(!err.to_string().is_empty());
+        // Step must NOT be marked done on failure.
+        assert!(!state.is_step_done("corp_config"));
+    }
+
+    #[tokio::test]
+    async fn corp_config_missing_file_errors_with_context() {
+        let d = tmp_dir();
+        let missing = d.path().join("does-not-exist.toml");
+        let mut state = SetupState::default();
+        let err = step_corp_config(d.path(), missing.to_str().unwrap(), &mut state)
+            .await
+            .expect_err("missing corp-config file should error");
+        assert!(
+            err.to_string().contains("cannot read corp config"),
+            "error lost path context: {err}",
+        );
+        assert!(!state.is_step_done("corp_config"));
+    }
+
+    // ---- SetupOptions sanity ------------------------------------------
+
+    #[test]
+    fn setup_options_defaults_are_non_interactive_safe() {
+        // This struct doesn't derive Default; spot-check that construction
+        // works with the fields we depend on in tests.
+        let o = SetupOptions {
+            non_interactive: true,
+            preset: None,
+            force: false,
+            accept_detected: false,
+            corp_config: None,
+        };
+        assert!(o.non_interactive);
+        assert!(!o.force);
+    }
 }

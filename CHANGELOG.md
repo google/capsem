@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **capsem/setup.rs tests + small DI refactor** -- helpers (`load_state`, `save_state`, each `step_*`) now take `capsem_dir: &Path` explicitly instead of reading it from `$HOME` at call time. `run_setup` still computes the real dir once and threads it through, so the public contract is unchanged. 11 new unit tests cover state-file roundtrip (including atomic overwrite + parent-dir creation), corrupt-state recovery, and `step_corp_config` success / invalid-TOML / missing-file paths against a `tempdir()`. `setup.rs` coverage 0% → 47%.
 - **Unit tests for capsem-app helpers** -- `parse_flag`, `cleanup_old_logs`, `format_log_filename` (extracted from `log_filename` for testability). 12 new tests covering the deep-link argument parser and log housekeeping.
 - **HTTP-level tests for capsem-tray gateway client** -- new `spawn_http_probe` test helper spins up a single-connection `tokio::net::TcpListener` so `status`, `stop_vm`, `delete_vm`, `suspend_vm`, `resume_vm`, `provision_temp` are exercised end-to-end (happy path + 4xx/5xx + dead host). `GatewayClient::new`/`new_with_base_url` added for injection. `capsem-tray/src/gateway.rs` jumps from 36% to 94% coverage. Also added `parse_port_file` tests against malformed `gateway.port` contents.
 - **capsem-gateway Args + event-ws tests** -- clap default/override tests and a `handle_events_ws`-without-Upgrade test. `main.rs` coverage 69% → 75%.
