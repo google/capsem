@@ -317,15 +317,15 @@ fn launch_ui(vm_id: Option<&str>) {
     // primary instance.
     #[cfg(target_os = "macos")]
     let binary_candidates: [std::path::PathBuf; 2] = [
-        std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-ui"),
+        std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app"),
         std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-ui"))
+            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-app"))
             .unwrap_or_default(),
     ];
     #[cfg(target_os = "linux")]
     let binary_candidates: [std::path::PathBuf; 2] = [
-        std::path::PathBuf::from("/usr/bin/capsem-ui"),
-        std::path::PathBuf::from("/usr/local/bin/capsem-ui"),
+        std::path::PathBuf::from("/usr/bin/capsem-app"),
+        std::path::PathBuf::from("/usr/local/bin/capsem-app"),
     ];
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let binary_candidates: [std::path::PathBuf; 0] = [];
@@ -337,7 +337,7 @@ fn launch_ui(vm_id: Option<&str>) {
     } else {
         // Fallback for uninstalled dev environments: LaunchServices lookup.
         // Works only when the app isn't already running.
-        warn!("capsem-ui binary not found in install locations; falling back to `open -a Capsem`");
+        warn!("capsem-app binary not found in install locations; falling back to `open -a Capsem`");
         let mut c = std::process::Command::new("open");
         c.args(["-a", "Capsem"]);
         if vm_id.is_some() {
@@ -364,15 +364,15 @@ fn launch_ui_action(vm_id: &str, action: &str) {
 
     #[cfg(target_os = "macos")]
     let binary_candidates: [std::path::PathBuf; 2] = [
-        std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-ui"),
+        std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app"),
         std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-ui"))
+            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-app"))
             .unwrap_or_default(),
     ];
     #[cfg(target_os = "linux")]
     let binary_candidates: [std::path::PathBuf; 2] = [
-        std::path::PathBuf::from("/usr/bin/capsem-ui"),
-        std::path::PathBuf::from("/usr/local/bin/capsem-ui"),
+        std::path::PathBuf::from("/usr/bin/capsem-app"),
+        std::path::PathBuf::from("/usr/local/bin/capsem-app"),
     ];
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let binary_candidates: [std::path::PathBuf; 0] = [];
@@ -381,7 +381,7 @@ fn launch_ui_action(vm_id: &str, action: &str) {
     let mut cmd = if let Some(path) = binary {
         std::process::Command::new(path)
     } else {
-        warn!("capsem-ui binary not found; falling back to `open -a Capsem`");
+        warn!("capsem-app binary not found; falling back to `open -a Capsem`");
         let mut c = std::process::Command::new("open");
         c.args(["-a", "Capsem", "--args"]);
         c

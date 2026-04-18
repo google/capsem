@@ -17,12 +17,12 @@ ENTITLEMENTS = PROJECT_ROOT / "entitlements.plist"
 
 IS_MACOS = os.uname().sysname == "Darwin"
 
-DAEMON_CRATES = ["capsem-service", "capsem-process", "capsem", "capsem-ui", "capsem-mcp"]
+DAEMON_CRATES = ["capsem-service", "capsem-process", "capsem", "capsem-app", "capsem-mcp"]
 DAEMON_BINARIES = {
     "capsem-service": TARGET_DIR / "capsem-service",
     "capsem-process": TARGET_DIR / "capsem-process",
     "capsem": TARGET_DIR / "capsem",
-    "capsem-ui": TARGET_DIR / "capsem-ui",
+    "capsem-app": TARGET_DIR / "capsem-app",
     "capsem-mcp": TARGET_DIR / "capsem-mcp",
 }
 

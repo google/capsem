@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Crate `capsem-ui` renamed to `capsem-app`** -- crate and binary name now match the directory. Tauri identifier (`com.capsem.capsem`), productName (`Capsem`), and code-signing/notarization are unaffected. `justfile`, CI workflow, `capsem-tray` binary path lookups, `capsem-build-chain` tests, and the relevant skills were updated. localStorage keys `capsem-ui-mode` / `capsem-ui-font-size` were intentionally left unchanged to preserve user preferences across upgrades.
+- **Workspace Cargo metadata** -- `[workspace.package]` now carries `description`, `license = "Apache-2.0"`, `repository`, `homepage`, `rust-version`, and `authors`; every per-crate `Cargo.toml` inherits via `.workspace = true`. `cargo metadata` consumers (SBOM, GitHub dep graph, cargo-deny) now see canonical values for all 13 crates.
+- **Skills drift reconciled** -- `/dev-capsem` crate map no longer has the duplicate `capsem-gateway` row and now lists `capsem-mcp-aggregator` and `capsem-mcp-builtin`. `/dev-mcp` tool table drops three tools that no longer exist (`capsem_image_list/inspect/delete`), adds `capsem_mcp_servers`, `capsem_mcp_tools`, `capsem_mcp_call`, and documents the three-crate MCP subprocess architecture. CLAUDE.md project layout now lists all 13 crates and the skills table matches `skills/` on disk.
+
+### Added
+- **`SECURITY.md`** -- vulnerability reporting policy (GitHub Security Advisories), supported versions, disclosure timeline, scope (sandbox escape, MITM bypass, supply-chain integrity) and explicit out-of-scope (anything inside the guest VM by design).
+- **`RELEASE.md`** -- human-facing pre/post-release checklist that points back to `/release-process` for depth. Captures the `just cut-release` path, CI pipeline shape, and what to check after the tag is pushed.
+- **`rust-toolchain.toml`** -- pins the stable channel + `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl` targets so local and CI builds resolve the same toolchain.
+- **`docs/usage/mcp-tools.md`** -- user-facing reference for the 22 MCP tools exposed by `capsem-mcp`, grouped by session lifecycle, exec/file, telemetry, MCP aggregator, and diagnostics. Source of truth remains `crates/capsem-mcp/src/main.rs`.
+- **`docs/usage/shell-completions.md`** -- how to generate and install bash/zsh/fish/PowerShell completions via `capsem completions <shell>`.
+- **Pointer READMEs at `crates/capsem/README.md` and `crates/capsem-proto/README.md`** -- ~10-line README each for the two externally-visible crates, linking to capsem.org.
+
 ### Added
 - **capsem/setup.rs tests + small DI refactor** -- helpers (`load_state`, `save_state`, each `step_*`) now take `capsem_dir: &Path` explicitly instead of reading it from `$HOME` at call time. `run_setup` still computes the real dir once and threads it through, so the public contract is unchanged. 11 new unit tests cover state-file roundtrip (including atomic overwrite + parent-dir creation), corrupt-state recovery, and `step_corp_config` success / invalid-TOML / missing-file paths against a `tempdir()`. `setup.rs` coverage 0% → 47%.
 - **Unit tests for capsem-app helpers** -- `parse_flag`, `cleanup_old_logs`, `format_log_filename` (extracted from `log_filename` for testability). 12 new tests covering the deep-link argument parser and log housekeeping.

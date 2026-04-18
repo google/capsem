@@ -141,7 +141,7 @@ The Rust workspace produces multiple binaries. Six host binaries and the Tauri d
 | `capsem-mcp` | `capsem-mcp` | MCP server: stdio, bridges AI agent tool calls to service |
 | `capsem-gateway` | `capsem-gateway` | HTTP gateway: TCP:19222, proxies to service, WebSocket terminal |
 | `capsem-tray` | `capsem-tray` | System tray: polls gateway, shows VM status |
-| `capsem-app` | `capsem-ui` | Thin Tauri webview: points at gateway, bundled frontend fallback |
+| `capsem-app` | `capsem-app` | Thin Tauri webview: points at gateway, bundled frontend fallback |
 | `capsem-proto` | (lib) | Shared protocol types (host-guest, service-process IPC) |
 | `capsem-logger` | (lib) | Session DB schema and async writer (SQLite) |
 

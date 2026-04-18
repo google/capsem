@@ -15,8 +15,8 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just doctor-fix` | Doctor + auto-fix all fixable issues in dependency order |
 | `just ui` | Tauri dev with hot reload (frontend + Rust) |
 | `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM) |
-| `just build-ui [release]` | **Frontend build + `cargo build -p capsem-ui` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
-| `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-ui` with args (e.g. `--connect <id>`). |
+| `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
+| `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`). |
 | `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
 | `just run "CMD"` | Same but run CMD instead of interactive shell |
 | `just smoke` | test + repack + sign + boot + session DB validation (~30s) |
@@ -117,8 +117,8 @@ For a full manual reset: `just clean-all` (removes all build artifacts + aggress
 
 `tauri::generate_context!()` reads `tauri.conf.json` `frontendDist: ../../frontend/dist` and **bakes every file under that directory into the Rust binary** during `cargo build`. Consequences:
 
-- Rebuilding only the frontend (`pnpm run build`) has **zero effect** on a running `./target/**/capsem-ui` -- the binary still carries the old bundle.
-- After any edit to `frontend/**`, you must `cargo build -p capsem-ui` for the change to reach the Tauri app.
+- Rebuilding only the frontend (`pnpm run build`) has **zero effect** on a running `./target/**/capsem-app` -- the binary still carries the old bundle.
+- After any edit to `frontend/**`, you must `cargo build -p capsem-app` for the change to reach the Tauri app.
 - `just ui` (`cargo tauri dev`) sidesteps this by serving `http://localhost:5173` directly -- no embedding happens in dev mode.
 - For manual launches, always go through `just build-ui` / `just run-ui`, never raw `pnpm run build` followed by re-running an already-compiled binary.
 

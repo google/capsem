@@ -1,0 +1,8 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "llvm-tools"]
+targets = [
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-musl",
+]
+profile = "minimal"

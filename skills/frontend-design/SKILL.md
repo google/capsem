@@ -14,12 +14,12 @@ description: Capsem frontend design system. Use when building UI components, sty
 
 ## Loading into capsem-app (Tauri)
 
-`tauri::generate_context!()` bakes `frontend/dist/**` into the `capsem-ui` binary at cargo compile time (via the `custom-protocol` feature). This means:
+`tauri::generate_context!()` bakes `frontend/dist/**` into the `capsem-app` binary at cargo compile time (via the `custom-protocol` feature). This means:
 
-- `pnpm run build` alone has **no effect** on a running `./target/**/capsem-ui` -- the bundle is embedded in the binary.
-- After any `frontend/` change you intend to test in the desktop app, run `just build-ui` (chains frontend build + `cargo build -p capsem-ui`).
+- `pnpm run build` alone has **no effect** on a running `./target/**/capsem-app` -- the bundle is embedded in the binary.
+- After any `frontend/` change you intend to test in the desktop app, run `just build-ui` (chains frontend build + `cargo build -p capsem-app`).
 - `just ui` (`cargo tauri dev`) bypasses this by loading `http://localhost:5173` -- good for iteration, but the production code path goes through the embedded bundle.
-- The Toolbar shows `build YYYY-MM-DD HH:MM:SS` as a quick visual sanity check -- if it's stale after you rebuilt, you forgot `cargo build -p capsem-ui`.
+- The Toolbar shows `build YYYY-MM-DD HH:MM:SS` as a quick visual sanity check -- if it's stale after you rebuilt, you forgot `cargo build -p capsem-app`.
 
 Also: iframe `src` for bundled pages **must end in `index.html`** (e.g. `/vm/terminal/index.html`). Tauri's custom protocol on macOS does not auto-append `index.html` for trailing-slash paths the way Vite/Astro dev server does. A `/vm/terminal/` src loads fine in Chrome dev mode and silently 404s in the Tauri app.
 

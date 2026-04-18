@@ -18,14 +18,19 @@ See `/dev-just` for the full recipe reference and dependency chains.
 ## Project Layout
 
 ```
-crates/capsem-core/       VM library (config, boot, serial, vsock, machine)
-crates/capsem-service/    Daemon service (axum HTTP over UDS, VM lifecycle)
-crates/capsem-process/    Per-VM process (boots VM, bridges vsock, job store)
-crates/capsem/            CLI client (start, list, shell, status)
-crates/capsem-mcp/        MCP server for AI agents (stdio, bridges to service)
-crates/capsem-agent/      Guest PTY agent (vsock bridge, cross-compiled)
-crates/capsem-proto/      Shared protocol types (host-guest, service-process IPC)
-crates/capsem-logger/     Session DB schema, queries, async writer
+crates/capsem-core/            VM library (config, boot, serial, vsock, machine)
+crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
+crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
+crates/capsem/                 CLI client (create, shell, list, status, setup, update)
+crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote auth)
+crates/capsem-mcp/             Host MCP server for AI agents (stdio, bridges to service)
+crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
+crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
+crates/capsem-agent/           Guest PTY agent + net-proxy + mcp-server + sysutil (musl)
+crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
+crates/capsem-tray/            System tray (polls gateway, quick actions)
+crates/capsem-proto/           Shared protocol types (host-guest, service-process IPC)
+crates/capsem-logger/          Session DB schema, queries, async writer
 frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + Preline
 site/                     Marketing website (Astro + Svelte 5)
 docs/                     Documentation site (Astro Starlight)
@@ -58,26 +63,38 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Area | Skill | When to load |
 |------|-------|--------------|
 | Overview | `/dev-capsem` | Orienting on any task, finding which skill to use |
+| Quick start | `/dev-start` | First-time bootstrap, onboarding |
+| Dev setup | `/dev-setup` | Environment setup, tool install, troubleshooting |
 | Rust patterns | `/dev-rust-patterns` | Writing any Rust code in capsem-core/app/agent |
 | MITM proxy | `/dev-mitm-proxy` | TLS, HTTP inspection, SSE parsing, ai_traffic |
-| MCP | `/dev-mcp` | capsem-mcp server, MCP gateway, tool routing |
+| MCP | `/dev-mcp` | capsem-mcp server, MCP gateway, aggregator, builtin, tool routing |
 | Testing | `/dev-testing` | Running or writing tests, TDD, coverage |
 | VM testing | `/dev-testing-vm` | In-VM diagnostics, capsem-doctor, session DB |
+| Hypervisor testing | `/dev-testing-hypervisor` | Apple VZ / KVM, VirtioFS, vsock tests |
+| Frontend testing | `/dev-testing-frontend` | vitest, svelte-check, visual verification |
+| Python testing | `/dev-testing-python` | capsem-builder pytest, coverage, golden fixtures |
+| Session DB | `/dev-session-debug` | Inspecting session.db, correlating events |
+| Benchmarking | `/dev-benchmark` | capsem-bench, performance regression |
+| capsem-doctor | `/dev-capsem-doctor` | In-VM diagnostic suite, adding new tests |
 | Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, Preline |
 | Build images | `/build-images` | capsem-builder, guest config, rootfs, kernel |
 | Initrd repack | `/build-initrd` | Guest binary changes, fast iteration loop |
+| Asset pipeline | `/asset-pipeline` | Asset manifest, hash verification, boot-time resolution |
 | Just recipes | `/dev-just` | Which just command to run for a given task |
 | Debugging | `/dev-debugging` | Bug investigation, reproduce-first workflow |
+| Sprints | `/dev-sprint` | Running a multi-step feature sprint |
 | Release | `/release-process` | CI, signing, notarization, changelog |
 | Installation | `/dev-installation` | Setup wizard, service registration, self-update, install tests |
 | Architecture | `/site-architecture` | System design, service architecture, vsock, key files |
 | Docs site | `/site-infra` | Writing/editing docs, Starlight, sidebar, release pages |
 | Marketing site | `/site-marketing` | Marketing website (capsem.org), copy, components, theme |
+| Skills system | `/dev-skills` | How skills work, naming, discovery |
+| Skills layout | `/meta-organize-skills` | Skills directory conventions, symlinks |
 
 ## Desktop app (capsem-app)
 
 - Thin Tauri webview shell -- only IPC commands are `log_frontend`, `open_url`, `check_for_app_update`. No VM logic, no capsem-core dep. All UI state flows through the gateway at `http://127.0.0.1:19222`.
-- **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build-ui` (frontend build + `cargo build -p capsem-ui`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
+- **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build-ui` (frontend build + `cargo build -p capsem-app`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
 - Iframe `src` for bundled pages must be explicit (`/vm/terminal/index.html`). The Tauri custom protocol on macOS does not auto-append `index.html` the way dev servers do.
 
 ## Code Style

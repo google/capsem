@@ -35,10 +35,10 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_inspect` | id, sql | Raw SQL against session.db |
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
-| `capsem_fork` | id, name, description? | Fork a running/stopped VM into a reusable image |
-| `capsem_image_list` | -- | List all user images |
-| `capsem_image_inspect` | name | Get detailed info about a specific image |
-| `capsem_image_delete` | name | Delete a user image |
+| `capsem_fork` | id, name, description? | Fork a running/stopped VM into a new stopped persistent session (use as a reusable template). |
+| `capsem_mcp_servers` | -- | List configured MCP servers with connection status and tool counts (from the in-guest gateway's point of view). |
+| `capsem_mcp_tools` | server? | List discovered MCP tools across all connected servers. Filter by `server` name to scope to one server. |
+| `capsem_mcp_call` | name, args? | Call an MCP tool by namespaced name (e.g. `github__search_repos`) with JSON arguments. Lets the agent exercise the full in-guest MCP path (policy + telemetry) without booting a VM. |
 
 ### Debug workflow
 
@@ -136,6 +136,21 @@ Registered in AI CLI settings:
 | `CAPSEM_RUN_DIR` | `~/.capsem/run` | Where to find service socket and write mcp.log |
 | `CAPSEM_UDS_PATH` | `$CAPSEM_RUN_DIR/service.sock` | Override service socket path |
 | `RUST_LOG` | `info` | Logging level |
+
+## MCP subprocess architecture
+
+The MCP gateway is not a single process. `capsem-process` (the per-VM host process) spawns two privilege-isolated subprocesses that together handle MCP traffic from the guest:
+
+| Crate | Role | Privileges |
+|-------|------|-----------|
+| `capsem-mcp-aggregator` | Manages connections to **external** MCP servers (GitHub, Slack, custom HTTP/stdio servers). Receives msgpack frames from `capsem-process` on stdin, routes tool calls. | Network only; no access to the VM, session DB, filesystem, or service socket. |
+| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) and file/snapshot tools (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_DOMAIN_ALLOW`, `CAPSEM_DOMAIN_BLOCK`, `CAPSEM_SESSION_DB`. |
+
+Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
+
+Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: **NDJSON over vsock port 5003** (see below).
+
+Binaries land in `~/.capsem/bin/` at install time: `capsem-mcp-aggregator`, `capsem-mcp-builtin`.
 
 ## MCP Gateway (in-guest)
 

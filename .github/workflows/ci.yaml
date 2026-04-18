@@ -35,7 +35,7 @@ jobs:
           cargo install cargo-llvm-cov --locked
 
       # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux).
-      # capsem-ui (Tauri) is macOS-only; Linux CI also exercises the MCP subprocess bins
+      # capsem-app (Tauri) is macOS-only; Linux CI also exercises the MCP subprocess bins
       # so they get Linux-specific regression coverage.
       - name: Unit tests (KVM backend) with coverage
         run: |
@@ -118,12 +118,12 @@ jobs:
           cargo install cargo-nextest --locked
 
       # Unit tests: all crates with coverage + JUnit XML for test analytics.
-      # capsem-ui (Tauri bin) is macOS-only; capsem-mcp-aggregator and
+      # capsem-app (Tauri bin) is macOS-only; capsem-mcp-aggregator and
       # capsem-mcp-builtin are thin binaries that pull capsem-core logic.
       - name: Unit tests with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json --fail-under-lines 70 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-ui -p capsem-process
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-ui -p capsem-process 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json --fail-under-lines 70 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process 2>&1 | tee coverage-summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
