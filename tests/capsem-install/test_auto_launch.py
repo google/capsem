@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import (
+from .conftest import (
     INSTALL_DIR,
     RUN_DIR,
     run_capsem,

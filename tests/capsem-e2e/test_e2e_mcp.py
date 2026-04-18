@@ -15,7 +15,7 @@ import uuid
 import pytest
 
 from pathlib import Path
-from conftest import RealService
+from .conftest import RealService
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"

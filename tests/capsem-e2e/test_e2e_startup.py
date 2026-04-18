@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from conftest import RealService
+from .conftest import RealService
 from helpers.constants import EXEC_READY_TIMEOUT
 
 pytestmark = pytest.mark.e2e

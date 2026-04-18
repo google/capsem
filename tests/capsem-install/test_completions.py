@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import run_capsem
+from .conftest import run_capsem
 
 
 class TestCompletions:

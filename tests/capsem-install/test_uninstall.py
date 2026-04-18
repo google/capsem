@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import (
+from .conftest import (
     CAPSEM_DIR,
     INSTALL_DIR,
     BINARIES,

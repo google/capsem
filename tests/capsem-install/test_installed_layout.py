@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import (
+from .conftest import (
     ASSETS_DIR,
     BINARIES,
     CAPSEM_DIR,

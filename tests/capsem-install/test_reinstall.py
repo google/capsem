@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import (
+from .conftest import (
     INSTALL_DIR,
     BINARIES,
     get_build_hash,
