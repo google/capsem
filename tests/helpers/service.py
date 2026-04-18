@@ -17,6 +17,8 @@ from .uds_client import UdsHttpClient
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
 PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
+GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
+TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
 
@@ -33,6 +35,8 @@ class ServiceInstance:
         # Sign binaries before spawning (macOS needs virtualization entitlement)
         sign_binary(PROCESS_BINARY)
         sign_binary(SERVICE_BINARY)
+        sign_binary(GATEWAY_BINARY)
+        sign_binary(TRAY_BINARY)
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
         assets_dir = ASSETS_DIR / arch
@@ -51,6 +55,9 @@ class ServiceInstance:
                 "--uds-path", str(self.uds_path),
                 "--assets-dir", str(assets_dir),
                 "--process-binary", str(PROCESS_BINARY),
+                "--gateway-binary", str(GATEWAY_BINARY),
+                "--gateway-port", "0",
+                "--tray-binary", str(TRAY_BINARY),
                 "--foreground",
             ],
             env=env,
@@ -83,16 +90,21 @@ class ServiceInstance:
         return UdsHttpClient(self.uds_path)
 
     def stop(self):
+        """Stop the service and clean up temporary directory."""
         if self.proc:
             self.proc.terminate()
             try:
-                self.proc.wait(timeout=10)
+                self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-                self.proc.wait()
+            self.proc = None
+
         if self._log_file:
             self._log_file.close()
-        # shutil.rmtree(self.tmp_dir, ignore_errors=True)
+            self._log_file = None
+
+        if self.tmp_dir.exists():
+            shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
 
 def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):

@@ -184,4 +184,4 @@ benchmarks/
   lifecycle/data_0.16.1.json     # Provision, exec-ready, exec, delete
 ```
 
-These data files feed the documentation benchmark page at `site/src/content/docs/benchmarks/results.md`. Before a release, run both benchmarks and update the results page with the new numbers. See `/release-process` for the full checklist.
+These data files feed the documentation benchmark page at `docs/src/content/docs/benchmarks/results.md`. Before a release, run both benchmarks and update the results page with the new numbers. See `/release-process` for the full checklist.

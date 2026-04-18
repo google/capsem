@@ -199,3 +199,49 @@ def gateway_env(mock_service):
 def gw_client(gateway_env):
     """TcpHttpClient with valid auth token."""
     return TcpHttpClient(gateway_env.base_url, gateway_env.token)
+
+
+@pytest.fixture(scope="session")
+def frontend_dir():
+    """Create a temp dir with mock frontend build artifacts."""
+    d = Path(tempfile.mkdtemp(prefix="capsem-frontend-test-"))
+    (d / "index.html").write_text(
+        '<!DOCTYPE html><html><head>'
+        '<link rel="stylesheet" href="/app/_astro/style.abc.css">'
+        '</head><body>'
+        '<script type="module" src="/app/_astro/app.xyz.js"></script>'
+        '</body></html>'
+    )
+    astro = d / "_astro"
+    astro.mkdir()
+    (astro / "style.abc.css").write_text("body { color: red; }")
+    (astro / "app.xyz.js").write_text("console.log('capsem');")
+    (d / "favicon.ico").write_bytes(b"\x00\x00\x01\x00")
+    fonts = d / "fonts"
+    fonts.mkdir()
+    (fonts / "inter.woff2").write_bytes(b"\x00woff2")
+    vm = d / "vm" / "terminal"
+    vm.mkdir(parents=True)
+    (vm / "index.html").write_text("<html><body>terminal</body></html>")
+    yield d
+    import shutil
+    shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.fixture(scope="session")
+def frontend_gateway_env(mock_service, frontend_dir):
+    """Gateway started with --frontend-dir pointing at mock assets."""
+    gw = GatewayInstance(
+        uds_path=mock_service.socket_path,
+        frontend_dir=frontend_dir,
+    )
+    gw.start()
+    yield gw
+    gw.stop()
+
+
+@pytest.fixture
+def fe_client(frontend_gateway_env):
+    """TcpHttpClient for the frontend-enabled gateway."""
+    return TcpHttpClient(frontend_gateway_env.base_url,
+                         frontend_gateway_env.token)

@@ -20,10 +20,12 @@ GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 class GatewayInstance:
     """A running capsem-gateway on an isolated temp dir."""
 
-    def __init__(self, uds_path: str | Path, port: int = 0):
+    def __init__(self, uds_path: str | Path, port: int = 0,
+                 frontend_dir: str | Path | None = None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-gw-test-"))
         self.uds_path = str(uds_path)
         self._port = port
+        self.frontend_dir = str(frontend_dir) if frontend_dir else None
         self.proc = None
         self._log_file = None
         self.token = None
@@ -55,12 +57,16 @@ class GatewayInstance:
         print(f"GATEWAY LOG: {log_path}")
         self._log_file = open(log_path, "w")
 
+        cmd = [
+            str(GATEWAY_BINARY),
+            "--port", str(self._port),
+            "--uds-path", self.uds_path,
+        ]
+        if self.frontend_dir:
+            cmd += ["--frontend-dir", self.frontend_dir]
+
         self.proc = subprocess.Popen(
-            [
-                str(GATEWAY_BINARY),
-                "--port", str(self._port),
-                "--uds-path", self.uds_path,
-            ],
+            cmd,
             env=env,
             stdout=self._log_file,
             stderr=self._log_file,
@@ -78,7 +84,7 @@ class GatewayInstance:
                 try:
                     result = subprocess.run(
                         ["curl", "-s", "--max-time", "2",
-                         f"http://127.0.0.1:{self.port}/"],
+                         f"http://127.0.0.1:{self.port}/health"],
                         capture_output=True, text=True, timeout=5,
                     )
                     if result.returncode == 0 and "ok" in result.stdout.lower():
@@ -162,5 +168,40 @@ class TcpHttpClient:
         if use_auth:
             cmd += ["-H", f"Authorization: Bearer {self.token}"]
         cmd.append(f"{self.base_url}{path}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+        return int(result.stdout.strip()) if result.stdout.strip() else 0
+
+    def get_status_and_body(self, path, timeout=30, use_auth=True,
+                            extra_headers=None):
+        """Return (status_code, body_text) tuple."""
+        cmd = [
+            "curl", "-s", "-S",
+            "-w", "\n%{http_code}",
+            "--max-time", str(timeout),
+        ]
+        if use_auth:
+            cmd += ["-H", f"Authorization: Bearer {self.token}"]
+        for k, v in (extra_headers or {}).items():
+            cmd += ["-H", f"{k}: {v}"]
+        cmd.append(f"{self.base_url}{path}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+        lines = result.stdout.rsplit("\n", 1)
+        body = lines[0] if len(lines) > 1 else ""
+        status = int(lines[-1]) if lines[-1].strip().isdigit() else 0
+        return status, body
+
+    def ws_upgrade_status(self, path, timeout=5):
+        """Send a WebSocket upgrade request, return the HTTP status code."""
+        cmd = [
+            "curl", "-s", "-S",
+            "-o", "/dev/null",
+            "-w", "%{http_code}",
+            "--max-time", str(timeout),
+            "-H", "Connection: Upgrade",
+            "-H", "Upgrade: websocket",
+            "-H", "Sec-WebSocket-Version: 13",
+            "-H", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+            f"{self.base_url}{path}",
+        ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return int(result.stdout.strip()) if result.stdout.strip() else 0

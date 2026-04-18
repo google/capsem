@@ -79,30 +79,23 @@ No capsem-core. No Tauri. No objc2.
 ## Menu Structure
 
 ```
-[Tray Icon: purple/black-template/red]
+[Tray Icon: black-template/red]
   |
-  +-- Permanent                  # Section header (disabled)
-  |     +-- "dev -- running"     # Per-VM submenu (named)
+  +-- Connected -- 5ms           # Status line (disabled)
+  +-- ────────────────
+  +-- Sessions                   # Section header (disabled)
+  |     +-- "dev -- running"     # Per-VM submenu
   |     |     +-- Connect        # Opens UI focused on this VM
-  |     |     +-- Fork
   |     |     +-- Stop
   |     |     +-- Delete
   |     +-- "staging -- suspended"
   |           +-- Resume         # Context-sensitive: Resume when suspended
-  |           +-- Fork
   |           +-- Stop
   |           +-- Delete
   |
   +-- ────────────────
-  +-- Temporary                  # Section header (disabled)
-  |     +-- "abc123de -- running"  # Per-VM submenu (ephemeral, short id)
-  |           +-- Connect
-  |           +-- Delete         # No Fork/Stop for ephemeral VMs
-  |
-  +-- ────────────────
-  +-- New Temporary              # Provision ephemeral + open UI
-  +-- New Permanent...           # Opens UI with name dialog
-  +-- Open Capsem                # Launch/focus UI (no specific VM)
+  +-- New Session                # Provision ephemeral + open UI
+  +-- Dashboard                  # Launch/focus UI (no specific VM)
   +-- ────────────────
   +-- Quit
 ```
@@ -144,9 +137,7 @@ Status: Done
 - [x] `delete_vm(id)` -> `DELETE /delete/{id}`
 - [x] `suspend_vm(id)` -> `POST /suspend/{id}`
 - [x] `resume_vm(id)` -> `POST /resume/{id}`
-- [x] `fork_vm(id)` -> `POST /fork/{id}`
 - [x] `provision_temp()` -> `POST /provision` (ephemeral, default config)
-- [x] `provision_named(name)` -> `POST /provision` with name (persistent)
 - [x] Token hot-reload: on poll failure, re-discover gateway (re-read port+token files)
 - [x] Response types: `StatusResponse`, `VmSummary` with Deserialize
 - [ ] Verify: with gateway + service running, `GatewayClient::status()` returns valid response (blocked on gateway landing)
@@ -156,15 +147,14 @@ Status: Done
 Status: Done
 
 - [x] `menu.rs`: testable `MenuSpec` layer + `render_menu()` for muda construction
-- [x] VMs split into Permanent and Temporary sections with disabled headers
-- [x] Permanent VMs: Connect/Resume (context-sensitive), Fork, Stop, Delete
-- [x] Temporary VMs: Connect/Resume (context-sensitive), Delete only
-- [x] VM display: `"{name} -- {status}"` for named, `"{short_id} -- {status}"` for unnamed
-- [x] Global items: "New Temporary", "New Permanent..." (opens UI with name dialog), "Open Capsem", "Quit"
+- [x] All VMs in single "Sessions" section with disabled header (no Permanent/Temporary split)
+- [x] All VMs: Connect/Resume (context-sensitive), Stop, Delete
+- [x] VM display: `"{name} -- {status}"` for named, `"{id} -- {status}"` for unnamed
+- [x] Global items: "New Session", "Dashboard", "Quit"
 - [x] `build_unavailable_menu()` for when gateway is down
-- [x] Menu item IDs encode action + VM id: `"connect:abc123"`, `"stop:abc123"`, `"new-temp"`, `"new-named"`, `"open"`, `"quit"`
+- [x] Menu item IDs encode action + VM id: `"connect:abc123"`, `"stop:abc123"`, `"new-session"`, `"open"`, `"quit"`
 - [x] `parse_action(id: &MenuId) -> Option<Action>` for dispatch
-- [x] 47 unit tests, menu.rs at 93% line coverage
+- [x] 37 unit tests passing
 
 ### SS4: Polling + Icon State
 
@@ -188,10 +178,8 @@ Status: Done
 - [x] Parse menu item ID to extract action + optional VM id via `parse_action()`
 - [x] `"connect:{id}"` -> launch UI with `--connect {id}`
 - [x] `"suspend:{id}"` / `"resume:{id}"` -> send to async runtime via channel
-- [x] `"fork:{id}"` -> send to async runtime
 - [x] `"stop:{id}"` / `"delete:{id}"` -> send to async runtime
-- [x] `"new-temp"` -> provision via gateway, then launch UI connected to new VM id
-- [x] `"new-named"` -> deferred to UI (tray can't prompt for name, launches UI with `--new-named`)
+- [x] `"new-session"` -> provision via gateway, then launch UI connected to new VM id
 - [x] `"open"` -> launch/focus Capsem UI
 - [x] `"quit"` -> `std::process::exit(0)`
 - [x] Actions dispatched in async worker drain loop (immediate on next poll cycle)
@@ -213,16 +201,14 @@ Status: Done
 ## Acceptance Criteria (Sprint Gate)
 
 - [x] `cargo build -p capsem-tray` succeeds
-- [x] 47 unit tests pass (menu spec, parse_action, vm_label, icons, gateway deser, state transitions)
+- [x] 37 unit tests pass (menu spec, parse_action, vm_label, icons, gateway deser)
 - [ ] Tray icon appears in macOS menu bar on launch
-- [ ] Polls gateway `/status` every 5s, menu shows VM list split into Permanent/Temporary
-- [ ] Permanent VM actions work: Connect, Fork, Stop, Delete
-- [ ] Temporary VM actions work: Connect, Delete
+- [ ] Polls gateway `/status` every 5s, menu shows VM list under "Sessions" header
+- [ ] VM actions work: Connect, Stop, Delete
 - [ ] Suspended VMs show Resume instead of Connect
-- [ ] "New Temporary" provisions and opens UI
-- [ ] "New Permanent..." opens UI with name dialog
-- [ ] "Open Capsem" launches/focuses UI window
-- [ ] Icon: purple with VMs, black template without (auto light/dark), red when gateway down
+- [ ] "New Session" provisions and opens UI
+- [ ] "Dashboard" launches/focuses UI window
+- [ ] Icon: black template without VMs (auto light/dark), red when gateway down
 - [ ] Token hot-reload works after gateway restart
 - [ ] "Quit" exits cleanly
 

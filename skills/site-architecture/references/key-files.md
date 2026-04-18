@@ -34,10 +34,10 @@
 - `crates/capsem-gateway/src/status.rs` -- Aggregated status with 2s thundering-herd-safe cache
 - `crates/capsem-gateway/src/terminal.rs` -- WebSocket relay from TCP to per-VM UDS for terminal I/O
 
-## App
+## App (thin Tauri webview shell)
 
-- `crates/capsem-app/src/commands.rs` -- Tauri IPC commands (serial_input, vm_status, terminal_resize, net_events)
-- `crates/capsem-app/src/state.rs` -- per-VM state (serial + vsock fds)
+- `crates/capsem-app/src/main.rs` -- Tauri setup, gateway URL, 2 IPC commands (open_url, check_for_app_update)
+- `crates/capsem-app/tauri.conf.json` -- Tauri config (bundle targets, updater endpoint, entitlements)
 
 ## Config
 
@@ -48,7 +48,7 @@
 
 - `frontend/src/components/capsem-terminal.ts` -- xterm.js web component
 - `frontend/src/lib/components/App.svelte` -- root layout
-- `frontend/src/lib/api.ts` -- typed Tauri IPC wrappers with auto-mock fallback
+- `frontend/src/lib/api.ts` -- HTTP client for gateway API with mock fallback
 - `frontend/src/lib/mock.ts` -- fake data for browser dev mode
 - `frontend/src/lib/types.ts` -- TS types mirroring Rust IPC structs
 

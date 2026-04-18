@@ -9,7 +9,7 @@ description: Capsem native CLI installer -- setup wizard, service registration, 
 
 ```
 ~/.capsem/
-  bin/capsem, capsem-service, capsem-process, capsem-mcp
+  bin/capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
   assets/manifest.json, v{ver}/
   run/service.sock, service.pid, instances/, persistent/
   setup-state.json

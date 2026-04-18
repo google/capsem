@@ -54,15 +54,25 @@ def sign_binary(binary_path: Path) -> None:
 
 
 def verify_signed(binary_path: Path) -> bool:
-    """Check if a binary is validly signed. Returns False on Linux."""
+    """Check if a binary is validly signed and has required entitlements."""
     if not IS_MACOS:
         return True
 
+    # 1. Basic signature check
     result = subprocess.run(
-        ["codesign", "--verify", "--verbose", str(binary_path)],
+        ["codesign", "--verify", str(binary_path)],
         capture_output=True, text=True,
     )
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+
+    # 2. Entitlement check (codesign -d --entitlements -)
+    # This ensures the virtualization entitlement is actually baked in.
+    result = subprocess.run(
+        ["codesign", "-d", "--entitlements", "-", str(binary_path)],
+        capture_output=True, text=True,
+    )
+    return "com.apple.security.virtualization" in result.stdout
 
 
 def ensure_all_signed() -> None:

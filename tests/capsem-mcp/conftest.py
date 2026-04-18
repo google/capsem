@@ -29,6 +29,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
 SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
 PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
+GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
+TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
 
@@ -149,13 +151,15 @@ def capsem_service():
             "--uds-path", str(uds_path),
             "--assets-dir", str(assets_dir),
             "--process-binary", str(PROCESS_BINARY),
+            "--gateway-binary", str(GATEWAY_BINARY),
+            "--gateway-port", "0",
+            "--tray-binary", str(TRAY_BINARY),
             "--foreground",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=stderr_file,
     )
-
     start = time.time()
     while time.time() - start < 15:
         if uds_path.exists():

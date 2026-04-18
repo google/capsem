@@ -15,6 +15,7 @@ description: Initrd repack and guest binary management for Capsem. Use when addi
 | `capsem-pty-agent` | PTY-over-vsock bridge agent |
 | `capsem-net-proxy` | TCP-to-vsock relay for air-gapped HTTPS proxying |
 | `capsem-mcp-server` | MCP stdio-to-vsock relay for AI agent tool access |
+| `capsem-sysutil` | Lifecycle multi-call binary (shutdown/halt/poweroff/reboot/suspend via vsock:5004) |
 | `capsem-doctor` | VM self-diagnostic suite (bash script) |
 | `snapshots` | Snapshot management CLI (Python, FastMCP client) |
 | `diagnostics/` | pytest test files for capsem-doctor |

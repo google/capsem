@@ -15,7 +15,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 - **capsem** (CLI): user-facing CLI. **Everything is ephemeral unless asked otherwise.** `capsem shell` (no args) = temp VM + auto-destroy on exit. `capsem create -n <name>` = persistent VM (detached). `capsem create` (no name) = ephemeral VM (detached). `capsem shell <id>` = attach to existing. Talks to capsem-service over UDS HTTP.
 - **capsem-mcp** (MCP server): stdio-based MCP server for AI agents (Claude Code, Gemini CLI). Bridges MCP tool calls to capsem-service HTTP API.
 - **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides `/status` (cached 1s), `/terminal/{id}` (WebSocket relay to per-VM UDS), and transparent fallback proxy to capsem-service. The frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
-- **capsem-app** (Tauri GUI): optional GUI shell with xterm.js frontend. All VM operations go through capsem-service (no direct VM boot).
+- **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `frontend/dist` as offline fallback when gateway is unreachable.
 - **capsem-tray** (system tray): standalone menu bar process. Polls the gateway for VM status, shows running/stopped counts, and provides quick actions (open dashboard, quit). Runs in its own process, isolated from the service.
 
 **Guest-side:**
@@ -230,13 +230,32 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Fork images** extend the ephemeral model with reusable templates. `capsem fork <vm> <image-name>` snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image <name>` boots from the template. Images have flat genealogy: each depends only on a base squashfs version, never on other images. Deleting any image is always safe; asset cleanup protects referenced squashfs versions.
 
+## Installation and service lifecycle
+
+`capsem setup` is the primary install entry point. On first CLI use, auto-runs non-interactively if `~/.capsem/setup-state.json` is missing.
+
+**Setup wizard** (6 steps): corp config provisioning, background asset download, security preset, AI provider detection, repository access, service installation.
+
+**Install layout** (`~/.capsem/`):
+- `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
+- `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+- `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
+
+**Service registration**: LaunchAgent `com.capsem.service` (macOS) or systemd user unit `capsem.service` (Linux). KeepAlive/Restart=always. Service auto-launches gateway and tray as companion processes.
+
+**Auto-launch cascade**: capsem-service starts -> spawns capsem-gateway (port 19222) + capsem-tray. All three are separate processes.
+
+**Self-update**: `capsem update` checks GitHub for new manifest, downloads assets in background. Binary swap deferred. Background update-check cache (`update-check.json`, 24h TTL) refreshes on every CLI command.
+
+Key source files: `crates/capsem/src/setup.rs`, `paths.rs`, `service_install.rs`, `update.rs`, `uninstall.rs`.
+
 ## Key source files
 
 Read `references/key-files.md` for the full annotated source map.
 
 ## Tauri v2 reference
 
-Read `references/tauri-v2.md` for Tauri IPC patterns, commands, capabilities, and permissions.
+Read `references/tauri-v2.md` for Tauri v2 patterns. capsem-app is a thin webview shell -- only 2 IPC commands (`open_url`, `check_for_app_update`). All VM operations route through the gateway.
 
 ## Crate architecture
 
@@ -246,7 +265,7 @@ Read `references/tauri-v2.md` for Tauri IPC patterns, commands, capabilities, an
 - **`capsem`**: CLI client. HTTP over UDS to service, direct UDS to process for shell.
 - **`capsem-mcp`**: MCP server (stdio). Uses `rmcp` crate. Bridges AI agent tool calls to service HTTP API.
 - **`capsem-gateway`**: TCP-to-UDS HTTP reverse proxy. Axum server on port 19222, Bearer token auth, CORS. Provides `/status` (cached), `/terminal/{id}` (WebSocket relay), and transparent fallback to service. Frontend and tray connect through this.
-- **`capsem-app`**: optional Tauri GUI shell. Wires IPC commands to core.
+- **`capsem-app`**: thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). No capsem-core dependency. 2 IPC commands: `open_url`, `check_for_app_update`.
 - **`capsem-agent`**: guest binaries crate. Contains four binaries cross-compiled for aarch64/x86_64-linux-musl: `capsem-pty-agent` (PTY bridge + control + exec + file I/O + shutdown), `capsem-sysutil` (lifecycle multi-call: shutdown/halt/poweroff/reboot/suspend), `capsem-net-proxy` (HTTPS -> MITM), `capsem-mcp-server` (MCP gateway).
 - **`capsem-logger`**: session DB schema, queries, async writer.
 - **`capsem-proto`**: shared protocol types. `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost).

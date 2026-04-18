@@ -40,14 +40,14 @@ def test_tool_descriptions_nonempty(mcp_session):
 
 
 def test_create_schema_fields(mcp_session):
-    """capsem_create schema must declare name, ramMb, cpuCount, image."""
+    """capsem_create schema must declare name, ramMb, cpuCount, from."""
     resp = mcp_session.request("tools/list")
     create = next(t for t in resp["result"]["tools"] if t["name"] == "capsem_create")
     props = create["inputSchema"].get("properties", {})
     assert "name" in props, "Missing 'name' in create schema"
     assert "ramMb" in props, "Missing 'ramMb' in create schema"
     assert "cpuCount" in props, "Missing 'cpuCount' in create schema"
-    assert "image" in props, "Missing 'image' in create schema"
+    assert "from" in props, "Missing 'from' in create schema"
 
 
 def test_exec_schema_fields(mcp_session):

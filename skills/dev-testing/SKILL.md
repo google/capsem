@@ -121,9 +121,70 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 
 Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test-install` runs the install suite in Docker with systemd. `just test` runs everything.
 
+## Test matrix: what runs where
+
+### Rust crate CI coverage
+
+| Crate | Tests | CI macOS | CI Linux | Smoke | Full |
+|-------|------:|:--------:|:--------:|:-----:|:----:|
+| capsem-core | ~1695 | Yes | Yes | No | Yes |
+| capsem-agent | ~71 | Yes | No | No | Yes |
+| capsem-logger | ~47 | Yes | Yes | No | Yes |
+| capsem-proto | ~132 | Yes | Yes | No | Yes |
+| capsem-gateway | ~38 | Yes | No | No | Yes |
+| capsem-service | ~109 | Yes | Yes | No | Yes |
+| capsem (CLI) | ~140 | Yes | Yes | No | Yes |
+| capsem-mcp | ~67 | Yes | Yes | No | Yes |
+| capsem-tray | ~47 | Yes | No | No | Yes |
+| capsem-process | ~62 | Yes | No | No | Yes |
+| capsem-app | ~35 | Check | No | No | Yes |
+
+### Python integration suite tier map
+
+| Suite | Marker | VM? | CI | Smoke | Full |
+|-------|--------|:---:|:--:|:-----:|:----:|
+| capsem-bootstrap | `bootstrap` | No | Run | No | Yes |
+| capsem-codesign | `codesign` | No | Run | No | Yes |
+| capsem-rootfs-artifacts | `rootfs` | No | Run | No | Yes |
+| capsem-mcp | `mcp` | Yes | Collect | Yes | Yes |
+| capsem-service | `integration` | Yes | Collect | Yes | Yes |
+| capsem-cli | `integration` | Yes | Collect | Yes | Yes |
+| capsem-gateway | `gateway` | Yes | Collect | Yes | Yes |
+| capsem-e2e | `e2e` | Yes | Collect | No | Yes |
+| capsem-session | `session` | Yes | Collect | No | Yes |
+| capsem-session-lifecycle | `session_lifecycle` | Yes | Collect | No | Yes |
+| capsem-session-exhaustive | `session_exhaustive` | Yes | Collect | No | Yes |
+| capsem-security | `security` | Yes | Collect | No | Yes |
+| capsem-isolation | `isolation` | Yes | Collect | No | Yes |
+| capsem-snapshots | `snapshot` | Yes | Collect | No | Yes |
+| capsem-config | `config` | Yes | Collect | No | Yes |
+| capsem-config-runtime | `config_runtime` | Yes | Collect | No | Yes |
+| capsem-guest | `guest` | Yes | Collect | No | Yes |
+| capsem-cleanup | `cleanup` | Yes | Collect | No | Yes |
+| capsem-stress | `stress` | Yes | Collect | No | Yes |
+| capsem-recovery | `recovery` | Yes | Collect | No | Yes |
+| capsem-serial | `serial` | Yes | Collect | No | Yes |
+| capsem-lifecycle | `integration` | Yes | Collect | No | Yes |
+| capsem-build-chain | `build_chain` | Yes | Collect | No | Yes |
+| capsem-recipes | `recipe` | No | Run | No | Yes |
+| capsem-install | `install` | No | Yes (Docker) | No | Yes |
+
+"Run" = tests execute in CI. "Collect" = imports verified (`--collect-only`) but tests skip (need VM). "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
+
+### Coverage targets
+
+| Component | Floor | Enforced | Where |
+|-----------|------:|:--------:|-------|
+| Rust workspace | 70% | `--fail-under-lines 70` | CI (`cargo llvm-cov`), `just test` |
+| Python builder | 90% | `--cov-fail-under=90` | CI (`pytest`), `just test` |
+| capsem-service | 80% | Codecov component | `codecov.yml` |
+| capsem-mcp | 80% | Codecov component | `codecov.yml` |
+| capsem-gateway | 80% | Codecov component | `codecov.yml` |
+| capsem (CLI) | 80% | Codecov component | `codecov.yml` |
+
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test`
+- Rust: `cargo llvm-cov` via `just test` (floor: 70% line coverage)
 - Python: `--cov-fail-under=90`
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 
