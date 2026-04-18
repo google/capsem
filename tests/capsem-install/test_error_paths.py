@@ -113,8 +113,8 @@ class TestErrorPaths:
 
     @pytest.mark.live_system
     def test_service_status_works_without_install(self, installed_layout, clean_state):
-        """capsem service status works even when not installed."""
-        result = run_capsem("service", "status", timeout=10)
+        """capsem status works even when not installed."""
+        result = run_capsem("status", timeout=10)
         assert result.returncode == 0
         assert "Installed:" in result.stdout
 

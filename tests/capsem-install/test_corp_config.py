@@ -19,7 +19,23 @@ from .conftest import (
 
 CORP_TOML = CAPSEM_DIR / "corp.toml"
 CORP_SOURCE = CAPSEM_DIR / "corp-source.json"
+SETUP_STATE = CAPSEM_DIR / "setup-state.json"
 SYSTEM_CORP = Path("/etc/capsem/corp.toml")
+
+
+@pytest.fixture
+def fresh_corp_state():
+    """Reset corp artifacts before each test so tests don't share state.
+
+    Without this, the first test marks corp_config as done in setup-state.json,
+    and subsequent tests skip the step -- leaving stale corp.toml, stale
+    corp-source.json, and no validation of new input.
+    """
+    for p in (CORP_TOML, CORP_SOURCE, SETUP_STATE):
+        p.unlink(missing_ok=True)
+    yield
+    for p in (CORP_TOML, CORP_SOURCE, SETUP_STATE):
+        p.unlink(missing_ok=True)
 
 VALID_CORP_CONTENT = """\
 refresh_interval_hours = 12
@@ -35,7 +51,7 @@ INVALID_CORP_CONTENT = "this is not [ valid toml {{{"
 class TestCorpProvisioning:
     """Corp config provisioning from local file path."""
 
-    def test_corp_config_from_local_file(self, installed_layout, clean_state, tmp_path):
+    def test_corp_config_from_local_file(self, installed_layout, clean_state, fresh_corp_state, tmp_path):
         """capsem setup --corp-config /path/to/corp.toml installs to ~/.capsem/corp.toml."""
         corp_file = tmp_path / "corp.toml"
         corp_file.write_text(VALID_CORP_CONTENT)
@@ -50,7 +66,7 @@ class TestCorpProvisioning:
         assert "ai.anthropic.allow" in content
 
     @pytest.mark.live_system
-    def test_corp_config_validates_toml(self, installed_layout, clean_state, tmp_path):
+    def test_corp_config_validates_toml(self, installed_layout, clean_state, fresh_corp_state, tmp_path):
         """Invalid TOML is rejected with clear error."""
         bad_file = tmp_path / "bad.toml"
         bad_file.write_text(INVALID_CORP_CONTENT)
@@ -63,7 +79,7 @@ class TestCorpProvisioning:
         assert result.returncode != 0 or "invalid" in (result.stdout + result.stderr).lower()
 
     @pytest.mark.live_system
-    def test_corp_source_metadata_written(self, installed_layout, clean_state, tmp_path):
+    def test_corp_source_metadata_written(self, installed_layout, clean_state, fresh_corp_state, tmp_path):
         """corp-source.json written with correct source path."""
         corp_file = tmp_path / "corp.toml"
         corp_file.write_text(VALID_CORP_CONTENT)
@@ -78,7 +94,7 @@ class TestCorpProvisioning:
         assert source.get("refresh_interval_hours") == 12
 
     @pytest.mark.live_system
-    def test_corp_config_overwrites_previous(self, installed_layout, clean_state, tmp_path):
+    def test_corp_config_overwrites_previous(self, installed_layout, clean_state, fresh_corp_state, tmp_path):
         """Re-provisioning replaces existing corp.toml."""
         # Write initial corp config directly
         CAPSEM_DIR.mkdir(parents=True, exist_ok=True)

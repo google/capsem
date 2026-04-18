@@ -23,10 +23,21 @@ from .conftest import (
 )
 
 
+_REGISTER_LAUNCHAGENT_REQUIRED = pytest.mark.skipif(
+    os.environ.get("CAPSEM_TEST_REGISTER_LAUNCHAGENT") != "1",
+    reason=(
+        "registers a real LaunchAgent / systemd unit against ~/.capsem/, mutates "
+        "user state, persists across runs, and pops the desktop UI. CI sets "
+        "CAPSEM_TEST_REGISTER_LAUNCHAGENT=1 to opt in."
+    ),
+)
+
+
 class TestAutoLaunch:
     """Service auto-launches when CLI connects and no service is running."""
 
     @pytest.mark.live_system
+    @_REGISTER_LAUNCHAGENT_REQUIRED
     def test_auto_launch_from_installed_layout(self, installed_layout, clean_state):
         """capsem list auto-starts service when socket is absent."""
         # Ensure no service running and no socket
@@ -49,6 +60,7 @@ class TestAutoLaunch:
             assert os.access(binary, os.X_OK), f"not executable: {name}"
 
     @pytest.mark.live_system
+    @_REGISTER_LAUNCHAGENT_REQUIRED
     def test_asset_resolution_installed_layout(self, installed_layout, clean_state):
         """Service finds assets at ~/.capsem/assets/ in installed layout."""
         # If assets were installed, service should start without --assets-dir
@@ -84,7 +96,7 @@ class TestAutoLaunch:
     @pytest.mark.live_system
     def test_auto_launch_missing_assets(self, installed_layout, clean_state):
         """Clear error when assets directory is empty or missing."""
-        from conftest import ASSETS_DIR
+        from .conftest import ASSETS_DIR
 
         # Temporarily rename assets dir
         backup = ASSETS_DIR.parent / "assets_backup"

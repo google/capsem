@@ -85,47 +85,45 @@ def _kill_service() -> None:
     sock.unlink(missing_ok=True)
 
 
-@pytest.fixture(scope="session")
-def installed_layout() -> Path:
-    """Verify or create the installed layout.
-
-    When CAPSEM_DEB_INSTALLED=1 (set by `just test-install` after dpkg -i),
-    the .deb was already installed -- just verify the layout.
-    Otherwise, fall back to simulate-install.sh for standalone use.
-
-    Session-scoped: runs once, all tests share the installed layout.
-    """
+def _ensure_installed() -> None:
+    """(Re)run simulate-install.sh if any expected binary is missing."""
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
-        # .deb already installed by dpkg -i in the justfile
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"binary not installed by dpkg: {binary}"
             assert os.access(binary, os.X_OK), f"binary not executable: {binary}"
-        return INSTALL_DIR
+        return
 
-    # Fallback: simulate-install.sh for standalone pytest runs
+    if all((INSTALL_DIR / name).exists() for name in BINARIES):
+        return
+
     bin_src = os.environ.get("CAPSEM_BIN_SRC", "target/debug")
     assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
-
     script = Path(__file__).parent.parent.parent / "scripts" / "simulate-install.sh"
     assert script.exists(), f"simulate-install.sh not found at {script}"
-
     result = subprocess.run(
         ["bash", str(script), bin_src, assets_src],
-        capture_output=True,
-        text=True,
-        timeout=60,
+        capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, (
         f"simulate-install.sh failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
-
-    # Verify all binaries exist
     for name in BINARIES:
         binary = INSTALL_DIR / name
         assert binary.exists(), f"binary not installed: {binary}"
         assert os.access(binary, os.X_OK), f"binary not executable: {binary}"
 
+
+@pytest.fixture
+def installed_layout() -> Path:
+    """Self-healing installed layout fixture.
+
+    Function-scoped (not session-scoped) so destructive tests like
+    test_full_uninstall don't poison the rest of the suite. Re-runs
+    simulate-install.sh only when binaries are missing, so the per-test
+    overhead is one stat() per binary in the common case.
+    """
+    _ensure_installed()
     return INSTALL_DIR
 
 
@@ -146,11 +144,14 @@ def clean_state():
 
 @pytest.fixture
 def systemd_available():
-    """Check if systemd user session is available. Skip if not."""
-    result = subprocess.run(
-        ["systemctl", "--user", "status"],
-        capture_output=True,
-        text=True,
-    )
+    """Check if systemd user session is available. Skip if not (e.g. macOS)."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "status"],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        pytest.skip("systemctl not installed (non-systemd OS)")
     if result.returncode not in (0, 3):  # 3 = no units loaded, still works
         pytest.skip("systemd user session not available")

@@ -36,9 +36,18 @@ class TestUninstall:
 
     def test_uninstall_when_nothing_installed(self, clean_state):
         """Uninstall with no ~/.capsem gives clean message."""
-        # Remove capsem dir entirely
+        # Remove capsem dir entirely. Overlayfs workdirs may be mode 000, so
+        # walk and chmod before rmtree.
         import shutil
+        import stat as _stat
         if CAPSEM_DIR.exists():
+            for root, dirs, _files in os.walk(CAPSEM_DIR):
+                for d in dirs:
+                    p = Path(root) / d
+                    try:
+                        p.chmod(_stat.S_IRWXU)
+                    except OSError:
+                        pass
             shutil.rmtree(CAPSEM_DIR)
 
         # We need the binary to exist somewhere to run it

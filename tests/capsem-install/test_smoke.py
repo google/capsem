@@ -33,7 +33,7 @@ class TestHarnessSmoke:
 
     def test_installed_layout_has_binaries(self, installed_layout):
         """All 6 binaries are present after simulate-install.sh."""
-        from conftest import BINARIES, INSTALL_DIR
+        from .conftest import BINARIES, INSTALL_DIR
 
         for name in BINARIES:
             assert (INSTALL_DIR / name).exists(), f"missing: {name}"
@@ -41,12 +41,12 @@ class TestHarnessSmoke:
     @pytest.mark.live_system
     def test_capsem_version_has_build_hash(self, installed_layout):
         """capsem version includes the build hash."""
-        from conftest import get_build_hash
+        from .conftest import get_build_hash
 
         build_hash = get_build_hash()
         assert "." in build_hash, f"build hash should contain '.': {build_hash}"
-        # Format: <git-short-sha>.<timestamp>
-        parts = build_hash.split(".")
-        assert len(parts) == 2, f"expected <sha>.<ts>, got: {build_hash}"
-        assert len(parts[0]) >= 7, f"git SHA too short: {parts[0]}"
-        assert parts[1].isdigit(), f"timestamp not numeric: {parts[1]}"
+        # Format: <git-short-sha>.<timestamp>[ <suffix>]   (suffix e.g. "ts=dev")
+        sha, _, rest = build_hash.partition(".")
+        assert len(sha) >= 7, f"git SHA too short: {sha}"
+        ts = rest.split()[0]
+        assert ts.isdigit(), f"timestamp not numeric: {ts!r}"

@@ -42,7 +42,7 @@ class TestSetupWizard:
 
         assert SETUP_STATE.exists(), "setup-state.json should be written"
         state = json.loads(SETUP_STATE.read_text())
-        assert state.get("schema_version") == 1
+        assert state.get("schema_version") == 2
         assert "welcome" in state.get("completed_steps", [])
         assert "security_preset" in state.get("completed_steps", [])
 
