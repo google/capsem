@@ -76,6 +76,12 @@ pub struct SessionRecord {
     pub forked_from: Option<String>,
     /// True if this session is persistent (named VM).
     pub persistent: bool,
+    /// Number of structured exec commands recorded.
+    #[serde(default)]
+    pub exec_count: u64,
+    /// Number of kernel audit events recorded.
+    #[serde(default)]
+    pub audit_event_count: u64,
 }
 
 /// Aggregated statistics across all sessions.

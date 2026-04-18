@@ -111,7 +111,7 @@ pub fn generate_token() -> String {
         .collect()
 }
 
-/// Axum middleware: require Bearer token on all routes except `GET /`.
+/// Axum middleware: require Bearer token on all routes except `GET /health` and `GET /token`.
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<axum::body::Body>,
@@ -119,7 +119,9 @@ pub async fn auth_middleware(
 ) -> Response {
     // Health check and token endpoint are unauthenticated (token has its own IP check)
     let path = req.uri().path();
-    if req.method() == http::Method::GET && (path == "/" || path == "/token") {
+    if req.method() == http::Method::GET
+        && (path == "/" || path == "/health" || path == "/token")
+    {
         return next.run(req).await;
     }
 
@@ -130,11 +132,11 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .is_some_and(|t| t == state.token);
 
-    // For /terminal/ paths only: allow ?token= query param as fallback
+    // For WebSocket paths: allow ?token= query param as fallback
     // (browser WebSocket API cannot set custom headers).
     // Only the "token" param is recognized; all others are dropped.
     let query_valid = !header_valid
-        && path.starts_with("/terminal/")
+        && (path.starts_with("/terminal/") || path == "/events")
         && req
             .uri()
             .query()
@@ -181,6 +183,7 @@ mod tests {
             uds_path: "/tmp/nonexistent.sock".into(),
             status_cache: StatusCache::new(),
             auth_failures: AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         })
     }
 
@@ -188,6 +191,7 @@ mod tests {
         let state = test_state(token);
         Router::new()
             .route("/", get(|| async { "health" }))
+            .route("/health", get(|| async { "health" }))
             .route("/token", get(|| async { "token" }))
             .route("/list", get(|| async { "ok" }))
             .route("/status", get(|| async { "status" }))
@@ -516,7 +520,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_exempt_only_exact_root() {
+    async fn health_exempt_only_exact_paths() {
         let app = test_app("tok");
         // /healthz is NOT exempt
         let resp = app
@@ -531,11 +535,24 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
-        // GET / with query is still exempt (path() returns "/" regardless of query)
+        // GET / is exempt
         let resp = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/?foo=bar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // GET /health is exempt
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
                     .body(Body::empty())
                     .unwrap(),
             )

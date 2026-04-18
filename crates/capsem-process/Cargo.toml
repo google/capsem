@@ -21,6 +21,9 @@ tokio-util = { version = "0.7", features = ["io"] }
 reqwest.workspace = true
 axum = { workspace = true, features = ["ws"] }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true
 

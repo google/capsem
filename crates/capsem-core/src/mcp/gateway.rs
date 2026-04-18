@@ -27,6 +27,12 @@ use super::types::*;
 const MAX_LINE_LEN: usize = 1_048_576;
 
 /// Shared configuration for the MCP gateway.
+///
+/// Two construction patterns:
+/// - **capsem-process** (service mode): uses `aggregator` to route tool calls
+///   through a subprocess. `server_manager` / `http_client` are `None`.
+/// - **capsem-app** (desktop mode): manages MCP servers directly via
+///   `server_manager` + `http_client`. `aggregator` is a no-op stub.
 pub struct McpGatewayConfig {
     /// Client handle for the MCP aggregator subprocess.
     /// Routes all tool calls (local + external) through the aggregator.
@@ -37,6 +43,14 @@ pub struct McpGatewayConfig {
     pub policy: RwLock<Arc<McpPolicy>>,
     /// Domain policy (retained for hot-reload, passed to aggregator on refresh).
     pub domain_policy: std::sync::RwLock<Arc<DomainPolicy>>,
+    /// Direct MCP server manager (desktop app mode).
+    pub server_manager: tokio::sync::Mutex<super::server_manager::McpServerManager>,
+    /// HTTP client for MCP server communication (desktop app mode).
+    pub http_client: reqwest::Client,
+    /// Snapshot scheduler (set after boot in VirtioFS mode).
+    pub auto_snapshots: Option<Arc<tokio::sync::Mutex<crate::auto_snapshot::AutoSnapshotScheduler>>>,
+    /// Workspace directory for the current session.
+    pub workspace_dir: Option<std::path::PathBuf>,
 }
 
 /// Serve a single MCP session over a vsock connection.
@@ -472,6 +486,12 @@ mod tests {
             db,
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
+            server_manager: tokio::sync::Mutex::new(
+                super::server_manager::McpServerManager::new(vec![], reqwest::Client::new()),
+            ),
+            http_client: reqwest::Client::new(),
+            auto_snapshots: None,
+            workspace_dir: None,
         }
     }
 

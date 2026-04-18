@@ -8,6 +8,7 @@
 //! Also provides async API key validation against provider endpoints.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -26,11 +27,155 @@ pub struct HostConfig {
     pub google_adc: Option<String>,
 }
 
+/// Safe summary of detected config for API responses.
+/// Contains presence booleans instead of raw secret values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectedConfigSummary {
+    pub git_name: Option<String>,
+    pub git_email: Option<String>,
+    pub ssh_public_key_present: bool,
+    pub anthropic_api_key_present: bool,
+    pub google_api_key_present: bool,
+    pub openai_api_key_present: bool,
+    pub github_token_present: bool,
+    pub claude_oauth_present: bool,
+    pub google_adc_present: bool,
+    /// Setting IDs that were written during detection.
+    pub settings_written: Vec<String>,
+}
+
+impl From<&HostConfig> for DetectedConfigSummary {
+    fn from(config: &HostConfig) -> Self {
+        Self {
+            git_name: config.git_name.clone(),
+            git_email: config.git_email.clone(),
+            ssh_public_key_present: config.ssh_public_key.is_some(),
+            anthropic_api_key_present: config.anthropic_api_key.is_some(),
+            google_api_key_present: config.google_api_key.is_some(),
+            openai_api_key_present: config.openai_api_key.is_some(),
+            github_token_present: config.github_token.is_some(),
+            claude_oauth_present: config.claude_oauth_credentials.is_some(),
+            google_adc_present: config.google_adc.is_some(),
+            settings_written: Vec::new(),
+        }
+    }
+}
+
 /// Result of validating an API key against a provider endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyValidation {
     pub valid: bool,
     pub message: String,
+}
+
+/// Mapping from HostConfig fields to setting IDs.
+/// Text settings use SettingValue::Text, file settings use SettingValue::File.
+const DETECT_SETTING_MAP: &[(&str, &str)] = &[
+    // (field_name, setting_id)
+    ("anthropic_api_key", "ai.anthropic.api_key"),
+    ("openai_api_key", "ai.openai.api_key"),
+    ("google_api_key", "ai.google.api_key"),
+    ("github_token", "repository.providers.github.token"),
+    ("git_name", "repository.git.identity.author_name"),
+    ("git_email", "repository.git.identity.author_email"),
+    ("ssh_public_key", "vm.environment.ssh.public_key"),
+];
+
+/// File-type settings that need SettingValue::File instead of Text.
+const DETECT_FILE_MAP: &[(&str, &str, &str)] = &[
+    // (field_name, setting_id, file_path)
+    ("claude_oauth_credentials", "ai.anthropic.claude.credentials_json", "/root/.claude/.credentials.json"),
+    ("google_adc", "ai.google.gemini.google_adc_json", "/root/.config/gcloud/application_default_credentials.json"),
+];
+
+/// Detect host config and write found values to user settings.
+///
+/// Only writes to settings that are currently empty (does not overwrite
+/// user-configured values). Returns a summary with presence booleans
+/// and the list of setting IDs that were written.
+pub fn detect_and_write_to_settings() -> DetectedConfigSummary {
+    use crate::net::policy_config::{self, SettingValue};
+
+    let config = detect();
+    let mut summary = DetectedConfigSummary::from(&config);
+
+    // Load current user settings to check which are already populated
+    let (user_settings, _corp) = policy_config::load_settings_files();
+    let mut changes: HashMap<String, SettingValue> = HashMap::new();
+
+    // Helper: get the detected value for a field name
+    let field_value = |field: &str| -> Option<&str> {
+        match field {
+            "anthropic_api_key" => config.anthropic_api_key.as_deref(),
+            "openai_api_key" => config.openai_api_key.as_deref(),
+            "google_api_key" => config.google_api_key.as_deref(),
+            "github_token" => config.github_token.as_deref(),
+            "git_name" => config.git_name.as_deref(),
+            "git_email" => config.git_email.as_deref(),
+            "ssh_public_key" => config.ssh_public_key.as_deref(),
+            _ => None,
+        }
+    };
+
+    // Text settings
+    for &(field, setting_id) in DETECT_SETTING_MAP {
+        if let Some(value) = field_value(field) {
+            // Only write if the setting is currently empty
+            let existing = user_settings.settings.get(setting_id);
+            let is_empty = match existing {
+                None => true,
+                Some(entry) => match &entry.value {
+                    SettingValue::Text(t) => t.is_empty(),
+                    _ => false,
+                },
+            };
+            if is_empty {
+                changes.insert(setting_id.to_string(), SettingValue::Text(value.to_string()));
+                summary.settings_written.push(setting_id.to_string());
+            }
+        }
+    }
+
+    // File settings (credentials, ADC)
+    let file_field_value = |field: &str| -> Option<&str> {
+        match field {
+            "claude_oauth_credentials" => config.claude_oauth_credentials.as_deref(),
+            "google_adc" => config.google_adc.as_deref(),
+            _ => None,
+        }
+    };
+
+    for &(field, setting_id, file_path) in DETECT_FILE_MAP {
+        if let Some(content) = file_field_value(field) {
+            let existing = user_settings.settings.get(setting_id);
+            let is_empty = match existing {
+                None => true,
+                Some(entry) => match &entry.value {
+                    SettingValue::File { content: c, .. } => c.is_empty(),
+                    _ => false,
+                },
+            };
+            if is_empty {
+                changes.insert(
+                    setting_id.to_string(),
+                    SettingValue::File {
+                        path: file_path.to_string(),
+                        content: content.to_string(),
+                    },
+                );
+                summary.settings_written.push(setting_id.to_string());
+            }
+        }
+    }
+
+    // Write all changes in one batch
+    if !changes.is_empty() {
+        if let Err(e) = policy_config::batch_update_settings(&changes) {
+            tracing::warn!(error = %e, "failed to write detected config to settings");
+        }
+    }
+
+    summary
 }
 
 /// Detect all available host configuration.
@@ -778,7 +923,9 @@ mod tests {
 
     #[tokio::test]
     async fn validate_github_token_real() {
-        let key = match real_key("GITHUB_TOKEN", "repository.providers.github.token") {
+        // Only use env var -- tokens stored in user.toml can expire silently,
+        // causing spurious test failures.
+        let key = match std::env::var("GITHUB_TOKEN").ok().filter(|k| !k.is_empty()) {
             Some(k) => k,
             None => return,
         };

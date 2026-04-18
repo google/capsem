@@ -198,6 +198,39 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
     }
 }
 
+/// Provision corp config from a URL: fetch, validate, install.
+/// Convenience wrapper combining fetch + install for the service API.
+pub async fn provision_from_source(capsem_dir: &Path, source_url: &str) -> Result<()> {
+    let client = reqwest::Client::new();
+    let (body, etag) = fetch_corp_config(&client, source_url).await?;
+    let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
+    let cs = CorpSource {
+        url: Some(source_url.to_string()),
+        file_path: None,
+        fetched_at: now_secs(),
+        etag,
+        content_hash,
+        refresh_interval_hours: parse_refresh_interval(&body),
+    };
+    install_corp_config(capsem_dir, &body, &cs)
+}
+
+/// Install corp config from inline TOML content (no URL fetch).
+/// Convenience wrapper for the service API.
+pub fn install_inline_corp_config(capsem_dir: &Path, toml_content: &str) -> Result<()> {
+    validate_corp_toml(toml_content)?;
+    let content_hash = blake3::hash(toml_content.as_bytes()).to_hex().to_string();
+    let cs = CorpSource {
+        url: None,
+        file_path: None,
+        fetched_at: now_secs(),
+        etag: None,
+        content_hash,
+        refresh_interval_hours: parse_refresh_interval(toml_content),
+    };
+    install_corp_config(capsem_dir, toml_content, &cs)
+}
+
 /// Write just the corp-source.json.
 fn write_corp_source(capsem_dir: &Path, source: &CorpSource) -> Result<()> {
     let path = capsem_dir.join("corp-source.json");

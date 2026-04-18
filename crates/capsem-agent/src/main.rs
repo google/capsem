@@ -16,9 +16,9 @@ use std::process;
 use std::thread;
 
 use capsem_proto::{
-    BootStage, GuestToHost, HostToGuest, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
-    VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
-    decode_host_msg, encode_guest_msg,
+    AuditRecord, BootStage, GuestToHost, HostToGuest, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
+    VSOCK_PORT_AUDIT, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
+    decode_host_msg, encode_audit_record, encode_guest_msg,
     validate_env_key, validate_env_value, validate_file_path, validate_file_path_safe,
     MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
 };
@@ -534,6 +534,11 @@ fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: 
         control_loop(control_fd, master_fd, child_pid, &boot_env_owned, ctrl_tx);
     });
 
+    // Spawn audit log reader thread (tails auditd output, streams to host).
+    thread::spawn(move || {
+        audit_reader_loop();
+    });
+
     // Main I/O bridge: master PTY <-> vsock terminal port.
     bridge_loop(master_fd, terminal_fd);
 
@@ -617,6 +622,202 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
             }
         }
     }
+}
+
+/// Tail /var/log/audit/audit.log and stream parsed execve records to host via vsock:5006.
+///
+/// Waits for the audit log file to appear (auditd may start slightly after the agent),
+/// then continuously reads new lines. Each complete audit record (correlated by audit ID)
+/// is serialized as MessagePack and sent as a length-prefixed frame.
+fn audit_reader_loop() {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader};
+
+    const AUDIT_LOG: &str = "/var/log/audit/audit.log";
+
+    // Wait for audit log to appear (up to 10 seconds)
+    for _ in 0..100 {
+        if std::path::Path::new(AUDIT_LOG).exists() {
+            break;
+        }
+        thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if !std::path::Path::new(AUDIT_LOG).exists() {
+        eprintln!("[capsem-agent] audit: {AUDIT_LOG} not found, skipping audit streaming");
+        return;
+    }
+
+    // Connect to host audit port
+    let audit_fd = match vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_AUDIT) {
+        Ok(fd) => fd,
+        Err(e) => {
+            eprintln!("[capsem-agent] audit: vsock connect failed: {e}");
+            return;
+        }
+    };
+    eprintln!("[capsem-agent] audit: connected to host, tailing {AUDIT_LOG}");
+
+    let file = match std::fs::File::open(AUDIT_LOG) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[capsem-agent] audit: open failed: {e}");
+            return;
+        }
+    };
+    let mut reader = BufReader::new(file);
+
+    // Accumulate multi-line audit records by audit ID.
+    // Each execve event generates SYSCALL + EXECVE + CWD + PROCTITLE lines
+    // sharing the same audit ID (e.g., "1713100000.001:42").
+    let mut pending: HashMap<String, AuditRecordBuilder> = HashMap::new();
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                // EOF -- audit log hasn't grown yet, poll
+                thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Parse audit log line. Format: type=SYSCALL msg=audit(1713100000.001:42): ...
+        let Some(audit_id) = extract_audit_id(line) else { continue };
+        let record_type = extract_field(line, "type=");
+
+        let builder = pending.entry(audit_id.clone()).or_default();
+
+        match record_type.as_deref() {
+            Some("SYSCALL") => {
+                builder.pid = extract_field(line, " pid=").and_then(|v| v.parse().ok());
+                builder.ppid = extract_field(line, " ppid=").and_then(|v| v.parse().ok());
+                builder.uid = extract_field(line, " uid=").and_then(|v| v.parse().ok());
+                builder.exe = extract_field(line, " exe=").map(|s| s.trim_matches('"').to_string());
+                builder.comm = extract_field(line, " comm=").map(|s| s.trim_matches('"').to_string());
+                builder.tty = extract_field(line, " tty=").and_then(|s| {
+                    if s == "(none)" { None } else { Some(s) }
+                });
+                builder.timestamp_us = extract_audit_timestamp_us(line);
+                builder.has_syscall = true;
+            }
+            Some("EXECVE") => {
+                builder.argv = extract_execve_argv(line);
+            }
+            Some("CWD") => {
+                builder.cwd = extract_field(line, " cwd=").map(|s| s.trim_matches('"').to_string());
+            }
+            Some("PROCTITLE") => {
+                // PROCTITLE is the last record in a group -- emit when we have SYSCALL + argv
+                if builder.has_syscall {
+                    if let Some(record) = builder.build(&audit_id) {
+                        let frame = match encode_audit_record(&record) {
+                            Ok(f) => f,
+                            Err(_) => { pending.remove(&audit_id); continue; }
+                        };
+                        if write_all_fd(audit_fd, &frame).is_err() {
+                            eprintln!("[capsem-agent] audit: write failed, disconnecting");
+                            return;
+                        }
+                    }
+                }
+                pending.remove(&audit_id);
+            }
+            _ => {}
+        }
+
+        // Prevent memory leak for incomplete records
+        if pending.len() > 1000 {
+            pending.retain(|_, v| v.has_syscall);
+        }
+    }
+}
+
+/// Intermediate builder for multi-line audit records.
+#[derive(Default)]
+struct AuditRecordBuilder {
+    has_syscall: bool,
+    timestamp_us: Option<u64>,
+    pid: Option<u32>,
+    ppid: Option<u32>,
+    uid: Option<u32>,
+    exe: Option<String>,
+    comm: Option<String>,
+    argv: Option<String>,
+    cwd: Option<String>,
+    tty: Option<String>,
+}
+
+impl AuditRecordBuilder {
+    fn build(&self, audit_id: &str) -> Option<AuditRecord> {
+        Some(AuditRecord {
+            timestamp_us: self.timestamp_us?,
+            pid: self.pid?,
+            ppid: self.ppid?,
+            uid: self.uid.unwrap_or(0),
+            exe: self.exe.clone()?,
+            comm: self.comm.clone(),
+            argv: self.argv.clone().unwrap_or_else(|| self.exe.clone().unwrap_or_default()),
+            cwd: self.cwd.clone(),
+            tty: self.tty.clone(),
+            session_id: None,
+            parent_exe: None,
+            audit_id: audit_id.to_string(),
+        })
+    }
+}
+
+/// Extract audit ID from a log line. Format: msg=audit(1713100000.001:42):
+fn extract_audit_id(line: &str) -> Option<String> {
+    let start = line.find("msg=audit(")? + "msg=audit(".len();
+    let end = line[start..].find(')')? + start;
+    Some(line[start..end].to_string())
+}
+
+/// Extract the audit timestamp as microseconds. Format: audit(1713100000.001:42)
+fn extract_audit_timestamp_us(line: &str) -> Option<u64> {
+    let id = extract_audit_id(line)?;
+    let ts_part = id.split(':').next()?;
+    let secs_f64: f64 = ts_part.parse().ok()?;
+    Some((secs_f64 * 1_000_000.0) as u64)
+}
+
+/// Extract a field value from an audit log line. Fields are space-delimited key=value.
+fn extract_field(line: &str, key: &str) -> Option<String> {
+    let start = line.find(key)? + key.len();
+    let rest = &line[start..];
+    // Value ends at next space (or end of line), unless quoted
+    if rest.starts_with('"') {
+        let end = rest[1..].find('"')? + 2;
+        Some(rest[..end].to_string())
+    } else {
+        let end = rest.find(' ').unwrap_or(rest.len());
+        Some(rest[..end].to_string())
+    }
+}
+
+/// Reconstruct argv from EXECVE audit record.
+/// Format: type=EXECVE msg=audit(...): argc=3 a0="python3" a1="train.py" a2="--epochs"
+fn extract_execve_argv(line: &str) -> Option<String> {
+    let mut args = Vec::new();
+    let mut i = 0;
+    loop {
+        let key = format!(" a{i}=");
+        if let Some(val) = extract_field(line, &key) {
+            args.push(val.trim_matches('"').to_string());
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if args.is_empty() { None } else { Some(args.join(" ")) }
 }
 
 /// Execute a command as a direct child process, streaming output over vsock:5005.

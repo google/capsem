@@ -4,23 +4,19 @@ use tray_icon::Icon;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayState {
-    /// No VMs running / disconnected (grey)
+    /// Normal state (grey template -- OS adapts to light/dark)
     Idle,
-    /// VMs running (black template -- OS adapts to light/dark)
-    Active,
     /// Gateway unreachable (grey, same as idle)
     Error,
 }
 
 // @2x Retina variants for macOS menu bar (44x44)
 static IDLE_PNG: &[u8] = include_bytes!("../icons/tray-idle@2x.png");
-static ACTIVE_PNG: &[u8] = include_bytes!("../icons/tray-active@2x.png");
 static ERROR_PNG: &[u8] = include_bytes!("../icons/tray-error@2x.png");
 
 pub fn load_icon(state: TrayState) -> Icon {
     let png_data = match state {
         TrayState::Idle => IDLE_PNG,
-        TrayState::Active => ACTIVE_PNG,
         TrayState::Error => ERROR_PNG,
     };
 
@@ -72,14 +68,6 @@ mod tests {
     }
 
     #[test]
-    fn active_png_decodes_to_44x44() {
-        let (w, h, rgba) = decode_png(ACTIVE_PNG);
-        assert_eq!(w, 44);
-        assert_eq!(h, 44);
-        assert!(!rgba.is_empty());
-    }
-
-    #[test]
     fn error_png_decodes_to_44x44() {
         let (w, h, rgba) = decode_png(ERROR_PNG);
         assert_eq!(w, 44);
@@ -90,7 +78,7 @@ mod tests {
     #[test]
     fn all_states_produce_valid_icons() {
         // Verifies the full load_icon path doesn't panic
-        for state in [TrayState::Idle, TrayState::Active, TrayState::Error] {
+        for state in [TrayState::Idle, TrayState::Error] {
             let _icon = load_icon(state);
         }
     }
@@ -106,23 +94,6 @@ mod tests {
                 assert!(
                     max - min < 30,
                     "idle icon should be grey (equal RGB), got r={} g={} b={}",
-                    chunk[0], chunk[1], chunk[2]
-                );
-                return;
-            }
-        }
-        panic!("no opaque pixels found");
-    }
-
-    #[test]
-    fn active_png_is_black_template() {
-        let (_, _, rgba) = decode_png(ACTIVE_PNG);
-        // Black template icon: dark pixels with alpha (macOS adapts to light/dark)
-        for chunk in rgba.chunks_exact(4) {
-            if chunk[3] > 128 {
-                assert!(
-                    chunk[0] < 30 && chunk[1] < 30 && chunk[2] < 30,
-                    "active template icon should be black, got r={} g={} b={}",
                     chunk[0], chunk[1], chunk[2]
                 );
                 return;

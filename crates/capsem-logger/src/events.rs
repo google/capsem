@@ -213,6 +213,52 @@ pub struct ModelCall {
     pub tool_responses: Vec<ToolResponseEntry>,
 }
 
+/// A structured exec command event (Layer 1: host-side recording of API-path commands).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecEvent {
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    pub timestamp: SystemTime,
+    pub exec_id: u64,
+    pub command: String,
+    /// Request origin: "mcp", "cli", "api", "frontend".
+    pub source: String,
+    pub mcp_call_id: Option<u64>,
+    pub trace_id: Option<String>,
+    pub process_name: Option<String>,
+}
+
+/// Completion data for a structured exec command (sent when GuestToHost::ExecDone arrives).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecEventComplete {
+    pub exec_id: u64,
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    pub stdout_preview: Option<String>,
+    pub stderr_preview: Option<String>,
+    pub stdout_bytes: u64,
+    pub stderr_bytes: u64,
+    pub pid: Option<u32>,
+}
+
+/// A kernel audit event (Layer 3: execve syscalls captured by auditd).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEvent {
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    pub timestamp: SystemTime,
+    pub pid: u32,
+    pub ppid: u32,
+    pub uid: u32,
+    pub exe: String,
+    pub comm: Option<String>,
+    pub argv: String,
+    pub cwd: Option<String>,
+    pub tty: Option<String>,
+    pub session_id: Option<u32>,
+    pub audit_id: Option<String>,
+    pub exec_event_id: Option<i64>,
+    pub parent_exe: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

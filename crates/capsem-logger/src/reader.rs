@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OpenFlags, Row};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::events::{Decision, FileAction, FileEvent, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry};
+use crate::events::{AuditEvent, Decision, ExecEvent, FileAction, FileEvent, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry};
 use crate::schema;
 
 /// Counts of network events by decision outcome.
@@ -153,6 +153,37 @@ pub struct McpServerCallCount {
     pub count: u64,
     pub denied: u64,
     pub warned: u64,
+}
+
+/// A unified history entry (merging exec_events and audit_events).
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryEntry {
+    pub timestamp: String,
+    pub layer: String,
+    pub command: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: Option<u64>,
+    pub stdout_preview: Option<String>,
+    pub stderr_preview: Option<String>,
+    /// For exec layer: source, process_name, trace_id, mcp_call_id.
+    /// For audit layer: pid, ppid, exe, parent_exe, tty, cwd.
+    pub details: serde_json::Value,
+}
+
+/// Process-centric history view.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessEntry {
+    pub exe: String,
+    pub command_count: u64,
+    pub first_seen: String,
+    pub last_seen: String,
+}
+
+/// Counts for exec and audit events.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryCounts {
+    pub exec_count: u64,
+    pub audit_count: u64,
 }
 
 /// Shared SQL column list for model_calls SELECT queries.
@@ -1155,6 +1186,161 @@ impl DbReader {
             by_server: by_server.collect::<rusqlite::Result<Vec<_>>>()?,
         })
     }
+
+    // -----------------------------------------------------------------
+    // History: exec_events + audit_events
+    // -----------------------------------------------------------------
+
+    /// Counts of exec and audit events in this session.
+    pub fn history_counts(&self) -> rusqlite::Result<HistoryCounts> {
+        let exec_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM exec_events", [], |row| row.get(0),
+        )?;
+        let audit_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM audit_events", [], |row| row.get(0),
+        )?;
+        Ok(HistoryCounts {
+            exec_count: exec_count as u64,
+            audit_count: audit_count as u64,
+        })
+    }
+
+    /// Unified command history (exec + audit), sorted by timestamp desc.
+    /// `layer` can be "all", "exec", or "audit".
+    pub fn history(
+        &self,
+        limit: usize,
+        offset: usize,
+        search: Option<&str>,
+        layer: &str,
+    ) -> rusqlite::Result<(Vec<HistoryEntry>, u64)> {
+        let mut entries = Vec::new();
+
+        if layer == "all" || layer == "exec" {
+            if let Some(q) = search {
+                let pattern = format!("%{q}%");
+                let mut stmt = self.conn.prepare(
+                    "SELECT timestamp, exec_id, command, exit_code, duration_ms,
+                            stdout_preview, stderr_preview, source, trace_id,
+                            process_name, mcp_call_id
+                     FROM exec_events WHERE command LIKE ?1
+                     ORDER BY timestamp DESC"
+                )?;
+                let rows = stmt.query_map(params![pattern], |row| read_exec_history_row(row))?;
+                for r in rows { entries.push(r?); }
+            } else {
+                let mut stmt = self.conn.prepare(
+                    "SELECT timestamp, exec_id, command, exit_code, duration_ms,
+                            stdout_preview, stderr_preview, source, trace_id,
+                            process_name, mcp_call_id
+                     FROM exec_events ORDER BY timestamp DESC"
+                )?;
+                let rows = stmt.query_map([], |row| read_exec_history_row(row))?;
+                for r in rows { entries.push(r?); }
+            }
+        }
+
+        if layer == "all" || layer == "audit" {
+            if let Some(q) = search {
+                let pattern = format!("%{q}%");
+                let mut stmt = self.conn.prepare(
+                    "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
+                            tty, session_id, audit_id, parent_exe, exit_code
+                     FROM audit_events WHERE argv LIKE ?1 OR exe LIKE ?1
+                     ORDER BY timestamp DESC"
+                )?;
+                let rows = stmt.query_map(params![pattern], |row| read_audit_history_row(row))?;
+                for r in rows { entries.push(r?); }
+            } else {
+                let mut stmt = self.conn.prepare(
+                    "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
+                            tty, session_id, audit_id, parent_exe, exit_code
+                     FROM audit_events ORDER BY timestamp DESC"
+                )?;
+                let rows = stmt.query_map([], |row| read_audit_history_row(row))?;
+                for r in rows { entries.push(r?); }
+            }
+        }
+
+        // Sort combined results by timestamp desc.
+        entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        let total = entries.len() as u64;
+        let paginated: Vec<HistoryEntry> = entries.into_iter().skip(offset).take(limit).collect();
+        Ok((paginated, total))
+    }
+
+    /// Process-centric view of audit events.
+    pub fn history_processes(&self, limit: usize) -> rusqlite::Result<Vec<ProcessEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT exe, COUNT(*) as cnt,
+                    MIN(timestamp) as first_seen,
+                    MAX(timestamp) as last_seen
+             FROM audit_events
+             GROUP BY exe
+             ORDER BY cnt DESC
+             LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(ProcessEntry {
+                exe: row.get(0)?,
+                command_count: row.get::<_, i64>(1)? as u64,
+                first_seen: row.get(2)?,
+                last_seen: row.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Recent exec events (for Layer 1 queries).
+    pub fn recent_exec_events(&self, limit: usize) -> rusqlite::Result<Vec<ExecEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name
+             FROM exec_events ORDER BY timestamp DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            let ts_str: String = row.get(0)?;
+            let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+            Ok(ExecEvent {
+                timestamp,
+                exec_id: row.get::<_, i64>(1)? as u64,
+                command: row.get(2)?,
+                source: row.get(3)?,
+                mcp_call_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+                trace_id: row.get(5)?,
+                process_name: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Recent audit events (for Layer 3 queries).
+    pub fn recent_audit_events(&self, limit: usize) -> rusqlite::Result<Vec<AuditEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
+                    tty, session_id, audit_id, exec_event_id, parent_exe
+             FROM audit_events ORDER BY timestamp DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            let ts_str: String = row.get(0)?;
+            let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+            Ok(AuditEvent {
+                timestamp,
+                pid: row.get::<_, i64>(1)? as u32,
+                ppid: row.get::<_, i64>(2)? as u32,
+                uid: row.get::<_, i64>(3)? as u32,
+                exe: row.get(4)?,
+                comm: row.get(5)?,
+                argv: row.get(6)?,
+                cwd: row.get(7)?,
+                tty: row.get(8)?,
+                session_id: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
+                audit_id: row.get(10)?,
+                exec_event_id: row.get(11)?,
+                parent_exe: row.get(12)?,
+            })
+        })?;
+        rows.collect()
+    }
 }
 
 /// Parse an fs_events row into FileEvent. Column order must match the SELECT in queries above.
@@ -1188,6 +1374,51 @@ fn read_mcp_call_row(row: &Row<'_>) -> rusqlite::Result<McpCall> {
         process_name: row.get(10)?,
         bytes_sent: row.get::<_, i64>(11)? as u64,
         bytes_received: row.get::<_, i64>(12)? as u64,
+    })
+}
+
+/// Parse an exec_events row into a HistoryEntry for unified history.
+fn read_exec_history_row(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
+    Ok(HistoryEntry {
+        timestamp: row.get(0)?,
+        layer: "exec".to_string(),
+        command: row.get(2)?,
+        exit_code: row.get::<_, Option<i64>>(3)?.map(|c| c as i32),
+        duration_ms: row.get::<_, Option<i64>>(4)?.map(|d| d as u64),
+        stdout_preview: row.get(5)?,
+        stderr_preview: row.get(6)?,
+        details: serde_json::json!({
+            "source": row.get::<_, Option<String>>(7)?,
+            "trace_id": row.get::<_, Option<String>>(8)?,
+            "process_name": row.get::<_, Option<String>>(9)?,
+            "mcp_call_id": row.get::<_, Option<i64>>(10)?,
+            "exec_id": row.get::<_, i64>(1)?,
+        }),
+    })
+}
+
+/// Parse an audit_events row into a HistoryEntry for unified history.
+fn read_audit_history_row(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
+    Ok(HistoryEntry {
+        timestamp: row.get(0)?,
+        layer: "audit".to_string(),
+        command: row.get(6)?, // argv
+        exit_code: row.get::<_, Option<i64>>(12)?.map(|c| c as i32),
+        duration_ms: None,
+        stdout_preview: None,
+        stderr_preview: None,
+        details: serde_json::json!({
+            "pid": row.get::<_, i64>(1)?,
+            "ppid": row.get::<_, i64>(2)?,
+            "uid": row.get::<_, i64>(3)?,
+            "exe": row.get::<_, String>(4)?,
+            "comm": row.get::<_, Option<String>>(5)?,
+            "cwd": row.get::<_, Option<String>>(7)?,
+            "tty": row.get::<_, Option<String>>(8)?,
+            "session_id": row.get::<_, Option<i64>>(9)?,
+            "audit_id": row.get::<_, Option<String>>(10)?,
+            "parent_exe": row.get::<_, Option<String>>(11)?,
+        }),
     })
 }
 

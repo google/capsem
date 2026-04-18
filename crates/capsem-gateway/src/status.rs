@@ -31,12 +31,22 @@ impl StatusCache {
 }
 
 #[derive(Serialize, Clone)]
+pub struct AssetHealth {
+    pub ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    pub missing: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
 pub struct StatusResponse {
     pub service: String,
     pub gateway_version: String,
     pub vm_count: usize,
     pub vms: Vec<VmSummary>,
     pub resource_summary: Option<ResourceSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assets: Option<AssetHealth>,
 }
 
 #[derive(Serialize, Clone)]
@@ -108,7 +118,34 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
         }
     }
 
+    let old_vms: Vec<(String, String)> = {
+        let cache = state.status_cache.inner.read().await;
+        cache.as_ref().map(|(_, r)| {
+            r.vms.iter().map(|v| (v.id.clone(), v.status.clone())).collect()
+        }).unwrap_or_default()
+    };
+
     let resp = fetch_status(&state).await;
+
+    // Detect VM state changes and broadcast events.
+    for vm in &resp.vms {
+        let old_status = old_vms.iter().find(|(id, _)| id == &vm.id).map(|(_, s)| s.as_str());
+        let changed = match old_status {
+            Some(prev) => prev != vm.status,
+            None => true, // new VM appeared
+        };
+        if changed {
+            let event = serde_json::json!({
+                "type": "vm-state-changed",
+                "payload": {
+                    "id": vm.id,
+                    "state": vm.status,
+                    "trigger": "status_poll",
+                }
+            });
+            let _ = state.events_tx.send(event.to_string());
+        }
+    }
 
     {
         let mut cache = state.status_cache.inner.write().await;
@@ -119,9 +156,20 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 }
 
 #[derive(Deserialize)]
+struct ServiceAssetHealth {
+    ready: bool,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    missing: Vec<String>,
+}
+
+#[derive(Deserialize)]
 struct ListResponse {
     #[serde(rename = "sandboxes")]
     sessions: Vec<SessionInfo>,
+    #[serde(default)]
+    asset_health: Option<ServiceAssetHealth>,
 }
 
 #[derive(Deserialize)]
@@ -169,6 +217,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
+        assets: None,
     };
 
     let list = match uds_get(&state.uds_path, "/list").await {
@@ -222,6 +271,12 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         });
     }
 
+    let assets = list.asset_health.map(|h| AssetHealth {
+        ready: h.ready,
+        version: h.version,
+        missing: h.missing,
+    });
+
     StatusResponse {
         service: "running".into(),
         gateway_version: env!("CARGO_PKG_VERSION").into(),
@@ -234,6 +289,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             stopped_count: stopped,
             suspended_count: suspended,
         }),
+        assets,
     }
 }
 
@@ -278,6 +334,7 @@ mod tests {
                 stopped_count: 0,
                 suspended_count: 0,
             }),
+            assets: None,
         };
 
         let json = serde_json::to_value(&resp).unwrap();
@@ -295,6 +352,7 @@ mod tests {
             vm_count: 0,
             vms: vec![],
             resource_summary: None,
+            assets: None,
         };
 
         let json = serde_json::to_value(&resp).unwrap();
@@ -321,6 +379,7 @@ mod tests {
                 stopped_count: 1,
                 suspended_count: 0,
             }),
+            assets: None,
         };
 
         let json = serde_json::to_value(&resp).unwrap();
@@ -368,6 +427,7 @@ mod tests {
             vm_count: 1,
             vms: vec![],
             resource_summary: None,
+            assets: None,
         };
 
         // Populate cache
@@ -395,6 +455,7 @@ mod tests {
             vm_count: 0,
             vms: vec![],
             resource_summary: None,
+            assets: None,
         };
 
         // Populate cache with a timestamp beyond the 1s TTL
@@ -448,6 +509,7 @@ mod tests {
             uds_path: uds_path.into(),
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         }
     }
 
@@ -555,6 +617,7 @@ mod tests {
             uds_path: path.into(),
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
 
         // First call -- cache miss, fetches from UDS

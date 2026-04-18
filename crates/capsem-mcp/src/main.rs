@@ -219,6 +219,8 @@ struct CreateParams {
     /// Clone state from an existing persistent session. The new session inherits
     /// the source's disk state (workspace, rootfs overlay, session.db).
     from: Option<String>,
+    /// Alias for 'from' (used by some test suites)
+    image: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -400,7 +402,7 @@ impl CapsemHandler {
         if let Some(env) = params.env {
             body["env"] = json!(env);
         }
-        if let Some(from) = params.from {
+        if let Some(from) = params.from.or(params.image) {
             body["from"] = json!(from);
         }
         match self.client.request::<Value, Value>("POST", "/provision", Some(body)).await {
@@ -620,6 +622,45 @@ impl CapsemHandler {
             "mcp_version": mcp_version,
             "service": service_status,
         }).to_string())
+    }
+
+    #[tool(name = "capsem_image_list", description = "List all user-created images available for booting")]
+    async fn image_list(&self) -> Result<String, String> {
+        match self.client.request::<Value, Value>("GET", "/images", None).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_image_inspect", description = "Get detailed information about a specific image")]
+    async fn image_inspect(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
+        match self.client.request::<Value, Value>("GET", &format!("/images/{}", params.name), None).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(name = "capsem_image_delete", description = "Delete a user-created image")]
+    async fn image_delete(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
+        match self.client.request::<Value, Value>("DELETE", &format!("/images/{}", params.name), None).await {
+            Ok(val) => {
+                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     #[tool(name = "capsem_mcp_servers", description = "List configured MCP servers with connection status and tool counts")]

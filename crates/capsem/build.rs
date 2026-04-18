@@ -11,6 +11,9 @@ fn main() {
         .unwrap()
         .as_secs();
     println!("cargo:rustc-env=CAPSEM_BUILD_HASH={git_hash}.{build_ts}");
+    if let Ok(ts) = std::env::var("CAPSEM_BUILD_TS") {
+        println!("cargo:rustc-env=CAPSEM_BUILD_TS={ts}");
+    }
     // Rebuild when git HEAD changes or any source changes
     println!("cargo:rerun-if-changed=../../.git/HEAD");
 }

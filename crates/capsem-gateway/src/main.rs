@@ -42,6 +42,8 @@ pub struct AppState {
     pub uds_path: PathBuf,
     pub status_cache: StatusCache,
     pub auth_failures: AuthFailureTracker,
+    /// Broadcast channel for real-time events to WebSocket /events clients.
+    pub events_tx: tokio::sync::broadcast::Sender<String>,
 }
 
 #[tokio::main]
@@ -68,18 +70,22 @@ async fn main() -> Result<()> {
     let token = auth::generate_token();
     let auth_state = AuthState::new(&run_dir, &token, args.port)?;
 
+    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
     let state = Arc::new(AppState {
         token,
         uds_path,
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
+        events_tx,
     });
 
     let app = Router::new()
         .route("/", get(handle_health))
+        .route("/health", get(handle_health))
         .route("/token", get(handle_token))
         .route("/status", get(status::handle_status))
         .route("/terminal/{id}", get(terminal::handle_terminal_ws))
+        .route("/events", get(handle_events_ws))
         .fallback(proxy::handle_proxy)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -143,6 +149,47 @@ async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     }))
 }
 
+/// WebSocket endpoint for real-time events (VM state changes, progress, etc.).
+///
+/// Clients receive JSON messages: `{"type":"vm-state-changed","payload":{...}}`
+/// Events are broadcast when the status cache detects VM state transitions.
+async fn handle_events_ws(
+    ws: axum::extract::WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let mut rx = state.events_tx.subscribe();
+    ws.on_upgrade(|mut socket| async move {
+        use axum::extract::ws::Message;
+        loop {
+            tokio::select! {
+                msg = rx.recv() => {
+                    match msg {
+                        Ok(text) => {
+                            if socket.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    }
+                }
+                frame = socket.recv() => {
+                    match frame {
+                        Some(Ok(Message::Ping(data))) => {
+                            if socket.send(Message::Pong(data)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(Message::Close(_))) | None => break,
+                        Some(Err(_)) => break,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    })
+}
+
 /// Return the auth token. Hardcoded to only accept requests from 127.0.0.1.
 async fn handle_token(
     State(state): State<Arc<AppState>>,
@@ -173,6 +220,7 @@ mod tests {
             uds_path: uds_path.into(),
             status_cache: StatusCache::new(),
             auth_failures: AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/", axum::routing::get(handle_health))
@@ -225,6 +273,7 @@ mod tests {
             uds_path: "/tmp/test.sock".into(),
             status_cache: StatusCache::new(),
             auth_failures: AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/token", axum::routing::get(handle_token))
@@ -289,6 +338,7 @@ mod tests {
             uds_path: "/tmp/test.sock".into(),
             status_cache: StatusCache::new(),
             auth_failures: AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         axum::Router::new()
             .route("/", axum::routing::get(handle_health))

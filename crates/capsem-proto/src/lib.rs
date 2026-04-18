@@ -85,6 +85,8 @@ pub const VSOCK_PORT_MCP_GATEWAY: u32 = 5003;
 pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
 /// vsock port for exec output (direct child process stdout from guest).
 pub const VSOCK_PORT_EXEC: u32 = 5005;
+/// vsock port for kernel audit stream (execve events from auditd via guest agent).
+pub const VSOCK_PORT_AUDIT: u32 = 5006;
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -135,6 +137,54 @@ pub enum HostToGuest {
 pub struct BootStage {
     pub name: String,
     pub duration_ms: u64,
+}
+
+/// A kernel audit record streamed from guest to host over vsock:5006.
+///
+/// Each record represents a single `execve` syscall captured by the kernel
+/// audit subsystem. The guest agent tails auditd output, correlates multi-line
+/// records by audit ID, and serializes them as MessagePack frames.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuditRecord {
+    /// Microseconds since epoch (from kernel audit timestamp).
+    pub timestamp_us: u64,
+    /// Guest PID that called execve.
+    pub pid: u32,
+    /// Parent PID.
+    pub ppid: u32,
+    /// User ID.
+    pub uid: u32,
+    /// Executable path (e.g. "/usr/bin/python3").
+    pub exe: String,
+    /// Short command name (e.g. "python3").
+    pub comm: Option<String>,
+    /// Full command line (reconstructed from EXECVE record argv).
+    pub argv: String,
+    /// Working directory at exec time.
+    pub cwd: Option<String>,
+    /// TTY name (e.g. "pts/0") or None for background processes.
+    pub tty: Option<String>,
+    /// Kernel session ID (tty grouping).
+    pub session_id: Option<u32>,
+    /// Parent executable path (quick "bash spawned python" queries).
+    pub parent_exe: Option<String>,
+    /// Kernel audit event ID (for deduplication and tracing).
+    pub audit_id: String,
+}
+
+/// Encode an `AuditRecord` into a length-prefixed RMP frame.
+pub fn encode_audit_record(record: &AuditRecord) -> Result<Vec<u8>> {
+    let payload = rmp_serde::to_vec_named(record).context("failed to encode AuditRecord")?;
+    let len = payload.len() as u32;
+    let mut frame = Vec::with_capacity(4 + payload.len());
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(&payload);
+    Ok(frame)
+}
+
+/// Decode an `AuditRecord` from an RMP payload (without the length prefix).
+pub fn decode_audit_record(payload: &[u8]) -> Result<AuditRecord> {
+    rmp_serde::from_slice(payload).context("failed to decode AuditRecord")
 }
 
 /// Messages sent from guest to host over vsock:5000.
@@ -724,6 +774,84 @@ mod tests {
         let frame = encode_guest_msg(&msg).unwrap();
         let decoded = decode_guest_msg(&frame[4..]).unwrap();
         assert!(matches!(decoded, GuestToHost::SnapshotReady));
+    }
+
+    // -------------------------------------------------------------------
+    // AuditRecord roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn roundtrip_audit_record() {
+        let record = AuditRecord {
+            timestamp_us: 1713100000_000_000,
+            pid: 1234,
+            ppid: 100,
+            uid: 0,
+            exe: "/usr/bin/python3".into(),
+            comm: Some("python3".into()),
+            argv: "python3 train.py --epochs 10".into(),
+            cwd: Some("/root/project".into()),
+            tty: Some("pts/0".into()),
+            session_id: Some(1),
+            parent_exe: Some("/bin/bash".into()),
+            audit_id: "1713100000.001:42".into(),
+        };
+        let frame = encode_audit_record(&record).unwrap();
+        let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
+        assert!(len < MAX_FRAME_SIZE);
+        let decoded = decode_audit_record(&frame[4..]).unwrap();
+        assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn roundtrip_audit_record_minimal() {
+        let record = AuditRecord {
+            timestamp_us: 0,
+            pid: 1,
+            ppid: 0,
+            uid: 0,
+            exe: "/bin/ls".into(),
+            comm: None,
+            argv: "ls".into(),
+            cwd: None,
+            tty: None,
+            session_id: None,
+            parent_exe: None,
+            audit_id: "0.0:1".into(),
+        };
+        let frame = encode_audit_record(&record).unwrap();
+        let decoded = decode_audit_record(&frame[4..]).unwrap();
+        assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn audit_record_is_compact() {
+        let record = AuditRecord {
+            timestamp_us: 1713100000_000_000,
+            pid: 100,
+            ppid: 1,
+            uid: 0,
+            exe: "/bin/ls".into(),
+            comm: Some("ls".into()),
+            argv: "ls -la".into(),
+            cwd: Some("/root".into()),
+            tty: Some("pts/0".into()),
+            session_id: Some(1),
+            parent_exe: Some("/bin/bash".into()),
+            audit_id: "1713100000.001:1".into(),
+        };
+        let frame = encode_audit_record(&record).unwrap();
+        let payload_len = frame.len() - 4;
+        assert!(
+            payload_len < 300,
+            "AuditRecord payload is {payload_len} bytes, expected < 300"
+        );
+    }
+
+    #[test]
+    fn decode_audit_record_garbage_fails() {
+        let garbage = [0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
+        assert!(decode_audit_record(&garbage).is_err());
     }
 
     // -------------------------------------------------------------------

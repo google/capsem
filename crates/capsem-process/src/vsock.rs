@@ -33,6 +33,8 @@ pub(crate) struct VsockOptions {
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
     pub(crate) uds_path: PathBuf,
+    pub(crate) db: Arc<capsem_logger::DbWriter>,
+    pub(crate) pty_log: Option<Arc<crate::pty_log::PtyLog>>,
 }
 
 /// Classify a vsock connection by port number.
@@ -80,6 +82,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         is_restore,
         vm_ready,
         uds_path,
+        db,
+        pty_log,
     } = options;
     let mut terminal_conn = None;
     let mut control_conn = None;
@@ -164,6 +168,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let term_out = Arc::clone(&terminal_output);
     let mut term_f = clone_fd(terminal.fd)?;
     let serial_log_path = session_dir.join("serial.log");
+    let pty_log_for_output = pty_log.clone();
     tokio::spawn(async move {
         let mut log_file = {
             #[cfg(unix)]
@@ -229,12 +234,18 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     let _ = f.write_all(&data);
                 }
 
+                // Record to pty.log (output direction)
+                if let Some(ref pl) = pty_log_for_output {
+                    pl.record_output(&data);
+                }
+
                 term_out.push(data);
             });
         }
         term_out.close();
     });
 
+    let db_for_deferred_audit = Arc::clone(&db);
     for conn in deferred_conns {
         match conn.port {
             capsem_core::VSOCK_PORT_SNI_PROXY => {
@@ -251,12 +262,62 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     drop(conn); // Hold conn alive
                 });
             }
+            capsem_proto::VSOCK_PORT_AUDIT => {
+                let db = Arc::clone(&db_for_deferred_audit);
+                std::thread::spawn(move || {
+                    let mut file = match clone_fd(conn.fd) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            error!("audit port (deferred): clone_fd failed: {e}");
+                            return;
+                        }
+                    };
+                    info!("audit port: connected (deferred), reading audit records");
+                    let mut len_buf = [0u8; 4];
+                    loop {
+                        if std::io::Read::read_exact(&mut file, &mut len_buf).is_err() {
+                            break;
+                        }
+                        let len = u32::from_be_bytes(len_buf) as usize;
+                        if len > capsem_proto::MAX_FRAME_SIZE as usize {
+                            break;
+                        }
+                        let mut payload = vec![0u8; len];
+                        if std::io::Read::read_exact(&mut file, &mut payload).is_err() {
+                            break;
+                        }
+                        if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
+                            let timestamp = std::time::SystemTime::UNIX_EPOCH
+                                + std::time::Duration::from_micros(record.timestamp_us);
+                            db.try_write(capsem_logger::WriteOp::AuditEvent(
+                                capsem_logger::AuditEvent {
+                                    timestamp,
+                                    pid: record.pid,
+                                    ppid: record.ppid,
+                                    uid: record.uid,
+                                    exe: record.exe,
+                                    comm: record.comm,
+                                    argv: record.argv,
+                                    cwd: record.cwd,
+                                    tty: record.tty,
+                                    session_id: record.session_id,
+                                    audit_id: Some(record.audit_id),
+                                    exec_event_id: None,
+                                    parent_exe: record.parent_exe,
+                                },
+                            ));
+                        }
+                    }
+                    drop(conn);
+                });
+            }
             _ => {}
         }
     }
 
     let mitm_config_loop = Arc::clone(&mitm_config);
     let mcp_config_loop = Arc::clone(&mcp_config);
+    let db_for_audit = Arc::clone(&db);
     let ipc_tx_lifecycle = ipc_tx.clone();
     let ctrl_tx_lifecycle = ctrl_tx.clone();
     let vm_id_lifecycle = vm_id.clone();
@@ -323,6 +384,63 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             drop(conn);
                         });
                     }
+                    capsem_proto::VSOCK_PORT_AUDIT => {
+                        let db = Arc::clone(&db_for_audit);
+                        std::thread::spawn(move || {
+                            let mut file = match clone_fd(conn.fd) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    error!("audit port: clone_fd failed: {e}");
+                                    return;
+                                }
+                            };
+                            info!("audit port: connected, reading audit records");
+                            // Read length-prefixed MessagePack AuditRecord frames
+                            let mut len_buf = [0u8; 4];
+                            loop {
+                                if std::io::Read::read_exact(&mut file, &mut len_buf).is_err() {
+                                    break;
+                                }
+                                let len = u32::from_be_bytes(len_buf) as usize;
+                                if len > capsem_proto::MAX_FRAME_SIZE as usize {
+                                    error!("audit port: frame too large ({len} bytes)");
+                                    break;
+                                }
+                                let mut payload = vec![0u8; len];
+                                if std::io::Read::read_exact(&mut file, &mut payload).is_err() {
+                                    break;
+                                }
+                                match capsem_proto::decode_audit_record(&payload) {
+                                    Ok(record) => {
+                                        let timestamp = std::time::SystemTime::UNIX_EPOCH
+                                            + std::time::Duration::from_micros(record.timestamp_us);
+                                        db.try_write(capsem_logger::WriteOp::AuditEvent(
+                                            capsem_logger::AuditEvent {
+                                                timestamp,
+                                                pid: record.pid,
+                                                ppid: record.ppid,
+                                                uid: record.uid,
+                                                exe: record.exe,
+                                                comm: record.comm,
+                                                argv: record.argv,
+                                                cwd: record.cwd,
+                                                tty: record.tty,
+                                                session_id: record.session_id,
+                                                audit_id: Some(record.audit_id),
+                                                exec_event_id: None,
+                                                parent_exe: record.parent_exe,
+                                            },
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        warn!("audit port: failed to decode record: {e}");
+                                    }
+                                }
+                            }
+                            info!("audit port: disconnected");
+                            drop(conn);
+                        });
+                    }
                     capsem_core::VSOCK_PORT_LIFECYCLE => {
                         let ipc_tx = ipc_tx_lifecycle.clone();
                         let ctrl_tx = ctrl_tx_lifecycle.clone();
@@ -366,8 +484,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         }
     });
 
+    let db_for_ctrl = Arc::clone(&db);
+    let db_for_cmd = db;
     let js = Arc::clone(&job_store);
     let mut ctrl_f_read = clone_fd(control.fd)?;
+    let exec_start_times: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let exec_times_ctrl = Arc::clone(&exec_start_times);
     tokio::task::spawn_blocking(move || {
         loop {
             match read_control_msg(&mut ctrl_f_read) {
@@ -375,11 +498,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     match msg {
                         GuestToHost::ExecDone { id, exit_code } => {
                             info!(id, exit_code, "Received ExecDone from guest");
-                            // The exec port reader thread accumulates output
-                            // locally and writes to active_exec atomically at
-                            // EOF. The agent closes exec_fd before sending
-                            // ExecDone, so the reader has already finished by
-                            // the time we get here.
                             let stdout = {
                                 let active = js.active_exec.lock().unwrap();
                                 if let Some((active_id, captured)) = active.as_ref() {
@@ -392,8 +510,29 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                     Vec::new()
                                 }
                             };
-                            // Clear active exec after capturing result
                             *js.active_exec.lock().unwrap() = None;
+
+                            // Record exec completion to session.db
+                            let duration_ms = exec_times_ctrl.lock().unwrap().remove(&id)
+                                .map(|start| start.elapsed().as_millis() as u64)
+                                .unwrap_or(0);
+                            let stdout_preview = if stdout.is_empty() {
+                                None
+                            } else {
+                                Some(String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).to_string())
+                            };
+                            db_for_ctrl.try_write(capsem_logger::WriteOp::ExecEventComplete(
+                                capsem_logger::ExecEventComplete {
+                                    exec_id: id,
+                                    exit_code,
+                                    duration_ms,
+                                    stdout_preview,
+                                    stderr_preview: None,
+                                    stdout_bytes: stdout.len() as u64,
+                                    stderr_bytes: 0,
+                                    pid: None,
+                                },
+                            ));
 
                             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                                 let _ = tx.send(JobResult::Exec { stdout, stderr: vec![], exit_code });
@@ -434,6 +573,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         }
     });
 
+    let pty_log_for_input = pty_log.clone();
     let mut term_f_write = clone_fd(terminal.fd)?;
     let mut ctrl_f_write = clone_fd(control.fd)?;
 
@@ -474,12 +614,34 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let ipc_tx_for_cmd = ipc_tx.clone();
     let vm_id_for_cmd = vm_id.clone();
     let session_dir_for_cmd = session_dir.clone();
+    let exec_times_cmd = exec_start_times;
     tokio::task::spawn_blocking(move || {
         while let Some(msg) = ctrl_rx.blocking_recv() {
             match msg {
-                ServiceToProcess::TerminalInput { data } => { let _ = term_f_write.write_all(&data); let _ = term_f_write.flush(); }
+                ServiceToProcess::TerminalInput { data } => {
+                    if let Some(ref pl) = pty_log_for_input {
+                        pl.record_input(&data);
+                    }
+                    let _ = term_f_write.write_all(&data);
+                    let _ = term_f_write.flush();
+                }
                 ServiceToProcess::TerminalResize { cols, rows } => { let _ = ctrl_cmd_tx.send(HostToGuest::Resize { cols, rows }); }
-                ServiceToProcess::Exec { id, command } => { let _ = ctrl_cmd_tx.send(HostToGuest::Exec { id, command }); }
+                ServiceToProcess::Exec { id, command } => {
+                    // Record exec start to session.db
+                    exec_times_cmd.lock().unwrap().insert(id, std::time::Instant::now());
+                    db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(
+                        capsem_logger::ExecEvent {
+                            timestamp: std::time::SystemTime::now(),
+                            exec_id: id,
+                            command: command.clone(),
+                            source: "api".to_string(),
+                            mcp_call_id: None,
+                            trace_id: None,
+                            process_name: None,
+                        },
+                    ));
+                    let _ = ctrl_cmd_tx.send(HostToGuest::Exec { id, command });
+                }
                 ServiceToProcess::WriteFile { id, path, data } => { let _ = ctrl_cmd_tx.send(HostToGuest::FileWrite { id, path, data, mode: 0o644 }); }
                 ServiceToProcess::ReadFile { id, path } => { let _ = ctrl_cmd_tx.send(HostToGuest::FileRead { id, path }); }
                 ServiceToProcess::Shutdown => {

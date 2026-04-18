@@ -77,6 +77,8 @@ mod tests {
             rootfs_version: None,
             forked_from: None,
             persistent: false,
+            exec_count: 0,
+            audit_event_count: 0,
         }
     }
 

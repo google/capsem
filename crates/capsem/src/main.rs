@@ -632,9 +632,10 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::Misc(MiscCommands::Version) => {
             println!(
-                "capsem {} (build {})",
+                "capsem {} (build {} ts={})",
                 env!("CARGO_PKG_VERSION"),
-                env!("CAPSEM_BUILD_HASH")
+                env!("CAPSEM_BUILD_HASH"),
+                option_env!("CAPSEM_BUILD_TS").unwrap_or("dev"),
             );
             return Ok(());
         }
@@ -688,7 +689,7 @@ async fn main() -> Result<()> {
                         let client = reqwest::Client::new();
 
                         // Check gateway version (unauthenticated health endpoint)
-                        let health_url = format!("http://127.0.0.1:{}/", port);
+                        let health_url = format!("http://127.0.0.1:{}/health", port);
                         let gw_version: Option<String> = async {
                             let r = client.get(&health_url)
                                 .timeout(std::time::Duration::from_secs(2))

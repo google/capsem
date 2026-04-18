@@ -328,6 +328,7 @@ mod tests {
             uds_path: uds_path.into(),
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         axum::Router::new()
             .route("/terminal/{id}", axum::routing::get(handle_terminal_ws))
@@ -408,6 +409,7 @@ mod tests {
             uds_path: service_sock.clone(),
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/terminal/{id}", axum::routing::get(handle_terminal_ws))
@@ -487,6 +489,7 @@ mod tests {
             uds_path: service_sock,
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/terminal/{id}", axum::routing::get(handle_terminal_ws))
@@ -545,6 +548,7 @@ mod tests {
             uds_path: service_sock,
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/terminal/{id}", axum::routing::get(handle_terminal_ws))
@@ -722,6 +726,7 @@ mod tests {
             uds_path: service_sock,
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/terminal/{id}", axum::routing::get(handle_terminal_ws))
@@ -769,6 +774,7 @@ mod tests {
             uds_path: service_sock,
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/terminal/{id}", axum::routing::get(handle_terminal_ws))
@@ -943,6 +949,7 @@ mod tests {
             uds_path: service_sock,
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         let app = axum::Router::new()
             .route("/terminal/{id}", axum::routing::get(handle_terminal_ws))

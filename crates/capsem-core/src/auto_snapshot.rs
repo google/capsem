@@ -717,6 +717,32 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// Calculate the physical disk usage (allocated blocks) of a sandbox session directory.
+/// Correctly handles sparse files (like rootfs.img) on Unix platforms.
+pub fn sandbox_disk_usage(session_dir: &Path) -> anyhow::Result<u64> {
+    let mut total_bytes = 0;
+    if !session_dir.exists() {
+        return Ok(0);
+    }
+    for entry in walkdir::WalkDir::new(session_dir) {
+        let entry = entry.map_err(|e| anyhow::anyhow!("walkdir failed: {e}"))?;
+        let metadata = entry.metadata().map_err(|e| anyhow::anyhow!("metadata failed: {e}"))?;
+        if metadata.is_file() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                // st_blocks is the number of 512-byte blocks allocated.
+                total_bytes += metadata.blocks() * 512;
+            }
+            #[cfg(not(unix))]
+            {
+                total_bytes += metadata.len();
+            }
+        }
+    }
+    Ok(total_bytes)
+}
+
 /// Clone a sandbox's state (system, workspace, session.db) from one session
 /// directory to another. The destination gets the `guest/` subdirectory layout
 /// with compat symlinks, ready for VirtioFS.

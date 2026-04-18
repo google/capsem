@@ -135,6 +135,26 @@ pub struct LogsResponse {
     pub process_logs: Option<String>,
 }
 
+/// A single command history entry from the service.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HistoryEntry {
+    pub timestamp: String,
+    pub layer: String,
+    pub command: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: Option<u64>,
+    pub stdout_preview: Option<String>,
+    pub stderr_preview: Option<String>,
+    pub details: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HistoryResponse {
+    pub commands: Vec<HistoryEntry>,
+    pub total: u64,
+    pub has_more: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ExecRequest {
     pub command: String,

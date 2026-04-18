@@ -1433,6 +1433,11 @@ mod tests {
     /// Flush delay for the DB writer thread to process queued writes.
     const DB_FLUSH_MS: u64 = 100;
 
+    /// Non-routable domain for tests that go through the full proxy pipeline.
+    /// Must never resolve so allowed requests always hit the 502 upstream-error
+    /// path instead of reaching a real server.
+    const TEST_DOMAIN: &str = "thisdomaindoesnotexistforsur3.ai";
+
     fn make_config_with_policy(policy: NetworkPolicy) -> Arc<MitmProxyConfig> {
         let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
         let dir = tempfile::tempdir().unwrap();
@@ -1524,7 +1529,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         // Fragment 2: rest of metadata with newline, then the TLS ClientHello
         let mut frag2 = b"ess_name\n".to_vec();
-        frag2.extend_from_slice(&make_client_hello("example.com"));
+        frag2.extend_from_slice(&make_client_hello(TEST_DOMAIN));
         std::io::Write::write_all(&mut writer, &frag2).unwrap();
         drop(writer);
 
@@ -1780,7 +1785,7 @@ mod tests {
 
         s1.set_nonblocking(true).unwrap();
         let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-        let domain = rustls::pki_types::ServerName::try_from("example.com").unwrap();
+        let domain = rustls::pki_types::ServerName::try_from(TEST_DOMAIN).unwrap();
         let tls_result = connector.connect(domain, stream).await;
 
         assert!(tls_result.is_ok(), "TLS handshake failed: {:?}", tls_result.err());
@@ -1791,7 +1796,7 @@ mod tests {
 
     #[test]
     fn split_path_query_with_query() {
-        let uri: hyper::Uri = "https://example.com/api/v1?foo=bar&baz=1".parse().unwrap();
+        let uri: hyper::Uri = format!("https://{TEST_DOMAIN}/api/v1?foo=bar&baz=1").parse().unwrap();
         let (path, query) = split_path_query(&uri);
         assert_eq!(path, "/api/v1");
         assert_eq!(query, Some("foo=bar&baz=1".to_string()));
@@ -1814,14 +1819,14 @@ mod tests {
         let mut headers = hyper::HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
         headers.insert("content-length", "42".parse().unwrap());
-        headers.insert("host", "api.example.com".parse().unwrap());
+        headers.insert("host", format!("api.{TEST_DOMAIN}").parse().unwrap());
         headers.insert("server", "nginx".parse().unwrap());
         headers.insert("user-agent", "curl/8.0".parse().unwrap());
 
         let formatted = format_headers(&headers);
         assert!(formatted.contains("content-type: application/json"));
         assert!(formatted.contains("content-length: 42"));
-        assert!(formatted.contains("host: api.example.com"));
+        assert!(formatted.contains(&format!("host: api.{TEST_DOMAIN}")));
         assert!(formatted.contains("server: nginx"));
         assert!(formatted.contains("user-agent: curl/8.0"));
     }
@@ -1956,7 +1961,7 @@ mod tests {
         TelemetryEmitter {
             db: Arc::clone(db),
             config: make_config_dev(),
-            domain: "example.com".to_string(),
+            domain: TEST_DOMAIN.to_string(),
             process_name: None,
             ai_provider: None,
             method: "GET".to_string(),
@@ -1965,7 +1970,7 @@ mod tests {
             status_code: Some(200),
             decision: Decision::Allowed,
             matched_rule: Some("default-dev-allow".to_string()),
-            request_headers: Some("host: example.com".to_string()),
+            request_headers: Some(format!("host: {TEST_DOMAIN}")),
             response_headers: Some("content-type: text/html".to_string()),
 
             req_stats: Arc::new(Mutex::new(BodyStats::new(0))),
@@ -1985,7 +1990,7 @@ mod tests {
         let reader = db.reader().unwrap();
         let events = reader.recent_net_events(10).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].domain, "example.com");
+        assert_eq!(events[0].domain, TEST_DOMAIN);
         assert_eq!(events[0].method, Some("GET".to_string()));
         assert_eq!(events[0].path, Some("/".to_string()));
         assert_eq!(events[0].status_code, Some(200));
@@ -2074,7 +2079,7 @@ mod tests {
         let reader = db.reader().unwrap();
         let events = reader.recent_net_events(10).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].domain, "example.com");
+        assert_eq!(events[0].domain, TEST_DOMAIN);
     }
 
     #[tokio::test]
@@ -2095,7 +2100,7 @@ mod tests {
         let reader = db.reader().unwrap();
         let events = reader.recent_net_events(10).unwrap();
         assert_eq!(events.len(), 1, "Drop fallback should emit");
-        assert_eq!(events[0].domain, "example.com");
+        assert_eq!(events[0].domain, TEST_DOMAIN);
     }
 
     #[tokio::test]
@@ -2154,7 +2159,7 @@ mod tests {
         let connector = tokio_rustls::TlsConnector::from(client_config);
         s1.set_nonblocking(true).unwrap();
         let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-        let sni = rustls::pki_types::ServerName::try_from("example.com").unwrap();
+        let sni = rustls::pki_types::ServerName::try_from(TEST_DOMAIN.to_owned()).unwrap();
         let tls_stream = connector.connect(sni, stream).await.unwrap();
 
         let io = TokioIo::new(tls_stream);
@@ -2164,7 +2169,7 @@ mod tests {
         let req = hyper::Request::builder()
             .method("GET")
             .uri("/secret")
-            .header("host", "example.com")
+            .header("host", TEST_DOMAIN)
             .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
             .unwrap();
         let resp = sender.send_request(req).await.unwrap();
@@ -2203,7 +2208,7 @@ mod tests {
         let connector = tokio_rustls::TlsConnector::from(client_config);
         s1.set_nonblocking(true).unwrap();
         let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-        let sni = rustls::pki_types::ServerName::try_from("example.com").unwrap();
+        let sni = rustls::pki_types::ServerName::try_from(TEST_DOMAIN.to_owned()).unwrap();
         let tls_stream = connector.connect(sni, stream).await.unwrap();
 
         let io = TokioIo::new(tls_stream);
@@ -2215,7 +2220,7 @@ mod tests {
             let req = hyper::Request::builder()
                 .method("GET")
                 .uri(path)
-                .header("host", "example.com")
+                .header("host", TEST_DOMAIN)
                 .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
                 .unwrap();
             let resp = sender.send_request(req).await.unwrap();
@@ -2252,7 +2257,7 @@ mod tests {
         let connector = tokio_rustls::TlsConnector::from(client_config);
         s1.set_nonblocking(true).unwrap();
         let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-        let sni = rustls::pki_types::ServerName::try_from("example.com").unwrap();
+        let sni = rustls::pki_types::ServerName::try_from(TEST_DOMAIN.to_owned()).unwrap();
         let tls_stream = connector.connect(sni, stream).await.unwrap();
 
         let io = TokioIo::new(tls_stream);
@@ -2262,7 +2267,7 @@ mod tests {
         let req = hyper::Request::builder()
             .method("GET")
             .uri("/ws")
-            .header("host", "example.com")
+            .header("host", TEST_DOMAIN)
             .header("upgrade", "websocket")
             .header("connection", "upgrade")
             .body(Full::new(Bytes::new()).map_err(|never| -> anyhow::Error { match never {} }).boxed())
@@ -2714,10 +2719,10 @@ mod tests {
     async fn policy_hot_reload_blocks_on_same_connection() {
         use crate::net::policy::{DomainMatcher, PolicyRule};
 
-        // Start with a policy that allows example.com (read+write).
+        // Start with a policy that allows TEST_DOMAIN (read+write).
         let allow_policy = NetworkPolicy::new(
             vec![PolicyRule {
-                matcher: DomainMatcher::parse("example.com"),
+                matcher: DomainMatcher::parse(TEST_DOMAIN),
                 allow_read: true,
                 allow_write: true,
             }],
@@ -2725,12 +2730,12 @@ mod tests {
             false,
         );
         let config = make_config_with_policy(allow_policy);
-        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, "example.com").await;
+        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
 
         // First request: allowed. Returns 502 because there's no real upstream,
         // but 502 proves the policy allowed the request past the policy check
         // (denied would be 403).
-        let status1 = send_get(&mut sender, "example.com", "/before-disable").await;
+        let status1 = send_get(&mut sender, TEST_DOMAIN, "/before-disable").await;
         assert_eq!(status1, 502, "allowed request should reach upstream (502 = no upstream, not 403)");
 
         // Hot-reload: swap to deny-all policy (simulates user disabling provider).
@@ -2738,7 +2743,7 @@ mod tests {
         *config.policy.write().unwrap() = deny_policy;
 
         // Second request on the SAME keep-alive connection: must be denied.
-        let status2 = send_get(&mut sender, "example.com", "/after-disable").await;
+        let status2 = send_get(&mut sender, TEST_DOMAIN, "/after-disable").await;
         assert_eq!(status2, 403, "request after policy swap must be denied on same connection");
 
         drop(sender);
@@ -2770,16 +2775,16 @@ mod tests {
 
         // Start with deny-all.
         let config = make_config_deny_all();
-        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, "example.com").await;
+        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
 
         // First request: denied.
-        let status1 = send_get(&mut sender, "example.com", "/while-denied").await;
+        let status1 = send_get(&mut sender, TEST_DOMAIN, "/while-denied").await;
         assert_eq!(status1, 403);
 
         // Hot-reload: swap to allow policy.
         let allow_policy = Arc::new(NetworkPolicy::new(
             vec![PolicyRule {
-                matcher: DomainMatcher::parse("example.com"),
+                matcher: DomainMatcher::parse(TEST_DOMAIN),
                 allow_read: true,
                 allow_write: true,
             }],
@@ -2789,7 +2794,7 @@ mod tests {
         *config.policy.write().unwrap() = allow_policy;
 
         // Second request: allowed (502 = no upstream, proves policy let it through).
-        let status2 = send_get(&mut sender, "example.com", "/after-enable").await;
+        let status2 = send_get(&mut sender, TEST_DOMAIN, "/after-enable").await;
         assert_eq!(status2, 502, "request after re-enable should be allowed (502 = no upstream)");
 
         drop(sender);
@@ -2803,15 +2808,15 @@ mod tests {
         use crate::net::policy::{DomainMatcher, PolicyRule};
 
         let config = make_config_deny_all();
-        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, "example.com").await;
+        let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
 
         // Request 1: denied.
-        assert_eq!(send_get(&mut sender, "example.com", "/r1").await, 403);
+        assert_eq!(send_get(&mut sender, TEST_DOMAIN, "/r1").await, 403);
 
         // Swap to allow.
         let allow = Arc::new(NetworkPolicy::new(
             vec![PolicyRule {
-                matcher: DomainMatcher::parse("example.com"),
+                matcher: DomainMatcher::parse(TEST_DOMAIN),
                 allow_read: true,
                 allow_write: true,
             }],
@@ -2821,14 +2826,14 @@ mod tests {
         *config.policy.write().unwrap() = allow;
 
         // Request 2: allowed (502).
-        assert_eq!(send_get(&mut sender, "example.com", "/r2").await, 502);
+        assert_eq!(send_get(&mut sender, TEST_DOMAIN, "/r2").await, 502);
 
         // Swap back to deny.
         let deny = Arc::new(NetworkPolicy::new(vec![], false, false));
         *config.policy.write().unwrap() = deny;
 
         // Request 3: denied again.
-        assert_eq!(send_get(&mut sender, "example.com", "/r3").await, 403);
+        assert_eq!(send_get(&mut sender, TEST_DOMAIN, "/r3").await, 403);
 
         drop(sender);
         let _ = proxy_task.await;

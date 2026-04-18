@@ -112,6 +112,7 @@ mod tests {
             uds_path: uds_path.into(),
             status_cache: StatusCache::new(),
             auth_failures: crate::auth::AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
         });
         Router::new()
             .fallback(handle_proxy)

@@ -10,7 +10,7 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-pub(super) const SCHEMA_VERSION: u32 = 6;
+pub(super) const SCHEMA_VERSION: u32 = 7;
 
 pub(super) const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
@@ -37,7 +37,9 @@ pub(super) const SESSION_SCHEMA: &str = "
         rootfs_hash TEXT,
         rootfs_version TEXT,
         forked_from TEXT,
-        persistent BOOLEAN NOT NULL DEFAULT 0
+        persistent BOOLEAN NOT NULL DEFAULT 0,
+        exec_count INTEGER NOT NULL DEFAULT 0,
+        audit_event_count INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_created
         ON sessions(created_at);
@@ -99,7 +101,14 @@ impl SessionIndex {
     /// Check user_version and migrate if needed.
     pub(crate) fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 5 {
+        if version == 6 {
+            // Additive migration v6->v7: add exec_count and audit_event_count columns.
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN exec_count INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE sessions ADD COLUMN audit_event_count INTEGER NOT NULL DEFAULT 0;"
+            )?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        } else if version == 5 {
             // Additive migration v5->v6: rename source_image to forked_from.
             conn.execute_batch(
                 "ALTER TABLE sessions RENAME COLUMN source_image TO forked_from;"
@@ -159,8 +168,9 @@ impl SessionIndex {
                 total_input_tokens, total_output_tokens, total_estimated_cost,
                 total_tool_calls, total_mcp_calls, total_file_events,
                 compressed_size_bytes, vacuumed_at,
-                storage_mode, rootfs_hash, rootfs_version, forked_from, persistent)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                storage_mode, rootfs_hash, rootfs_version, forked_from, persistent,
+                exec_count, audit_event_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             params![
                 record.id,
                 record.mode,
@@ -186,6 +196,8 @@ impl SessionIndex {
                 record.rootfs_version,
                 record.forked_from,
                 record.persistent,
+                record.exec_count as i64,
+                record.audit_event_count as i64,
             ],
         )?;
         Ok(())
@@ -237,7 +249,8 @@ impl SessionIndex {
          total_input_tokens, total_output_tokens, total_estimated_cost,
          total_tool_calls, total_mcp_calls, total_file_events,
          compressed_size_bytes, vacuumed_at,
-         storage_mode, rootfs_hash, rootfs_version, forked_from, persistent";
+         storage_mode, rootfs_hash, rootfs_version, forked_from, persistent,
+         exec_count, audit_event_count";
 
     /// Parse a row into a SessionRecord. Column order must match SESSION_COLUMNS.
     fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
@@ -266,6 +279,8 @@ impl SessionIndex {
             rootfs_version: row.get(21)?,
             forked_from: row.get(22)?,
             persistent: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
+            exec_count: row.get::<_, Option<i64>>(24)?.unwrap_or(0) as u64,
+            audit_event_count: row.get::<_, Option<i64>>(25)?.unwrap_or(0) as u64,
         })
     }
 
@@ -865,6 +880,8 @@ mod tests {
             rootfs_version: None,
             forked_from: None,
             persistent: false,
+            exec_count: 0,
+            audit_event_count: 0,
         }
     }
 

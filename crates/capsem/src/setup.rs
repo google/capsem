@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use tracing::{info, warn};
+use tracing::warn;
 
 use capsem_core::net::policy_config;
 use capsem_core::net::policy_config::corp_provision;

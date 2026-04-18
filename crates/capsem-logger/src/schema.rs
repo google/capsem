@@ -136,6 +136,58 @@ pub const CREATE_SCHEMA: &str = "
     );
     CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp
         ON snapshot_events(timestamp);
+
+    CREATE TABLE IF NOT EXISTS exec_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        exec_id INTEGER NOT NULL,
+        command TEXT NOT NULL,
+        exit_code INTEGER,
+        duration_ms INTEGER,
+        stdout_preview TEXT,
+        stderr_preview TEXT,
+        stdout_bytes INTEGER DEFAULT 0,
+        stderr_bytes INTEGER DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'api',
+        mcp_call_id INTEGER,
+        trace_id TEXT,
+        process_name TEXT,
+        pid INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_exec_events_timestamp
+        ON exec_events(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_exec_events_exec_id
+        ON exec_events(exec_id);
+    CREATE INDEX IF NOT EXISTS idx_exec_events_trace_id
+        ON exec_events(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_exec_events_source
+        ON exec_events(source);
+
+    CREATE TABLE IF NOT EXISTS audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        ppid INTEGER NOT NULL,
+        uid INTEGER NOT NULL,
+        exe TEXT NOT NULL,
+        comm TEXT,
+        argv TEXT NOT NULL,
+        cwd TEXT,
+        exit_code INTEGER,
+        session_id INTEGER,
+        tty TEXT,
+        audit_id TEXT,
+        exec_event_id INTEGER,
+        parent_exe TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
+        ON audit_events(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_exe
+        ON audit_events(exe);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_pid
+        ON audit_events(pid);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_ppid
+        ON audit_events(ppid);
 ";
 
 /// Create all tables and indexes on the given connection.
@@ -233,6 +285,54 @@ pub fn migrate(conn: &Connection) {
             stop_fs_event_id INTEGER DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp ON snapshot_events(timestamp);",
+    );
+    // Add exec_events table if not present (for DBs created before this feature).
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS exec_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            exec_id INTEGER NOT NULL,
+            command TEXT NOT NULL,
+            exit_code INTEGER,
+            duration_ms INTEGER,
+            stdout_preview TEXT,
+            stderr_preview TEXT,
+            stdout_bytes INTEGER DEFAULT 0,
+            stderr_bytes INTEGER DEFAULT 0,
+            source TEXT NOT NULL DEFAULT 'api',
+            mcp_call_id INTEGER,
+            trace_id TEXT,
+            process_name TEXT,
+            pid INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_exec_events_timestamp ON exec_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_exec_events_exec_id ON exec_events(exec_id);
+        CREATE INDEX IF NOT EXISTS idx_exec_events_trace_id ON exec_events(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_exec_events_source ON exec_events(source);",
+    );
+    // Add audit_events table if not present (for DBs created before this feature).
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            pid INTEGER NOT NULL,
+            ppid INTEGER NOT NULL,
+            uid INTEGER NOT NULL,
+            exe TEXT NOT NULL,
+            comm TEXT,
+            argv TEXT NOT NULL,
+            cwd TEXT,
+            exit_code INTEGER,
+            session_id INTEGER,
+            tty TEXT,
+            audit_id TEXT,
+            exec_event_id INTEGER,
+            parent_exe TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_audit_events_exe ON audit_events(exe);
+        CREATE INDEX IF NOT EXISTS idx_audit_events_pid ON audit_events(pid);
+        CREATE INDEX IF NOT EXISTS idx_audit_events_ppid ON audit_events(ppid);",
     );
 }
 

@@ -661,6 +661,8 @@ mod tests {
         let unit = generate_systemd_unit(
             Path::new("/home/John Doe/.capsem/bin/capsem-service"),
             Path::new("/home/John Doe/.capsem/bin/capsem-process"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-gateway"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-tray"),
             Path::new("/home/John Doe/.capsem/assets"),
         );
         let exec_line = unit.lines().find(|l| l.starts_with("ExecStart=")).unwrap();

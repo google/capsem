@@ -10,6 +10,7 @@ pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
 pub mod session;
+pub mod setup_state;
 pub mod vm;
 use std::path::Path;
 

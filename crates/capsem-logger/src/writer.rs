@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
-use crate::events::{FileEvent, McpCall, ModelCall, NetEvent, SnapshotEvent};
+use crate::events::{AuditEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent, SnapshotEvent};
 use crate::schema;
 
 /// Maximum bytes stored for any preview/content field (256 KB).
@@ -35,6 +35,9 @@ pub enum WriteOp {
     McpCall(McpCall),
     FileEvent(FileEvent),
     SnapshotEvent(SnapshotEvent),
+    ExecEvent(ExecEvent),
+    ExecEventComplete(ExecEventComplete),
+    AuditEvent(AuditEvent),
 }
 
 /// A dedicated writer thread that owns the SQLite connection.
@@ -180,6 +183,9 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
             WriteOp::FileEvent(f) => insert_file_event(&tx, f)?,
             WriteOp::SnapshotEvent(s) => insert_snapshot_event(&tx, s)?,
+            WriteOp::ExecEvent(e) => insert_exec_event(&tx, e)?,
+            WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c)?,
+            WriteOp::AuditEvent(a) => insert_audit_event(&tx, a)?,
         }
     }
     tx.commit()
@@ -366,6 +372,80 @@ fn insert_snapshot_event(conn: &Connection, event: &SnapshotEvent) -> rusqlite::
             event.files_count as i64,
             event.start_fs_event_id,
             event.stop_fs_event_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    conn.execute(
+        "INSERT INTO exec_events (
+            timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            timestamp,
+            event.exec_id as i64,
+            event.command,
+            event.source,
+            event.mcp_call_id.map(|id| id as i64),
+            event.trace_id,
+            event.process_name,
+        ],
+    )?;
+    Ok(())
+}
+
+fn update_exec_event(conn: &Connection, complete: &ExecEventComplete) -> rusqlite::Result<()> {
+    let stdout_preview = cap_field(&complete.stdout_preview);
+    let stderr_preview = cap_field(&complete.stderr_preview);
+    conn.execute(
+        "UPDATE exec_events SET
+            exit_code = ?1,
+            duration_ms = ?2,
+            stdout_preview = ?3,
+            stderr_preview = ?4,
+            stdout_bytes = ?5,
+            stderr_bytes = ?6,
+            pid = ?7
+         WHERE exec_id = ?8",
+        params![
+            complete.exit_code as i64,
+            complete.duration_ms as i64,
+            stdout_preview,
+            stderr_preview,
+            complete.stdout_bytes as i64,
+            complete.stderr_bytes as i64,
+            complete.pid.map(|p| p as i64),
+            complete.exec_id as i64,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    conn.execute(
+        "INSERT INTO audit_events (
+            timestamp, pid, ppid, uid, exe, comm, argv, cwd,
+            session_id, tty, audit_id, exec_event_id, parent_exe
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            timestamp,
+            event.pid as i64,
+            event.ppid as i64,
+            event.uid as i64,
+            event.exe,
+            event.comm,
+            event.argv,
+            event.cwd,
+            event.session_id.map(|s| s as i64),
+            event.tty,
+            event.audit_id,
+            event.exec_event_id,
+            event.parent_exe,
         ],
     )?;
     Ok(())
