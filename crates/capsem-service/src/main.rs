@@ -78,6 +78,10 @@ struct PersistentVmEntry {
     suspended: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     checkpoint_path: Option<String>,
+    /// User-provided env vars from /provision -- replayed on every resume so the
+    /// guest sees the same environment after stop+resume cycles.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    env: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -481,6 +485,7 @@ impl ServiceState {
                 description: description.clone(),
                 suspended: false,
                 checkpoint_path: None,
+                env: env.clone(),
             })?;
         }
 
@@ -553,6 +558,13 @@ impl ServiceState {
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", name));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
+
+        // Replay user-provided env vars so they survive stop/resume cycles.
+        if let Some(ref env_vars) = entry.env {
+            for (k, v) in env_vars {
+                child_cmd.arg("--env").arg(format!("{}={}", k, v));
+            }
+        }
 
         // Pass checkpoint path for warm restore from suspended state
         if entry.suspended {
@@ -1114,6 +1126,7 @@ async fn handle_fork(
             description: payload.description.clone(),
             suspended: false,
             checkpoint_path: None,
+            env: None,
         }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
@@ -2136,9 +2149,19 @@ async fn handle_suspend(
     }).await;
 
     if !suspended {
+        // The guest never acknowledged suspend. Leaving the process alive
+        // would leak a wedged Apple VZ instance (seen in the wild: 945
+        // orphan temp dirs accumulated over one test run). SIGKILL the
+        // child, reclaim the instance slot, and surface the error.
+        if pid > 0 {
+            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+        }
+        state.instances.lock().unwrap().remove(&id);
+        let _ = std::fs::remove_file(&uds_path);
+        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         return Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "suspend timed out: VM did not confirm suspended state".into(),
+            "suspend timed out: VM did not confirm suspended state (process killed)".into(),
         ));
     }
 
@@ -2286,13 +2309,13 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, ram_mb, cpus, base_version, forked_from) = {
+    let (old_session_dir, ram_mb, cpus, base_version, forked_from, env) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         if i.persistent {
             return Err(AppError(StatusCode::BAD_REQUEST, format!("VM \"{}\" is already persistent", id)));
         }
-        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), i.forked_from.clone())
+        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), i.forked_from.clone(), i.env.clone())
     };
 
     // Move session dir to persistent location
@@ -2315,6 +2338,7 @@ async fn handle_persist(
             description: None,
             suspended: false,
             checkpoint_path: None,
+            env: env.clone(),
         }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
@@ -2714,7 +2738,7 @@ async fn main() -> Result<()> {
         .route("/files/{id}", get(handle_list_files))
         .route("/files/{id}/content", get(handle_download_file).post(handle_upload_file))
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state.clone());
 
     info!(socket = %service_sock.display(), "listening on UDS");
 
@@ -2732,10 +2756,12 @@ async fn main() -> Result<()> {
     )
     .await;
 
+    let shutdown_state = state.clone();
     axum::serve(uds, app)
-        .with_graceful_shutdown(async {
+        .with_graceful_shutdown(async move {
             shutdown_signal().await;
-            info!("service shutting down, killing companions");
+            info!("service shutting down, killing VM processes and companions");
+            kill_all_vm_processes(&shutdown_state);
         })
         .await
         .context("server error")?;
@@ -2746,6 +2772,46 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Kill every per-VM `capsem-process` the service has spawned.
+///
+/// Called from the graceful-shutdown path so a SIGTERM to capsem-service does
+/// NOT orphan running guests. Without this, each service shutdown leaked one
+/// `capsem-process` per live VM, which in turn held Apple VZ memory -- making
+/// long test runs increasingly slow until boots timed out.
+fn kill_all_vm_processes(state: &ServiceState) {
+    let pids_and_sockets: Vec<(u32, PathBuf, PathBuf, bool)> = {
+        let instances = state.instances.lock().unwrap();
+        instances.values()
+            .map(|i| (i.pid, i.uds_path.clone(), i.session_dir.clone(), i.persistent))
+            .collect()
+    };
+    for (pid, uds_path, session_dir, persistent) in pids_and_sockets {
+        if pid > 0 {
+            // SIGTERM first so capsem-process gets a chance to run its own cleanup
+            // (save state, unmount virtiofs). Graceful_shutdown is already holding
+            // the axum server open briefly so a short wait is acceptable.
+            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
+        }
+        let _ = std::fs::remove_file(&uds_path);
+        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+        if !persistent {
+            let _ = std::fs::remove_dir_all(&session_dir);
+        }
+    }
+    // Brief grace period, then SIGKILL survivors.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let survivors: Vec<u32> = {
+        let instances = state.instances.lock().unwrap();
+        instances.values()
+            .map(|i| i.pid)
+            .filter(|&pid| pid > 0 && unsafe { nix::libc::kill(pid as i32, 0) } == 0)
+            .collect()
+    };
+    for pid in survivors {
+        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+    }
 }
 
 async fn shutdown_signal() {
@@ -3282,6 +3348,7 @@ mod tests {
             description: None,
             suspended: false,
             checkpoint_path: None,
+        env: None,
         }).unwrap();
 
         assert!(registry.contains("mydev"));
@@ -3314,6 +3381,7 @@ mod tests {
             description: None,
             suspended: false,
             checkpoint_path: None,
+        env: None,
         };
         registry.register(entry.clone()).unwrap();
         let err = registry.register(entry).unwrap_err();
@@ -3341,6 +3409,7 @@ mod tests {
             description: None,
             suspended: false,
             checkpoint_path: None,
+        env: None,
         }).unwrap();
         assert!(registry.contains("tmp"));
         registry.unregister("tmp").unwrap();
@@ -3370,6 +3439,7 @@ mod tests {
                 description: None,
                 suspended: false,
                 checkpoint_path: None,
+            env: None,
             });
         }
         let result = state.provision_sandbox(ProvisionOptions {
@@ -3538,6 +3608,7 @@ mod tests {
                 description: None,
                 suspended: false,
                 checkpoint_path: None,
+            env: None,
             });
         }
         // state is already Arc<ServiceState> from make_test_state*
@@ -3590,6 +3661,7 @@ mod tests {
             description: None,
             suspended: false,
             checkpoint_path: None,
+        env: None,
         }).unwrap();
 
         // Mutate via get_mut
@@ -3625,6 +3697,7 @@ mod tests {
                 description: None,
                 suspended: true,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
+            env: None,
             });
         }
 
@@ -3642,6 +3715,7 @@ mod tests {
                 description: None,
                 suspended: false,
                 checkpoint_path: None,
+            env: None,
             });
         }
 
@@ -3671,6 +3745,7 @@ mod tests {
                 description: None,
                 suspended: true,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
+            env: None,
             });
         }
 
@@ -3734,6 +3809,7 @@ mod tests {
             description: None,
             suspended: true,
             checkpoint_path: Some("checkpoint.vzsave".into()),
+        env: None,
         }).unwrap();
 
         // Verify suspended initially
@@ -3771,6 +3847,7 @@ mod tests {
             description: None,
             suspended: true,
             checkpoint_path: Some("checkpoint.vzsave".into()),
+        env: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         let parsed: PersistentVmEntry = serde_json::from_str(&json).unwrap();

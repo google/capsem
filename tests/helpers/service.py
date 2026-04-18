@@ -90,11 +90,16 @@ class ServiceInstance:
         return UdsHttpClient(self.uds_path)
 
     def stop(self):
-        """Stop the service and clean up temporary directory."""
+        """Stop the service and clean up temporary directory.
+
+        Gives the service enough time for graceful shutdown to reap every
+        per-VM capsem-process child (SIGTERM -> 500ms grace -> SIGKILL
+        survivors). SIGKILL here would skip that cleanup and orphan VMs.
+        """
         if self.proc:
             self.proc.terminate()
             try:
-                self.proc.wait(timeout=5)
+                self.proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
             self.proc = None

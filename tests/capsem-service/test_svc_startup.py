@@ -57,8 +57,53 @@ class TestServiceStartup:
         """Service must shut down cleanly without orphaning processes."""
         svc = ServiceInstance()
         svc.start()
-        pid = svc.proc.pid
+        proc = svc.proc
+        pid = proc.pid
         svc.stop()
-        assert svc.proc.returncode is not None, (
+        assert proc.returncode is not None, (
             f"Service process {pid} did not terminate after stop()"
+        )
+
+    def test_shutdown_kills_vm_processes(self):
+        """SIGTERM on capsem-service must also kill all per-VM capsem-process children.
+
+        Regression test for a leak where graceful_shutdown killed the gateway +
+        tray companions but left running VMs orphaned; every test-suite run
+        accumulated ghosts that held Apple VZ memory and caused subsequent
+        boot timeouts.
+        """
+        import os
+        import signal
+        import time
+
+        svc = ServiceInstance()
+        svc.start()
+        try:
+            client = svc.client()
+            name = vm_name("shut")
+            resp = client.post("/provision", {
+                "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            })
+            assert resp is not None
+            assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
+                f"VM {name} never exec-ready"
+            )
+
+            info = client.get(f"/info/{name}")
+            vm_pid = info.get("pid")
+            assert vm_pid and vm_pid > 0, f"no pid in /info response: {info}"
+        finally:
+            svc.stop()
+
+        # After svc.stop() the per-VM capsem-process must also be dead.
+        # Poll briefly -- reaping can race by a few ms.
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            try:
+                os.kill(vm_pid, 0)
+            except ProcessLookupError:
+                return  # dead, as expected
+            time.sleep(0.05)
+        pytest.fail(
+            f"capsem-process pid {vm_pid} survived service shutdown -- leak"
         )
