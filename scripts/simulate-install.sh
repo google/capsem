@@ -16,6 +16,13 @@ INSTALL_DIR="$HOME/.capsem/bin"
 ASSETS_DST="$HOME/.capsem/assets"
 RUN_DIR="$HOME/.capsem/run"
 
+# Preflight: reap any running capsem processes so reinstalling mid-session
+# doesn't leave the old service (and its per-VM capsem-process children)
+# holding Apple VZ memory. Mirrors what `capsem install` does.
+for name in capsem-service capsem-tray capsem-gateway capsem-process; do
+    pkill -9 -x "$name" 2>/dev/null || true
+done
+
 mkdir -p "$INSTALL_DIR" "$RUN_DIR"
 # Remove dev symlink if present (just _ensure-service creates one)
 if [[ -L "$ASSETS_DST" ]]; then

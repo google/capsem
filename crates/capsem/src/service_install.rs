@@ -317,20 +317,26 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     //    during the bootstrap of other services.
     let _ = std::fs::remove_file(plist_dir.join("com.capsem.service.plist"));
     let _ = std::fs::remove_file(plist_dir.join("com.capsem.tray.plist"));
-    // 3. Kill strays not managed by launchd (dev _ensure-service, manual launches)
-    let _ = tokio::process::Command::new("pkill")
-        .args(["-9", "-x", "capsem-service"]).output().await;
-    let _ = tokio::process::Command::new("pkill")
-        .args(["-9", "-x", "capsem-tray"]).output().await;
+    // 3. Kill strays not managed by launchd (dev _ensure-service, test crashes,
+    //    manual launches). Must cover every binary the service may have spawned
+    //    so the (re)install starts from a clean slate -- otherwise orphan
+    //    capsem-process instances hold Apple VZ memory across reinstalls.
+    for name in ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"] {
+        let _ = tokio::process::Command::new("pkill")
+            .args(["-9", "-x", name]).output().await;
+    }
     // 4. Wait until all are dead (prevents stale socket EADDRINUSE on bootstrap)
     for _ in 0..30 {
-        let svc = tokio::process::Command::new("pgrep")
-            .args(["-x", "capsem-service"]).output().await;
-        let tray = tokio::process::Command::new("pgrep")
-            .args(["-x", "capsem-tray"]).output().await;
-        let svc_dead = svc.map(|o| o.stdout.is_empty()).unwrap_or(true);
-        let tray_dead = tray.map(|o| o.stdout.is_empty()).unwrap_or(true);
-        if svc_dead && tray_dead { break; }
+        let mut any_alive = false;
+        for name in ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"] {
+            let out = tokio::process::Command::new("pgrep")
+                .args(["-x", name]).output().await;
+            if out.map(|o| !o.stdout.is_empty()).unwrap_or(false) {
+                any_alive = true;
+                break;
+            }
+        }
+        if !any_alive { break; }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     // 5. Remove stale socket so the new service can bind cleanly
