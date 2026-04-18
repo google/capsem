@@ -13,7 +13,9 @@ use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 #[tauri::command]
 fn log_frontend(level: String, message: String) {
-    eprintln!("[frontend:{level}] {message}");
+    // tracing handles output formatting/sinks; no eprintln -- it duplicated
+    // every line in the launching terminal (once here, once from the fmt
+    // subscriber) and made `just run-ui` unreadable when vmStore polls.
     match level.as_str() {
         "error" => tracing::error!(target: "frontend", "{message}"),
         "warn" => tracing::warn!(target: "frontend", "{message}"),
