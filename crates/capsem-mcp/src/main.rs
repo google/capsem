@@ -281,6 +281,41 @@ impl UdsClient {
             }
         }
     }
+
+    /// Send a request and return the raw response body as UTF-8 text.
+    /// For endpoints like GET /service-logs that return plain text, not JSON.
+    async fn request_text(&self, method: &str, path: &str) -> Result<String> {
+        info!(method, path, "sending UDS text request");
+        let stream = match UnixStream::connect(&self.uds_path).await {
+            Ok(s) => s,
+            Err(_) => {
+                self.try_ensure_service().await?;
+                UnixStream::connect(&self.uds_path).await?
+            }
+        };
+        let io = TokioIo::new(stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+        tokio::task::spawn(async move {
+            if let Err(err) = conn.await {
+                error!("Connection failed: {:?}", err);
+            }
+        });
+        let req = Request::builder()
+            .method(method)
+            .uri(format!("http://localhost{}", path))
+            .body(Full::new(Bytes::new()))?;
+        let res = sender.send_request(req).await?;
+        let status = res.status();
+        let body_bytes = res.collect().await?.to_bytes();
+        if !status.is_success() {
+            let msg = serde_json::from_slice::<Value>(&body_bytes)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+                .unwrap_or_else(|| String::from_utf8_lossy(&body_bytes).into_owned());
+            return Err(anyhow::anyhow!("{status}: {msg}"));
+        }
+        Ok(String::from_utf8_lossy(&body_bytes).into_owned())
+    }
 }
 
 #[derive(Clone)]
@@ -451,26 +486,9 @@ impl CapsemHandler {
 
     #[tool(name = "capsem_service_logs", description = "Get the latest capsem-service logs (last ~100KB). Use grep to filter lines, tail to limit to last N lines")]
     async fn service_logs(&self, Parameters(params): Parameters<ServiceLogsParams>) -> Result<String, String> {
-        let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-        let run_dir = resolve_run_dir(&home, std::env::var("CAPSEM_RUN_DIR").ok().as_deref());
-        let log_path = run_dir.join("service.log");
-
-        if !log_path.exists() {
-            return Err("Service log not found".to_string());
-        }
-
-        // Read last 100KB to avoid hitting MCP limits -- spawn_blocking for file I/O
-        let mut buf = tokio::task::spawn_blocking(move || -> Result<String, String> {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
-            let len = file.metadata().map_err(|e| e.to_string())?.len();
-            let start = len.saturating_sub(100_000);
-            file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
-            let mut buf = String::new();
-            file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
-            Ok(buf)
-        }).await.map_err(|e| e.to_string())??;
-
+        let mut buf = self.client.request_text("GET", "/service-logs")
+            .await
+            .map_err(|e| e.to_string())?;
         if let Some(pattern) = &params.grep {
             buf = grep_lines(&buf, pattern);
         }
