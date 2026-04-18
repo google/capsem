@@ -7,12 +7,13 @@ use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
 use tracing::{info, error, warn, debug};
 
 use crate::job_store::{JobStore, JobResult};
+use crate::terminal::TerminalRelay;
 
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     ipc_tx: broadcast::Sender<ProcessToService>,
-    term_bcast_tx: broadcast::Sender<Vec<u8>>,
+    term_relay: Arc<TerminalRelay>,
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
@@ -37,8 +38,15 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::StartTerminalStream => {
                     info!("Starting terminal stream for connection");
                     let out_tx = ipc_tx_out.clone();
-                    let mut term_rx = term_bcast_tx.subscribe();
+                    // Atomic snapshot + subscribe so the client sees buffered
+                    // banner bytes and then a gap-free live stream.
+                    let (replay, mut term_rx) = term_relay.subscribe();
                     tokio::spawn(async move {
+                        if !replay.is_empty()
+                            && out_tx.send(ProcessToService::TerminalOutput { data: replay }).await.is_err()
+                        {
+                            return;
+                        }
                         while let Ok(data) = term_rx.recv().await {
                             if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() { break; }
                         }
@@ -176,7 +184,7 @@ pub(crate) async fn handle_ipc_connection(
                                         url: s.url,
                                         enabled: s.enabled,
                                         source: s.source,
-                                        unsupported_stdio: s.unsupported_stdio,
+                                        is_stdio: s.is_stdio,
                                         connected: s.connected,
                                         tool_count: s.tool_count,
                                     }

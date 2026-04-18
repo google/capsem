@@ -68,6 +68,14 @@
         console.log('[app] deep-link: opening VM tab connect=%s vm=%s', p.connect, vm?.name ?? 'unknown');
         tabStore.openVM(p.connect, vm?.name ?? p.connect);
       }
+      if (p.action && p.connect) {
+        // Defer until the tab is mounted and Toolbar is listening.
+        requestAnimationFrame(() =>
+          window.dispatchEvent(new CustomEvent('capsem:tab-action', {
+            detail: { vmId: p.connect, action: p.action },
+          })),
+        );
+      }
     };
 
     return () => {

@@ -253,6 +253,12 @@ async fn run_async_main_loop(
         db: Arc::clone(&db),
         policy: tokio::sync::RwLock::new(Arc::new(merged.mcp)),
         domain_policy: std::sync::RwLock::new(Arc::new(merged.domain)),
+        server_manager: tokio::sync::Mutex::new(
+            capsem_core::mcp::server_manager::McpServerManager::new(vec![], reqwest::Client::new()),
+        ),
+        http_client: reqwest::Client::new(),
+        auto_snapshots: None,
+        workspace_dir: None,
     });
 
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
@@ -400,26 +406,27 @@ async fn run_async_main_loop(
     }
     info!(socket = %ws_sock_path.display(), "listening for terminal WS (mode 0600)");
 
-    // We use a broadcast channel to fan out terminal output to multiple WS connections
-    let (term_bcast_tx, _) = tokio::sync::broadcast::channel::<Vec<u8>>(1024);
+    // Terminal relay: fan-out broadcast + ring buffer so a newly-connecting
+    // WS client sees the shell's startup banner (printed before it joined).
+    let term_relay = terminal::TerminalRelay::new(1024);
     let term_c_bcast = Arc::clone(&terminal_output);
-    let term_bcast_tx_clone = term_bcast_tx.clone();
+    let term_relay_pump = Arc::clone(&term_relay);
     tokio::spawn(async move {
         while let Some(data) = term_c_bcast.poll().await {
-            let _ = term_bcast_tx_clone.send(data);
+            term_relay_pump.publish(data);
         }
     });
 
     let ctrl_tx_ws = ctrl_tx_ipc.clone();
-    let term_bcast_tx_app = term_bcast_tx.clone();
+    let term_relay_app = Arc::clone(&term_relay);
 
     let ws_app = axum::Router::new()
         .route("/terminal", axum::routing::get(
             move |ws: axum::extract::ws::WebSocketUpgrade| {
                 let ctrl_tx = ctrl_tx_ws.clone();
-                let term_rx = term_bcast_tx_app.subscribe();
+                let (replay, term_rx) = term_relay_app.subscribe();
                 async move {
-                    ws.on_upgrade(move |socket| terminal::handle_terminal_socket(socket, ctrl_tx, term_rx))
+                    ws.on_upgrade(move |socket| terminal::handle_terminal_socket(socket, ctrl_tx, replay, term_rx))
                 }
             }
         ));
@@ -434,7 +441,7 @@ async fn run_async_main_loop(
         let (stream, _) = listener.accept().await?;
         let tx_c = ctrl_tx_ipc.clone();
         let ipc_tx_pass = ipc_tx.clone();
-        let term_c = term_bcast_tx.clone();
+        let term_c = Arc::clone(&term_relay);
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_config);

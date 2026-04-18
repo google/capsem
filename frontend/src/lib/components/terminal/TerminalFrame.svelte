@@ -28,6 +28,12 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let destroyed = false;
+  let everConnected = false;
+
+  // Reactive overlay state -- drives the loading animation shown on top of
+  // the terminal while we're waiting on the gateway / VM boot.
+  let overlayVisible = $state(true);
+  let overlayText = $state('Setting up session...');
 
   // Read initial state from URL. No postMessage handshake -- iframe owns its
   // setup data via its own URL.
@@ -39,6 +45,15 @@
   const initialMode = (params.get('mode') === 'light' ? 'light' : 'dark') as 'light' | 'dark';
   const initialFontSize = Math.max(8, Math.min(32, Number(params.get('fontSize')) || 14));
   const initialFontFamily = params.get('fontFamily') ?? '';
+
+  // Sync the body background to the terminal theme BEFORE first paint so the
+  // overlay (which inherits body bg) matches the eventual terminal surface.
+  // Otherwise the overlay flashes in a different color than the xterm pane.
+  if (typeof document !== 'undefined') {
+    const bg = getTheme(initialTheme)?.background ?? '#000';
+    document.documentElement.style.backgroundColor = bg;
+    document.body.style.backgroundColor = bg;
+  }
 
   function postToParent(msg: unknown): void {
     try { window.parent.postMessage(msg, '*'); } catch { /* detached */ }
@@ -56,17 +71,26 @@
     }
   }
 
+  function showOverlay(text: string): void {
+    overlayText = text;
+    overlayVisible = true;
+  }
+
+  function hideOverlay(): void {
+    overlayVisible = false;
+  }
+
   function scheduleReconnect(reason: string): void {
     if (destroyed) return;
     postToParent({ type: 'disconnected', reason });
     if (reconnectAttempt >= MAX_RECONNECT) {
-      terminal?.write(`\r\n\x1b[1;31m[Connection lost: ${reason}. Reload to retry.]\x1b[0m\r\n`);
+      showOverlay('Connection failed -- reload to retry');
       return;
     }
     const delay = Math.min(500 * Math.pow(2, reconnectAttempt), 5000);
     reconnectAttempt++;
-    console.log('[terminal] reconnect attempt=%d delay=%dms', reconnectAttempt, delay);
-    terminal?.write(`\r\n\x1b[33m[Reconnecting in ${Math.round(delay / 100) / 10}s...]\x1b[0m\r\n`);
+    console.log('[terminal] reconnect attempt=%d delay=%dms reason=%s', reconnectAttempt, delay, reason);
+    showOverlay(everConnected ? 'Reconnecting...' : 'Setting up session...');
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -105,7 +129,7 @@
     socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
-      console.log('[terminal] connected vmId=%s', vmId);
+      console.log('[terminal] ws-open vmId=%s', vmId);
       reconnectAttempt = 0;
       postToParent({ type: 'connected' });
       if (terminal && fitAddon) {
@@ -113,13 +137,24 @@
         if (dims) {
           socket.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
         }
-        // Nudge shell to redraw its prompt.
+        // Nudge the shell to redraw its prompt.
         socket.send(new TextEncoder().encode('\n'));
       }
+      // NOTE: do not flip `everConnected` here. The gateway sometimes
+      // completes the WS handshake and closes moments later when the
+      // per-VM UDS isn't ready yet. Using that as "first connect" makes
+      // the next retry say "Reconnecting..." even though the VM never
+      // actually gave us a prompt. We only count it as connected once
+      // the first byte of real PTY output arrives (onmessage below).
     };
 
     socket.onmessage = (event: MessageEvent) => {
       if (!terminal) return;
+      if (!everConnected) {
+        everConnected = true;
+        hideOverlay();
+        console.log('[terminal] first-data vmId=%s', vmId);
+      }
       if (event.data instanceof ArrayBuffer) {
         terminal.write(new Uint8Array(event.data));
       } else {
@@ -246,6 +281,17 @@
 
 <div id="terminal-container" bind:this={containerEl}></div>
 
+{#if overlayVisible}
+  <div class="loading-overlay" role="status" aria-live="polite">
+    <div class="spinner" aria-hidden="true">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+    <div class="loading-text">{overlayText}</div>
+  </div>
+{/if}
+
 <style>
   #terminal-container {
     position: absolute;
@@ -254,4 +300,50 @@
     bottom: 10px;
     left: 10px;
   }
+
+  .loading-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    /* Solid background -- inherits body color which TerminalFrame.onMount
+       syncs to the terminal theme background. No transparency, no fade
+       animation: the overlay and the terminal are visually the same
+       surface, so appearing/disappearing is instantaneous and silent. */
+    background: inherit;
+    color: #cbd5e1;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    z-index: 10;
+  }
+
+  .loading-text {
+    font-size: 0.875rem;
+    letter-spacing: 0.01em;
+    opacity: 0.85;
+  }
+
+  .spinner {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .spinner .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #60a5fa;
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+
+  .spinner .dot:nth-child(2) { animation-delay: 0.15s; }
+  .spinner .dot:nth-child(3) { animation-delay: 0.3s; }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(0.6); opacity: 0.35; }
+    50%      { transform: scale(1);   opacity: 1;    }
+  }
+
 </style>

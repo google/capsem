@@ -1180,10 +1180,19 @@ async fn handle_provision(
 ) -> Result<Json<ProvisionResponse>, AppError> {
     let id = payload.name.clone().unwrap_or_else(generate_tmp_name);
 
+    // Missing ram_mb/cpus fall back to merged VM settings. This keeps
+    // "new ephemeral VM" callers (tray, MCP one-shots) honoring the user's
+    // configured defaults without having to fetch settings first.
+    let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
+    let ram_mb = payload
+        .ram_mb
+        .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
+    let cpus = payload.cpus.unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+
     match state.provision_sandbox(ProvisionOptions {
         id: &id,
-        ram_mb: payload.ram_mb,
-        cpus: payload.cpus,
+        ram_mb,
+        cpus,
         version_override: Some(state.current_version.clone()),
         persistent: payload.persistent,
         env: payload.env,

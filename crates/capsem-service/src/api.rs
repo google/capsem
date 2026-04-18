@@ -17,8 +17,14 @@ pub struct StatsResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
-    pub ram_mb: u64,
-    pub cpus: u32,
+    /// RAM in megabytes. If absent, service resolves from merged VM settings
+    /// (vm.resources.ram_gb, default 4 GiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ram_mb: Option<u64>,
+    /// CPU count. If absent, service resolves from merged VM settings
+    /// (vm.resources.cpu_count, default 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
     /// When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop.
     #[serde(default)]
     pub persistent: bool,

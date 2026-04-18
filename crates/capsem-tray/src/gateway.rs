@@ -152,29 +152,18 @@ impl GatewayClient {
         Ok(())
     }
 
-    pub async fn fork_vm(&self, id: &str) -> Result<()> {
-        self.post(&format!("/fork/{id}")).await?;
-        Ok(())
-    }
-
     /// Provision a temporary (ephemeral) VM. Returns the new VM id.
     pub async fn provision_temp(&self) -> Result<String> {
-        let resp = self.post("/provision").await?;
-        let body: serde_json::Value = resp.json().await?;
-        body["id"]
-            .as_str()
-            .map(|s| s.to_string())
-            .context("provision response missing id")
-    }
-
-    /// Provision a named (persistent) VM. Returns the new VM id.
-    #[allow(dead_code)]
-    pub async fn provision_named(&self, name: &str) -> Result<String> {
+        // Gateway requires Content-Type: application/json on POST /provision
+        // (returns 415 otherwise). Empty object == default ephemeral VM.
         let resp = self
             .client
             .post(format!("{}/provision", self.base_url()))
             .header(AUTHORIZATION, self.auth_header())
-            .json(&serde_json::json!({ "name": name }))
+            // Empty body == ephemeral VM with user's configured defaults
+            // (vm.resources.ram_gb, vm.resources.cpu_count). The service
+            // resolves missing fields from merged VM settings.
+            .json(&serde_json::json!({ "persistent": false }))
             .send()
             .await
             .context("gateway request failed")?;
@@ -182,7 +171,6 @@ impl GatewayClient {
         if !resp.status().is_success() {
             bail!("gateway returned {}", resp.status());
         }
-
         let body: serde_json::Value = resp.json().await?;
         body["id"]
             .as_str()

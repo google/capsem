@@ -49,7 +49,6 @@ fn main() -> Result<()> {
 
     // Pre-decode icons
     let icon_idle = icons::load_icon(TrayState::Idle);
-    let icon_active = icons::load_icon(TrayState::Active);
     let icon_error = icons::load_icon(TrayState::Error);
 
     // Initialize NSApplication as Accessory (no dock icon, but participates
@@ -77,6 +76,12 @@ fn main() -> Result<()> {
         .build()
         .context("failed to build tray icon")?;
 
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        built = option_env!("CAPSEM_BUILD_TS").unwrap_or("dev"),
+        "capsem-tray started"
+    );
+    eprintln!("[capsem-tray] version={} built={}", env!("CARGO_PKG_VERSION"), option_env!("CAPSEM_BUILD_TS").unwrap_or("dev"));
     info!("tray icon created");
 
     // Spawn tokio runtime on background thread
@@ -106,18 +111,12 @@ fn main() -> Result<()> {
         while let Ok(result) = poll_rx.try_recv() {
             match result {
                 PollResult::Status(status) => {
-                    let state = state_for_status(&status);
-                    
-                    if last_state != Some(state) {
-                        let is_template = state == TrayState::Idle;
-                        let icon = match state {
-                            TrayState::Idle => icon_idle.clone(),
-                            TrayState::Active => icon_active.clone(),
-                            TrayState::Error => icon_error.clone(),
-                        };
-                        tray.set_icon_with_as_template(Some(icon), is_template)
+                    // Icon always stays as template (white) -- only
+                    // switch back from Error to Idle when gateway reconnects.
+                    if last_state != Some(TrayState::Idle) {
+                        tray.set_icon_with_as_template(Some(icon_idle.clone()), true)
                             .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
-                        last_state = Some(state);
+                        last_state = Some(TrayState::Idle);
                     }
 
                     if last_status.as_ref() != Some(&status) {
@@ -127,16 +126,14 @@ fn main() -> Result<()> {
                     }
                 }
                 PollResult::Unavailable(reason) => {
-                    let state = TrayState::Error;
-                    
-                    if last_state != Some(state) {
-                        tray.set_icon_with_as_template(Some(icon_error.clone()), false)
+                    if last_state != Some(TrayState::Error) {
+                        tray.set_icon_with_as_template(Some(icon_error.clone()), true)
                             .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
                         tray.set_menu(Some(Box::new(menu::build_unavailable_menu())));
-                        last_state = Some(state);
+                        last_state = Some(TrayState::Error);
                         last_status = None;
                     }
-                    
+
                     warn!("gateway unavailable: {reason}");
                 }
             }
@@ -144,7 +141,9 @@ fn main() -> Result<()> {
 
         // Process menu clicks
         while let Ok(event) = menu_channel.try_recv() {
-            match menu::parse_action(&event.id) {
+            let action = menu::parse_action(&event.id);
+            info!(menu_id = %event.id.0, action = ?action, "menu click");
+            match action {
                 Some(Action::Quit) => {
                     info!("quit requested");
                     return Ok(());
@@ -250,29 +249,49 @@ async fn async_worker(
 }
 
 async fn dispatch_action(client: &GatewayClient, action: Action) {
+    info!(action = ?action, "dispatching tray action");
     let result = match &action {
         Action::Connect(id) => {
             launch_ui(Some(id));
             return;
         }
-        Action::Stop(id) => client.stop_vm(id).await,
-        Action::Delete(id) => client.delete_vm(id).await,
-        Action::Suspend(id) => client.suspend_vm(id).await,
-        Action::Resume(id) => client.resume_vm(id).await,
-        Action::Fork(id) => client.fork_vm(id).await,
-        Action::NewTemp => {
+        Action::Stop(id) => {
+            let r = client.stop_vm(id).await;
+            info!(id = %id, ok = r.is_ok(), "stop_vm");
+            r
+        }
+        Action::Delete(id) => {
+            let r = client.delete_vm(id).await;
+            info!(id = %id, ok = r.is_ok(), "delete_vm");
+            r
+        }
+        Action::Suspend(id) => {
+            let r = client.suspend_vm(id).await;
+            info!(id = %id, ok = r.is_ok(), "suspend_vm");
+            r
+        }
+        Action::Resume(id) => {
+            let r = client.resume_vm(id).await;
+            info!(id = %id, ok = r.is_ok(), "resume_vm");
+            r
+        }
+        Action::NewSession => {
+            info!("provisioning new temp session");
             match client.provision_temp().await {
                 Ok(id) => {
+                    info!(id = %id, "new session provisioned, launching UI");
                     launch_ui(Some(&id));
                     return;
                 }
                 Err(e) => Err(e),
             }
         }
-        Action::NewNamed => {
-            // Named VMs need a name -- the tray can't prompt, so open the UI
-            // which has a dialog for naming. Pass --new-named flag.
-            launch_ui_new_named();
+        Action::Save(id) => {
+            launch_ui_action(id, "save");
+            return;
+        }
+        Action::Fork(id) => {
+            launch_ui_action(id, "fork");
             return;
         }
         Action::OpenUi | Action::Quit => return,
@@ -283,72 +302,105 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
     }
 }
 
-/// Determine tray icon state from a status response.
-fn state_for_status(status: &gateway::StatusResponse) -> TrayState {
-    if status.vm_count > 0 {
-        TrayState::Active
-    } else {
-        TrayState::Idle
-    }
-}
-
 fn launch_ui(vm_id: Option<&str>) {
-    let mut cmd = std::process::Command::new("open");
-    cmd.args(["-a", "Capsem"]);
+    info!(vm_id = ?vm_id, "launching Capsem.app");
+
+    // On macOS, `open -a Capsem --args X` only delivers X when the app is
+    // NOT already running. When it is, `open` just brings the existing
+    // window to front and the args are dropped -- the single-instance
+    // plugin callback never fires because no second process spawns.
+    //
+    // Invoking the binary path directly always spawns a process. If Capsem
+    // is already running, tauri-plugin-single-instance detects the second
+    // launch, forwards argv to the running instance via its IPC socket,
+    // and the new process exits. If not, the new process becomes the
+    // primary instance.
+    #[cfg(target_os = "macos")]
+    let binary_candidates: [std::path::PathBuf; 2] = [
+        std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-ui"),
+        std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-ui"))
+            .unwrap_or_default(),
+    ];
+    #[cfg(target_os = "linux")]
+    let binary_candidates: [std::path::PathBuf; 2] = [
+        std::path::PathBuf::from("/usr/bin/capsem-ui"),
+        std::path::PathBuf::from("/usr/local/bin/capsem-ui"),
+    ];
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let binary_candidates: [std::path::PathBuf; 0] = [];
+
+    let binary = binary_candidates.iter().find(|p| p.exists());
+
+    let mut cmd = if let Some(path) = binary {
+        std::process::Command::new(path)
+    } else {
+        // Fallback for uninstalled dev environments: LaunchServices lookup.
+        // Works only when the app isn't already running.
+        warn!("capsem-ui binary not found in install locations; falling back to `open -a Capsem`");
+        let mut c = std::process::Command::new("open");
+        c.args(["-a", "Capsem"]);
+        if vm_id.is_some() {
+            c.arg("--args");
+        }
+        c
+    };
+
     if let Some(id) = vm_id {
-        cmd.args(["--args", "--connect", id]);
+        cmd.args(["--connect", id]);
     }
-    if let Err(e) = cmd.spawn() {
-        warn!("failed to launch UI: {e}");
+
+    match cmd.spawn() {
+        Ok(_) => info!(vm_id = ?vm_id, "Capsem.app launch dispatched"),
+        Err(e) => warn!("failed to launch UI: {e}"),
     }
 }
 
-fn launch_ui_new_named() {
-    let mut cmd = std::process::Command::new("open");
-    cmd.args(["-a", "Capsem", "--args", "--new-named"]);
-    if let Err(e) = cmd.spawn() {
-        warn!("failed to launch UI: {e}");
+/// Launch the UI with a VM deep-link plus an action hint (e.g. "save", "fork").
+/// The UI opens the VM tab and dispatches the action (opens the relevant modal)
+/// -- actions requiring a user-supplied name belong in the UI, not the tray.
+fn launch_ui_action(vm_id: &str, action: &str) {
+    info!(%vm_id, %action, "launching Capsem.app for action");
+
+    #[cfg(target_os = "macos")]
+    let binary_candidates: [std::path::PathBuf; 2] = [
+        std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-ui"),
+        std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-ui"))
+            .unwrap_or_default(),
+    ];
+    #[cfg(target_os = "linux")]
+    let binary_candidates: [std::path::PathBuf; 2] = [
+        std::path::PathBuf::from("/usr/bin/capsem-ui"),
+        std::path::PathBuf::from("/usr/local/bin/capsem-ui"),
+    ];
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let binary_candidates: [std::path::PathBuf; 0] = [];
+
+    let binary = binary_candidates.iter().find(|p| p.exists());
+    let mut cmd = if let Some(path) = binary {
+        std::process::Command::new(path)
+    } else {
+        warn!("capsem-ui binary not found; falling back to `open -a Capsem`");
+        let mut c = std::process::Command::new("open");
+        c.args(["-a", "Capsem", "--args"]);
+        c
+    };
+    cmd.args(["--connect", vm_id, "--action", action]);
+    match cmd.spawn() {
+        Ok(_) => info!(%vm_id, %action, "UI action dispatched"),
+        Err(e) => warn!("failed to launch UI: {e}"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{StatusResponse, VmSummary};
-
-    fn make_status(vm_count: u32, vms: Vec<VmSummary>) -> StatusResponse {
-        StatusResponse {
-            service: "running".into(),
-            vm_count,
-            vms,
-            latency_ms: Some(5),
-        }
-    }
-
-    fn make_vm(id: &str, status: &str) -> VmSummary {
-        VmSummary {
-            id: id.into(),
-            name: None,
-            status: status.into(),
-            persistent: false,
-        }
-    }
 
     #[test]
-    fn state_active_when_vms_running() {
-        let status = make_status(2, vec![make_vm("a", "running"), make_vm("b", "running")]);
-        assert_eq!(state_for_status(&status), TrayState::Active);
-    }
-
-    #[test]
-    fn state_idle_when_no_vms() {
-        let status = make_status(0, vec![]);
-        assert_eq!(state_for_status(&status), TrayState::Idle);
-    }
-
-    #[test]
-    fn state_active_with_one_vm() {
-        let status = make_status(1, vec![make_vm("x", "suspended")]);
-        assert_eq!(state_for_status(&status), TrayState::Active);
+    fn launch_ui_no_vm_does_not_panic() {
+        // Smoke test: calling launch_ui(None) should not panic
+        // (it spawns a process; on CI the app may not exist, but no panic)
+        launch_ui(None);
     }
 }

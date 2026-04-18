@@ -56,6 +56,22 @@
     modalKind = kind;
   }
 
+  // Deep-link actions from the tray (e.g. `--action save`) dispatch a
+  // `capsem:tab-action` event on window. Open the matching modal when the
+  // target VM is the active tab.
+  import { onMount, onDestroy } from 'svelte';
+
+  function onTabAction(e: Event) {
+    const detail = (e as CustomEvent).detail as { vmId?: string; action?: string };
+    if (!detail?.vmId || !detail.action) return;
+    if (active?.vmId !== detail.vmId) return;
+    if (detail.action === 'save' || detail.action === 'fork' || detail.action === 'stop' || detail.action === 'destroy') {
+      openModal(detail.action as ModalKind);
+    }
+  }
+  onMount(() => window.addEventListener('capsem:tab-action', onTabAction));
+  onDestroy(() => window.removeEventListener('capsem:tab-action', onTabAction));
+
   function closeModal() {
     modalKind = null;
     modalInput = '';

@@ -49,10 +49,10 @@ async fn check_for_app_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo
 
 // ---------- Deep link handling (--connect <vm_id>) ----------
 
-fn parse_connect_arg(args: &[String]) -> Option<String> {
+fn parse_flag(args: &[String], flag: &str) -> Option<String> {
     let mut i = 0;
     while i < args.len() {
-        if args[i] == "--connect" && i + 1 < args.len() {
+        if args[i] == flag && i + 1 < args.len() {
             return Some(args[i + 1].clone());
         }
         i += 1;
@@ -60,10 +60,21 @@ fn parse_connect_arg(args: &[String]) -> Option<String> {
     None
 }
 
-fn dispatch_deep_link(window: &tauri::WebviewWindow, vm_id: &str) {
-    let escaped = vm_id.replace('\'', "\\'");
+fn parse_connect_arg(args: &[String]) -> Option<String> {
+    parse_flag(args, "--connect")
+}
+
+fn parse_action_arg(args: &[String]) -> Option<String> {
+    parse_flag(args, "--action")
+}
+
+fn dispatch_deep_link(window: &tauri::WebviewWindow, vm_id: &str, action: Option<&str>) {
+    let escaped_id = vm_id.replace('\'', "\\'");
+    let action_part = action
+        .map(|a| format!(", action: '{}'", a.replace('\'', "\\'")))
+        .unwrap_or_default();
     let _ = window.eval(&format!(
-        "if (window.__capsemDeepLink) {{ window.__capsemDeepLink({{ connect: '{escaped}' }}) }}"
+        "if (window.__capsemDeepLink) {{ window.__capsemDeepLink({{ connect: '{escaped_id}'{action_part} }}) }}"
     ));
 }
 
@@ -186,6 +197,7 @@ fn main() {
     );
 
     let connect_id = parse_connect_arg(&cli_args);
+    let initial_action = parse_action_arg(&cli_args);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -200,7 +212,8 @@ fn main() {
             };
             let _ = window.set_focus();
             if let Some(id) = parse_connect_arg(&args) {
-                dispatch_deep_link(&window, &id);
+                let action = parse_action_arg(&args);
+                dispatch_deep_link(&window, &id, action.as_deref());
             }
         }))
         .setup(move |app| {
@@ -210,13 +223,14 @@ fn main() {
             });
 
             if let Some(id) = connect_id.clone() {
+                let action = initial_action.clone();
                 let window = app
                     .get_webview_window("main")
                     .expect("main window must exist");
                 tauri::async_runtime::spawn(async move {
                     // Let the frontend mount __capsemDeepLink before dispatching.
                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                    dispatch_deep_link(&window, &id);
+                    dispatch_deep_link(&window, &id, action.as_deref());
                 });
             }
 
