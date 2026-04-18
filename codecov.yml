@@ -86,11 +86,15 @@ component_management:
         - crates/capsem-core/src/host_config.rs
 
     # MCP gateway, builtin HTTP tools, file/snapshot tools,
-    # MCP policy, auto-snapshots, FS monitor.
+    # MCP policy, auto-snapshots, FS monitor. Also includes the
+    # aggregator and builtin MCP subprocess crates which are thin
+    # binaries over capsem-core::mcp.
     - component_id: tooling
       name: Tooling
       paths:
         - crates/capsem-core/src/mcp/**
+        - crates/capsem-mcp-aggregator/src/**
+        - crates/capsem-mcp-builtin/src/**
         - crates/capsem-core/src/auto_snapshot.rs
         - crates/capsem-core/src/fs_monitor.rs
 
@@ -164,6 +168,12 @@ component_management:
         - type: project
           target: 80%
 
+    # System tray host: menu wiring, gateway client, icon rendering.
+    - component_id: systray
+      name: System Tray
+      paths:
+        - crates/capsem-tray/src/**
+
     # Frontend: Astro + Svelte components, views, stores.
     # Populated when vitest coverage is added to pipeline.
     - component_id: ui
@@ -179,6 +189,7 @@ component_management:
 
 ignore:
   - crates/*/tests/**
+  - crates/capsem-app/gen/**
   - site/**
   - docs/**
   - guest/**
