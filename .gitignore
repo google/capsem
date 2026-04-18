@@ -1,7 +1,8 @@
-#capsem log 
-*.log 
+#capsem log
+*.log
 # Python virtualenv lib (but NOT frontend/src/lib/)
 /lib/
+dist/
 .env
 .venv
 archive/

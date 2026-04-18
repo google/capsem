@@ -169,6 +169,10 @@ CONFIG_HARDENED_USERCOPY=y
 CONFIG_PAGE_TABLE_ISOLATION=y
 CONFIG_RETPOLINE=y
 
+# Kernel audit subsystem (execve recording)
+CONFIG_AUDIT=y
+CONFIG_AUDITSYSCALL=y
+
 # ==========================================
 # 10. ATTACK SURFACE REDUCTION
 # ==========================================

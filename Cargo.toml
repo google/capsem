@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.1776271625"
+version = "1.0.1776445634"
 
 # Always optimize blake3 -- its SIMD assembly is 100x faster than
 # unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.

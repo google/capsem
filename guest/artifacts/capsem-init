@@ -347,6 +347,22 @@ if [ -d /diagnostics ]; then
 fi
 boot_mark "deploy"
 
+# Start kernel audit subsystem for execve recording.
+# auditd generates /var/log/audit/audit.log which capsem-agent tails and
+# streams to the host via vsock for tamper-proof command recording.
+if [ -x /newroot/usr/sbin/auditd ]; then
+    mkdir -p /newroot/var/log/audit
+    chroot /newroot /usr/sbin/auditd -s disable 2>/dev/null &
+    # Brief wait for auditd to create its socket
+    sleep 0.1
+    # Record all execve syscalls with the capsem_exec key
+    chroot /newroot /usr/sbin/auditctl -a always,exit -F arch=b64 -S execve -k capsem_exec 2>/dev/null || true
+    # Lock audit config: even root cannot disable until reboot
+    chroot /newroot /usr/sbin/auditctl -e 2 2>/dev/null || true
+    echo "[capsem-init] auditd started, rules locked"
+fi
+boot_mark "audit"
+
 # Increase open file descriptor limit to prevent EMFILE/Errno 24 crashes
 ulimit -n 65536
 

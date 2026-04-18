@@ -171,6 +171,10 @@ CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
 CONFIG_HARDENED_USERCOPY=y
 CONFIG_UNMAP_KERNEL_AT_EL0=y
 
+# Kernel audit subsystem (execve recording)
+CONFIG_AUDIT=y
+CONFIG_AUDITSYSCALL=y
+
 # ==========================================
 # 10. ATTACK SURFACE REDUCTION
 # ==========================================

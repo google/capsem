@@ -47,7 +47,7 @@ fi
 
 # Copy assets (manifest + versioned dir)
 if [ -d "$PKG_SHARE/assets" ]; then
-    cp -r "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
+    cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
 fi
 
 # Fix ownership (we ran as root)
@@ -68,5 +68,19 @@ done
 # Register LaunchAgent and run setup as the installing user
 su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
 su "$USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected" 2>/dev/null || true
+
+# --- GUI detection and app launch ---
+# Open the desktop app for interactive onboarding if a GUI is available.
+# The app detects first launch (onboarding_completed=false) and shows the wizard.
+if [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem.app" ]; then
+    su "$USER" -c "open /Applications/Capsem.app" 2>/dev/null || true
+elif [ "$(uname)" = "Linux" ]; then
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        if command -v capsem-app >/dev/null 2>&1; then
+            su "$USER" -c "capsem-app &" 2>/dev/null || true
+        fi
+    fi
+    # headless Linux: terminal setup already ran, nothing more to do
+fi
 
 exit 0
