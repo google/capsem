@@ -161,20 +161,21 @@ After preset application, resolution re-runs: `corp > user (with preset values) 
 
 ## IPC Protocol
 
-The frontend communicates with the backend via two commands. Currently these are Tauri IPC invocations; in a future release they will be HTTPS API endpoints.
+The frontend communicates with the backend via HTTP through capsem-gateway (TCP port 19222), which proxies requests to capsem-service over UDS. Two logical operations handle all settings I/O:
 
 ```mermaid
 sequenceDiagram
   participant UI as Frontend Store
   participant M as SettingsModel
-  participant API as IPC Layer
-  participant BE as Backend
+  participant GW as capsem-gateway
+  participant SVC as capsem-service
 
   Note over UI: Page load
-  UI->>API: load_settings()
-  API->>BE: resolve + build tree + lint + presets
-  BE-->>API: SettingsResponse
-  API-->>UI: {tree, issues, presets}
+  UI->>GW: GET /settings
+  GW->>SVC: GET /settings (UDS)
+  SVC->>SVC: resolve + build tree + lint + presets
+  SVC-->>GW: SettingsResponse
+  GW-->>UI: {tree, issues, presets}
   UI->>M: new SettingsModel(response)
 
   Note over UI: User edits a text field
@@ -182,10 +183,11 @@ sequenceDiagram
   Note over M: Accumulated locally
 
   Note over UI: User clicks Save
-  UI->>API: save_settings({id: value, ...})
-  API->>BE: validate ALL then write user.toml then reload policies
-  BE-->>API: SettingsResponse (fresh state)
-  API-->>UI: response
+  UI->>GW: POST /settings {id: value, ...}
+  GW->>SVC: POST /settings (UDS)
+  SVC->>SVC: validate ALL then write user.toml then reload policies
+  SVC-->>GW: SettingsResponse (fresh state)
+  GW-->>UI: response
   UI->>M: new SettingsModel(response)
 ```
 
@@ -229,7 +231,7 @@ flowchart TD
   MODEL -->|"uses"| ENUM
   VIEW -->|"reads from"| STORE
   VIEW -->|"getWidget(), getSideEffect()"| MODEL
-  MOCK -.->|"when no Tauri"| API
+  MOCK -.->|"when no gateway"| API
 ```
 
 | Layer | File | Responsibility |
@@ -239,7 +241,7 @@ flowchart TD
 | **Store** | `settings.svelte.ts` | Thin Svelte 5 wrapper -- reactive state, IPC calls, delegates to SettingsModel |
 | **View** | `SettingsSection.svelte` | Recursive renderer -- dispatches on `node.kind` (group/leaf/action/mcp_server) and `Widget` enum |
 
-The model class is independently testable (43 vitest tests) and can be reused when the frontend migrates to an HTTPS API.
+The model class is independently testable (43 vitest tests) and works identically whether talking to the gateway or using mock data.
 
 ## Boot-Time Config Injection
 
@@ -247,24 +249,24 @@ At VM boot, resolved settings are translated into environment variables and file
 
 ```mermaid
 sequenceDiagram
-  participant App as Tauri App
+  participant Proc as capsem-process
   participant Core as capsem-core
   participant VM as Guest VM
 
-  App->>Core: load_merged_guest_config()
+  Proc->>Core: load_merged_guest_config()
   Core->>Core: Resolve settings (corp > user > defaults)
   Core->>Core: Collect env vars from meta.env_vars
   Core->>Core: Collect boot files (type=file settings with content)
   Core->>Core: Inject MCP servers into agent config files
   Core->>Core: Generate .git-credentials from tokens
-  App->>VM: send_boot_config()
+  Proc->>VM: send_boot_config()
   loop Each env var
-    App->>VM: SetEnv { key, value }
+    Proc->>VM: SetEnv { key, value }
   end
   loop Each boot file
-    App->>VM: FileWrite { path, content, mode=0o600 }
+    Proc->>VM: FileWrite { path, content, mode=0o600 }
   end
-  App->>VM: BootConfigDone
+  Proc->>VM: BootConfigDone
 ```
 
 Key behaviors:

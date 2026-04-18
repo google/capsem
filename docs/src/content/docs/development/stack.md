@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-When you run `just run`, Capsem cross-compiles guest binaries, repacks the initrd, builds the host app, codesigns it, and boots a VM -- all in ~10 seconds. This page explains what each stage produces and which tools do the work.
+When you run `just run`, Capsem cross-compiles guest binaries, repacks the initrd, builds the host binaries, codesigns them, and boots a VM -- all in ~10 seconds. This page explains what each stage produces and which tools do the work.
 
 ## The build pipeline
 
@@ -16,7 +16,8 @@ flowchart TD
         AGENT["capsem-pty-agent"]
         NETPROXY["capsem-net-proxy"]
         MCP["capsem-mcp-server"]
-        CARGO_CROSS --> AGENT & NETPROXY & MCP
+        SYSUTIL["capsem-sysutil"]
+        CARGO_CROSS --> AGENT & NETPROXY & MCP & SYSUTIL
     end
 
     subgraph stage2["2. Initrd repack"]
@@ -24,17 +25,16 @@ flowchart TD
         SCRIPTS["capsem-init + doctor\n+ bench + snapshots"]
         REPACK["cpio + gzip repack"]
         INITRD_IN --> REPACK
-        AGENT & NETPROXY & MCP --> REPACK
+        AGENT & NETPROXY & MCP & SYSUTIL --> REPACK
         SCRIPTS --> REPACK
         REPACK --> INITRD_OUT["initrd.img\n(repacked)"]
     end
 
-    subgraph stage3["3. Host binary"]
-        PNPM["pnpm install"]
-        ASTRO["astro build\n(Astro + Svelte + Tailwind)"]
-        DIST["frontend/dist/\n(static HTML/JS/CSS)"]
-        CARGO_HOST["cargo build -p capsem\n(Tauri embeds frontend)"]
-        PNPM --> ASTRO --> DIST --> CARGO_HOST
+    subgraph stage3["3. Host binaries"]
+        PNPM["pnpm install + astro build"]
+        DIST["frontend/dist/"]
+        CARGO_HOST["cargo build\n(6 host binaries)"]
+        PNPM --> DIST --> CARGO_HOST
         CARGO_HOST --> SIGN["codesign\n(com.apple.security.virtualization)"]
     end
 
@@ -51,7 +51,7 @@ flowchart TD
     INITRD_BASE -.-> INITRD_IN
 
     subgraph stage4["4. Boot"]
-        SIGN --> BOOT["capsem binary"]
+        SIGN --> BOOT["capsem-service\n+ capsem-process"]
         INITRD_OUT --> BOOT
         VMLINUZ --> BOOT
         ROOTFS --> BOOT
@@ -61,13 +61,14 @@ flowchart TD
 
 ## Stage 1: Guest binaries (compilation)
 
-The guest agent crate (`crates/capsem-agent/`) produces three binaries that run inside the Linux VM, statically linked with musl:
+The guest agent crate (`crates/capsem-agent/`) produces four binaries that run inside the Linux VM, statically linked with musl:
 
 | Binary | Purpose | Target |
 |--------|---------|--------|
 | `capsem-pty-agent` | Bridges terminal I/O over vsock | `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl` |
 | `capsem-net-proxy` | Relays HTTPS to host MITM proxy over vsock | same |
 | `capsem-mcp-server` | MCP tool relay over vsock | same |
+| `capsem-sysutil` | Lifecycle multi-call (shutdown/halt/poweroff/reboot/suspend) | same |
 
 On **macOS**, `cross_compile_agent()` delegates to `container_compile_agent()` which builds natively inside a Linux container (docker). Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts. No host cross-compile toolchain needed.
 
@@ -83,11 +84,11 @@ linker = "rust-lld"
 
 ### Verifying the full Linux build locally
 
-`just cross-compile [arch]` builds everything in a container: agent binaries, frontend, and the full Tauri app (deb + AppImage). This catches linuxdeploy and system dep issues before CI.
+`just cross-compile [arch]` builds everything in a container: agent binaries, frontend, and all host binaries (deb package). This catches system dep issues before CI.
 
 ```bash
 just cross-compile           # Build for host arch (arm64 on Apple Silicon)
-just cross-compile x86_64    # Build x86_64 deb + AppImage
+just cross-compile x86_64    # Build x86_64 deb
 ```
 
 ## Stage 2: Initrd repack
@@ -102,17 +103,17 @@ The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. T
 
 This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
 
-## Stage 3: Host binary
+## Stage 3: Host binaries
 
 This stage has two parts: the frontend build and the Rust compilation.
 
 ### Frontend (`pnpm build`)
 
-The UI lives in `frontend/` and is built by pnpm before Rust compilation starts. The build chain:
+The UI lives in `frontend/` and is built by pnpm. The build chain:
 
-1. **pnpm install** -- installs npm dependencies (Astro, Svelte, Tailwind, DaisyUI, xterm.js, LayerChart, sql.js, Tauri API bindings)
+1. **pnpm install** -- installs npm dependencies (Astro, Svelte, Tailwind, Preline, xterm.js, LayerChart, sql.js)
 2. **astro build** -- compiles `.astro` and `.svelte` files into static HTML/JS/CSS in `frontend/dist/`
-3. Tauri's build step copies `frontend/dist/` into the Rust binary as embedded assets
+3. The built frontend is served by capsem-gateway over HTTP (and bundled into capsem-app as offline fallback)
 
 The frontend stack:
 
@@ -120,29 +121,35 @@ The frontend stack:
 |------------|------|
 | [Astro 5](https://astro.build) | Static site generator -- page routing, builds the app shell |
 | [Svelte 5](https://svelte.dev) | Reactive components -- terminal view, stats charts, settings panels |
-| [Tailwind v4](https://tailwindcss.com) + [DaisyUI v5](https://daisyui.com) | Styling -- utility classes + themed component library |
+| [Tailwind v4](https://tailwindcss.com) + [Preline](https://preline.co) | Styling -- utility classes + themed CSS-only component library |
 | [xterm.js 6](https://xtermjs.org) | Terminal emulator -- renders the in-VM shell |
 | [LayerChart 2](https://layerchart.com) | Charts -- session stats, cost tracking (D3-based Svelte library) |
 | [sql.js](https://sql.js.org) | SQLite in the browser -- queries session DBs client-side |
 
-For frontend iteration without booting a VM, use `just ui` (Astro dev server with mock data on port 5173). For the full Tauri app with hot-reload, use `just dev`.
+For frontend iteration without booting a VM, use `just ui` (Astro dev server with mock data on port 5173).
 
 ### Rust compilation (`cargo build`)
 
-The Rust workspace compiles into a single `capsem` binary:
+The Rust workspace produces multiple binaries. Six host binaries and the Tauri desktop app:
 
-| Crate | Role |
-|-------|------|
-| `capsem-core` | All business logic: VM config, boot, vsock, MITM proxy, MCP gateway, network policy, telemetry |
-| `capsem-app` | Thin Tauri shell: IPC commands, CLI, state management |
-| `capsem-proto` | Shared protocol types between host and guest |
-| `capsem-logger` | Session DB schema and async writer (SQLite) |
+| Crate | Binary | Role |
+|-------|--------|------|
+| `capsem-core` | (lib) | All business logic: VM config, boot, vsock, MITM proxy, MCP gateway, network policy, telemetry |
+| `capsem-service` | `capsem-service` | Background daemon: Axum HTTP over UDS, VM lifecycle |
+| `capsem-process` | `capsem-process` | Per-VM: boots VM, bridges vsock, manages jobs |
+| `capsem` | `capsem` | CLI: HTTP over UDS to service |
+| `capsem-mcp` | `capsem-mcp` | MCP server: stdio, bridges AI agent tool calls to service |
+| `capsem-gateway` | `capsem-gateway` | HTTP gateway: TCP:19222, proxies to service, WebSocket terminal |
+| `capsem-tray` | `capsem-tray` | System tray: polls gateway, shows VM status |
+| `capsem-app` | `capsem-ui` | Thin Tauri webview: points at gateway, bundled frontend fallback |
+| `capsem-proto` | (lib) | Shared protocol types (host-guest, service-process IPC) |
+| `capsem-logger` | (lib) | Session DB schema and async writer (SQLite) |
 
-On macOS, the binary must be codesigned with the `com.apple.security.virtualization` entitlement or Virtualization.framework crashes. The justfile handles this automatically via the `_sign` recipe.
+On macOS, all binaries must be codesigned with the `com.apple.security.virtualization` entitlement or Virtualization.framework crashes. The justfile handles this automatically via the `_sign` recipe.
 
 ## Stage 4: Boot
 
-The `capsem` binary loads three assets from `assets/{arch}/`:
+The service loads three assets from `~/.capsem/assets/v{VERSION}/` (installed) or `assets/{arch}/` (development):
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|
@@ -150,7 +157,7 @@ The `capsem` binary loads three assets from `assets/{arch}/`:
 | `initrd.img` | `just run` (repacked each time) | Guest binaries + init scripts |
 | `rootfs.squashfs` | `just build-assets` | Debian bookworm base + AI CLIs + tools |
 
-Boot sequence: kernel loads initrd into RAM, `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy. The host connects over vsock.
+Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
 
 ## VM image builds (`just build-assets`)
 
@@ -207,27 +214,24 @@ flowchart LR
 | `preflight` | macos-14 | Validates Apple cert, Tauri key, notarization creds |
 | `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
 | `test` | macos-14 | Unit tests + coverage, frontend check, audit |
-| `build-app-macos` | macos-14 | DMG, codesigned + notarized, latest.json |
-| `build-app-linux` | ubuntu arm64 + x86_64 | deb (both arches), AppImage (x86_64 only), latest.json |
+| `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
+| `build-app-linux` | ubuntu arm64 + x86_64 | deb (both arches), latest.json |
 | `create-release` | ubuntu | Merges latest.json, signs manifest, creates GitHub release |
 
 **Key design decisions:**
 - `test` runs in parallel with `build-assets` and app builds -- it gates `create-release` but doesn't block compilation
-- arm64 Linux produces `.deb` only -- linuxdeploy has no arm64 build
+- arm64 Linux produces `.deb` only
 - Each platform's `latest.json` is merged in `create-release` for the Tauri auto-updater
 
 ### Local vs CI
 
-`just cross-compile` builds the Linux app inside a container and catches most issues, but the environments differ:
+`just cross-compile` builds the Linux binaries inside a container and catches most issues, but the environments differ:
 
 | Aspect | Local (container) | CI (bare runner) |
 |--------|-------------------|------------------|
 | Base | `rust:bookworm` | `ubuntu-24.04` |
 | Node | nodesource script | `actions/setup-node` |
-| FUSE | available (Colima VM) | not guaranteed |
 | Volumes | none (clean build) | none (fresh runner) |
-
-AppImage bundling that works locally can fail in CI due to FUSE differences. Always verify the first CI run after changing Linux packaging.
 
 ## Tools summary
 
@@ -243,6 +247,6 @@ Everything below is checked by `bootstrap.sh` and `just doctor`. You don't need 
 | Docker (via Colima on macOS) | Container runtime for kernel + rootfs builds |
 | cargo-llvm-cov | Code coverage (`just test`) |
 | cargo-audit | Dependency vulnerability scanning |
-| cargo-tauri | Tauri CLI for app builds |
+| cargo-tauri | Tauri CLI for desktop app builds |
 | b3sum | BLAKE3 checksums for asset integrity |
-| codesign (macOS) | Signs binary with virtualization entitlement |
+| codesign (macOS) | Signs binaries with virtualization entitlement |

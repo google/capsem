@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+    <path id="ai-star" d="M 0 -45 C 0 -12 12 0 45 0 C 12 0 0 12 0 45 C 0 12 -12 0 -45 0 C -12 0 0 -12 0 -45 Z" />
+    <path id="orbital-arc" d="M 26 -11 A 28 28 0 0 0 11 -26 A 48 48 0 0 1 26 -11 Z" />
+  </defs>
+  <g fill="url(#g)">
+    <use href="#ai-star" transform="translate(50, 50)" />
+    <use href="#orbital-arc" transform="translate(50, 50)" />
+    <use href="#orbital-arc" transform="translate(50, 50) rotate(90)" />
+    <use href="#orbital-arc" transform="translate(50, 50) rotate(180)" />
+    <use href="#orbital-arc" transform="translate(50, 50) rotate(270)" />
+    <use href="#ai-star" transform="translate(82, 18) scale(0.25) rotate(15)" />
+    <use href="#ai-star" transform="translate(22, 78) scale(0.15) rotate(-15)" />
+  </g>
+</svg>

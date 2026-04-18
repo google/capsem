@@ -20,11 +20,11 @@ The guest VM is always Linux (Debian bookworm, custom hardened kernel). Only the
 
 ## Architecture
 
-On macOS and Linux, the VMM is **embedded** in the Capsem binary -- no external process needed. On Windows, crosvm runs as a subprocess.
+On macOS and Linux, the VMM is **embedded** in the capsem-process binary -- no external VMM process needed. On Windows, crosvm runs as a subprocess.
 
 ```mermaid
 graph TD
-    A[capsem-app] --> B[capsem-core]
+    A[capsem-process] --> B[capsem-core]
     B --> C{Hypervisor Trait}
     C -->|macOS| D["Apple VZ (embedded)"]
     C -->|Linux| E["KVM (embedded, rust-vmm)"]
@@ -46,13 +46,15 @@ graph TD
 
 ```mermaid
 sequenceDiagram
-    participant App as capsem-app
+    participant Svc as capsem-service
+    participant Proc as capsem-process
     participant Core as capsem-core
     participant HV as Hypervisor::boot()
     participant VM as Platform VM
     participant Guest as Linux Guest
 
-    App->>Core: start_session(config)
+    Svc->>Proc: spawn(session_config)
+    Proc->>Core: start_session(config)
     Core->>HV: boot(config, vsock_ports)
     HV->>VM: Create VM (VZ/KVM fd)
     HV->>VM: Allocate guest memory
@@ -65,21 +67,23 @@ sequenceDiagram
     Guest->>Guest: capsem-init (PID 1)
     Guest->>Guest: Mount overlayfs + VirtioFS
     Guest->>Guest: Start dnsmasq, net-proxy
-    Guest->>Guest: Start pty-agent, mcp-server
-    Guest-->>Core: vsock:5000 Ready
-    Core-->>App: VM running, vsock wired
+    Guest->>Guest: Start pty-agent, mcp-server, sysutil
+    Guest-->>Proc: vsock:5000 Ready
+    Proc-->>Svc: VM running, vsock wired
 ```
 
 ## Guest-Host Communication
 
-All guest-host communication uses vsock (virtio socket), with four dedicated ports:
+All guest-host communication uses vsock (virtio socket), with six dedicated ports:
 
-| Port | Purpose |
-|------|---------|
-| 5000 | Control messages (resize, heartbeat, exec) |
-| 5001 | Terminal data (PTY I/O) |
-| 5002 | MITM proxy (HTTPS connections) |
-| 5003 | MCP gateway (tool routing) |
+| Port | Purpose | Guest binary |
+|------|---------|-------------|
+| 5000 | Control messages (resize, heartbeat, exec, file I/O) | capsem-pty-agent |
+| 5001 | Terminal data (PTY I/O) | capsem-pty-agent |
+| 5002 | MITM proxy (HTTPS connections) | capsem-net-proxy |
+| 5003 | MCP gateway (tool routing, NDJSON) | capsem-mcp-server |
+| 5004 | Lifecycle commands (shutdown/suspend) | capsem-sysutil |
+| 5005 | Exec output (direct child stdout) | capsem-pty-agent |
 
 ### Vsock Per Platform
 

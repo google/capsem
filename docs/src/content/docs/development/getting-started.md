@@ -96,10 +96,10 @@ Needed for `just full-test` (integration tests exercise real AI API calls) and i
 Create `~/.capsem/user.toml`:
 
 ```toml
-[providers.anthropic]
+[ai.anthropic]
 api_key = "sk-ant-..."
 
-[providers.google]
+[ai.google]
 api_key = "AIza..."
 ```
 
