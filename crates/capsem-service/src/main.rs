@@ -1705,19 +1705,6 @@ async fn handle_asset_status(
     }
 }
 
-/// POST /setup/assets/download -- trigger background asset download.
-/// NOTE: Full download integration depends on the asset pipeline fix in progress.
-/// Currently returns a stub response.
-async fn handle_trigger_download(
-    State(_state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: Wire to AssetManager download once asset pipeline is fixed.
-    Ok(Json(json!({
-        "started": false,
-        "reason": "asset pipeline not yet wired -- run `capsem update` from the terminal"
-    })))
-}
-
 /// POST /setup/corp-config -- apply corporate config from URL or inline TOML.
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
@@ -2723,7 +2710,6 @@ async fn main() -> Result<()> {
         .route("/setup/detect", get(handle_detect_host_config))
         .route("/setup/complete", post(handle_complete_onboarding))
         .route("/setup/assets", get(handle_asset_status))
-        .route("/setup/assets/download", post(handle_trigger_download))
         .route("/setup/corp-config", post(handle_corp_config))
         .route("/mcp/servers", get(handle_mcp_servers))
         .route("/mcp/tools", get(handle_mcp_tools))

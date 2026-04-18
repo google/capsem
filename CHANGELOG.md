@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`just build-ui [release]` recipe** -- frontend build + `cargo build -p capsem-ui` in lockstep. Required because `tauri::generate_context!()` embeds the frontend bundle at cargo compile time; rebuilding only the frontend has no effect on an already-compiled binary. Documented in `CLAUDE.md`, `/dev-just`, and `/frontend-design`.
 - **`just run-ui -- [args]`** -- `build-ui` then launch `./target/debug/capsem-ui` with passthrough args (e.g., `just run-ui -- --connect <vm-id>`).
 
+### Removed
+- **`POST /setup/assets/download`** -- zero callers anywhere (no frontend, no CLI, no MCP tool wraps it). The handler was a stub that always returned `{"started": false, "reason": "asset pipeline not yet wired -- run \`capsem update\` from the terminal"}`. The real asset download path is the `capsem update` CLI. Removing the route and the `handle_trigger_download` handler; if/when an in-service asset pipeline is added later, add it back under the name that matches its behavior.
+
 ### Changed
 - **`capsem_service_logs` now routes through the service's `/service-logs` endpoint** instead of opening `$CAPSEM_RUN_DIR/service.log` directly. The direct-file read was an inherited shortcut and left two parallel implementations of the same logic (MCP tool + HTTP handler) that could drift. The MCP tool now has a single code path on par with `capsem_vm_logs`; grep/tail filtering is still applied locally on the returned text. Post-mortem reads when capsem-service has crashed are no longer covered by this tool -- use `tail -f ~/.capsem/run/service.log` from the shell, same as every other tool that can't reach a dead service.
 
