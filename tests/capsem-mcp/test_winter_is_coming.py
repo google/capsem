@@ -74,19 +74,21 @@ def test_winter_is_coming(mcp_session):
             f"fork took {fork_secs:.3f}s, expected < {MAX_FORK_SECS}s"
         )
 
-        # 5. Image size must be actual disk usage, not a 2GB sparse lie
-        res = mcp_session.call_tool("capsem_image_inspect", {"name": image})
+        # 5. Forked VM disk usage must be actual, not a 2GB sparse lie.
+        # Persistent VMs carry size_bytes in capsem_info (no separate
+        # /images surface since the rename).
+        res = mcp_session.call_tool("capsem_info", {"id": image})
         info = parse_content(res)
         size_mb = info["size_bytes"] / (1024 * 1024)
         assert size_mb < MAX_IMAGE_SIZE_MB, (
-            f"image is {size_mb:.1f}MB, expected < {MAX_IMAGE_SIZE_MB}MB "
+            f"forked VM is {size_mb:.1f}MB, expected < {MAX_IMAGE_SIZE_MB}MB "
             f"(sparse file reporting actual blocks?)"
         )
 
-        # 6. Boot from forked image
+        # 6. Boot another VM forked from the first fork
         mcp_session.call_tool("capsem_create", {
             "name": forked,
-            "image": image,
+            "from": image,
         })
         assert wait_ready(mcp_session, forked), f"{forked} never exec-ready"
 
@@ -113,12 +115,8 @@ def test_winter_is_coming(mcp_session):
         assert "the north remembers" in content_text(res), "nested workspace file lost in fork"
 
     finally:
-        for v in [forked, vm]:
+        for v in [forked, image, vm]:
             try:
                 mcp_session.call_tool("capsem_delete", {"id": v})
             except Exception:
                 pass
-        try:
-            mcp_session.call_tool("capsem_image_delete", {"name": image})
-        except Exception:
-            pass

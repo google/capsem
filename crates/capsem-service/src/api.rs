@@ -74,6 +74,11 @@ pub struct SandboxInfo {
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// On-disk size of the session dir in bytes. Populated for /info on
+    /// persistent VMs; useful for verifying that fork produced a compact
+    /// overlay and not a bloated sparse file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
     // -- Telemetry (populated for /info, omitted when absent) --
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
@@ -115,6 +120,7 @@ impl SandboxInfo {
             version: None,
             forked_from: None,
             description: None,
+            size_bytes: None,
             created_at: None,
             uptime_secs: None,
             total_input_tokens: None,

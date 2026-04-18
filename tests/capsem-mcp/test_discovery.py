@@ -8,11 +8,11 @@ EXPECTED_TOOLS = {
     "capsem_create", "capsem_list", "capsem_info",
     "capsem_exec", "capsem_read_file", "capsem_write_file",
     "capsem_inspect_schema", "capsem_inspect", "capsem_delete",
-    "capsem_stop", "capsem_resume", "capsem_persist",
+    "capsem_stop", "capsem_suspend", "capsem_resume", "capsem_persist",
     "capsem_purge", "capsem_run", "capsem_vm_logs",
     "capsem_service_logs", "capsem_version",
-    "capsem_fork", "capsem_image_list",
-    "capsem_image_inspect", "capsem_image_delete",
+    "capsem_fork",
+    "capsem_mcp_servers", "capsem_mcp_tools", "capsem_mcp_call",
 }
 
 
@@ -69,9 +69,3 @@ def test_fork_schema_fields(mcp_session):
     assert "description" in props, "Missing 'description' in fork schema"
 
 
-def test_image_inspect_schema_fields(mcp_session):
-    """capsem_image_inspect schema must declare name."""
-    resp = mcp_session.request("tools/list")
-    tool = next(t for t in resp["result"]["tools"] if t["name"] == "capsem_image_inspect")
-    props = tool["inputSchema"].get("properties", {})
-    assert "name" in props, "Missing 'name' in image_inspect schema"

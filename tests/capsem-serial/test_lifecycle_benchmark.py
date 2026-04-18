@@ -114,10 +114,10 @@ def _run_fork_benchmark(client):
         size_bytes = fork_resp.get("size_bytes", 0)
         size_mb = size_bytes / (1024 * 1024)
 
-        # Boot from image -- time provision + exec-ready
+        # Boot from fork -- time provision + exec-ready
         t0 = time.monotonic()
         client.post("/provision", {
-            "name": dst, "image": img,
+            "name": dst, "from": img,
             "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         boot_provision_ms = (time.monotonic() - t0) * 1000
@@ -145,15 +145,11 @@ def _run_fork_benchmark(client):
             "ws_survived": ws_survived,
         }
     finally:
-        for v in [dst, src]:
+        for v in [dst, src, img]:
             try:
                 client.delete(f"/delete/{v}")
             except Exception:
                 pass
-        try:
-            client.delete(f"/images/{img}")
-        except Exception:
-            pass
 
 
 def test_lifecycle_benchmark():

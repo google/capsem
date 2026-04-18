@@ -219,8 +219,6 @@ struct CreateParams {
     /// Clone state from an existing persistent session. The new session inherits
     /// the source's disk state (workspace, rootfs overlay, session.db).
     from: Option<String>,
-    /// Alias for 'from' (used by some test suites)
-    image: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -389,20 +387,24 @@ impl CapsemHandler {
         Ok(buf)
     }
 
-    #[tool(name = "capsem_create", description = "Create a new session. Named sessions are persistent. Returns session ID. Defaults: 2048 MB RAM, 2 CPUs. If name already exists, returns error -- use capsem_resume instead")]
+    #[tool(name = "capsem_create", description = "Create a new session. Named sessions are persistent. Returns session ID. RAM/CPU default to the user's configured VM settings (vm.resources.ram_gb / cpu_count) when unspecified. If name already exists, returns error -- use capsem_resume instead")]
     async fn create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, String> {
         info!(?params, "capsem_create tool called");
         let persistent = params.name.is_some();
         let mut body = json!({
             "name": params.name,
-            "ram_mb": params.ram_mb.unwrap_or(2048),
-            "cpus": params.cpu_count.unwrap_or(2),
             "persistent": persistent,
         });
+        if let Some(ram) = params.ram_mb {
+            body["ram_mb"] = json!(ram);
+        }
+        if let Some(cpus) = params.cpu_count {
+            body["cpus"] = json!(cpus);
+        }
         if let Some(env) = params.env {
             body["env"] = json!(env);
         }
-        if let Some(from) = params.from.or(params.image) {
+        if let Some(from) = params.from {
             body["from"] = json!(from);
         }
         match self.client.request::<Value, Value>("POST", "/provision", Some(body)).await {
@@ -624,45 +626,6 @@ impl CapsemHandler {
         }).to_string())
     }
 
-    #[tool(name = "capsem_image_list", description = "List all user-created images available for booting")]
-    async fn image_list(&self) -> Result<String, String> {
-        match self.client.request::<Value, Value>("GET", "/images", None).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
-    }
-
-    #[tool(name = "capsem_image_inspect", description = "Get detailed information about a specific image")]
-    async fn image_inspect(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
-        match self.client.request::<Value, Value>("GET", &format!("/images/{}", params.name), None).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
-    }
-
-    #[tool(name = "capsem_image_delete", description = "Delete a user-created image")]
-    async fn image_delete(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
-        match self.client.request::<Value, Value>("DELETE", &format!("/images/{}", params.name), None).await {
-            Ok(val) => {
-                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                    return Err(err.to_string());
-                }
-                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
-            }
-            Err(e) => Err(e.to_string()),
-        }
-    }
-
     #[tool(name = "capsem_mcp_servers", description = "List configured MCP servers with connection status and tool counts")]
     async fn mcp_servers(&self) -> Result<String, String> {
         let resp: Vec<Value> = self.client.request("GET", "/mcp/servers", None::<&()>).await
@@ -771,7 +734,6 @@ mod tests {
             version: None,
             env: None,
             from: None,
-            image: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert!(v.get("ramMb").is_some());

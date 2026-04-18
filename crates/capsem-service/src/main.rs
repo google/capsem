@@ -1110,70 +1110,6 @@ async fn handle_fork(
     }))
 }
 
-async fn handle_list_images(
-    State(state): State<Arc<ServiceState>>,
-) -> Json<serde_json::Value> {
-    let registry = state.persistent_registry.lock().unwrap();
-    let mut images = Vec::new();
-    for entry in registry.data.vms.values() {
-        images.push(serde_json::json!({
-            "name": entry.name,
-            "description": entry.description,
-            "created_at": entry.created_at,
-            "base_version": entry.base_version,
-            "forked_from": entry.forked_from,
-        }));
-    }
-    Json(serde_json::json!({ "images": images }))
-}
-
-async fn handle_inspect_image(
-    State(state): State<Arc<ServiceState>>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let registry = state.persistent_registry.lock().unwrap();
-    if let Some(entry) = registry.get(&name) {
-        let size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir)
-            .unwrap_or(0);
-            
-        Ok(Json(serde_json::json!({
-            "name": entry.name,
-            "description": entry.description,
-            "created_at": entry.created_at,
-            "base_version": entry.base_version,
-            "forked_from": entry.forked_from,
-            "source_vm": entry.forked_from, // compat for MCP tests
-            "session_dir": entry.session_dir,
-            "ram_mb": entry.ram_mb,
-            "cpus": entry.cpus,
-            "size_bytes": size_bytes,
-        })))
-    } else {
-        Err(AppError(StatusCode::NOT_FOUND, format!("image '{}' not found", name)))
-    }
-}
-
-async fn handle_delete_image(
-    State(state): State<Arc<ServiceState>>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let mut registry = state.persistent_registry.lock().unwrap();
-    if registry.get(&name).is_some() {
-        let entry = registry.data.vms.remove(&name).unwrap();
-        let _ = registry.save();
-        
-        // Asynchronously delete the session directory
-        let dir = entry.session_dir;
-        tokio::task::spawn_blocking(move || {
-            let _ = std::fs::remove_dir_all(dir);
-        });
-        
-        Ok(Json(serde_json::json!({ "ok": true })))
-    } else {
-        Err(AppError(StatusCode::NOT_FOUND, format!("image '{}' not found", name)))
-    }
-}
-
 async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<ProvisionRequest>,
@@ -1335,6 +1271,7 @@ async fn handle_info(
             info.version = Some(entry.base_version.clone());
             info.forked_from = entry.forked_from.clone();
             info.description = entry.description.clone();
+            info.size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
             return Ok(Json(info));
         }
     }
@@ -2740,8 +2677,6 @@ async fn main() -> Result<()> {
         .route("/service-logs", get(handle_service_logs))
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))
-        .route("/images", get(handle_list_images))
-        .route("/images/{name}", get(handle_inspect_image).delete(handle_delete_image))
         .route("/settings", get(handle_get_settings).post(handle_save_settings))
         .route("/settings/presets", get(handle_get_presets))
         .route("/settings/presets/{id}", post(handle_apply_preset))

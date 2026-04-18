@@ -2231,7 +2231,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let result = inject_capsem_mcp_server(r#"{}"#);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["capsem"]["command"],
+            parsed["mcpServers"]["local"]["command"],
             "/run/capsem-mcp-server"
         );
     }
@@ -2243,7 +2243,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["mcpServers"]["github"]["command"], "npx");
         assert_eq!(
-            parsed["mcpServers"]["capsem"]["command"],
+            parsed["mcpServers"]["local"]["command"],
             "/run/capsem-mcp-server"
         );
     }
@@ -2255,7 +2255,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["permissions"]["defaultMode"], "bypassPermissions");
         assert_eq!(
-            parsed["mcpServers"]["capsem"]["command"],
+            parsed["mcpServers"]["local"]["command"],
             "/run/capsem-mcp-server"
         );
     }
@@ -2275,7 +2275,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let claude = files.iter().find(|f| f.path == "/root/.claude/settings.json").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["capsem"]["command"],
+            parsed["mcpServers"]["local"]["command"],
             "/run/capsem-mcp-server",
             "capsem MCP server should be injected into Claude settings.json"
         );
@@ -2291,7 +2291,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let gemini = files.iter().find(|f| f.path == "/root/.gemini/settings.json").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["capsem"]["command"],
+            parsed["mcpServers"]["local"]["command"],
             "/run/capsem-mcp-server",
             "capsem MCP server should be injected into Gemini settings.json"
         );
@@ -2313,7 +2313,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
         assert_eq!(parsed["mcpServers"]["myserver"]["command"], "my-tool");
         assert_eq!(
-            parsed["mcpServers"]["capsem"]["command"],
+            parsed["mcpServers"]["local"]["command"],
             "/run/capsem-mcp-server"
         );
     }
@@ -2325,7 +2325,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         let gc = settings_to_guest_config(&resolved);
         let files = gc.files.unwrap();
         let projects = files.iter().find(|f| f.path == "/root/.gemini/projects.json").unwrap();
-        assert!(!projects.content.contains("capsem"), "projects.json should not have capsem injected");
+        assert!(!projects.content.contains("mcpServers"), "projects.json should not have mcpServers injected");
     }
 
     #[test]
@@ -2339,7 +2339,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["capsem"]["command"],
+            parsed["mcpServers"]["local"]["command"],
             "/run/capsem-mcp-server",
             "capsem MCP server should be injected into .claude.json"
         );
@@ -2355,8 +2355,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             .find(|f| f.path == "/root/.codex/config.toml")
             .unwrap();
         assert!(
-            codex.content.contains("capsem"),
-            "codex config.toml should contain capsem MCP server"
+            codex.content.contains("[mcp_servers.local]"),
+            "codex config.toml should declare [mcp_servers.local]"
         );
         assert!(
             codex.content.contains("/run/capsem-mcp-server"),
@@ -2372,7 +2372,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     fn inject_capsem_mcp_server_toml_empty() {
         let result = inject_capsem_mcp_server_toml("");
         let parsed: toml::Value = toml::from_str(&result).unwrap();
-        let cmd = parsed["mcp_servers"]["capsem"]["command"].as_str().unwrap();
+        let cmd = parsed["mcp_servers"]["local"]["command"].as_str().unwrap();
         assert_eq!(cmd, "/run/capsem-mcp-server");
     }
 
@@ -2386,7 +2386,7 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
             "npx"
         );
         assert_eq!(
-            parsed["mcp_servers"]["capsem"]["command"].as_str().unwrap(),
+            parsed["mcp_servers"]["local"]["command"].as_str().unwrap(),
             "/run/capsem-mcp-server"
         );
     }
@@ -3056,17 +3056,17 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
 
     #[test]
     fn mcp_section_parsed_from_defaults() {
-        // defaults.toml has [mcp.capsem]
+        // guest/config/mcp/local.toml declares [local]
         let servers = super::loader::load_mcp_servers();
-        let capsem = servers.iter().find(|s| s.key == "capsem");
-        assert!(capsem.is_some(), "capsem MCP server should be in defaults");
-        let capsem = capsem.unwrap();
-        assert_eq!(capsem.name, "Capsem");
-        assert_eq!(capsem.transport, McpTransport::Stdio);
-        assert_eq!(capsem.command.as_deref(), Some("/run/capsem-mcp-server"));
-        assert!(capsem.builtin);
-        assert!(capsem.enabled);
-        assert_eq!(capsem.source, PolicySource::Default);
+        let local = servers.iter().find(|s| s.key == "local");
+        assert!(local.is_some(), "local MCP server should be in defaults");
+        let local = local.unwrap();
+        assert_eq!(local.name, "Local");
+        assert_eq!(local.transport, McpTransport::Stdio);
+        assert_eq!(local.command.as_deref(), Some("/run/capsem-mcp-server"));
+        assert!(local.builtin);
+        assert!(local.enabled);
+        assert_eq!(local.source, PolicySource::Default);
     }
 
     #[test]
@@ -3082,10 +3082,10 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         assert!(mcp_group.is_some(), "tree should have MCP Servers group");
 
         if let Some(SettingsNode::Group { children, .. }) = mcp_group {
-            let has_capsem = children.iter().any(|c| {
-                matches!(c, SettingsNode::McpServer(s) if s.key == "capsem")
+            let has_local = children.iter().any(|c| {
+                matches!(c, SettingsNode::McpServer(s) if s.key == "local")
             });
-            assert!(has_capsem, "MCP Servers group should contain capsem");
+            assert!(has_local, "MCP Servers group should contain local");
         }
     }
 
@@ -3126,6 +3126,13 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         corp_entries: Vec<(&str, SettingValue)>,
         f: F,
     ) {
+        // This helper mutates process-wide env vars that the loader reads.
+        // Serialize across the whole test binary so parallel tests don't
+        // stomp each other's CAPSEM_*_CONFIG (caused flaky batch_update_*
+        // failures before this lock).
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
         let dir = tempfile::tempdir().unwrap();
         let user_path = dir.path().join("user.toml");
         let corp_path = dir.path().join("corp.toml");
