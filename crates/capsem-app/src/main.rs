@@ -141,6 +141,10 @@ fn log_filename() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    format_log_filename(secs)
+}
+
+fn format_log_filename(secs: u64) -> String {
     let t = secs % 86400;
     let days = secs / 86400;
     let z = days as i64 + 719468;
@@ -180,7 +184,7 @@ fn main() {
     });
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("capsem_ui=info,frontend=info"));
+        .unwrap_or_else(|_| EnvFilter::new("capsem_app=info,frontend=info"));
 
     let stdout_layer = tracing_subscriber::fmt::layer().with_span_events(FmtSpan::CLOSE);
 
@@ -195,7 +199,7 @@ fn main() {
         version = env!("CARGO_PKG_VERSION"),
         built = option_env!("CAPSEM_BUILD_TS").unwrap_or("dev"),
         args = ?cli_args,
-        "starting capsem-ui"
+        "starting capsem-app"
     );
 
     let connect_id = parse_connect_arg(&cli_args);
@@ -247,4 +251,120 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::thread;
+    use std::time::Duration;
+
+    fn args(input: &[&str]) -> Vec<String> {
+        input.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_flag_returns_value_for_known_flag() {
+        let a = args(&["--connect", "vm-123", "--action", "open"]);
+        assert_eq!(parse_flag(&a, "--connect"), Some("vm-123".into()));
+        assert_eq!(parse_flag(&a, "--action"), Some("open".into()));
+    }
+
+    #[test]
+    fn parse_flag_returns_none_when_flag_missing() {
+        let a = args(&["--other", "x"]);
+        assert_eq!(parse_flag(&a, "--connect"), None);
+    }
+
+    #[test]
+    fn parse_flag_ignores_trailing_flag_without_value() {
+        // "--connect" with no value at end should not panic and should return None.
+        let a = args(&["--connect"]);
+        assert_eq!(parse_flag(&a, "--connect"), None);
+    }
+
+    #[test]
+    fn parse_connect_and_action_share_logic() {
+        let a = args(&["--action", "stop", "--connect", "abc"]);
+        assert_eq!(parse_connect_arg(&a), Some("abc".into()));
+        assert_eq!(parse_action_arg(&a), Some("stop".into()));
+    }
+
+    #[test]
+    fn cleanup_old_logs_removes_expired_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.jsonl");
+        let new = dir.path().join("new.jsonl");
+        fs::write(&old, b"x").unwrap();
+        fs::write(&new, b"y").unwrap();
+
+        // Backdate old file to 30 days ago.
+        let thirty_days_ago = SystemTime::now() - Duration::from_secs(30 * 86400);
+        filetime::set_file_mtime(&old, filetime::FileTime::from_system_time(thirty_days_ago))
+            .unwrap();
+
+        cleanup_old_logs(dir.path(), 7);
+
+        assert!(!old.exists(), "expired file should be deleted");
+        assert!(new.exists(), "recent file should survive");
+    }
+
+    #[test]
+    fn cleanup_old_logs_is_a_noop_on_missing_dir() {
+        // Must not panic.
+        cleanup_old_logs(std::path::Path::new("/nonexistent/capsem-app-test"), 7);
+    }
+
+    #[test]
+    fn cleanup_old_logs_ignores_subdirectories() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        // Subdirs should not be removed even when past the cutoff.
+        let thirty_days_ago = SystemTime::now() - Duration::from_secs(30 * 86400);
+        filetime::set_file_mtime(&sub, filetime::FileTime::from_system_time(thirty_days_ago))
+            .unwrap();
+
+        cleanup_old_logs(dir.path(), 7);
+        assert!(sub.exists());
+    }
+
+    #[test]
+    fn format_log_filename_has_expected_shape() {
+        // 2026-01-01T00:00:00Z → 1767225600
+        let name = format_log_filename(1_767_225_600);
+        assert_eq!(name, "2026-01-01T00-00-00.jsonl");
+    }
+
+    #[test]
+    fn format_log_filename_unix_epoch() {
+        assert_eq!(format_log_filename(0), "1970-01-01T00-00-00.jsonl");
+    }
+
+    #[test]
+    fn format_log_filename_roundtrips_seconds_of_day() {
+        // 86399 = 23:59:59 on 1970-01-01
+        assert_eq!(format_log_filename(86_399), "1970-01-01T23-59-59.jsonl");
+    }
+
+    #[test]
+    fn log_filename_produces_reasonable_modern_shape() {
+        let name = log_filename();
+        // Format: YYYY-MM-DDTHH-MM-SS.jsonl
+        assert!(name.ends_with(".jsonl"));
+        assert_eq!(name.len(), "YYYY-MM-DDTHH-MM-SS.jsonl".len());
+        // Year should be at least 2025 (any CI machine).
+        let year: i32 = name[..4].parse().unwrap();
+        assert!(year >= 2025, "expected modern year in log filename, got {name}");
+    }
+
+    #[test]
+    fn log_filenames_are_stable_across_quick_calls() {
+        let a = log_filename();
+        thread::sleep(Duration::from_millis(5));
+        let b = log_filename();
+        // Shapes match.
+        assert_eq!(a.len(), b.len());
+    }
 }

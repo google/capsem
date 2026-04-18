@@ -1,10 +1,10 @@
 [package]
-name = "capsem-ui"
+name = "capsem-app"
 version.workspace = true
 edition = "2021"
 
 [[bin]]
-name = "capsem-ui"
+name = "capsem-app"
 path = "src/main.rs"
 
 [dependencies]
@@ -26,3 +26,7 @@ workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile = "3"
+filetime = "0.2"

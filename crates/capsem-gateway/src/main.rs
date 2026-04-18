@@ -449,6 +449,111 @@ mod tests {
             .await
             .unwrap();
     }
+
+    // --- Args / CLI parsing ---
+
+    #[test]
+    fn args_have_sensible_defaults() {
+        let a = Args::parse_from(["capsem-gateway"]);
+        assert_eq!(a.port, 19222);
+        assert!(a.foreground);
+        assert!(a.uds_path.is_none());
+    }
+
+    #[test]
+    fn args_port_override() {
+        let a = Args::parse_from(["capsem-gateway", "--port", "8080"]);
+        assert_eq!(a.port, 8080);
+    }
+
+    #[test]
+    fn args_uds_path_override() {
+        let a = Args::parse_from(["capsem-gateway", "--uds-path", "/tmp/custom.sock"]);
+        assert_eq!(a.uds_path, Some(PathBuf::from("/tmp/custom.sock")));
+    }
+
+    #[test]
+    fn args_rejects_bad_port() {
+        let r = Args::try_parse_from(["capsem-gateway", "--port", "abc"]);
+        assert!(r.is_err());
+    }
+
+    // --- Health response reflects the configured service socket ---
+
+    #[tokio::test]
+    async fn health_reports_service_socket_path() {
+        let (app, _) = health_app("/tmp/unique-socket-path.sock");
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["service_socket"].as_str().unwrap(), "/tmp/unique-socket-path.sock");
+    }
+
+    // --- Token endpoint: loopback matrix ---
+
+    #[tokio::test]
+    async fn token_rejects_another_external_ipv4() {
+        let (app, _) = token_app();
+        let mut req = http::Request::builder()
+            .uri("/token")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([8, 8, 8, 8], 443))));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn token_rejects_external_ipv6() {
+        let (app, _) = token_app();
+        let mut req = http::Request::builder()
+            .uri("/token")
+            .body(Body::empty())
+            .unwrap();
+        // 2001:4860:4860::8888 (public Google DNS) -- not loopback.
+        req.extensions_mut().insert(ConnectInfo(SocketAddr::from((
+            [0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888],
+            443,
+        ))));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
+    }
+
+    // --- Events WebSocket: verify the route mounts and upgrades ---
+
+    #[tokio::test]
+    async fn events_ws_without_upgrade_header_is_rejected() {
+        let state = Arc::new(AppState {
+            token: "t".into(),
+            uds_path: "/tmp/x.sock".into(),
+            status_cache: StatusCache::new(),
+            auth_failures: AuthFailureTracker::new(),
+            events_tx: tokio::sync::broadcast::channel(16).0,
+        });
+        let app = axum::Router::new()
+            .route("/events", axum::routing::get(handle_events_ws))
+            .with_state(state);
+        // A plain GET without Upgrade should return 426 Upgrade Required or 400.
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .uri("/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(resp.status(), http::StatusCode::OK);
+    }
 }
 
 async fn shutdown_signal() {
