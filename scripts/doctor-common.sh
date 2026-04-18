@@ -207,11 +207,12 @@ section "VM Assets"
 if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
     if [[ -f "$ASSETS_DIR/manifest.json" ]]; then
         _cargo_ver=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-        _manifest_ver=$(grep '"latest":' "$ASSETS_DIR/manifest.json" | sed 's/.*: "\(.*\)".*/\1/')
+        # v2 manifest: binaries.current holds the binary release that matches Cargo.toml.
+        _manifest_ver=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("binaries",{}).get("current",""))' "$ASSETS_DIR/manifest.json" 2>/dev/null)
         if [[ "$_cargo_ver" == "$_manifest_ver" ]]; then
-            pass "assets version ($_manifest_ver) matches Cargo.toml"
+            pass "binary version ($_manifest_ver) matches Cargo.toml"
         else
-            fixable build-assets "assets version mismatch: Cargo=$_cargo_ver, manifest=$_manifest_ver"
+            fixable build-assets "binary version mismatch: Cargo=$_cargo_ver, manifest.binaries.current=$_manifest_ver"
         fi
 
         if command -v b3sum &>/dev/null && [[ -f "$ASSETS_DIR/B3SUMS" ]]; then
