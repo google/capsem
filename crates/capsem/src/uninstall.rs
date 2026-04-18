@@ -88,9 +88,14 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         }
     }
 
-    // Remove ~/.capsem entirely
+    // Remove ~/.capsem entirely. Overlayfs workdirs under sessions/*/work end
+    // up with mode 000 while the VM is running; chmod the tree back to 0o700
+    // so remove_dir_all can traverse it.
     println!("Removing ~/.capsem...");
-    std::fs::remove_dir_all(&capsem_dir).ok();
+    restore_perms(&capsem_dir);
+    if let Err(e) = std::fs::remove_dir_all(&capsem_dir) {
+        eprintln!("Warning: failed to remove {}: {}", capsem_dir.display(), e);
+    }
 
     // Remove macOS logs
     let log_dir = PathBuf::from(&home).join("Library/Logs/capsem");
@@ -100,4 +105,20 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
 
     println!("Capsem uninstalled.");
     Ok(())
+}
+
+/// Recursively chmod directories to 0o700 so remove_dir_all can traverse
+/// overlayfs workdirs (which end up mode 000 while mounted).
+fn restore_perms(root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.is_dir() {
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700));
+                restore_perms(&path);
+            }
+        }
+    }
 }
