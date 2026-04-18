@@ -1,7 +1,0 @@
-[capsem]
-name = "Capsem"
-description = "Built-in Capsem MCP server for file and snapshot tools"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true
-enabled = true

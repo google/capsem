@@ -923,16 +923,9 @@ max = 32
 # Declarative MCP server definitions. Auto-injected into AI agent configs at boot.
 # Enterprises can add servers via corp.toml [mcp] section.
 
-[mcp.capsem]
-name = "Capsem"
-description = "Built-in Capsem MCP server for file and snapshot tools"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true
-
-[mcp.capsem-host]
-name = "Capsem Host"
-description = "Control sandboxes from within a guest AI agent."
+[mcp.local]
+name = "Local"
+description = "Built-in local tools: HTTP fetch, workspace snapshots"
 transport = "stdio"
 command = "/run/capsem-mcp-server"
 builtin = true

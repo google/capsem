@@ -771,6 +771,7 @@ mod tests {
             version: None,
             env: None,
             from: None,
+            image: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert!(v.get("ramMb").is_some());

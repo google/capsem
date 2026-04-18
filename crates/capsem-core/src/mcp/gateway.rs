@@ -487,7 +487,7 @@ mod tests {
             policy: RwLock::new(Arc::new(McpPolicy::new())),
             domain_policy: std::sync::RwLock::new(Arc::new(DomainPolicy::default_dev())),
             server_manager: tokio::sync::Mutex::new(
-                super::server_manager::McpServerManager::new(vec![], reqwest::Client::new()),
+                crate::mcp::server_manager::McpServerManager::new(vec![], reqwest::Client::new()),
             ),
             http_client: reqwest::Client::new(),
             auto_snapshots: None,

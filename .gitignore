@@ -69,6 +69,9 @@ crates/capsem-app/gen/
 frontend/.astro/
 frontend/dist/
 frontend/node_modules/
+# Generator output -- no runtime code imports it; kept out of the tree to avoid
+# churn on every `just _generate-settings` run. See commit 97ab1b5.
+frontend/src/lib/mock-settings.generated.ts
 
 # Site
 site/dist/

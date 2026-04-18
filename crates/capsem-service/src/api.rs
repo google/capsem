@@ -154,18 +154,20 @@ pub struct RunRequest {
     pub command: String,
     #[serde(default = "default_run_timeout")]
     pub timeout_secs: u64,
-    #[serde(default = "default_run_ram")]
-    pub ram_mb: u64,
-    #[serde(default = "default_run_cpus")]
-    pub cpus: u32,
+    /// Guest RAM in MiB. Falls back to merged VM settings
+    /// (vm.resources.ram_gb, default 4 GiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ram_mb: Option<u64>,
+    /// Guest CPU count. Falls back to merged VM settings
+    /// (vm.resources.cpu_count, default 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
     /// Environment variables to inject into the guest at boot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
 }
 
 fn default_run_timeout() -> u64 { 60 }
-fn default_run_ram() -> u64 { 2048 }
-fn default_run_cpus() -> u32 { 2 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AssetHealth {
@@ -407,10 +409,20 @@ mod tests {
         let json = json!({"name": "my-vm", "ram_mb": 4096, "cpus": 4, "persistent": true});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.name, Some("my-vm".into()));
-        assert_eq!(r.ram_mb, 4096);
-        assert_eq!(r.cpus, 4);
+        assert_eq!(r.ram_mb, Some(4096));
+        assert_eq!(r.cpus, Some(4));
         assert!(r.persistent);
         assert!(r.env.is_none());
+    }
+
+    #[test]
+    fn provision_request_ram_cpus_omitted_deserializes_as_none() {
+        // Service handler fills these from merged VM settings. Callers like
+        // the tray's "New Session" rely on this to honor user defaults.
+        let json = json!({"name": "my-vm"});
+        let r: ProvisionRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(r.ram_mb, None);
+        assert_eq!(r.cpus, None);
     }
 
     #[test]
@@ -424,7 +436,7 @@ mod tests {
 
     #[test]
     fn provision_request_env_omitted() {
-        let r = ProvisionRequest { name: None, ram_mb: 2048, cpus: 2, persistent: false, env: None, from: None };
+        let r = ProvisionRequest { name: None, ram_mb: Some(2048), cpus: Some(2), persistent: false, env: None, from: None };
         let json = serde_json::to_string(&r).unwrap();
         assert!(!json.contains("env"));
         assert!(!json.contains("from"));
@@ -539,12 +551,13 @@ mod tests {
 
     #[test]
     fn run_request_defaults() {
+        // ram_mb/cpus omitted -> None; handler resolves from VM settings.
         let json = json!({"command": "echo hello"});
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.command, "echo hello");
         assert_eq!(r.timeout_secs, 60);
-        assert_eq!(r.ram_mb, 2048);
-        assert_eq!(r.cpus, 2);
+        assert_eq!(r.ram_mb, None);
+        assert_eq!(r.cpus, None);
     }
 
     #[test]
@@ -552,8 +565,8 @@ mod tests {
         let json = json!({"command": "ls", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.timeout_secs, 120);
-        assert_eq!(r.ram_mb, 4096);
-        assert_eq!(r.cpus, 4);
+        assert_eq!(r.ram_mb, Some(4096));
+        assert_eq!(r.cpus, Some(4));
     }
 
     // -----------------------------------------------------------------------

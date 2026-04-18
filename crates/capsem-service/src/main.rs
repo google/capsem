@@ -2466,14 +2466,22 @@ async fn handle_run(
 ) -> Result<Json<ExecResponse>, AppError> {
     let id = generate_tmp_name();
 
-    let ram_bytes = payload.ram_mb * 1024 * 1024;
+    // Resolve ram/cpu from merged VM settings if the caller didn't specify,
+    // matching handle_provision. Keeps `capsem run` settings-driven.
+    let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
+    let ram_mb = payload
+        .ram_mb
+        .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
+    let cpus = payload.cpus.unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+
+    let ram_bytes = ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
 
     // 1. Provision ephemeral VM
     state.provision_sandbox(ProvisionOptions {
         id: &id,
-        ram_mb: payload.ram_mb,
-        cpus: payload.cpus,
+        ram_mb,
+        cpus,
         version_override: Some(state.current_version.clone()),
         persistent: false,
         env: payload.env,
