@@ -260,7 +260,19 @@ impl UdsClient {
                 return Err(e.into());
             }
         };
+        let status = res.status();
         let body_bytes = res.collect().await?.to_bytes();
+        if !status.is_success() {
+            // Surface non-2xx as an error. The service returns JSON like
+            // {"error": "..."} on failure; prefer that message over the raw
+            // status line so callers see actionable detail.
+            let msg = serde_json::from_slice::<Value>(&body_bytes)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+                .unwrap_or_else(|| String::from_utf8_lossy(&body_bytes).into_owned());
+            error!(method, path, status = %status, body = %msg, "service returned non-success status");
+            return Err(anyhow::anyhow!("{status}: {msg}"));
+        }
         match serde_json::from_slice(&body_bytes) {
             Ok(r) => Ok(r),
             Err(e) => {
