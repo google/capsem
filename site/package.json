@@ -1,5 +1,5 @@
 {
-  "name": "capsem-site",
+  "name": "capsem-marketing",
   "type": "module",
   "version": "0.1.0",
   "scripts": {
@@ -9,18 +9,14 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
-      "sharp"
+      "esbuild"
     ]
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.38.2",
-    "@astrojs/starlight-tailwind": "^5.0.0",
-    "@tailwindcss/vite": "^4.0.0",
     "astro": "^6.0.0",
-    "astro-mermaid": "^2.0.1",
-    "mermaid": "^11.13.0",
-    "sharp": "^0.34.5",
-    "tailwindcss": "^4.0.0"
+    "@astrojs/svelte": "^8.0.0",
+    "svelte": "^5.0.0",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/vite": "^4.0.0"
   }
 }

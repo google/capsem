@@ -1,66 +1,17 @@
 import { defineConfig } from 'astro/config';
-import starlight from '@astrojs/starlight';
+import svelte from '@astrojs/svelte';
 import tailwindcss from '@tailwindcss/vite';
-import mermaid from 'astro-mermaid';
+import { fileURLToPath } from 'url';
 
 export default defineConfig({
   site: 'https://capsem.org',
-  integrations: [
-    starlight({
-      title: 'Capsem',
-      description: 'Sandbox AI agents in air-gapped Linux VMs on macOS.',
-      logo: {
-        src: './src/assets/logo.svg',
-      },
-      favicon: '/favicon.svg',
-      social: [
-        {
-          icon: 'github',
-          label: 'GitHub',
-          href: 'https://github.com/google/capsem',
-        },
-      ],
-      editLink: {
-        baseUrl: 'https://github.com/google/capsem/edit/main/site/',
-      },
-      lastUpdated: true,
-      customCss: ['./src/styles/custom.css'],
-      sidebar: [
-        { slug: 'getting-started' },
-        {
-          label: 'Usage',
-          autogenerate: { directory: 'usage' },
-        },
-        {
-          label: 'Architecture',
-          autogenerate: { directory: 'architecture' },
-        },
-        {
-          label: 'Security',
-          autogenerate: { directory: 'security' },
-        },
-        {
-          label: 'Benchmarks',
-          autogenerate: { directory: 'benchmarks' },
-        },
-        {
-          label: 'Debugging',
-          autogenerate: { directory: 'debugging' },
-        },
-        {
-          label: 'Development',
-          autogenerate: { directory: 'development' },
-        },
-        {
-          label: 'Releases',
-          collapsed: true,
-          autogenerate: { directory: 'releases' },
-        },
-      ],
-    }),
-    mermaid(),
-  ],
+  integrations: [svelte()],
   vite: {
     plugins: [tailwindcss()],
+    resolve: {
+      alias: {
+        $lib: fileURLToPath(new URL('./src/lib', import.meta.url)),
+      },
+    },
   },
 });

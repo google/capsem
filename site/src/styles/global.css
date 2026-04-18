@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Capsem Marketing Site Theme
+   ============================================================ */
+
+@theme {
+  /* Accent */
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-accent-secondary: #7c3aed;
+  --color-accent-glow: oklch(0.62 0.18 250 / 0.15);
+
+  /* Surfaces */
+  --color-surface: #ffffff;
+  --color-surface-alt: #f9fafb;
+  --color-surface-dark: #0a0a0a;
+  --color-surface-dark-alt: #141414;
+  --color-surface-card: #ffffff;
+  --color-surface-card-dark: #141414;
+
+  /* Borders */
+  --color-border: #e5e7eb;
+  --color-border-dark: #262626;
+
+  /* Text -- light bg (all pass WCAG AA 4.5:1 on white) */
+  --color-heading: #0a0a0a;
+  --color-body: #4b5563;
+  --color-muted: #6b7280;
+
+  /* Text -- dark bg (all pass WCAG AA 4.5:1 on #0a0a0a) */
+  --color-heading-dark: #ffffff;
+  --color-body-dark: #d4d4d8;
+  --color-muted-dark: #a1a1aa;
+
+  /* Badge */
+  --color-badge-bg: #f3f4f6;
+  --color-badge-text: #374151;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    background: var(--color-surface);
+    color: var(--color-body);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ============================================================
+   Utilities
+   ============================================================ */
+
+@utility gradient-text {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@utility section-dark {
+  background: var(--color-surface-dark);
+  color: var(--color-body-dark);
+}
+
+/* ============================================================
+   Buttons
+   Pill buttons with 4 variants. Use class="btn-primary" etc.
+   ============================================================ */
+
+@utility btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 150ms;
+  background: linear-gradient(to right, var(--color-accent), var(--color-accent-secondary));
+  color: white;
+  &:hover { opacity: 0.9; }
+}
+
+@utility btn-dark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 150ms;
+  background: var(--color-heading);
+  color: var(--color-surface);
+  &:hover { opacity: 0.9; }
+}
+
+@utility btn-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.875rem 1.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 150ms;
+  border: 1px solid var(--color-border);
+  color: var(--color-heading);
+  &:hover { background: var(--color-surface-alt); }
+}
+
+@utility btn-outline-dark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.875rem 1.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 150ms;
+  border: 1px solid var(--color-border-dark);
+  color: var(--color-heading-dark);
+  &:hover { background: var(--color-surface-dark-alt); }
+}
