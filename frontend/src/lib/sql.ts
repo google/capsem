@@ -384,3 +384,42 @@ export const SNAPSHOT_LIST_SQL = `
   )
   ORDER BY s.timestamp DESC
 `;
+
+// -- Inspector preset queries -----------------------------------------------
+
+import type { PresetQuery } from './types';
+
+export const PRESET_QUERIES: PresetQuery[] = [
+  { label: 'Recent events', sql: 'SELECT timestamp, event_type, summary FROM event_log ORDER BY timestamp DESC LIMIT 20' },
+  { label: 'HTTP requests', sql: 'SELECT method, url, status_code, decision, duration_ms FROM http_requests ORDER BY timestamp DESC LIMIT 20' },
+  { label: 'Tool calls', sql: 'SELECT tool_name, server, duration_ms, timestamp FROM tool_calls ORDER BY timestamp DESC LIMIT 20' },
+  { label: 'Model calls', sql: 'SELECT provider, model, input_tokens, output_tokens, estimated_cost_usd FROM model_calls ORDER BY timestamp DESC' },
+  { label: 'File events', sql: 'SELECT path, operation, size_bytes, timestamp FROM file_events ORDER BY timestamp DESC LIMIT 20' },
+];
+
+/**
+ * Validate that a SQL query is a SELECT statement (not INSERT/UPDATE/DELETE/DROP/etc).
+ * Returns null if valid, or an error message if rejected.
+ */
+export function validateSelectOnly(sql: string): string | null {
+  const trimmed = sql.trim();
+  if (!trimmed) return 'Query is empty';
+
+  const stripped = trimmed
+    .replace(/--[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trim();
+
+  if (!stripped) return 'Query is empty (only comments)';
+
+  if (!/^SELECT\b/i.test(stripped)) {
+    return 'Only SELECT queries are allowed';
+  }
+
+  const dangerous = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|ATTACH|DETACH|PRAGMA)\b/i;
+  if (dangerous.test(stripped)) {
+    return 'Query contains forbidden keyword';
+  }
+
+  return null;
+}

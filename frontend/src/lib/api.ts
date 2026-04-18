@@ -509,7 +509,12 @@ function _connectEventWs() {
   if (_eventWs) return;
   if (!_token) return;
   const wsBase = _baseUrl.replace(/^http/, 'ws');
-  _eventWs = new WebSocket(`${wsBase}/events?token=${_token}`);
+  const evUrl = `${wsBase}/events?token=${_token}`;
+  console.log('[api] events-ws connecting url=%s', evUrl.replace(/token=[^&]+/, 'token=***'));
+  _eventWs = new WebSocket(evUrl);
+  _eventWs.onopen = () => {
+    console.log('[api] events-ws connected');
+  };
   _eventWs.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data as string);
@@ -522,7 +527,11 @@ function _connectEventWs() {
       // Ignore malformed messages.
     }
   };
+  _eventWs.onerror = () => {
+    console.warn('[api] events-ws error');
+  };
   _eventWs.onclose = () => {
+    console.log('[api] events-ws closed, reconnecting in 5s');
     _eventWs = null;
     // Auto-reconnect after 5s if still connected.
     if (_connected) {

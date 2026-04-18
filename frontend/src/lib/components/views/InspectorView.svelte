@@ -2,15 +2,13 @@
   import Play from 'phosphor-svelte/lib/Play';
   import CaretDown from 'phosphor-svelte/lib/CaretDown';
   import * as api from '../../api';
-  import {
-    mockPresetQueries, validateSelectOnly, executeMockQuery,
-  } from '../../mock.ts';
-  import type { MockQueryResult } from '../../mock.ts';
+  import { PRESET_QUERIES, validateSelectOnly } from '../../sql';
+  import type { InspectResponse } from '../../types/gateway';
 
   let { vmId }: { vmId: string } = $props();
 
   let sql = $state('');
-  let result = $state<MockQueryResult | null>(null);
+  let result = $state<InspectResponse | null>(null);
   let error = $state<string | null>(null);
   let presetOpen = $state(false);
   let running = $state(false);
@@ -126,7 +124,7 @@
         {#if presetOpen}
           <div class="absolute start-0 top-full mt-1 w-72 bg-dropdown border border-dropdown-border rounded-xl shadow-lg z-50">
             <div class="p-1">
-              {#each mockPresetQueries as preset}
+              {#each PRESET_QUERIES as preset}
                 <button
                   type="button"
                   class="w-full flex flex-col gap-y-0.5 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover text-left"

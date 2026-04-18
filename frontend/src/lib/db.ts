@@ -1,35 +1,18 @@
-// SQL gateway: routes queries to Tauri `query_db` command or mock sql.js.
-import { isMock } from './mock';
+// SQL gateway: routes queries to the gateway /inspect endpoint.
 import type { QueryResult } from './types';
 
 /** Execute a SELECT query against the session DB. */
-export async function queryDb(sql: string, params?: unknown[]): Promise<QueryResult> {
-  if (isMock) {
-    const { queryFixture } = await import('./mock');
-    return queryFixture(sql, params);
-  }
-  const { invoke } = await import('@tauri-apps/api/core');
-  const raw = await invoke<string>('query_db', {
-    sql,
-    db: 'session',
-    params: params ?? [],
-  });
-  return JSON.parse(raw);
+export async function queryDb(sql: string, _params?: unknown[]): Promise<QueryResult> {
+  const { inspectQuery } = await import('./api');
+  const result = await inspectQuery('_active', sql);
+  return { columns: result.columns, rows: result.rows.map(r => Object.values(r)) };
 }
 
 /** Execute a SELECT query against the main.db (cross-session index). */
-export async function queryDbMain(sql: string, params?: unknown[]): Promise<QueryResult> {
-  if (isMock) {
-    const { queryFixtureMain } = await import('./mock');
-    return queryFixtureMain(sql, params);
-  }
-  const { invoke } = await import('@tauri-apps/api/core');
-  const raw = await invoke<string>('query_db', {
-    sql,
-    db: 'main',
-    params: params ?? [],
-  });
-  return JSON.parse(raw);
+export async function queryDbMain(sql: string, _params?: unknown[]): Promise<QueryResult> {
+  const { inspectQuery } = await import('./api');
+  const result = await inspectQuery('_main', sql);
+  return { columns: result.columns, rows: result.rows.map(r => Object.values(r)) };
 }
 
 /** Extract the first row as a typed object (column-name keys). */

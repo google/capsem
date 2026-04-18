@@ -1,8 +1,46 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { settingsStore } from '../stores/settings.svelte';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { buildMockSettingsResponse, mockSettings, recomputeEnabled } from '../mock-settings';
+import type { SettingsResponse } from '../types/settings';
+
+// Mock the API module -- settings store calls getSettings/saveSettings/applyPreset.
+let mockResponse: SettingsResponse;
+
+vi.mock('../api', () => ({
+  getSettings: vi.fn(async () => mockResponse),
+  saveSettings: vi.fn(async (changes: Record<string, unknown>) => {
+    // Apply changes to mock data and return updated response.
+    for (const [id, value] of Object.entries(changes)) {
+      const setting = mockSettings.find(s => s.id === id);
+      if (setting) {
+        setting.effective_value = value as any;
+      }
+    }
+    recomputeEnabled();
+    mockResponse = buildMockSettingsResponse();
+    return mockResponse;
+  }),
+  applyPreset: vi.fn(async (id: string) => {
+    const preset = mockResponse.presets.find(p => p.id === id);
+    if (preset) {
+      for (const [settingId, value] of Object.entries(preset.settings)) {
+        const setting = mockSettings.find(s => s.id === settingId);
+        if (setting) {
+          setting.effective_value = value as any;
+        }
+      }
+      recomputeEnabled();
+    }
+    mockResponse = buildMockSettingsResponse();
+    return mockResponse;
+  }),
+}));
+
+// Import store AFTER mock is set up.
+const { settingsStore } = await import('../stores/settings.svelte');
 
 describe('settingsStore', () => {
   beforeEach(async () => {
+    mockResponse = buildMockSettingsResponse();
     await settingsStore.load();
   });
 

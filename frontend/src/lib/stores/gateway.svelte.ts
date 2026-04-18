@@ -16,8 +16,10 @@ class GatewayStore {
   #failCount = 0;
 
   async init(): Promise<void> {
+    console.log('[gateway] init() starting');
     try {
       const result = await api.init();
+      console.log('[gateway] init result: connected=%s reachable=%s version=%s', result.connected, result.reachable, result.version);
       this.connected = result.connected;
       this.reachable = result.reachable;
       this.version = result.version;
@@ -25,6 +27,7 @@ class GatewayStore {
       this.#failCount = result.connected ? 0 : 1;
       this.scheduleHealthCheck();
     } catch (e) {
+      console.error('[gateway] init FAIL:', e);
       this.connected = false;
       this.reachable = false;
       this.error = e instanceof Error ? e.message : 'Init failed';

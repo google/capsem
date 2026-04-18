@@ -7,6 +7,7 @@
     confirmLabel = 'Confirm',
     cancelLabel = 'Cancel',
     destructive = false,
+    disabled = false,
     onconfirm,
     oncancel,
     children,
@@ -16,6 +17,7 @@
     confirmLabel?: string;
     cancelLabel?: string;
     destructive?: boolean;
+    disabled?: boolean;
     onconfirm: () => void;
     oncancel: () => void;
     children?: any;
@@ -28,7 +30,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === 'Escape') oncancel();
-    if (e.key === 'Enter') onconfirm();
+    if (e.key === 'Enter' && !disabled) onconfirm();
   }
 </script>
 
@@ -36,16 +38,20 @@
 
 {#if open}
   <!-- Backdrop -->
-  <div
-    class="fixed inset-0 z-80 bg-black/50 transition-opacity"
+  <button
+    type="button"
+    class="fixed inset-0 z-80 bg-black/50 transition-opacity cursor-default border-none p-0 m-0"
     onclick={handleBackdrop}
-  ></div>
+    aria-label="Close dialog"
+  ></button>
 
   <!-- Dialog -->
   <div class="fixed inset-0 z-80 overflow-y-auto flex items-center justify-center p-4">
     <div
       class="bg-overlay border border-overlay-border shadow-2xs rounded-xl sm:max-w-md w-full"
-      onclick={(e: MouseEvent) => e.stopPropagation()}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
     >
       <!-- Header -->
       <div class="flex justify-between items-center py-3 px-4 border-b border-overlay-border">
@@ -78,8 +84,10 @@
           class="py-2 px-3 text-sm font-medium rounded-lg transition-colors
             {destructive
               ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
-              : 'bg-primary text-primary-foreground hover:bg-primary-hover'}"
+              : 'bg-primary text-primary-foreground hover:bg-primary-hover'}
+            {disabled ? 'opacity-50 cursor-not-allowed' : ''}"
           onclick={onconfirm}
+          {disabled}
         >
           {confirmLabel}
         </button>

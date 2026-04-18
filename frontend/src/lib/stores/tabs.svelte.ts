@@ -25,6 +25,15 @@ function createTab(view: TabView = 'new-tab', title?: string, vmId?: string): Ta
 class TabStore {
   tabs = $state<Tab[]>([createTab()]);
   activeId = $state<string>(this.tabs[0].id);
+  /** Tabs in creation order -- used for content rendering to avoid iframe DOM reorder (which reloads iframes). */
+  stableTabs = $derived(
+    [...this.tabs].sort((a, b) => {
+      // Sort by numeric suffix of tab ID (creation order).
+      const numA = parseInt(a.id.replace('tab-', ''), 10);
+      const numB = parseInt(b.id.replace('tab-', ''), 10);
+      return numA - numB;
+    })
+  );
 
   get active(): Tab | undefined {
     return this.tabs.find(t => t.id === this.activeId);
@@ -38,6 +47,7 @@ class TabStore {
     const tab = createTab(view, title, vmId);
     this.tabs.push(tab);
     this.activeId = tab.id;
+    console.log('[tabs] add id=%s view=%s vmId=%s title=%s', tab.id, view, vmId, title);
   }
 
   close(id: string) {
@@ -46,6 +56,7 @@ class TabStore {
 
     const wasActive = id === this.activeId;
     this.tabs.splice(idx, 1);
+    console.log('[tabs] close id=%s wasActive=%s remaining=%d', id, wasActive, this.tabs.length);
 
     if (wasActive) {
       const newIdx = Math.min(idx, this.tabs.length - 1);
@@ -56,6 +67,7 @@ class TabStore {
   activate(id: string) {
     if (this.tabs.some(t => t.id === id)) {
       this.activeId = id;
+      console.log('[tabs] activate id=%s', id);
     }
   }
 
@@ -78,6 +90,7 @@ class TabStore {
     if (fromIndex === toIndex) return;
     const [tab] = this.tabs.splice(fromIndex, 1);
     this.tabs.splice(toIndex, 0, tab);
+    console.log('[tabs] reorder from=%d to=%d id=%s', fromIndex, toIndex, tab.id);
   }
 
   updateTitle(id: string, title: string) {
@@ -107,8 +120,10 @@ class TabStore {
   openVM(vmId: string, vmName: string) {
     const existing = this.tabs.find(t => t.vmId === vmId && t.view === 'terminal');
     if (existing) {
+      console.log('[tabs] openVM reuse existing tab=%s vmId=%s', existing.id, vmId);
       this.activeId = existing.id;
     } else {
+      console.log('[tabs] openVM new tab vmId=%s name=%s', vmId, vmName);
       this.add('terminal', vmName, vmId);
     }
   }

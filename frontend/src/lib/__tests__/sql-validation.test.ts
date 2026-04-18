@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateSelectOnly } from '../mock.ts';
+import { validateSelectOnly } from '../sql';
 
 describe('validateSelectOnly', () => {
   it('accepts valid SELECT queries', () => {
