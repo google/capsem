@@ -118,7 +118,7 @@ jobs:
 
       - uses: pnpm/action-setup@v5
         with:
-          version: 9
+          version: 10
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -230,7 +230,7 @@ jobs:
 
       - uses: pnpm/action-setup@v5
         with:
-          version: 9
+          version: 10
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -245,7 +245,6 @@ jobs:
         run: cargo install tauri-cli cargo-auditable cargo-sbom --locked
 
       - name: Import Apple certificate
-        if: env.APPLE_CERTIFICATE != ''
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -298,14 +297,13 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         run: |
           cd crates/capsem-app
-          cargo tauri build --skip-stapling
+          cargo tauri build --bundles app --skip-stapling
 
       - name: Build companion binaries
         run: |
           cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-gateway -p capsem-tray
 
       - name: Codesign companion binaries
-        if: env.APPLE_SIGNING_IDENTITY != ''
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
@@ -323,8 +321,7 @@ jobs:
             "$VERSION" \
             "${{ secrets.APPLE_SIGNING_IDENTITY }}"
 
-      - name: Notarize .pkg
-        if: env.APPLE_API_KEY != ''
+      - name: Notarize and staple .pkg
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -335,9 +332,9 @@ jobs:
             --key "$APPLE_API_KEY_PATH" \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
-            --wait --timeout 30m || echo "::warning::Notarization timed out (will complete async)"
-          # Staple the notarization ticket
-          xcrun stapler staple "Capsem-$VERSION.pkg" || echo "::warning::Stapling failed (notarization may still be in progress)"
+            --wait --timeout 30m
+          xcrun stapler staple "Capsem-$VERSION.pkg"
+          xcrun stapler validate "Capsem-$VERSION.pkg"
 
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
@@ -346,10 +343,11 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release-artifacts
-          cp target/release/bundle/dmg/*.dmg release-artifacts/
-          if [ -f "Capsem-$VERSION.pkg" ]; then
-            cp "Capsem-$VERSION.pkg" release-artifacts/
+          if [ ! -f "Capsem-$VERSION.pkg" ]; then
+            echo "::error::Capsem-$VERSION.pkg not produced by build-pkg.sh"
+            exit 1
           fi
+          cp "Capsem-$VERSION.pkg" release-artifacts/
           cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
 
@@ -360,7 +358,11 @@ jobs:
 
   build-app-linux:
     needs: [preflight, build-assets, test, test-install]
+    # Linux release is best-effort for now. See sprints/linux/tracker.md --
+    # macOS .pkg is the shipping artifact until Linux is verified end-to-end.
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: arm64
@@ -408,7 +410,7 @@ jobs:
 
       - uses: pnpm/action-setup@v5
         with:
-          version: 9
+          version: 10
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -527,7 +529,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Download all platform artifacts.
+      # Download all platform artifacts. macOS is required; Linux is best-effort.
       - uses: actions/download-artifact@v8
         with:
           name: release-macos
@@ -536,10 +538,12 @@ jobs:
         with:
           name: release-linux-arm64
           path: release-artifacts/
+        continue-on-error: true
       - uses: actions/download-artifact@v8
         with:
           name: release-linux-x86_64
           path: release-artifacts/
+        continue-on-error: true
 
       # Download per-arch VM assets for the release.
       - uses: actions/download-artifact@v8
@@ -568,34 +572,75 @@ jobs:
           "
           cp unified-assets/manifest.json release-artifacts/manifest.json
 
-      # Accumulate v2 manifest: merge asset and binary releases from previous manifest.
-      - name: Build accumulated manifest
+      # Populate v2 manifest binaries.releases[VERSION] with pkg + deb entries
+      # and merge previous release's assets/binaries so clients can still
+      # resolve older versions.
+      - name: Populate and accumulate manifest
         run: |
           gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
-          if [ -f /tmp/prev-manifest/manifest.json ]; then
-            python3 -c "
-          import json
-          with open('release-artifacts/manifest.json') as f:
+          VERSION="${GITHUB_REF_NAME#v}"
+          PREV_PATH=""
+          [ -f /tmp/prev-manifest/manifest.json ] && PREV_PATH=/tmp/prev-manifest/manifest.json
+          VERSION="$VERSION" PREV_PATH="$PREV_PATH" python3 <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          version = os.environ['VERSION']
+          prev_path = os.environ.get('PREV_PATH') or None
+          artifacts = Path('release-artifacts')
+          manifest_path = artifacts / 'manifest.json'
+
+          with manifest_path.open() as f:
               new = json.load(f)
-          with open('/tmp/prev-manifest/manifest.json') as f:
-              prev = json.load(f)
-          # v2 format: merge assets.releases and binaries.releases separately
-          if prev.get('format') == 2:
-              for ver, entry in prev.get('assets', {}).get('releases', {}).items():
-                  new['assets']['releases'].setdefault(ver, entry)
-              for ver, entry in prev.get('binaries', {}).get('releases', {}).items():
-                  new['binaries']['releases'].setdefault(ver, entry)
-              a_count = len(new['assets']['releases'])
-              b_count = len(new['binaries']['releases'])
-              print(f'Merged v2 manifest: {a_count} asset releases, {b_count} binary releases')
+
+          assert new.get('format') == 2, f"generate_checksums must emit v2 manifest (got {new.get('format')!r})"
+          new.setdefault('binaries', {}).setdefault('releases', {})
+
+          def sha256(p: Path) -> str:
+              h = hashlib.sha256()
+              with p.open('rb') as fh:
+                  for chunk in iter(lambda: fh.read(1 << 20), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          binary_files = []
+          # .pkg is required -- .deb may be absent if Linux best-effort build failed.
+          for pattern in ('*.pkg', '*.deb'):
+              binary_files.extend(sorted(artifacts.glob(pattern)))
+          if not any(f.suffix == '.pkg' for f in binary_files):
+              raise SystemExit('No .pkg found in release-artifacts/ -- macOS build must have failed')
+
+          entry = {
+              'version': version,
+              'files': [
+                  {'name': f.name, 'size': f.stat().st_size, 'sha256': sha256(f)}
+                  for f in binary_files
+              ],
+          }
+          new['binaries']['releases'][version] = entry
+          print(f'Populated binaries.releases[{version}] with {len(entry["files"])} file(s):')
+          for fd in entry['files']:
+              print(f'  {fd["name"]}  {fd["size"]}  {fd["sha256"][:16]}...')
+
+          if prev_path:
+              with open(prev_path) as f:
+                  prev = json.load(f)
+              if prev.get('format') == 2:
+                  for ver, e in prev.get('assets', {}).get('releases', {}).items():
+                      new['assets']['releases'].setdefault(ver, e)
+                  for ver, e in prev.get('binaries', {}).get('releases', {}).items():
+                      new['binaries']['releases'].setdefault(ver, e)
+                  a = len(new['assets']['releases'])
+                  b = len(new['binaries']['releases'])
+                  print(f'Merged: {a} asset releases, {b} binary releases')
+              else:
+                  print('Previous manifest is v1, skipping merge')
           else:
-              print('Previous manifest is v1, skipping merge (clean start)')
-          with open('release-artifacts/manifest.json', 'w') as f:
+              print('No previous manifest, fresh start')
+
+          with manifest_path.open('w') as f:
               json.dump(new, f, indent=2)
-          "
-          else
-            echo "No previous manifest found, using fresh manifest"
-          fi
+          PY
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -608,11 +653,11 @@ jobs:
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
-      - name: Attest build provenance (DMG + deb + rootfs per arch)
+      - name: Attest build provenance (pkg + deb + rootfs per arch)
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
-            release-artifacts/*.dmg
+            release-artifacts/*.pkg
             release-artifacts/*.deb
             release-artifacts/arm64/rootfs.squashfs
             release-artifacts/x86_64/rootfs.squashfs
@@ -621,22 +666,21 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: |
-            release-artifacts/*.dmg
-            release-artifacts/*.deb
+            release-artifacts/*.pkg
           predicate-type: https://spdx.dev/Document/v2.3
           predicate-path: release-artifacts/capsem-sbom.spdx.json
 
       - name: Build summary
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          DMG=$(ls -1 release-artifacts/*.dmg 2>/dev/null | head -1)
-          DMG_NAME=$(basename "$DMG" 2>/dev/null || echo "N/A")
-          DMG_SIZE=$(du -h "$DMG" 2>/dev/null | cut -f1 || echo "N/A")
+          PKG=$(ls -1 release-artifacts/*.pkg 2>/dev/null | head -1)
+          PKG_NAME=$(basename "$PKG" 2>/dev/null || echo "N/A")
+          PKG_SIZE=$(du -h "$PKG" 2>/dev/null | cut -f1 || echo "N/A")
           ARM64_ROOTFS=$(du -h release-artifacts/arm64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
           X86_ROOTFS=$(du -h release-artifacts/x86_64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
           SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
 
-          # Build artifact table rows for all debs
+          # Build artifact table rows for all debs (may be absent if Linux best-effort failed)
           LINUX_ROWS=""
           for f in release-artifacts/*.deb; do
             [ -f "$f" ] || continue
@@ -645,6 +689,8 @@ jobs:
             LINUX_ROWS="${LINUX_ROWS}| ${NAME} | ${SIZE} |
           "
           done
+          [ -z "$LINUX_ROWS" ] && LINUX_ROWS="| (no .deb produced -- Linux best-effort) | -- |
+          "
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Release $VERSION
@@ -653,7 +699,7 @@ jobs:
 
           | File | Size |
           |------|------|
-          | $DMG_NAME | $DMG_SIZE |
+          | $PKG_NAME | $PKG_SIZE |
           ${LINUX_ROWS}| rootfs.squashfs (arm64) | $ARM64_ROOTFS |
           | rootfs.squashfs (x86_64) | $X86_ROOTFS |
           | manifest.json | signed (minisign) |
@@ -661,10 +707,9 @@ jobs:
 
           ### Security
 
-          - Apple codesigned (Developer ID)
-          - Notarization submitted (skip-stapling)
-          - SLSA build provenance attested (DMG + deb + rootfs)
-          - SBOM attested (SPDX 2.3, DMG + deb)
+          - Apple codesigned (Developer ID), notarized + stapled (.pkg)
+          - SLSA build provenance attested (pkg + deb + rootfs)
+          - SBOM attested (SPDX 2.3, pkg)
           - Manifest signed (minisign)
           EOF
 
@@ -689,13 +734,18 @@ jobs:
             done < release-artifacts/arm64/tool-versions.txt
           fi
 
-          # Create release with platform-independent artifacts first
+          # Create release with the .pkg + manifest, then upload optional .deb
+          # files if Linux build succeeded (best-effort until sprints/linux lands).
           gh release create ${{ github.ref_name }} \
-            release-artifacts/*.dmg release-artifacts/*.deb \
+            release-artifacts/*.pkg \
             release-artifacts/manifest.json release-artifacts/manifest.json.minisig \
             release-artifacts/capsem-sbom.spdx.json \
             --title "Capsem ${{ github.ref_name }}" \
             --notes "$NOTES"
+
+          for deb in release-artifacts/*.deb; do
+            [ -f "$deb" ] && gh release upload ${{ github.ref_name }} "$deb"
+          done
 
           # Upload per-arch VM assets with arch prefix (both have vmlinuz, initrd.img, etc.)
           # gh release upload uses the filename as the asset name, so we must
