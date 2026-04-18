@@ -226,8 +226,11 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     set -euo pipefail
 
     echo "=== Dependency audit ==="
-    cargo audit || echo "warnings found (see above) -- upstream Tauri/GTK deps, not actionable"
-    (cd frontend && pnpm audit) || echo "pnpm audit warnings (see above)"
+    # Real vulnerabilities must fail the build. Upstream-only advisories
+    # that we cannot remediate live in .cargo/audit.toml with justification
+    # per ID -- not swallowed here.
+    cargo audit
+    (cd frontend && pnpm audit)
 
     echo "=== Rust: warnings-as-errors (all crates) ==="
     cargo check --workspace
@@ -419,11 +422,11 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     step "Rust check + audit (parallel)"
     cargo check --workspace &
     CHECK_PID=$!
-    (cargo audit || echo "warnings found -- upstream Tauri/GTK deps, not actionable") &
+    cargo audit &
     AUDIT_PID=$!
-    (cd frontend && pnpm audit) || echo "pnpm audit warnings (see above)"
+    (cd frontend && pnpm audit)
     wait $CHECK_PID || { echo "cargo check failed"; exit 1; }
-    wait $AUDIT_PID
+    wait $AUDIT_PID || { echo "cargo audit failed"; exit 1; }
     step_done
     step "capsem-doctor --fast (in-VM diagnostics, no throughput)"
     {{cli_binary}} doctor --fast
