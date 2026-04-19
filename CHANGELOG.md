@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`just _clean-stale` no longer hangs for minutes.** The bash body called
+  `lsof -tU "$s"` once per socket in `/tmp/capsem/*.sock`. On macOS each call
+  scans every process's FD table (~200 ms), so after ~1700 dead sockets
+  accumulated the loop took ~6 minutes and made `just test` / `just smoke` /
+  `just install` / `just build-assets` look stuck. Replaced the entire recipe
+  with `scripts/clean_stale.py`, which probes socket liveness via
+  `socket.connect()` (~4 us per socket, ~50000x faster) and ports the other
+  stages (stale rootfs/`_up_` dirs, stale test fixtures, cargo artifact
+  age-prune) to Python. Measured: 1772 orphan sockets + 926 stale cargo dirs
+  cleaned in 3.2 s total; steady-state second run 1.3 s. Covered by 16 pytest
+  cases in `tests/capsem-cleanup-script/` including a 2000-socket perf guard
+  that fails if the regression ever returns.
+
 - **`just test -n 4` concurrency cascade** -- four independent bugs surfaced as
   "flaky tests" whenever pytest ran with parallel workers. Collapsed the cascade
   from ~130 test failures down to ~5.

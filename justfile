@@ -146,7 +146,9 @@ build-ui profile="debug": _pnpm-install
     #!/bin/bash
     set -euo pipefail
     echo "=== Frontend build ==="
-    cd frontend && pnpm run build && cd ..
+    cd frontend
+    pnpm run build
+    cd ..
     echo ""
     echo "=== capsem-app ({{profile}}) build ==="
     if [[ "{{profile}}" == "release" ]]; then
@@ -242,7 +244,13 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     uv run capsem-builder agent
 
     echo "=== Frontend ==="
-    cd frontend && pnpm run check && pnpm run test && pnpm run build
+    # Each step on its own line so `set -e` aborts on failure. Chaining with
+    # `&&` suppresses errexit for non-final commands in bash, which silently
+    # swallowed frontend test failures.
+    cd frontend
+    pnpm run check
+    pnpm run test
+    pnpm run build
     cd ..
 
     echo "=== Sign binaries for integration tests ==="
@@ -516,7 +524,9 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
     cargo build --release {{host_crates}}
     echo "=== Building frontend ==="
-    cd frontend && pnpm build && cd ..
+    cd frontend
+    pnpm build
+    cd ..
     # Load Tauri signing key if available (needed for updater artifacts).
     # If absent, disable updater artifacts via config override.
     TAURI_FLAGS=""
@@ -833,93 +843,10 @@ update-prices:
         -o config/genai-prices.json
     @echo "Updated config/genai-prices.json"
 
-# Remove stale rootfs copies and trim bloated incremental caches
+# Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
+# See scripts/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
 _clean-stale:
-    #!/bin/bash
-    echo "=== Pruning stale build artifacts ==="
-
-    # 1. Stale rootfs copies + overlay scratch dirs in target/.
-    rootfs_count=$(find target \( -path "*/debug/rootfs.*" -o -path "*/release/rootfs.*" -o -path "*/llvm-cov-target/debug/rootfs.*" \) 2>/dev/null | wc -l | tr -d ' ')
-    up_count=$(find target -path "*/_up_" -type d 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$rootfs_count" -gt 0 ] || [ "$up_count" -gt 0 ]; then
-        echo "  target/: removing ${rootfs_count} stale rootfs file(s), ${up_count} overlay _up_ dir(s)"
-    fi
-    find target -path "*/debug/rootfs.*" -delete 2>/dev/null || true
-    find target -path "*/release/rootfs.*" -delete 2>/dev/null || true
-    find target -path "*/_up_" -type d -exec rm -rf {} + 2>/dev/null || true
-    find target -path "*/llvm-cov-target/debug/rootfs.*" -delete 2>/dev/null || true
-
-    # 2. Test temp dirs left by killed/crashed test runs (the big leak source --
-    #    945 stragglers seen after one bad just test run). Anything older than
-    #    1 hour can't be from an active test.
-    TMPROOT="${TMPDIR:-/tmp}"
-    test_tmp_count=$(find "$TMPROOT" -maxdepth 1 -mindepth 1 -type d \
-        \( -name "capsem-test-*" -o -name "capsem-e2e-*" -o -name "capsem-gw-*" -o -name "capsem-install-*" \) \
-        -mmin +60 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$test_tmp_count" -gt 0 ]; then
-        echo "  tmp: removing ${test_tmp_count} stale test fixture dir(s) (>1h old)"
-        find "$TMPROOT" -maxdepth 1 -mindepth 1 -type d \
-            \( -name "capsem-test-*" -o -name "capsem-e2e-*" -o -name "capsem-gw-*" -o -name "capsem-install-*" \) \
-            -mmin +60 -exec rm -rf {} + 2>/dev/null || true
-    fi
-    # Per-VM UDS sockets in /tmp/capsem/. Age alone is NOT a safety check --
-    # an installed service running for days has sockets days old that are
-    # actively in use. Only delete sockets with no live listener (lsof -t
-    # returns empty). Skip silently if lsof is missing.
-    if command -v lsof >/dev/null 2>&1 && [ -d /tmp/capsem ]; then
-        dead_socks=()
-        for s in /tmp/capsem/*.sock; do
-            [ -e "$s" ] || continue
-            if [ -z "$(lsof -tU "$s" 2>/dev/null)" ]; then
-                dead_socks+=("$s")
-            fi
-        done
-        if [ "${#dead_socks[@]}" -gt 0 ]; then
-            echo "  tmp: removing ${#dead_socks[@]} orphan UDS socket(s) (no listener)"
-            rm -f "${dead_socks[@]}"
-        fi
-    fi
-
-    # 3. target/ cargo artifact prune. mtime threshold scales with target size:
-    #    on a freshly-built dev tree everything is recent, so >3d alone never
-    #    matches and the recipe reports "freed 0 MB" while target/ sits at 91 GB.
-    #    Aggressive thresholds when the tree is huge force forward progress.
-    if [ -d target ]; then
-        echo "  measuring target/ size..."
-        TARGET_KB=$(du -sk target 2>/dev/null | cut -f1)
-        TARGET_GB=$(( TARGET_KB / 1024 / 1024 ))
-        if   [ "$TARGET_GB" -ge 50 ]; then MTIME_DAYS=1
-        elif [ "$TARGET_GB" -ge 20 ]; then MTIME_DAYS=2
-        elif [ "$TARGET_GB" -ge 10 ]; then MTIME_DAYS=3
-        else                               MTIME_DAYS=0  # skip
-        fi
-        if [ "$MTIME_DAYS" -gt 0 ]; then
-            echo "  target/ is ${TARGET_GB} GB -- pruning artifacts older than ${MTIME_DAYS} day(s)"
-            BEFORE_KB=$TARGET_KB
-            obj_count=$(find target/debug/deps target/llvm-cov-target/debug/deps \
-                -maxdepth 1 -type f \( -name "*.o" -o -name "*.rlib" -o -name "*.rmeta" -o -name "*.d" \) \
-                -mtime +${MTIME_DAYS} 2>/dev/null | wc -l | tr -d ' ')
-            inc_count=$(find target/debug/incremental target/release/incremental target/llvm-cov-target/debug/incremental \
-                -maxdepth 1 -mindepth 1 -type d -mtime +${MTIME_DAYS} 2>/dev/null | wc -l | tr -d ' ')
-            echo "  removing ${obj_count} stale .o/.rlib/.rmeta/.d files, ${inc_count} stale incremental dir(s)"
-            find target/debug/deps target/llvm-cov-target/debug/deps \
-                -maxdepth 1 -type f \( -name "*.o" -o -name "*.rlib" -o -name "*.rmeta" -o -name "*.d" \) \
-                -mtime +${MTIME_DAYS} -delete 2>/dev/null || true
-            find target/debug/incremental target/release/incremental target/llvm-cov-target/debug/incremental \
-                -maxdepth 1 -mindepth 1 -type d -mtime +${MTIME_DAYS} \
-                -exec rm -rf {} + 2>/dev/null || true
-            AFTER_KB=$(du -sk target 2>/dev/null | cut -f1)
-            FREED_MB=$(( (BEFORE_KB - AFTER_KB) / 1024 ))
-            AFTER_GB=$(( AFTER_KB / 1024 / 1024 ))
-            echo "  freed ${FREED_MB} MB (target/ now ${AFTER_GB} GB)"
-            if [ "$FREED_MB" -lt 500 ] && [ "$TARGET_GB" -ge 50 ]; then
-                echo "  target/ is still ${AFTER_GB} GB but nothing matched the prune filter --"
-                echo "  consider: cargo clean -p <crate>, or manually remove target/{debug,release}/build"
-            fi
-        else
-            echo "  target/ is ${TARGET_GB} GB (under 10 GB; skipping cargo prune)"
-        fi
-    fi
+    @uv run python3 scripts/clean_stale.py
 
 # Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
 # Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
