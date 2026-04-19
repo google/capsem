@@ -12,7 +12,7 @@ See `plan.md` for context and exit criteria.
 
 ### T1: Fill MCP tool blind spots
 - [x] `capsem_version`, `capsem_vm_logs`, `capsem_mcp_servers`, `capsem_mcp_tools` -- `tests/capsem-mcp/test_meta.py`
-- [x] `capsem_suspend` (happy path xfailed -- see discovery below), `capsem_suspend` (ephemeral rejection), `capsem_persist`, `capsem_purge` -- `tests/capsem-mcp/test_state_transitions.py`
+- [x] `capsem_suspend` (happy path + ephemeral rejection), `capsem_persist`, `capsem_purge` -- `tests/capsem-mcp/test_state_transitions.py`. Suspend round-trip now passes after the IPC fix landed (see discovery below); the earlier xfail marker is removed.
 - [x] `capsem_run` -- `tests/capsem-mcp/test_run.py`
 - [x] `capsem_service_logs` -- `tests/capsem-mcp/test_service_logs.py`
 - [x] `capsem_mcp_call` -- `tests/capsem-mcp/test_mcp_call.py` (error paths; full happy path needs a downstream MCP server in the fixture, tracked as follow-up)
@@ -50,7 +50,7 @@ See `plan.md` for context and exit criteria.
 
 ## Discoveries
 
-- **Suspend round-trip is broken end-to-end.** Both the new MCP suspend test and the pre-existing `tests/capsem-lifecycle/test_vm_lifecycle.py::TestSuspendResume::test_suspend_resume_round_trip` fail with `suspend timed out: VM did not confirm suspended state (process killed)`. The service waits 15s for `ProcessToService::StateChanged { state: "Suspended" }` on the IPC channel and never receives it, then SIGKILLs the VM. Suspect triage targets live at `crates/capsem-service/src/main.rs:2111` (handler side) and `crates/capsem-process/src/vsock.rs:670` (emit side). New test is xfail-marked so the commit can land; remove the xfail once the IPC bug is fixed. **Handed off to debug agent.**
+- **Suspend round-trip was broken end-to-end.** Surfaced while writing coverage: both the new MCP suspend test and the pre-existing `tests/capsem-lifecycle/test_vm_lifecycle.py::TestSuspendResume::test_suspend_resume_round_trip` failed with `suspend timed out: VM did not confirm suspended state (process killed)`. Fix landed via the debug agent (changes in `crates/capsem-core/src/hypervisor/apple_vz/`, `crates/capsem-process/src/{ipc,vsock,main}.rs`, `crates/capsem-service/src/main.rs`, `crates/capsem-agent/src/main.rs`). Both suspend tests now pass; the xfail marker on `test_suspend_and_resume_persistent` is removed.
 
 - **CI does not actually run the VM-requiring tests.** `.github/workflows/ci.yaml` runs the non-VM directories (`tests/capsem-bootstrap/`, `tests/capsem-codesign/`, `tests/capsem-rootfs-artifacts/`) but for everything else only does `pytest --collect-only -q`, which imports test modules but never executes them. That is why the suspend bug sat green in CI. This is the "merges green but production breaks" scenario plan.md describes; fixing CI to run these suites (with a macOS runner that has the `com.apple.security.virtualization` entitlement) is a separate sprint. **Flagged to user.**
 
