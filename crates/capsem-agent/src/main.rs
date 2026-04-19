@@ -415,6 +415,7 @@ fn main() {
                     }
 
                     eprintln!("[capsem-agent] reconnected successfully");
+                    rebind_workspace_after_resume();
                     let _ = send_guest_msg(c_fd, &GuestToHost::Ready { version: env!("CARGO_PKG_VERSION").to_string() });
 
                     // Drain abbreviated handshake, processing clock/timezone resync.
@@ -493,6 +494,68 @@ fn main() {
 /// Path to the boot timing JSONL file written by capsem-init.
 const BOOT_TIMING_PATH: &str = "/run/capsem-boot-timing";
 
+/// After resume, the VirtioFS mount capsem-init set up in its pre-chroot
+/// namespace (host path: /mnt/shared) is connected to a dead virtiofsd from
+/// the previous capsem-process. /root was bind-mounted from that share, so
+/// reads/writes against /root return ENOENT or hang.
+///
+/// The agent runs inside a chroot where /mnt/shared means /newroot/mnt/shared
+/// -- NOT init's mount point. So we create a fresh virtiofs mount inside the
+/// chroot (same "capsem" tag, new connection to the new host's virtiofsd)
+/// and rebind /root onto it. Lazy-unmount the stale /root and any stale
+/// chroot-local /mnt/shared first. mkdir -p ensures the mount point exists
+/// in the overlay upper even on first resume.
+///
+/// Best-effort: log and continue on every failure. A wedged virtiofs is
+/// better than crashing the agent.
+fn rebind_workspace_after_resume() {
+    use std::process::Command;
+    let run = |args: &[&str]| -> bool {
+        match Command::new(args[0]).args(&args[1..]).status() {
+            Ok(s) if s.success() => true,
+            Ok(s) => {
+                eprintln!("[capsem-agent] rebind: {} exited {s}", args.join(" "));
+                false
+            }
+            Err(e) => {
+                eprintln!("[capsem-agent] rebind: failed to spawn {}: {e}", args[0]);
+                false
+            }
+        }
+    };
+    eprintln!("[capsem-agent] rebinding workspace after resume");
+    let _ = run(&["umount", "-l", "/root"]);
+    let _ = run(&["umount", "-l", "/mnt/shared"]);
+    let _ = run(&["mkdir", "-p", "/mnt/shared"]);
+    if !run(&["mount", "-t", "virtiofs", "capsem", "/mnt/shared"]) {
+        eprintln!("[capsem-agent] rebind: virtiofs remount failed; /root will be stale");
+        return;
+    }
+    // Warm the virtiofs: on first mount after VM restore, the kernel's FUSE
+    // lookup is lazy and a path stat returns ENOENT until the virtio-fs
+    // device has exchanged its init handshake with the new host virtiofsd.
+    // If we mount --bind before that, the bind captures the stale (empty)
+    // subtree and /root stays inaccessible.
+    let workspace_src = std::path::Path::new("/mnt/shared/workspace");
+    let mut warmed = false;
+    for _ in 0..50 {
+        if workspace_src.exists() {
+            warmed = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if !warmed {
+        eprintln!("[capsem-agent] rebind: /mnt/shared/workspace never appeared; bind may fail");
+    }
+    let _ = run(&["mkdir", "-p", "/root"]);
+    if !run(&["mount", "--bind", "/mnt/shared/workspace", "/root"]) {
+        eprintln!("[capsem-agent] rebind: /root bind-mount failed");
+    } else {
+        eprintln!("[capsem-agent] rebind: /root reconnected to host workspace");
+    }
+}
+
 /// Parse boot timing JSONL file. Each line: {"name":"...","duration_ms":...}
 /// Rejects entries with non-alphanumeric names (defense against injection).
 fn parse_boot_timing(path: &str) -> Vec<BootStage> {
@@ -518,10 +581,32 @@ fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: 
     // to control_fd; concurrent writes would corrupt protocol framing.
     let (ctrl_write_tx, ctrl_write_rx) = std::sync::mpsc::channel::<GuestToHost>();
 
-    // Single control channel writer thread.
+    // Single control channel writer thread. On write failure (host gone --
+    // typically because the VM was suspended and resumed against a fresh
+    // host process), shutdown both vsock fds so bridge_loop and control_loop
+    // wake from their polls and the outer reconnect logic re-establishes
+    // both connections against the new host.
     std::thread::spawn(move || {
         while let Ok(msg) = ctrl_write_rx.recv() {
             if send_guest_msg(control_fd, &msg).is_err() {
+                unsafe {
+                    libc::shutdown(control_fd, libc::SHUT_RDWR);
+                    libc::shutdown(terminal_fd, libc::SHUT_RDWR);
+                }
+                break;
+            }
+        }
+    });
+
+    // Heartbeat. Without periodic probes the connection is invisible until
+    // the next genuine traffic, which can be hours. After a suspend/resume
+    // the host process is gone; the first failed write here trips the
+    // shutdown path above and triggers reconnect within ~3s.
+    let hb_tx = ctrl_write_tx.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            if hb_tx.send(GuestToHost::Pong).is_err() {
                 break;
             }
         }
@@ -589,8 +674,12 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
     });
 
     loop {
+        // Poll vsock_fd too so a local shutdown (triggered by the heartbeat
+        // detecting host death) wakes us up via POLLHUP. Otherwise we'd sit
+        // in poll forever waiting for PTY activity that never comes.
         let mut poll_fds = [
             PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) }, PollFlags::POLLIN),
+            PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) }, PollFlags::empty()),
         ];
 
         match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
@@ -599,6 +688,12 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
             Err(nix::errno::Errno::EINTR) => continue,
             Err(e) => {
                 eprintln!("[capsem-agent] poll error: {e}");
+                break;
+            }
+        }
+
+        if let Some(revents) = poll_fds[1].revents() {
+            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
                 break;
             }
         }
@@ -1063,27 +1158,25 @@ fn control_loop(
                 if ctrl_tx.send(msg).is_err() { break; }
             }
             Ok(HostToGuest::PrepareSnapshot) => {
+                // sync() flushes dirty caches to the underlying FS (the host
+                // via virtiofsd, or the block device). Then best-effort
+                // fsfreeze: VirtioFS returns ENOTSUP because FUSE doesn't
+                // implement the freeze_fs ioctl. That's fine -- Apple VZ
+                // pauses the VM before save_state, which stops all guest
+                // writes anyway. Proceed with SnapshotReady regardless so
+                // the host never hangs waiting for a reply it won't get.
                 eprintln!("[capsem-agent] PrepareSnapshot: syncing and freezing /");
                 unsafe { libc::sync(); }
                 match std::process::Command::new("fsfreeze").args(["-f", "/"]).status() {
-                    Ok(st) if st.success() => {
-                        if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() { break; }
-                    }
+                    Ok(st) if st.success() => {}
                     Ok(st) => {
-                        eprintln!("[capsem-agent] fsfreeze -f failed: {}", st);
-                        let _ = ctrl_tx.send(GuestToHost::Error {
-                            id: 0,
-                            message: format!("fsfreeze -f failed: {st}"),
-                        });
+                        eprintln!("[capsem-agent] fsfreeze -f not available ({st}); continuing after sync");
                     }
                     Err(e) => {
-                        eprintln!("[capsem-agent] failed to execute fsfreeze: {e}");
-                        let _ = ctrl_tx.send(GuestToHost::Error {
-                            id: 0,
-                            message: format!("fsfreeze exec failed: {e}"),
-                        });
+                        eprintln!("[capsem-agent] fsfreeze exec failed: {e}; continuing after sync");
                     }
                 }
+                if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() { break; }
             }
             Ok(HostToGuest::Unfreeze) => {
                 eprintln!("[capsem-agent] Unfreeze: thawing /");

@@ -55,6 +55,24 @@ just inspect-session   # Check net_events for domain, decision, status_code
 
 Write down what you find. The diagnosis should explain *why* the bug exists, not just *where* the symptom appears.
 
+## Concurrency flakes are product bugs, not test-tuning problems
+
+`just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot in parallel; this is dogfooding. Capsem ships as a multi-VM sandbox for AI agents -- if the test suite cannot safely run 4 concurrent VMs, real users running an agent farm will hit the same bug. When a test flakes only under concurrency, the diagnosis target is **Capsem's product code**, not the test:
+
+- "Suspend timed out" appearing only at `-n 4` -> `handle_suspend` IPC race; investigate the `with_quiescence` path and the `Suspend` round-trip, not the test timeout
+- "Session did not become ready" only with multiple parallel provisions -> Apple VZ resource contention, VirtioFS lock, or service handle_provision serialization gap
+- Two tests collide on the same VM/session name -> `validate_vm_name` / persistent registry has a TOCTOU; UUID prefix in the test is not the bug
+- "Connection refused" on a per-VM UDS only at `-n 4` -> service spawned the process but didn't wait for the socket to be bound; race in the spawn path
+- A test passes serial but hangs at n=4 -> a global lock somewhere (state mutex held across an await, blocking Tokio worker; or a sync `std::Mutex` on a hot path)
+
+Anti-patterns to avoid:
+- Adding `time.sleep` in the test "to let things settle"
+- Bumping a per-test timeout from 30s to 120s "because it's flaky"
+- Marking the test `serial` -- defeats the dogfooding signal
+- Adding retries with backoff in the client
+
+Right pattern: capture a service log of the failing run (set `RUST_LOG=capsem=trace`), find the operation that took unexpectedly long or returned an error, fix the underlying race in capsem-service / capsem-process / capsem-core. Then re-run at `-n 4` to confirm.
+
 ## Step 2.5: Fix the pattern, not the instance
 
 When diagnosis reveals a **systemic pattern** (the same mistake repeated across the codebase), the fix must cover every instance -- not just the one that was reported.

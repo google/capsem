@@ -26,6 +26,22 @@ Write tests first:
 
 Without a failing test first, it's easy to write tests that pass by accident or don't actually verify the behavior you intended.
 
+## Parallel tests as dogfooding (n=4 is non-negotiable)
+
+`just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:
+
+- "Suspend timed out" under load -> service IPC handling is racy, not "bump the timeout"
+- "Session did not become ready" -> Apple VZ resource serialization, VirtioFS lock contention, or service handling concurrent provisions; investigate, don't suppress
+- Two tests both want the same VM name -> name-collision bug in `validate_vm_name` / registry, not "isolate test names better"
+- Stale socket between tests -> service didn't reap a child cleanly, real production bug
+
+Anti-patterns when a test flakes under `-n 4`:
+- Adding `time.sleep()` to "let things settle" -- masking a race
+- Bumping the per-test timeout -- buying time for a real bug to manifest in prod instead of CI
+- Marking the test `serial` so it runs alone -- defeating the dogfooding signal
+
+The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each = 8 GB / 8 cores). If concurrency surfaces a flake, fix the product, then re-run. Bumping `-n` higher (8, 12) is the natural follow-on once n=4 is stable -- real users will run more.
+
 ## Adversarial testing
 
 Capsem is a security product. Every security-relevant feature needs tests that actively try to break invariants. Think like an attacker:

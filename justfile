@@ -248,8 +248,15 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     echo "=== Sign binaries for integration tests ==="
     just _sign
 
-    echo "=== Python: ALL tests (no marker exclusions) ==="
-    uv run python -m pytest tests/ -v --tb=short --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+    echo "=== Python: ALL tests (no marker exclusions, n=4 parallel) ==="
+    # n=4 parallel: this is the dogfooding canary. We ship Capsem as a
+    # multi-VM sandbox for AI agents -- if our own tests can't safely
+    # boot 4 VMs concurrently, real users will hit the same bug. Any
+    # concurrency flake here is a Capsem-side bug, not a test-tuning
+    # problem. loadfile keeps tests in the same module on the same
+    # worker so per-file fixtures are not re-init'd 4x.
+    uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
+        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
     echo "=== Injection test ==="
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}

@@ -2,11 +2,11 @@ use anyhow::{Context, Result};
 use block2::RcBlock;
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
-use objc2_foundation::{NSArray, NSObjectProtocol, NSString, NSURL};
+use objc2_foundation::{NSArray, NSData, NSObjectProtocol, NSString, NSURL};
 use objc2_virtualization::{
     VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
     VZDirectorySharingDeviceConfiguration,
-    VZEntropyDeviceConfiguration, VZGenericPlatformConfiguration,
+    VZEntropyDeviceConfiguration, VZGenericMachineIdentifier, VZGenericPlatformConfiguration,
     VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare,
     VZSocketDevice, VZSocketDeviceConfiguration,
     VZStorageDeviceConfiguration,
@@ -33,6 +33,108 @@ pub fn is_main_thread() -> bool {
         fn pthread_main_np() -> libc::c_int;
     }
     unsafe { pthread_main_np() == 1 }
+}
+
+/// Run a closure on the main thread and wait for its result.
+///
+/// VZ API calls (pause, save_state, stop, resume) must run on the thread
+/// that owns the main CFRunLoop. The caller is typically a tokio worker,
+/// so we dispatch the work via GCD's main queue and block until done.
+///
+/// If already on the main thread, invokes the closure directly — avoids
+/// deadlock when boot-time code (on main) eventually calls into this.
+pub fn run_on_main_thread<F, R>(f: F) -> Result<R>
+where
+    F: FnOnce() -> Result<R> + Send + 'static,
+    R: Send + 'static,
+{
+    if is_main_thread() {
+        return f();
+    }
+
+    // Why not GCD's main queue?
+    //
+    // VZ completion handlers (e.g. from pauseWithCompletionHandler) are
+    // driven by the main dispatch queue. If we're sitting inside a
+    // dispatch_async(main_queue, ...) block, the main queue is busy with
+    // our block and VZ's completion can't fire -- deadlock. Instead we
+    // schedule directly on the main CFRunLoop via CFRunLoopPerformBlock,
+    // which executes on the main thread *without* going through the main
+    // dispatch queue. That leaves the main queue free to service VZ's
+    // internal completions while our block calls spin_runloop_until.
+    extern "C" {
+        fn CFRunLoopGetMain() -> *mut std::ffi::c_void;
+        fn CFRunLoopPerformBlock(
+            rl: *mut std::ffi::c_void,
+            mode: *const std::ffi::c_void,
+            block: *mut block2::Block<dyn Fn()>,
+        );
+        fn CFRunLoopWakeUp(rl: *mut std::ffi::c_void);
+        static kCFRunLoopCommonModes: *const std::ffi::c_void;
+    }
+
+    // RcBlock requires `Fn` (callable repeatedly), but `f` is FnOnce. Wrap
+    // it in an Option behind a mutex so the first invocation takes it and
+    // subsequent invocations (which shouldn't happen, but guard anyway)
+    // become no-ops.
+    let f_slot: std::sync::Arc<std::sync::Mutex<Option<F>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Some(f)));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let f_slot_cb = std::sync::Arc::clone(&f_slot);
+    let block = block2::RcBlock::new(move || {
+        if let Some(f) = f_slot_cb.lock().unwrap().take() {
+            let _ = tx.send(f());
+        }
+    });
+
+    unsafe {
+        let rl = CFRunLoopGetMain();
+        CFRunLoopPerformBlock(rl, kCFRunLoopCommonModes, &*block as *const _ as *mut _);
+        CFRunLoopWakeUp(rl);
+    }
+
+    rx.recv()
+        .map_err(|_| anyhow::anyhow!("main-runloop perform channel closed"))?
+}
+
+/// Load a persisted VZGenericMachineIdentifier from `path`, or generate a new
+/// one and write it to `path`. Returns the generated identifier when `path`
+/// is `None`.
+///
+/// Apple VZ requires the identifier to match between save and restore. The
+/// default constructor generates a fresh identifier each time, so callers
+/// that care about save/restore parity must persist it across boots.
+fn load_or_create_machine_identifier(
+    path: Option<&std::path::Path>,
+) -> Result<Retained<VZGenericMachineIdentifier>> {
+    let Some(path) = path else {
+        return Ok(unsafe { VZGenericMachineIdentifier::new() });
+    };
+
+    if path.exists() {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("failed to read machine identifier at {}", path.display()))?;
+        let nsdata = NSData::with_bytes(&bytes);
+        let id = unsafe {
+            VZGenericMachineIdentifier::initWithDataRepresentation(
+                VZGenericMachineIdentifier::alloc(),
+                &nsdata,
+            )
+        }
+        .ok_or_else(|| {
+            anyhow::anyhow!("invalid machine identifier data at {}", path.display())
+        })?;
+        return Ok(id);
+    }
+
+    let id = unsafe { VZGenericMachineIdentifier::new() };
+    let data = unsafe { id.dataRepresentation() }.to_vec();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(path, &data)
+        .with_context(|| format!("failed to write machine identifier to {}", path.display()))?;
+    Ok(id)
 }
 
 /// Internal wrapper around VZVirtualMachine.
@@ -71,8 +173,16 @@ impl AppleVzMachine {
                 vz_config.setMemorySize(config.ram_bytes);
                 vz_config.setBootLoader(Some(&boot_loader));
 
-                // Platform
+                // Platform. VZGenericPlatformConfiguration auto-generates a
+                // fresh machineIdentifier on every construction, which would
+                // make restoreMachineStateFromURL fail with VZErrorRestore
+                // because the saved state references the original identifier.
+                // Persist the identifier alongside the session and reuse it
+                // across boots so save/restore parity holds.
                 let platform = VZGenericPlatformConfiguration::new();
+                let identifier =
+                    load_or_create_machine_identifier(config.machine_identifier_path.as_deref())?;
+                platform.setMachineIdentifier(&identifier);
                 vz_config.setPlatform(&platform);
 
                 // Entropy device (prevents hangs waiting for random)
@@ -207,6 +317,9 @@ impl AppleVzMachine {
 
         if checkpoint_path.is_some() {
             info!("virtual machine restored from checkpoint");
+            // restoreMachineStateFromURL leaves the VM in the paused state per
+            // Apple's docs. Resume it so the guest actually runs.
+            self.resume().context("VM resume after restore")?;
         } else {
             info!("virtual machine started");
         }

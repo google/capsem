@@ -649,14 +649,20 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // Give the guest agent SHUTDOWN_GRACE_SECS + margin for kernel
                     // teardown, then force-stop the VM and exit. Without this,
                     // CFRunLoopRun keeps the process alive indefinitely.
+                    // VZ stop must run on the main thread, so dispatch via
+                    // run_on_main_thread instead of calling from a tokio worker
+                    // (which would silently fail the main-thread assertion).
                     let vm_clone = Arc::clone(&vm_for_cmd);
                     let rt = tokio::runtime::Handle::current();
                     rt.spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(
                             (capsem_proto::SHUTDOWN_GRACE_SECS * 1000) + 500
                         )).await;
-                        let v = vm_clone.lock().await;
-                        let _ = v.stop();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
+                                vm_clone.blocking_lock().stop()
+                            })
+                        }).await;
                         std::process::exit(0);
                     });
                 }
@@ -683,11 +689,39 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     let rt = tokio::runtime::Handle::current();
                     rt.spawn(async move {
                         let res = with_quiescence(&ctrl_cmd_tx_clone, &js_clone, std::time::Duration::from_secs(10), || async {
-                            let v = vm_clone.lock().await;
-                            v.pause().context("failed to pause")?;
-                            v.save_state(&full_path).context("failed to save state")?;
-                            v.stop().context("failed to stop")?;
-                            Ok(())
+                            // VZ pause/save_state/stop must run on the main
+                            // thread (where CFRunLoopRun is). Dispatch via
+                            // GCD's main queue; spawn_blocking keeps the
+                            // tokio worker free while we wait.
+                            // VZ pause/save_state must run on the main thread
+                            // (the one driving CFRunLoopRun). Dispatch via
+                            // run_on_main_thread; spawn_blocking keeps the
+                            // tokio worker free while we wait. We deliberately
+                            // do *not* call stop() after save_state -- per
+                            // saveMachineStateToURL docs the VM stays paused
+                            // and is torn down by releasing the instance,
+                            // which happens when this process exits below.
+                            let vm_arc = Arc::clone(&vm_clone);
+                            let path = full_path.clone();
+                            let path_for_sync = path.clone();
+                            tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                                capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
+                                    let v = vm_arc.blocking_lock();
+                                    v.pause().context("failed to pause")?;
+                                    v.save_state(&path).context("failed to save state")?;
+                                    Ok(())
+                                })?;
+                                // saveMachineStateToURL's completion fires
+                                // before the OS finishes flushing the .vzsave
+                                // to disk. The next process's restore can race
+                                // the flush. fsync to guarantee the resume
+                                // path sees a fully-persisted file.
+                                if let Ok(f) = std::fs::OpenOptions::new().read(true).open(&path_for_sync) {
+                                    use std::os::fd::AsRawFd;
+                                    unsafe { nix::libc::fsync(f.as_raw_fd()); }
+                                }
+                                Ok(())
+                            }).await.context("suspend join")?
                         }).await;
 
                         if let Err(e) = res {

@@ -10,14 +10,6 @@ from helpers.mcp import parse_content, wait_exec_ready
 pytestmark = pytest.mark.mcp
 
 
-@pytest.mark.xfail(
-    reason="suspend round-trip is broken: service times out waiting for "
-    "ProcessToService::StateChanged and SIGKILLs the VM. Same failure in "
-    "tests/capsem-lifecycle/test_vm_lifecycle.py::TestSuspendResume"
-    "::test_suspend_resume_round_trip. CI only collects these tests, never "
-    "runs them, so the regression went unnoticed.",
-    strict=False,
-)
 def test_suspend_and_resume_persistent(fresh_vm, mcp_session):
     """Suspend flips status Running -> Suspended; resume restores it and state survives."""
     vm_name = fresh_vm()

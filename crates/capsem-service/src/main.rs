@@ -538,6 +538,12 @@ impl ServiceState {
         let uds_path = self.instance_socket_path(name);
         let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
 
+        // Clear stale UDS + ready sentinel from the prior boot. Without this,
+        // wait_for_vm_ready returns instantly against the old .ready file and
+        // callers race ahead before the resumed agent has reconnected.
+        let _ = std::fs::remove_file(&uds_path);
+        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+
         let resolved = self.resolve_asset_paths()?;
         if !resolved.rootfs.exists() {
             return Err(anyhow!("rootfs not found at {}", resolved.rootfs.display()));

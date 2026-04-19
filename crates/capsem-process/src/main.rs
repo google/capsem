@@ -60,6 +60,8 @@ fn main() -> Result<()> {
     let guest_dir = capsem_core::guest_share_dir(&args.session_dir);
     let virtiofs_shares = vec![VirtioFsShare { tag: "capsem".into(), host_path: guest_dir, read_only: false }];
 
+    let machine_identifier_path = args.session_dir.join("machine_identifier");
+    let serial_log_path = args.session_dir.join("serial.log");
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),
@@ -74,6 +76,8 @@ fn main() -> Result<()> {
             .checkpoint_path
             .clone()
             .map(|p| if p.is_absolute() { p } else { args.session_dir.join(p) }),
+        machine_identifier_path: Some(&machine_identifier_path),
+        serial_log_path: Some(&serial_log_path),
     })?;
 
     // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown
@@ -313,26 +317,10 @@ async fn run_async_main_loop(
     let job_store_clone = Arc::clone(&job_store);
     let terminal_output_clone = Arc::clone(&terminal_output);
 
-    // Spawn serial log reader
-    let mut rx = {
-        let v = vm.lock().await;
-        v.serial().subscribe()
-    };
-    let log_path = args.session_dir.join("serial.log");
-    tokio::spawn(async move {
-        use std::io::Write;
-        let mut log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-            .ok();
-        while let Ok(data) = rx.recv().await {
-            if let Some(ref mut f) = log_file {
-                let _ = f.write_all(&data);
-                let _ = f.flush();
-            }
-        }
-    });
+    // Serial log is written by a thread attached inside the hypervisor's
+    // boot() (before machine.start() spawns the reader), so no subscription
+    // is needed here -- tokio::broadcast would race with VM resume and drop
+    // the first ~100ms of post-resume output.
 
     let session_dir = args.session_dir.clone();
     let net_state_clone = Arc::clone(&net_state);

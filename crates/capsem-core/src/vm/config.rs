@@ -69,6 +69,16 @@ pub struct VmConfig {
     pub expected_initrd_hash: Option<String>,
     pub checkpoint_path: Option<PathBuf>,
     pub expected_disk_hash: Option<String>,
+    /// Sidecar file holding the persisted VZGenericMachineIdentifier bytes.
+    /// Required for save/restore parity: VZ generates a fresh identifier on
+    /// every VZGenericPlatformConfiguration unless explicitly set, and a
+    /// mismatched identifier causes restoreMachineStateFromURL to fail with
+    /// VZErrorRestore.
+    pub machine_identifier_path: Option<PathBuf>,
+    /// Append every byte from the VM serial console to this file. Writer is
+    /// attached before the VM is started/resumed so no post-resume output is
+    /// dropped while a tokio broadcast subscriber is still scheduling.
+    pub serial_log_path: Option<PathBuf>,
 }
 
 impl VmConfig {
@@ -91,6 +101,8 @@ pub struct VmConfigBuilder {
     expected_initrd_hash: Option<String>,
     checkpoint_path: Option<PathBuf>,
     expected_disk_hash: Option<String>,
+    machine_identifier_path: Option<PathBuf>,
+    serial_log_path: Option<PathBuf>,
 }
 
 impl Default for VmConfigBuilder {
@@ -108,6 +120,8 @@ impl Default for VmConfigBuilder {
             expected_initrd_hash: None,
             checkpoint_path: None,
             expected_disk_hash: None,
+            machine_identifier_path: None,
+            serial_log_path: None,
         }
     }
 }
@@ -179,6 +193,16 @@ impl VmConfigBuilder {
 
     pub fn checkpoint_path(mut self, path: std::path::PathBuf) -> Self {
         self.checkpoint_path = Some(path);
+        self
+    }
+
+    pub fn machine_identifier_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.machine_identifier_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn serial_log_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.serial_log_path = Some(path.as_ref().to_path_buf());
         self
     }
 
@@ -327,6 +351,8 @@ impl VmConfigBuilder {
             expected_initrd_hash: self.expected_initrd_hash,
             checkpoint_path: self.checkpoint_path,
             expected_disk_hash: self.expected_disk_hash,
+            machine_identifier_path: self.machine_identifier_path,
+            serial_log_path: self.serial_log_path,
         })
     }
 }

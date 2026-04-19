@@ -33,6 +33,22 @@ pub(crate) async fn handle_ipc_connection(
         }
     });
 
+    // Every connection receives low-volume lifecycle events (StateChanged,
+    // ShutdownRequested, SuspendRequested) from the broadcast. TerminalOutput
+    // is high-volume and still opt-in via StartTerminalStream. Without this,
+    // a suspend-only connection never sees StateChanged { state: "Suspended" }
+    // and the service times out waiting for confirmation.
+    {
+        let out_tx = ipc_tx_out.clone();
+        let mut rx_bcast = ipc_tx.subscribe();
+        tokio::spawn(async move {
+            while let Ok(msg) = rx_bcast.recv().await {
+                if matches!(msg, ProcessToService::TerminalOutput { .. }) { continue; }
+                if out_tx.send(msg).await.is_err() { break; }
+            }
+        });
+    }
+
     while let Ok(msg) = rx.recv().await {
         match msg {
             ServiceToProcess::StartTerminalStream => {
@@ -49,14 +65,6 @@ pub(crate) async fn handle_ipc_connection(
                         }
                         while let Ok(data) = term_rx.recv().await {
                             if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() { break; }
-                        }
-                    });
-
-                    let out_tx2 = ipc_tx_out.clone();
-                    let mut rx_c = ipc_tx.subscribe();
-                    tokio::spawn(async move {
-                        while let Ok(msg) = rx_c.recv().await {
-                            if out_tx2.send(msg).await.is_err() { break; }
                         }
                     });
                 }

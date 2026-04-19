@@ -98,7 +98,9 @@ class TestGuestShutdownPersistent:
             f"VM {resumed_id} never became exec-ready after resume"
 
         read_resp = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
-        assert marker in str(read_resp), \
+        assert isinstance(read_resp, dict) and "content" in read_resp, \
+            f"read_file returned an error instead of content: {read_resp}"
+        assert marker in read_resp["content"], \
             f"File did not survive guest shutdown + resume: {read_resp}"
 
         client.delete(f"/delete/{resumed_id}")

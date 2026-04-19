@@ -70,6 +70,8 @@ pub struct BootOptions<'a> {
     pub cpu_count: u32,
     pub ram_bytes: u64,
     pub checkpoint_path: Option<std::path::PathBuf>,
+    pub machine_identifier_path: Option<&'a Path>,
+    pub serial_log_path: Option<&'a Path>,
 }
 
 /// Build config, boot the VM via the hypervisor trait, and return the handle +
@@ -93,6 +95,8 @@ pub fn boot_vm(
         cpu_count,
         ram_bytes,
         checkpoint_path,
+        machine_identifier_path,
+        serial_log_path,
     } = options;
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
@@ -123,6 +127,14 @@ pub fn boot_vm(
 
         if let Some(cp) = checkpoint_path {
             builder = builder.checkpoint_path(cp);
+        }
+
+        if let Some(mi_path) = machine_identifier_path {
+            builder = builder.machine_identifier_path(mi_path);
+        }
+
+        if let Some(slp) = serial_log_path {
+            builder = builder.serial_log_path(slp);
         }
 
         if let Some(hash) = option_env!("VMLINUZ_HASH") {
