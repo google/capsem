@@ -37,6 +37,11 @@ pub struct ProvisionRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionResponse {
     pub id: String,
+    /// Where the per-VM `capsem-process` listens. Returned by the service
+    /// so clients never have to recompute the SUN_LEN fallback. `None` only
+    /// when talking to an older service that pre-dates this field.
+    #[serde(default)]
+    pub uds_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

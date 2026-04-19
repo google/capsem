@@ -20,6 +20,7 @@ use serde_json::json;
 use rand::Rng;
 
 mod api;
+mod startup;
 
 /// Generate a fun temporary VM name like `tmp-brave-falcon`.
 fn generate_tmp_name() -> String {
@@ -216,25 +217,17 @@ pub struct ProvisionOptions<'a> {
 impl ServiceState {
     /// Build the Unix socket path for a VM instance.
     ///
-    /// Prefers `{run_dir}/instances/{id}.sock` but falls back to
-    /// `/tmp/capsem/{hash}.sock` when the path would exceed the macOS
-    /// 104-byte `SUN_LEN` limit (common with `/var/folders/...` temp dirs).
+    /// Delegates to `capsem_core::uds::instance_socket_path`, the single
+    /// source of truth for the macOS `SUN_LEN` workaround. Logs when the
+    /// fallback path is used so clients can correlate.
     fn instance_socket_path(&self, id: &str) -> PathBuf {
-        const SUN_PATH_MAX: usize = 90;
-        let preferred = self.run_dir.join("instances").join(format!("{id}.sock"));
-        if preferred.as_os_str().len() < SUN_PATH_MAX {
-            return preferred;
+        let path = capsem_core::uds::instance_socket_path(&self.run_dir, id);
+        if !path.starts_with(&self.run_dir) {
+            let preferred = self.run_dir.join("instances").join(format!("{id}.sock"));
+            tracing::info!(%id, original = %preferred.display(), short = %path.display(),
+                           "socket path too long, using /tmp/capsem/");
         }
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        id.hash(&mut h);
-        self.run_dir.hash(&mut h);
-        let dir = PathBuf::from("/tmp/capsem");
-        let _ = std::fs::create_dir_all(&dir);
-        let short = dir.join(format!("{:x}.sock", h.finish()));
-        tracing::info!(%id, original = %preferred.display(), short = %short.display(),
-                       "socket path too long, using /tmp/capsem/");
-        short
+        path
     }
 
     /// Path to main.db (global session index).
@@ -1167,7 +1160,10 @@ async fn handle_provision(
         from: payload.from,
         description: None,
     }) {
-        Ok(_) => Ok(Json(ProvisionResponse { id })),
+        Ok(_) => {
+            let uds_path = state.instance_socket_path(&id);
+            Ok(Json(ProvisionResponse { id, uds_path: Some(uds_path) }))
+        }
         Err(e) => {
             error!(id, "provision failed: {e}");
             let status = if e.to_string().contains("already exists") {
@@ -2277,7 +2273,10 @@ async fn handle_resume(
     Path(name): Path<String>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
     match state.resume_sandbox(&name, None, None) {
-        Ok(id) => Ok(Json(ProvisionResponse { id })),
+        Ok(id) => {
+            let uds_path = state.instance_socket_path(&id);
+            Ok(Json(ProvisionResponse { id, uds_path: Some(uds_path) }))
+        }
         Err(e) => {
             error!(name, "resume failed: {e}");
             Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("resume failed: {e}")))
@@ -2594,9 +2593,95 @@ async fn main() -> Result<()> {
     let _ = std::fs::create_dir_all(&persistent_dir);
 
     let service_sock = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
+
+    // Self-idempotent startup. Four parallel `capsem-service --uds-path X`
+    // invocations must converge on exactly one running service.
+    //
+    //   1. Fast probe without locking: if someone matching our version is
+    //      already serving, exit 0 (happy path for tests and re-runs).
+    //   2. Take an flock next to the socket for the critical section:
+    //      probe again (double-check), remove any stale socket, bind.
+    //      Drop the lock the moment bind() succeeds so peers waiting for
+    //      the lock can fast-probe us on their next iteration.
+    //   3. Version mismatch refuses to start (do not auto-kill -- destructive).
+    //
+    // On crash the flock releases automatically (fd close), so failed
+    // startups never wedge subsequent ones.
+    let current_version = env!("CARGO_PKG_VERSION");
+    let probe_timeout = std::time::Duration::from_millis(500);
+
+    // Fast path: someone else already serves a compatible version.
     if service_sock.exists() {
-        let _ = std::fs::remove_file(&service_sock);
+        if let Ok(Some(running)) =
+            startup::probe_running_version(&service_sock, probe_timeout).await
+        {
+            if running == current_version {
+                info!(
+                    socket = %service_sock.display(),
+                    version = %running,
+                    "compatible capsem-service already running; exiting 0"
+                );
+                return Ok(());
+            }
+            eprintln!(
+                "capsem-service {} is already running at {}, but this binary is {}.\n\
+                 Stop the running service before starting a new one.",
+                running,
+                service_sock.display(),
+                current_version
+            );
+            return Err(anyhow::anyhow!(
+                "version mismatch with running service (running: {}, this: {})",
+                running,
+                current_version
+            ));
+        }
     }
+
+    let lock_path = service_sock.with_extension("lock");
+    let startup_lock =
+        match startup::StartupLock::acquire(&lock_path, std::time::Duration::from_secs(30))? {
+            Some(lock) => lock,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "another capsem-service startup holds {} after 30s; aborting",
+                    lock_path.display()
+                ));
+            }
+        };
+
+    // Under lock: double-check a peer didn't finish starting while we waited.
+    if service_sock.exists() {
+        match startup::probe_running_version(&service_sock, probe_timeout).await {
+            Ok(Some(running)) if running == current_version => {
+                info!(
+                    socket = %service_sock.display(),
+                    version = %running,
+                    "peer starter won the race; exiting 0"
+                );
+                return Ok(());
+            }
+            Ok(Some(running)) => {
+                return Err(anyhow::anyhow!(
+                    "version mismatch with running service (running: {}, this: {})",
+                    running,
+                    current_version
+                ));
+            }
+            Ok(None) => {
+                info!(socket = %service_sock.display(), "removing stale socket");
+                let _ = std::fs::remove_file(&service_sock);
+            }
+            Err(e) => {
+                warn!(error = %e, socket = %service_sock.display(),
+                    "probe failed under lock; removing socket and continuing");
+                let _ = std::fs::remove_file(&service_sock);
+            }
+        }
+    }
+    // Keep `startup_lock` alive until after UnixListener::bind below. Released
+    // where we explicitly drop it, right after bind succeeds.
+    let startup_lock_guard = startup_lock;
 
     let process_binary = args.process_binary.unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
     let assets_base_dir = args.assets_dir.unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
@@ -2735,18 +2820,33 @@ async fn main() -> Result<()> {
     info!(socket = %service_sock.display(), "listening on UDS");
 
     let uds = UnixListener::bind(&service_sock).context("failed to bind UDS")?;
+    // Socket is bound; release the startup lock so any peer starter still in
+    // its flock wait can fast-probe us and exit 0.
+    drop(startup_lock_guard);
 
-    // Spawn companion processes (gateway + tray) as children.
-    // They are killed automatically when the service exits because we hold
-    // the Child handles and drop them on shutdown.
-    let mut children = spawn_companions(
-        &service_sock,
-        &run_dir,
-        args.gateway_binary,
-        args.gateway_port,
-        args.tray_binary,
-    )
-    .await;
+    // Spawn companion processes (gateway + tray) in the background so the UDS
+    // starts accepting immediately. The previous .await here delayed accept()
+    // by up to 5s on every startup while polling gateway.token into existence
+    // -- fatal under parallel test load. Companions are stateless and can come
+    // up after the service is already serving clients.
+    let companions = Arc::new(std::sync::Mutex::new(Vec::<tokio::process::Child>::new()));
+    let companions_for_spawn = Arc::clone(&companions);
+    let service_sock_for_spawn = service_sock.clone();
+    let run_dir_for_spawn = run_dir.clone();
+    let gateway_binary = args.gateway_binary;
+    let gateway_port = args.gateway_port;
+    let tray_binary = args.tray_binary;
+    tokio::spawn(async move {
+        let spawned = spawn_companions(
+            &service_sock_for_spawn,
+            &run_dir_for_spawn,
+            gateway_binary,
+            gateway_port,
+            tray_binary,
+        )
+        .await;
+        companions_for_spawn.lock().unwrap().extend(spawned);
+    });
 
     let shutdown_state = state.clone();
     axum::serve(uds, app)
@@ -2759,6 +2859,7 @@ async fn main() -> Result<()> {
         .context("server error")?;
 
     // Explicitly kill companion processes on shutdown
+    let mut children = std::mem::take(&mut *companions.lock().unwrap());
     for child in &mut children {
         let _ = child.kill().await;
     }
@@ -2862,19 +2963,28 @@ async fn spawn_companions(
 ) -> Vec<tokio::process::Child> {
     let mut children = Vec::new();
 
-    // Log files for companion processes (~/Library/Logs/capsem/ on macOS)
-    let log_dir = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
-        .unwrap_or_else(|_| run_dir.join("logs"));
+    // Log files for companion processes. Tests set CAPSEM_RUN_DIR for isolation;
+    // when it is set, keep logs under that run_dir so parallel test workers do
+    // not trample each other's gateway.log in ~/Library/Logs/capsem.
+    let log_dir = if std::env::var("CAPSEM_RUN_DIR").is_ok() {
+        run_dir.join("logs")
+    } else {
+        std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
+            .unwrap_or_else(|_| run_dir.join("logs"))
+    };
     let _ = std::fs::create_dir_all(&log_dir);
 
     // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
     let gateway_bin = gateway_bin.unwrap_or_else(|| find_sibling_binary("capsem-gateway"));
     let (gw_out, gw_err) = companion_stdio(&log_dir.join("gateway.log"));
     info!(binary = %gateway_bin.display(), "spawning capsem-gateway");
-    
+
     let mut gw_cmd = tokio::process::Command::new(&gateway_bin);
     gw_cmd.arg("--uds-path").arg(service_sock);
+    // Pin the gateway to the service's run_dir so gateway.{token,port,pid} land
+    // in the same place we poll for them below and the same place clients read.
+    gw_cmd.arg("--run-dir").arg(run_dir);
     if let Some(port) = gateway_port {
         gw_cmd.arg("--port").arg(port.to_string());
     }

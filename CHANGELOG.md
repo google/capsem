@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`just test -n 4` concurrency cascade** -- four independent bugs surfaced as
+  "flaky tests" whenever pytest ran with parallel workers. Collapsed the cascade
+  from ~130 test failures down to ~5.
+  - **`capsem-service` is now self-idempotent on startup.** New
+    `crates/capsem-service/src/startup.rs` probes `/version` on the target UDS
+    and an adjacent advisory flock serialises the probe→remove-stale→bind
+    critical section. Four parallel `capsem-service --uds-path X` invocations
+    converge on exactly one running service; losers exit 0 when the version
+    matches, exit non-zero on mismatch (never auto-kill).
+  - **`capsem-gateway` honours the service's `run_dir`.** New `--run-dir` flag
+    (plus `CAPSEM_RUN_DIR` env fallback) replaces the `$HOME/.capsem/run`
+    hardcode. The service passes it when spawning the gateway child, so
+    `gateway.{token,port,pid}` land where the service polls for them. The
+    gateway also writes `gateway.port` *after* `TcpListener::bind` so
+    OS-assigned ports (`--gateway-port 0`) are recorded correctly instead of
+    persisting the configured `0`.
+  - **`axum::serve` no longer blocks on `gateway-ready`.** `spawn_companions`
+    ran inline before `axum::serve`, delaying UDS accept by up to 5 s per
+    startup while polling for `gateway.token`. Companion spawning is now
+    detached via `tokio::spawn`, so the UDS accepts the instant it binds.
+    Companion children are parked in a `Mutex<Vec<Child>>` and explicitly
+    killed on graceful shutdown (kill_on_drop handles crash paths).
+  - **CLI `run_dir` derives from `--uds-path`.** When `--uds-path` is explicit
+    (tests, custom deployments), `crates/capsem/src/main.rs` now takes the
+    parent directory as `run_dir` instead of falling back to
+    `CAPSEM_RUN_DIR`/`$HOME`. Keeps doctor logs and inherited paths consistent
+    with wherever the service actually writes.
+- **`ProvisionResponse.uds_path` is the source of truth for instance sockets.**
+  Clients were recomputing `<run_dir>/instances/{id}.sock`, but the service
+  falls back to `/tmp/capsem/<hash>.sock` when the preferred path exceeds
+  macOS's 104-byte `SUN_LEN`. The fallback hash uses process-randomised
+  `DefaultHasher`, so clients *cannot* reliably recompute. The provision
+  response now includes the server-chosen path; `capsem doctor` uses it
+  directly (fixes "Session did not become ready within 30s" on e2e tests
+  rooted under `/var/folders/...`).
+
+### Changed
+- **Shared `capsem_core::uds` module** -- extracted `SUN_PATH_MAX` and
+  `instance_socket_path` into `crates/capsem-core/src/uds.rs` so the
+  SUN-length workaround lives in exactly one place. Service delegates; clients
+  use it as a fallback only when talking to a pre-`uds_path` service.
+- **`capsem doctor` uses the shared poll helper** -- the hand-rolled
+  `loop { if sock.exists() ... sleep 200ms }` waiting for the per-VM IPC
+  channel was replaced with `capsem_core::poll::poll_until`, same primitive
+  already used by CLI/service/MCP.
+
 ### Changed
 - **Crate `capsem-ui` renamed to `capsem-app`** -- crate and binary name now match the directory. Tauri identifier (`com.capsem.capsem`), productName (`Capsem`), and code-signing/notarization are unaffected. `justfile`, CI workflow, `capsem-tray` binary path lookups, `capsem-build-chain` tests, and the relevant skills were updated. localStorage keys `capsem-ui-mode` / `capsem-ui-font-size` were intentionally left unchanged to preserve user preferences across upgrades.
 - **Workspace Cargo metadata** -- `[workspace.package]` now carries `description`, `license = "Apache-2.0"`, `repository`, `homepage`, `rust-version`, and `authors`; every per-crate `Cargo.toml` inherits via `.workspace = true`. `cargo metadata` consumers (SBOM, GitHub dep graph, cargo-deny) now see canonical values for all 13 crates.

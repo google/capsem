@@ -24,13 +24,18 @@ use crate::status::StatusCache;
 #[derive(Parser, Debug)]
 #[command(name = "capsem-gateway", about = "TCP-to-UDS gateway for capsem-service")]
 struct Args {
-    /// TCP port to listen on
+    /// TCP port to listen on (0 = OS-assigned)
     #[arg(long, default_value_t = 19222)]
     port: u16,
 
     /// Path to capsem-service UDS socket
     #[arg(long)]
     uds_path: Option<PathBuf>,
+
+    /// Directory for runtime files (gateway.token / gateway.port / gateway.pid).
+    /// Overrides CAPSEM_RUN_DIR env var and the default $HOME/.capsem/run.
+    #[arg(long)]
+    run_dir: Option<PathBuf>,
 
     /// Run in foreground (default: true, placeholder for daemonization)
     #[arg(long, default_value_t = true)]
@@ -57,8 +62,17 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let run_dir = PathBuf::from(&home).join(".capsem/run");
+    // Resolve run_dir in priority: --run-dir, then CAPSEM_RUN_DIR, then $HOME/.capsem/run.
+    // Must match capsem-service's resolution so parent and child read/write the
+    // same gateway.{token,port,pid} files.
+    let run_dir = if let Some(dir) = args.run_dir.clone() {
+        dir
+    } else if let Ok(env_dir) = std::env::var("CAPSEM_RUN_DIR") {
+        PathBuf::from(env_dir)
+    } else {
+        let home = std::env::var("HOME").context("HOME not set")?;
+        PathBuf::from(&home).join(".capsem/run")
+    };
     let uds_path = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Check if service socket exists (warning only -- service may start later)
@@ -66,9 +80,20 @@ async fn main() -> Result<()> {
         tracing::warn!(path = %uds_path.display(), "service socket not found -- requests will return 502 until service starts");
     }
 
-    // Generate auth token and write runtime files
+    // Bind TCP listener first so the runtime file records the real bound port
+    // (args.port may be 0 to request an OS-assigned port).
+    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .context("failed to bind TCP listener")?;
+    let bound_port = listener
+        .local_addr()
+        .context("failed to read bound TCP port")?
+        .port();
+
+    // Generate auth token and write runtime files (token/port/pid).
     let token = auth::generate_token();
-    let auth_state = AuthState::new(&run_dir, &token, args.port)?;
+    let auth_state = AuthState::new(&run_dir, &token, bound_port)?;
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
     let state = Arc::new(AppState {
@@ -108,18 +133,13 @@ async fn main() -> Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     info!(
-        port = args.port,
+        port = bound_port,
         token_path = %auth_state.token_path.display(),
         uds_path = %state.uds_path.display(),
         version = env!("CARGO_PKG_VERSION"),
         "capsem-gateway listening"
     );
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .context("failed to bind TCP listener")?;
 
     // Graceful shutdown on SIGTERM/SIGINT
     let shutdown_auth = auth_state.clone();
@@ -458,6 +478,13 @@ mod tests {
         assert_eq!(a.port, 19222);
         assert!(a.foreground);
         assert!(a.uds_path.is_none());
+        assert!(a.run_dir.is_none());
+    }
+
+    #[test]
+    fn args_run_dir_override() {
+        let a = Args::parse_from(["capsem-gateway", "--run-dir", "/tmp/capsem-run"]);
+        assert_eq!(a.run_dir, Some(PathBuf::from("/tmp/capsem-run")));
     }
 
     #[test]

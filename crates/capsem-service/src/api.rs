@@ -53,6 +53,12 @@ pub struct ForkResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionResponse {
     pub id: String,
+    /// The UDS path the per-VM capsem-process is listening on. Clients MUST
+    /// use this value rather than recomputing it -- the service may fall back
+    /// to a short hashed path under /tmp/capsem/ when the preferred path
+    /// would exceed SUN_LEN. See capsem_core::uds::instance_socket_path.
+    #[serde(default)]
+    pub uds_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -472,10 +478,14 @@ mod tests {
 
     #[test]
     fn provision_response_roundtrip() {
-        let r = ProvisionResponse { id: "vm-123".into() };
+        let r = ProvisionResponse {
+            id: "vm-123".into(),
+            uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
+        };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.id, "vm-123");
+        assert_eq!(r2.uds_path.as_deref(), Some(std::path::Path::new("/tmp/r/instances/vm-123.sock")));
     }
 
     // -----------------------------------------------------------------------

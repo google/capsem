@@ -11,6 +11,7 @@ pub mod mcp;
 pub mod net;
 pub mod session;
 pub mod setup_state;
+pub mod uds;
 pub mod vm;
 use std::path::Path;
 

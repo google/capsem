@@ -613,11 +613,24 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let home = std::env::var("HOME").context("HOME not set")?;
-    let run_dir = std::env::var("CAPSEM_RUN_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(home).join(".capsem").join("run"));
     let auto_launch = cli.uds_path.is_none();
-    let uds_path = cli.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
+    // Resolve run_dir and uds_path together so they always agree.
+    // If the user passed --uds-path explicitly, run_dir is its parent by
+    // convention (service places instance sockets at <run_dir>/instances/{id}.sock).
+    // Otherwise fall back to CAPSEM_RUN_DIR / $HOME/.capsem/run, matching the service.
+    let (run_dir, uds_path) = match cli.uds_path {
+        Some(p) => {
+            let dir = p.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+            (dir, p)
+        }
+        None => {
+            let dir = std::env::var("CAPSEM_RUN_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(&home).join(".capsem").join("run"));
+            let sock = dir.join("service.sock");
+            (dir, sock)
+        }
+    };
 
     // Show update notice if available (sync file read, no latency)
     if let Some(notice) = update::read_cached_update_notice() {
@@ -1206,7 +1219,8 @@ async fn main() -> Result<()> {
                 from: None,
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
-            let vm_id = resp.into_result()?.id;
+            let provisioned = resp.into_result()?;
+            let vm_id = provisioned.id;
 
             // Helper: always delete the session, even on Ctrl-C or error
             async fn delete_vm(client: &UdsClient, vm_id: &str) {
@@ -1217,134 +1231,152 @@ async fn main() -> Result<()> {
             let ctrl_c = tokio::signal::ctrl_c();
             tokio::pin!(ctrl_c);
 
-            // Connect directly to session socket for streaming output
-            let sock_path = run_dir.join("instances").join(format!("{}.sock", vm_id));
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-            loop {
-                if sock_path.exists() {
-                    if let Ok(stream) = tokio::net::UnixStream::connect(&sock_path).await {
-                        if let Ok(std_stream) = stream.into_std() {
-                            if let Ok((tx, rx)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
-                                // Subscribe to terminal output then type the command
-                                // into the shell. This streams output in real-time
-                                // (unlike Exec which buffers until completion).
-                                let _ = tx.send(ServiceToProcess::StartTerminalStream).await;
+            // The service tells us exactly where the per-VM socket lives. Never
+            // recompute locally -- the service may fall back to /tmp/capsem/{hash}
+            // when run_dir is under macOS's /var/folders (long SUN path).
+            let sock_path = provisioned
+                .uds_path
+                .clone()
+                .unwrap_or_else(|| capsem_core::uds::instance_socket_path(&run_dir, &vm_id));
 
-                                // Wait for shell to be ready (boot banner finishes)
-                                let mut ready = false;
-                                let boot_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-                                while !ready {
-                                    tokio::select! {
-                                        _ = &mut ctrl_c => {
-                                            eprintln!("\nInterrupted, cleaning up session...");
-                                            delete_vm(&client, &vm_id).await;
-                                            std::process::exit(130);
-                                        }
-                                        result = tokio::time::timeout(
-                                            std::time::Duration::from_secs(30),
-                                            rx.recv(),
-                                        ) => {
-                                            match result {
-                                                Ok(Ok(ProcessToService::TerminalOutput { data })) => {
-                                                    // Look for the shell prompt (ends with "# ")
-                                                    let text = String::from_utf8_lossy(&data);
-                                                    if text.contains("# ") || text.contains("$ ") {
-                                                        ready = true;
-                                                    }
-                                                }
-                                                Ok(Ok(_)) => continue,
-                                                Ok(Err(_)) | Err(_) => break,
-                                            }
-                                        }
-                                    }
-                                    if tokio::time::Instant::now() >= boot_deadline {
-                                        eprintln!("Shell did not become ready within 30s");
-                                        delete_vm(&client, &vm_id).await;
-                                        std::process::exit(1);
-                                    }
-                                }
-
-                                // Type the doctor command into the shell
-                                let cmd: Vec<u8> = if *fast {
-                                    b"capsem-doctor --durations=10 -k 'not throughput'\n".to_vec()
-                                } else {
-                                    b"capsem-doctor --durations=10\n".to_vec()
-                                };
-                                let _ = tx.send(ServiceToProcess::TerminalInput { data: cmd }).await;
-
-                                // Stream output until we see the sentinel line
-                                let mut stdout = tokio::io::stdout();
-                                let mut output_buf = String::new();
-                                let exit_code = loop {
-                                    tokio::select! {
-                                        _ = &mut ctrl_c => {
-                                            eprintln!("\nInterrupted, cleaning up session...");
-                                            break 130;
-                                        }
-                                        result = tokio::time::timeout(
-                                            std::time::Duration::from_secs(300),
-                                            rx.recv(),
-                                        ) => {
-                                            match result {
-                                                Ok(Ok(ProcessToService::TerminalOutput { data })) => {
-                                                    let _ = stdout.write_all(&data).await;
-                                                    let _ = stdout.flush().await;
-                                                    if let Some(ref mut f) = log_file {
-                                                        let _ = std::io::Write::write_all(f, &data);
-                                                    }
-                                                    // Check for sentinel
-                                                    output_buf.push_str(&String::from_utf8_lossy(&data));
-                                                    // Keep only last 512 bytes to avoid unbounded growth.
-                                                    // Pad by sentinel length so we never split "RESULT: FAIL"
-                                                    // across a truncation boundary.
-                                                    if output_buf.len() > 1024 {
-                                                        let keep = 512 + "RESULT: FAIL".len();
-                                                        output_buf = output_buf.split_off(output_buf.len() - keep);
-                                                    }
-                                                    if output_buf.contains("RESULT: PASS") {
-                                                        break 0;
-                                                    } else if output_buf.contains("RESULT: FAIL") {
-                                                        break 1;
-                                                    }
-                                                }
-                                                Ok(Ok(_)) => continue,
-                                                Ok(Err(e)) => {
-                                                    eprintln!("IPC error: {e}");
-                                                    break 1;
-                                                }
-                                                Err(_) => {
-                                                    eprintln!("Doctor timed out after 300s");
-                                                    break 1;
-                                                }
-                                            }
-                                        }
-                                    }
-                                };
-
-                                delete_vm(&client, &vm_id).await;
-                                if exit_code != 0 {
-                                    eprintln!("Full log: {}", log_path.display());
-                                    std::process::exit(exit_code);
-                                }
-                                return Ok(());
-                            }
+            // Poll for the per-VM socket to exist and hand us an open IPC
+            // channel. Uses the shared exponential-backoff helper instead of
+            // a hand-rolled loop.
+            let sock_path_for_poll = sock_path.clone();
+            let poll_ipc = capsem_core::poll::poll_until(
+                capsem_core::poll::PollOpts::new(
+                    "vm-ipc-ready",
+                    std::time::Duration::from_secs(30),
+                ),
+                || {
+                    let sock_path = sock_path_for_poll.clone();
+                    async move {
+                        if !sock_path.exists() {
+                            return None;
                         }
+                        let stream = tokio::net::UnixStream::connect(&sock_path).await.ok()?;
+                        let std_stream = stream.into_std().ok()?;
+                        channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).ok()
                     }
+                },
+            );
+
+            let (tx, rx) = tokio::select! {
+                _ = &mut ctrl_c => {
+                    eprintln!("\nInterrupted, cleaning up session...");
+                    delete_vm(&client, &vm_id).await;
+                    std::process::exit(130);
                 }
-                // Check Ctrl-C while waiting for socket
+                res = poll_ipc => match res {
+                    Ok(chan) => chan,
+                    Err(_) => {
+                        eprintln!("Session did not become ready within 30s");
+                        delete_vm(&client, &vm_id).await;
+                        std::process::exit(1);
+                    }
+                },
+            };
+
+            // Subscribe to terminal output then type the command
+            // into the shell. This streams output in real-time
+            // (unlike Exec which buffers until completion).
+            let _ = tx.send(ServiceToProcess::StartTerminalStream).await;
+
+            // Wait for shell to be ready (boot banner finishes)
+            let mut ready = false;
+            let boot_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !ready {
                 tokio::select! {
                     _ = &mut ctrl_c => {
                         eprintln!("\nInterrupted, cleaning up session...");
                         delete_vm(&client, &vm_id).await;
                         std::process::exit(130);
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
+                    result = tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        rx.recv(),
+                    ) => {
+                        match result {
+                            Ok(Ok(ProcessToService::TerminalOutput { data })) => {
+                                // Look for the shell prompt (ends with "# ")
+                                let text = String::from_utf8_lossy(&data);
+                                if text.contains("# ") || text.contains("$ ") {
+                                    ready = true;
+                                }
+                            }
+                            Ok(Ok(_)) => continue,
+                            Ok(Err(_)) | Err(_) => break,
+                        }
+                    }
                 }
-                if tokio::time::Instant::now() >= deadline {
-                    eprintln!("Session did not become ready within 30s");
+                if tokio::time::Instant::now() >= boot_deadline {
+                    eprintln!("Shell did not become ready within 30s");
                     delete_vm(&client, &vm_id).await;
                     std::process::exit(1);
                 }
+            }
+
+            // Type the doctor command into the shell
+            let cmd: Vec<u8> = if *fast {
+                b"capsem-doctor --durations=10 -k 'not throughput'\n".to_vec()
+            } else {
+                b"capsem-doctor --durations=10\n".to_vec()
+            };
+            let _ = tx.send(ServiceToProcess::TerminalInput { data: cmd }).await;
+
+            // Stream output until we see the sentinel line
+            let mut stdout = tokio::io::stdout();
+            let mut output_buf = String::new();
+            let exit_code = loop {
+                tokio::select! {
+                    _ = &mut ctrl_c => {
+                        eprintln!("\nInterrupted, cleaning up session...");
+                        break 130;
+                    }
+                    result = tokio::time::timeout(
+                        std::time::Duration::from_secs(300),
+                        rx.recv(),
+                    ) => {
+                        match result {
+                            Ok(Ok(ProcessToService::TerminalOutput { data })) => {
+                                let _ = stdout.write_all(&data).await;
+                                let _ = stdout.flush().await;
+                                if let Some(ref mut f) = log_file {
+                                    let _ = std::io::Write::write_all(f, &data);
+                                }
+                                // Check for sentinel
+                                output_buf.push_str(&String::from_utf8_lossy(&data));
+                                // Keep only last 512 bytes to avoid unbounded growth.
+                                // Pad by sentinel length so we never split "RESULT: FAIL"
+                                // across a truncation boundary.
+                                if output_buf.len() > 1024 {
+                                    let keep = 512 + "RESULT: FAIL".len();
+                                    output_buf = output_buf.split_off(output_buf.len() - keep);
+                                }
+                                if output_buf.contains("RESULT: PASS") {
+                                    break 0;
+                                } else if output_buf.contains("RESULT: FAIL") {
+                                    break 1;
+                                }
+                            }
+                            Ok(Ok(_)) => continue,
+                            Ok(Err(e)) => {
+                                eprintln!("IPC error: {e}");
+                                break 1;
+                            }
+                            Err(_) => {
+                                eprintln!("Doctor timed out after 300s");
+                                break 1;
+                            }
+                        }
+                    }
+                }
+            };
+
+            delete_vm(&client, &vm_id).await;
+            if exit_code != 0 {
+                eprintln!("Full log: {}", log_path.display());
+                std::process::exit(exit_code);
             }
         }
     }
