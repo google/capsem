@@ -173,27 +173,12 @@ pub struct ProvisionOptions<'a> {
     pub description: Option<String>,
 }
 
-/// Clean up filesystem artifacts for an instance whose record has already
-/// been removed from the instances map. Called OUTSIDE the instances mutex
-/// so `remove_dir_all` on a large session dir cannot stall concurrent
-/// instance-map handlers.
-fn scrub_evicted_instance(id: &str, info: &InstanceInfo) {
-    if info.persistent {
-        info!(id, "persistent VM process died, preserving session dir");
-    } else {
-        info!(id, "ephemeral VM process died, removing session files");
-        if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
-            warn!(
-                id,
-                path = %info.session_dir.display(),
-                error = %e,
-                "failed to remove ephemeral session dir -- orphaned on disk"
-            );
-        }
-    }
-    let _ = std::fs::remove_file(&info.uds_path);
-    let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
-}
+/// Maximum number of `-failed-*` session dirs preserved across crashes /
+/// wait_for_vm_ready timeouts / dead-process cleanup. The preserved dirs
+/// hold the only host-side post-mortem signal we have (process.log,
+/// mcp-aggregator.stderr.log, serial.log, session.db), so too few is
+/// useless and too many accumulates disk for rare events.
+const MAX_FAILED_SESSIONS: usize = 5;
 
 impl ServiceState {
     /// Build the Unix socket path for a VM instance.
@@ -232,7 +217,7 @@ impl ServiceState {
     /// sockets on disk -- the caller is responsible for scrubbing those
     /// OUTSIDE the lock, otherwise a concurrent `instances.lock()` caller
     /// would wait for `remove_dir_all` to finish.
-    #[must_use = "evicted entries still have filesystem artifacts; pass each to scrub_evicted_instance"]
+    #[must_use = "evicted entries still have filesystem artifacts; pass each to ServiceState::scrub_evicted_instance"]
     fn drain_dead_instances(&self) -> Vec<(String, InstanceInfo)> {
         let mut instances = self.instances.lock().unwrap();
         let dead_ids: Vec<String> = instances
@@ -246,11 +231,126 @@ impl ServiceState {
             .collect()
     }
 
+    /// Scrub filesystem artifacts for a dead-process instance: preserve
+    /// the ephemeral session dir for post-mortem (rename + cull) and
+    /// clean up its UDS sockets. Persistent VMs keep their session dir
+    /// untouched -- they're designed to survive.
+    ///
+    /// MUST be called OUTSIDE the instances mutex -- `remove_dir_all`
+    /// and `rename` can block on large dirs and stall other handlers
+    /// racing for the lock.
+    fn scrub_evicted_instance(&self, id: &str, info: &InstanceInfo) {
+        if info.persistent {
+            info!(id, "persistent VM process died, preserving session dir");
+        } else {
+            info!(id, "ephemeral VM process died, preserving session dir for post-mortem");
+            self.preserve_failed_session_dir(&info.session_dir, id);
+        }
+        let _ = std::fs::remove_file(&info.uds_path);
+        let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
+    }
+
     fn cleanup_stale_instances(&self) {
         for (id, info) in self.drain_dead_instances() {
             info!(id, "removing stale instance record");
-            scrub_evicted_instance(&id, &info);
+            self.scrub_evicted_instance(&id, &info);
         }
+    }
+
+    /// Rename an ephemeral session dir to a `-failed-*` sibling so its
+    /// logs survive for post-mortem, then cull down to
+    /// `MAX_FAILED_SESSIONS`.
+    ///
+    /// Three loss paths converge here: (a) `handle_run`'s
+    /// `wait_for_vm_ready` timeout, (b) `scrub_evicted_instance` when
+    /// cleanup detects a dead capsem-process, (c) the unexpected
+    /// child-exit handler in `provision_sandbox`. All three cases are
+    /// "the process we wanted died" -- exactly when you need
+    /// `process.log`, `mcp-aggregator.stderr.log`, `serial.log`, and
+    /// `session.db` most. Call this instead of `remove_dir_all` on
+    /// every such path.
+    ///
+    /// If the rename fails (EEXIST, permission, different filesystem,
+    /// etc.) we `warn!` with the specific error and fall back to
+    /// `remove_dir_all` so disk isn't leaked when the filesystem is
+    /// already unhappy.
+    fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) {
+        let failed_id = format!(
+            "{}-failed-{}",
+            id,
+            capsem_core::session::generate_session_id(),
+        );
+        let failed_dir = self.run_dir.join("sessions").join(&failed_id);
+        match std::fs::rename(session_dir, &failed_dir) {
+            Ok(()) => {
+                info!(
+                    id,
+                    path = %failed_dir.display(),
+                    "preserved failed session dir for post-mortem"
+                );
+                if let Err(e) = self.cull_failed_sessions() {
+                    warn!(
+                        error = %e,
+                        "failed to cull old failed session dirs -- disk may grow beyond {MAX_FAILED_SESSIONS}"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    id,
+                    from = %session_dir.display(),
+                    to = %failed_dir.display(),
+                    error = %e,
+                    "failed to preserve session dir for post-mortem -- logs lost; removing to reclaim disk"
+                );
+                if let Err(e) = std::fs::remove_dir_all(session_dir) {
+                    warn!(
+                        id,
+                        path = %session_dir.display(),
+                        error = %e,
+                        "also failed to remove session dir -- orphaned on disk"
+                    );
+                }
+            }
+        }
+    }
+
+    fn cull_failed_sessions(&self) -> Result<()> {
+        let sessions_dir = self.run_dir.join("sessions");
+        if !sessions_dir.exists() {
+            return Ok(());
+        }
+        let mut failed_dirs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+        let entries = std::fs::read_dir(&sessions_dir)
+            .with_context(|| format!("read_dir({})", sessions_dir.display()))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            if !name.contains("-failed-") {
+                continue;
+            }
+            // If we can't stat, skip rather than fail the whole cull --
+            // we'd rather leave one undateable dir than abort the prune.
+            if let Ok(metadata) = entry.metadata() {
+                if let Ok(modified) = metadata.modified() {
+                    failed_dirs.push((path, modified));
+                }
+            }
+        }
+        failed_dirs.sort_by(|a, b| a.1.cmp(&b.1));
+        if failed_dirs.len() > MAX_FAILED_SESSIONS {
+            let to_delete = failed_dirs.len() - MAX_FAILED_SESSIONS;
+            for (path, _) in failed_dirs.iter().take(to_delete) {
+                info!(path = %path.display(), "culling old failed session dir");
+                if let Err(e) = std::fs::remove_dir_all(path) {
+                    warn!(path = %path.display(), error = %e, "cull remove_dir_all failed");
+                }
+            }
+        }
+        Ok(())
     }
 
     fn provision_sandbox(
@@ -443,18 +543,20 @@ impl ServiceState {
                 }
             }
 
-            // Remove from active instances so the service knows this VM is gone.
-            // If the VM was ephemeral and died without going through handle_stop/
-            // handle_run/handle_purge (crash, SIGTERM, OOM), nothing else will ever
-            // remove its session dir -- cleanup_stale_instances has nothing to find
-            // because we just removed the map entry. Do the cleanup here.
+            // If the VM was ephemeral and died without going through
+            // handle_stop / handle_run / handle_purge / handle_delete
+            // (crash, SIGTERM, OOM), nothing else will ever touch its
+            // session dir. Those explicit handlers all call
+            // shutdown_vm_process which removes the entry from the map
+            // BEFORE this handler fires -- so when `removed` is Some,
+            // we're in the "died unexpectedly" case by definition.
+            // That's exactly when we want to preserve process.log /
+            // mcp-aggregator.stderr.log / serial.log / session.db for
+            // post-mortem, rather than silently `remove_dir_all`.
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
             if let Some(info) = removed {
                 if !info.persistent {
-                    if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
-                        warn!(id = %id_clone, path = %info.session_dir.display(),
-                              error = %e, "failed to remove ephemeral session dir on process exit");
-                    }
+                    state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
                 }
             }
             let _ = std::fs::remove_file(&uds_clone);
@@ -2465,9 +2567,25 @@ async fn handle_run(
     // 3. Wait for VM socket to appear
     let uds_path = state.instance_socket_path(&id);
     if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
-        let _ = shutdown_vm_process(&state, &id).await;
+        // Send Shutdown IPC / SIGTERM and then wait for the child to
+        // actually exit before renaming. Rename on an open-for-write
+        // dir is safe (fds survive) but any path-based reopens the
+        // child might do during shutdown (log rotation, db reopen)
+        // would ENOENT -- so we let it finish flushing first. The
+        // 5s bound matches shutdown_vm_process's own reaper.
+        let pid = shutdown_vm_process(&state, &id)
+            .await
+            .map(|(_, _, p)| p)
+            .unwrap_or(0);
+        if pid > 0 {
+            wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
+        }
         let dir = session_dir;
-        tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
+        let state_clone = Arc::clone(&state);
+        let id_owned = id.clone();
+        tokio::task::spawn_blocking(move || {
+            state_clone.preserve_failed_session_dir(&dir, &id_owned);
+        });
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
     }
 
@@ -3228,6 +3346,150 @@ mod tests {
             state.instances.try_lock().is_ok(),
             "mutex still held after drain_dead_instances returned"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // preserve_failed_session_dir + cull_failed_sessions
+    //
+    // The post-mortem pipeline: when any of the three loss paths
+    // (wait_for_vm_ready timeout, dead-process cleanup, unexpected
+    // child exit) would have silently `remove_dir_all`'d a session dir,
+    // it's renamed to a `-failed-*` sibling instead so process.log,
+    // mcp-aggregator.stderr.log, serial.log, and session.db survive.
+    // Cap: MAX_FAILED_SESSIONS (5).
+    // -----------------------------------------------------------------------
+
+    fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
+        let registry_path = run_dir.join("persistent_registry.json");
+        std::fs::create_dir_all(run_dir.join("sessions")).unwrap();
+        Arc::new(ServiceState {
+            instances: Mutex::new(HashMap::new()),
+            persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
+            process_binary: PathBuf::from("/nonexistent/capsem-process"),
+            assets_dir: PathBuf::from("/nonexistent/assets"),
+            run_dir,
+            job_counter: AtomicU64::new(1),
+            manifest: None,
+            current_version: "0.0.0".into(),
+            magika: test_magika(),
+        })
+    }
+
+    #[test]
+    fn preserve_renames_session_dir_and_keeps_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = make_state_in(dir.path().to_path_buf());
+        let session_dir = state.run_dir.join("sessions").join("vm-abc");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(session_dir.join("process.log"), b"boot failed: ...").unwrap();
+        std::fs::write(session_dir.join("serial.log"), b"kernel panic").unwrap();
+
+        state.preserve_failed_session_dir(&session_dir, "vm-abc");
+
+        assert!(!session_dir.exists(), "original dir should have been renamed");
+        let entries: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
+            .unwrap()
+            .flatten()
+            .collect();
+        let failed = entries
+            .iter()
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("vm-abc-failed-")
+            })
+            .expect("a vm-abc-failed-* dir must exist");
+        let preserved = failed.path().join("process.log");
+        assert_eq!(std::fs::read(&preserved).unwrap(), b"boot failed: ...");
+        let preserved_serial = failed.path().join("serial.log");
+        assert_eq!(std::fs::read(&preserved_serial).unwrap(), b"kernel panic");
+    }
+
+    #[test]
+    fn cull_keeps_newest_and_prunes_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = make_state_in(dir.path().to_path_buf());
+        let sessions = state.run_dir.join("sessions");
+
+        // Create MAX_FAILED_SESSIONS + 2 failed dirs with staggered mtimes.
+        // Using filetime to set mtime lets us assert deterministically
+        // which ones get pruned (oldest) vs kept (newest).
+        let total = MAX_FAILED_SESSIONS + 2;
+        for i in 0..total {
+            let name = format!("vm-{i}-failed-20260101-00000{i}-aaaa");
+            let p = sessions.join(&name);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join("process.log"), format!("run {i}")).unwrap();
+            // Older i -> older mtime.
+            let when = std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(1_700_000_000 + i as u64 * 10);
+            filetime::set_file_mtime(&p, filetime::FileTime::from_system_time(when)).unwrap();
+        }
+
+        state.cull_failed_sessions().unwrap();
+
+        let remaining: std::collections::HashSet<String> = std::fs::read_dir(&sessions)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            remaining.len(),
+            MAX_FAILED_SESSIONS,
+            "should keep exactly MAX_FAILED_SESSIONS, got {remaining:?}"
+        );
+        // Oldest two (i=0, i=1) must be pruned; newest MAX_FAILED_SESSIONS kept.
+        for i in 0..2 {
+            let name = format!("vm-{i}-failed-20260101-00000{i}-aaaa");
+            assert!(
+                !remaining.contains(&name),
+                "oldest dir {name} should have been culled"
+            );
+        }
+        for i in 2..total {
+            let name = format!("vm-{i}-failed-20260101-00000{i}-aaaa");
+            assert!(
+                remaining.contains(&name),
+                "newer dir {name} should have been kept"
+            );
+        }
+    }
+
+    #[test]
+    fn cull_is_noop_when_under_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = make_state_in(dir.path().to_path_buf());
+        let sessions = state.run_dir.join("sessions");
+
+        for i in 0..3 {
+            let name = format!("vm-{i}-failed-20260101-00000{i}-aaaa");
+            std::fs::create_dir_all(sessions.join(&name)).unwrap();
+        }
+
+        state.cull_failed_sessions().unwrap();
+
+        assert_eq!(std::fs::read_dir(&sessions).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn cull_ignores_non_failed_dirs() {
+        // Running sessions (no `-failed-` in the name) must never be
+        // culled. This is the safety property: a misnamed cull is a
+        // production outage.
+        let dir = tempfile::tempdir().unwrap();
+        let state = make_state_in(dir.path().to_path_buf());
+        let sessions = state.run_dir.join("sessions");
+
+        std::fs::create_dir_all(sessions.join("vm-alive")).unwrap();
+        for i in 0..(MAX_FAILED_SESSIONS + 3) {
+            let name = format!("vm-{i}-failed-20260101-00000{i}-aaaa");
+            std::fs::create_dir_all(sessions.join(&name)).unwrap();
+        }
+
+        state.cull_failed_sessions().unwrap();
+
+        assert!(sessions.join("vm-alive").exists(), "active VM dir must not be culled");
     }
 
     // -----------------------------------------------------------------------

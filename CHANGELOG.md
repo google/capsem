@@ -41,6 +41,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extract pure helpers into lib + submodules`.
 
 ### Added
+- **Failed-session log preservation for post-mortem.** Three host-side
+  loss paths used to silently `remove_dir_all` the session directory
+  when capsem-process died unexpectedly, taking `process.log`,
+  `mcp-aggregator.stderr.log`, `serial.log`, and `session.db` with
+  them -- exactly when those logs are most useful. All three now
+  funnel through a single `ServiceState::preserve_failed_session_dir`
+  helper that renames the dir to a `-failed-<ts>-<rand>` sibling
+  (via `capsem_core::session::generate_session_id`) and calls
+  `cull_failed_sessions` to cap the surviving count at
+  `MAX_FAILED_SESSIONS = 5`. If rename fails (EEXIST, permission,
+  cross-filesystem), `warn!` with the specific error and fall back
+  to `remove_dir_all` so disk isn't leaked when the filesystem is
+  already unhappy. Paths wired through the helper:
+  (a) `handle_run`'s `wait_for_vm_ready` timeout -- now also awaits
+  `wait_for_process_exit` before rename so the child has finished
+  flushing session.db and log files (avoids the path-based-reopen
+  ENOENT hazard during shutdown);
+  (b) `scrub_evicted_instance` (promoted from free fn to
+  `ServiceState` method) when `cleanup_stale_instances` detects a
+  dead PID -- the loss path the last service commit introduced;
+  (c) `provision_sandbox`'s child-exit handler, which fires only
+  when the child died outside the explicit teardown path
+  (`shutdown_vm_process` removes the map entry first, so the
+  `removed = Some(info)` branch is by definition the "died
+  unexpectedly" case). Four new unit tests pin the contract: rename
+  preserves file contents, cull keeps newest and prunes oldest, cull
+  is a no-op under the cap, cull never touches non-`-failed-` dirs.
 - **Multi-agent execution lock on heavy `just` recipes.** `smoke`,
   `test`, `bench`, `shell`, `exec`, `ui`, `install`, and
   `test-gateway-e2e` now acquire a non-blocking `flock(1)` on
