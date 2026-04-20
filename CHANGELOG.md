@@ -77,6 +77,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+- **`just cross-compile` no longer dies with `Invalid cross-device link`
+  when rustup self-updates inside the host-builder container.**
+  `rust-toolchain.toml` pins `channel = "stable"`, so every time a new
+  stable drops, the first cargo invocation inside the pre-built
+  `capsem-host-builder` image triggers a rustup channel sync. The sync
+  tries to `rename(2)` a toolchain directory
+  (`toolchains/stable-.../lib/rustlib/.../self-contained`) from the
+  image's lower overlay layer into `/usr/local/rustup/tmp/` on the
+  container's upper layer; Docker-for-Mac's overlayfs bounces that
+  specific cross-layer rename with `os error 18` and rustup aborts.
+  Added a persistent `capsem-rustup:/usr/local/rustup` named-volume
+  mount to the `docker run` in `cross-compile`, matching the same
+  pattern used for `capsem-cargo-registry` / `capsem-cargo-git` /
+  `capsem-host-target-<arch>`. First run copies the image's baked-in
+  rustup tree into the volume; subsequent runs put all of rustup on
+  one filesystem, so the rename stays within a single mount and the
+  EXDEV class of bug is eliminated whether or not rustup self-updates.
+  Updated `_clean-host-image` to rm the new volume and drop the
+  never-wired `capsem-rustup-{arm64,x86_64}` placeholders.
 - **`just test` and `just smoke` execution lock actually blocks
   concurrent runs now.** The lockfile lived at
   `$CAPSEM_RUN_DIR/execution.lock` under `$CAPSEM_HOME`, but the recipe

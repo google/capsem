@@ -390,7 +390,7 @@ _clean-host-image:
     set -euo pipefail
     docker rmi capsem-host-builder:latest 2>/dev/null || true
     docker rmi capsem-install-test:latest 2>/dev/null || true
-    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup-arm64 capsem-rustup-x86_64 capsem-install-target capsem-install-cargo; do
+    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup capsem-install-target capsem-install-cargo; do
         docker volume rm "$vol" 2>/dev/null || true
     done
     echo "Cleaned host builder image and volumes."
@@ -474,6 +474,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         -v "capsem-cargo-registry:/usr/local/cargo/registry" \
         -v "capsem-cargo-git:/usr/local/cargo/git" \
         -v "capsem-host-target-$TARGET_ARCH:/cargo-target" \
+        -v "capsem-rustup:/usr/local/rustup" \
         -w /src \
         capsem-host-builder:latest \
         bash -c "swap-dev-libs \$DPKG_ARCH && \
