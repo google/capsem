@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **External links ("Get a key", API key docs, onboarding "Learn more")
+  now open in the system browser from the Tauri desktop app.** Previously
+  `<a target="_blank">` did nothing in the Tauri webview because
+  `window.open` is a no-op there, and the `open_url` IPC handler already
+  wired up in `capsem-app` was never called from the frontend. `openUrl()`
+  in `api.ts` now detects the Tauri shell via `__TAURI_INTERNALS__` and
+  invokes the `open_url` command; a document-level click interceptor in
+  `App.svelte` routes every `<a target="_blank">` and `http(s):`/`mailto:`
+  link through it, so existing call sites keep working unchanged. Browser
+  dev mode still falls back to `window.open`.
 - **Dark-mode warning banners no longer render with a white strip and
   unreadable text.** Two compounding issues: `html`/`body` had no
   theme-aware `background-color`, so the browser's default white canvas
