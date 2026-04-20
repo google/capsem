@@ -106,14 +106,28 @@ VM_COMMAND = "; ".join([
 def _kill_dev_service() -> None:
     """Stop the smoke-owned `capsem-service --foreground` and any child VMs.
 
-    The dev service was started by `just _ensure-service` with no test
-    config in env. We replace it with one that inherits our test user/corp
-    config so `capsem run` actually routes policy through the test config.
+    Kill ONLY by pidfile -- never pkill-by-pattern. A pattern like
+    `capsem-service.*--foreground` would also catch the user's installed
+    LaunchAgent / systemd unit. On macOS the LaunchAgent has KeepAlive=true
+    and would respawn mid-test, racing against the test service and the
+    direct-spawn path in client.rs.
     """
-    subprocess.run(["pkill", "-f", "capsem-process.*--id"], check=False)
-    subprocess.run(["pkill", "-f", "capsem-service.*--foreground"], check=False)
-    time.sleep(0.5)
-    subprocess.run(["pkill", "-9", "-f", "capsem-process.*--id"], check=False)
+    if SERVICE_PIDFILE.exists():
+        try:
+            pid = int(SERVICE_PIDFILE.read_text().strip())
+        except (ValueError, OSError):
+            pid = 0
+        if pid > 0:
+            # Term the service; its own signal handler terminates child VMs.
+            subprocess.run(["kill", str(pid)], check=False)
+            for _ in range(20):
+                if subprocess.run(["kill", "-0", str(pid)], check=False,
+                                   capture_output=True).returncode != 0:
+                    break
+                time.sleep(0.1)
+            # Force-kill if still alive.
+            subprocess.run(["kill", "-9", str(pid)], check=False,
+                           capture_output=True)
     try:
         SERVICE_PIDFILE.unlink()
     except FileNotFoundError:
@@ -185,7 +199,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     """Boot a temp VM via `capsem run`, return (session_id, exit_code).
 
     The service preserves the session dir after `run` completes, so we
-    find it by looking for the newest `tmp-*` directory created during
+    find it by looking for the newest `*-tmp` directory created during
     this invocation.
     """
     env = {
@@ -255,10 +269,10 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         print(proc.stdout.strip())
 
     # Find the new session dir created during this invocation.
-    # `capsem run` uses the service's auto-generated `tmp-<adj>-<noun>` ID
-    # (see capsem-service/src/main.rs::generate_tmp_name).
+    # `capsem run` uses the service's auto-generated `<adj>-<noun>-tmp` ID
+    # (see capsem-service/src/naming.rs::generate_tmp_name).
     new_sessions = sorted(
-        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.startswith("tmp-")),
+        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.endswith("-tmp")),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     ) if SESSIONS_DIR.exists() else []

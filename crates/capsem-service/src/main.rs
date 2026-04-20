@@ -1180,7 +1180,10 @@ async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<ProvisionRequest>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
-    let id = payload.name.clone().unwrap_or_else(generate_tmp_name);
+    let id = payload.name.clone().unwrap_or_else(|| {
+        let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
+        generate_tmp_name(existing.iter().map(|s| s.as_str()))
+    });
 
     // Missing ram_mb/cpus fall back to merged VM settings. This keeps
     // "new ephemeral VM" callers (tray, MCP one-shots) honoring the user's
@@ -2523,7 +2526,10 @@ async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
-    let id = generate_tmp_name();
+    let id = {
+        let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
+        generate_tmp_name(existing.iter().map(|s| s.as_str()))
+    };
 
     // Resolve ram/cpu from merged VM settings if the caller didn't specify,
     // matching handle_provision. Keeps `capsem run` settings-driven.

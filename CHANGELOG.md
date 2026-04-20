@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Temp VM names now suffix `-tmp` and never collide on the first word.**
+  Auto-generated names went from `tmp-<adj>-<noun>` to `<adj>-<noun>-tmp`
+  (e.g. `brave-falcon-tmp`) so every tab/list entry leads with a
+  distinctive adjective instead of the same `tmp-` prefix. The generator
+  also consults the live instance table and skips any adjective that
+  matches the leading segment of an existing VM name, so two concurrent
+  temp VMs never share a first word. The adjective and noun rosters were
+  expanded (68 adjectives, 85 nouns) to keep the avoid-set useful even
+  under heavy concurrency, and the generator falls back to a random
+  adjective if every one is already claimed. `scripts/integration_test.py`
+  was updated to match on the `-tmp` suffix instead of the prefix.
+
 ### Fixed
 - **`just install` now leaves `~/.capsem/assets/` in the layout the service's
   resolver actually reads.** The .pkg/.deb ships only `manifest.json` (binaries

@@ -1,34 +1,82 @@
 //! VM-name helpers: human-readable temp names and persistent-name validation.
 
 use anyhow::{anyhow, Result};
+use rand::seq::SliceRandom;
 use rand::Rng;
 
-/// Generate a fun temporary VM name like `tmp-brave-falcon`.
+const ADJECTIVES: &[&str] = &[
+    "agile", "ample", "bold", "bonny", "brave", "bright", "calm", "cheerful",
+    "clever", "cosmic", "cozy", "crafty", "daring", "dapper", "dashing",
+    "eager", "elegant", "epic", "fancy", "feisty", "fierce", "friendly",
+    "gentle", "gleeful", "glossy", "grand", "happy", "hardy", "honest",
+    "jazzy", "jolly", "keen", "kindly", "lively", "lofty", "lucky", "mellow",
+    "merry", "mighty", "nimble", "noble", "pearly", "peppy", "placid",
+    "plucky", "proud", "quick", "quiet", "royal", "rustic", "serene", "sharp",
+    "sleek", "smart", "steady", "stellar", "swift", "tender", "tidy",
+    "upbeat", "valiant", "vibrant", "vivid", "whimsical", "winsome", "witty",
+    "zany", "zesty",
+];
+
+const NOUNS: &[&str] = &[
+    "amber", "aurora", "badger", "beacon", "bear", "beaver", "bison",
+    "blaze", "bobcat", "breeze", "bronze", "canyon", "cedar", "comet",
+    "cobra", "coral", "cougar", "cricket", "crimson", "dolphin", "dragon",
+    "eagle", "ember", "falcon", "finch", "fox", "frost", "galaxy", "gecko",
+    "glacier", "griffin", "hare", "hawk", "heron", "ibis", "indigo", "ivory",
+    "jade", "jaguar", "kestrel", "kiwi", "koala", "lemur", "llama", "lotus",
+    "lynx", "maple", "marlin", "meadow", "meteor", "moth", "narwhal",
+    "nebula", "nova", "onyx", "opal", "orchid", "osprey", "otter", "owl",
+    "panda", "pebble", "phoenix", "pine", "puma", "quartz", "raven", "ridge",
+    "river", "ruby", "sable", "seal", "silver", "sparrow", "spruce", "stone",
+    "summit", "swan", "thunder", "tiger", "tundra", "violet", "vortex",
+    "willow", "wolf", "zephyr",
+];
+
+/// Generate a fun temporary VM name like `brave-falcon-tmp`.
 ///
-/// The shape is `tmp-<adj>-<noun>` -- two hyphens, lowercase ASCII only.
-/// Callers rely on the `tmp-` prefix to distinguish auto-generated names from
-/// user-supplied ones.
-pub fn generate_tmp_name() -> String {
-    const ADJECTIVES: &[&str] = &[
-        "brave", "calm", "clever", "daring", "eager", "fancy", "gentle",
-        "happy", "jolly", "keen", "lively", "lucky", "merry", "noble",
-        "plucky", "quick", "quiet", "sharp", "smart", "swift", "witty",
-        "zany", "bright", "bold", "proud", "fierce", "steady", "agile",
-        "cosmic", "epic", "grand", "mighty", "nimble", "stellar", "vivid",
-    ];
-    const NOUNS: &[&str] = &[
-        "phoenix", "falcon", "otter", "panda", "wolf", "tiger", "raven",
-        "cobra", "dolphin", "hawk", "lynx", "puma", "fox", "owl", "bear",
-        "jaguar", "eagle", "heron", "bison", "coral", "amber", "jade",
-        "onyx", "ruby", "opal", "ivory", "crimson", "indigo", "violet",
-        "bronze", "silver", "cedar", "maple", "willow", "aurora", "comet",
-        "nova", "nebula", "summit", "ridge", "canyon", "glacier", "thunder",
-        "blaze", "ember", "frost", "breeze",
-    ];
+/// The shape is `<adj>-<noun>-tmp` -- two hyphens, lowercase ASCII only. The
+/// `-tmp` suffix (rather than a prefix) keeps the distinctive adjective at
+/// the start of tab titles and VM lists so users can tell instances apart at
+/// a glance.
+///
+/// `existing` is an iterator over names already in use (any source -- running
+/// VMs, persistent VMs, in-flight provisions). The generator avoids picking
+/// an adjective whose string matches the first `-`-separated segment of any
+/// existing name, so two concurrent temp VMs never share a leading word. If
+/// every adjective is already claimed the function falls back to a random
+/// adjective rather than failing.
+pub fn generate_tmp_name<I, S>(existing: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let used_first_words: std::collections::HashSet<String> = existing
+        .into_iter()
+        .map(|name| {
+            name.as_ref()
+                .split('-')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+
     let mut rng = rand::thread_rng();
-    let adj = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
+
+    let adj = {
+        let candidates: Vec<&&str> = ADJECTIVES
+            .iter()
+            .filter(|a| !used_first_words.contains(**a))
+            .collect();
+        if let Some(pick) = candidates.choose(&mut rng) {
+            **pick
+        } else {
+            ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())]
+        }
+    };
     let noun = NOUNS[rng.gen_range(0..NOUNS.len())];
-    format!("tmp-{adj}-{noun}")
+    format!("{adj}-{noun}-tmp")
 }
 
 /// Validate that a persistent VM name is safe for use as a directory name.
@@ -123,17 +171,18 @@ mod tests {
     }
 
     #[test]
-    fn generate_tmp_name_starts_with_tmp_prefix() {
+    fn generate_tmp_name_ends_with_tmp_suffix() {
         for _ in 0..32 {
-            let n = generate_tmp_name();
-            assert!(n.starts_with("tmp-"), "generated name {n:?} missing tmp- prefix");
+            let n = generate_tmp_name(std::iter::empty::<&str>());
+            assert!(n.ends_with("-tmp"), "generated name {n:?} missing -tmp suffix");
+            assert!(!n.starts_with("tmp-"), "generated name {n:?} must not keep tmp- prefix");
         }
     }
 
     #[test]
     fn generate_tmp_name_has_exactly_two_hyphens() {
         for _ in 0..32 {
-            let n = generate_tmp_name();
+            let n = generate_tmp_name(std::iter::empty::<&str>());
             let hyphens = n.bytes().filter(|b| *b == b'-').count();
             assert_eq!(hyphens, 2, "name {n:?} should have exactly two hyphens");
         }
@@ -144,8 +193,48 @@ mod tests {
         // Auto-generated names must pass the validator that gates persistent
         // names -- the temp-name shape doubles as a safety check on the word lists.
         for _ in 0..16 {
-            let n = generate_tmp_name();
+            let n = generate_tmp_name(std::iter::empty::<&str>());
             validate_vm_name(&n).expect("generated tmp name must validate");
         }
+    }
+
+    #[test]
+    fn generate_tmp_name_avoids_existing_first_word() {
+        // Reserve every adjective but one and confirm we pick the free one.
+        let free = "zesty";
+        let used: Vec<String> = ADJECTIVES
+            .iter()
+            .filter(|a| **a != free)
+            .map(|a| format!("{a}-wolf-tmp"))
+            .collect();
+        for _ in 0..16 {
+            let n = generate_tmp_name(used.iter().map(|s| s.as_str()));
+            assert!(
+                n.starts_with(&format!("{free}-")),
+                "expected generator to pick the only free adjective, got {n:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_tmp_name_falls_back_when_all_adjectives_used() {
+        // Every adjective claimed -- the generator must still return something
+        // that validates rather than panicking or spinning forever.
+        let used: Vec<String> = ADJECTIVES
+            .iter()
+            .map(|a| format!("{a}-wolf-tmp"))
+            .collect();
+        let n = generate_tmp_name(used.iter().map(|s| s.as_str()));
+        validate_vm_name(&n).expect("fallback name must still validate");
+        assert!(n.ends_with("-tmp"));
+    }
+
+    #[test]
+    fn generate_tmp_name_ignores_empty_existing() {
+        // An empty iterator is the no-collision case; the prior test exercised
+        // this, so this just guards against a regression where an empty string
+        // in the input accidentally blocks every adjective.
+        let n = generate_tmp_name(std::iter::once(""));
+        validate_vm_name(&n).expect("empty existing name should not break generator");
     }
 }
