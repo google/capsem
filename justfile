@@ -674,6 +674,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
             echo "Check: journalctl --user -u capsem"
         fi
     fi
+    echo "=== Syncing locally built assets into ~/.capsem/assets ==="
+    bash scripts/sync-dev-assets.sh "{{assets_dir}}" "$HOME/.capsem/assets"
     echo "=== Pruning stale build artifacts ==="
     just _clean-stale
 

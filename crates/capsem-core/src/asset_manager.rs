@@ -186,28 +186,7 @@ impl ManifestV2 {
         arch: &str,
         base_dir: &Path,
     ) -> Result<ResolvedAssets> {
-        // Find the asset version to use: prefer assets.current.
-        // If the binary specifies min_assets, verify compatibility.
-        let asset_version = if let Some(bin_rel) = self.binaries.releases.get(binary_version) {
-            let min = &bin_rel.min_assets;
-            if self.assets.current >= *min {
-                self.assets.current.clone()
-            } else {
-                // Current assets are too old for this binary -- find newest compatible
-                let mut best: Option<&str> = None;
-                for v in self.assets.releases.keys() {
-                    if v.as_str() >= min.as_str()
-                        && (best.is_none() || v.as_str() > best.unwrap())
-                    {
-                        best = Some(v.as_str());
-                    }
-                }
-                best.map(String::from).unwrap_or_else(|| self.assets.current.clone())
-            }
-        } else {
-            // Binary version not in manifest -- use current assets
-            self.assets.current.clone()
-        };
+        let asset_version = pick_asset_version(self, binary_version);
 
         let release = self.assets.releases.get(&asset_version)
             .with_context(|| format!("asset version {} not found in manifest", asset_version))?;
@@ -295,9 +274,17 @@ pub fn default_assets_dir() -> Option<PathBuf> {
     crate::paths::capsem_home_opt().map(|h| h.join("assets"))
 }
 
-/// Build the GitHub Releases download base URL for the given version.
+/// Build the GitHub Releases download base URL for the given asset version.
+///
+/// Honors the `CAPSEM_RELEASE_URL` env override (used by integration tests that
+/// point at a local HTTP fixture). The trailing path `/v{version}` is still
+/// appended so local fixtures can mirror the release directory structure.
 pub fn release_url(version: &str) -> String {
-    format!("https://github.com/google/capsem/releases/download/v{version}")
+    let base = std::env::var("CAPSEM_RELEASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://github.com/google/capsem/releases/download".into());
+    format!("{}/v{version}", base.trim_end_matches('/'))
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +339,188 @@ pub fn cleanup_unused_assets(
     }
 
     Ok(removed)
+}
+
+// ---------------------------------------------------------------------------
+// Download
+// ---------------------------------------------------------------------------
+
+/// Per-file download progress for [`download_missing_assets`].
+#[derive(Debug, Clone)]
+pub struct DownloadProgress {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    pub bytes_total: Option<u64>,
+    pub done: bool,
+}
+
+/// Resolve the compatible asset release for `binary_version`, then download
+/// any missing or hash-mismatched files from the GitHub Release (or the URL
+/// in `CAPSEM_RELEASE_URL`) into `base_dir/{arch}/{hash_filename}`.
+///
+/// Per-arch upload convention (see commit aef5269): remote filenames are
+/// `{arch}-{logical_name}` (e.g. `arm64-rootfs.squashfs`). The downloaded
+/// bytes are blake3-verified before atomic rename.
+///
+/// Returns the set of paths that were freshly downloaded. Already-present
+/// files with matching hashes are skipped silently.
+pub async fn download_missing_assets<F>(
+    manifest: &ManifestV2,
+    binary_version: &str,
+    arch: &str,
+    base_dir: &Path,
+    on_progress: F,
+) -> Result<Vec<PathBuf>>
+where
+    F: Fn(DownloadProgress) + Send + Sync,
+{
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    // Pick the same asset release the service's resolver will pick.
+    let asset_version = pick_asset_version(manifest, binary_version);
+    let release = manifest.assets.releases.get(&asset_version)
+        .with_context(|| format!("asset version {asset_version} not found in manifest"))?;
+    let arch_assets = release.arches.get(arch)
+        .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
+
+    let arch_dir = base_dir.join(arch);
+    std::fs::create_dir_all(&arch_dir)
+        .with_context(|| format!("cannot create {}", arch_dir.display()))?;
+
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("build reqwest client")?;
+
+    let base_url = release_url(&asset_version);
+    let mut downloaded = Vec::new();
+
+    // Deterministic order for stable progress output.
+    let mut names: Vec<&String> = arch_assets.keys().collect();
+    names.sort();
+
+    for name in names {
+        let entry = &arch_assets[name];
+        let hname = hash_filename(name, &entry.hash);
+        let target = arch_dir.join(&hname);
+
+        if target.exists() {
+            match hash_file(&target) {
+                Ok(h) if h == entry.hash => {
+                    on_progress(DownloadProgress {
+                        logical_name: name.clone(),
+                        bytes_done: entry.size,
+                        bytes_total: Some(entry.size),
+                        done: true,
+                    });
+                    continue;
+                }
+                _ => {
+                    info!(path = %target.display(), "existing file hash mismatch, redownloading");
+                    let _ = std::fs::remove_file(&target);
+                }
+            }
+        }
+
+        let url = format!("{}/{}-{}", base_url, arch, name);
+        info!(name = %name, url = %url, "downloading asset");
+
+        let resp = client.get(&url).send().await
+            .with_context(|| format!("GET {url}"))?;
+        if !resp.status().is_success() {
+            bail!("GET {} returned {}", url, resp.status());
+        }
+        let total = resp.content_length().or(Some(entry.size));
+
+        let tmp = arch_dir.join(format!("{hname}.tmp"));
+        // Best-effort: clean up any stale tmp from a prior aborted run.
+        let _ = std::fs::remove_file(&tmp);
+
+        let mut file = tokio::fs::File::create(&tmp).await
+            .with_context(|| format!("create {}", tmp.display()))?;
+        let mut hasher = blake3::Hasher::new();
+        let mut bytes_done: u64 = 0;
+        let mut stream = resp.bytes_stream();
+
+        let cleanup_tmp = |tmp: &Path| {
+            let _ = std::fs::remove_file(tmp);
+        };
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(e) => {
+                    cleanup_tmp(&tmp);
+                    return Err(anyhow::Error::new(e).context(format!("stream {url}")));
+                }
+            };
+            if let Err(e) = file.write_all(&chunk).await {
+                cleanup_tmp(&tmp);
+                return Err(anyhow::Error::new(e).context(format!("write {}", tmp.display())));
+            }
+            hasher.update(&chunk);
+            bytes_done += chunk.len() as u64;
+            on_progress(DownloadProgress {
+                logical_name: name.clone(),
+                bytes_done,
+                bytes_total: total,
+                done: false,
+            });
+        }
+        if let Err(e) = file.flush().await {
+            cleanup_tmp(&tmp);
+            return Err(anyhow::Error::new(e).context(format!("flush {}", tmp.display())));
+        }
+        drop(file);
+
+        let actual = hasher.finalize().to_hex().to_string();
+        if actual != entry.hash {
+            cleanup_tmp(&tmp);
+            bail!(
+                "{}: hash mismatch (expected {}, got {})",
+                name, entry.hash, actual
+            );
+        }
+
+        std::fs::rename(&tmp, &target)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444));
+        }
+
+        on_progress(DownloadProgress {
+            logical_name: name.clone(),
+            bytes_done,
+            bytes_total: total,
+            done: true,
+        });
+        downloaded.push(target);
+    }
+
+    Ok(downloaded)
+}
+
+/// Pick the asset version that [`ManifestV2::resolve`] would pick for a
+/// given binary version. Extracted so `download_missing_assets` and the
+/// resolver stay in lock-step.
+fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> String {
+    if let Some(bin_rel) = manifest.binaries.releases.get(binary_version) {
+        let min = &bin_rel.min_assets;
+        if manifest.assets.current >= *min {
+            return manifest.assets.current.clone();
+        }
+        let mut best: Option<&str> = None;
+        for v in manifest.assets.releases.keys() {
+            if v.as_str() >= min.as_str() && (best.is_none() || v.as_str() > best.unwrap()) {
+                best = Some(v.as_str());
+            }
+        }
+        return best.map(String::from).unwrap_or_else(|| manifest.assets.current.clone());
+    }
+    manifest.assets.current.clone()
 }
 
 // ---------------------------------------------------------------------------

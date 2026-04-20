@@ -352,6 +352,10 @@ enum MiscCommands {
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
+        /// Refresh only VM assets (kernel/initrd/rootfs) from the release URL.
+        /// Useful when an asset-only release ships independently of binaries.
+        #[arg(long)]
+        assets: bool,
     },
     /// Run diagnostic tests in a fresh session
     ///
@@ -786,8 +790,8 @@ async fn main() -> Result<()> {
             uninstall::run_uninstall(*yes).await?;
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Update { yes }) => {
-            update::run_update(*yes).await?;
+        Commands::Misc(MiscCommands::Update { yes, assets }) => {
+            update::run_update(*yes, *assets).await?;
             return Ok(());
         }
         Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, accept_detected, corp_config, force_onboarding }) => {
@@ -1849,7 +1853,10 @@ mod tests {
     fn parse_update() {
         let cli = Cli::parse_from(["capsem", "update"]);
         match cli.command {
-            Commands::Misc(MiscCommands::Update { yes }) => assert!(!yes),
+            Commands::Misc(MiscCommands::Update { yes, assets }) => {
+                assert!(!yes);
+                assert!(!assets);
+            }
             _ => panic!("expected Update"),
         }
     }
@@ -1858,7 +1865,22 @@ mod tests {
     fn parse_update_yes() {
         let cli = Cli::parse_from(["capsem", "update", "--yes"]);
         match cli.command {
-            Commands::Misc(MiscCommands::Update { yes }) => assert!(yes),
+            Commands::Misc(MiscCommands::Update { yes, assets }) => {
+                assert!(yes);
+                assert!(!assets);
+            }
+            _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn parse_update_assets() {
+        let cli = Cli::parse_from(["capsem", "update", "--assets"]);
+        match cli.command {
+            Commands::Misc(MiscCommands::Update { yes, assets }) => {
+                assert!(!yes);
+                assert!(assets);
+            }
             _ => panic!("expected Update"),
         }
     }

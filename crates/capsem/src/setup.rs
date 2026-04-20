@@ -184,13 +184,59 @@ async fn step_welcome(capsem_dir: &Path, state: &mut SetupState) -> Result<Optio
     println!("[2/6] Welcome to Capsem!");
     println!("  Capsem sandboxes AI agents in air-gapped Linux VMs.");
 
-    // TODO: Asset download will be implemented with the orthogonal CI sprint.
-    // For now, assets are built locally with `just build-assets`.
-    println!("  Assets: use `just build-assets` to build VM images.");
+    let manifest_path = capsem_dir.join("assets").join("manifest.json");
+    let manifest_bytes = match std::fs::read_to_string(&manifest_path) {
+        Ok(b) => b,
+        Err(e) => {
+            println!(
+                "  Skipping asset check: no manifest at {} ({}).",
+                manifest_path.display(),
+                e
+            );
+            state.mark_done("welcome");
+            save_state_to(capsem_dir, state)?;
+            return Ok(None);
+        }
+    };
+    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
+        .with_context(|| format!("parse {}", manifest_path.display()))?;
+
+    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+    let assets_dir = capsem_dir.join("assets");
+    let binary_version = env!("CARGO_PKG_VERSION").to_string();
+
+    println!("  Checking VM assets...");
+    let handle = tokio::spawn(async move {
+        let on_progress = |p: capsem_core::asset_manager::DownloadProgress| {
+            if p.done {
+                let mb = p.bytes_done as f64 / 1_048_576.0;
+                println!("  Asset ready: {} ({:.1} MB)", p.logical_name, mb);
+            }
+        };
+        match capsem_core::asset_manager::download_missing_assets(
+            &manifest,
+            &binary_version,
+            arch,
+            &assets_dir,
+            on_progress,
+        )
+        .await
+        {
+            Ok(downloaded) if downloaded.is_empty() => {
+                println!("  All VM assets already present.");
+                Ok(())
+            }
+            Ok(downloaded) => {
+                println!("  Downloaded {} asset(s).", downloaded.len());
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    });
 
     state.mark_done("welcome");
     save_state_to(capsem_dir, state)?;
-    Ok(None)
+    Ok(Some(handle))
 }
 
 fn step_security_preset(

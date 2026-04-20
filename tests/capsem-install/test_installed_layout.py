@@ -8,8 +8,12 @@ service startup expect. Works with both installation paths:
 Layout contract:
   ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}  (executables or symlinks)
   ~/.capsem/assets/manifest.json                                (service reads this)
-  ~/.capsem/assets/v{VERSION}/*.squashfs                        (service resolves via version)
+  ~/.capsem/assets/{arch}/{logical}-{hash16}.{ext}              (resolver target)
   ~/.capsem/run/                                                (created at runtime)
+
+The legacy ~/.capsem/assets/v{VERSION}/ layout is NOT supported anymore --
+ManifestV2::resolve() only checks $ASSETS/{hash_filename} or
+$ASSETS/{arch}/{hash_filename}.
 """
 
 from __future__ import annotations
@@ -83,26 +87,52 @@ class TestInstalledLayoutContract:
         assert "assets" in data and "releases" in data["assets"], "manifest missing assets.releases"
         assert "binaries" in data and "releases" in data["binaries"], "manifest missing binaries.releases"
 
-    def test_versioned_assets_exist(self, installed_layout):
-        """Assets exist under v{VERSION}/ matching the installed binary version."""
-        result = run_capsem("version", timeout=5)
-        assert result.returncode == 0
-        # Parse "capsem 0.16.1 (build ...)" -> "0.16.1"
-        version = result.stdout.strip().split()[1]
+    def test_hash_named_assets_exist(self, installed_layout):
+        """Assets exist under $ASSETS/{arch}/{hash-filename} as resolved from the manifest."""
+        import platform
 
-        versioned_dir = ASSETS_DIR / f"v{version}"
-        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not versioned_dir.exists():
+        machine = platform.machine().lower()
+        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+
+        manifest_path = ASSETS_DIR / "manifest.json"
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest_path.exists():
             pytest.skip("assets downloaded on first use, not bundled in .deb")
-        assert versioned_dir.exists(), (
-            f"versioned asset dir missing: {versioned_dir}\n"
-            f"service will fail to resolve assets for version {version}"
+        assert manifest_path.exists(), f"manifest missing: {manifest_path}"
+
+        data = json.loads(manifest_path.read_text())
+        current = data["assets"]["current"]
+        arch_assets = data["assets"]["releases"][current]["arches"].get(arch)
+        if arch_assets is None:
+            pytest.skip(f"no {arch} entry in manifest (cross-arch install)")
+
+        arch_dir = ASSETS_DIR / arch
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not arch_dir.exists():
+            pytest.skip("assets downloaded on first use, not bundled in .deb")
+        assert arch_dir.is_dir(), (
+            f"arch dir missing: {arch_dir}\n"
+            f"resolver will fail: ManifestV2::resolve() checks $ASSETS/{arch}/<hash>"
         )
 
-        # rootfs.squashfs must be in the versioned dir (service checks this)
-        rootfs = versioned_dir / "rootfs.squashfs"
-        assert rootfs.exists(), (
-            f"rootfs.squashfs missing in {versioned_dir}\n"
-            f"service resolve_assets_dir() will fail"
+        for logical, meta in arch_assets.items():
+            prefix = meta["hash"][:16]
+            if "." in logical:
+                stem, ext = logical.split(".", 1)
+                hashed = f"{stem}-{prefix}.{ext}"
+            else:
+                hashed = f"{logical}-{prefix}"
+            target = arch_dir / hashed
+            assert target.exists(), (
+                f"asset missing: {target}\n"
+                f"manifest says {logical} hash={meta['hash']}, expected file name {hashed}"
+            )
+
+    def test_no_legacy_version_dirs(self, installed_layout):
+        """Reject leftover ~/.capsem/assets/v1.0.* dirs -- resolver doesn't read them."""
+        legacy = sorted(ASSETS_DIR.glob("v1.0.*"))
+        assert not legacy, (
+            f"legacy asset dirs present: {legacy}\n"
+            f"ManifestV2::resolve() no longer reads these; sync-dev-assets.sh "
+            f"and simulate-install.sh are supposed to clean them up."
         )
 
     def test_version_in_manifest_matches_binary(self, installed_layout):

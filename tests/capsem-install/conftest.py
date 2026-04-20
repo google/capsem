@@ -10,11 +10,13 @@ Tests are split into two tiers:
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import shutil
 import signal
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -28,16 +30,61 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
+    reason = None
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
-        skip = pytest.mark.skip(reason="live_system test -- requires VM assets, skipped in packaging test")
-        for item in items:
-            if "live_system" in item.keywords:
-                item.add_marker(skip)
+        reason = "live_system test skipped in Docker packaging harness (no VM assets)"
+    elif not os.environ.get("CAPSEM_ALLOW_DESTRUCTIVE"):
+        # live_system tests call `capsem setup` / `capsem uninstall`, which
+        # write to ~/Library/LaunchAgents/com.capsem.service.plist or
+        # ~/.config/systemd/user/capsem.service -- these paths can't be
+        # redirected by CAPSEM_HOME, so running them bare-metal would overwrite
+        # the developer's actual installed service. Opt in with
+        # CAPSEM_ALLOW_DESTRUCTIVE=1.
+        reason = (
+            "live_system test skipped to avoid mutating real LaunchAgent / "
+            "systemd unit; set CAPSEM_ALLOW_DESTRUCTIVE=1 to opt in"
+        )
+    if reason is None:
+        return
+    skip = pytest.mark.skip(reason=reason)
+    for item in items:
+        if "live_system" in item.keywords:
+            item.add_marker(skip)
 
-INSTALL_DIR = Path.home() / ".capsem" / "bin"
-ASSETS_DIR = Path.home() / ".capsem" / "assets"
-RUN_DIR = Path.home() / ".capsem" / "run"
-CAPSEM_DIR = Path.home() / ".capsem"
+
+def _resolve_capsem_home() -> Path:
+    """Pick the CAPSEM_HOME these tests operate on.
+
+    Running bare-metal, the suite used to clobber the developer's real
+    ``~/.capsem`` -- `test_full_uninstall` literally asserts it got removed,
+    and `simulate-install.sh` would overwrite binaries the developer had
+    just installed. We isolate under a dedicated temp dir so bare-metal
+    `pytest tests/capsem-install/` is always safe.
+
+    Exceptions:
+      - ``CAPSEM_DEB_INSTALLED=1`` (Docker install-test harness): we are
+        the system under test -- write to the real $HOME/.capsem there.
+      - ``CAPSEM_HOME`` already set by the caller: honor it (lets `just
+        test` point the suite at its isolated ``target/test-home``).
+    """
+    if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
+        return Path.home() / ".capsem"
+    env = os.environ.get("CAPSEM_HOME")
+    if env:
+        return Path(env)
+    d = Path(tempfile.mkdtemp(prefix="capsem-install-test-"))
+    os.environ["CAPSEM_HOME"] = str(d)
+    # Mirror the env override the Rust helpers honor, so child processes
+    # (capsem + simulate-install.sh) write into the same isolated tree.
+    os.environ["CAPSEM_RUN_DIR"] = str(d / "run")
+    atexit.register(lambda p=d: shutil.rmtree(p, ignore_errors=True))
+    return d
+
+
+CAPSEM_DIR = _resolve_capsem_home()
+INSTALL_DIR = CAPSEM_DIR / "bin"
+ASSETS_DIR = CAPSEM_DIR / "assets"
+RUN_DIR = CAPSEM_DIR / "run"
 
 BINARIES = ["capsem", "capsem-service", "capsem-process", "capsem-mcp", "capsem-gateway", "capsem-tray"]
 DEFAULT_TIMEOUT = 30

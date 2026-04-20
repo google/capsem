@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`just install` now leaves `~/.capsem/assets/` in the layout the service's
+  resolver actually reads.** The .pkg/.deb ships only `manifest.json` (binaries
+  and assets are on independent shipping cadences), and `capsem setup` was a
+  stub with a TODO, so a fresh install left the UI banner stuck on "VM assets
+  are missing" and every VM boot failed asset resolution. Added
+  `scripts/sync-dev-assets.sh`, invoked by the `install` recipe after the
+  installer runs, which mirrors the locally built `assets/$arch/*` hash-named
+  files into `~/.capsem/assets/$arch/` (the exact paths
+  `ManifestV2::resolve()` looks up) and removes the legacy `v1.0.*/`
+  directories that accumulated from the old v1 layout. Also updated
+  `scripts/simulate-install.sh` to honor the same layout so
+  `tests/capsem-install/` agrees with production.
+
+### Added
+- **`capsem setup` actually downloads VM assets, and `capsem update --assets`
+  re-fetches them on their own cadence.** New
+  `capsem_core::asset_manager::download_missing_assets()` streams each arch's
+  asset files from the GitHub release URL (per-arch upload names:
+  `arm64-vmlinuz` / `arm64-initrd.img` / `arm64-rootfs.squashfs`),
+  blake3-verifies the bytes, and places them at
+  `$base/$arch/{hash_filename}` with 0o444 perms. `step_welcome` in the setup
+  wizard, and a new `capsem update --assets` subcommand, both call into it.
+  `CAPSEM_RELEASE_URL` env override lets integration tests redirect the
+  download target.
+
+### Tests
+- **`tests/capsem-install/` is now safe to run bare-metal.** The module-level
+  `CAPSEM_DIR` previously hardcoded `$HOME/.capsem`, so running
+  `pytest tests/capsem-install/` clobbered the developer's real install
+  (`simulate-install.sh` overwrote binaries; `test_full_uninstall` literally
+  asserted `~/.capsem` was removed). `conftest.py` now provisions a temp
+  `CAPSEM_HOME` for the session and auto-skips the `live_system` tier
+  bare-metal unless `CAPSEM_ALLOW_DESTRUCTIVE=1`, because those tests invoke
+  `capsem setup` / `capsem uninstall` which touch the system-level
+  LaunchAgent / systemd unit outside any `CAPSEM_HOME` override.
+  `test_installed_layout` was rewritten to assert the v2 layout
+  (`$ASSETS/$arch/{hash_filename}`) instead of the legacy
+  `$ASSETS/v$VERSION/` the resolver no longer reads.
+  New `test_asset_download.py` covers the happy path, 404, hash mismatch,
+  and idempotent rerun for `capsem update --assets` against a local HTTP
+  fixture.
+
 ### Changed
 - **`just test` and `just smoke` reordered for fail-fast feedback.** Audits,
   Rust lint, and the frontend suite now run in a single parallel block at the

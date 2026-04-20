@@ -156,19 +156,61 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 /// Run the update flow.
 ///
-/// Asset download and binary swap are not yet implemented -- they require the
-/// orthogonal CI pipeline (see sprints/orthogonal-ci/plan.md). For now, dev
-/// builds update from source.
-pub async fn run_update(_yes: bool) -> Result<()> {
+/// With `assets = true`, refresh only the VM asset files referenced by the
+/// locally-installed manifest. Binary swap is still scoped to the orthogonal
+/// CI sprint and remains a "rebuild from source" step for dev builds.
+pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
     let layout = platform::detect_install_layout();
+
+    if assets {
+        return refresh_assets().await;
+    }
+
     if layout == InstallLayout::Development {
         println!("Development build detected. Update from source with `git pull && just install`.");
         return Ok(());
     }
 
-    println!("Update not yet available for installed builds.");
-    println!("Asset and binary downloads will be implemented in the orthogonal CI sprint.");
-    println!("For now, rebuild from source: `git pull && just install`.");
+    println!("Binary self-update is not yet wired up.");
+    println!("Run `capsem update --assets` to refresh VM assets, or");
+    println!("rebuild from source: `git pull && just install`.");
+    Ok(())
+}
+
+/// Pull any missing / hash-mismatched VM assets from the release URL.
+async fn refresh_assets() -> Result<()> {
+    let assets_dir = capsem_core::asset_manager::default_assets_dir()
+        .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
+    let manifest_path = assets_dir.join("manifest.json");
+    let manifest_bytes = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
+        .with_context(|| format!("parse {}", manifest_path.display()))?;
+
+    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+    let binary_version = env!("CARGO_PKG_VERSION");
+
+    println!("Refreshing VM assets into {}...", assets_dir.display());
+    let downloaded = capsem_core::asset_manager::download_missing_assets(
+        &manifest,
+        binary_version,
+        arch,
+        &assets_dir,
+        |p| {
+            if p.done {
+                let mb = p.bytes_done as f64 / 1_048_576.0;
+                println!("  {} ({:.1} MB)", p.logical_name, mb);
+            }
+        },
+    )
+    .await
+    .context("asset download failed")?;
+
+    if downloaded.is_empty() {
+        println!("All assets already up to date.");
+    } else {
+        println!("Refreshed {} asset(s).", downloaded.len());
+    }
     Ok(())
 }
 
