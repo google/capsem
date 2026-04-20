@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { FileEntry } from '../../types';
   import { themeStore } from '../../stores/theme.svelte.ts';
-  import { getShikiHighlighter, resolveShikiTheme, detectShikiLang, type ShikiHighlighter } from '../../shiki.ts';
+  import { getShikiHighlighter, resolveShikiTheme, detectShikiLang, ensureShikiLang, type ShikiHighlighter } from '../../shiki.ts';
   import { formatBytes } from '../../format';
   import Copy from 'phosphor-svelte/lib/Copy';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
@@ -70,21 +70,35 @@
     }
   });
 
-  // Syntax highlighting
+  // Syntax highlighting. When the file needs an on-demand grammar
+  // (cpp, ruby), fetch + register it first, then paint. A generation
+  // counter lets a later file-change abort the in-flight load without
+  // flashing stale highlighted HTML.
+  let highlightGen = 0;
   $effect(() => {
     if (!content || !highlighter || !entry || isImage || isSvg) {
       highlightedHtml = '';
       return;
     }
-    try {
-      const langHint = entry.label ?? entry.name;
-      const lang = detectShikiLang(langHint, content);
-      const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
-      highlightedHtml = highlighter.codeToHtml(content, { lang, theme });
-    } catch (e) {
-      console.error('[FileContent] Shiki highlight failed:', e);
+    const gen = ++highlightGen;
+    const langHint = entry.label ?? entry.name;
+    const lang = detectShikiLang(langHint, content);
+    const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
+    const localContent = content;
+    const hl = highlighter;
+    ensureShikiLang(lang).then(() => {
+      if (gen !== highlightGen) return;
+      try {
+        highlightedHtml = hl.codeToHtml(localContent, { lang, theme });
+      } catch (e) {
+        console.error('[FileContent] Shiki highlight failed:', e);
+        highlightedHtml = '';
+      }
+    }).catch(e => {
+      if (gen !== highlightGen) return;
+      console.error('[FileContent] Shiki lang load failed:', e);
       highlightedHtml = '';
-    }
+    });
   });
 
   let breadcrumbs = $derived.by(() => {

@@ -88,11 +88,10 @@ export async function getShikiHighlighter(): Promise<HighlighterCore> {
       import('@shikijs/langs/sql'),
       import('@shikijs/langs/go'),
       import('@shikijs/langs/c'),
-      // cpp grammar is 419 KB of JSON that bundles to 620 KB; every Shiki
-      // host grammar (ruby, php, ...) re-imports it for inline-assembly
-      // heredocs, blowing past Vite's 500 KB chunk budget. .cpp/.hpp fall
-      // back to `c` grammar, which covers keywords/strings/comments and
-      // loses templates/namespaces -- acceptable for a sandbox file viewer.
+      // cpp and ruby are loaded on demand via ON_DEMAND_LANGS below --
+      // their grammars bundle to >500 KB, and ruby re-imports cpp for
+      // inline-C heredocs. Pulling them into the eager set would bloat
+      // startup for everyone; pulling them on first use keeps the UI fast.
       import('@shikijs/langs/java'),
       import('@shikijs/langs/xml'),
       import('@shikijs/langs/dockerfile'),
@@ -103,9 +102,6 @@ export async function getShikiHighlighter(): Promise<HighlighterCore> {
       import('@shikijs/langs/tsx'),
       import('@shikijs/langs/jsx'),
       import('@shikijs/langs/graphql'),
-      // ruby embeds 12 sub-grammars (html, cpp, graphql, sql, haml, ...)
-      // which bundles to ~676 KB. Plain text is acceptable for .rb files
-      // in a sandbox file viewer.
       import('@shikijs/langs/php'),
       import('@shikijs/langs/swift'),
       import('@shikijs/langs/kotlin'),
@@ -118,6 +114,31 @@ export async function getShikiHighlighter(): Promise<HighlighterCore> {
     return h;
   });
   return initPromise;
+}
+
+// Grammars too large to ship eagerly. Fetched the first time a file of
+// that kind is highlighted, then kept in memory for the session.
+const ON_DEMAND_LANGS: Record<string, () => Promise<unknown>> = {
+  cpp:  () => import('@shikijs/langs/cpp'),
+  ruby: () => import('@shikijs/langs/ruby'),
+};
+
+const pendingLoads = new Map<string, Promise<void>>();
+
+/** Ensure a Shiki grammar is loaded. No-op for eagerly-registered langs;
+ *  dynamically imports + registers lazy ones (cpp, ruby). Safe to call
+ *  repeatedly; concurrent calls for the same lang share one import. */
+export async function ensureShikiLang(lang: string): Promise<void> {
+  const loader = ON_DEMAND_LANGS[lang];
+  if (!loader) return;
+  const hl = await getShikiHighlighter();
+  if (hl.getLoadedLanguages().includes(lang)) return;
+  let p = pendingLoads.get(lang);
+  if (!p) {
+    p = loader().then(mod => hl.loadLanguage((mod as { default: unknown }).default as never));
+    pendingLoads.set(lang, p);
+  }
+  return p;
 }
 
 /** Resolve the Shiki theme ID for the current terminal theme + mode. */
@@ -135,8 +156,8 @@ export function detectShikiLang(filetypeOrPath: string, content?: string): strin
     py: 'python', sh: 'bash', bash: 'bash', zsh: 'bash',
     yaml: 'yaml', yml: 'yaml', xml: 'xml', svg: 'xml',
     html: 'html', htm: 'html', css: 'css', scss: 'css',
-    sql: 'sql', go: 'go', c: 'c', h: 'c', cpp: 'c', hpp: 'c', cc: 'c', cxx: 'c',
-    java: 'java', kt: 'kotlin', swift: 'swift', php: 'php',
+    sql: 'sql', go: 'go', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp', cc: 'cpp', cxx: 'cpp',
+    java: 'java', kt: 'kotlin', swift: 'swift', rb: 'ruby', php: 'php',
     lua: 'lua', r: 'r', R: 'r', csv: 'csv',
     dockerfile: 'dockerfile', makefile: 'makefile',
     ini: 'ini', cfg: 'ini', env: 'ini',
