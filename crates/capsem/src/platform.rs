@@ -82,11 +82,7 @@ pub fn install_bin_dir() -> Option<PathBuf> {
     match detect_install_layout() {
         InstallLayout::MacosPkg => Some(PathBuf::from("/usr/local/bin")),
         InstallLayout::LinuxDeb => Some(PathBuf::from("/usr/bin")),
-        InstallLayout::UserDir => {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".capsem").join("bin"))
-        }
+        InstallLayout::UserDir => Some(capsem_core::paths::capsem_bin_dir()),
         InstallLayout::Development => None,
     }
 }

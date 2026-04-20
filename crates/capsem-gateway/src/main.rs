@@ -72,17 +72,13 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // Resolve run_dir in priority: --run-dir, then CAPSEM_RUN_DIR, then $HOME/.capsem/run.
-    // Must match capsem-service's resolution so parent and child read/write the
-    // same gateway.{token,port,pid} files.
-    let run_dir = if let Some(dir) = args.run_dir.clone() {
-        dir
-    } else if let Ok(env_dir) = std::env::var("CAPSEM_RUN_DIR") {
-        PathBuf::from(env_dir)
-    } else {
-        let home = std::env::var("HOME").context("HOME not set")?;
-        PathBuf::from(&home).join(".capsem/run")
-    };
+    // Resolve run_dir in priority: --run-dir, then the shared capsem_run_dir
+    // helper (CAPSEM_RUN_DIR > <capsem_home>/run). Must match capsem-service
+    // so parent and child read/write the same gateway.{token,port,pid} files.
+    let run_dir = args
+        .run_dir
+        .clone()
+        .unwrap_or_else(capsem_core::paths::capsem_run_dir);
 
     // Companion guards: refuse to run without a live parent service, and
     // refuse if another gateway already holds the singleton lock for this

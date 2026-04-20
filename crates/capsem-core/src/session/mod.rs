@@ -397,10 +397,9 @@ mod tests {
 
     #[test]
     fn disk_usage_bytes_real_sessions_timing() {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let sessions_dir = std::path::PathBuf::from(&home).join(".capsem").join("sessions");
+        let sessions_dir = crate::paths::capsem_sessions_dir();
         if !sessions_dir.exists() {
-            eprintln!("skipping: no ~/.capsem/sessions/ directory");
+            eprintln!("skipping: no sessions dir at {}", sessions_dir.display());
             return;
         }
 

@@ -867,12 +867,11 @@ mod tests {
 
     // Real-key validation tests -- skipped when credentials are unavailable.
 
-    /// Read a setting value from ~/.capsem/user.toml by dotted setting id.
+    /// Read a setting value from `<capsem_home>/user.toml` by dotted setting id.
     /// e.g. "repository.providers.github.token" looks up
     /// [settings."repository.providers.github.token"] -> value
     fn read_user_toml_setting(id: &str) -> Option<String> {
-        let home = std::env::var("HOME").ok()?;
-        let path = PathBuf::from(home).join(".capsem").join("user.toml");
+        let path = crate::paths::capsem_home_opt()?.join("user.toml");
         let content = std::fs::read_to_string(path).ok()?;
         let doc: toml::Value = content.parse().ok()?;
         let settings = doc.get("settings")?;

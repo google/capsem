@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use anyhow::{bail, Context, Result};
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde::Deserialize;
@@ -66,8 +64,7 @@ impl GatewayClient {
     /// Discover gateway connection info from well-known file paths.
     /// If `port_override` is set, use that instead of reading the file.
     pub async fn discover(port_override: Option<u16>) -> Result<Self> {
-        let home = std::env::var("HOME").context("HOME not set")?;
-        let run_dir = PathBuf::from(home).join(".capsem/run");
+        let run_dir = capsem_core::paths::capsem_run_dir();
 
         let port = match port_override {
             Some(p) => p,

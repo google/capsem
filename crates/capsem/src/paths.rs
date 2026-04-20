@@ -3,10 +3,12 @@ use anyhow::{Context, Result};
 
 use crate::service_install;
 
-/// Return the capsem home directory (~/.capsem).
+/// Return the capsem home directory.
+///
+/// Delegates to [`capsem_core::paths::capsem_home_opt`] so `CAPSEM_HOME`
+/// overrides `$HOME/.capsem` uniformly across the workspace.
 pub fn capsem_home() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join(".capsem"))
+    capsem_core::paths::capsem_home_opt().context("HOME not set")
 }
 
 /// Resolved paths for capsem binaries and assets.
@@ -22,25 +24,26 @@ pub struct CapsemPaths {
 /// Discover paths for sibling binaries and assets.
 ///
 /// Binaries: current_exe() parent -> sibling capsem-service, capsem-process.
-/// Assets: ~/.capsem/assets/ (the only layout -- use `just install` or symlink for dev).
+/// Assets: `<capsem_home>/assets/` via [`capsem_core::paths::capsem_assets_dir`].
 pub fn discover_paths() -> Result<CapsemPaths> {
     let exe_path = std::env::current_exe().context("cannot determine executable path")?;
     let bin_dir = exe_path.parent()
         .ok_or_else(|| anyhow::anyhow!("executable path has no parent: {}", exe_path.display()))?;
-
-    let home = std::env::var("HOME").context("HOME not set")?;
 
     Ok(CapsemPaths {
         service_bin: bin_dir.join("capsem-service"),
         process_bin: bin_dir.join("capsem-process"),
         gateway_bin: bin_dir.join("capsem-gateway"),
         tray_bin: bin_dir.join("capsem-tray"),
-        assets_dir: assets_dir_from_home(&home),
+        assets_dir: capsem_core::paths::capsem_assets_dir(),
     })
 }
 
-/// Build the assets dir path from HOME. Separate function for testability.
-pub fn assets_dir_from_home(home: &str) -> PathBuf {
+/// Build the assets dir path from HOME. Test-only: production paths go through
+/// [`capsem_core::paths::capsem_assets_dir`] so `CAPSEM_HOME` /
+/// `CAPSEM_ASSETS_DIR` are honored.
+#[cfg(test)]
+fn assets_dir_from_home(home: &str) -> PathBuf {
     PathBuf::from(home).join(".capsem").join("assets")
 }
 
@@ -88,8 +91,11 @@ mod tests {
     #[test]
     fn capsem_home_under_home() {
         let dir = capsem_home().unwrap();
-        let home = std::env::var("HOME").unwrap();
-        assert_eq!(dir, PathBuf::from(home).join(".capsem"));
+        let expected = match std::env::var("CAPSEM_HOME") {
+            Ok(v) if !v.is_empty() => PathBuf::from(v),
+            _ => PathBuf::from(std::env::var("HOME").unwrap()).join(".capsem"),
+        };
+        assert_eq!(dir, expected);
     }
 
     #[test]
@@ -156,8 +162,17 @@ mod tests {
     #[test]
     fn discover_paths_assets_always_under_home() {
         let paths = discover_paths().unwrap();
-        let home = std::env::var("HOME").unwrap();
-        assert_eq!(paths.assets_dir, PathBuf::from(home).join(".capsem/assets"));
+        let expected = match std::env::var("CAPSEM_HOME") {
+            Ok(v) if !v.is_empty() => PathBuf::from(v).join("assets"),
+            _ => PathBuf::from(std::env::var("HOME").unwrap()).join(".capsem/assets"),
+        };
+        // CAPSEM_ASSETS_DIR may override further; honor the same priority
+        // the helper itself uses.
+        let expected = match std::env::var("CAPSEM_ASSETS_DIR") {
+            Ok(v) if !v.is_empty() => PathBuf::from(v),
+            _ => expected,
+        };
+        assert_eq!(paths.assets_dir, expected);
     }
 
     #[test]

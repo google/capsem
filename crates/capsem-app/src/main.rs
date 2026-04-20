@@ -204,10 +204,21 @@ fn open_log_file(path: &Path) -> std::io::Result<std::fs::File> {
     }
 }
 
-fn main() {
-    // Log to ~/.capsem/logs/<timestamp>.jsonl
+/// Resolve the capsem home dir without pulling in capsem-core (thin-shell invariant).
+/// Mirrors `capsem_core::paths::capsem_home` priority: CAPSEM_HOME > $HOME/.capsem.
+fn capsem_home_dir() -> PathBuf {
+    if let Ok(h) = std::env::var("CAPSEM_HOME") {
+        if !h.is_empty() {
+            return PathBuf::from(h);
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let log_dir = PathBuf::from(&home).join(".capsem").join("logs");
+    PathBuf::from(home).join(".capsem")
+}
+
+fn main() {
+    // Log to <capsem_home>/logs/<timestamp>.jsonl
+    let log_dir = capsem_home_dir().join("logs");
     let _ = std::fs::create_dir_all(&log_dir);
     cleanup_old_logs(&log_dir, 7);
 

@@ -14,6 +14,7 @@ name = "capsem-tray"
 path = "src/main.rs"
 
 [dependencies]
+capsem-core = { path = "../capsem-core" }
 capsem-guard = { path = "../capsem-guard" }
 tray-icon = "0.22"
 muda = "0.17"

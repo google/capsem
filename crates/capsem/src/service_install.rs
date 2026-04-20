@@ -354,7 +354,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     // 5. Remove stale socket so the new service can bind cleanly
-    let sock_path = PathBuf::from(home).join(".capsem/run/service.sock");
+    let sock_path = capsem_core::paths::service_socket_path();
     let _ = std::fs::remove_file(&sock_path);
 
     // Install service plist
@@ -500,11 +500,7 @@ async fn uninstall_systemd_unit() -> Result<()> {
 
 async fn check_running() -> (bool, Option<u32>) {
     // Check via socket connectivity
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => return (false, None),
-    };
-    let sock = PathBuf::from(&home).join(".capsem/run/service.sock");
+    let sock = capsem_core::paths::service_socket_path();
     if tokio::net::UnixStream::connect(&sock).await.is_ok() {
         // Get actual PID via pgrep (pidfile may be stale)
         let pid = tokio::process::Command::new("pgrep")

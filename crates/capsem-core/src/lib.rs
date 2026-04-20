@@ -9,6 +9,7 @@ pub mod log_layer;
 pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
+pub mod paths;
 pub mod session;
 pub mod setup_state;
 pub mod uds;

@@ -152,10 +152,14 @@ fn resolve_uds_path(override_val: Option<&str>, run_dir: &std::path::Path) -> Pa
 }
 
 /// Resolve the capsem run directory from HOME + optional override.
-fn resolve_run_dir(home: &str, override_val: Option<&str>) -> PathBuf {
+///
+/// `home` is accepted for backward compatibility with existing call sites and
+/// unit tests; the actual resolution goes through
+/// [`capsem_core::paths::capsem_run_dir`] so that `CAPSEM_HOME` is honored.
+fn resolve_run_dir(_home: &str, override_val: Option<&str>) -> PathBuf {
     override_val
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(home).join(".capsem/run"))
+        .unwrap_or_else(capsem_core::paths::capsem_run_dir)
 }
 
 struct UdsClient {
@@ -183,10 +187,8 @@ impl UdsClient {
             return Err(anyhow::anyhow!("capsem-service not found at {}", service_bin.display()));
         }
 
-        // Assets: always ~/.capsem/assets/ (use `just install` or symlink for dev)
-        let home = std::env::var("HOME")
-            .map_err(|_| anyhow::anyhow!("HOME not set"))?;
-        let assets_dir = std::path::PathBuf::from(home).join(".capsem").join("assets");
+        // Assets: always <capsem_home>/assets/ (use `just install` or symlink for dev)
+        let assets_dir = capsem_core::paths::capsem_assets_dir();
         let process_bin = bin_dir.join("capsem-process");
 
         info!(service = %service_bin.display(), assets = %assets_dir.display(), "spawning service");
@@ -1500,10 +1502,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_run_dir_default_under_home() {
+    fn resolve_run_dir_default_delegates_to_capsem_core() {
+        // The `home` arg is ignored now -- the helper reads CAPSEM_HOME /
+        // CAPSEM_RUN_DIR from the process env via capsem-core, so the
+        // assertion is that it matches what capsem-core returns.
         assert_eq!(
-            resolve_run_dir("/home/u", None),
-            PathBuf::from("/home/u/.capsem/run"),
+            resolve_run_dir("/ignored", None),
+            capsem_core::paths::capsem_run_dir(),
         );
     }
 }

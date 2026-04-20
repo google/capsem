@@ -281,11 +281,18 @@ pub fn hash_file(path: &Path) -> Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-/// Return the default assets directory: `~/.capsem/assets/`.
+/// Return the default assets directory.
+///
+/// Resolves via [`crate::paths::capsem_home_opt`], so the `CAPSEM_HOME` /
+/// `CAPSEM_ASSETS_DIR` env overrides are honored.
 pub fn default_assets_dir() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".capsem").join("assets"))
+    // Honor CAPSEM_ASSETS_DIR first, then <capsem_home>/assets.
+    if let Ok(v) = std::env::var("CAPSEM_ASSETS_DIR") {
+        if !v.is_empty() {
+            return Some(PathBuf::from(v));
+        }
+    }
+    crate::paths::capsem_home_opt().map(|h| h.join("assets"))
 }
 
 /// Build the GitHub Releases download base URL for the given version.
@@ -533,8 +540,17 @@ mod tests {
 
     #[test]
     fn default_assets_dir_under_home() {
+        // With CAPSEM_HOME / CAPSEM_ASSETS_DIR overrides the path won't contain
+        // ".capsem/assets" -- it's whatever the user pointed at. Only assert
+        // the substring when we're on the default layout.
+        let overridden = std::env::var("CAPSEM_ASSETS_DIR").is_ok()
+            || std::env::var("CAPSEM_HOME").is_ok();
         if let Some(dir) = default_assets_dir() {
-            assert!(dir.to_str().unwrap().contains(".capsem/assets"));
+            if overridden {
+                assert!(dir.to_str().is_some());
+            } else {
+                assert!(dir.to_str().unwrap().contains(".capsem/assets"));
+            }
         }
     }
 

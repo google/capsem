@@ -486,11 +486,7 @@ fn launch_capsem_app(vm_id: Option<&str>, action: Option<&str>) {
 /// tray can acquire. Tests that need strict isolation override with
 /// `--lock-path`.
 fn tray_lock_path() -> std::path::PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        std::path::PathBuf::from(home).join(".capsem/run/tray.lock")
-    } else {
-        std::path::PathBuf::from("/tmp/capsem-tray.lock")
-    }
+    capsem_core::paths::capsem_run_dir().join("tray.lock")
 }
 
 #[cfg(test)]

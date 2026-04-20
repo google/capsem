@@ -8,12 +8,12 @@ use super::{SettingValue, SettingsFile};
 // File I/O
 // ---------------------------------------------------------------------------
 
-/// User config path: ~/.capsem/user.toml (overridable via CAPSEM_USER_CONFIG)
+/// User config path: `<capsem_home>/user.toml` (overridable via CAPSEM_USER_CONFIG)
 pub fn user_config_path() -> Option<std::path::PathBuf> {
     if let Ok(path) = std::env::var("CAPSEM_USER_CONFIG") {
         return Some(std::path::PathBuf::from(path));
     }
-    dirs_path("HOME").map(|h| h.join(".capsem").join("user.toml"))
+    crate::paths::capsem_home_opt().map(|h| h.join("user.toml"))
 }
 
 /// Corporate config path: returns the first available corp config path.
@@ -39,17 +39,13 @@ pub fn corp_config_paths() -> Vec<std::path::PathBuf> {
     if system.exists() {
         paths.push(system);
     }
-    if let Some(home) = dirs_path("HOME") {
-        let user_corp = home.join(".capsem").join("corp.toml");
+    if let Some(capsem_home) = crate::paths::capsem_home_opt() {
+        let user_corp = capsem_home.join("corp.toml");
         if user_corp.exists() {
             paths.push(user_corp);
         }
     }
     paths
-}
-
-fn dirs_path(env_var: &str) -> Option<std::path::PathBuf> {
-    std::env::var(env_var).ok().map(std::path::PathBuf::from)
 }
 
 /// Load a settings file from disk. Returns empty SettingsFile if file missing.

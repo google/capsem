@@ -83,44 +83,64 @@ _sign: _build-host
     fi
 
 # Ensure capsem-service daemon is running with the current binary.
-# Always kills any existing instance and relaunches fresh.
+# Kills any existing dev-owned instance (via pidfile -- never pkill-by-name)
+# and relaunches fresh. Honors CAPSEM_HOME / CAPSEM_RUN_DIR env vars so
+# `just test` and `just smoke` can run against an isolated test home
+# without ever touching the user's locally installed capsem.
 _ensure-service: _sign
     #!/bin/bash
     set -euo pipefail
     arch=$(uname -m)
     [[ "$arch" == "arm64" ]] || arch="x86_64"
-    mkdir -p ~/.capsem/run
-    PIDFILE=~/.capsem/run/service.pid
-    # Kill ALL capsem-service processes and their child VM processes.
-    # The dev service must own the socket exclusively.
-    pkill -f "capsem-process.*--id" 2>/dev/null || true
-    pkill -f "capsem-service.*--foreground" 2>/dev/null || true
-    sleep 0.5
-    # Force-kill any VM processes that survived SIGTERM
-    pkill -9 -f "capsem-process.*--id" 2>/dev/null || true
-    rm -f "$PIDFILE"
-    rm -f ~/.capsem/run/service.sock
-    # Symlink ~/.capsem/assets -> repo assets so installed tools (MCP, CLI)
-    # see the same repacked initrd as the dev service.
-    DEV_ASSETS="$(cd "{{assets_dir}}" && pwd)"
-    if [ -L ~/.capsem/assets ]; then
-        # Already a symlink -- update if stale
-        CURRENT=$(readlink ~/.capsem/assets)
-        if [ "$CURRENT" != "$DEV_ASSETS" ]; then
-            ln -sfn "$DEV_ASSETS" ~/.capsem/assets
-            echo "Updated ~/.capsem/assets -> $DEV_ASSETS"
+    # Resolve capsem home + run dir from env, matching the Rust helpers.
+    CAPSEM_HOME_DIR="${CAPSEM_HOME:-$HOME/.capsem}"
+    RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
+    mkdir -p "$RUN_DIR"
+    PIDFILE="$RUN_DIR/service.pid"
+    SOCKET="$RUN_DIR/service.sock"
+    # Kill ONLY the service this pidfile tracks -- no pkill by name.
+    # Killing by pattern would take down a user's locally installed capsem
+    # (or a parallel test run with a different CAPSEM_HOME).
+    if [ -f "$PIDFILE" ]; then
+        OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+        if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+            # SIGTERM the service; it propagates to child capsem-process VMs.
+            kill "$OLD_PID" 2>/dev/null || true
+            for _ in 1 2 3 4 5 6; do
+                kill -0 "$OLD_PID" 2>/dev/null || break
+                sleep 0.25
+            done
+            # Force-kill if still alive.
+            if kill -0 "$OLD_PID" 2>/dev/null; then
+                pgrep -P "$OLD_PID" | xargs -r kill -9 2>/dev/null || true
+                kill -9 "$OLD_PID" 2>/dev/null || true
+            fi
         fi
-    elif [ -d ~/.capsem/assets ]; then
-        # Real directory from install -- replace with symlink for dev
-        rm -rf ~/.capsem/assets.installed
-        mv ~/.capsem/assets ~/.capsem/assets.installed
-        ln -sfn "$DEV_ASSETS" ~/.capsem/assets
-        echo "Saved ~/.capsem/assets.installed, symlinked ~/.capsem/assets -> $DEV_ASSETS"
-    else
-        ln -sfn "$DEV_ASSETS" ~/.capsem/assets
-        echo "Symlinked ~/.capsem/assets -> $DEV_ASSETS"
     fi
-    echo "Starting capsem-service..."
+    rm -f "$PIDFILE" "$SOCKET"
+    # Symlink <capsem_home>/assets -> repo assets so installed tools (MCP, CLI)
+    # see the same repacked initrd as the dev service.
+    ASSETS_LINK="$CAPSEM_HOME_DIR/assets"
+    DEV_ASSETS="$(cd "{{assets_dir}}" && pwd)"
+    if [ -L "$ASSETS_LINK" ]; then
+        CURRENT=$(readlink "$ASSETS_LINK")
+        if [ "$CURRENT" != "$DEV_ASSETS" ]; then
+            ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
+            echo "Updated $ASSETS_LINK -> $DEV_ASSETS"
+        fi
+    elif [ -d "$ASSETS_LINK" ]; then
+        # Real directory from install -- replace with symlink for dev.
+        # Only happens on the default ~/.capsem layout; test homes start empty.
+        rm -rf "$ASSETS_LINK.installed"
+        mv "$ASSETS_LINK" "$ASSETS_LINK.installed"
+        ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
+        echo "Saved $ASSETS_LINK.installed, symlinked $ASSETS_LINK -> $DEV_ASSETS"
+    else
+        mkdir -p "$CAPSEM_HOME_DIR"
+        ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
+        echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
+    fi
+    echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
     RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
@@ -128,7 +148,7 @@ _ensure-service: _sign
     SVC_PID=$!
     echo "$SVC_PID" > "$PIDFILE"
     for i in $(seq 1 30); do
-        if [ -S ~/.capsem/run/service.sock ] && curl -s --unix-socket ~/.capsem/run/service.sock --max-time 2 http://localhost/list >/dev/null 2>&1; then
+        if [ -S "$SOCKET" ] && curl -s --unix-socket "$SOCKET" --max-time 2 http://localhost/list >/dev/null 2>&1; then
             echo "capsem-service running (PID $SVC_PID)"
             exit 0
         fi
@@ -252,13 +272,21 @@ update-deps: _pnpm-install
     echo "Done. Run 'just smoke' to verify nothing broke."
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
+#
+# Runs against an isolated CAPSEM_HOME under target/test-home/ so the suite
+# never kills or mutates the user's locally installed capsem. The flock is
+# still honored for multi-agent coordination but now lives inside the test
+# home, not the shared ~/.capsem/run.
 test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
+    export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
+    export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
+    rm -rf "$CAPSEM_HOME"
+    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
+    LOCK_FILE="$CAPSEM_RUN_DIR/execution.lock"
     exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    flock -n 3 || { echo "another agent holds the test execution lock ($LOCK_FILE); try again later"; exit 1; }
 
     echo "=== Dependency audit ==="
     # Real vulnerabilities must fail the build. Upstream-only advisories
@@ -458,13 +486,19 @@ _generate-settings:
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
 # Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
-smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
+smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
+    # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
+    # locally installed capsem daemon. _ensure-service is invoked below
+    # (not as a just dep) so it inherits the exported env vars.
+    export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
+    export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
+    mkdir -p "$CAPSEM_RUN_DIR"
+    LOCK_FILE="$CAPSEM_RUN_DIR/execution.lock"
     exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    flock -n 3 || { echo "another agent holds the test execution lock ($LOCK_FILE); try again later"; exit 1; }
+    just _ensure-service
     SMOKE_LOG="{{justfile_directory()}}/target/smoke.log"
     mkdir -p "$(dirname "$SMOKE_LOG")"
     exec > >(tee "$SMOKE_LOG") 2>&1
@@ -787,6 +821,24 @@ clean all="":
             rm -rf "$dir"
         fi
     done
+    # Explicit removal of the isolated test home (also swept by `cargo clean`
+    # when target/ is rebuilt, but listed here so it's visible in the log).
+    if [ -d target/test-home ]; then
+        echo "  target/test-home/   $(du -sh target/test-home 2>/dev/null | cut -f1)"
+        rm -rf target/test-home
+    fi
+    # Leftover /tmp/capsem-test-* dirs from python helpers/service.py.
+    if compgen -G "/tmp/capsem-test-*" >/dev/null; then
+        TMP_COUNT=$(ls -d /tmp/capsem-test-* 2>/dev/null | wc -l | tr -d ' ')
+        echo "  /tmp/capsem-test-*  ($TMP_COUNT entries)"
+        rm -rf /tmp/capsem-test-*
+    fi
+    # Backup assets dir the dev _ensure-service created when it first found a
+    # real ~/.capsem/assets/ (replaced with a symlink to the repo assets).
+    if [ -d "$HOME/.capsem/assets.installed" ]; then
+        echo "  ~/.capsem/assets.installed"
+        rm -rf "$HOME/.capsem/assets.installed"
+    fi
     if [[ "{{all}}" == "all" ]]; then
         just _clean-host-image
         if command -v docker &>/dev/null; then

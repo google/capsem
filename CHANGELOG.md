@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`just test` no longer kills or mutates a locally installed capsem.**
+  Previously the test harness (`scripts/integration_test.py`,
+  `_ensure-service`, and every Rust site that computed `$HOME/.capsem/...`
+  directly) ran against the shared `~/.capsem/` directory, so a pkill-by-name
+  on `capsem-service --foreground` took down the user's installed daemon,
+  `~/.capsem/run/service.{sock,pid}` were deleted, and `~/.capsem/assets`
+  was swapped for a symlink. Added a `CAPSEM_HOME` env var honored by a new
+  `capsem_core::paths` module (with `capsem_run_dir`, `capsem_assets_dir`,
+  `capsem_sessions_dir`, `capsem_bin_dir`, `capsem_logs_dir`,
+  `service_socket_path`, `service_pidfile_path`) and routed every
+  `$HOME/.capsem/...` site across `capsem`, `capsem-service`,
+  `capsem-mcp`, `capsem-gateway`, `capsem-tray`, `capsem-app`, and
+  `capsem-core` through it. `just test` / `just smoke` now export
+  `CAPSEM_HOME=target/test-home/.capsem` (cleaned each run, swept by
+  `just clean`). `_ensure-service` no longer uses pkill-by-name --
+  it kills only the service tracked by its own pidfile, so an isolated
+  test run never touches an installed daemon. The execution-lock flock
+  moves into the test home alongside its socket.
+- **Dev-build tray icon now renders orange** so the menu-bar icon is
+  visually distinct from an installed release build. Grey pixels are
+  recoloured to a `#FF8800` ramp at icon-load time under
+  `cfg!(debug_assertions)`; anti-aliased edges remap by luminance so the
+  icon stays smooth instead of banding. Release builds are untouched.
 - **External links ("Get a key", API key docs, onboarding "Learn more")
   now open in the system browser from the Tauri desktop app.** Previously
   `<a target="_blank">` did nothing in the Tauri webview because

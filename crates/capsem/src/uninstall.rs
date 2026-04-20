@@ -6,19 +6,19 @@ use crate::platform;
 
 /// Run full uninstall: stop service, remove unit, remove binaries and data.
 pub async fn run_uninstall(yes: bool) -> Result<()> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let capsem_dir = PathBuf::from(&home).join(".capsem");
+    let capsem_dir = capsem_core::paths::capsem_home_opt()
+        .context("HOME not set")?;
 
     if !capsem_dir.exists() {
-        println!("Nothing to uninstall (~/.capsem does not exist).");
+        println!("Nothing to uninstall ({} does not exist).", capsem_dir.display());
         return Ok(());
     }
 
     if !yes {
         println!("This will remove:");
         println!("  - Capsem service (LaunchAgent / systemd unit)");
-        println!("  - All binaries in ~/.capsem/bin/");
-        println!("  - All data in ~/.capsem/ (assets, config, state)");
+        println!("  - All binaries in {}/bin/", capsem_dir.display());
+        println!("  - All data in {}/ (assets, config, state)", capsem_dir.display());
 
         let confirm = inquire::Confirm::new("Proceed with uninstall?")
             .with_default(false)
@@ -91,19 +91,21 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         }
     }
 
-    // Remove ~/.capsem entirely. Overlayfs workdirs under sessions/*/work end
-    // up with mode 000 while the VM is running; chmod the tree back to 0o700
+    // Remove the capsem home entirely. Overlayfs workdirs under sessions/*/work
+    // end up with mode 000 while the VM is running; chmod the tree back to 0o700
     // so remove_dir_all can traverse it.
-    println!("Removing ~/.capsem...");
+    println!("Removing {}...", capsem_dir.display());
     restore_perms(&capsem_dir);
     if let Err(e) = std::fs::remove_dir_all(&capsem_dir) {
         eprintln!("Warning: failed to remove {}: {}", capsem_dir.display(), e);
     }
 
-    // Remove macOS logs
-    let log_dir = PathBuf::from(&home).join("Library/Logs/capsem");
-    if log_dir.exists() {
-        std::fs::remove_dir_all(&log_dir).ok();
+    // Remove macOS logs (always under the real user $HOME, not CAPSEM_HOME).
+    if let Ok(home) = std::env::var("HOME") {
+        let log_dir = PathBuf::from(&home).join("Library/Logs/capsem");
+        if log_dir.exists() {
+            std::fs::remove_dir_all(&log_dir).ok();
+        }
     }
 
     println!("Capsem uninstalled.");

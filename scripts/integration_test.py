@@ -34,10 +34,30 @@ YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
-MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
-SERVICE_SOCKET = Path.home() / ".capsem" / "run" / "service.sock"
-SERVICE_PIDFILE = Path.home() / ".capsem" / "run" / "service.pid"
+def _capsem_home() -> Path:
+    """Resolve the capsem base dir, honoring CAPSEM_HOME like the Rust helper.
+
+    Tests run with CAPSEM_HOME pointing at an isolated directory so this
+    script never stomps on a locally installed capsem under ~/.capsem.
+    """
+    env = os.environ.get("CAPSEM_HOME")
+    if env:
+        return Path(env)
+    return Path.home() / ".capsem"
+
+
+def _run_dir() -> Path:
+    env = os.environ.get("CAPSEM_RUN_DIR")
+    if env:
+        return Path(env)
+    return _capsem_home() / "run"
+
+
+CAPSEM_HOME = _capsem_home()
+SESSIONS_DIR = _run_dir() / "sessions"
+MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
+SERVICE_SOCKET = _run_dir() / "service.sock"
+SERVICE_PIDFILE = _run_dir() / "service.pid"
 
 # The compound command executed inside the VM.  Semicolons ensure every step
 # runs even if an earlier one fails -- the host-side assertions decide pass/fail.
@@ -59,7 +79,7 @@ VM_COMMAND = "; ".join([
         "curl -s -o /dev/null"
         " -w 'throughput: %{speed_download} B/s in %{time_total}s\\n'"
         " --connect-timeout 5 -m 5"
-        " https://ash-speed.hetzner.com/10MB.bin"
+        " https://ash-speed.hetzner.com/1MB.bin"
     ),
 
     # -- mcp_calls: capsem-doctor MCP test subset --
@@ -779,11 +799,11 @@ def verify_session(session_id: str) -> bool:
             f"only {valid_ts}/5 timestamps match ISO 8601 format",
         )
 
-    # capsem-app per-launch log files live in ~/.capsem/logs/*.jsonl and are
-    # only produced when the Tauri desktop shell has been launched. This
+    # capsem-app per-launch log files live in <capsem_home>/logs/*.jsonl and
+    # are only produced when the Tauri desktop shell has been launched. This
     # script exercises `capsem run` / the service, never the desktop app, so
     # inspect the dir only if prior capsem-app runs left logs behind.
-    launch_log_dir = Path.home() / ".capsem" / "logs"
+    launch_log_dir = CAPSEM_HOME / "logs"
     if launch_log_dir.exists():
         jsonl_files = sorted(launch_log_dir.glob("*.jsonl"), key=lambda p: p.name, reverse=True)
         if jsonl_files:
