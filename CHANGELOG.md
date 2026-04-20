@@ -59,7 +59,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page `docs/src/content/docs/development/benchmarking.md` updated to
   match.
 
-### Fixed
+### Added
+- **`just test` now records an in-VM capsem-bench baseline on every
+  run.** The stage-6 "Benchmarks" step used to call
+  `{{binary}} "capsem-bench"`, which clap parsed as a host-side
+  subcommand and aborted with `unrecognized subcommand 'capsem-bench'`.
+  Replaced with a new pytest
+  (`tests/capsem-serial/test_capsem_bench_baseline.py`) that provisions
+  a fresh VM, runs `capsem-bench all` inside it, pulls
+  `/tmp/capsem-benchmark.json` out via `/exec cat`, and archives it to
+  `benchmarks/capsem-bench/data_<version>_<arch>.json` with host-side
+  timestamp + arch stamp. Mirrors the `_save_benchmark` pattern used by
+  the existing `test_lifecycle_benchmark.py` host-side archives
+  (`benchmarks/lifecycle/`, `benchmarks/fork/`). No regression gate
+  yet -- once ~5-10 clean archives land per arch, per-category
+  tolerances can be picked and promoted to pytest asserts, mirroring
+  `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
+  lifecycle benchmark. Host-side lifecycle/fork regressions remain
+  gated today.
 - **`cargo test -p capsem-guard --lib` is deterministic again.** The
   `install_happy_path_returns_guards_and_creates_lock` test did
   `install -> drop -> install` in-process, which reliably failed under

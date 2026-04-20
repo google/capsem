@@ -360,7 +360,10 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
 
     echo "=== Benchmarks ==="
-    CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
+    # Records /tmp/capsem-benchmark.json to benchmarks/capsem-bench/data_<ver>_<arch>.json
+    # on every run so we accumulate a baseline. No gate yet -- will grow
+    # per-category tolerances once ~5-10 clean runs are on disk per arch.
+    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux release (Docker) ==="
