@@ -1962,20 +1962,29 @@ async fn handle_mcp_call(
     let uds_path = uds_path
         .ok_or_else(|| AppError(StatusCode::SERVICE_UNAVAILABLE, "no running sessions".into()))?;
 
+    let arguments_json = serde_json::to_string(&arguments)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
     let msg = ServiceToProcess::McpCallTool {
         id: state.next_job_id(),
         namespaced_name: name.clone(),
-        arguments,
+        arguments_json,
     };
     let resp = send_ipc_command(&uds_path, msg, 60).await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
 
     match resp {
-        ProcessToService::McpCallToolResult { result, error, .. } => {
+        ProcessToService::McpCallToolResult { result_json, error, .. } => {
             if let Some(err) = error {
                 Err(AppError(StatusCode::BAD_GATEWAY, err))
             } else {
-                Ok(Json(result.unwrap_or(serde_json::Value::Null)))
+                let result = match result_json {
+                    Some(s) => serde_json::from_str(&s).map_err(|e| AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("bad result_json from process: {e}"),
+                    ))?,
+                    None => serde_json::Value::Null,
+                };
+                Ok(Json(result))
             }
         }
         _ => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response".into())),

@@ -217,6 +217,19 @@ pub fn parse_env_vars(env: &[String]) -> Result<Option<HashMap<String, String>>>
     Ok(Some(map))
 }
 
+/// Whether the caller is running under an explicit `CAPSEM_HOME` override.
+/// In that mode the installed system-wide service unit (registered against
+/// the real `$HOME/.capsem`) is the wrong target for auto-launch: it would
+/// bind a socket under the default home while this client polls the
+/// overridden layout. The auto-launch path direct-spawns instead so the
+/// child service inherits `CAPSEM_HOME` and binds the socket the client
+/// is actually watching.
+fn isolation_mode_active() -> bool {
+    std::env::var("CAPSEM_HOME")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
 /// Validate that a session identifier is safe for path construction.
 /// Rejects identifiers containing path separators or traversal sequences.
 pub fn validate_id(id: &str) -> Result<()> {
@@ -337,7 +350,14 @@ impl UdsClient {
 
         // If the service is registered with a service manager, use that exclusively.
         // Direct-spawning when a unit exists would create an unmanaged duplicate.
-        if service_install::is_service_installed() {
+        // Isolation-mode guard skips this path: when CAPSEM_HOME is set the
+        // caller runs against a non-default layout (e.g. `just test` under
+        // target/test-home). The installed LaunchAgent / systemd unit was
+        // registered against $HOME/.capsem, so kickstarting it would bind a
+        // socket under the real home while this client polls the test home --
+        // a guaranteed 5s timeout. Direct-spawn instead; the child inherits
+        // CAPSEM_HOME.
+        if !isolation_mode_active() && service_install::is_service_installed() {
             info!("Service unit installed, using service manager");
             match paths::try_start_via_service_manager().await {
                 Ok(true) => {
@@ -383,12 +403,23 @@ impl UdsClient {
             "spawning service directly"
         );
 
+        // Detach stdio. The spawned service inherits the CLI's stdout/stderr
+        // otherwise, which holds those pipes open for its entire lifetime.
+        // When the CLI is invoked by a Python harness using
+        // `subprocess.run(..., capture_output=True)`, that pipe inheritance
+        // turns every `capsem run` into a 120s hang: Python's communicate()
+        // waits for EOF on stdout/stderr, but the detached service keeps
+        // them alive long after the CLI returns. Service logs go to
+        // `<run_dir>/service.log` regardless, so nothing useful is lost.
         let mut child = tokio::process::Command::new(&paths.service_bin)
             .arg("--foreground")
             .arg("--assets-dir")
             .arg(&paths.assets_dir)
             .arg("--process-binary")
             .arg(&paths.process_bin)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn()
             .context("failed to spawn capsem-service")?;
 

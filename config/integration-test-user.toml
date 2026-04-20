@@ -1,14 +1,39 @@
-# Configuration for end-to-end integration tests.
-# This file is used by scripts/integration_test.py to ensure isolation from the user's ~/.capsem/user.toml.
+[settings."security.web.allow_read"]
+value = false
+modified = "2026-03-05T00:00:00Z"
 
-[settings]
-"security.web.custom_allow" = { value = "elie.net, *.googleapis.com, ash-speed.hetzner.com", modified = "2026-03-05T00:00:00Z" }
-"security.web.custom_block" = { value = "deny.example.com", modified = "2026-03-05T00:00:00Z" }
-"security.web.allow_read" = { value = false, modified = "2026-03-05T00:00:00Z" }
-"security.web.allow_write" = { value = false, modified = "2026-03-05T00:00:00Z" }
+[settings."vm.environment.ssh.public_key"]
+value = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBkujAwh+zwKM656FDYEuYdJcBCuMSxXDpTdCoz6PNMI"
+modified = "2026-04-20T14:54:44Z"
 
-"ai.openai.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
-"ai.anthropic.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
+[settings."ai.anthropic.allow"]
+value = false
+modified = "2026-03-05T00:00:00Z"
 
-"ai.google.allow" = { value = true, modified = "2026-03-05T00:00:00Z" }
-# API key injected via --env from host GOOGLE_API_KEY (see integration_test.py)
+[settings."ai.openai.allow"]
+value = false
+modified = "2026-03-05T00:00:00Z"
+
+[settings."repository.git.identity.author_name"]
+value = "Elie Bursztein"
+modified = "2026-04-20T14:54:44Z"
+
+[settings."security.web.custom_allow"]
+value = "elie.net, *.elie.net, *.googleapis.com"
+modified = "2026-03-05T00:00:00Z"
+
+[settings."security.web.allow_write"]
+value = false
+modified = "2026-03-05T00:00:00Z"
+
+[settings."repository.git.identity.author_email"]
+value = "github@elie.net"
+modified = "2026-04-20T14:54:44Z"
+
+[settings."security.web.custom_block"]
+value = "deny.example.com"
+modified = "2026-03-05T00:00:00Z"
+
+[settings."ai.google.allow"]
+value = true
+modified = "2026-03-05T00:00:00Z"

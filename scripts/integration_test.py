@@ -74,12 +74,17 @@ VM_COMMAND = "; ".join([
     "curl -sf https://google.com -o /dev/null",
     "curl -sf https://deny.example.com/ -o /dev/null || true",  # denied by policy
 
-    # -- throughput: 100MB download through the full MITM proxy pipeline --
+    # -- throughput: ~10MB PDF through the full MITM proxy pipeline --
+    # cdn.elie.net 301-redirects to elie.net; -L proves the proxy handles
+    # cross-host redirects too. The previous target (ash-speed.hetzner.com/
+    # 1MB.bin) 404'd silently -- curl reported 146 bytes of nginx error page
+    # while the test asserted only "request logged" + "decision=allowed",
+    # so throughput was untested for months.
     (
-        "curl -s -o /dev/null"
+        "curl -sL -o /dev/null"
         " -w 'throughput: %{speed_download} B/s in %{time_total}s\\n'"
-        " --connect-timeout 5 -m 5"
-        " https://ash-speed.hetzner.com/1MB.bin"
+        " --connect-timeout 5 -m 30"
+        " https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
     ),
 
     # -- mcp_calls: capsem-doctor MCP test subset --
@@ -402,20 +407,29 @@ def verify_session(session_id: str) -> bool:
         "no googleapis.com net_events (Gemini API call not captured)",
     )
 
-    # ash-speed.hetzner.com throughput download.
-    hetzner = conn.execute(
-        "SELECT * FROM net_events WHERE domain = 'ash-speed.hetzner.com'"
-    ).fetchone()
+    # cdn.elie.net / elie.net throughput download (~10MB PDF, -L follows
+    # 301 to elie.net, so both hosts should appear in net_events).
+    throughput_rows = conn.execute(
+        "SELECT * FROM net_events WHERE domain IN ('cdn.elie.net', 'elie.net')"
+    ).fetchall()
     r.check(
-        hetzner is not None,
-        "ash-speed.hetzner.com request logged (100MB throughput test)",
-        "ash-speed.hetzner.com NOT found in net_events (throughput download may have failed)",
+        len(throughput_rows) > 0,
+        f"{len(throughput_rows)} throughput net_events recorded (cdn.elie.net/elie.net)",
+        "no throughput net_events found (10MB download may have failed through MITM)",
     )
-    if hetzner:
+    if throughput_rows:
+        allowed = sum(1 for row in throughput_rows if row["decision"] == "allowed")
         r.check(
-            hetzner["decision"] == "allowed",
-            "ash-speed.hetzner.com decision = allowed",
-            f"ash-speed.hetzner.com decision = {hetzner['decision']} (expected allowed)",
+            allowed == len(throughput_rows),
+            f"all {allowed} throughput net_events decision = allowed",
+            f"{len(throughput_rows) - allowed} throughput net_events NOT allowed",
+        )
+        sizes = [row["bytes_received"] for row in throughput_rows
+                 if row["bytes_received"] and row["bytes_received"] > 1_000_000]
+        r.check(
+            len(sizes) > 0,
+            f"throughput bytes_received ~{sizes[0]} (proves MITM didn't truncate)",
+            "no throughput net_event with bytes_received >1MB (MITM may have truncated or hit 404)",
         )
 
     # At least one allowed net_event with an HTTP status code.

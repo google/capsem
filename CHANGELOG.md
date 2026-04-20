@@ -21,6 +21,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was updated to match on the `-tmp` suffix instead of the prefix.
 
 ### Fixed
+- **`capsem_mcp_call` no longer hangs for 60s on every invocation.** The
+  service -> capsem-process IPC channel is `tokio-unix-ipc`, which uses
+  bincode as its wire format. Bincode is not self-describing, and
+  `serde_json::Value::deserialize` calls `deserialize_any`, which bincode
+  explicitly rejects. `ServiceToProcess::McpCallTool { arguments:
+  serde_json::Value }` therefore serialized fine on the service side and
+  then failed to deserialize inside capsem-process the moment the message
+  hit the wire -- the per-connection handler returned silently and the
+  service's 60s `send_ipc_command` timeout fired. End result: every
+  `tests/capsem-mcp/test_mcp_call.py` test spent exactly 60s hanging
+  (120s combined, 75% of the 160s MCP parallel group), and the entire
+  `capsem_mcp_call` feature path was dead on arrival on any non-stub
+  aggregator. Fix: changed the IPC payload to JSON-stringified forms --
+  `McpCallTool { arguments_json: String }` and
+  `McpCallToolResult { result_json: Option<String> }` -- so the payload
+  is opaque to bincode. The service and capsem-process now
+  `serde_json::to_string` / `from_str` at the boundary. Added
+  `mcp_call_tool_roundtrip_bincode` / `mcp_call_tool_result_roundtrip_bincode`
+  tests in `capsem-proto` that exercise the real bincode path (the old
+  tests only roundtripped through `serde_json::to_vec`, which is
+  self-describing and missed the bug). MCP pytest group: 160s -> ~40s.
+- **`capsem install` and `just install` can no longer bake a
+  `target/test-home` path into the installed LaunchAgent / systemd unit.**
+  `install_service()` resolves `--assets-dir` via
+  `capsem_core::paths::capsem_assets_dir()`, which honors `CAPSEM_HOME` /
+  `CAPSEM_RUN_DIR` / `CAPSEM_ASSETS_DIR`. If the installer inherited any
+  of those from a prior `just test` session, the resulting LaunchAgent
+  permanently referenced a directory that `just test` wipes on every
+  run -- and with `KeepAlive=true`, launchd kept respawning it against a
+  dead path, racing against `_ensure-service` during subsequent tests.
+  Two-layer fix:
+  - `install_service()` now bails with a clear message if any of the three
+    isolation vars are set, telling the caller to `unset` them.
+  - The `just install` recipe explicitly `unset`s them before running, so
+    shells that accidentally still have them exported install cleanly.
+  `scripts/integration_test.py::_kill_dev_service` also switched from
+  `pkill -f capsem-service.*--foreground` (which catches any installed
+  LaunchAgent/systemd unit on the box) to a strict pidfile-based kill,
+  mirroring the discipline `_ensure-service` already follows.
+- **`capsem run` auto-launch now honors `CAPSEM_HOME`.** When the client
+  couldn't reach the service socket it fell back to
+  `launchctl kickstart` / `systemctl --user start` whenever a
+  LaunchAgent / systemd unit existed. Those units point at the default
+  `$HOME/.capsem` layout, so under an isolated test run
+  (`CAPSEM_HOME=target/test-home/.capsem`) the kicked service bound a
+  socket in the *real* home while the client kept polling the test home
+  until the 5s `AwaitStartup` budget expired -- `scripts/integration_test.py`'s
+  ephemeral-model check always failed on machines with capsem installed.
+  `UdsClient::try_ensure_service` now skips the service-manager branch
+  whenever `CAPSEM_HOME` is set and goes straight to direct-spawn, so the
+  child service inherits `CAPSEM_HOME` and binds the socket the client is
+  watching. Production `~/.capsem` flow is unchanged.
+- **Direct-spawn auto-launch no longer hangs the CLI's stdout/stderr
+  pipes.** `UdsClient::try_ensure_service`'s fallback path spawned the
+  service with inherited stdio, so when the CLI was invoked from Python
+  under `subprocess.run(capture_output=True)`, the detached service
+  kept stdout/stderr open long after the CLI returned. Python's
+  `communicate()` waited for EOF on those pipes and always timed out at
+  its outer 120s deadline -- the same symptom
+  `scripts/integration_test.py::check_persistence` hit under a test
+  harness without an existing running service. The spawn now redirects
+  all three fds to `/dev/null`; service logs still land in
+  `<run_dir>/service.log` as before.
+- **`_ensure-service` no longer leaks the execution-lock fd.** The
+  backgrounded capsem-service inherited fd 3 (which holds `flock -n 3` on
+  `$CAPSEM_RUN_DIR/execution.lock`) from its parent shell. If `just smoke`
+  or `just test` aborted after starting the service, the service kept fd 3
+  open and the flock stayed held after the outer shell exited, bricking
+  subsequent runs with "another agent holds the test execution lock". The
+  service is now launched with `3>&-` so fd 3 is closed before exec.
 - **`just install` now leaves `~/.capsem/assets/` in the layout the service's
   resolver actually reads.** The .pkg/.deb ships only `manifest.json` (binaries
   and assets are on independent shipping cadences), and `capsem setup` was a

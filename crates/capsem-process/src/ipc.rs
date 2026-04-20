@@ -251,18 +251,23 @@ pub(crate) async fn handle_ipc_connection(
                         }
                     });
                 }
-                ServiceToProcess::McpCallTool { id, namespaced_name, arguments } => {
+                ServiceToProcess::McpCallTool { id, namespaced_name, arguments_json } => {
                     let mcp = Arc::clone(&mcp_config);
                     let ipc_tx_out = ipc_tx_out.clone();
                     tokio::spawn(async move {
-                        match mcp.aggregator.call_tool(&namespaced_name, arguments).await {
-                            Ok(result) => {
-                                let _ = ipc_tx_out.send(ProcessToService::McpCallToolResult { id, result: Some(result), error: None }).await;
-                            }
-                            Err(e) => {
-                                let _ = ipc_tx_out.send(ProcessToService::McpCallToolResult { id, result: None, error: Some(e.to_string()) }).await;
-                            }
-                        }
+                        // arguments travels as a JSON string because bincode
+                        // (tokio-unix-ipc's wire format) cannot round-trip
+                        // serde_json::Value through its non-self-describing
+                        // deserialize_any. See crates/capsem-proto/src/ipc.rs.
+                        let arguments: serde_json::Value = serde_json::from_str(&arguments_json)
+                            .unwrap_or(serde_json::Value::Null);
+                        let outcome = mcp.aggregator.call_tool(&namespaced_name, arguments).await;
+                        let result_json = match &outcome {
+                            Ok(result) => serde_json::to_string(result).ok(),
+                            Err(_) => None,
+                        };
+                        let error = outcome.as_ref().err().map(|e| e.to_string());
+                        let _ = ipc_tx_out.send(ProcessToService::McpCallToolResult { id, result_json, error }).await;
                     });
                 }
                 ServiceToProcess::PrepareSnapshot

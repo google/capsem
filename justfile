@@ -141,10 +141,13 @@ _ensure-service: _sign
         echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
     fi
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
+    # Close fd 3 on the service; otherwise the backgrounded service inherits
+    # the execution-lock fd from `just smoke` / `just test` and keeps the
+    # flock held after the outer shell exits, blocking subsequent runs.
     RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
-        --foreground &
+        --foreground 3>&- &
     SVC_PID=$!
     echo "$SVC_PID" > "$PIDFILE"
     for i in $(seq 1 30); do
@@ -288,45 +291,64 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     exec 3>"$LOCK_FILE"
     flock -n 3 || { echo "another agent holds the test execution lock ($LOCK_FILE); try again later"; exit 1; }
 
-    echo "=== Dependency audit ==="
-    # Real vulnerabilities must fail the build. Upstream-only advisories
-    # that we cannot remediate live in .cargo/audit.toml with justification
-    # per ID -- not swallowed here.
-    cargo audit
-    (cd frontend && pnpm audit)
+    # ---- Stage 1: parallel fast-fail (audits + lint + frontend) -------------
+    # Cheap, independent, most-common failure class. Clippy (not cargo check)
+    # is the Rust lint gate per CLAUDE.md -- it's a strict superset of check
+    # and covers --all-targets. `set -e` does not trip on failed background
+    # jobs, so aggregate with FAIL=1.
+    echo "=== Audits + lint + frontend (parallel) ==="
+    cargo audit & PID_CARGO_AUDIT=$!
+    (cd frontend && pnpm audit) & PID_PNPM_AUDIT=$!
+    cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
+    (
+        cd frontend
+        pnpm run check
+        pnpm run test
+        pnpm run build
+    ) & PID_FE=$!
+    FAIL=0
+    wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
+    wait $PID_PNPM_AUDIT  || { echo "pnpm audit failed";  FAIL=1; }
+    wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
+    wait $PID_FE          || { echo "frontend (check/test/build) failed"; FAIL=1; }
+    [ $FAIL -eq 0 ] || exit 1
 
-    echo "=== Rust: warnings-as-errors (all crates) ==="
-    cargo check --workspace
-
-    echo "=== Rust: test suite with coverage (compiles + runs all tests) ==="
-    cargo llvm-cov --workspace --no-cfg-coverage --fail-under-lines 70
-
-    echo "=== Cross-compile agent ==="
+    # ---- Stage 2: cross-arch agent cross-compile ----------------------------
+    # _pack-initrd already built the host arch; this validates the non-host
+    # arch compiles cleanly against musl, so a cross-arch regression surfaces
+    # before the Docker-based cross-compile at Stage 7.
+    echo "=== Cross-compile agent (both arches) ==="
     uv run capsem-builder agent
 
-    echo "=== Frontend ==="
-    # Each step on its own line so `set -e` aborts on failure. Chaining with
-    # `&&` suppresses errexit for non-final commands in bash, which silently
-    # swallowed frontend test failures.
-    cd frontend
-    pnpm run check
-    pnpm run test
-    pnpm run build
-    cd ..
+    # ---- Stage 3: Rust tests + coverage -------------------------------------
+    echo "=== Rust: test suite with coverage ==="
+    cargo llvm-cov --workspace --no-cfg-coverage --fail-under-lines 70
 
+    # ---- Stage 4: sign host binaries for VM tests ---------------------------
     echo "=== Sign binaries for integration tests ==="
     just _sign
 
-    echo "=== Python: ALL tests (no marker exclusions, n=4 parallel) ==="
-    # n=4 parallel: this is the dogfooding canary. We ship Capsem as a
-    # multi-VM sandbox for AI agents -- if our own tests can't safely
-    # boot 4 VMs concurrently, real users will hit the same bug. Any
-    # concurrency flake here is a Capsem-side bug, not a test-tuning
-    # problem. loadfile keeps tests in the same module on the same
-    # worker so per-file fixtures are not re-init'd 4x.
+    # ---- Stage 5: Python pytest, n=4 ----------------------------------------
+    # Dogfooding canary: 4 concurrent VMs. --dist=loadfile keeps per-file
+    # fixtures on the same worker. Any concurrency flake here is a Capsem-side
+    # bug.
+    #
+    # --ignore=tests/capsem-recipes -- recipe meta-tests invoke `cargo build
+    #   --workspace` via subprocess, which atomically replaces the codesigned
+    #   binaries concurrent VM tests need. All their assertions are already
+    #   covered by Stage 1 clippy + Stage 3 llvm-cov + Stage 4 _build-host.
+    #   Still runnable standalone via `uv run pytest -m recipe`.
+    # --ignore=tests/capsem-install -- install-suite tests also spawn `cargo
+    #   build -p capsem` from within pytest. This directory is owned by
+    #   Stage 7's `just test-install`, which runs it inside Docker with
+    #   CAPSEM_DEB_INSTALLED=1 (the skip flag live_system tests respect).
+    echo "=== Python: ALL tests (n=4 parallel) ==="
     uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
+        --ignore=tests/capsem-recipes \
+        --ignore=tests/capsem-install \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
+    # ---- Stage 6: legacy VM scripts + bench ---------------------------------
     echo "=== Injection test ==="
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
 
@@ -336,12 +358,14 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     echo "=== Benchmarks ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} {{binary}} "capsem-bench"
 
+    # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux release (Docker) ==="
     just cross-compile
 
     echo "=== Install e2e tests (Docker + systemd) ==="
     just test-install
 
+    # ---- Stage 8: cleanup ---------------------------------------------------
     echo "=== Pruning stale build artifacts ==="
     just _clean-stale
 
@@ -494,7 +518,13 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     # (not as a just dep) so it inherits the exported env vars.
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
-    mkdir -p "$CAPSEM_RUN_DIR"
+    # Wipe stale state so assertions that read <capsem_home>/logs or
+    # <capsem_home>/sessions don't trip on artifacts from a previous run
+    # (e.g. a 0-entry capsem-app launch log left by a crashed Tauri shell).
+    # Matches the `just test` preamble; smoke inherited the leak when
+    # CAPSEM_HOME isolation was introduced.
+    rm -rf "$CAPSEM_HOME"
+    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
     LOCK_FILE="$CAPSEM_RUN_DIR/execution.lock"
     exec 3>"$LOCK_FILE"
     flock -n 3 || { echo "another agent holds the test execution lock ($LOCK_FILE); try again later"; exit 1; }
@@ -505,14 +535,21 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     SMOKE_START=$SECONDS
     step() { STEP_START=$SECONDS; echo "=== $1 ==="; }
     step_done() { echo "  -> $(( SECONDS - STEP_START ))s"; echo ""; }
-    step "Rust check + audit (parallel)"
-    cargo check --workspace &
-    CHECK_PID=$!
-    cargo audit &
-    AUDIT_PID=$!
-    (cd frontend && pnpm audit)
-    wait $CHECK_PID || { echo "cargo check failed"; exit 1; }
-    wait $AUDIT_PID || { echo "cargo audit failed"; exit 1; }
+    step "Rust clippy + audits + frontend lint (parallel)"
+    # Clippy (superset of cargo check) is the lint gate per CLAUDE.md.
+    # Frontend `pnpm run check` runs here too so a broken Svelte/TS type
+    # fails smoke in seconds instead of only surfacing under `just test`.
+    # Background jobs don't trip `set -e`, so aggregate via FAIL=1.
+    cargo clippy --workspace --all-targets -- -D warnings & CLIPPY_PID=$!
+    cargo audit & AUDIT_PID=$!
+    (cd frontend && pnpm audit) & PNPM_AUDIT_PID=$!
+    (cd frontend && pnpm run check) & FE_CHECK_PID=$!
+    FAIL=0
+    wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
+    wait $AUDIT_PID      || { echo "cargo audit failed";  FAIL=1; }
+    wait $PNPM_AUDIT_PID || { echo "pnpm audit failed";   FAIL=1; }
+    wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
+    [ $FAIL -eq 0 ] || exit 1
     step_done
     step "capsem-doctor --fast (in-VM diagnostics, no throughput)"
     {{cli_binary}} doctor --fast
@@ -528,9 +565,16 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     for b in {{service_binary}} {{process_binary}}; do
         codesign --sign - --entitlements {{entitlements}} --force "$b" 2>/dev/null || true
     done
+    # service+cli is the longest group (~67s serial) -- the big lever.
+    # -n 2 + --dist=loadfile cuts it to ~36s. loadfile keeps all tests in
+    # a file on the same worker so module-scoped fixtures don't rebuild.
+    # MCP group stays serial: parallelising it shaved only ~17s but
+    # surfaced an intermittent `sandbox not found: shared-<id>` under the
+    # combined load of 5 concurrent services (2 MCP + 2 svc + 1 gateway).
+    # Not worth the flakiness until the underlying race is pinned down.
     uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" &
     PID_MCP=$!
-    uv run python -m pytest tests/capsem-service/ tests/capsem-cli/ -v --tb=short -m "integration" &
+    uv run python -m pytest tests/capsem-service/ tests/capsem-cli/ -v --tb=short -m "integration" -n 2 --dist=loadfile &
     PID_SVC=$!
     uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway" &
     PID_GW=$!
@@ -598,6 +642,12 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 install: _pnpm-install _stamp-version _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
+    # Strip test-isolation env vars so the installer never bakes a transient
+    # target/test-home path into the LaunchAgent / systemd unit. If the user
+    # was just running `just test` in this shell and exports lingered, the
+    # install would permanently embed a path that gets wiped on the next
+    # test run. `capsem install` also refuses these vars defensively.
+    unset CAPSEM_HOME CAPSEM_RUN_DIR CAPSEM_ASSETS_DIR
     LOCK_FILE="$HOME/.capsem/run/execution.lock"
     mkdir -p "$(dirname "$LOCK_FILE")"
     exec 3>"$LOCK_FILE"

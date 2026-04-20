@@ -114,8 +114,41 @@ pub fn is_service_installed() -> bool {
         || systemd_unit_path().map(|p| p.exists()).unwrap_or(false)
 }
 
+/// Refuse service installation when test-isolation env vars are set.
+///
+/// `capsem install` writes a persistent LaunchAgent / systemd unit whose
+/// `--assets-dir` argument is resolved at install time from
+/// `capsem_core::paths::capsem_assets_dir()`. That helper honors
+/// `CAPSEM_HOME` / `CAPSEM_ASSETS_DIR` / `CAPSEM_RUN_DIR`, which the test
+/// harness sets to transient paths like `target/test-home/.capsem`. If
+/// the install inherits any of them the generated unit permanently points
+/// at a directory that gets wiped on every subsequent `just test`,
+/// leaving the installed service pointing at non-existent assets. Fail
+/// loud instead; the caller must unset these vars before installing.
+fn reject_test_isolation_env() -> Result<()> {
+    const ISOLATION_VARS: &[&str] = &["CAPSEM_HOME", "CAPSEM_RUN_DIR", "CAPSEM_ASSETS_DIR"];
+    let set: Vec<&str> = ISOLATION_VARS
+        .iter()
+        .filter(|k| std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false))
+        .copied()
+        .collect();
+    if set.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "refusing to install service with test-isolation env vars set: {}.\n\
+         These point at transient test directories (e.g. target/test-home) \
+         that are wiped by `just test`, so an install that inherits them \
+         permanently embeds a non-existent path in the LaunchAgent / systemd \
+         unit. Unset them and retry: `unset {}`.",
+        set.join(", "),
+        set.join(" "),
+    );
+}
+
 /// Install the capsem service as a LaunchAgent (macOS) or systemd user unit (Linux).
 pub async fn install_service() -> Result<()> {
+    reject_test_isolation_env()?;
     let capsem_paths = paths::discover_paths()
         .context("cannot discover paths for service installation")?;
     let home = std::env::var("HOME").context("HOME not set")?;
@@ -685,5 +718,79 @@ mod tests {
         // Spaces must be escaped as \x20 in ExecStart
         assert!(!exec_line.contains("John Doe"), "unescaped space in ExecStart: {}", exec_line);
         assert!(exec_line.contains("John\\x20Doe"), "missing \\x20 escape: {}", exec_line);
+    }
+
+    // -- test-isolation guard -------------------------------------------------
+
+    // Env mutation races across parallel tests; serialize writes.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+        fn unset(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn reject_test_isolation_env_accepts_clean_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _h = EnvGuard::unset("CAPSEM_HOME");
+        let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
+        let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
+        assert!(reject_test_isolation_env().is_ok());
+    }
+
+    #[test]
+    fn reject_test_isolation_env_refuses_capsem_home() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/fake");
+        let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
+        let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
+        let err = reject_test_isolation_env().unwrap_err().to_string();
+        assert!(err.contains("CAPSEM_HOME"), "missing CAPSEM_HOME in error: {err}");
+        assert!(err.contains("unset"), "error should tell user to unset: {err}");
+    }
+
+    #[test]
+    fn reject_test_isolation_env_ignores_empty() {
+        // Empty value means "not set" per env_nonempty convention -- must not refuse.
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _h = EnvGuard::set("CAPSEM_HOME", "");
+        let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
+        let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
+        assert!(reject_test_isolation_env().is_ok());
+    }
+
+    #[test]
+    fn reject_test_isolation_env_lists_all_set_vars() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/a");
+        let _r = EnvGuard::set("CAPSEM_RUN_DIR", "/tmp/b");
+        let _a = EnvGuard::set("CAPSEM_ASSETS_DIR", "/tmp/c");
+        let err = reject_test_isolation_env().unwrap_err().to_string();
+        assert!(err.contains("CAPSEM_HOME"));
+        assert!(err.contains("CAPSEM_RUN_DIR"));
+        assert!(err.contains("CAPSEM_ASSETS_DIR"));
     }
 }

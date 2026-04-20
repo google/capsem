@@ -36,7 +36,15 @@ pub enum ServiceToProcess {
     /// Tell MCP aggregator to reconnect all servers with fresh config.
     McpRefreshTools { id: u64 },
     /// Call an MCP tool via the aggregator subprocess.
-    McpCallTool { id: u64, namespaced_name: String, arguments: serde_json::Value },
+    ///
+    /// `arguments_json` is the JSON-serialized argument object. We send it as
+    /// a `String`, not a `serde_json::Value`, because the IPC transport
+    /// (`tokio-unix-ipc` -> bincode) is not self-describing and bincode
+    /// refuses `serde_json::Value::deserialize` (which calls
+    /// `deserialize_any`). Without this, every `capsem_mcp_call` silently
+    /// dropped the message in capsem-process and the service hit its 60s
+    /// receive timeout.
+    McpCallTool { id: u64, namespaced_name: String, arguments_json: String },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -66,8 +74,10 @@ pub enum ProcessToService {
     McpToolsResult { id: u64, tools: Vec<McpToolStatus> },
     /// Response to McpRefreshTools.
     McpRefreshResult { id: u64, success: bool, error: Option<String> },
-    /// Response to McpCallTool.
-    McpCallToolResult { id: u64, result: Option<serde_json::Value>, error: Option<String> },
+    /// Response to McpCallTool. `result_json` is a JSON-serialized
+    /// `serde_json::Value`, wrapped for the same bincode reason as
+    /// `McpCallTool::arguments_json`.
+    McpCallToolResult { id: u64, result_json: Option<String>, error: Option<String> },
 }
 
 /// Status of an MCP server as reported through IPC.
@@ -470,19 +480,46 @@ mod tests {
     }
 
     #[test]
-    fn mcp_call_tool_roundtrip() {
+    fn mcp_call_tool_roundtrip_bincode() {
+        // Regression guard: bincode is the real IPC wire format (via
+        // tokio-unix-ipc). When `arguments` was a `serde_json::Value` this
+        // failed with "Bincode does not support deserialize_any". Keeping
+        // the field as a JSON string means the payload is transparent to
+        // bincode and capsem-process actually receives the message.
         let msg = ServiceToProcess::McpCallTool {
             id: 30,
             namespaced_name: "github__search".into(),
-            arguments: serde_json::json!({"q": "rust"}),
+            arguments_json: serde_json::json!({"q": "rust"}).to_string(),
         };
-        let bytes = serde_json::to_vec(&msg).unwrap();
-        let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+        let bytes = bincode::serialize(&msg).unwrap();
+        let msg2: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
         match msg2 {
-            ServiceToProcess::McpCallTool { id, namespaced_name, arguments } => {
+            ServiceToProcess::McpCallTool { id, namespaced_name, arguments_json } => {
                 assert_eq!(id, 30);
                 assert_eq!(namespaced_name, "github__search");
-                assert_eq!(arguments["q"], "rust");
+                let parsed: serde_json::Value = serde_json::from_str(&arguments_json).unwrap();
+                assert_eq!(parsed["q"], "rust");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mcp_call_tool_result_roundtrip_bincode() {
+        let msg = ProcessToService::McpCallToolResult {
+            id: 30,
+            result_json: Some(serde_json::json!({"items": [1, 2]}).to_string()),
+            error: None,
+        };
+        let bytes = bincode::serialize(&msg).unwrap();
+        let msg2: ProcessToService = bincode::deserialize(&bytes).unwrap();
+        match msg2 {
+            ProcessToService::McpCallToolResult { id, result_json, error } => {
+                assert_eq!(id, 30);
+                assert!(error.is_none());
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&result_json.unwrap()).unwrap();
+                assert_eq!(parsed["items"], serde_json::json!([1, 2]));
             }
             _ => panic!("wrong variant"),
         }
@@ -542,15 +579,15 @@ mod tests {
     fn mcp_call_tool_result_roundtrip() {
         let msg = ProcessToService::McpCallToolResult {
             id: 30,
-            result: Some(serde_json::json!({"content": []})),
+            result_json: Some(serde_json::json!({"content": []}).to_string()),
             error: None,
         };
         let bytes = serde_json::to_vec(&msg).unwrap();
         let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
         match msg2 {
-            ProcessToService::McpCallToolResult { id, result, error } => {
+            ProcessToService::McpCallToolResult { id, result_json, error } => {
                 assert_eq!(id, 30);
-                assert!(result.is_some());
+                assert!(result_json.is_some());
                 assert!(error.is_none());
             }
             _ => panic!("wrong variant"),
