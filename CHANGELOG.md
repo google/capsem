@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   match.
 
 ### Fixed
+- **`capsem-process` now exits on `SIGTERM` on macOS.** Previously, the process blocked on `CFRunLoopRun()` and the signal handler task only logged the signal without stopping the run loop. Now, the signal handler calls `CFRunLoopStop` to allow the process to exit cleanly, fixing race conditions in VM cleanup tests.
 - **MCP `shared_vm` consumers no longer intermittently 404 after
   `test_purge_all` runs on the same xdist worker.** `test_purge_all` was
   calling `capsem_purge { all: true }` on the session-scoped

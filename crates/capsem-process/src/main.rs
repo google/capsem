@@ -153,6 +153,29 @@ fn main() -> Result<()> {
         }
     });
 
+    // Instrumentation: trace signals
+    rt.spawn(async move {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        tokio::select! {
+            _ = sigterm.recv() => {
+                tracing::warn!("capsem-process received SIGTERM");
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    core_foundation_sys::runloop::CFRunLoopStop(core_foundation_sys::runloop::CFRunLoopGetMain());
+                }
+            }
+            _ = sigint.recv() => {
+                tracing::warn!("capsem-process received SIGINT");
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    core_foundation_sys::runloop::CFRunLoopStop(core_foundation_sys::runloop::CFRunLoopGetMain());
+                }
+            }
+        }
+    });
+
     #[cfg(target_os = "macos")]
     unsafe { core_foundation_sys::runloop::CFRunLoopRun(); }
     #[cfg(not(target_os = "macos"))]
