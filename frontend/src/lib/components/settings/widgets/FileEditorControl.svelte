@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SettingsLeaf, SettingValue } from '../../../types/settings';
   import { themeStore } from '../../../stores/theme.svelte.ts';
-  import { getShikiHighlighter, resolveShikiTheme, detectShikiLang } from '../../../shiki.ts';
+  import { highlightCode, resolveShikiTheme, detectShikiLang } from '../../../shiki.ts';
   import Copy from 'phosphor-svelte/lib/Copy';
   import Check from 'phosphor-svelte/lib/Check';
   import PencilSimple from 'phosphor-svelte/lib/PencilSimple';
@@ -47,6 +47,7 @@
     try { return JSON.stringify(JSON.parse(text)); } catch { return text.trim(); }
   }
 
+  let highlightGen = 0;
   $effect(() => {
     const content = fv.content;
     const editing = isEditing;
@@ -58,11 +59,17 @@
       highlightedHtml = '';
       return;
     }
+    const gen = ++highlightGen;
     const formatted = ft === 'json' ? formatJson(content) : content;
     const lang = detectShikiLang(ft);
     const theme = resolveShikiTheme(termTheme, mode);
-    getShikiHighlighter().then(h => {
-      highlightedHtml = h.codeToHtml(formatted, { lang, theme });
+    highlightCode(formatted, lang, theme).then(html => {
+      if (gen !== highlightGen) return;
+      highlightedHtml = html;
+    }).catch(e => {
+      if (gen !== highlightGen) return;
+      console.error('[FileEditorControl] Shiki highlight failed:', e);
+      highlightedHtml = '';
     });
   });
 

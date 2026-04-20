@@ -28,33 +28,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (clippy + `cargo llvm-cov` + `_build-host` already cover their assertions)
   and remain runnable standalone via `uv run pytest -m recipe`. The install
   suite is fully covered by `just test-install` inside Docker.
-- **Frontend startup bundle slims down; `cpp` and `ruby` grammars move
-  to truly on-demand chunks, loaded only when the user opens a file of
-  that kind.** The app was importing `'shiki'` (the default
-  `bundle-full` export), which references all 235 Shiki languages --
-  Vite code-split every one, shipping >600 KB chunks for unused grammars
-  (emacs-lisp, wolfram, wasm, vue-vine, ...). Moved to `shiki/core` with
-  explicit `@shikijs/langs/*` and `@shikijs/themes/*` imports so only
-  the 29 eagerly-registered languages and 21 themes ship in the startup
-  graph. Swapped the Oniguruma WASM regex engine for
-  `createJavaScriptRegexEngine()` (the JS engine covers all shipped
-  grammars and removes a 608 KB WASM-as-JS chunk). `cpp` (~620 KB
-  bundled) and `ruby` (imports 12 sub-grammars including cpp) are kept
-  as supported highlight targets but registered lazily via a new
-  `ensureShikiLang()` helper: the grammar is dynamic-imported and
-  `highlighter.loadLanguage()`-ed the first time a `.cpp`/`.hpp`/`.cc`/
-  `.cxx`/`.rb` file is opened, never preloaded, so the UI stays fast for
-  sessions that never touch those languages. The Vite
-  `chunkSizeWarningLimit` is raised to 700 KB to accommodate the cpp
-  lazy chunk (the only expected exemption); any other chunk crossing
-  that threshold is a real regression. In `App.svelte` the heavy views
-  (Settings, Stats, Logs, ServiceLogs, Files, Inspector,
-  OnboardingWizard, CreateSandboxDialog) are now loaded via
-  `{#await import()}` so they're fetched only on first use. App chunk
-  drops from 582 KB to 142 KB; SettingsPage is a 119 KB on-demand
-  chunk. `@shikijs/langs` and `@shikijs/themes` are now direct
-  dependencies (previously transitive via `shiki`) so Vite can resolve
-  the subpath imports.
+- **Every Shiki grammar and theme is now a lazy chunk fetched on first
+  use, and the heavy app views are code-split.** The app was importing
+  `'shiki'` (the default `bundle-full` export), which references all
+  235 Shiki languages -- Vite code-split every one, shipping >600 KB
+  chunks for grammars we never use (emacs-lisp, wolfram, wasm,
+  vue-vine, ...). Moved to `shiki/core` and swapped the Oniguruma WASM
+  regex engine for `createJavaScriptRegexEngine()` (removes a 608 KB
+  WASM-as-JS chunk; the JS engine covers every grammar we ship).
+  `shiki.ts` now creates the highlighter with empty `langs` and
+  `themes` arrays and exposes a single `highlightCode(code, lang,
+  theme)` entry point plus `ensureShikiLang` / `ensureShikiTheme`
+  helpers. Each of the 31 supported languages and 21 themes is a
+  `() => import('@shikijs/langs/<name>')` entry, so Vite emits one
+  chunk per grammar/theme; they are fetched the first time a matching
+  file is rendered, then retained for the session. A `shikiTick`
+  pattern in StatsView upgrades the plaintext fallback to highlighted
+  HTML once the prewarm promise for its langs/theme resolves. In
+  `App.svelte` the heavy views (Settings, Stats, Logs, ServiceLogs,
+  Files, Inspector, OnboardingWizard, CreateSandboxDialog) are now
+  loaded via `{#await import()}` so they're fetched only on first use.
+  App chunk drops from 582 KB to 142 KB. `chunkSizeWarningLimit` is
+  raised to 700 KB to accommodate the inherent ~620 KB cpp grammar
+  chunk (loaded only for `.cpp`/`.hpp`/`.cc`/`.cxx`); every other
+  chunk stays under 200 KB. `@shikijs/langs` and `@shikijs/themes` are
+  now direct deps (previously transitive) so Vite can resolve the
+  subpath imports.
 
 ### Fixed
 - **`just test` no longer kills or mutates a locally installed capsem.**

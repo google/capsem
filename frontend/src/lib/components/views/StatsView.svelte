@@ -4,7 +4,7 @@
   import { SNAPSHOT_STATS_SQL, SNAPSHOT_LIST_SQL } from '../../sql';
   import type { ModelStats, ToolCallStat, NetworkEvent, FileEvent, DetailSelection } from '../../types';
   import { formatDuration, formatBytes, formatTime, truncate, fmtAge } from '../../format';
-  import { getShikiHighlighter, resolveShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
+  import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import Brain from 'phosphor-svelte/lib/Brain';
   import Wrench from 'phosphor-svelte/lib/Wrench';
@@ -38,14 +38,40 @@
   // Detail panel
   let detail = $state<DetailSelection | null>(null);
   let shiki = $state<ShikiHighlighter | null>(null);
+  // Bumped whenever a new grammar/theme is registered, so detail-panel
+  // `{@html formatAndHighlight(...)}` calls re-evaluate and pick up the
+  // now-available Shiki output instead of the plain-text fallback.
+  let shikiTick = $state(0);
 
-
-  // Shiki is loaded in the main onMount below
+  // Shiki is loaded on-demand: grammars and themes needed by the detail
+  // panel (json, bash, plus the current theme) are fetched in an effect
+  // below. codeToHtml is synchronous but throws if a lang or theme
+  // isn't registered yet -- fall back to HTML-escaped plaintext while
+  // the async fetch is in flight.
   function shikiHighlight(text: string, lang: string): string {
+    // Reading shikiTick keeps this function reactive: it re-runs after
+    // each async load so the view upgrades from plaintext to highlighted.
+    shikiTick;
     if (!shiki) return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
+    if (!shiki.getLoadedLanguages().includes(lang) || !shiki.getLoadedThemes().includes(theme)) {
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
     return shiki.codeToHtml(text, { lang, theme });
   }
+
+  // Prewarm the two langs the detail panel uses + the active theme.
+  // Re-runs on theme switch so the new theme loads before rendering.
+  $effect(() => {
+    const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
+    Promise.all([
+      ensureShikiLang('json'),
+      ensureShikiLang('bash'),
+      ensureShikiTheme(theme),
+    ]).then(() => { shikiTick++; }).catch(e => {
+      console.error('[StatsView] Shiki prewarm failed:', e);
+    });
+  });
 
   function formatAndHighlight(text: string | null | undefined, lang?: string): string {
     if (!text) return '';

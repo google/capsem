@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import type { FileEntry } from '../../types';
   import { themeStore } from '../../stores/theme.svelte.ts';
-  import { getShikiHighlighter, resolveShikiTheme, detectShikiLang, ensureShikiLang, type ShikiHighlighter } from '../../shiki.ts';
+  import { highlightCode, resolveShikiTheme, detectShikiLang } from '../../shiki.ts';
   import { formatBytes } from '../../format';
   import Copy from 'phosphor-svelte/lib/Copy';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
@@ -13,21 +13,12 @@
     blob: Blob | null;
   } = $props();
 
-  let highlighter: ShikiHighlighter | null = $state(null);
   let highlightedHtml = $state('');
   let copied = $state(false);
   let blobUrl = $state<string | null>(null);
 
   // Track previous blob URL for cleanup without reading $state in the effect
   let prevBlobUrl: string | null = null;
-
-  onMount(async () => {
-    try {
-      highlighter = await getShikiHighlighter();
-    } catch (e) {
-      console.error('[FileContent] Shiki init failed:', e);
-    }
-  });
 
   onDestroy(() => {
     if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
@@ -70,13 +61,12 @@
     }
   });
 
-  // Syntax highlighting. When the file needs an on-demand grammar
-  // (cpp, ruby), fetch + register it first, then paint. A generation
-  // counter lets a later file-change abort the in-flight load without
-  // flashing stale highlighted HTML.
+  // Syntax highlighting. highlightCode() lazily fetches the grammar +
+  // theme on first use. A generation counter lets a later file-change
+  // abort the in-flight load without flashing stale highlighted HTML.
   let highlightGen = 0;
   $effect(() => {
-    if (!content || !highlighter || !entry || isImage || isSvg) {
+    if (!content || !entry || isImage || isSvg) {
       highlightedHtml = '';
       return;
     }
@@ -84,19 +74,12 @@
     const langHint = entry.label ?? entry.name;
     const lang = detectShikiLang(langHint, content);
     const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
-    const localContent = content;
-    const hl = highlighter;
-    ensureShikiLang(lang).then(() => {
+    highlightCode(content, lang, theme).then(html => {
       if (gen !== highlightGen) return;
-      try {
-        highlightedHtml = hl.codeToHtml(localContent, { lang, theme });
-      } catch (e) {
-        console.error('[FileContent] Shiki highlight failed:', e);
-        highlightedHtml = '';
-      }
+      highlightedHtml = html;
     }).catch(e => {
       if (gen !== highlightGen) return;
-      console.error('[FileContent] Shiki lang load failed:', e);
+      console.error('[FileContent] Shiki highlight failed:', e);
       highlightedHtml = '';
     });
   });
