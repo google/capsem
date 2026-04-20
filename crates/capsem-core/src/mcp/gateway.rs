@@ -112,7 +112,7 @@ async fn serve_mcp_session_inner(fd: RawFd, config: &McpGatewayConfig) -> Result
             .context("failed to read NDJSON line")?;
 
         if n == 0 {
-            debug!(process = %process_name, "MCP session closed (EOF)");
+            info!(process = %process_name, "MCP session closed (EOF)");
             return Ok(());
         }
 

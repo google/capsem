@@ -5,9 +5,9 @@ mod pty_log;
 mod terminal;
 mod vsock;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use capsem_core::{
     boot_vm, BootOptions, VirtioFsShare,
@@ -43,6 +43,40 @@ struct Args {
     env: Vec<String>,
 }
 
+/// Generate a short (16-hex-char) correlation id for this
+/// capsem-process's lifetime. Propagated to capsem-mcp-aggregator via
+/// `CAPSEM_TRACE_ID` so all three host-side processes
+/// (service -> process -> aggregator) share a `trace_id` field on
+/// every log line, making cross-process correlation grep-able.
+///
+/// Not cryptographic -- it just needs enough entropy to disambiguate
+/// concurrent processes and rapid-fire restarts on the same host.
+fn generate_trace_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let pid = std::process::id() as u64;
+    // FxHash-style mixer -- cheap, deterministic, plenty of bit churn
+    // for the "probably unique within this host" bar we need here.
+    static MIX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let bump = MIX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mixed = nanos
+        .wrapping_mul(0x9e3779b97f4a7c15)
+        .wrapping_add(pid)
+        .wrapping_add(bump.wrapping_mul(0x94d049bb133111eb));
+    format!("{mixed:016x}")
+}
+
+/// Path to the aggregator's dedicated stderr log within a VM's session
+/// directory. Kept out of `process.log` so the parent's JSON tracing
+/// stream isn't polluted by child text tracing (the two used to mix
+/// because `Stdio::inherit()` forwarded the aggregator's stderr
+/// straight into the parent's log sink).
+fn aggregator_log_path(session_dir: &Path) -> PathBuf {
+    session_dir.join("mcp-aggregator.stderr.log")
+}
+
 fn main() -> Result<()> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
@@ -51,6 +85,14 @@ fn main() -> Result<()> {
         .with(fmt::layer().json().with_writer(std::io::stderr))
         .init();
     let args = Args::parse();
+
+    // Root span shared across the whole capsem-process run: every
+    // subsequent log line inherits `vm_id` and `trace_id` as structured
+    // fields in the JSON output. Guard is held until main returns.
+    let trace_id = generate_trace_id();
+    let root_span = tracing::info_span!("vm", vm_id = %args.id, trace_id = %trace_id);
+    let _root_span_guard = root_span.enter();
+
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
     info!(id = %args.id, "capsem-sandbox-process starting");
@@ -103,8 +145,9 @@ fn main() -> Result<()> {
         );
     }
 
+    let trace_id_for_loop = trace_id.clone();
     rt.spawn(async move {
-        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm).await {
+        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm, trace_id_for_loop).await {
             error!("async loop failed: {e:#}");
             std::process::exit(1);
         }
@@ -123,6 +166,7 @@ async fn run_async_main_loop(
     vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
     _sm: capsem_core::host_state::HostStateMachine,
+    trace_id: String,
 ) -> Result<()> {
     let job_store = Arc::new(JobStore::new());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
@@ -219,7 +263,12 @@ async fn run_async_main_loop(
     }
 
     // Spawn the isolated MCP aggregator subprocess.
-    let aggregator_client = spawn_mcp_aggregator(&mcp_servers).await?;
+    let aggregator_client = spawn_mcp_aggregator(
+        &mcp_servers,
+        &args.session_dir,
+        &args.id,
+        &trace_id,
+    ).await?;
 
     // Persist the aggregator's discovered tool catalog to the cache file
     // so the service's GET /mcp/tools endpoint can serve it.
@@ -454,6 +503,9 @@ async fn run_async_main_loop(
 /// mock that returns empty results.
 async fn spawn_mcp_aggregator(
     servers: &[capsem_core::mcp::types::McpServerDef],
+    session_dir: &Path,
+    vm_id: &str,
+    trace_id: &str,
 ) -> Result<capsem_core::mcp::aggregator::AggregatorClient> {
     use std::collections::HashMap;
     use capsem_core::mcp::aggregator::*;
@@ -494,12 +546,45 @@ async fn spawn_mcp_aggregator(
         return Ok(client);
     }
 
-    info!(bin = %aggregator_bin.display(), servers = servers.len(), "spawning MCP aggregator");
+    // Dedicated stderr log for the aggregator -- keeps its JSON tracing
+    // stream out of the parent's process.log. 0o600 to match the
+    // project's sensitive-log permissions policy (see
+    // /dev-rust-patterns lesson 14).
+    let log_path = aggregator_log_path(session_dir);
+    let stderr_file = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(&log_path)
+                .with_context(|| format!("failed to open {}", log_path.display()))?
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .with_context(|| format!("failed to open {}", log_path.display()))?
+        }
+    };
+
+    info!(
+        bin = %aggregator_bin.display(),
+        servers = servers.len(),
+        log = %log_path.display(),
+        "spawning MCP aggregator"
+    );
 
     let mut child = tokio::process::Command::new(&aggregator_bin)
+        .env("CAPSEM_VM_ID", vm_id)
+        .env("CAPSEM_TRACE_ID", trace_id)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::from(stderr_file))
         .spawn()?;
 
     let mut child_stdin = child.stdin.take().unwrap();
@@ -517,6 +602,7 @@ async fn spawn_mcp_aggregator(
     // Reader task: reads msgpack frames from subprocess stdout and routes to pending callers.
     let pending_reader = Arc::clone(&pending);
     tokio::spawn(async move {
+        info!("aggregator reader task started");
         loop {
             match read_frame::<_, AggregatorResponse>(&mut child_stdout).await {
                 Ok(Some(resp)) => {
@@ -526,7 +612,7 @@ async fn spawn_mcp_aggregator(
                     }
                 }
                 Ok(None) => {
-                    info!("aggregator stdout closed");
+                    info!("aggregator stdout closed (EOF)");
                     break;
                 }
                 Err(e) => {
@@ -535,11 +621,13 @@ async fn spawn_mcp_aggregator(
                 }
             }
         }
+        info!("aggregator reader task ending");
     });
 
     // Writer task: reads from client channel, writes msgpack frames to subprocess stdin.
     let pending_writer = Arc::clone(&pending);
     tokio::spawn(async move {
+        info!("aggregator writer task started");
         while let Some((req, resp_tx)) = rx.recv().await {
             {
                 let mut map = pending_writer.lock().await;
@@ -547,13 +635,16 @@ async fn spawn_mcp_aggregator(
             }
             if let Err(e) = write_frame(&mut child_stdin, &req).await {
                 error!(error = %e, "failed to write aggregator request frame");
+                info!("aggregator writer task ending due to write error");
                 break;
             }
         }
+        info!("aggregator writer task ending (channel closed or break)");
     });
 
     // Monitor child process.
     tokio::spawn(async move {
+        info!("aggregator monitor task started");
         match child.wait().await {
             Ok(status) => info!(status = %status, "aggregator subprocess exited"),
             Err(e) => error!(error = %e, "failed to wait on aggregator"),
@@ -691,7 +782,7 @@ mod tests {
 
     #[test]
     fn cli_env_parsing_valid() {
-        let env = vec!["FOO=bar".to_string(), "BAZ=qux=extra".to_string()];
+        let env = ["FOO=bar".to_string(), "BAZ=qux=extra".to_string()];
         let parsed: Vec<(String, String)> = env.iter()
             .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
             .collect();
@@ -703,7 +794,7 @@ mod tests {
 
     #[test]
     fn cli_env_parsing_no_equals_skipped() {
-        let env = vec!["NOEQ".to_string(), "GOOD=val".to_string()];
+        let env = ["NOEQ".to_string(), "GOOD=val".to_string()];
         let parsed: Vec<(String, String)> = env.iter()
             .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
             .collect();
@@ -713,10 +804,43 @@ mod tests {
 
     #[test]
     fn cli_env_parsing_empty_value() {
-        let env = vec!["KEY=".to_string()];
+        let env = ["KEY=".to_string()];
         let parsed: Vec<(String, String)> = env.iter()
             .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
             .collect();
         assert_eq!(parsed, vec![("KEY".to_string(), "".to_string())]);
+    }
+
+    // -----------------------------------------------------------------------
+    // trace_id generation: stitches together the three host-side processes
+    // (capsem-service, capsem-process, capsem-mcp-aggregator) so
+    // per-VM logs can be correlated across the process.log + the new
+    // mcp-aggregator.stderr.log streams.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn generate_trace_id_is_16_hex_chars() {
+        let id = generate_trace_id();
+        assert_eq!(id.len(), 16);
+        assert!(
+            id.chars().all(|c| c.is_ascii_hexdigit()),
+            "non-hex character in trace_id: {id}"
+        );
+    }
+
+    #[test]
+    fn generate_trace_id_is_unique_across_calls() {
+        // Not cryptographic -- but within a process, rapid successive
+        // calls must not collide, otherwise correlation is useless.
+        use std::collections::HashSet;
+        let ids: HashSet<String> = (0..64).map(|_| generate_trace_id()).collect();
+        assert_eq!(ids.len(), 64, "trace_id collisions: {ids:?}");
+    }
+
+    #[test]
+    fn aggregator_log_path_lives_in_session_dir() {
+        let session = PathBuf::from("/tmp/some-session");
+        let log = aggregator_log_path(&session);
+        assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
     }
 }

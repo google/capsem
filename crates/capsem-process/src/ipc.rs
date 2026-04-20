@@ -9,6 +9,7 @@ use tracing::{info, error, warn, debug};
 use crate::job_store::{JobStore, JobResult};
 use crate::terminal::TerminalRelay;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,

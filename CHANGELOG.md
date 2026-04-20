@@ -15,7 +15,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   toolchain the tree is actually built with, and unblocks
   `cargo clippy -- -D warnings` across the workspace.
 
+### Added
+- **Host-side logs now carry `vm_id` and `trace_id` as structured
+  fields for cross-process correlation.** `capsem-process` generates a
+  16-hex-char `trace_id` at startup and enters a root
+  `info_span!("vm", vm_id, trace_id)` that every subsequent log line
+  inherits. The same pair is propagated to the aggregator subprocess
+  via `CAPSEM_VM_ID` / `CAPSEM_TRACE_ID` env vars, and
+  `capsem-mcp-aggregator` enters a matching
+  `info_span!("aggregator", vm_id, trace_id)`. Grep for a `trace_id` to
+  follow a single VM's execution across `process.log`,
+  `mcp-aggregator.stderr.log`, and `session.db` in the same session
+  directory. First step toward broader log correlation -- other
+  binaries (service, gateway, app) will pick up the same pair in
+  follow-ups. OpenTelemetry export was proposed alongside this and
+  explicitly deferred to a sprint proposal: it's a feature, it adds
+  a new outbound channel to an air-gapped product, and the
+  correlation problem that motivated it is solved by `trace_id`
+  alone.
+
 ### Fixed
+- **`capsem-mcp-aggregator` stderr no longer pollutes `process.log`.**
+  `capsem-process` spawned the aggregator with
+  `Stdio::inherit()` for stderr, so the aggregator's plain-text
+  tracing merged into the parent's JSON tracing stream and made
+  `process.log` effectively unparseable with `jq` / log pipelines.
+  Two coupled fixes: (a) the aggregator's subscriber now uses
+  `.json()`, matching `capsem-process` and `capsem-service`; (b) the
+  aggregator's stderr is now redirected to a dedicated
+  `mcp-aggregator.stderr.log` in the VM's session directory, opened
+  with `0o600` under `#[cfg(unix)]` per
+  `/dev-rust-patterns` lesson 14. End state: `process.log` is pure
+  parent JSON, `mcp-aggregator.stderr.log` is pure aggregator JSON.
+  Also elevated a small set of lifecycle events from `debug` to
+  `info` (aggregator reader/writer/monitor task start/stop,
+  `mcp::gateway::serve_mcp_session_inner` EOF) so critical
+  lifecycle transitions are always visible in the default filter.
+  Cleared 4 pre-existing clippy errors in `capsem-process` that the
+  gate surfaced: one `too_many_arguments` on `ipc::handle_ipc_connection`
+  (8 > 7 -- `#[allow(...)]` with no behavior change), three
+  `useless_vec` in unit tests. Three new unit tests pin the
+  `trace_id` contract (16 hex chars, no collisions over 64 calls)
+  and the aggregator-log path (lives in session dir). The JSON
+  format switch and the root-span wiring are not cleanly unit
+  testable without a live subscriber harness; validated via compile
+  + clippy + existing suites.
 - **`capsem-app`'s update-prompt no longer blocks a tauri/tokio worker
   thread while the user decides.** `check_for_update_with_prompt` in
   `crates/capsem-app/src/main.rs` used `tauri_plugin_dialog`'s

@@ -27,13 +27,28 @@ use capsem_core::mcp::types::McpServerDef;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // JSON output to stderr (capsem-process redirects it to
+    // mcp-aggregator.stderr.log in the VM's session dir). Matches the
+    // format capsem-process + capsem-service already emit, so every
+    // host-side log is machine-parseable with the same schema.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "capsem_mcp_aggregator=info".into()),
         )
+        .json()
         .with_writer(std::io::stderr)
         .init();
+
+    // Root span: every log inherits `vm_id` and `trace_id` as
+    // structured fields, so lines in mcp-aggregator.stderr.log can be
+    // correlated with process.log (parent) and main.db / session.db
+    // (service). `unknown` fallbacks let the binary still run if
+    // invoked standalone (dev/debug), without panicking.
+    let vm_id = std::env::var("CAPSEM_VM_ID").unwrap_or_else(|_| "unknown".into());
+    let trace_id = std::env::var("CAPSEM_TRACE_ID").unwrap_or_else(|_| "unknown".into());
+    let root_span = tracing::info_span!("aggregator", vm_id = %vm_id, trace_id = %trace_id);
+    let _root_span_guard = root_span.enter();
 
     info!("capsem-mcp-aggregator starting");
 
