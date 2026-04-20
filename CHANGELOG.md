@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`UdsClient::connect_with_timeout` now uses
+  `capsem_core::poll::poll_until`** instead of a hand-rolled
+  exponential-backoff loop. New `ConnectMode { FailFast, AwaitStartup }`
+  parameter makes the retryable-vs-permanent classification explicit
+  at every call site: the initial probe in `request()` stays
+  `FailFast` so CLI calls don't sit for 5 s when the service is
+  definitively down; post-launch retries in `try_ensure_service` are
+  `AwaitStartup` so a just-started service's `ENOENT`/`ConnectionRefused`
+  are treated as "socket not bound yet" rather than "service dead."
+  Also folded: `try_ensure_service` now returns the connected
+  `UnixStream` so `request()` no longer does a third redundant
+  connect. Net effect on the code is smaller than the diff suggests --
+  mostly deletes the hand-rolled state machine and replaces it with
+  the shared primitive. See `/dev-rust-patterns` lesson 19 and
+  `/dev-bug-review` (the skill now explicitly calls out
+  "grep for existing primitives, don't hand-roll" as a first-class
+  step of the workflow).
 - **`capsem-service` split into `lib + bin`** -- new `crates/capsem-service/src/lib.rs` exposes the `api`, `errors`, `fs_utils`, and `naming` submodules. Pure helpers (`AppError`, `sanitize_file_path`, `extract_magika_info`, `identify_file_sync`, `validate_vm_name`, `generate_tmp_name`) move out of `main.rs` into their own files with their own `#[cfg(test)] mod tests`. `ServiceState`, `PersistentRegistry`, `resolve_workspace_path`, and every axum handler stay in `main.rs` (their move is a follow-up sprint). `api.rs` content is unchanged -- `errors.rs` re-exports `ErrorResponse` via `pub use`. +14 net new unit tests; `errors.rs`/`fs_utils.rs`/`naming.rs` each at 100% line, region, and function coverage. Unblocks future `crates/capsem-service/tests/` integration tests now that `lib.rs` exists.
 - **Workspace MSRV bumped from Rust 1.82 to 1.91.** `capsem-core`'s
   `mcp::builtin_tools` relies on `str::floor_char_boundary`, stable in
@@ -15,6 +32,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Raising the floor clears the lint (no downgrade path), matches the
   toolchain the tree is actually built with, and unblocks
   `cargo clippy -- -D warnings` across the workspace.
+
+### Fixed
+- **`capsem doctor` (and any other auto-launch path) no longer
+  spuriously fails with "Service manager started capsem but socket not
+  ready."** Root cause: `UdsClient::connect_with_timeout` fast-failed
+  on `ENOENT`/`ConnectionRefused` from its very first attempt, breaking
+  out of its own retry loop before the just-requested service could
+  bind its socket. The obvious symptom was the misleading error
+  message; the less obvious consequence was that the auto-launch
+  path became racy under load and flaky in tests. Fix is the
+  `ConnectMode`-aware refactor above plus preserving the inner error
+  via `Context` instead of the old `.map_err(|_| anyhow!(...))` which
+  threw the real `io::Error::kind` away. Pre-existing clippy cleared
+  in the same file: 3 `print_literal` on table-header printlns
+  (intentional literal labels -- allowed locally with a comment),
+  3 `field_reassign_with_default` in `setup.rs` test fixtures.
+  Regression tests in `client.rs`: FailFast short-circuits in under
+  500 ms on a missing socket; AwaitStartup sees a `UnixListener`
+  bound 400 ms after the connect call starts; AwaitStartup times out
+  cleanly with a preserved error chain when nothing ever binds.
 
 ### Added
 - **Host-side logs now carry `vm_id` and `trace_id` as structured

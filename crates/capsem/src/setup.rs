@@ -367,8 +367,10 @@ mod tests {
         let d = tmp_dir();
         // Write to a subdir that doesn't exist yet -- save_state should mkdir -p.
         let sub = d.path().join("deep").join("nested");
-        let mut s = SetupState::default();
-        s.schema_version = 2;
+        let mut s = SetupState {
+            schema_version: 2,
+            ..SetupState::default()
+        };
         s.mark_done("corp_config");
         s.security_preset = Some("high".into());
         save_state_to(&sub, &s).unwrap();
@@ -378,13 +380,15 @@ mod tests {
     #[test]
     fn save_then_load_roundtrips_fields() {
         let d = tmp_dir();
-        let mut s = SetupState::default();
-        s.schema_version = 2;
+        let mut s = SetupState {
+            schema_version: 2,
+            providers_done: true,
+            security_preset: Some("medium".into()),
+            corp_config_source: Some("/tmp/corp.toml".into()),
+            ..SetupState::default()
+        };
         s.mark_done("welcome");
         s.mark_done("providers");
-        s.security_preset = Some("medium".into());
-        s.providers_done = true;
-        s.corp_config_source = Some("/tmp/corp.toml".into());
         save_state_to(d.path(), &s).unwrap();
 
         let loaded = load_state_from(d.path());
@@ -400,8 +404,10 @@ mod tests {
     fn save_state_is_atomic_overwrite() {
         let d = tmp_dir();
         // First write
-        let mut s = SetupState::default();
-        s.security_preset = Some("medium".into());
+        let mut s = SetupState {
+            security_preset: Some("medium".into()),
+            ..SetupState::default()
+        };
         save_state_to(d.path(), &s).unwrap();
         // Overwrite with different state
         s.security_preset = Some("high".into());

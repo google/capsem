@@ -1073,7 +1073,14 @@ async fn main() -> Result<()> {
             if *json {
                 println!("{}", serde_json::to_string_pretty(&history)?);
             } else {
-                println!(" {:<22} {:<7} {:<5} {:<10} {}", "TIMESTAMP", "LAYER", "EXIT", "PROCESS", "COMMAND");
+                // Column-aligned table header; literal labels intentional.
+                #[allow(clippy::print_literal)]
+                {
+                    println!(
+                        " {:<22} {:<7} {:<5} {:<10} {}",
+                        "TIMESTAMP", "LAYER", "EXIT", "PROCESS", "COMMAND"
+                    );
+                }
                 for entry in &history.commands {
                     let exit = entry.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
                     let process = match entry.layer.as_str() {
@@ -1130,7 +1137,13 @@ async fn main() -> Result<()> {
             if servers.is_empty() {
                 println!("No MCP servers configured.");
             } else {
-                println!("{:<20} {:<8} {:<10} {:<8} {}", "NAME", "ENABLED", "SOURCE", "TOOLS", "URL");
+                #[allow(clippy::print_literal)]
+                {
+                    println!(
+                        "{:<20} {:<8} {:<10} {:<8} {}",
+                        "NAME", "ENABLED", "SOURCE", "TOOLS", "URL"
+                    );
+                }
                 for s in &servers {
                     println!(
                         "{:<20} {:<8} {:<10} {:<8} {}",
@@ -1152,7 +1165,13 @@ async fn main() -> Result<()> {
             if tools.is_empty() {
                 println!("No MCP tools discovered.");
             } else {
-                println!("{:<40} {:<20} {:<10} {}", "TOOL", "SERVER", "APPROVED", "DESCRIPTION");
+                #[allow(clippy::print_literal)]
+                {
+                    println!(
+                        "{:<40} {:<20} {:<10} {}",
+                        "TOOL", "SERVER", "APPROVED", "DESCRIPTION"
+                    );
+                }
                 for t in &tools {
                     let desc = t["description"].as_str().unwrap_or("-");
                     let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };

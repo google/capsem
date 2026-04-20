@@ -233,6 +233,24 @@ pub fn validate_id(id: &str) -> Result<()> {
 // UDS Client
 // ---------------------------------------------------------------------------
 
+/// How `UdsClient::connect_with_timeout` should interpret socket-absent
+/// errors (`NotFound` / `ConnectionRefused`).
+///
+/// Both values run the same 5s `poll_until` budget; they differ only in
+/// whether a missing socket short-circuits the poll.
+#[derive(Debug, Clone, Copy)]
+pub enum ConnectMode {
+    /// The service should already be running. Missing socket or
+    /// connection refused is a permanent failure -- give up immediately
+    /// so CLI calls don't sit for 5s when there's nothing to wait for.
+    FailFast,
+    /// We just asked the service to start (service manager or direct
+    /// spawn). Missing socket is the expected state while the process
+    /// boots and binds; keep polling until the socket appears or the
+    /// deadline expires.
+    AwaitStartup,
+}
+
 pub struct UdsClient {
     uds_path: PathBuf,
     auto_launch: bool,
@@ -246,55 +264,75 @@ impl UdsClient {
         }
     }
 
-    /// Connect to the service socket with exponential backoff.
-    /// Uses shared `PollOpts` backoff (50ms initial, 500ms max, 5s timeout).
-    /// Fails immediately on ENOENT or ConnectionRefused (non-retryable).
-    async fn connect_with_timeout(&self) -> Result<UnixStream> {
-        let opts = capsem_core::poll::PollOpts::new(
-            "service-connect",
-            std::time::Duration::from_secs(5),
-        );
-        let deadline = tokio::time::Instant::now() + opts.timeout;
-        let mut delay = opts.initial_delay;
-
-        loop {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                UnixStream::connect(&self.uds_path),
-            )
+    /// Connect to the service socket using the shared `poll_until`
+    /// primitive. The 5 s deadline, 50ms-500ms exponential backoff, and
+    /// "poll succeeded / poll timed out" tracing all come from
+    /// `capsem_core::poll`; this function only provides the
+    /// connect-attempt closure and the retryable-vs-permanent
+    /// classification (see `ConnectMode`).
+    async fn connect_with_timeout(&self, mode: ConnectMode) -> Result<UnixStream> {
+        self.connect_with_timeout_for_test(mode, std::time::Duration::from_secs(5))
             .await
-            {
-                Ok(Ok(stream)) => return Ok(stream),
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(anyhow::anyhow!(
-                        "service socket not found: {}",
-                        self.uds_path.display()
-                    ));
+    }
+
+    /// Same as `connect_with_timeout` but lets tests override the
+    /// overall deadline so "timeout expired" paths complete fast.
+    async fn connect_with_timeout_for_test(
+        &self,
+        mode: ConnectMode,
+        timeout: std::time::Duration,
+    ) -> Result<UnixStream> {
+        let opts = capsem_core::poll::PollOpts::new("service-connect", timeout);
+        let uds_path = &self.uds_path;
+        let outcome = capsem_core::poll::poll_until(opts, || async move {
+            let attempt = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                UnixStream::connect(uds_path),
+            )
+            .await;
+            match attempt {
+                Ok(Ok(stream)) => Some(Ok(stream)),
+                // Retry loops must classify errors (see
+                // /dev-rust-patterns lesson 19). `NotFound` /
+                // `ConnectionRefused` are "service down" under FailFast
+                // (permanent -> Some(Err)) but "socket not bound yet"
+                // under AwaitStartup (retryable -> None).
+                Ok(Err(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::ConnectionRefused
+                    ) && matches!(mode, ConnectMode::FailFast) =>
+                {
+                    Some(Err(anyhow::anyhow!(
+                        "service socket unavailable at {}: {e}",
+                        uds_path.display()
+                    )))
                 }
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-                    return Err(anyhow::anyhow!(
-                        "service not listening at {}",
-                        self.uds_path.display()
-                    ));
-                }
-                _ => {
-                    if tokio::time::Instant::now() >= deadline {
-                        return Err(anyhow::anyhow!(
-                            "cannot connect to service at {} (timed out)",
-                            self.uds_path.display()
-                        ));
-                    }
-                    tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(opts.max_delay);
-                }
+                // Everything else (other io errors, per-attempt 500ms
+                // timeout, NotFound/Refused under AwaitStartup) is
+                // retryable.
+                _ => None,
             }
+        })
+        .await;
+
+        match outcome {
+            Ok(Ok(stream)) => Ok(stream),
+            Ok(Err(e)) => Err(e),
+            Err(timed_out) => Err(anyhow::anyhow!(
+                "cannot connect to service at {} (timed out after {:?})",
+                self.uds_path.display(),
+                timed_out.timeout,
+            )),
         }
     }
 
-    /// Try to ensure the service is running. Tries service manager
-    /// (systemd/launchctl) if a unit is installed, falls back to direct spawn.
-    /// Caller already verified the socket is unreachable.
-    async fn try_ensure_service(&self) -> Result<()> {
+    /// Try to ensure the service is running, returning a live
+    /// connection on success. Tries service manager (systemd/launchctl)
+    /// if a unit is installed, falls back to direct spawn. Caller
+    /// already verified the socket is unreachable.
+    async fn try_ensure_service(&self) -> Result<UnixStream> {
         info!("Service not responding, attempting to launch...");
 
         // If the service is registered with a service manager, use that exclusively.
@@ -304,13 +342,14 @@ impl UdsClient {
             match paths::try_start_via_service_manager().await {
                 Ok(true) => {
                     info!("Service start requested via service manager");
-                    return self.connect_with_timeout().await.map(|_| ()).map_err(|_| {
-                        anyhow::anyhow!(
+                    return self
+                        .connect_with_timeout(ConnectMode::AwaitStartup)
+                        .await
+                        .context(
                             "Service manager started capsem but socket not ready. \
                              Check logs: journalctl --user -u capsem (Linux) or \
-                             ~/Library/Logs/capsem/service.log (macOS)"
-                        )
-                    });
+                             ~/Library/Logs/capsem/service.log (macOS)",
+                        );
                 }
                 Ok(false) => {
                     return Err(anyhow::anyhow!(
@@ -353,27 +392,28 @@ impl UdsClient {
             .spawn()
             .context("failed to spawn capsem-service")?;
 
-        match self.connect_with_timeout().await {
-            Ok(_) => {
+        match self.connect_with_timeout(ConnectMode::AwaitStartup).await {
+            Ok(stream) => {
                 info!("Service spawned and responding");
                 tokio::spawn(async move {
                     let _ = child.wait().await;
                 });
-                Ok(())
+                Ok(stream)
             }
-            Err(_) => Err(anyhow::anyhow!("capsem-service failed to start")),
+            Err(e) => Err(e).context("capsem-service failed to start"),
         }
     }
 
-    /// Unified HTTP request over UDS. Retries once via try_ensure_service() on
-    /// connection failure.
+    /// Unified HTTP request over UDS. On initial connect failure, tries
+    /// `try_ensure_service` which already returns a live stream -- no
+    /// redundant third connect needed.
     pub async fn request<T: Serialize, R: for<'de> Deserialize<'de>>(
         &self,
         method: &str,
         path: &str,
         body: Option<T>,
     ) -> Result<R> {
-        let stream = match self.connect_with_timeout().await {
+        let stream = match self.connect_with_timeout(ConnectMode::FailFast).await {
             Ok(s) => s,
             Err(e) if !self.auto_launch => {
                 return Err(anyhow::anyhow!(
@@ -381,12 +421,7 @@ impl UdsClient {
                     self.uds_path.display()
                 ));
             }
-            Err(_) => {
-                self.try_ensure_service().await?;
-                self.connect_with_timeout()
-                    .await
-                    .context("failed to connect to service socket after auto-launch")?
-            }
+            Err(_) => self.try_ensure_service().await?,
         };
 
         let io = TokioIo::new(stream);
@@ -947,4 +982,95 @@ mod tests {
         assert!(info.total_estimated_cost.is_none());
     }
 
+    // -- connect_with_timeout : ConnectMode contract -------------------------
+    //
+    // Regression guards for the `capsem doctor` "Service manager started
+    // capsem but socket not ready" bug. FailFast must exit immediately when
+    // the socket doesn't exist; AwaitStartup must wait inside the 5s poll
+    // budget for a just-starting service to bind.
+
+    #[tokio::test]
+    async fn connect_fail_fast_errors_immediately_on_missing_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("ghost.sock");
+        let client = UdsClient::new(sock.clone(), false);
+
+        let start = std::time::Instant::now();
+        let err = client
+            .connect_with_timeout(ConnectMode::FailFast)
+            .await
+            .unwrap_err();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "FailFast should short-circuit, not wait the poll budget (took {elapsed:?})"
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("socket") || msg.contains(&*sock.display().to_string()),
+            "error should mention the socket or path, got {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_await_startup_waits_for_late_binder() {
+        use tokio::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("late.sock");
+        let sock_for_bind = sock.clone();
+
+        // Bind AFTER a delay -- simulates a service that was just
+        // started and hasn't yet called UnixListener::bind.
+        let binder = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            UnixListener::bind(&sock_for_bind).unwrap()
+        });
+
+        let client = UdsClient::new(sock.clone(), false);
+        let stream = client
+            .connect_with_timeout(ConnectMode::AwaitStartup)
+            .await
+            .expect("AwaitStartup must see the late bind within the 5s budget");
+        drop(stream);
+
+        // Keep the listener alive until after the connect returned
+        // (otherwise the Drop could race with accept).
+        drop(binder.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn connect_await_startup_eventually_times_out() {
+        // Nothing ever binds -- AwaitStartup must still return a
+        // timeout error, not hang. Use a short override timeout so
+        // the test completes in under a second.
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("never.sock");
+        let client = UdsClient::new(sock.clone(), false);
+
+        let start = std::time::Instant::now();
+        let err = client
+            .connect_with_timeout_for_test(
+                ConnectMode::AwaitStartup,
+                std::time::Duration::from_millis(300),
+            )
+            .await
+            .unwrap_err();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= std::time::Duration::from_millis(250),
+            "should have polled until ~timeout, got {elapsed:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "should not exceed budget by much, got {elapsed:?}"
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("timed out") || msg.contains("timeout"),
+            "expected timeout error, got: {msg}"
+        );
+    }
 }
