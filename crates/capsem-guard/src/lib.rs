@@ -763,7 +763,12 @@ mod tests {
         // The existing install_* tests only cover the rejection arms
         // (NoParent / ParentDead). Cover Ok(Some(_)): real parent + fresh
         // lock path must produce an InstalledGuards and leave the lockfile
-        // on disk.
+        // on disk. Drop-then-reacquire coverage lives in
+        // `singleton_reacquires_after_drop_in_isolated_process`, which
+        // forks a clean subprocess -- doing it here would regress under
+        // parallel cargo test, since a sibling test's Command::spawn fork
+        // can briefly inherit our flock fd and keep the kernel lock alive
+        // past drop.
         let dir = tempfile::tempdir().unwrap();
         let lock = dir.path().join("happy.lock");
         let ppid = current_ppid();
@@ -772,12 +777,7 @@ mod tests {
             .expect("install must succeed under a real parent")
             .expect("install must return Some when lock is fresh");
         assert!(lock.exists(), "install did not create the lock file");
-        // Releasing the guards must free the registry for the next caller.
         drop(guards);
-        let reacq = install(Some(ppid), &lock)
-            .expect("re-install after drop must succeed")
-            .expect("re-install must return Some after prior guard drop");
-        drop(reacq);
     }
 
     #[test]

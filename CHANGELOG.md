@@ -60,6 +60,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   match.
 
 ### Fixed
+- **`cargo test -p capsem-guard --lib` is deterministic again.** The
+  `install_happy_path_returns_guards_and_creates_lock` test did
+  `install -> drop -> install` in-process, which reliably failed under
+  parallel `cargo test` because a sibling test
+  (`singleton_reacquires_after_ungraceful_holder_exit`) calls
+  `Command::spawn`, and the forked child briefly inherits our flock fd
+  before exec'ing. `O_CLOEXEC` only closes on exec, not on fork; that
+  window is enough for the kernel-level flock to survive our drop, so
+  the second `install()` returns `Ok(None)` instead of `Ok(Some(_))`.
+  This trap is already called out on
+  `singleton_reacquires_after_drop_in_isolated_process`, which solves
+  it by forking a clean subprocess for the drop-then-reacquire check;
+  the new install_happy_path test quietly regressed that workaround.
+  Removed the drop+re-install portion of the test -- its stated
+  purpose (cover `install()`'s `Ok(Some(_))` arm and assert the
+  lockfile exists) is preserved. llvm-cov on
+  `capsem-guard/src/lib.rs` is unchanged to the region (714 / 37
+  missed, 94.82%); the deleted lines duplicated coverage already
+  carried by the isolated subprocess test.
 - **Excluded `tests/capsem-build-chain/` from parallel pytest execution.** The suite runs `cargo build` and `codesign` via session-scoped fixtures, which caused races and failures on codesigning (`replacing existing signature` errors) when run concurrently with other tests. Now run in serial after the parallel block.
 - **`capsem-process` now exits on `SIGTERM` on macOS.** Previously, the process blocked on `CFRunLoopRun()` and the signal handler task only logged the signal without stopping the run loop. Now, the signal handler calls `CFRunLoopStop` to allow the process to exit cleanly, fixing race conditions in VM cleanup tests.
 - **MCP `shared_vm` consumers no longer intermittently 404 after
