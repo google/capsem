@@ -342,6 +342,10 @@ enum MiscCommands {
         /// Provision corp config from URL or file path
         #[arg(long)]
         corp_config: Option<String>,
+        /// Reset only the GUI wizard (onboarding_completed and onboarding_version).
+        /// Preserves security preset, provider keys, and other install state.
+        #[arg(long)]
+        force_onboarding: bool,
     },
     /// Check for updates and install the latest version
     Update {
@@ -612,21 +616,19 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let home = std::env::var("HOME").context("HOME not set")?;
     let auto_launch = cli.uds_path.is_none();
     // Resolve run_dir and uds_path together so they always agree.
     // If the user passed --uds-path explicitly, run_dir is its parent by
     // convention (service places instance sockets at <run_dir>/instances/{id}.sock).
-    // Otherwise fall back to CAPSEM_RUN_DIR / $HOME/.capsem/run, matching the service.
+    // Otherwise fall back to capsem_core::paths::capsem_run_dir (CAPSEM_RUN_DIR
+    // env > <capsem_home>/run), matching the service.
     let (run_dir, uds_path) = match cli.uds_path {
         Some(p) => {
             let dir = p.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
             (dir, p)
         }
         None => {
-            let dir = std::env::var("CAPSEM_RUN_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from(&home).join(".capsem").join("run"));
+            let dir = capsem_core::paths::capsem_run_dir();
             let sock = dir.join("service.sock");
             (dir, sock)
         }
@@ -788,13 +790,14 @@ async fn main() -> Result<()> {
             update::run_update(*yes).await?;
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, accept_detected, corp_config }) => {
+        Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, accept_detected, corp_config, force_onboarding }) => {
             let opts = setup::SetupOptions {
                 non_interactive: *non_interactive,
                 preset: preset.clone(),
                 force: *force,
                 accept_detected: *accept_detected,
                 corp_config: corp_config.clone(),
+                force_onboarding: *force_onboarding,
             };
             setup::run_setup(opts).await?;
             return Ok(());
@@ -819,6 +822,7 @@ async fn main() -> Result<()> {
                 force: false,
                 accept_detected: true,
                 corp_config: None,
+                force_onboarding: false,
             }).await?;
         }
     }

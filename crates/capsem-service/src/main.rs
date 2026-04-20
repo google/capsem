@@ -1695,7 +1695,9 @@ async fn handle_get_setup_state() -> Json<serde_json::Value> {
         Some(path) => capsem_core::setup_state::load_state(&path),
         None => capsem_core::setup_state::SetupState::default(),
     };
-    // Include asset readiness in the response
+    // `needs_onboarding` is computed server-side so the frontend never has to
+    // mirror the version constant. `install_completed` is surfaced so the app
+    // can render an "install incomplete" banner if the CLI setup never finished.
     Json(json!({
         "schema_version": state.schema_version,
         "completed_steps": state.completed_steps,
@@ -1703,7 +1705,10 @@ async fn handle_get_setup_state() -> Json<serde_json::Value> {
         "providers_done": state.providers_done,
         "repositories_done": state.repositories_done,
         "service_installed": state.service_installed,
+        "install_completed": state.install_completed,
         "onboarding_completed": state.onboarding_completed,
+        "onboarding_version": state.onboarding_version,
+        "needs_onboarding": state.needs_onboarding(),
         "corp_config_source": state.corp_config_source,
     }))
 }
@@ -1721,12 +1726,46 @@ async fn handle_detect_host_config() -> Json<serde_json::Value> {
     Json(serde_json::to_value(summary).unwrap_or_default())
 }
 
+/// POST /setup/retry -- re-run `capsem setup --non-interactive --accept-detected`.
+/// Used by the app when `install_completed=false` so the user can retry without
+/// a terminal. Invokes the installed capsem CLI as a subprocess rather than
+/// pulling setup logic into capsem-core (the CLI owns provider detection, corp
+/// config, asset download, etc.).
+async fn handle_setup_retry() -> Result<Json<serde_json::Value>, AppError> {
+    let home = capsem_core::paths::capsem_home_opt()
+        .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+    let capsem_bin = home.join("bin").join("capsem");
+    if !capsem_bin.exists() {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("capsem binary not found at {}", capsem_bin.display()),
+        ));
+    }
+    let output = tokio::process::Command::new(&capsem_bin)
+        .args(["setup", "--non-interactive", "--accept-detected"])
+        .output()
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to spawn capsem setup: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let code = output.status.code().unwrap_or(-1);
+        warn!(exit_code = code, stderr = %stderr, "capsem setup retry failed");
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("setup exited {code}: {}", stderr.lines().last().unwrap_or("(no output)")),
+        ));
+    }
+    Ok(Json(json!({ "success": true })))
+}
+
 /// POST /setup/complete -- mark GUI onboarding as completed.
 async fn handle_complete_onboarding() -> Result<Json<serde_json::Value>, AppError> {
     let path = capsem_core::setup_state::default_state_path()
         .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
     let mut state = capsem_core::setup_state::load_state(&path);
     state.onboarding_completed = true;
+    // Record which wizard version the user saw, so a future bump re-triggers it.
+    state.onboarding_version = capsem_core::setup_state::CURRENT_ONBOARDING_VERSION;
     capsem_core::setup_state::save_state(&path, &state)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(json!({ "success": true })))
@@ -1768,9 +1807,8 @@ async fn handle_corp_config(
 ) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
 
-    let capsem_dir = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".capsem"))
-        .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+    let capsem_dir = capsem_core::paths::capsem_home_opt()
+        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
 
     if let Some(source) = &payload.source {
         // Use the existing provision function which handles fetch + install
@@ -2642,14 +2680,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let run_dir = std::env::var("CAPSEM_RUN_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(&home).join(".capsem/run"));
-    
-    let _home_capsem = PathBuf::from(&home).join(".capsem");
-    
+
+    let run_dir = capsem_core::paths::capsem_run_dir();
+
     let _ = std::fs::create_dir_all(&run_dir);
 
     let log_path = run_dir.join("service.log");
@@ -2884,6 +2917,7 @@ async fn main() -> Result<()> {
         .route("/setup/state", get(handle_get_setup_state))
         .route("/setup/detect", get(handle_detect_host_config))
         .route("/setup/complete", post(handle_complete_onboarding))
+        .route("/setup/retry", post(handle_setup_retry))
         .route("/setup/assets", get(handle_asset_status))
         .route("/setup/corp-config", post(handle_corp_config))
         .route("/mcp/servers", get(handle_mcp_servers))

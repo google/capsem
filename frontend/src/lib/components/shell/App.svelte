@@ -17,9 +17,20 @@
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { onboardingStore } from '../../stores/onboarding.svelte.ts';
+  import { openUrl } from '../../api';
 
   const vmViews = ['terminal', 'stats', 'logs', 'files', 'inspector'] as const;
 
+  function handleExternalLinkClick(e: MouseEvent) {
+    const a = (e.target as Element | null)?.closest('a');
+    if (!a) return;
+    const href = a.getAttribute('href');
+    if (!href) return;
+    const external = a.target === '_blank' || /^https?:|^mailto:/.test(href);
+    if (!external) return;
+    e.preventDefault();
+    openUrl(href).catch(err => console.error('[app] openUrl failed:', err));
+  }
 
   async function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
@@ -88,10 +99,33 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+<svelte:document onclick={handleExternalLinkClick} />
 
 <div class="flex flex-col h-full">
   <TabBar />
   <Toolbar />
+
+  {#if gatewayStore.connected && !onboardingStore.loading && !onboardingStore.installCompleted}
+    <div class="flex items-center gap-3 px-4 py-2 border-b border-line-2 bg-warning/10 text-sm">
+      <svg class="size-4 shrink-0 text-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <span class="text-foreground flex-1">
+        Install didn't finish &mdash; some features may not work.
+        {#if onboardingStore.retryError}
+          <span class="text-destructive ml-2">{onboardingStore.retryError}</span>
+        {/if}
+      </span>
+      <button
+        type="button"
+        class="py-1 px-3 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={onboardingStore.retrying}
+        onclick={() => onboardingStore.retryInstall()}
+      >
+        {onboardingStore.retrying ? 'Retrying...' : 'Retry install'}
+      </button>
+    </div>
+  {/if}
 
   <div class="flex-1 overflow-hidden bg-background relative">
     {#if !gatewayStore.connected}

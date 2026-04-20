@@ -8,7 +8,16 @@ export interface SetupStateResponse {
   providers_done: boolean;
   repositories_done: boolean;
   service_installed: boolean;
+  /** True once `capsem setup` has finished its mandatory steps. Separate
+   *  from `onboarding_completed`: the install flow can be done without the
+   *  user ever seeing the GUI wizard. */
+  install_completed: boolean;
   onboarding_completed: boolean;
+  /** Which wizard version the user last completed. Compared server-side to
+   *  a const to force re-onboarding on release. */
+  onboarding_version: number;
+  /** Server-computed: `!onboarding_completed || onboarding_version < current`. */
+  needs_onboarding: boolean;
   corp_config_source: string | null;
 }
 

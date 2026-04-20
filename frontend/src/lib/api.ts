@@ -749,10 +749,24 @@ export async function completeOnboarding(): Promise<void> {
   await _post('/setup/complete');
 }
 
+/** Retry `capsem setup --non-interactive --accept-detected` server-side.
+ *  Blocks until the subprocess exits. Throws ApiError with stderr tail on
+ *  non-zero exit so the UI can surface a useful message. */
+export async function retrySetup(): Promise<void> {
+  await _post('/setup/retry');
+}
+
 // -- App actions --
 
-/** Open a URL in the system default browser. */
+/** Open a URL in the system default browser. Routes through the Tauri IPC
+ * inside the desktop shell (where `window.open` is a no-op) and falls back to
+ * a new tab in the browser. */
 export async function openUrl(url: string): Promise<void> {
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_url', { url });
+    return;
+  }
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 

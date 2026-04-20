@@ -21,6 +21,9 @@ pub struct SetupOptions {
     pub force: bool,
     pub accept_detected: bool,
     pub corp_config: Option<String>,
+    /// Reset only the GUI wizard flags (onboarding_completed, onboarding_version)
+    /// without wiping CLI install state. No other setup steps run.
+    pub force_onboarding: bool,
 }
 
 fn capsem_dir() -> Result<PathBuf> {
@@ -43,6 +46,17 @@ fn save_state_to(capsem_dir: &Path, state: &SetupState) -> Result<()> {
 pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     let cd = capsem_dir()?;
     std::fs::create_dir_all(&cd)?;
+
+    // Fast path: --force-onboarding resets only the GUI wizard flags.
+    // Everything else about install state (security preset, detected
+    // providers, corp config, completed steps) is preserved.
+    if opts.force_onboarding && !opts.force {
+        let mut state = load_state_from(&cd);
+        state.reset_onboarding();
+        save_state_to(&cd, &state)?;
+        println!("Onboarding reset. The welcome wizard will show on next app launch.");
+        return Ok(());
+    }
 
     let mut state = if opts.force {
         SetupState::default()
@@ -101,6 +115,10 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     if opts.force || !state.is_step_done("summary") {
         step_summary(&cd, &mut state, &opts).await?;
     }
+
+    // All mandatory steps finished -- the CLI side of install is done.
+    // Separate from onboarding_completed, which only the GUI wizard can flip.
+    state.install_completed = true;
 
     save_state_to(&cd, &state)?;
     println!("\nSetup complete.");
@@ -505,8 +523,47 @@ default_action = "allow"
             force: false,
             accept_detected: false,
             corp_config: None,
+            force_onboarding: false,
         };
         assert!(o.non_interactive);
         assert!(!o.force);
+    }
+
+    // ---- --force-onboarding fast path ---------------------------------
+    //
+    // The fast path in `run_setup` does: load -> reset_onboarding -> save.
+    // All three primitives are already unit-tested individually:
+    //   * load_state_from / save_state_to -- setup.rs tests above
+    //   * SetupState::reset_onboarding     -- setup_state.rs tests
+    // So the glue is exercised by walking the same primitives here and
+    // confirming install-side fields survive the reset (i.e. that we didn't
+    // accidentally call `SetupState::default()` on the force_onboarding path).
+    #[test]
+    fn force_onboarding_glue_preserves_install_state() {
+        let d = tmp_dir();
+        let mut state = SetupState {
+            schema_version: 2,
+            install_completed: true,
+            onboarding_completed: true,
+            onboarding_version: capsem_core::setup_state::CURRENT_ONBOARDING_VERSION,
+            security_preset: Some("medium".into()),
+            providers_done: true,
+            ..SetupState::default()
+        };
+        state.mark_done("summary");
+        save_state_to(d.path(), &state).unwrap();
+
+        // Mirror run_setup's force_onboarding fast path.
+        let mut loaded = load_state_from(d.path());
+        loaded.reset_onboarding();
+        save_state_to(d.path(), &loaded).unwrap();
+
+        let after = load_state_from(d.path());
+        assert!(!after.onboarding_completed);
+        assert_eq!(after.onboarding_version, 0);
+        assert!(after.install_completed);
+        assert!(after.providers_done);
+        assert_eq!(after.security_preset.as_deref(), Some("medium"));
+        assert!(after.is_step_done("summary"));
     }
 }

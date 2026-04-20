@@ -45,6 +45,12 @@ class TestSetupWizard:
         assert state.get("schema_version") == 2
         assert "welcome" in state.get("completed_steps", [])
         assert "security_preset" in state.get("completed_steps", [])
+        # install_completed tracks CLI install finish (separate from GUI wizard).
+        assert state.get("install_completed") is True, (
+            "successful non-interactive setup must flip install_completed"
+        )
+        # GUI wizard must NOT be auto-completed -- that's the app's job.
+        assert state.get("onboarding_completed") is False
 
     def test_setup_rerun_skips_completed(self, installed_layout, clean_state, clean_setup_state):
         """Second run skips done steps."""
@@ -77,6 +83,31 @@ class TestSetupWizard:
         state = json.loads(SETUP_STATE.read_text())
         assert "welcome" in state.get("completed_steps", [])
         assert "security_preset" in state.get("completed_steps", [])
+
+    def test_force_onboarding_resets_only_wizard_flags(self, installed_layout, clean_state, clean_setup_state):
+        """--force-onboarding resets GUI wizard flags but keeps install state."""
+        # Run setup to completion so install_completed flips true.
+        r1 = run_capsem("setup", "--non-interactive", timeout=30)
+        assert r1.returncode == 0
+
+        # Simulate a user who has completed the GUI wizard.
+        state = json.loads(SETUP_STATE.read_text())
+        state["onboarding_completed"] = True
+        state["onboarding_version"] = 1
+        SETUP_STATE.write_text(json.dumps(state))
+
+        # Now reset onboarding.
+        r2 = run_capsem("setup", "--force-onboarding", timeout=10)
+        assert r2.returncode == 0, (
+            f"force-onboarding failed:\nstdout: {r2.stdout}\nstderr: {r2.stderr}"
+        )
+
+        after = json.loads(SETUP_STATE.read_text())
+        assert after.get("onboarding_completed") is False, "wizard flag must reset"
+        assert after.get("onboarding_version") == 0, "wizard version must reset"
+        # Install state must survive.
+        assert after.get("install_completed") is True, "install_completed must persist"
+        assert "summary" in after.get("completed_steps", []), "completed steps must persist"
 
     def test_setup_writes_user_toml(self, installed_layout, clean_state, clean_setup_state):
         """Security preset writes user.toml."""

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`just install` no longer re-shows the GUI onboarding wizard on every
+  reinstall.** The single `onboarding_completed` flag conflated "CLI install
+  finished" with "user dismissed the welcome wizard", so dev reinstalls
+  re-triggered the full-screen wizard even when the user had already clicked
+  through it. Split into two flags: `install_completed` (set by `capsem setup`
+  on success) and `onboarding_completed` (set only by the GUI wizard's "Get
+  Started" button). Added `onboarding_version` to let a future release force
+  re-onboarding by bumping `CURRENT_ONBOARDING_VERSION`. The frontend now reads
+  a server-computed `needs_onboarding` instead of mirroring the version
+  constant. Added `capsem setup --force-onboarding` to reset the wizard flags
+  without wiping install state. Existing state files missing `install_completed`
+  are migrated on load: if the `summary` step is present, install is inferred
+  complete so upgraded users don't see a spurious "install didn't finish"
+  banner. The app renders that banner only when `install_completed=false`,
+  with a "Retry install" button that hits a new `POST /setup/retry` endpoint
+  -- the service spawns `capsem setup --non-interactive --accept-detected` so
+  users can recover from a broken install without opening a terminal.
 - **`just smoke` now passes on dev machines whose user config opts
   into `security.web.allow_read=true`.** Three unrelated failures came
   out in the same wash:
