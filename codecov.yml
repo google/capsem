@@ -174,6 +174,17 @@ component_management:
       paths:
         - crates/capsem-tray/src/**
 
+    # Companion-lifecycle primitives: parent-watch, singleton flock.
+    # Small library but load-bearing -- ensures capsem-gateway and
+    # capsem-tray never outlive their parent service.
+    - component_id: guard
+      name: Guard
+      paths:
+        - crates/capsem-guard/src/**
+      statuses:
+        - type: project
+          target: 70%
+
     # Frontend: Astro + Svelte components, views, stores.
     # Populated when vitest coverage is added to pipeline.
     - component_id: ui

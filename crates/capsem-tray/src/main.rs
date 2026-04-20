@@ -24,6 +24,17 @@ struct Args {
     /// Poll interval in seconds
     #[arg(long, default_value = "5")]
     interval: u64,
+
+    /// PID of the capsem-service that spawned us. The tray is a companion
+    /// process: it refuses to start without a live parent service and
+    /// exits the moment that parent dies. See capsem-guard for details.
+    #[arg(long)]
+    parent_pid: Option<u32>,
+
+    /// Path for the singleton lock file (overrides the default under
+    /// CAPSEM_RUN_DIR). Used by tests that need an isolated namespace.
+    #[arg(long)]
+    lock_path: Option<std::path::PathBuf>,
 }
 
 /// Message from the async poller to the main thread.
@@ -41,6 +52,37 @@ fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+
+    // Companion guards: (1) refuse to start without a live parent service,
+    // (2) refuse to start if another tray already holds the singleton. Both
+    // conditions are expected (stale launch, double-spawn race) and resolved
+    // by exiting 0 -- not Err -- so the caller sees success.
+    let lock_path = args
+        .lock_path
+        .clone()
+        .unwrap_or_else(|| tray_lock_path());
+    match capsem_guard::install(args.parent_pid, &lock_path) {
+        Ok(Some(_guards)) => {
+            // `_guards` is bound here and held for the process's lifetime.
+            // std::mem::forget would also work but keeping the binding
+            // makes the ownership obvious.
+            Box::leak(Box::new(_guards));
+        }
+        Ok(None) => {
+            info!(
+                lock = %lock_path.display(),
+                "another capsem-tray is already running; exiting 0"
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            // No parent or parent dead: the tray was launched standalone or
+            // re-parented to init. Not an error -- just not something we
+            // should keep running for.
+            info!(error = %e, "tray refusing to run without a live capsem-service; exiting 0");
+            return Ok(());
+        }
+    }
 
     // Channel: async poller -> main thread (std mpsc is fine for non-tokio main thread)
     let (poll_tx, poll_rx) = mpsc::channel::<PollResult>();
@@ -390,6 +432,24 @@ fn launch_ui_action(vm_id: &str, action: &str) {
     match cmd.spawn() {
         Ok(_) => info!(%vm_id, %action, "UI action dispatched"),
         Err(e) => warn!("failed to launch UI: {e}"),
+    }
+}
+
+/// Default path for the tray singleton lockfile.
+///
+/// The macOS menu bar is a shared global resource: a second NSStatusItem
+/// shows up as a duplicate icon. The tray must therefore be a SYSTEM-WIDE
+/// singleton, not scoped to CAPSEM_RUN_DIR. Parallel test workers each have
+/// their own service + gateway (scoped per run_dir), but only one tray icon
+/// ever lives in the menu bar -- the first one that wins the global lock.
+/// When its parent service exits, the tray exits, and the next service's
+/// tray can acquire. Tests that need strict isolation override with
+/// `--lock-path`.
+fn tray_lock_path() -> std::path::PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        std::path::PathBuf::from(home).join(".capsem/run/tray.lock")
+    } else {
+        std::path::PathBuf::from("/tmp/capsem-tray.lock")
     }
 }
 

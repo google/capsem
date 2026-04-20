@@ -2849,20 +2849,24 @@ async fn main() -> Result<()> {
     });
 
     let shutdown_state = state.clone();
+    let companions_for_shutdown = Arc::clone(&companions);
     axum::serve(uds, app)
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
-            info!("service shutting down, killing VM processes and companions");
+            info!("service shutting down, killing companions and VM processes");
+            // Companions FIRST. kill_all_vm_processes has an unconditional
+            // 500ms SIGTERM grace sleep; if companion-kill ran after it, a
+            // downstream `_ensure-service` (which itself sleeps 500ms before
+            // spawning the next service) would race with companion exit and
+            // the new gateway would fail to bind :19222.
+            let mut children = std::mem::take(&mut *companions_for_shutdown.lock().unwrap());
+            for child in &mut children {
+                let _ = child.kill().await;
+            }
             kill_all_vm_processes(&shutdown_state);
         })
         .await
         .context("server error")?;
-
-    // Explicitly kill companion processes on shutdown
-    let mut children = std::mem::take(&mut *companions.lock().unwrap());
-    for child in &mut children {
-        let _ = child.kill().await;
-    }
 
     Ok(())
 }
@@ -2880,18 +2884,29 @@ fn kill_all_vm_processes(state: &ServiceState) {
             .map(|i| (i.pid, i.uds_path.clone(), i.session_dir.clone(), i.persistent))
             .collect()
     };
+    // Nothing to reap -- skip the grace sleep. `_ensure-service` only waits
+    // 500ms before respawning the service, so every unnecessary ms here
+    // widens the orphan-gateway race.
+    if pids_and_sockets.is_empty() {
+        return;
+    }
+    let mut signaled_any_vm = false;
     for (pid, uds_path, session_dir, persistent) in pids_and_sockets {
         if pid > 0 {
             // SIGTERM first so capsem-process gets a chance to run its own cleanup
             // (save state, unmount virtiofs). Graceful_shutdown is already holding
             // the axum server open briefly so a short wait is acceptable.
             let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
+            signaled_any_vm = true;
         }
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         if !persistent {
             let _ = std::fs::remove_dir_all(&session_dir);
         }
+    }
+    if !signaled_any_vm {
+        return;
     }
     // Brief grace period, then SIGKILL survivors.
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -2985,6 +3000,10 @@ async fn spawn_companions(
     // Pin the gateway to the service's run_dir so gateway.{token,port,pid} land
     // in the same place we poll for them below and the same place clients read.
     gw_cmd.arg("--run-dir").arg(run_dir);
+    // Parent-watch: the gateway exits the moment we die, even if we die
+    // ungracefully (SIGKILL/OOM). capsem-guard enforces this on the gateway
+    // side; we just have to hand it our PID.
+    gw_cmd.arg("--parent-pid").arg(std::process::id().to_string());
     if let Some(port) = gateway_port {
         gw_cmd.arg("--port").arg(port.to_string());
     }
@@ -3023,6 +3042,7 @@ async fn spawn_companions(
                 let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
                 info!(binary = %tray_bin.display(), "spawning capsem-tray");
                 match tokio::process::Command::new(&tray_bin)
+                    .arg("--parent-pid").arg(std::process::id().to_string())
                     .stdout(tray_out)
                     .stderr(tray_err)
                     .kill_on_drop(true)

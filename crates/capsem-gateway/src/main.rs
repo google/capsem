@@ -40,6 +40,16 @@ struct Args {
     /// Run in foreground (default: true, placeholder for daemonization)
     #[arg(long, default_value_t = true)]
     foreground: bool,
+
+    /// PID of the capsem-service that spawned us. The gateway is a companion
+    /// process: it refuses to start without a live parent service and exits
+    /// the moment that parent dies. See capsem-guard.
+    #[arg(long)]
+    parent_pid: Option<u32>,
+
+    /// Path for the singleton lockfile (overrides default under run_dir).
+    #[arg(long)]
+    lock_path: Option<PathBuf>,
 }
 
 pub struct AppState {
@@ -73,6 +83,35 @@ async fn main() -> Result<()> {
         let home = std::env::var("HOME").context("HOME not set")?;
         PathBuf::from(&home).join(".capsem/run")
     };
+
+    // Companion guards: refuse to run without a live parent service, and
+    // refuse if another gateway already holds the singleton lock for this
+    // run_dir. Both conditions are expected (stale launch, double-spawn race)
+    // and resolved by exiting 0 -- standalone launches become no-ops.
+    let lock_path = args
+        .lock_path
+        .clone()
+        .unwrap_or_else(|| run_dir.join("gateway.lock"));
+    match capsem_guard::install(args.parent_pid, &lock_path) {
+        Ok(Some(guards)) => {
+            // Keep the guards alive for the process's lifetime.
+            Box::leak(Box::new(guards));
+        }
+        Ok(None) => {
+            tracing::info!(
+                lock = %lock_path.display(),
+                "another capsem-gateway is already running; exiting 0"
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            tracing::info!(
+                error = %e,
+                "gateway refusing to run without a live capsem-service; exiting 0"
+            );
+            return Ok(());
+        }
+    }
     let uds_path = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Check if service socket exists (warning only -- service may start later)

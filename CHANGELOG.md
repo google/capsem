@@ -7,7 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`capsem-guard` crate** -- new tiny library (`crates/capsem-guard/`) with
+  parent-watch + singleton flock primitives. Used by `capsem-gateway` and
+  `capsem-tray` to make them non-standalone companions of `capsem-service`:
+  they refuse to start without a valid `--parent-pid`, acquire a system-wide
+  singleton lock, and self-exit within 100 ms when the parent dies. Works
+  under SIGKILL, OOM, and pytest-xdist worker death -- scenarios where
+  `tokio::process::Command::kill_on_drop(true)` silently does nothing.
+  Implementation details: `getppid()`-based watcher (immune to zombie state),
+  `O_CLOEXEC`-atomic `flock(2)` with a process-local registry to cover the
+  fork-to-exec window, global tray lock at `~/.capsem/run/tray.lock` (one
+  menu-bar icon system-wide). 31 Rust unit tests + 15 adversarial Python
+  integration tests in `tests/capsem-service/test_companion_lifecycle.py`
+  (refuse-standalone × 4, singleton × 3 incl. 20-way hammer, dies-with-parent
+  × 2, service-SIGKILL end-to-end × 1, timing-budget regression guards × 5).
+  See `/dev-rust-patterns` lesson 18.
+
 ### Fixed
+- **Companion processes no longer leak across interrupted test runs.**
+  `just test -n 4` under ctrl-C / pytest-xdist worker death / SIGKILL left
+  `capsem-gateway` and `capsem-tray` reparented to PID 1 because their only
+  cleanup hook was `kill_on_drop(true)`, which does not fire on ungraceful
+  exit. Accumulated orphans caused downstream "vm-ready never asserted"
+  poll spins, UDS connection refusals, and the suspend/resume regression.
+  Fixed by wiring all companions through the new `capsem-guard` library;
+  the contract is enforced on the companion side so the spawner can't get
+  it wrong.
+
+### Changed
+- **Linux CI now measures coverage for every portable host crate.** The
+  `llvm-cov nextest --codecov` invocation on the KVM runner previously
+  tested only 8 of 14 workspace members. Added `capsem-agent` (118 tests),
+  `capsem-gateway` (128), `capsem-process` (72), and `capsem-guard` (31)
+  -- none of which had macOS-only code paths gating their Linux build.
+  The only crates still excluded from Linux CI are `capsem-app` (Tauri
+  shell) and `capsem-tray` (`muda` menu-bar), both genuinely macOS-only.
+  Net effect: ~349 additional Rust tests now contribute to the Codecov
+  dashboard from the Linux side, catching Linux-specific regressions the
+  macOS run cannot. Added a new `Guard` component to `codecov.yml` so the
+  crate shows up alongside Gateway, Service, CLI, etc.
+
+### Fixed
+- **`just ui` / `just shell` re-invocation no longer leaves the dev service
+  without a gateway.** Three related bugs in the companion-shutdown path
+  collectively caused the new gateway to hit `EADDRINUSE` on port 19222
+  whenever the prior dev service was killed (SIGTERM or SIGKILL) and a
+  new one spawned within `_ensure-service`'s 500 ms restart budget. User
+  symptom: the frontend WebSocket connected briefly (served by the
+  orphan gateway), then dropped when the orphan's parent-watch fired,
+  after which every reconnect hit "connection refused". Each bug has a
+  dedicated regression test in `tests/capsem-service/test_companion_lifecycle.py`.
+  - `capsem-service` killed VMs *before* companions on graceful shutdown.
+    `kill_all_vm_processes` includes an unconditional 500 ms SIGTERM-grace
+    `thread::sleep`, so companion-kill didn't run until at least 500 ms
+    after SIGTERM -- exactly when the new service was spawning its own
+    gateway. Fixed by reordering graceful_shutdown to kill companions
+    first. Guard: `TestServiceSigtermReapsCompanionsPromptly` (300 ms
+    budget).
+  - `kill_all_vm_processes` slept 500 ms *even when zero VMs were
+    running*, inflating every shutdown by half the `_ensure-service`
+    budget. Fixed by early-returning when the VM list is empty and
+    skipping the grace sleep when no VM was actually signalled. Guard:
+    `TestServiceShutdownIsFastWithoutVMs` (300 ms full shutdown budget).
+  - `capsem-guard`'s parent-watch polled every 500 ms, so a SIGKILL'd
+    service's companions could remain alive up to a full poll interval --
+    the full `_ensure-service` budget by itself. Tightened
+    `PARENT_POLL_INTERVAL` from 500 ms to 100 ms (`getppid()` is a vDSO
+    call; cost is negligible). Guard: `TestCompanionsDieFastAfterServiceSigkill`
+    (300 ms budget on SIGKILL path). Also documents an end-to-end
+    restart contract in `TestServiceRestartSequenceKeepsGatewayHealthy`.
+
 - **`just _clean-stale` no longer hangs for minutes.** The bash body called
   `lsof -tU "$s"` once per socket in `/tmp/capsem/*.sock`. On macOS each call
   scans every process's FD table (~200 ms), so after ~1700 dead sockets
