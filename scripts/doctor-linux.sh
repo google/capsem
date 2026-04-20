@@ -38,6 +38,12 @@ tool_hint() {
                 *)   echo "https://git-scm.com" ;;
             esac ;;
         b3sum)     echo "cargo install b3sum --locked" ;;
+        flock)
+            case "$pkg" in
+                apt) echo "sudo apt install util-linux" ;;
+                dnf) echo "sudo dnf install util-linux" ;;
+                *)   echo "install util-linux (provides flock)" ;;
+            esac ;;
         docker)
             case "$pkg" in
                 apt) echo "sudo apt install docker.io" ;;

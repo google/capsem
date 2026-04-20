@@ -14,6 +14,7 @@ tool_hint() {
         sqlite3)       echo "brew install sqlite" ;;
         git)           echo "brew install git" ;;
         b3sum)         echo "cargo install b3sum --locked" ;;
+        flock)         echo "brew install flock (multi-agent lock on ~/.capsem/run/execution.lock)" ;;
         docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8" ;;
         docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8" ;;
         docker-buildx) echo "brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx" ;;

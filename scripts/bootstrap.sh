@@ -50,6 +50,22 @@ else
     printf "  [SKIP] Python deps (uv not installed yet -- doctor will catch this)\n"
 fi
 
+# flock: multi-agent coordination lock for heavy just recipes.
+# Linux ships it in util-linux; macOS needs brew install flock.
+if ! command -v flock >/dev/null 2>&1; then
+    case "$(uname -s)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                printf "  flock (brew install flock, multi-agent lock)...\n"
+                brew install flock >/dev/null
+            else
+                printf "  [SKIP] flock (Homebrew not installed -- install brew, then: brew install flock)\n"
+            fi ;;
+        Linux)
+            printf "  [SKIP] flock (missing -- install util-linux via your package manager)\n" ;;
+    esac
+fi
+
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
     (cd frontend && pnpm install --frozen-lockfile --silent)

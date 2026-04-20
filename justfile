@@ -1,40 +1,51 @@
 # Capsem Justfile
 #
-# Dependency chains:
-#
+# Internal helpers:
 #   _ensure-setup   checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
-#   doctor          read-only check of all required tools, writes .dev-setup (user-facing)
-#   _install-tools  auto-installs rust targets, components, cargo tools (internal)
-#   _check-assets   verifies VM assets exist, tells you to run build-assets if not
+#   _install-tools  auto-installs rust targets, components, cargo tools
+#   _check-assets   verifies VM assets exist, runs build-assets if not
+#   _pack-initrd    cross-compiles guest binaries + repacks initrd
+#   _sign           builds host binaries + codesigns (macOS only, required for VZ)
+#   _ensure-service kills any running service, launches a fresh one, waits for socket
 #
-#   shell           -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
-#   test            -> _install-tools + _check-assets + _pack-initrd + audit + cross-compile + test-install + _clean-stale (ALL tests)
-#   build-assets    -> doctor + _install-tools + _clean-stale
-#   dev             -> _ensure-setup + _pnpm-install
-#   bench           -> _ensure-setup + _check-assets + _sign
-#   test-mcp        -> _check-assets + _pack-initrd (MCP integration tests, boots VMs)
-#   test-service    -> _check-assets + _pack-initrd (service HTTP API tests)
-#   test-cli        -> _check-assets + _pack-initrd (CLI integration tests)
-#   cut-release     -> test
-#   smoke           -> _check-assets + _pack-initrd + _ensure-service + _clean-stale (fast path: audit + doctor + integration)
-#   install         -> _pnpm-install + _clean-stale (build .pkg/.deb for current platform, install it)
-#   test-install    -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
-#
-# Service daemon:
-#   run-service     -> _check-assets + _pack-initrd (start daemon, idempotent)
-#   ui              -> run-service + cargo tauri dev (GUI with hot-reload)
+# User-facing recipe chains:
+#   shell            -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
+#   ui               -> _ensure-setup + _pnpm-install + run-service (service + Tauri dev hot-reload)
+#   run-service      -> _check-assets + _pack-initrd + _ensure-service (start daemon, idempotent)
+#   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
+#   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-builder)
+#   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
+#   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
+#   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
+#                       (audit, doctor --fast, injection, integration, parallel pytest groups)
+#   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
+#                       + _check-assets + _pack-initrd (everything: audit, cov, cross-compile,
+#                       frontend, python, injection, integration, bench, test-install)
+#   bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
+#   test-gateway     -> (no deps; unit + mock UDS tests)
+#   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
+#   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
+#   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
+#                       (release build + frontend + Tauri bundle + .pkg/.deb installer)
+#   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
+#   release [tag]    -> (waits for CI on a pushed tag)
 #
 # First-time setup:
-#   just doctor       (shows what's missing)
+#   just doctor       (shows what's missing; `just doctor fix` auto-installs)
 #   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker via Colima on macOS)
 #
-# Daily dev:          just shell   (service daemon + temp VM + shell, ~10s)
-#                     just ui      (service + Tauri GUI with hot-reload)
-# Local install:      just install (build .pkg/.deb + install it)
-# Releases:           just cut-release (test + bump, tag, push, CI)
-# Dep maintenance:    just update-deps (cargo update + pnpm update)
-# Disk cleanup:       just clean   (nuke target/ + frontend build, ~100 GB)
-#                     just clean-all (clean + docker prune)
+# Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
+#                     just ui            (service + Tauri GUI with hot-reload)
+#                     just exec "<cmd>"  (one-shot command in a temp VM)
+# Local install:      just install       (build .pkg/.deb + install it)
+# Releases:           just cut-release   (test + bump, tag, push, CI)
+# Dep maintenance:    just update-deps   (cargo update + pnpm update)
+#                     just update-prices (refresh genai-prices.json)
+#                     just update-fixture <src> (rebuild test.db fixture)
+# Debugging:          just logs, just sandbox-logs <id>, just list-sessions,
+#                     just inspect-session [id], just query-session "SQL"
+# Disk cleanup:       just clean         (nuke target/ + frontend build, ~100 GB)
+#                     just clean all     (clean + docker prune)
 
 binary := "target/debug/capsem"
 cli_binary := "target/debug/capsem"
@@ -130,6 +141,12 @@ _ensure-service: _sign
 
 # Start service daemon + Tauri GUI with hot-reloading
 ui: _ensure-setup _pnpm-install run-service
+    #!/bin/bash
+    set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
     CAPSEM_ASSETS_DIR={{assets_dir}} cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
@@ -172,6 +189,12 @@ run-ui *ARGS: build-ui
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
 shell: _check-assets _pack-initrd _ensure-service
+    #!/bin/bash
+    set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
     {{cli_binary}} shell
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
@@ -180,6 +203,12 @@ run-service: _check-assets _pack-initrd _ensure-service
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
 exec +CMD: run-service
+    #!/bin/bash
+    set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
     {{cli_binary}} run "{{CMD}}"
 
 
@@ -226,6 +255,10 @@ update-deps: _pnpm-install
 test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
 
     echo "=== Dependency audit ==="
     # Real vulnerabilities must fail the build. Upstream-only advisories
@@ -428,6 +461,10 @@ _generate-settings:
 smoke: _install-tools _pnpm-install _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
     SMOKE_LOG="{{justfile_directory()}}/target/smoke.log"
     mkdir -p "$(dirname "$SMOKE_LOG")"
     exec > >(tee "$SMOKE_LOG") 2>&1
@@ -491,6 +528,10 @@ test-gateway:
 test-gateway-e2e: _check-assets _pack-initrd _sign
     #!/bin/bash
     set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
     cargo build -p capsem-gateway {{host_crates}}
     echo "=== Gateway: E2E tests (real service + VMs) ==="
     uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway and e2e"
@@ -507,6 +548,10 @@ coverage:
 bench: _ensure-setup _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
     echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, snapshots) ==="
     {{cli_binary}} run "capsem-bench"
     echo ""
@@ -519,6 +564,10 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 install: _pnpm-install _stamp-version _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
+    LOCK_FILE="$HOME/.capsem/run/execution.lock"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 3>"$LOCK_FILE"
+    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
