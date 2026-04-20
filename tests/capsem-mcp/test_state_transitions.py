@@ -128,19 +128,50 @@ def test_purge_ephemeral_only(fresh_vm, mcp_session):
     assert eph_id not in ids, f"ephemeral {eph_id} survived purge all=false"
 
 
-def test_purge_all(mcp_session):
-    """purge with all=true destroys both ephemerals and persistents."""
+def test_purge_all(isolated_mcp_session):
+    """purge with all=true destroys both ephemerals and persistents.
+
+    Runs on its own capsem-service instance: `purge all=true` wipes every
+    sandbox on the service, so sharing the fixture would destroy the
+    session-scoped shared_vm on the same xdist worker.
+    """
     named_a = f"purge-a-{uuid.uuid4().hex[:6]}"
     named_b = f"purge-b-{uuid.uuid4().hex[:6]}"
-    mcp_session.call_tool("capsem_create", {"name": named_a})
-    mcp_session.call_tool("capsem_create", {"name": named_b})
-    eph_data = parse_content(mcp_session.call_tool("capsem_create", {}))
+    isolated_mcp_session.call_tool("capsem_create", {"name": named_a})
+    isolated_mcp_session.call_tool("capsem_create", {"name": named_b})
+    eph_data = parse_content(isolated_mcp_session.call_tool("capsem_create", {}))
     eph_id = eph_data.get("id") or eph_data.get("name")
     assert eph_id
 
-    mcp_session.call_tool("capsem_purge", {"all": True})
+    isolated_mcp_session.call_tool("capsem_purge", {"all": True})
 
-    listing = parse_content(mcp_session.call_tool("capsem_list"))
+    listing = parse_content(isolated_mcp_session.call_tool("capsem_list"))
     ids = {s["id"] for s in listing["sandboxes"]}
     for removed in (named_a, named_b, eph_id):
         assert removed not in ids, f"{removed} survived purge all=true: {ids}"
+
+
+def test_isolated_mcp_session_does_not_affect_shared_service(
+    mcp_session, isolated_mcp_session
+):
+    """isolated_mcp_session must target a different service than mcp_session.
+
+    Pins the invariant behind the fix: destructive tests (test_purge_all)
+    run on their own service, so session-scoped fixtures (shared_vm) on
+    the same xdist worker survive.
+    """
+    bystander = f"bystand-{uuid.uuid4().hex[:6]}"
+    mcp_session.call_tool("capsem_create", {"name": bystander})
+    try:
+        isolated_mcp_session.call_tool("capsem_purge", {"all": True})
+
+        listing = parse_content(mcp_session.call_tool("capsem_list"))
+        ids = {s["id"] for s in listing["sandboxes"]}
+        assert bystander in ids, (
+            f"{bystander} destroyed by isolated purge -- services are not isolated"
+        )
+    finally:
+        try:
+            mcp_session.call_tool("capsem_delete", {"id": bystander})
+        except Exception:
+            pass

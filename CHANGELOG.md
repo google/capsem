@@ -21,6 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was updated to match on the `-tmp` suffix instead of the prefix.
 
 ### Fixed
+- **MCP `shared_vm` consumers no longer intermittently 404 after
+  `test_purge_all` runs on the same xdist worker.** `test_purge_all` was
+  calling `capsem_purge { all: true }` on the session-scoped
+  `capsem_service`, which also hosts the session-scoped `shared_vm`
+  (persistent, named `shared-<worker>-<hex>`). Because `all=true`
+  destroys every sandbox on the service -- persistent included -- any
+  subsequent test on the same worker that used `shared_vm`
+  (`test_sql_query`, `test_exec.*`, `test_file_io.*`, `test_lifecycle.*`,
+  `test_mcp_call.*`) got `404 Not Found: sandbox not found` whenever
+  pytest happened to schedule `test_purge_all` first. Fix: extracted the
+  MCP conftest's service-startup into `_start_capsem_service()` so the
+  `--gateway-port 0`, `--foreground`, `sign_binary`, and log-dumping
+  invariants live in one place, added an `isolated_mcp_session`
+  function-scoped fixture that spins up its own transient service for
+  globally destructive tests, and migrated `test_purge_all` onto it.
+  Added `test_isolated_mcp_session_does_not_affect_shared_service` to
+  pin the isolation invariant so a future destructive test can't quietly
+  regrow the same bug.
 - **`capsem_mcp_call` no longer hangs for 60s on every invocation.** The
   service -> capsem-process IPC channel is `tokio-unix-ipc`, which uses
   bincode as its wire format. Bincode is not self-describing, and

@@ -120,18 +120,20 @@ def _kill_proc(proc, timeout=5):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def capsem_service():
-    """Start a dedicated capsem-service on a random socket.
+def _start_capsem_service():
+    """Start a capsem-service on a random socket; return (uds_path, teardown).
 
-    Fully isolated -- does not touch the dev service or user HOME.
-    Temp directory is cleaned up on teardown.
+    Both the session-scoped `capsem_service` fixture and the function-scoped
+    `isolated_mcp_session` fixture rely on this helper so invariants
+    (sign_binary, --gateway-port 0, --foreground, log-dumping on teardown)
+    live in a single place.
     """
     from helpers.sign import sign_binary
     sign_binary(PROCESS_BINARY)
     sign_binary(SERVICE_BINARY)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
+    print(f"\n@@@ WORKER {os.environ.get('PYTEST_XDIST_WORKER', 'master')} TMP_DIR: {tmp_dir}", file=sys.stderr)
     uds_path = tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
 
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
@@ -178,23 +180,34 @@ def capsem_service():
 
     print(f"SERVICE LOG DIR: {log_path}", file=sys.stderr)
 
+    def teardown():
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+        stderr_file.close()
+
+        if log_path.exists():
+            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        if stderr_path.exists():
+            print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
+
+    return uds_path, teardown
+
+
+@pytest.fixture(scope="session")
+def capsem_service():
+    """Start a dedicated capsem-service on a random socket.
+
+    Fully isolated -- does not touch the dev service or user HOME.
+    Temp directory is cleaned up on teardown.
+    """
+    uds_path, teardown = _start_capsem_service()
     yield uds_path
-
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-    
-    stderr_file.close()
-    
-    if log_path.exists():
-        print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
-    if stderr_path.exists():
-        print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
-
-    # shutil.rmtree(tmp_dir, ignore_errors=True)
+    teardown()
 
 
 @pytest.fixture
@@ -205,6 +218,24 @@ def mcp_session(capsem_service):
     _kill_proc(proc)
 
 
+@pytest.fixture
+def isolated_mcp_session():
+    """Ephemeral capsem-service + MCP session dedicated to one test.
+
+    Use for tests that mutate global service state (e.g. purge all=True).
+    Running such tests on the shared `capsem_service` would destroy
+    session-scoped fixtures (`shared_vm`) on the same xdist worker and
+    cause 404s in unrelated subsequent tests.
+    """
+    uds_path, teardown = _start_capsem_service()
+    session, proc = _make_mcp_session(uds_path)
+    try:
+        yield session
+    finally:
+        _kill_proc(proc)
+        teardown()
+
+
 @pytest.fixture(scope="session")
 def shared_vm(capsem_service):
     """One long-lived VM for non-destructive tests (exec, read, info, inspect).
@@ -213,7 +244,8 @@ def shared_vm(capsem_service):
     """
     session, proc = _make_mcp_session(capsem_service)
 
-    vm_name = f"shared-{uuid.uuid4().hex[:8]}"
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    vm_name = f"shared-{worker_id}-{uuid.uuid4().hex[:8]}"
     session.call_tool("capsem_create", {"name": vm_name})
 
     if not mcp_wait_exec_ready(session, vm_name, timeout=EXEC_READY_TIMEOUT):
