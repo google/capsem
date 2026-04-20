@@ -1108,8 +1108,16 @@ async fn handle_fork(
     let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
     let _ = std::fs::create_dir_all(&new_session_dir);
 
-    let size_bytes = capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &new_session_dir)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fork sandbox: {e}")))?;
+    // clone_sandbox_state does fsync + APFS clonefile + walkdir -- all blocking.
+    // Offload to the blocking pool so axum worker threads aren't starved under
+    // concurrent fork load.
+    let clone_dst = new_session_dir.clone();
+    let size_bytes = tokio::task::spawn_blocking(move || {
+        capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &clone_dst)
+    })
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("clone task: {e}")))?
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fork sandbox: {e}")))?;
 
     // Register as persistent VM
     {
@@ -1150,16 +1158,30 @@ async fn handle_provision(
         .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
     let cpus = payload.cpus.unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
 
-    match state.provision_sandbox(ProvisionOptions {
-        id: &id,
-        ram_mb,
-        cpus,
-        version_override: Some(state.current_version.clone()),
-        persistent: payload.persistent,
-        env: payload.env,
-        from: payload.from,
-        description: None,
-    }) {
+    // provision_sandbox is synchronous and performs heavy I/O (APFS clonefile,
+    // rootfs.img fsync, walkdir-based disk_usage_bytes, child process spawn).
+    // Offload to the blocking pool so the axum worker thread stays free.
+    // tokio::process::Command::spawn inside still works -- spawn_blocking
+    // preserves the runtime handle via thread-locals.
+    let state_clone = Arc::clone(&state);
+    let id_clone = id.clone();
+    let version = state.current_version.clone();
+    let provision_result = tokio::task::spawn_blocking(move || {
+        state_clone.provision_sandbox(ProvisionOptions {
+            id: &id_clone,
+            ram_mb,
+            cpus,
+            version_override: Some(version),
+            persistent: payload.persistent,
+            env: payload.env,
+            from: payload.from,
+            description: None,
+        })
+    })
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
+
+    match provision_result {
         Ok(_) => {
             let uds_path = state.instance_socket_path(&id);
             Ok(Json(ProvisionResponse { id, uds_path: Some(uds_path) }))

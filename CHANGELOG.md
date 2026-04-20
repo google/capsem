@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   See `/dev-rust-patterns` lesson 18.
 
 ### Fixed
+- **`POST /fork/{id}` and `POST /sandboxes` (provision) no longer block
+  the tokio reactor during heavy filesystem work.** `handle_fork` called
+  `capsem_core::auto_snapshot::clone_sandbox_state` directly from the axum
+  handler; `handle_provision` called the synchronous
+  `ServiceState::provision_sandbox`, which wraps the same clone plus a
+  `sync_all()` flush of `rootfs.img` and a walkdir-based `disk_usage_bytes`.
+  Under concurrent fork/provision load these could exhaust axum worker
+  threads and stall unrelated requests. Both call sites are now wrapped in
+  `tokio::task::spawn_blocking`, matching the established pattern in the
+  same file (`handle_upload`, `list_dir_recursive`, `handle_detect_host_config`,
+  the `remove_dir_all` cleanups). The sync-to-spawn_blocking handoff
+  preserves the tokio runtime handle via thread-locals, so the
+  `tokio::process::Command::spawn` call inside `provision_sandbox` still
+  works. All 116 capsem-service tests remain green.
 - **AI traffic parsers no longer build a full JSON DOM for tool call args
   and responses.** Three places in `crates/capsem-core/src/net/ai_traffic/`
   parsed LLM SSE payloads into `serde_json::Value` only to stringify them
