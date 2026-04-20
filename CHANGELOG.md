@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Integration-test fixtures archive their tmp_dir on failure.** When any
+  test that spins up a capsem-service via `tests/helpers/service.py::ServiceInstance`,
+  the e2e `RealService`, or the MCP conftest's `_start_capsem_service`
+  fails, the fixture teardown now copies its
+  `/var/folders/.../capsem-test-*` directory into
+  `test-artifacts/<timestamp>-<worker>-<nodeid>/<tmp-basename>/` before
+  the usual `shutil.rmtree`, so `service.log`, `logs/gateway.log`,
+  `sessions/<vm>/process.log`, `sessions/<vm>/serial.log`, and
+  `sessions/<vm>/session.db` all survive for post-mortem. The failing
+  test's stderr prints `ARTIFACT: preserved <src> -> <dest>`; Unix
+  sockets/FIFOs are skipped because `shutil.copy2` can't read them.
+  `test-artifacts/` is gitignored. `skills/dev-debugging/SKILL.md` and
+  `skills/dev-bug-review/SKILL.md` document the layout and when to read
+  it -- first stop for "VM didn't boot" and "exec timed out" failures
+  in the integration suite, where log availability used to depend on
+  whether macOS had culled `/var/folders` yet.
+
 ### Changed
 - **Temp VM names now suffix `-tmp` and never collide on the first word.**
   Auto-generated names went from `tmp-<adj>-<noun>` to `<adj>-<noun>-tmp`

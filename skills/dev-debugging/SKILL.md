@@ -30,6 +30,20 @@ just inspect-session
 
 With a failing test in hand, investigate. Do not skip this step. Common diagnostic approaches:
 
+**Integration-test failures: read the preserved service log.** When any integration test fails, the test fixture (`tests/helpers/service.py::ServiceInstance`, the e2e `RealService`, and the MCP `_start_capsem_service`) archives its tmp_dir to `test-artifacts/<timestamp>-<worker>-<nodeid>/<tmp-basename>/` **before** the usual rmtree. The failing test's stderr has the exact path: look for a line `ARTIFACT: preserved /var/folders/... -> test-artifacts/...`. Inside that directory:
+
+```
+service.log                     host-side capsem-service debug log (RUST_LOG=debug)
+logs/gateway.log                gateway stdout/stderr
+logs/tray.log                   tray stdout/stderr (if spawned)
+sessions/<vm-id>/process.log    per-VM capsem-process log (vsock bridge, IPC, spawn chain)
+sessions/<vm-id>/serial.log     VM serial console (kernel boot, capsem-init, agent startup)
+sessions/<vm-id>/session.db     SQLite telemetry DB (net_events, model_calls, ...)
+persistent/<name>/...           persistent-VM state (checkpoint.vzsave, workspace)
+```
+
+`test-artifacts/` is gitignored. Multiple failures sharing a session-scoped service land in different subdirs but the latest run's name tags them by the most recent failing nodeid. First place to look for "VM didn't become exec-ready" style failures: `sessions/<id>/serial.log` (did the VM boot?) and `sessions/<id>/process.log` (did the agent come up + IPC handshake?). For "provision hung" or service-side contention: `service.log`, grep for the VM id.
+
 **Rust code**: Read the code path the test exercises. Trace the data flow. Add `tracing` instrumentation if needed (`RUST_LOG=capsem=debug`). Check if the issue is in capsem-core, capsem-app, or capsem-agent.
 
 **Guest VM issues**: Boot with targeted commands and inspect behavior:

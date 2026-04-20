@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
+from helpers.service import preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -118,6 +119,7 @@ class RealService:
             self._log_file.close()
         if self._stderr_file:
             self._stderr_file.close()
+        preserve_tmp_dir_on_failure(self.tmp_dir)
 
     def cli(self, *args, timeout=60):
         """Run the real capsem CLI binary. Returns CompletedProcess."""

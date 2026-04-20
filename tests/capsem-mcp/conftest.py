@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import content_text, parse_content, wait_exec_ready as mcp_wait_exec_ready
+from helpers.service import preserve_tmp_dir_on_failure
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
@@ -194,6 +195,8 @@ def _start_capsem_service():
             print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
         if stderr_path.exists():
             print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
+
+        preserve_tmp_dir_on_failure(tmp_dir)
 
     return uds_path, teardown
 

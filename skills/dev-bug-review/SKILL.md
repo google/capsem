@@ -25,6 +25,7 @@ Before writing any code, prove the bug is real and that you understand it.
 
 - Read the code path the report implicates. Cite file paths and line numbers.
 - Reproduce it where feasible: a failing test, a `just run "<cmd>"` that demonstrates the issue, a session DB inspection, a screenshot, a log snippet.
+- For integration-test failures, **check for a preserved service log first**. The test fixtures (`ServiceInstance`, e2e `RealService`, MCP conftest helper) archive their tmp_dir to `test-artifacts/<timestamp>-<worker>-<nodeid>/<tmp-basename>/` on failure. The stderr of the failing test has an `ARTIFACT: preserved ... -> test-artifacts/...` line with the exact path. Inside: `service.log`, `sessions/<vm-id>/process.log`, `sessions/<vm-id>/serial.log`, `sessions/<vm-id>/session.db`, `logs/gateway.log`. These are the authoritative evidence for "VM didn't boot", "provision hung", or "exec timed out" style reports -- read them before accepting any root-cause theory. See `/dev-debugging` Step 2 for the layout. If the artifact doesn't exist, ask the user to rerun (or run it yourself) so one gets captured.
 - If the report is vague ("it's slow", "it crashes sometimes"), nail it down before moving on. Ask a targeted question rather than guess.
 - If the bug is **not reproducible or not present in the code**, say so clearly and stop. Do not manufacture a fix for a bug that doesn't exist.
 

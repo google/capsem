@@ -22,6 +22,49 @@ TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
 
+def preserve_tmp_dir_on_failure(tmp_dir):
+    """Copy tmp_dir to test-artifacts/ when this worker saw any failure.
+
+    Called by integration-test fixture teardowns BEFORE they rmtree the
+    tmp dir, so service.log, sessions/<vm>/process.log, sessions/<vm>/serial.log,
+    and session.db survive for post-mortem. No-op on clean sessions.
+
+    Skips sockets and FIFOs (shutil.copy2 can't read them).
+    """
+    try:
+        from tests.conftest import FAILED_NODEIDS, ARTIFACTS_ROOT
+    except ImportError:
+        return
+    tmp_dir = Path(tmp_dir)
+    if not FAILED_NODEIDS or not tmp_dir.exists():
+        return
+    import stat as statmod
+    import time
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    dest = ARTIFACTS_ROOT / f"{ts}-{worker}-{tag}" / tmp_dir.name
+
+    def _skip_unsupported(src, names):
+        src_path = Path(src)
+        skip = []
+        for name in names:
+            try:
+                mode = (src_path / name).lstat().st_mode
+                if statmod.S_ISSOCK(mode) or statmod.S_ISFIFO(mode):
+                    skip.append(name)
+            except OSError:
+                pass
+        return skip
+
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(tmp_dir, dest, ignore=_skip_unsupported, dirs_exist_ok=True)
+        print(f"ARTIFACT: preserved {tmp_dir} -> {dest}", file=sys.stderr)
+    except Exception as e:
+        print(f"ARTIFACT: preserve failed for {tmp_dir}: {e}", file=sys.stderr)
+
+
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
@@ -110,6 +153,8 @@ class ServiceInstance:
         if self._log_file:
             self._log_file.close()
             self._log_file = None
+
+        preserve_tmp_dir_on_failure(self.tmp_dir)
 
         if self.tmp_dir.exists():
             shutil.rmtree(self.tmp_dir, ignore_errors=True)

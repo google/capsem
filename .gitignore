@@ -1,5 +1,7 @@
 #capsem log
 *.log
+# Preserved service logs / session dirs from failing integration tests.
+test-artifacts/
 # Python virtualenv lib (but NOT frontend/src/lib/)
 /lib/
 dist/
