@@ -1,7 +1,7 @@
 [web]
 allow_read = false
 allow_write = false
-custom_allow = ["elie.net", "*.elie.net", "ash-speed.hetzner.com", "en.wikipedia.org", "*.wikipedia.org"]
+custom_allow = ["elie.net", "*.elie.net", "en.wikipedia.org", "*.wikipedia.org"]
 custom_block = []
 
 [web.search.google]

@@ -425,18 +425,21 @@ async fn multiple_requests_reuse_upstream_connection() {
     }
 }
 
-/// Download 100 MB through the MITM proxy and assert throughput >= 1 MB/s.
+/// Download a ~10 MB PDF through the MITM proxy and assert throughput >= 1 MB/s.
 ///
 /// Exercises the full proxy pipeline on the host: TLS termination from the
 /// "guest" client, upstream TLS to a real CDN, and body streaming back.
-/// Marked #[ignore] so it doesn't run on every `cargo test` -- run explicitly
-/// with `cargo test -p capsem-core -- --ignored mitm_proxy_download_throughput`.
+/// Uses elie.net directly (not cdn.elie.net) because raw hyper does not
+/// follow 301 redirects. Marked #[ignore] so it doesn't run on every
+/// `cargo test` -- run explicitly with
+/// `cargo test -p capsem-core -- --ignored mitm_proxy_download_throughput`.
 #[tokio::test]
-#[ignore = "downloads 100 MB; run explicitly to test proxy throughput"]
+#[ignore = "downloads ~10 MB; run explicitly to test proxy throughput"]
 async fn mitm_proxy_download_throughput() {
-    const DOMAIN: &str = "ash-speed.hetzner.com";
-    const PATH: &str = "/100MB.bin";
-    const EXPECTED_BYTES: u64 = 100 * 1024 * 1024;
+    const DOMAIN: &str = "elie.net";
+    const PATH: &str = "/static/files/i-am-a-legend/i-am-a-legend-slides.pdf";
+    // Conservative floor; the PDF is ~9.5 MB today but may drift on re-publish.
+    const EXPECTED_BYTES: u64 = 9 * 1024 * 1024;
     const MIN_MBPS: f64 = 1.0;
 
     let (config, _db) = make_proxy_config(&[DOMAIN], &[], false);
@@ -448,7 +451,7 @@ async fn mitm_proxy_download_throughput() {
     let tls = connector
         .connect(sni, tcp)
         .await
-        .expect("TLS handshake to ash-speed.hetzner.com should succeed");
+        .expect("TLS handshake to elie.net should succeed");
 
     let io = TokioIo::new(tls);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
@@ -495,8 +498,9 @@ async fn mitm_proxy_download_throughput() {
 
     assert!(
         total_bytes >= EXPECTED_BYTES,
-        "incomplete download: {:.1} MB (expected 100 MB)",
-        total_bytes as f64 / (1024.0 * 1024.0)
+        "incomplete download: {:.1} MB (expected >= {:.1} MB)",
+        total_bytes as f64 / (1024.0 * 1024.0),
+        EXPECTED_BYTES as f64 / (1024.0 * 1024.0),
     );
     assert!(
         mbps >= MIN_MBPS,

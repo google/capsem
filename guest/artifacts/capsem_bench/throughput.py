@@ -1,4 +1,4 @@
-"""Proxy throughput benchmark (100MB download through MITM proxy)."""
+"""Proxy throughput benchmark (~10 MB PDF download through MITM proxy)."""
 
 import subprocess
 
@@ -7,20 +7,23 @@ from rich.text import Text
 
 from .helpers import console, fmt_bytes
 
-THROUGHPUT_URL = "https://ash-speed.hetzner.com/100MB.bin"
-THROUGHPUT_DOMAIN = "ash-speed.hetzner.com"
-THROUGHPUT_EXPECTED_BYTES = 100 * 1024 * 1024
+# cdn.elie.net 301-redirects to elie.net, so curl runs with -L and both hosts
+# appear in net_events.
+THROUGHPUT_URL = "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
+THROUGHPUT_DOMAIN = "cdn.elie.net"
+# Conservative floor; the PDF is ~9.5 MB today but may drift on re-publish.
+THROUGHPUT_EXPECTED_BYTES = 9 * 1024 * 1024
 
 
 def throughput_bench():
-    """Download 100 MB through the MITM proxy and report end-to-end throughput."""
+    """Download a ~10 MB PDF through the MITM proxy and report end-to-end throughput."""
     table = Table(title=Text(f"Proxy Throughput  [{THROUGHPUT_URL}]"))
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
 
     result = subprocess.run(
         [
-            "curl", "-s", "-o", "/dev/null",
+            "curl", "-sL", "-o", "/dev/null",
             "-w", "%{http_code} %{speed_download} %{size_download} %{time_total}",
             "--connect-timeout", "15",
             THROUGHPUT_URL,

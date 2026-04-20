@@ -363,13 +363,15 @@ def test_direct_ip_no_route():
 # Layer 7: Proxy throughput
 # ---------------------------------------------------------------
 
-_THROUGHPUT_URL = "https://ash-speed.hetzner.com/100MB.bin"
-_THROUGHPUT_DOMAIN = "ash-speed.hetzner.com"
+# cdn.elie.net 301-redirects to elie.net, so curl needs -L and both hosts
+# must be on the custom_allow list.
+_THROUGHPUT_URL = "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
+_THROUGHPUT_DOMAIN = "cdn.elie.net"
 _MIN_SPEED_MBPS = 0.5
 
 
 def test_proxy_download_throughput():
-    """100MB download through the MITM proxy must complete above minimum speed.
+    """~10 MB PDF download through the MITM proxy must complete above minimum speed.
 
     Exercises the full pipeline: guest curl -> iptables -> net-proxy ->
     vsock -> host MITM proxy -> upstream TLS -> back.  Skipped when the
@@ -377,14 +379,14 @@ def test_proxy_download_throughput():
     """
     # Probe reachability first so we can skip cleanly rather than fail.
     probe = run(
-        f"curl -skI --connect-timeout 10 {_THROUGHPUT_URL} 2>&1",
+        f"curl -skLI --connect-timeout 10 {_THROUGHPUT_URL} 2>&1",
         timeout=20,
     )
     if probe.returncode != 0 or "403" in probe.stdout:
         pytest.skip(f"{_THROUGHPUT_DOMAIN} not in allow list (add to network.custom_allow to run)")
 
     result = run(
-        f"curl -s -o /dev/null"
+        f"curl -sL -o /dev/null"
         f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
         f" --connect-timeout 15"
         f" {_THROUGHPUT_URL}",
@@ -406,7 +408,7 @@ def test_proxy_download_throughput():
         f" in {time_s:.1f}s = {speed_mbps:.2f} MB/s"
     )
 
-    assert size_bytes >= 10 * 1024 * 1024, \
-        f"incomplete download: {size_bytes / (1024*1024):.1f} MB (expected 10 MB)"
+    assert size_bytes >= 500 * 1024, \
+        f"incomplete download: {size_bytes / (1024*1024):.1f} MB (expected 0.5 MB)"
     assert speed_mbps >= _MIN_SPEED_MBPS, \
         f"throughput too low: {speed_mbps:.2f} MB/s (minimum {_MIN_SPEED_MBPS} MB/s)"

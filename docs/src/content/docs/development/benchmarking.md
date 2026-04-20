@@ -90,9 +90,9 @@ Each worker thread uses a persistent `requests.Session`. Latency includes the fu
 
 ### Proxy throughput (`throughput`)
 
-Downloads a 100MB file through the MITM proxy and reports end-to-end throughput.
+Downloads a ~10 MB PDF through the MITM proxy and reports end-to-end throughput.
 
-Uses `curl` to download `https://ash-speed.hetzner.com/100MB.bin`. This measures the maximum sustained bandwidth the proxy pipeline can deliver, including TLS termination, body inspection, and re-encryption.
+Uses `curl -L` to download `https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf` (301-redirects to `elie.net`, so both hosts must be on the allow list). This measures the maximum sustained bandwidth the proxy pipeline can deliver, including TLS termination, body inspection, and re-encryption.
 
 ### Snapshot operations (`snapshot`)
 

@@ -414,7 +414,7 @@
           "name": "Allowed domains",
           "description": "Comma-separated domain patterns to allow. Wildcards supported (*.example.com).",
           "type": "text",
-          "default": "elie.net, *.elie.net, ash-speed.hetzner.com, en.wikipedia.org, *.wikipedia.org",
+          "default": "elie.net, *.elie.net, en.wikipedia.org, *.wikipedia.org",
           "meta": {
             "format": "domain_list"
           }

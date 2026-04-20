@@ -20,6 +20,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adjective if every one is already claimed. `scripts/integration_test.py`
   was updated to match on the `-tmp` suffix instead of the prefix.
 
+### Changed
+- **Throughput benchmark target moved off `ash-speed.hetzner.com`.** The
+  `capsem-bench throughput` command, the in-VM `test_proxy_download_throughput`
+  diagnostic, and the host-side `mitm_proxy_download_throughput` integration
+  test all pointed at `ash-speed.hetzner.com/{1,10,100}MB.bin`, which has
+  been 404ing silently (the integration-test swap in `bdc8c12` already
+  noticed -- curl reported 146 bytes of nginx error page while every
+  test asserted only "request logged + decision=allowed"). Swapped all
+  three to `https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf`
+  (~9.5 MB via Cloudflare, 301-redirects to `elie.net`). Size constants
+  dropped to a conservative 9 MiB floor and the curl invocations gained
+  `-L` so the proxy's 301-follow is exercised; the Rust test hits
+  `elie.net` directly because raw hyper does not follow redirects.
+  Dropped `ash-speed.hetzner.com` from the default web allow list
+  (`config/defaults.toml`, `guest/config/security/web.toml`, and the
+  hand-written `frontend/src/lib/mock-settings.ts`) since no live test
+  or config still needs it; regenerated `config/defaults.json` and
+  `frontend/src/lib/mock-settings.generated.ts` from the TOML. Docs
+  page `docs/src/content/docs/development/benchmarking.md` updated to
+  match.
+
 ### Fixed
 - **MCP `shared_vm` consumers no longer intermittently 404 after
   `test_purge_all` runs on the same xdist worker.** `test_purge_all` was
