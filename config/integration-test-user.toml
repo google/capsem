@@ -2,9 +2,10 @@
 # This file is used by scripts/integration_test.py to ensure isolation from the user's ~/.capsem/user.toml.
 
 [settings]
-"network.custom_allow" = { value = "elie.net, *.googleapis.com, ash-speed.hetzner.com", modified = "2026-03-05T00:00:00Z" }
-"network.custom_block" = { value = "deny.example.com", modified = "2026-03-05T00:00:00Z" }
-"network.default_action" = { value = "deny", modified = "2026-03-05T00:00:00Z" }
+"security.web.custom_allow" = { value = "elie.net, *.googleapis.com, ash-speed.hetzner.com", modified = "2026-03-05T00:00:00Z" }
+"security.web.custom_block" = { value = "deny.example.com", modified = "2026-03-05T00:00:00Z" }
+"security.web.allow_read" = { value = false, modified = "2026-03-05T00:00:00Z" }
+"security.web.allow_write" = { value = false, modified = "2026-03-05T00:00:00Z" }
 
 "ai.openai.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
 "ai.anthropic.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }

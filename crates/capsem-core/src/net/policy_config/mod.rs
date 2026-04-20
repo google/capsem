@@ -1451,7 +1451,8 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza");
         // 3 API keys + 7 built-in env vars (TERM, HOME, PATH, LANG, 3x CA)
         // + 3 CAPSEM_*_ALLOWED provider flags
-        assert_eq!(env.len(), 13);
+        // + 2 CAPSEM_WEB_ALLOW_{READ,WRITE} toggles
+        assert_eq!(env.len(), 15);
     }
 
     #[test]
@@ -1518,6 +1519,28 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
         assert_eq!(env.get("CAPSEM_ANTHROPIC_ALLOWED").unwrap(), "1");
         assert_eq!(env.get("CAPSEM_OPENAI_ALLOWED").unwrap(), "1");
         assert_eq!(env.get("CAPSEM_GOOGLE_ALLOWED").unwrap(), "1");
+    }
+
+    #[test]
+    fn web_default_toggles_exposed_as_env_vars() {
+        // CAPSEM_WEB_ALLOW_{READ,WRITE} let in-VM diagnostics adapt their
+        // "denied domain" assertions when the user has opted to let unknown
+        // domains through by default.
+        let defaults = resolve_settings(&empty_file(), &empty_file());
+        let gc_defaults = settings_to_guest_config(&defaults);
+        let env_defaults = gc_defaults.env.unwrap();
+        assert_eq!(env_defaults.get("CAPSEM_WEB_ALLOW_READ").unwrap(), "0");
+        assert_eq!(env_defaults.get("CAPSEM_WEB_ALLOW_WRITE").unwrap(), "0");
+
+        let user = file_with(vec![
+            ("security.web.allow_read", SettingValue::Bool(true)),
+            ("security.web.allow_write", SettingValue::Bool(true)),
+        ]);
+        let resolved = resolve_settings(&user, &empty_file());
+        let gc = settings_to_guest_config(&resolved);
+        let env = gc.env.unwrap();
+        assert_eq!(env.get("CAPSEM_WEB_ALLOW_READ").unwrap(), "1");
+        assert_eq!(env.get("CAPSEM_WEB_ALLOW_WRITE").unwrap(), "1");
     }
 
     #[test]

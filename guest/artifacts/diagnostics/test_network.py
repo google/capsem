@@ -292,8 +292,12 @@ def test_denied_domain_rejected():
     ``api.openai.com`` is allowlist-gated by ``CAPSEM_OPENAI_ALLOWED`` and will
     return 401 (real upstream auth failure) when enabled -- see
     ``test_ai_provider_domain_blocked`` for that matrix. This test uses a
-    domain that no policy path ever allows, so the proxy must reject it.
+    domain that no rule ever matches; when ``CAPSEM_WEB_ALLOW_READ=1`` the
+    default-read fallback makes every unknown domain reachable, so the
+    assertion is only meaningful with the default-deny posture.
     """
+    if os.environ.get("CAPSEM_WEB_ALLOW_READ") == "1":
+        pytest.skip("security.web.allow_read=true -- unknown domains allowed by policy")
     result = run("curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15)
     assert result.returncode != 0 or "403" in result.stdout, \
         f"curl to denied domain should fail or return 403: {result.stdout}"

@@ -256,14 +256,19 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
 
         // Provider allow toggles: inject CAPSEM_<PROVIDER>_ALLOWED=1|0
         // so the guest banner can show which AI tools are enabled.
+        // Also surface the default web read/write toggles so in-VM
+        // diagnostics can adapt their "denied domain" assertions when
+        // the user has opted to let unknown domains through.
         if s.setting_type == SettingType::Bool {
-            let provider_env = match s.id.as_str() {
+            let bool_env = match s.id.as_str() {
                 SETTING_ANTHROPIC_ALLOW => Some("CAPSEM_ANTHROPIC_ALLOWED"),
                 SETTING_OPENAI_ALLOW => Some("CAPSEM_OPENAI_ALLOWED"),
                 SETTING_GOOGLE_ALLOW => Some("CAPSEM_GOOGLE_ALLOWED"),
+                "security.web.allow_read" => Some("CAPSEM_WEB_ALLOW_READ"),
+                "security.web.allow_write" => Some("CAPSEM_WEB_ALLOW_WRITE"),
                 _ => None,
             };
-            if let Some(var_name) = provider_env {
+            if let Some(var_name) = bool_env {
                 let val = if s.effective_value.as_bool().unwrap_or(false) { "1" } else { "0" };
                 env.insert(var_name.to_string(), val.to_string());
             }

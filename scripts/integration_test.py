@@ -19,9 +19,11 @@ import argparse
 import json
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 BOLD = "\033[1m"
@@ -34,6 +36,8 @@ RESET = "\033[0m"
 
 SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
 MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
+SERVICE_SOCKET = Path.home() / ".capsem" / "run" / "service.sock"
+SERVICE_PIDFILE = Path.home() / ".capsem" / "run" / "service.pid"
 
 # The compound command executed inside the VM.  Semicolons ensure every step
 # runs even if an earlier one fails -- the host-side assertions decide pass/fail.
@@ -79,11 +83,90 @@ VM_COMMAND = "; ".join([
 ])
 
 
+def _kill_dev_service() -> None:
+    """Stop the smoke-owned `capsem-service --foreground` and any child VMs.
+
+    The dev service was started by `just _ensure-service` with no test
+    config in env. We replace it with one that inherits our test user/corp
+    config so `capsem run` actually routes policy through the test config.
+    """
+    subprocess.run(["pkill", "-f", "capsem-process.*--id"], check=False)
+    subprocess.run(["pkill", "-f", "capsem-service.*--foreground"], check=False)
+    time.sleep(0.5)
+    subprocess.run(["pkill", "-9", "-f", "capsem-process.*--id"], check=False)
+    try:
+        SERVICE_PIDFILE.unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        SERVICE_SOCKET.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _start_service_with_test_config(
+    assets_dir: str, user_config: str, corp_config: str
+) -> subprocess.Popen:
+    """Spawn `capsem-service --foreground` with test config env vars.
+
+    The service forwards CAPSEM_{USER,CORP}_CONFIG to each `capsem-process`
+    it spawns, so the per-VM network policy picks up `deny.example.com`
+    and the other overrides from `config/integration-test-user.toml`.
+    """
+    project_root = Path(__file__).resolve().parent.parent
+    service_bin = project_root / "target/debug/capsem-service"
+    process_bin = project_root / "target/debug/capsem-process"
+
+    env = {
+        **os.environ,
+        "CAPSEM_USER_CONFIG": str(project_root / user_config),
+        "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
+        "RUST_LOG": "capsem=info",
+    }
+
+    log_path = project_root / "target/integration-test-service.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_path, "w")
+
+    proc = subprocess.Popen(
+        [
+            str(service_bin),
+            "--assets-dir", f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
+            "--process-binary", str(process_bin),
+            "--foreground",
+        ],
+        env=env,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
+    SERVICE_PIDFILE.write_text(str(proc.pid))
+
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        if SERVICE_SOCKET.exists():
+            # Socket alone isn't enough -- wait for /list to respond.
+            r = subprocess.run(
+                ["curl", "-s", "--unix-socket", str(SERVICE_SOCKET),
+                 "--max-time", "2", "http://localhost/list"],
+                capture_output=True,
+            )
+            if r.returncode == 0:
+                return proc
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"capsem-service exited early (code {proc.returncode}); "
+                f"see {log_path}"
+            )
+        time.sleep(0.2)
+    raise RuntimeError(f"capsem-service did not become ready in 15s; see {log_path}")
+
+
 def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     """Boot a temp VM via `capsem run`, return (session_id, exit_code).
 
     The service preserves the session dir after `run` completes, so we
-    find the session by looking for the most recent run-* directory.
+    find it by looking for the newest `tmp-*` directory created during
+    this invocation.
     """
     env = {
         **os.environ,
@@ -106,6 +189,19 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
                             google_key = m.group(1)
                             break
 
+    # Restart the dev service with CAPSEM_{USER,CORP}_CONFIG in its env so
+    # the policy rules from `config/integration-test-user.toml` actually
+    # reach the VM. Without this, the service inherits whatever env
+    # `_ensure-service` was launched with (usually nothing), and the
+    # per-VM policy falls back to `~/.capsem/user.toml` -- which is the
+    # user's real config, not the isolated test config.
+    _kill_dev_service()
+    service_proc = _start_service_with_test_config(
+        assets_dir,
+        "config/integration-test-user.toml",
+        "config/integration-test-corp.toml",
+    )
+
     # Snapshot session dirs before so we can find the new one after.
     existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
@@ -116,17 +212,33 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     cmd.append(VM_COMMAND)
 
     print(f"{BOLD}Booting VM with test command ...{RESET}")
-    proc = subprocess.run(
-        cmd,
-        env=env, capture_output=True, text=True, timeout=300,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            env=env, capture_output=True, text=True, timeout=300,
+        )
+    finally:
+        # Always tear down the test service. Subsequent smoke steps spawn
+        # their own fixtures, and leaving this one around would shadow any
+        # default-config service the pipeline expects next.
+        service_proc.send_signal(signal.SIGTERM)
+        try:
+            service_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            service_proc.kill()
+        try:
+            SERVICE_PIDFILE.unlink()
+        except FileNotFoundError:
+            pass
     exit_code = proc.returncode
     if proc.stdout.strip():
         print(proc.stdout.strip())
 
-    # Find the new session dir (run-* created during this invocation).
+    # Find the new session dir created during this invocation.
+    # `capsem run` uses the service's auto-generated `tmp-<adj>-<noun>` ID
+    # (see capsem-service/src/main.rs::generate_tmp_name).
     new_sessions = sorted(
-        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.startswith("run-")),
+        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.startswith("tmp-")),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     ) if SESSIONS_DIR.exists() else []
@@ -284,14 +396,13 @@ def verify_session(session_id: str) -> bool:
 
     # Denied net_event from curl to blocked domain (from test config).
     # Manually parse the TOML to avoid 'import toml' dependency.
-    # Structure: "network.custom_block" = { value = "domain.com", ... }
+    # Structure: "security.web.custom_block" = { value = "domain.com", ... }
     deny_domain = "deny.example.com"
     config_path = Path("config/integration-test-user.toml")
     if config_path.exists():
         with open(config_path, "r") as f:
             for line in f:
-                if 'network.custom_block' in line and 'value =' in line:
-                    # Extract "domain.com" from "network.custom_block" = { value = "domain.com", ... }
+                if 'security.web.custom_block' in line and 'value =' in line:
                     match = re.search(r'value\s*=\s*"(.*?)"', line)
                     if match:
                         deny_domain = match.group(1).split(",")[0].strip()
@@ -668,18 +779,14 @@ def verify_session(session_id: str) -> bool:
             f"only {valid_ts}/5 timestamps match ISO 8601 format",
         )
 
-    # Per-launch log file: ~/.capsem/logs/*.jsonl
+    # capsem-app per-launch log files live in ~/.capsem/logs/*.jsonl and are
+    # only produced when the Tauri desktop shell has been launched. This
+    # script exercises `capsem run` / the service, never the desktop app, so
+    # inspect the dir only if prior capsem-app runs left logs behind.
     launch_log_dir = Path.home() / ".capsem" / "logs"
     if launch_log_dir.exists():
         jsonl_files = sorted(launch_log_dir.glob("*.jsonl"), key=lambda p: p.name, reverse=True)
-        r.check(
-            len(jsonl_files) >= 1,
-            f"{len(jsonl_files)} launch log files in {launch_log_dir}",
-            f"no .jsonl files in {launch_log_dir}",
-        )
-
         if jsonl_files:
-            # Verify the most recent launch log has entries.
             latest = jsonl_files[0]
             latest_lines = [l for l in latest.read_text().splitlines() if l.strip()]
             r.check(
@@ -687,16 +794,12 @@ def verify_session(session_id: str) -> bool:
                 f"latest launch log {latest.name} has {len(latest_lines)} entries",
                 f"latest launch log {latest.name} has only {len(latest_lines)} entries (expected >= 5)",
             )
-
-            # Verify launch log filename is valid timestamp format.
             fname_match = re.match(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}", latest.stem)
             r.check(
                 fname_match is not None,
                 f"launch log filename {latest.name} has valid timestamp format",
                 f"launch log filename {latest.name} does not match expected format",
             )
-    else:
-        r.fail(f"launch log directory {launch_log_dir} not found")
 
     # ── auto-snapshots ────────────────────────────────────────────────
     print(f"\n{BOLD}auto-snapshots{RESET}")

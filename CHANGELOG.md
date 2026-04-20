@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`just smoke` now passes on dev machines whose user config opts
+  into `security.web.allow_read=true`.** Three unrelated failures came
+  out in the same wash:
+  - Doctor `test_denied_domain_rejected` (test_network.py) and
+    `test_denied_domain` (test_sandbox.py) hard-coded the default-deny
+    posture. They now skip when `CAPSEM_WEB_ALLOW_READ=1` -- surfaced
+    by injecting the `security.web.allow_{read,write}` toggles into
+    the guest as `CAPSEM_WEB_ALLOW_{READ,WRITE}` env vars, the same
+    pattern already used for `CAPSEM_OPENAI_ALLOWED` / etc. The
+    policy's actual read/write denial is still exercised by
+    `test_post_to_random_domain_denied`, which doesn't depend on the
+    user's toggles.
+  - `scripts/integration_test.py` looked for `run-*` session
+    directories; current `capsem-service` generates
+    `tmp-<adj>-<noun>` IDs (see `generate_tmp_name`). Also relaxed
+    the `~/.capsem/logs` check -- that directory only exists after
+    the Tauri desktop shell has been launched, which integration_test
+    never does. The script now only validates the logs if they're
+    present.
+  - `config/integration-test-user.toml` used the stale
+    `network.custom_{allow,block}` / `network.default_action`
+    setting IDs; migrated to current `security.web.*` keys so the
+    deny list (`deny.example.com`) actually takes effect.
+- **`scripts/integration_test.py` restarts `capsem-service` with
+  `CAPSEM_{USER,CORP}_CONFIG` in its env before booting the test VM**,
+  then tears it down on exit. Required because the dev service
+  (started by `_ensure-service`) inherits no test config, and
+  `capsem run` talks to whatever service is already listening, so the
+  per-VM policy previously fell back silently to `~/.capsem/user.toml`.
+  Complements the service-side env passthrough in `refactor(service):
+  extract pure helpers into lib + submodules`.
+
+### Added
+- **Multi-agent execution lock on heavy `just` recipes.** `smoke`,
+  `test`, `bench`, `shell`, `exec`, `ui`, `install`, and
+  `test-gateway-e2e` now acquire a non-blocking `flock(1)` on
+  `~/.capsem/run/execution.lock` before doing anything that touches
+  the shared `capsem-service`. A second agent attempting a heavy
+  recipe while one is in flight gets an immediate
+  `"another agent holds the capsem execution lock ..."` error instead
+  of silently restarting the service under the first agent's VMs.
+  The kernel releases the lock when the holding process exits, so
+  there are no stale lockfiles on crash/SIGKILL. `flock` is now
+  checked by `just doctor` (hints point at `brew install flock` on
+  macOS, `util-linux` on Linux) and auto-installed by
+  `scripts/bootstrap.sh` on macOS when Homebrew is available.
+
 ### Changed
 - **`UdsClient::connect_with_timeout` now uses
   `capsem_core::poll::poll_until`** instead of a hand-rolled

@@ -233,7 +233,15 @@ def test_allowed_domain():
 
 
 def test_denied_domain():
-    """HTTPS to a denied domain (example.com) must be rejected (403 or refused)."""
+    """HTTPS to a denied domain (example.com) must be rejected (403 or refused).
+
+    Only asserts default-deny semantics. When ``CAPSEM_WEB_ALLOW_READ=1`` the
+    proxy lets unknown domains through by policy, so there is nothing to
+    check here -- ``test_post_to_random_domain_denied`` covers the
+    write-side contract.
+    """
+    if os.environ.get("CAPSEM_WEB_ALLOW_READ") == "1":
+        pytest.skip("security.web.allow_read=true -- unknown domains allowed by policy")
     result = run("curl -sI --connect-timeout 5 https://example.com 2>&1", timeout=15)
     assert result.returncode != 0 or "403" in result.stdout, \
         f"curl to denied domain should fail or return 403: {result.stdout}"
