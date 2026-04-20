@@ -75,7 +75,7 @@ fn dispatch_deep_link(window: &tauri::WebviewWindow, vm_id: &str, action: Option
     let action_part = action
         .map(|a| format!(", action: '{}'", a.replace('\'', "\\'")))
         .unwrap_or_default();
-    let _ = window.eval(&format!(
+    let _ = window.eval(format!(
         "if (window.__capsemDeepLink) {{ window.__capsemDeepLink({{ connect: '{escaped_id}'{action_part} }}) }}"
     ));
 }
@@ -97,15 +97,25 @@ async fn check_for_update_with_prompt(app: tauri::AppHandle) {
     };
 
     let current = app.package_info().version.to_string();
-    let accepted = app
-        .dialog()
+
+    // Bridge the callback-based `show()` to async via a oneshot: the user
+    // can leave the dialog open for seconds to minutes, and blocking_show()
+    // would hold a tauri/tokio runtime worker thread that whole time.
+    // spawn_blocking is also wrong here -- its bounded pool is meant for
+    // short I/O, not human-time waits. See /dev-rust-patterns "Blocking-
+    // in-async anti-pattern".
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
         .message(format!(
             "Capsem {} is available (you have {current}). Download and install?",
             update.version
         ))
         .title("Update Available")
         .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
-        .blocking_show();
+        .show(move |accepted| {
+            let _ = tx.send(accepted);
+        });
+    let accepted = rx.await.unwrap_or(false);
     if !accepted {
         return;
     }
@@ -165,6 +175,35 @@ fn format_log_filename(secs: u64) -> String {
     )
 }
 
+/// Open (or create-truncate) the per-launch app log at `path`.
+///
+/// Logs contain tracing spans with VM ids, filesystem paths, provider API
+/// metadata, and tool-call arguments. On a shared macOS/Linux box a
+/// world-readable log is a user-to-user information leak, so the file is
+/// always created with mode 0o600 on Unix. Mirrors the pattern used for
+/// serial.log, the gateway auth token, and per-VM sockets (see
+/// `/dev-rust-patterns` lesson 14).
+fn open_log_file(path: &Path) -> std::io::Result<std::fs::File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+    }
+}
+
 fn main() {
     // Log to ~/.capsem/logs/<timestamp>.jsonl
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -173,7 +212,7 @@ fn main() {
     cleanup_old_logs(&log_dir, 7);
 
     let log_path = log_dir.join(log_filename());
-    let file_layer = std::fs::File::create(&log_path).ok().map(|f| {
+    let file_layer = open_log_file(&log_path).ok().map(|f| {
         let (nb, guard) = tracing_appender::non_blocking(f);
         // Leak the guard — we want logs flushed for the entire process lifetime.
         Box::leak(Box::new(guard));
@@ -335,6 +374,36 @@ mod tests {
         // 2026-01-01T00:00:00Z → 1767225600
         let name = format_log_filename(1_767_225_600);
         assert_eq!(name, "2026-01-01T00-00-00.jsonl");
+    }
+
+    #[test]
+    fn open_log_file_creates_file_and_returns_writable_handle() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capsem-app-test.jsonl");
+
+        let mut file = open_log_file(&path).expect("open_log_file should succeed");
+        file.write_all(b"line\n").unwrap();
+
+        assert!(path.exists());
+        let contents = fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "line\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_log_file_restricts_permissions_to_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("perms-test.jsonl");
+
+        let _ = open_log_file(&path).expect("open_log_file should succeed");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "log files may contain VM ids, paths, and provider API metadata -- must not be world-readable (got {mode:o})"
+        );
     }
 
     #[test]

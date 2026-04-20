@@ -16,6 +16,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cargo clippy -- -D warnings` across the workspace.
 
 ### Fixed
+- **`capsem-app`'s update-prompt no longer blocks a tauri/tokio worker
+  thread while the user decides.** `check_for_update_with_prompt` in
+  `crates/capsem-app/src/main.rs` used `tauri_plugin_dialog`'s
+  `.blocking_show()` from inside an `async fn` spawned on the runtime.
+  Because the user can leave the dialog sitting for seconds to minutes,
+  the blocked thread effectively holds a runtime worker for human time
+  -- same anti-pattern we just fixed in the tray (`std::process::Command`
+  in async). The fix is NOT `spawn_blocking` (its bounded pool is sized
+  for short I/O, not human waits); it's bridging the plugin's
+  callback-based `.show(|accepted| ...)` to async via
+  `tokio::sync::oneshot`. See `/dev-rust-patterns` "Blocking-in-async
+  anti-pattern" and `/dev-bug-review`.
+- **`capsem-app` session log now created with mode `0o600`.** The
+  per-launch log at `~/.capsem/logs/<timestamp>.jsonl` was opened via
+  `File::create`, which applies the user's umask (typically `0644`) and
+  leaves the file readable by every local user. The log contains
+  tracing spans with VM ids, filesystem paths, provider API metadata,
+  and tool-call arguments -- on a shared box that is a user-to-user
+  information leak. Factored an `open_log_file(path)` helper that uses
+  `OpenOptions::mode(0o600)` under `#[cfg(unix)]` with a plain-options
+  fallback elsewhere, matching the established pattern already used by
+  `pty_log.rs`, the gateway auth token, per-VM sockets, and
+  `capsem-core`'s key helpers. Two new unit tests pin the behavior
+  (file round-trips content; mode is exactly `0o600` on Unix). Also
+  cleared a pre-existing `needless_borrows_for_generic_args` clippy on
+  the deep-link `window.eval` call in the same file. See
+  `/dev-rust-patterns` lesson 14.
 - **`provision_sandbox` no longer holds the `instances` mutex across
   blocking filesystem work, and no longer probes for stale records on
   every successful provision.** `cleanup_stale_instances` previously
