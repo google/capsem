@@ -17,35 +17,12 @@ use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use tower_http::trace::TraceLayer;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use rand::Rng;
 
-mod api;
 mod startup;
 
-/// Generate a fun temporary VM name like `tmp-brave-falcon`.
-fn generate_tmp_name() -> String {
-    const ADJECTIVES: &[&str] = &[
-        "brave", "calm", "clever", "daring", "eager", "fancy", "gentle",
-        "happy", "jolly", "keen", "lively", "lucky", "merry", "noble",
-        "plucky", "quick", "quiet", "sharp", "smart", "swift", "witty",
-        "zany", "bright", "bold", "proud", "fierce", "steady", "agile",
-        "cosmic", "epic", "grand", "mighty", "nimble", "stellar", "vivid",
-    ];
-    const NOUNS: &[&str] = &[
-        "phoenix", "falcon", "otter", "panda", "wolf", "tiger", "raven",
-        "cobra", "dolphin", "hawk", "lynx", "puma", "fox", "owl", "bear",
-        "jaguar", "eagle", "heron", "bison", "coral", "amber", "jade",
-        "onyx", "ruby", "opal", "ivory", "crimson", "indigo", "violet",
-        "bronze", "silver", "cedar", "maple", "willow", "aurora", "comet",
-        "nova", "nebula", "summit", "ridge", "canyon", "glacier", "thunder",
-        "blaze", "ember", "frost", "breeze",
-    ];
-    let mut rng = rand::thread_rng();
-    let adj = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
-    let noun = NOUNS[rng.gen_range(0..NOUNS.len())];
-    format!("tmp-{adj}-{noun}")
-}
-use api::*;
+use capsem_service::api;
+use capsem_service::api::*;
+use capsem_service::naming::{generate_tmp_name, validate_vm_name};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -145,24 +122,6 @@ impl PersistentRegistry {
         self.data.vms.contains_key(name)
     }
 }
-
-/// Validate that a persistent VM name is safe for use as a directory name.
-fn validate_vm_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        return Err(anyhow!("VM name cannot be empty"));
-    }
-    if name.len() > 64 {
-        return Err(anyhow!("VM name too long (max 64 characters)"));
-    }
-    if !name.chars().next().unwrap().is_ascii_alphanumeric() {
-        return Err(anyhow!("VM name must start with a letter or digit"));
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(anyhow!("VM name must contain only letters, digits, hyphens, and underscores"));
-    }
-    Ok(())
-}
-
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -423,8 +382,12 @@ impl ServiceState {
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
+        // CAPSEM_{USER,CORP}_CONFIG are forwarded so the child loads the
+        // same settings tree as the service (tests rely on this to route
+        // policy through an isolated test config without touching the
+        // real ~/.capsem/user.toml).
         child_cmd.env_clear();
-        for key in &["HOME", "PATH", "USER", "TMPDIR"] {
+        for key in &["HOME", "PATH", "USER", "TMPDIR", "CAPSEM_USER_CONFIG", "CAPSEM_CORP_CONFIG"] {
             if let Ok(val) = std::env::var(key) {
                 child_cmd.env(key, val);
             }
@@ -613,8 +576,12 @@ impl ServiceState {
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
+        // CAPSEM_{USER,CORP}_CONFIG are forwarded so the child loads the
+        // same settings tree as the service (tests rely on this to route
+        // policy through an isolated test config without touching the
+        // real ~/.capsem/user.toml).
         child_cmd.env_clear();
-        for key in &["HOME", "PATH", "USER", "TMPDIR"] {
+        for key in &["HOME", "PATH", "USER", "TMPDIR", "CAPSEM_USER_CONFIG", "CAPSEM_CORP_CONFIG"] {
             if let Ok(val) = std::env::var(key) {
                 child_cmd.env(key, val);
             }
@@ -710,58 +677,12 @@ impl ServiceState {
 }
 
 use axum::http::StatusCode;
-
-#[derive(Debug)]
-struct AppError(StatusCode, String);
-
-impl IntoResponse for AppError {
-    fn into_response(self) -> axum::response::Response {
-        (
-            self.0,
-            Json(ErrorResponse {
-                error: self.1,
-            }),
-        )
-            .into_response()
-    }
-}
+use capsem_service::errors::AppError;
+use capsem_service::fs_utils::{sanitize_file_path, identify_file_sync};
 
 // ---------------------------------------------------------------------------
-// Files API -- path security + Magika helpers
+// Files API -- workspace path resolver (state-bound; pure helpers live in fs_utils.rs)
 // ---------------------------------------------------------------------------
-
-/// Allowlist-based path sanitization for the files API.
-/// Strips any character NOT in `[a-zA-Z0-9._\-/]`, collapses consecutive
-/// slashes, strips leading `/`, and rejects `..` or empty results.
-fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
-    let cleaned: String = raw
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-' || *c == '/')
-        .collect();
-    // Collapse consecutive slashes
-    let mut collapsed = String::with_capacity(cleaned.len());
-    let mut prev_slash = false;
-    for ch in cleaned.chars() {
-        if ch == '/' {
-            if !prev_slash {
-                collapsed.push(ch);
-            }
-            prev_slash = true;
-        } else {
-            collapsed.push(ch);
-            prev_slash = false;
-        }
-    }
-    // Strip leading slashes
-    let trimmed = collapsed.trim_start_matches('/');
-    if trimmed.is_empty() {
-        return Err(AppError(StatusCode::BAD_REQUEST, "empty path after sanitization".into()));
-    }
-    if trimmed.contains("..") {
-        return Err(AppError(StatusCode::BAD_REQUEST, "path traversal rejected".into()));
-    }
-    Ok(trimmed.to_string())
-}
 
 /// Resolve a sanitized relative path to an absolute workspace path on the host.
 /// Returns (workspace_root, resolved_path). Verifies the resolved path is
@@ -815,29 +736,6 @@ fn resolve_workspace_path(
         return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
     }
     Ok((workspace_root, canonical))
-}
-
-/// Extract file-type info from Magika `FileType`.
-fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bool) {
-    let info = ft.info();
-    (
-        info.label.to_string(),
-        info.mime_type.to_string(),
-        info.group.to_string(),
-        info.is_text,
-    )
-}
-
-/// Identify a file using Magika. Runs in spawn_blocking since Session is &mut self.
-fn identify_file_sync(
-    magika: &Mutex<magika::Session>,
-    path: &std::path::Path,
-) -> (String, String, String, bool) {
-    let mut session = magika.lock().unwrap();
-    match session.identify_file_sync(path) {
-        Ok(ft) => extract_magika_info(&ft),
-        Err(_) => ("unknown".into(), "application/octet-stream".into(), "unknown".into(), false),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3353,31 +3251,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // AppError
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn app_error_formats_json() {
-        let err = AppError(StatusCode::NOT_FOUND, "sandbox not found".into());
-        let resp = err.into_response();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[test]
-    fn app_error_internal_server() {
-        let err = AppError(StatusCode::INTERNAL_SERVER_ERROR, "boom".into());
-        let resp = err.into_response();
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    #[test]
-    fn app_error_conflict() {
-        let err = AppError(StatusCode::CONFLICT, "already exists".into());
-        let resp = err.into_response();
-        assert_eq!(resp.status(), StatusCode::CONFLICT);
-    }
-
-    // -----------------------------------------------------------------------
     // Input validation edge cases (DTO level)
     // -----------------------------------------------------------------------
 
@@ -3519,50 +3392,6 @@ mod tests {
             assert!(!msg.contains("socket path"), "normal name should not hit path limit: {msg}");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // VM name validation
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn validate_vm_name_valid() {
-        assert!(validate_vm_name("mydev").is_ok());
-        assert!(validate_vm_name("my-dev").is_ok());
-        assert!(validate_vm_name("my_dev").is_ok());
-        assert!(validate_vm_name("dev123").is_ok());
-        assert!(validate_vm_name("a").is_ok());
-    }
-
-    #[test]
-    fn validate_vm_name_empty() {
-        assert!(validate_vm_name("").is_err());
-    }
-
-    #[test]
-    fn validate_vm_name_path_separator() {
-        assert!(validate_vm_name("../escape").is_err());
-        assert!(validate_vm_name("foo/bar").is_err());
-    }
-
-    #[test]
-    fn validate_vm_name_starts_with_hyphen() {
-        assert!(validate_vm_name("-bad").is_err());
-    }
-
-    #[test]
-    fn validate_vm_name_spaces() {
-        assert!(validate_vm_name("has space").is_err());
-    }
-
-    #[test]
-    fn validate_vm_name_too_long() {
-        assert!(validate_vm_name(&"a".repeat(65)).is_err());
-        assert!(validate_vm_name(&"a".repeat(64)).is_ok());
-    }
-
-    // -----------------------------------------------------------------------
-    // Image name validation (path traversal defense)
-    // -----------------------------------------------------------------------
 
     // -----------------------------------------------------------------------
     // PersistentRegistry
@@ -4321,70 +4150,6 @@ mod tests {
             magika: test_magika(),
         });
         (state, dir)
-    }
-
-    // -----------------------------------------------------------------------
-    // sanitize_file_path
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn sanitize_strips_script_tags() {
-        let r = sanitize_file_path("<script>alert(1)</script>.txt").unwrap();
-        assert_eq!(r, "scriptalert1/script.txt");
-    }
-
-    #[test]
-    fn sanitize_strips_null_bytes() {
-        let r = sanitize_file_path("foo\0bar.txt").unwrap();
-        assert_eq!(r, "foobar.txt");
-    }
-
-    #[test]
-    fn sanitize_strips_unicode() {
-        let r = sanitize_file_path("foo\u{200B}bar.txt").unwrap();
-        assert_eq!(r, "foobar.txt");
-    }
-
-    #[test]
-    fn sanitize_rejects_dot_dot() {
-        let r = sanitize_file_path("../etc/passwd");
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn sanitize_rejects_embedded_dot_dot() {
-        let r = sanitize_file_path("foo/../../etc/passwd");
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn sanitize_collapses_slashes() {
-        let r = sanitize_file_path("foo///bar.txt").unwrap();
-        assert_eq!(r, "foo/bar.txt");
-    }
-
-    #[test]
-    fn sanitize_strips_leading_slash() {
-        let r = sanitize_file_path("/src/main.rs").unwrap();
-        assert_eq!(r, "src/main.rs");
-    }
-
-    #[test]
-    fn sanitize_rejects_empty() {
-        let r = sanitize_file_path("");
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn sanitize_preserves_valid_path() {
-        let r = sanitize_file_path("src/main.rs").unwrap();
-        assert_eq!(r, "src/main.rs");
-    }
-
-    #[test]
-    fn sanitize_preserves_hyphens_underscores_dots() {
-        let r = sanitize_file_path("my-file_v2.0.tar.gz").unwrap();
-        assert_eq!(r, "my-file_v2.0.tar.gz");
     }
 
     // -----------------------------------------------------------------------

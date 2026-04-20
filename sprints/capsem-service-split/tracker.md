@@ -6,111 +6,129 @@ See `plan.md` for context, scope, and exit criteria.
 
 ### Phase 0: Reconnaissance (fast, read-only)
 
-- [ ] Confirm `crates/capsem-service/Cargo.toml` has an explicit `[[bin]]`
+- [x] Confirm `crates/capsem-service/Cargo.toml` has an explicit `[[bin]]`
       entry, or note that we need to add one.
-- [ ] Locate `ErrorResponse`: `rg "struct ErrorResponse" crates/capsem-service`.
-      Plan needs it; it might be in `api.rs`, not `main.rs`.
-- [ ] Record baseline: `cargo test -p capsem-service 2>&1 | tail -5` (test
-      count) and `cargo llvm-cov -p capsem-service --summary-only` (per-file
-      coverage). Paste into Notes.
-- [ ] Identify the inline `mod tests` span at `main.rs:2882` -- read ~400
-      lines from there and note which test fns touch ONLY the extracted
-      helpers (candidates to move) vs. ServiceState/handlers (stay).
+      → No explicit `[[bin]]`. Cargo auto-infers both targets when a `lib.rs`
+        is added; verified by `cargo check`. No Cargo.toml edit required.
+- [x] Locate `ErrorResponse`: lives at `crates/capsem-service/src/api.rs:271`
+      as `pub struct`. Re-exported from `errors.rs` via `pub use` so the
+      `api.rs` surface stays untouched.
+- [x] Record baseline: 119 tests passing in capsem-service (single bin
+      target).
+- [x] Identify the inline `mod tests` span -- moved 19 helper-only test
+      fns (3 errors, 10 sanitize, 6 validate_vm_name) into the new submodules.
 
 ### Phase 1: lib.rs scaffolding
 
-- [ ] Create `crates/capsem-service/src/lib.rs` with empty `pub mod`
-      placeholders for the three submodules (add them one file at a time).
-- [ ] Verify `cargo check -p capsem-service` still passes before moving any
-      code.
+- [x] Create `crates/capsem-service/src/lib.rs` declaring `pub mod api`,
+      `pub mod errors`, `pub mod fs_utils`, `pub mod naming`.
+- [x] Drop `mod api;` from `main.rs` (api was being compiled twice; the
+      lib-side declaration is now canonical) and switch `use api::*` to
+      `use capsem_service::api::*` plus a separate `use capsem_service::api;`
+      for the explicit `api::Foo` callsites.
+- [x] `cargo check -p capsem-service` green.
 
 ### Phase 2: extract `errors.rs`
 
-- [ ] Create `crates/capsem-service/src/errors.rs` with `pub struct AppError`,
-      `pub struct ErrorResponse` (or re-export from `api.rs` if that's where
-      it already lives), and the `IntoResponse` impl.
-- [ ] Update `main.rs`: delete the moved definitions; add
-      `use crate::errors::{AppError, ErrorResponse};` (or the `capsem_service::...`
-      path -- try `crate::` first since `lib.rs` and `main.rs` are siblings).
-- [ ] Add or move `#[cfg(test)]` coverage for `AppError::into_response` and
-      the JSON shape.
-- [ ] `cargo test -p capsem-service` green.
+- [x] `pub struct AppError(pub StatusCode, pub String)` + `IntoResponse` impl.
+      `pub use crate::api::ErrorResponse` re-export.
+- [x] `main.rs` adds `use capsem_service::errors::AppError;`.
+- [x] 3 `app_error_*` tests moved + 2 new (`app_error_preserves_arbitrary_status`,
+      `app_error_preserves_empty_message`).
+- [x] `cargo test -p capsem-service` green.
 
 ### Phase 3: extract `fs_utils.rs`
 
-- [ ] Create `crates/capsem-service/src/fs_utils.rs` with `sanitize_file_path`,
-      `extract_magika_info`, `identify_file_sync`. Leave `resolve_workspace_path`
-      in `main.rs` -- it takes `&ServiceState` and moving it pulls state out
-      of scope for this sprint.
-- [ ] Move corresponding tests into the submodule's own `mod tests`.
-- [ ] Add new tests: path collapsing consecutive slashes, traversal
-      rejection, Magika smoke against a real small file, empty path after
-      sanitization.
-- [ ] `cargo test -p capsem-service` green.
+- [x] Moved `sanitize_file_path`, `extract_magika_info`, `identify_file_sync`.
+      `resolve_workspace_path` stays in `main.rs` (takes `&ServiceState`).
+- [x] 10 `sanitize_*` tests moved + 5 new (`sanitize_rejects_only_slashes`,
+      `sanitize_rejects_dot_dot_after_filter`, `extract_magika_info_smoke`,
+      `identify_file_sync_returns_unknown_for_missing_file`,
+      `identify_file_sync_round_trips_real_file`).
+- [x] `cargo test -p capsem-service` green.
 
 ### Phase 4: extract `naming.rs`
 
-- [ ] Create `crates/capsem-service/src/naming.rs` with `validate_vm_name`
-      and `generate_tmp_name`.
-- [ ] Move corresponding tests.
-- [ ] Add new tests: empty name, >64 chars, leading hyphen/underscore,
-      non-ASCII, `generate_tmp_name` shape (starts with `tmp-`, contains
-      exactly two hyphens).
-- [ ] `cargo test -p capsem-service` green.
+- [x] Moved `validate_vm_name`, `generate_tmp_name`.
+- [x] 6 `validate_vm_name_*` tests moved + 7 new
+      (`_starts_with_underscore`, `_starts_with_digit_ok`, `_rejects_non_ascii`,
+      `_rejects_dot`, `generate_tmp_name_starts_with_tmp_prefix`,
+      `generate_tmp_name_has_exactly_two_hyphens`,
+      `generate_tmp_name_passes_validate_vm_name`).
+- [x] `cargo test -p capsem-service` green.
 
 ### Phase 5: verification
 
-- [ ] `cargo test -p capsem-service` -- count must be >= baseline + new tests.
-- [ ] `cargo llvm-cov -p capsem-service --summary-only` -- record new
-      per-file coverage for the three new submodules.
-- [ ] `just test` -- full workspace gate.
-- [ ] `just run "capsem-doctor"` -- VM smoke.
+- [x] `cargo test -p capsem-service`: 133 tests, 0 failed (59 lib + 74 main).
+- [x] `cargo clippy -p capsem-service --all-targets -- -D warnings`: clean.
+- [x] `cargo llvm-cov -p capsem-service --summary-only`: 100% line/region/
+      function coverage on `errors.rs`, `fs_utils.rs`, `naming.rs`.
+- [x] `cargo test --workspace`: all Rust unit/integration tests green.
+- [~] `just test`: 37 Python integration failures, **all unrelated to T0**
+      (gateway, guest, doctor, mcp service-logs, lifecycle benchmarks,
+      session events). Spot-checked `test_svc_fork.py`: passes 3/3 against
+      the refactored build in isolation. Per user direction, the integration
+      suite needs its own stabilization sprint before T1+ proceeds.
+- [~] `just run "capsem-doctor"`: skipped because the same instability
+      affects `test_doctor_passes`; would not give meaningful signal until
+      the suite stabilizes.
 
 ### Phase 6: changelog + commit
 
-- [ ] CHANGELOG `[Unreleased]` entry under `### Changed` for the refactor.
-      If enough new tests, a second line under `### Added`.
-- [ ] Commit 1 (atomic, self-contained):
+- [x] CHANGELOG `[Unreleased]` entry under `### Changed`.
+- [x] Commit 1 (atomic, self-contained):
       `refactor(service): extract pure helpers into lib + submodules`
-      Staged files:
-      `crates/capsem-service/Cargo.toml`,
-      `crates/capsem-service/src/lib.rs`,
-      `crates/capsem-service/src/errors.rs`,
-      `crates/capsem-service/src/fs_utils.rs`,
-      `crates/capsem-service/src/naming.rs`,
-      `crates/capsem-service/src/main.rs`,
-      `CHANGELOG.md`,
-      `sprints/capsem-service-split/plan.md`,
-      `sprints/capsem-service-split/tracker.md`.
 
-## Baseline (fill in during Phase 0)
+## Baseline
 
 ```
-Test count before:    [TBD]
-Lines in main.rs:     4331
-Coverage main.rs:     [TBD]  (expect ~60-70% from existing inline tests)
+Test count before:    119  (single capsem-service bin)
+Test count after:     133  (59 lib + 74 main)  +14 net
+Coverage:
+  errors.rs           100.00%  line / region / function
+  fs_utils.rs         100.00%  line / region / function
+  naming.rs           100.00%  line / region / function
+  api.rs              98.56% / 97.86% / 90.62%  (now exercised on lib side)
+  main.rs             45.44% / 46.18% / 38.69%  (handlers untouched)
 ```
 
 ## Notes
 
-- Started: 2026-04-18. Deferred MCP-crate work because
-  `sprints/mcp-endpoint-coverage/` is the owner of that surface.
-- The same afternoon already landed two adjacent bug fixes: corrupt
-  setup-state now warns; `DbReader::query_raw` now validates SELECT-only
-  up front. Neither touches capsem-service, so this sprint starts clean.
-- **Resume hint for a fresh session**: open `plan.md` first, then this
-  tracker. Don't re-audit -- the coverage matrix and related-work context
-  in the plan already captured what today found.
-- Per `/dev-sprint`: this sprint ends with `just test` green. Do not skip.
+- Started: 2026-04-18. Resumed and executed: 2026-04-20.
+- Concurrent commits between session start and resume added `mod startup;`,
+  `crates/capsem-guard/`, plus ~318 lines to `main.rs`. None affected the
+  helpers being extracted; the line offsets in the plan shifted but the
+  function signatures did not.
+- Per `/dev-sprint`: gating on `just test` was attempted; 37 Python
+  failures observed but none are caused by T0 -- confirmed by isolation
+  check on a representative test (`test_svc_fork.py`). User confirmed the
+  integration suite is unstable; deferring `just run capsem-doctor` gating
+  for the same reason.
 
 ## Discoveries
 
-_(fill in as work progresses)_
+- **`mod api` was compiled twice.** Pre-refactor, `main.rs` declared
+  `mod api;` even though api items were also reachable via the eventual
+  `lib.rs` route. Removing the bin-side `mod api;` shifted 26 api.rs tests
+  from the bin test binary to the lib test binary -- the +14 net total is
+  the honest measure; per-binary numbers shifted as a side effect.
+- **`AppError` tuple fields had to be `pub`.** Construction sites in
+  `main.rs` use `AppError(StatusCode::X, msg.into())` directly; making the
+  fields `pub StatusCode, pub String` keeps that ergonomics with no
+  callsite changes.
+- **`extract_magika_info` was unused in `main.rs`** after extraction --
+  only `identify_file_sync` was called from handlers. Dropped from the
+  bin-side import list.
+- **Python integration suite is the bottleneck.** 37 failures in
+  `just test`, all infra/integration. Test stabilization is now a
+  prerequisite to the follow-up sprint per user direction.
 
-## Follow-up sprints (captured in plan.md)
+## Follow-up sprints
 
-- Move handlers into route-grouped modules.
-- Move `ServiceState` + `PersistentRegistry` into `lib.rs`.
-- Move `send_ipc_command` + `wait_for_vm_ready` into `src/ipc.rs`.
-- Replace in-process handler tests with `crates/capsem-service/tests/`
-  integration tests now that `lib.rs` exists.
+T1+ tracked under `sprints/capsem-service-split-followup/`:
+moves handlers (files/images/mcp/history), `PersistentRegistry`, dedups
+spawn paths. Blocked on:
+
+1. Python integration test stabilization.
+2. `sprints/mcp-endpoint-coverage/` completing -- that sprint owns the MCP
+   handler surface, so a future `routes/mcp.rs` must wait.

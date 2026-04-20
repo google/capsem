@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`capsem-service` split into `lib + bin`** -- new `crates/capsem-service/src/lib.rs` exposes the `api`, `errors`, `fs_utils`, and `naming` submodules. Pure helpers (`AppError`, `sanitize_file_path`, `extract_magika_info`, `identify_file_sync`, `validate_vm_name`, `generate_tmp_name`) move out of `main.rs` into their own files with their own `#[cfg(test)] mod tests`. `ServiceState`, `PersistentRegistry`, `resolve_workspace_path`, and every axum handler stay in `main.rs` (their move is a follow-up sprint). `api.rs` content is unchanged -- `errors.rs` re-exports `ErrorResponse` via `pub use`. +14 net new unit tests; `errors.rs`/`fs_utils.rs`/`naming.rs` each at 100% line, region, and function coverage. Unblocks future `crates/capsem-service/tests/` integration tests now that `lib.rs` exists.
 - **Workspace MSRV bumped from Rust 1.82 to 1.91.** `capsem-core`'s
   `mcp::builtin_tools` relies on `str::floor_char_boundary`, stable in
   1.91, which clippy's `incompatible_msrv` lint correctly flagged.
