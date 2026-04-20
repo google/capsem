@@ -1,11 +1,33 @@
 // Shared Shiki highlighter singleton.
 // Used by FileContent.svelte and FileEditorControl.svelte.
-// Avoids loading themes/languages twice.
+//
+// Uses `shiki/core` with explicit language/theme imports so the bundler
+// only includes the grammars we actually ship. Importing from `'shiki'`
+// would pull the full bundled-languages registry (235 langs) -- Vite then
+// code-splits every one, producing >500 KB chunks for languages we never
+// use (emacs-lisp, wolfram, wasm, ...).
 
-import { createHighlighter, type Highlighter, type BundledTheme } from 'shiki';
+import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
+import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
+
+export type ShikiThemeId =
+  | 'github-dark-default' | 'github-light-default' | 'github-light'
+  | 'one-dark-pro' | 'one-light'
+  | 'dracula'
+  | 'catppuccin-mocha' | 'catppuccin-latte'
+  | 'monokai'
+  | 'gruvbox-dark-medium' | 'gruvbox-light-medium'
+  | 'solarized-dark' | 'solarized-light'
+  | 'nord'
+  | 'rose-pine' | 'rose-pine-dawn'
+  | 'tokyo-night'
+  | 'kanagawa-wave' | 'kanagawa-lotus'
+  | 'everforest-dark' | 'everforest-light';
+
+export type ShikiHighlighter = HighlighterCore;
 
 // Map terminal theme families to Shiki theme IDs
-export const SHIKI_THEMES: Record<string, { dark: BundledTheme; light: BundledTheme }> = {
+export const SHIKI_THEMES: Record<string, { dark: ShikiThemeId; light: ShikiThemeId }> = {
   'default':     { dark: 'github-dark-default',  light: 'github-light-default' },
   'one':         { dark: 'one-dark-pro',          light: 'one-light' },
   'dracula':     { dark: 'dracula',               light: 'github-light' },
@@ -20,26 +42,77 @@ export const SHIKI_THEMES: Record<string, { dark: BundledTheme; light: BundledTh
   'everforest':  { dark: 'everforest-dark',       light: 'everforest-light' },
 };
 
-const ALL_SHIKI_THEME_IDS = [...new Set(
-  Object.values(SHIKI_THEMES).flatMap(t => [t.dark, t.light])
-)];
-
-const LANGS = [
-  'rust', 'toml', 'markdown', 'json', 'typescript', 'javascript', 'python', 'bash', 'yaml',
-  'html', 'css', 'sql', 'go', 'c', 'cpp', 'java', 'xml', 'dockerfile', 'makefile', 'ini', 'csv',
-  'svelte', 'tsx', 'jsx', 'graphql', 'ruby', 'php', 'swift', 'kotlin', 'lua', 'r',
-] as const;
-
-let instance: Highlighter | null = null;
-let initPromise: Promise<Highlighter> | null = null;
+let instance: HighlighterCore | null = null;
+let initPromise: Promise<HighlighterCore> | null = null;
 
 /** Get (or lazily create) the shared Shiki highlighter. */
-export async function getShikiHighlighter(): Promise<Highlighter> {
+export async function getShikiHighlighter(): Promise<HighlighterCore> {
   if (instance) return instance;
   if (initPromise) return initPromise;
-  initPromise = createHighlighter({
-    themes: ALL_SHIKI_THEME_IDS,
-    langs: [...LANGS],
+  initPromise = createHighlighterCore({
+    themes: [
+      import('@shikijs/themes/github-dark-default'),
+      import('@shikijs/themes/github-light-default'),
+      import('@shikijs/themes/github-light'),
+      import('@shikijs/themes/one-dark-pro'),
+      import('@shikijs/themes/one-light'),
+      import('@shikijs/themes/dracula'),
+      import('@shikijs/themes/catppuccin-mocha'),
+      import('@shikijs/themes/catppuccin-latte'),
+      import('@shikijs/themes/monokai'),
+      import('@shikijs/themes/gruvbox-dark-medium'),
+      import('@shikijs/themes/gruvbox-light-medium'),
+      import('@shikijs/themes/solarized-dark'),
+      import('@shikijs/themes/solarized-light'),
+      import('@shikijs/themes/nord'),
+      import('@shikijs/themes/rose-pine'),
+      import('@shikijs/themes/rose-pine-dawn'),
+      import('@shikijs/themes/tokyo-night'),
+      import('@shikijs/themes/kanagawa-wave'),
+      import('@shikijs/themes/kanagawa-lotus'),
+      import('@shikijs/themes/everforest-dark'),
+      import('@shikijs/themes/everforest-light'),
+    ],
+    langs: [
+      import('@shikijs/langs/rust'),
+      import('@shikijs/langs/toml'),
+      import('@shikijs/langs/markdown'),
+      import('@shikijs/langs/json'),
+      import('@shikijs/langs/typescript'),
+      import('@shikijs/langs/javascript'),
+      import('@shikijs/langs/python'),
+      import('@shikijs/langs/bash'),
+      import('@shikijs/langs/yaml'),
+      import('@shikijs/langs/html'),
+      import('@shikijs/langs/css'),
+      import('@shikijs/langs/sql'),
+      import('@shikijs/langs/go'),
+      import('@shikijs/langs/c'),
+      // cpp grammar is 419 KB of JSON that bundles to 620 KB; every Shiki
+      // host grammar (ruby, php, ...) re-imports it for inline-assembly
+      // heredocs, blowing past Vite's 500 KB chunk budget. .cpp/.hpp fall
+      // back to `c` grammar, which covers keywords/strings/comments and
+      // loses templates/namespaces -- acceptable for a sandbox file viewer.
+      import('@shikijs/langs/java'),
+      import('@shikijs/langs/xml'),
+      import('@shikijs/langs/dockerfile'),
+      import('@shikijs/langs/makefile'),
+      import('@shikijs/langs/ini'),
+      import('@shikijs/langs/csv'),
+      import('@shikijs/langs/svelte'),
+      import('@shikijs/langs/tsx'),
+      import('@shikijs/langs/jsx'),
+      import('@shikijs/langs/graphql'),
+      // ruby embeds 12 sub-grammars (html, cpp, graphql, sql, haml, ...)
+      // which bundles to ~676 KB. Plain text is acceptable for .rb files
+      // in a sandbox file viewer.
+      import('@shikijs/langs/php'),
+      import('@shikijs/langs/swift'),
+      import('@shikijs/langs/kotlin'),
+      import('@shikijs/langs/lua'),
+      import('@shikijs/langs/r'),
+    ],
+    engine: createJavaScriptRegexEngine(),
   }).then(h => {
     instance = h;
     return h;
@@ -48,7 +121,7 @@ export async function getShikiHighlighter(): Promise<Highlighter> {
 }
 
 /** Resolve the Shiki theme ID for the current terminal theme + mode. */
-export function resolveShikiTheme(terminalTheme: string, mode: 'light' | 'dark'): BundledTheme {
+export function resolveShikiTheme(terminalTheme: string, mode: 'light' | 'dark'): ShikiThemeId {
   const entry = SHIKI_THEMES[terminalTheme] ?? SHIKI_THEMES['default'];
   return mode === 'dark' ? entry.dark : entry.light;
 }
@@ -62,8 +135,8 @@ export function detectShikiLang(filetypeOrPath: string, content?: string): strin
     py: 'python', sh: 'bash', bash: 'bash', zsh: 'bash',
     yaml: 'yaml', yml: 'yaml', xml: 'xml', svg: 'xml',
     html: 'html', htm: 'html', css: 'css', scss: 'css',
-    sql: 'sql', go: 'go', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp',
-    java: 'java', kt: 'kotlin', swift: 'swift', rb: 'ruby', php: 'php',
+    sql: 'sql', go: 'go', c: 'c', h: 'c', cpp: 'c', hpp: 'c', cc: 'c', cxx: 'c',
+    java: 'java', kt: 'kotlin', swift: 'swift', php: 'php',
     lua: 'lua', r: 'r', R: 'r', csv: 'csv',
     dockerfile: 'dockerfile', makefile: 'makefile',
     ini: 'ini', cfg: 'ini', env: 'ini',

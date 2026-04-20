@@ -1,9 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import type { Highlighter } from 'shiki';
   import type { FileEntry } from '../../types';
   import { themeStore } from '../../stores/theme.svelte.ts';
-  import { getShikiHighlighter, resolveShikiTheme, detectShikiLang } from '../../shiki.ts';
+  import { getShikiHighlighter, resolveShikiTheme, detectShikiLang, type ShikiHighlighter } from '../../shiki.ts';
   import { formatBytes } from '../../format';
   import Copy from 'phosphor-svelte/lib/Copy';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
@@ -14,7 +13,7 @@
     blob: Blob | null;
   } = $props();
 
-  let highlighter: Highlighter | null = $state(null);
+  let highlighter: ShikiHighlighter | null = $state(null);
   let highlightedHtml = $state('');
   let copied = $state(false);
   let blobUrl = $state<string | null>(null);

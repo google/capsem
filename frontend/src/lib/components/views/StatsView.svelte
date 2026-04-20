@@ -4,9 +4,8 @@
   import { SNAPSHOT_STATS_SQL, SNAPSHOT_LIST_SQL } from '../../sql';
   import type { ModelStats, ToolCallStat, NetworkEvent, FileEvent, DetailSelection } from '../../types';
   import { formatDuration, formatBytes, formatTime, truncate, fmtAge } from '../../format';
-  import { getShikiHighlighter, resolveShikiTheme } from '../../shiki.ts';
+  import { getShikiHighlighter, resolveShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
-  import type { Highlighter } from 'shiki';
   import Brain from 'phosphor-svelte/lib/Brain';
   import Wrench from 'phosphor-svelte/lib/Wrench';
   import Globe from 'phosphor-svelte/lib/Globe';
@@ -38,7 +37,7 @@
 
   // Detail panel
   let detail = $state<DetailSelection | null>(null);
-  let shiki = $state<Highlighter | null>(null);
+  let shiki = $state<ShikiHighlighter | null>(null);
 
 
   // Shiki is loaded in the main onMount below

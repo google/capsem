@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Frontend bundle no longer emits chunks larger than 500 KB, and the
+  `App` chunk drops from 582 KB to 142 KB.** The app was importing
+  `'shiki'` (the default `bundle-full` export), which references all 235
+  Shiki languages -- Vite code-split every one, shipping >600 KB chunks
+  for unused grammars (emacs-lisp, wolfram, wasm, vue-vine, ...). Moved
+  to `shiki/core` with explicit `@shikijs/langs/*` and
+  `@shikijs/themes/*` imports so only the 29 languages and 21 themes we
+  actually highlight are bundled. Swapped the Oniguruma WASM regex
+  engine for `createJavaScriptRegexEngine()` (the JS engine covers all
+  shipped grammars and removes a 608 KB WASM-as-JS chunk). Dropped
+  highlight support for `cpp` (419 KB grammar) and `ruby` (pulls 12
+  embedded sub-grammars including cpp, bundling to 676 KB): `.cpp`/
+  `.hpp`/`.cc`/`.cxx` fall back to the C grammar (keywords/strings/
+  comments highlight; templates and namespaces don't); `.rb` shows as
+  plain text. In `App.svelte` the heavy views (Settings, Stats, Logs,
+  ServiceLogs, Files, Inspector, OnboardingWizard, CreateSandboxDialog)
+  are now loaded via `{#await import()}` so they're fetched only on
+  first use. `@shikijs/langs` and `@shikijs/themes` are now direct
+  dependencies (previously transitive via `shiki`) so Vite can resolve
+  the subpath imports.
+
 ### Fixed
 - **`just test` no longer kills or mutates a locally installed capsem.**
   Previously the test harness (`scripts/integration_test.py`,

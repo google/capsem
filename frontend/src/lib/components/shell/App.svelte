@@ -5,14 +5,16 @@
   import Toolbar from './Toolbar.svelte';
   import NewTabPage from './NewTabPage.svelte';
   import VMFrame from './VMFrame.svelte';
-  import SettingsPage from './SettingsPage.svelte';
-  import StatsView from '../views/StatsView.svelte';
-  import LogsView from '../views/LogsView.svelte';
-  import ServiceLogsView from '../views/ServiceLogsView.svelte';
-  import FilesView from '../views/FilesView.svelte';
-  import InspectorView from '../views/InspectorView.svelte';
-  import OnboardingWizard from '../onboarding/OnboardingWizard.svelte';
-  import CreateSandboxDialog from './CreateSandboxDialog.svelte';
+
+  // Heavy views split into separate chunks; loaded on first use.
+  const loadSettings = () => import('./SettingsPage.svelte').then(m => m.default);
+  const loadStats = () => import('../views/StatsView.svelte').then(m => m.default);
+  const loadLogs = () => import('../views/LogsView.svelte').then(m => m.default);
+  const loadServiceLogs = () => import('../views/ServiceLogsView.svelte').then(m => m.default);
+  const loadFiles = () => import('../views/FilesView.svelte').then(m => m.default);
+  const loadInspector = () => import('../views/InspectorView.svelte').then(m => m.default);
+  const loadWizard = () => import('../onboarding/OnboardingWizard.svelte').then(m => m.default);
+  const loadCreateDialog = () => import('./CreateSandboxDialog.svelte').then(m => m.default);
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
@@ -159,22 +161,34 @@
           {#if tab.view === 'new-tab'}
             <NewTabPage />
           {:else if tab.view === 'settings'}
-            <SettingsPage />
+            {#await loadSettings() then Component}
+              <Component />
+            {/await}
           {:else if tab.view === 'logs' && !tab.vmId}
-            <ServiceLogsView />
+            {#await loadServiceLogs() then Component}
+              <Component />
+            {/await}
           {:else if isVM && tab.vmId}
             <div class="h-full relative">
               <div class="absolute inset-0" class:hidden={tab.view !== 'terminal'}>
                 <VMFrame vmId={tab.vmId} tabId={tab.id} />
               </div>
               {#if tab.view === 'stats'}
-                <div class="absolute inset-0"><StatsView vmId={tab.vmId} /></div>
+                <div class="absolute inset-0">
+                  {#await loadStats() then Component}<Component vmId={tab.vmId} />{/await}
+                </div>
               {:else if tab.view === 'logs'}
-                <div class="absolute inset-0"><LogsView vmId={tab.vmId} /></div>
+                <div class="absolute inset-0">
+                  {#await loadLogs() then Component}<Component vmId={tab.vmId} />{/await}
+                </div>
               {:else if tab.view === 'files'}
-                <div class="absolute inset-0"><FilesView vmId={tab.vmId} /></div>
+                <div class="absolute inset-0">
+                  {#await loadFiles() then Component}<Component vmId={tab.vmId} />{/await}
+                </div>
               {:else if tab.view === 'inspector'}
-                <div class="absolute inset-0"><InspectorView vmId={tab.vmId} /></div>
+                <div class="absolute inset-0">
+                  {#await loadInspector() then Component}<Component vmId={tab.vmId} />{/await}
+                </div>
               {/if}
             </div>
           {/if}
@@ -185,8 +199,14 @@
 
   <!-- Onboarding wizard: fixed overlay, renders on top of everything -->
   {#if onboardingStore.needsOnboarding && !onboardingStore.loading}
-    <OnboardingWizard />
+    {#await loadWizard() then Component}
+      <Component />
+    {/await}
   {/if}
 
-  <CreateSandboxDialog />
+  {#if vmStore.showCreateModal}
+    {#await loadCreateDialog() then Component}
+      <Component />
+    {/await}
+  {/if}
 </div>
