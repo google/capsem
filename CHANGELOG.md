@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Dark-mode warning banners no longer render with a white strip and
+  unreadable text.** Two compounding issues: `html`/`body` had no
+  theme-aware `background-color`, so the browser's default white canvas
+  showed through any transparent element; and `--warning` /
+  `--warning-foreground` were referenced across the frontend (install-
+  incomplete banner, "VM assets are missing" alert, password-required
+  badges, MCP section warnings) but never defined, so `bg-warning/10`
+  resolved to fully transparent. Set the canvas to
+  `var(--background)`/`var(--foreground)` on `html, body` and defined
+  `--warning` (amber-600 light / amber-400 dark) plus
+  `--warning-foreground` in `:root` and `.dark` so the amber tint and
+  legible contrast appear on every warning surface.
 - **`just install` no longer re-shows the GUI onboarding wizard on every
   reinstall.** The single `onboarding_completed` flag conflated "CLI install
   finished" with "user dismissed the welcome wizard", so dev reinstalls

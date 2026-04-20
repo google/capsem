@@ -119,6 +119,8 @@
   --background-1: #f4f3f2;         /* recessed: rgb(244,243,242)       */
   --background-2: #f4f3f2;         /* most recessed: same              */
   --layer: #ffffff;                 /* elevated/selected: white         */
+  --warning: var(--color-amber-600);
+  --warning-foreground: var(--color-white);
 }
 
 .dark {
@@ -126,6 +128,8 @@
   --background-1: #282828;          /* recessed: same as canvas         */
   --background-2: #282828;          /* most recessed: same              */
   --layer: #3c3c3c;                 /* elevated/selected: rgb(60,60,60) */
+  --warning: var(--color-amber-400);
+  --warning-foreground: var(--color-neutral-900);
 }
 
 /* -- Accent color overrides (primary scale only) -- */
@@ -249,4 +253,6 @@ body {
   overflow: hidden;
   margin: 0;
   padding: 0;
+  background-color: var(--background);
+  color: var(--foreground);
 }
