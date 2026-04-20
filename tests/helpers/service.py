@@ -49,6 +49,10 @@ class ServiceInstance:
         print(f"SERVICE LOG: {log_path}")
         self._log_file = open(log_path, "w")
 
+        # Deliberately omit --tray-binary: the tray is a user-facing macOS
+        # menu bar icon and spawning it on every test instance flashes the
+        # menu bar dozens of times during a full suite run. Companion
+        # lifecycle tests exercise the tray via their own spawn.
         self.proc = subprocess.Popen(
             [
                 str(SERVICE_BINARY),
@@ -57,7 +61,6 @@ class ServiceInstance:
                 "--process-binary", str(PROCESS_BINARY),
                 "--gateway-binary", str(GATEWAY_BINARY),
                 "--gateway-port", "0",
-                "--tray-binary", str(TRAY_BINARY),
                 "--foreground",
             ],
             env=env,

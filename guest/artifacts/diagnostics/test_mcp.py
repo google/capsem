@@ -97,9 +97,9 @@ def test_mcp_tools_list():
     assert len(tools_resp) == 1
     tools = tools_resp[0]["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert "fetch_http" in names
-    assert "grep_http" in names
-    assert "http_headers" in names
+    assert "local__fetch_http" in names
+    assert "local__grep_http" in names
+    assert "local__http_headers" in names
 
 
 def test_mcp_fetch_http_allowed_domain():
@@ -121,7 +121,7 @@ def test_mcp_fetch_http_allowed_domain():
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "fetch_http",
+                "name": "local__fetch_http",
                 "arguments": {"url": "https://elie.net", "max_length": 1000},
             },
         },
@@ -136,37 +136,38 @@ def test_mcp_fetch_http_allowed_domain():
 
 def test_mcp_fetch_http_blocked_domain():
     """fetch_http on a blocked domain returns isError."""
-    responses = _mcp_call([
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "capsem-doctor", "version": "1.0"},
-            },
-        },
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "tools/call",
-            "params": {
-                "name": "fetch_http",
-                "arguments": {"url": "https://evil-blocked-domain.xyz"},
-            },
-        },
-    ])
-    call_resp = [r for r in responses if r.get("id") == 4]
-    assert len(call_resp) == 1
-    result = call_resp[0]["result"]
-    assert result["isError"] is True
-    assert "blocked" in result["content"][0]["text"].lower()
+    result = _init_and_call(
+        "fetch_http",
+        {"url": "https://evil-blocked-domain.xyz"},
+    )
+    assert result.get("isError") is True, f"expected isError: {result}"
+    assert "blocked" in result["content"][0]["text"].lower(), (
+        f"expected 'blocked' in error text: {result}"
+    )
+
+
+# Every tool served by the in-VM MCP gateway is namespaced with its source
+# server's key. The built-in tools all live behind the ``local`` server
+# (see ``config/defaults.json``'s ``mcp.local`` entry and
+# ``namespace_name`` in ``capsem-core/src/mcp/types.rs``), so their wire
+# names are ``local__<tool>``. Tests take the bare name and this helper
+# applies the prefix.
+LOCAL_NS = "local__"
+
+
+def ns(tool_name: str) -> str:
+    """Return the namespaced wire name for a built-in local tool."""
+    return f"{LOCAL_NS}{tool_name}" if not tool_name.startswith(LOCAL_NS) else tool_name
 
 
 def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
-    """Helper: initialize + call a tool in one shot, return the result dict."""
+    """Helper: initialize + call a tool in one shot, return the result dict.
+
+    ``tool_name`` is the bare tool identifier (e.g. ``fetch_http``); the
+    gateway's namespaced form (``local__fetch_http``) is applied here so
+    callers stay readable.
+    """
+    wire_name = ns(tool_name)
     responses = _mcp_call([
         {
             "jsonrpc": "2.0",
@@ -183,17 +184,29 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
             "jsonrpc": "2.0",
             "id": call_id,
             "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments},
+            "params": {"name": wire_name, "arguments": arguments},
         },
     ], timeout=timeout)
     call_resp = [r for r in responses if r.get("id") == call_id]
     assert len(call_resp) == 1, f"expected 1 response for id={call_id}, got {len(call_resp)}"
     resp = call_resp[0]
+    # Collapse a JSON-RPC protocol error into an ``isError: true`` tool result
+    # so callers see a single shape. Aggregators emit JSON-RPC ``error`` when
+    # the tool layer is out of spec (wrong name, missing required arg, policy
+    # block); tools emit ``isError`` on the result when their own handler
+    # rejects the input. Both signal "this call failed"; conflating them
+    # keeps tests simple.
     if "error" in resp:
-        raise AssertionError(
-            f"MCP tool '{tool_name}' returned error: "
-            f"[{resp['error'].get('code')}] {resp['error'].get('message')}"
-        )
+        err = resp["error"]
+        code = err.get("code")
+        message = err.get("message", "")
+        return {
+            "isError": True,
+            "content": [{
+                "type": "text",
+                "text": f"[{code}] {message}" if code is not None else message,
+            }],
+        }
     return resp["result"]
 
 
@@ -286,30 +299,36 @@ def test_claude_mcp_list_shows_capsem():
 
 
 def test_claude_state_json_has_capsem_mcp():
-    """Claude state file (.claude.json) has capsem MCP server configured."""
+    """Claude state file (.claude.json) has the capsem MCP server configured.
+
+    The injected server key is ``local`` (see config/defaults.json and the
+    host-side ``inject_capsem_mcp_server`` tests). The command path points
+    at the in-VM ``/run/capsem-mcp-server`` bridge.
+    """
     r = run("cat /root/.claude.json")
     assert r.returncode == 0, "~/.claude.json missing"
     settings = json.loads(r.stdout)
     assert "mcpServers" in settings, "mcpServers key missing from .claude.json"
-    assert "capsem" in settings["mcpServers"], (
-        f"capsem not in mcpServers: {list(settings['mcpServers'].keys())}"
+    assert "local" in settings["mcpServers"], (
+        f"local not in mcpServers: {list(settings['mcpServers'].keys())}"
     )
-    assert settings["mcpServers"]["capsem"]["command"] == "/run/capsem-mcp-server", (
-        f"wrong command: {settings['mcpServers']['capsem']}"
+    assert settings["mcpServers"]["local"]["command"] == "/run/capsem-mcp-server", (
+        f"wrong command: {settings['mcpServers']['local']}"
     )
 
 
 def test_gemini_settings_has_capsem_mcp():
-    """Gemini settings.json has capsem MCP server configured."""
+    """Gemini settings.json has the capsem MCP server configured under the
+    canonical ``local`` key."""
     r = run("cat /root/.gemini/settings.json")
     assert r.returncode == 0, "~/.gemini/settings.json missing"
     settings = json.loads(r.stdout)
     assert "mcpServers" in settings, "mcpServers key missing from Gemini settings"
-    assert "capsem" in settings["mcpServers"], (
-        f"capsem not in mcpServers: {list(settings['mcpServers'].keys())}"
+    assert "local" in settings["mcpServers"], (
+        f"local not in mcpServers: {list(settings['mcpServers'].keys())}"
     )
-    assert settings["mcpServers"]["capsem"]["command"] == "/run/capsem-mcp-server", (
-        f"wrong command: {settings['mcpServers']['capsem']}"
+    assert settings["mcpServers"]["local"]["command"] == "/run/capsem-mcp-server", (
+        f"wrong command: {settings['mcpServers']['local']}"
     )
 
 
@@ -396,7 +415,7 @@ def test_mcp_tools_list_has_annotations():
     ])
     tools_resp = [r for r in responses if r.get("id") == 2]
     tools = tools_resp[0]["result"]["tools"]
-    builtin_names = {"fetch_http", "grep_http", "http_headers"}
+    builtin_names = {"local__fetch_http", "local__grep_http", "local__http_headers"}
     for tool in tools:
         if tool["name"] in builtin_names:
             ann = tool.get("annotations")
@@ -537,10 +556,10 @@ def test_mcp_tools_list_has_file_tools():
     assert len(tools_resp) == 1
     tools = tools_resp[0]["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert "snapshots_changes" in names, f"list_changed_files missing from tools: {names}"
-    assert "snapshots_revert" in names, f"revert_file missing from tools: {names}"
-    assert "snapshots_create" in names, f"snapshots_create missing from tools: {names}"
-    assert "snapshots_delete" in names, f"delete_snapshot missing from tools: {names}"
+    assert "local__snapshots_changes" in names, f"snapshots_changes missing from tools: {names}"
+    assert "local__snapshots_revert" in names, f"snapshots_revert missing from tools: {names}"
+    assert "local__snapshots_create" in names, f"snapshots_create missing from tools: {names}"
+    assert "local__snapshots_delete" in names, f"snapshots_delete missing from tools: {names}"
 
 
 def test_mcp_list_changed_files():
@@ -659,7 +678,7 @@ def test_mcp_snapshot_name_sanitized():
             "jsonrpc": "2.0",
             "id": 10,
             "method": "tools/call",
-            "params": {"name": "snapshots_create", "arguments": {"name": "<script>alert(1)</script>"}},
+            "params": {"name": "local__snapshots_create", "arguments": {"name": "<script>alert(1)</script>"}},
         },
     ], timeout=15)
     call_resp = [r for r in responses if r.get("id") == 10]
@@ -762,7 +781,7 @@ def _cleanup_snapshots():
                             "clientInfo": {"name": "cleanup", "version": "1.0"}}},
                 {"jsonrpc": "2.0", "method": "notifications/initialized"},
                 {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                 "params": {"name": "snapshots_delete", "arguments": {"checkpoint": cp}}},
+                 "params": {"name": "local__snapshots_delete", "arguments": {"checkpoint": cp}}},
             ], timeout=5)
         except Exception:
             pass
@@ -1165,21 +1184,10 @@ def test_bug3_revert_already_current():
     cp = _mcp_snap_create("bug3")
 
     # File hasn't changed -- revert should error.
-    # Use raw _mcp_call since _init_and_call crashes on error responses.
-    responses = _mcp_call([
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-         "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                    "clientInfo": {"name": "test", "version": "1.0"}}},
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-         "params": {"name": "snapshots_revert",
-                    "arguments": {"path": "bug3.txt", "checkpoint": cp}}},
-    ])
-    revert_resp = [r for r in responses if r.get("id") == 2][0]
-    assert "error" in revert_resp, f"revert of identical file should error, got: {revert_resp}"
-    assert "already" in revert_resp["error"]["message"].lower(), (
-        f"error should mention 'already': {revert_resp['error']['message']}"
-    )
+    # The builtin maps logical failures to ``isError: true`` on the tool
+    # result (not a JSON-RPC error), so we inspect the result payload.
+    result = _init_and_call("snapshots_revert", {"path": "bug3.txt", "checkpoint": cp})
+    _assert_tool_error(result, "already")
 
     # CLI path
     r = _snap_revert("bug3.txt", cp)
@@ -1227,10 +1235,27 @@ def test_tool_create_duplicate_name():
     assert r1.returncode == 0 and r2.returncode == 0
 
 
+def _assert_tool_error(result, match: str):
+    """Assert that ``result`` is an MCP tool error result and its text
+    contains ``match`` (case-insensitive).
+
+    The aggregator routes tool calls that complete with a failure through
+    ``isError: true`` on the result payload rather than a JSON-RPC error,
+    so tests check the content text for the expected message.
+    """
+    assert isinstance(result, dict), f"expected dict result, got: {result!r}"
+    assert result.get("isError") is True, f"expected isError: {result}"
+    content = result.get("content") or []
+    text = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+    assert match.lower() in text.lower(), (
+        f"expected error containing {match!r}, got: {text[:500]}"
+    )
+
+
 def test_tool_delete_auto_snapshot():
     """T10: Deleting an auto snapshot should error."""
-    with pytest.raises(AssertionError, match="cannot delete automatic"):
-        _init_and_call("snapshots_delete", {"checkpoint": "cp-0"})
+    result = _init_and_call("snapshots_delete", {"checkpoint": "cp-0"})
+    _assert_tool_error(result, "cannot delete automatic")
 
     # CLI path
     r = run("snapshots delete cp-0 --json")
@@ -1239,8 +1264,8 @@ def test_tool_delete_auto_snapshot():
 
 def test_tool_delete_nonexistent():
     """T11: Deleting nonexistent checkpoint should error."""
-    with pytest.raises(AssertionError, match="not found"):
-        _init_and_call("snapshots_delete", {"checkpoint": "cp-9999"})
+    result = _init_and_call("snapshots_delete", {"checkpoint": "cp-9999"})
+    _assert_tool_error(result, "not found")
 
 
 def test_tool_delete_double():
@@ -1253,8 +1278,8 @@ def test_tool_delete_double():
         _created_snapshots.remove(cp)
 
     # Second delete should error.
-    with pytest.raises(AssertionError, match="not found"):
-        _init_and_call("snapshots_delete", {"checkpoint": cp})
+    result = _init_and_call("snapshots_delete", {"checkpoint": cp})
+    _assert_tool_error(result, "not found")
 
 
 def test_tool_history_never_snapped():
@@ -1784,11 +1809,11 @@ def test_compact_newest_wins():
 
 def test_compact_invalid_checkpoint():
     """Compact with invalid checkpoint ID errors."""
-    with pytest.raises(AssertionError, match="not found"):
-        _init_and_call("snapshots_compact", {
-            "checkpoints": ["cp-9999"],
-            "name": "bad",
-        })
+    result = _init_and_call("snapshots_compact", {
+        "checkpoints": ["cp-9999"],
+        "name": "bad",
+    })
+    _assert_tool_error(result, "not found")
 
 
 def test_compact_cli():

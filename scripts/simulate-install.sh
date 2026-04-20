@@ -16,11 +16,16 @@ INSTALL_DIR="$HOME/.capsem/bin"
 ASSETS_DST="$HOME/.capsem/assets"
 RUN_DIR="$HOME/.capsem/run"
 
-# Preflight: reap any running capsem processes so reinstalling mid-session
-# doesn't leave the old service (and its per-VM capsem-process children)
-# holding Apple VZ memory. Mirrors what `capsem install` does.
+# Preflight: reap any running capsem processes FROM THIS INSTALL PREFIX so
+# reinstalling mid-session doesn't leave the old service (and its per-VM
+# capsem-process children) holding Apple VZ memory.
+#
+# Scoped to ``$INSTALL_DIR/`` so parallel pytest workers running
+# ``target/debug/capsem-*`` are not caught in the blast. A bare
+# ``pkill -x capsem-service`` matches every capsem-service on the box, which
+# poisoned the full test suite whenever any install fixture fired this script.
 for name in capsem-service capsem-tray capsem-gateway capsem-process; do
-    pkill -9 -x "$name" 2>/dev/null || true
+    pkill -9 -f "$INSTALL_DIR/$name" 2>/dev/null || true
 done
 
 mkdir -p "$INSTALL_DIR" "$RUN_DIR"

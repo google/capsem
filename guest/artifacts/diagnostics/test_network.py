@@ -287,8 +287,14 @@ def test_ca_env_var_set(var):
 
 
 def test_denied_domain_rejected():
-    """HTTPS to a denied domain must be rejected (403 or connection refused)."""
-    result = run("curl -skI --connect-timeout 5 https://api.openai.com 2>&1", timeout=15)
+    """HTTPS to an unconditionally denied domain must be rejected.
+
+    ``api.openai.com`` is allowlist-gated by ``CAPSEM_OPENAI_ALLOWED`` and will
+    return 401 (real upstream auth failure) when enabled -- see
+    ``test_ai_provider_domain_blocked`` for that matrix. This test uses a
+    domain that no policy path ever allows, so the proxy must reject it.
+    """
+    result = run("curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15)
     assert result.returncode != 0 or "403" in result.stdout, \
         f"curl to denied domain should fail or return 403: {result.stdout}"
 

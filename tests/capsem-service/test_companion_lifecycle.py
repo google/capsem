@@ -56,6 +56,10 @@ def _sign():
 def _spawn(binary: Path, *args: str, env_extra: dict | None = None) -> subprocess.Popen:
     env = os.environ.copy()
     env.setdefault("RUST_LOG", "info")
+    # Run trays without a menu-bar icon. Companion-lifecycle tests exercise
+    # parent-watch and the singleton lock -- they don't need UI, and without
+    # this every test run flashes the user's menu bar.
+    env.setdefault("CAPSEM_TRAY_HEADLESS", "1")
     if env_extra:
         env.update(env_extra)
     return subprocess.Popen(
@@ -94,6 +98,7 @@ def _spawn_under_parent(
     )
     env = os.environ.copy()
     env.setdefault("RUST_LOG", "info")
+    env.setdefault("CAPSEM_TRAY_HEADLESS", "1")
     if env_extra:
         env.update(env_extra)
     return subprocess.Popen(
@@ -787,6 +792,7 @@ def _spawn_service_on_fixed_port(
     env = os.environ.copy()
     env["RUST_LOG"] = "info"
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
+    env["CAPSEM_TRAY_HEADLESS"] = "1"
     proc = subprocess.Popen(
         [
             str(SERVICE_BINARY),

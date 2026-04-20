@@ -63,7 +63,14 @@ def get_build_hash() -> str:
 
 
 def _kill_service() -> None:
-    """Kill any running capsem-service and companion processes."""
+    """Kill any running capsem-service and companion processes from the
+    installed layout at ``~/.capsem/bin/``.
+
+    Scoped to the installed prefix so it never reaches into parallel test
+    workers running ``target/debug/capsem-service``. A broad ``pkill -f
+    capsem-service`` would race with every other pytest worker on the box,
+    which was the original cascade that poisoned the full suite.
+    """
     pidfile = RUN_DIR / "service.pid"
     if pidfile.exists():
         try:
@@ -73,10 +80,13 @@ def _kill_service() -> None:
             pass
         pidfile.unlink(missing_ok=True)
 
-    # Also kill by name as fallback (service + companions)
+    # Fallback: only kill processes whose executable path lives under the
+    # installed prefix. We build the pattern from INSTALL_DIR so HOME expansion
+    # is consistent and we never match target/debug binaries.
+    install_prefix = str(INSTALL_DIR) + "/"
     for proc_name in ["capsem-service", "capsem-gateway", "capsem-tray", "capsem-process"]:
         subprocess.run(
-            ["pkill", "-f", proc_name],
+            ["pkill", "-f", f"{install_prefix}{proc_name}"],
             capture_output=True,
         )
 

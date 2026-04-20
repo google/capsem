@@ -52,18 +52,17 @@ def test_rapid_file_io():
 
         # Write 10 files
         for i in range(10):
-            resp = client.post(f"/write-file/{name}", {
+            resp = client.post(f"/write_file/{name}", {
                 "path": f"/root/file-{i}.txt",
-                "data": list(f"content-{i}".encode()),
+                "content": f"content-{i}",
             })
             assert resp is not None, f"Write {i} failed"
 
         # Read them all back
         for i in range(10):
-            resp = client.post(f"/read-file/{name}", {"path": f"/root/file-{i}.txt"})
+            resp = client.post(f"/read_file/{name}", {"path": f"/root/file-{i}.txt"})
             assert resp is not None, f"Read {i} failed"
-            data_bytes = bytes(resp.get("data", []))
-            assert f"content-{i}".encode() in data_bytes, f"File {i} content mismatch"
+            assert f"content-{i}" in resp.get("content", ""), f"File {i} content mismatch"
 
     finally:
         try:

@@ -94,18 +94,34 @@ struct SnapshotPaginationParams {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct SnapshotHistoryParams {
+    /// File path to show history for (relative to workspace root or absolute).
+    path: String,
+    /// Character offset to start from (default: 0).
+    #[serde(default)]
+    start_index: Option<u64>,
+    /// Maximum characters to return (default: 5000).
+    #[serde(default)]
+    max_length: Option<u64>,
+    /// Output format: 'text' (default) or 'json'.
+    #[serde(default)]
+    format: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct SnapshotNameParams {
     /// Name for the snapshot.
     name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct SnapshotCheckpointParams {
-    /// Checkpoint ID (e.g. "cp-3").
-    checkpoint: String,
-    /// File path to revert (relative to workspace root).
+struct SnapshotRevertParams {
+    /// File path to revert (relative to workspace root or absolute).
+    path: String,
+    /// Checkpoint ID (e.g. "cp-3"). Optional -- auto-picks the newest
+    /// snapshot that contains the file when absent.
     #[serde(default)]
-    path: Option<String>,
+    checkpoint: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -118,6 +134,9 @@ struct SnapshotDeleteParams {
 struct SnapshotCompactParams {
     /// List of checkpoint IDs to compact.
     checkpoints: Vec<String>,
+    /// Name for the resulting merged snapshot (optional; auto-generated if missing).
+    #[serde(default)]
+    name: Option<String>,
 }
 
 // -- Handler --
@@ -148,7 +167,8 @@ impl BuiltinHandler {
 
     #[tool(
         name = "fetch_http",
-        description = "Fetch a URL and return its content. In 'markdown' mode (default), HTML is converted to markdown. In 'content' mode, plain text. In 'raw' mode, unchanged. Use start_index/max_length for pagination."
+        description = "Fetch a URL and return its content. In 'markdown' mode (default), HTML is converted to markdown. In 'content' mode, plain text. In 'raw' mode, unchanged. Use start_index/max_length for pagination.",
+        annotations(title = "Fetch URL", read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
     async fn fetch_http(
         &self,
@@ -159,7 +179,8 @@ impl BuiltinHandler {
 
     #[tool(
         name = "grep_http",
-        description = "Fetch a URL and search its content for a regex pattern. Returns matching lines with context. Use start_index/max_length for pagination."
+        description = "Fetch a URL and search its content for a regex pattern. Returns matching lines with context. Use start_index/max_length for pagination.",
+        annotations(title = "Grep URL", read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
     async fn grep_http(
         &self,
@@ -170,7 +191,8 @@ impl BuiltinHandler {
 
     #[tool(
         name = "http_headers",
-        description = "Return HTTP status code and response headers for a URL. Optionally specify the HTTP method (default: GET)."
+        description = "Return HTTP status code and response headers for a URL. Optionally specify the HTTP method (default: GET).",
+        annotations(title = "HTTP headers", read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
     async fn http_headers(
         &self,
@@ -215,7 +237,7 @@ impl BuiltinHandler {
     )]
     async fn snapshots_revert(
         &self,
-        Parameters(params): Parameters<SnapshotCheckpointParams>,
+        Parameters(params): Parameters<SnapshotRevertParams>,
     ) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
@@ -257,7 +279,7 @@ impl BuiltinHandler {
     )]
     async fn snapshots_history(
         &self,
-        Parameters(params): Parameters<SnapshotPaginationParams>,
+        Parameters(params): Parameters<SnapshotHistoryParams>,
     ) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
@@ -318,15 +340,25 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
         return Err(err.message);
     }
     let result = resp.result.unwrap_or(serde_json::Value::Null);
-    if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
-        Ok(content
+    let text = if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+        content
             .iter()
             .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
             .collect::<Vec<_>>()
-            .join("\n"))
+            .join("\n")
     } else {
-        Ok(serde_json::to_string_pretty(&result).unwrap_or_default())
-    }
+        serde_json::to_string_pretty(&result).unwrap_or_default()
+    };
+    // The underlying ``call_builtin_tool`` signals a logical tool failure via
+    // ``isError: true`` on the result (blocked domain, invalid URL, policy
+    // refusal). rmcp's ``Result<String, String>`` maps ``Err`` to the wire-
+    // level ``isError: true`` response, so we propagate that here -- without
+    // this, the client saw a successful result containing error text.
+    let is_error = result
+        .get("isError")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if is_error { Err(text) } else { Ok(text) }
 }
 
 // -- Main --

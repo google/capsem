@@ -57,10 +57,18 @@ class GatewayInstance:
         print(f"GATEWAY LOG: {log_path}")
         self._log_file = open(log_path, "w")
 
+        # capsem-gateway refuses to run without a live parent service (see
+        # capsem-guard). Standalone test invocations pass the pytest worker PID
+        # as the parent so the guard's parent-watch is satisfied; when pytest
+        # exits, the gateway exits with it. --run-dir is passed explicitly so
+        # the token/port/pid/lock files land in the test tmp dir, isolating
+        # parallel workers from each other's singleton lock.
         cmd = [
             str(GATEWAY_BINARY),
             "--port", str(self._port),
             "--uds-path", self.uds_path,
+            "--run-dir", str(run_dir),
+            "--parent-pid", str(os.getpid()),
         ]
         if self.frontend_dir:
             cmd += ["--frontend-dir", self.frontend_dir]

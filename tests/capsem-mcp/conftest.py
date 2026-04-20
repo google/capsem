@@ -145,6 +145,7 @@ def capsem_service():
     stderr_path = tmp_dir / "service.stderr.log"
     stderr_file = open(stderr_path, "w")
 
+    # Skip --tray-binary: macOS menu bar icon; flashes on every test.
     proc = subprocess.Popen(
         [
             str(SERVICE_BINARY),
@@ -153,7 +154,6 @@ def capsem_service():
             "--process-binary", str(PROCESS_BINARY),
             "--gateway-binary", str(GATEWAY_BINARY),
             "--gateway-port", "0",
-            "--tray-binary", str(TRAY_BINARY),
             "--foreground",
         ],
         env=env,

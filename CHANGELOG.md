@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`just test` no longer self-destructs across parallel workers from a
+  broad `pkill`.** Four sites fired `pkill -9 -x capsem-service` (or
+  `-f capsem-service`) which matched every `capsem-service` on the box,
+  including every other pytest-xdist worker's test service. A single
+  install-tests fixture running `simulate-install.sh` took the whole suite
+  down -- reproducibly -- pushing ~148 tests into "service refused
+  connection" / "VM never exec-ready" cascades. Each site now scopes the
+  match to its own install prefix:
+  - `scripts/simulate-install.sh` matches `$INSTALL_DIR/<name>`.
+  - `tests/capsem-install/conftest.py::_kill_service` matches
+    `$INSTALL_DIR/<name>`.
+  - `tests/capsem-install/test_service_install.py` matches
+    `$INSTALL_DIR/capsem-service`.
+  - `crates/capsem/src/uninstall.rs` and
+    `crates/capsem/src/service_install.rs` use `current_exe().parent()` to
+    scope `pkill` to the binary's own install directory -- semantically
+    also correct in production: `capsem uninstall` from `~/.capsem/bin`
+    only affects processes launched from `~/.capsem/bin`, leaving dev
+    services under `target/debug/` alone.
+- **Gateway tests now pass their parent PID.** `tests/helpers/gateway.py`
+  spawned `capsem-gateway` without `--parent-pid`, so `capsem-guard`
+  returned `Err(NoParent)` and the gateway exited 0 immediately. Every
+  gateway fixture then failed its 10s readiness wait and every gateway
+  test (60+ errors, ~10 failures) cascade-failed at setup. Helper now
+  passes `--parent-pid=os.getpid()` and `--run-dir` so the per-test
+  singleton lock lands in the test tmp dir.
+- **Built-in MCP snapshot tools: `snapshots_history` dropped its `path`
+  argument and `snapshots_compact` dropped its `name` argument** because
+  `SnapshotPaginationParams` / `SnapshotCompactParams` in
+  `crates/capsem-mcp-builtin/src/main.rs` didn't declare those fields.
+  rmcp's typed-parameter deserialiser silently discarded the unknown
+  keys, so every `snapshots_history` call returned
+  `-32602 missing 'path' argument`. Added a dedicated
+  `SnapshotHistoryParams` struct and extended `SnapshotCompactParams`.
+  Also renamed `SnapshotCheckpointParams` → `SnapshotRevertParams` with
+  `path: String` required and `checkpoint: Option<String>` optional
+  (matches `handle_revert_file`'s auto-pick-newest behaviour).
+- **Built-in MCP tool failures are now `isError: true` on the result
+  instead of a success-shaped result containing error text.**
+  `extract_text` in `capsem-mcp-builtin` returned
+  `Ok(text)` for every tool response, including the ones where
+  `call_builtin_tool` had set `isError: true`. rmcp maps `Err(String)`
+  to the wire-level `isError` result, so blocked-domain and
+  invalid-URL rejections from `fetch_http` / `grep_http` / `http_headers`
+  went through as regular successes. Now propagated correctly.
+- **Three built-in HTTP tools carry MCP annotations.** Added
+  `annotations(title, read_only_hint, destructive_hint, idempotent_hint,
+  open_world_hint)` to `fetch_http`, `grep_http`, `http_headers` so their
+  `tools/list` output matches the file-tool annotations the MCP spec
+  expects clients to surface.
+- **Guest `snapshots` CLI calls now use namespaced tool names.** The
+  in-VM `snapshots` helper in `guest/artifacts/snapshots` called
+  `snapshots_create`/`_list`/`_revert`/`_delete`/`_history`/`_compact`
+  against the host MCP gateway, which namespaces aggregator tools as
+  `{server}__{tool}` -- so every bare call returned
+  `-32603 tool call failed` and every `snapshots …` command inside the
+  VM died with the capsem-mcp-server stderr bleeding into the CLI
+  error. Prefixed each call with `local__`. See
+  `crates/capsem-core/src/mcp/types.rs::namespace_name` and the `local`
+  key in `config/defaults.json`.
+- **Tray no longer flashes the menu bar during tests.** Added
+  `CAPSEM_TRAY_HEADLESS` env var to `capsem-tray` -- when set, the
+  binary still arms parent-watch and acquires the singleton flock but
+  skips `NSStatusItem` / `TrayIconBuilder` creation and idles. The
+  integration test helpers (`tests/helpers/service.py`,
+  `tests/capsem-mcp/conftest.py`) no longer pass `--tray-binary` at all;
+  the tray-focused `tests/capsem-service/test_companion_lifecycle.py`
+  keeps spawning the tray but in headless mode. Full-suite runs now
+  create zero menu-bar icons.
+- **In-VM diagnostic test suite realigned to current product behaviour.**
+  `guest/artifacts/diagnostics/test_mcp.py` and `test_network.py` had a
+  cluster of stale assertions: tool names without the `local__`
+  namespace prefix that the gateway applies, the four
+  `pytest.raises(AssertionError)` blocks that were only catching the
+  "tool not found" protocol error (now that the tools are found and
+  exercise real error paths), `mcpServers["capsem"]` instead of the
+  canonical `["local"]` key from `config/defaults.json`, `fetch_http` /
+  `grep_http` / `http_headers` expecting `{"isError": true}` where the
+  host code was returning a success result containing error text,
+  `list_changed_files` expected in `tools/list` (renamed to
+  `snapshots_changes`), and `test_denied_domain_rejected` using
+  `api.openai.com` which is policy-gated by `CAPSEM_OPENAI_ALLOWED`
+  (returns 401 when enabled, not the 403 the test wanted).
+  Introduced `ns()` / `_init_and_call` auto-prefix + `_assert_tool_error`
+  helpers; `_init_and_call` now collapses JSON-RPC errors into
+  `isError: true` tool results so callers see a single shape regardless
+  of where the failure originated.
+- **`tests/capsem-stress/test_rapid_exec.py::test_rapid_file_io` hit a
+  404 on every iteration.** The test POSTed to `/write-file/{id}` and
+  `/read-file/{id}` (dashes) but the service routes are `/write_file/`
+  and `/read_file/` (underscores); it also sent `data: list[int]` bytes
+  where the endpoint expects `content: str`. Fixed.
+
 ### Added
 - **`capsem-guard` crate** -- new tiny library (`crates/capsem-guard/`) with
   parent-watch + singleton flock primitives. Used by `capsem-gateway` and

@@ -85,8 +85,13 @@ class TestServiceInstall:
         install = run_capsem("service", "install", timeout=15)
         assert install.returncode == 0, f"install failed: {install.stderr}"
 
-        # Kill any running service
-        subprocess.run(["pkill", "-f", "capsem-service"], capture_output=True)
+        # Kill the installed service only -- matching the binary path keeps
+        # this from stomping on parallel test workers running target/debug
+        # binaries.
+        subprocess.run(
+            ["pkill", "-f", f"{INSTALL_DIR}/capsem-service"],
+            capture_output=True,
+        )
         sock = RUN_DIR / "service.sock"
         sock.unlink(missing_ok=True)
 

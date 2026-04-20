@@ -321,16 +321,30 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     //    manual launches). Must cover every binary the service may have spawned
     //    so the (re)install starts from a clean slate -- otherwise orphan
     //    capsem-process instances hold Apple VZ memory across reinstalls.
-    for name in ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"] {
+    //
+    // Scope by the installed prefix so we only kill processes from this
+    // installation -- `-x <name>` matches every capsem-service on the box,
+    // including parallel pytest workers running target/debug binaries.
+    let install_dir = capsem_paths.service_bin.parent().map(|p| p.to_path_buf());
+    let scoped_name = |name: &str| -> String {
+        install_dir
+            .as_ref()
+            .map(|d| format!("{}/{name}", d.display()))
+            .unwrap_or_else(|| name.to_string())
+    };
+    let names = ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"];
+    for name in names {
+        let pattern = scoped_name(name);
         let _ = tokio::process::Command::new("pkill")
-            .args(["-9", "-x", name]).output().await;
+            .args(["-9", "-f", &pattern]).output().await;
     }
     // 4. Wait until all are dead (prevents stale socket EADDRINUSE on bootstrap)
     for _ in 0..30 {
         let mut any_alive = false;
-        for name in ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"] {
+        for name in names {
+            let pattern = scoped_name(name);
             let out = tokio::process::Command::new("pgrep")
-                .args(["-x", name]).output().await;
+                .args(["-f", &pattern]).output().await;
             if out.map(|o| !o.stdout.is_empty()).unwrap_or(false) {
                 any_alive = true;
                 break;
