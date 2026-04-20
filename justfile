@@ -166,10 +166,8 @@ _ensure-service: _sign
 ui: _ensure-setup _pnpm-install run-service
     #!/bin/bash
     set -euo pipefail
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     CAPSEM_ASSETS_DIR={{assets_dir}} cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
@@ -214,10 +212,8 @@ run-ui *ARGS: build-ui
 shell: _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     {{cli_binary}} shell
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
@@ -228,10 +224,8 @@ run-service: _check-assets _pack-initrd _ensure-service
 exec +CMD: run-service
     #!/bin/bash
     set -euo pipefail
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     {{cli_binary}} run "{{CMD}}"
 
 
@@ -285,11 +279,14 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
+    # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
+    # below. Acquired BEFORE the wipe: if a second `just test` were to run
+    # past this line, the first's fd would be pinned to an unlinked inode
+    # and the second would flock a brand-new inode unchallenged.
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "{{justfile_directory()}}/target/capsem-test-execution.lock"
     rm -rf "$CAPSEM_HOME"
     mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
-    LOCK_FILE="$CAPSEM_RUN_DIR/execution.lock"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the test execution lock ($LOCK_FILE); try again later"; exit 1; }
 
     # ---- Stage 1: parallel fast-fail (audits + lint + frontend) -------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
@@ -525,6 +522,12 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     # (not as a just dep) so it inherits the exported env vars.
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
+    # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
+    # below. Acquired BEFORE the wipe: if a second `just smoke` were to run
+    # past this line, the first's fd would be pinned to an unlinked inode
+    # and the second would flock a brand-new inode unchallenged.
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "{{justfile_directory()}}/target/capsem-test-execution.lock"
     # Wipe stale state so assertions that read <capsem_home>/logs or
     # <capsem_home>/sessions don't trip on artifacts from a previous run
     # (e.g. a 0-entry capsem-app launch log left by a crashed Tauri shell).
@@ -532,9 +535,6 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     # CAPSEM_HOME isolation was introduced.
     rm -rf "$CAPSEM_HOME"
     mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
-    LOCK_FILE="$CAPSEM_RUN_DIR/execution.lock"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the test execution lock ($LOCK_FILE); try again later"; exit 1; }
     just _ensure-service
     SMOKE_LOG="{{justfile_directory()}}/target/smoke.log"
     mkdir -p "$(dirname "$SMOKE_LOG")"
@@ -613,10 +613,8 @@ test-gateway:
 test-gateway-e2e: _check-assets _pack-initrd _sign
     #!/bin/bash
     set -euo pipefail
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     cargo build -p capsem-gateway {{host_crates}}
     echo "=== Gateway: E2E tests (real service + VMs) ==="
     uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway and e2e"
@@ -633,10 +631,8 @@ coverage:
 bench: _ensure-setup _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, snapshots) ==="
     {{cli_binary}} run "capsem-bench"
     echo ""
@@ -655,10 +651,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     # install would permanently embed a path that gets wiped on the next
     # test run. `capsem install` also refuses these vars defensively.
     unset CAPSEM_HOME CAPSEM_RUN_DIR CAPSEM_ASSETS_DIR
-    LOCK_FILE="$HOME/.capsem/run/execution.lock"
-    mkdir -p "$(dirname "$LOCK_FILE")"
-    exec 3>"$LOCK_FILE"
-    flock -n 3 || { echo "another agent holds the capsem execution lock ($LOCK_FILE); try again later"; exit 1; }
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="

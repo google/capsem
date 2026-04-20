@@ -77,6 +77,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+- **`just test` and `just smoke` execution lock actually blocks
+  concurrent runs now.** The lockfile lived at
+  `$CAPSEM_RUN_DIR/execution.lock` under `$CAPSEM_HOME`, but the recipe
+  ran `rm -rf "$CAPSEM_HOME"` *before* the `flock`. A second invocation
+  therefore nuked the first's lockfile and created a new one; `flock -n
+  3` on the new inode succeeded unchallenged (the first invocation's
+  fd was pinned to the unlinked inode), so two `just test` or `just
+  smoke` runs could race through the same `$CAPSEM_HOME`/shared-service
+  path and trample each other's VMs. Moved the lockfile to
+  `target/capsem-test-execution.lock` (outside `$CAPSEM_HOME`, survives
+  the wipe) and acquired it *before* `rm -rf`. Extracted the
+  mkdir/exec/flock dance into a single shell helper
+  (`scripts/lib/exec_lock.sh::acquire_exec_lock`) and replaced all 8
+  inline copies in the justfile (`dev`, `shell`, `run`, `test`,
+  `smoke`, `build-gateway`, `bench`, `release`) with two-line
+  `source + acquire_exec_lock <path>` calls. Added
+  `tests/test_exec_lock.py` (3 tests: concurrent blocker, reacquire
+  after release, parent-dir creation) so this regression can't sneak
+  back in.
 - **`cargo test -p capsem-guard --lib` is deterministic again.** The
   `install_happy_path_returns_guards_and_creates_lock` test did
   `install -> drop -> install` in-process, which reliably failed under
