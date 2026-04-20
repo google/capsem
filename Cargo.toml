@@ -20,7 +20,7 @@ members = [
 [workspace.package]
 version = "1.0.1776445634"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.91"
 license = "Apache-2.0"
 description = "Sandbox AI coding agents in hardware-isolated Linux VMs with full network control, HTTPS inspection, and MCP tool routing."
 homepage = "https://capsem.org"

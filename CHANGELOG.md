@@ -7,7 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Workspace MSRV bumped from Rust 1.82 to 1.91.** `capsem-core`'s
+  `mcp::builtin_tools` relies on `str::floor_char_boundary`, stable in
+  1.91, which clippy's `incompatible_msrv` lint correctly flagged.
+  Raising the floor clears the lint (no downgrade path), matches the
+  toolchain the tree is actually built with, and unblocks
+  `cargo clippy -- -D warnings` across the workspace.
+
 ### Fixed
+- **`provision_sandbox` no longer holds the `instances` mutex across
+  blocking filesystem work, and no longer probes for stale records on
+  every successful provision.** `cleanup_stale_instances` previously
+  held the std::sync::Mutex from the `kill(pid, 0)` probe loop all the
+  way through the `remove_dir_all` + `remove_file` sweep for every
+  evicted ephemeral session -- hundreds of ms of blocking I/O under
+  which every other `instances.lock()` caller (~30 sites: list /
+  status / stop / delete / suspend / resume / fork / exec handlers)
+  stalled. Split into a two-phase contract: `drain_dead_instances`
+  probes and evicts under the lock (microseconds), and the caller
+  scrubs each evicted entry's filesystem artifacts via the free
+  `scrub_evicted_instance` with the lock released. Additionally gated
+  the probe itself: `provision_sandbox` now only runs it when
+  `instances.contains_key(id)` or the map is already at
+  `max_concurrent_vms` -- the two conditions under which stale
+  reclamation could unblock the caller. Three regression tests pin
+  the drain contract (dead-only eviction, no-op when all alive, mutex
+  released on return). Follow-up to commit 34d0e3f.
+- **`POST /run` no longer blocks the tokio reactor on provision.**
+  `handle_run` at `crates/capsem-service/src/main.rs:2484` was calling
+  `state.provision_sandbox(...)` directly from the axum async handler,
+  missed by commit 34d0e3f's spawn_blocking sweep that covered
+  `handle_provision` and `handle_fork`. Same blocking I/O
+  (APFS clonefile, `rootfs.img` fsync, walkdir, subprocess spawn),
+  same fix -- wrap in `tokio::task::spawn_blocking` with the runtime-
+  handle thread-local preserved for the inner
+  `tokio::process::Command::spawn`.
+- **Cleared 18 pre-existing clippy errors surfaced by running
+  `-D warnings` across the provision path's dependency graph:** 3 in
+  `capsem-service/main.rs` (two `u64 as u64` casts in
+  `attach_summary_telemetry`, one `iter_kv_map` in the MCP refresh
+  broadcast), 6 in `capsem-core/asset_manager.rs` (five `iter_kv_map`,
+  one `collapsible_if` in the asset-version resolver), 1 in
+  `capsem-core/setup_state.rs` (field reassignment after
+  `Default::default()` in a unit test), 1 `incompatible_msrv`
+  (addressed via the MSRV bump above), 4 redundant closures + 3
+  redundant `+ 0` operands in `capsem-logger/reader.rs` test fixtures.
+  None were behavioral; the redundant-closure fixes convert
+  `|row| read_*_row(row)` to `read_*_row`.
 - **`just test` no longer self-destructs across parallel workers from a
   broad `pkill`.** Four sites fired `pkill -9 -x capsem-service` (or
   `-f capsem-service`) which matched every `capsem-service` on the box,

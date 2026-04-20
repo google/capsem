@@ -161,7 +161,7 @@ impl ManifestV2 {
         validate_version(&manifest.binaries.current)?;
         for (version, release) in &manifest.assets.releases {
             validate_version(version)?;
-            for (_arch, assets) in &release.arches {
+            for assets in release.arches.values() {
                 if assets.is_empty() {
                     bail!("asset release {version} has empty arch entry");
                 }
@@ -171,7 +171,7 @@ impl ManifestV2 {
                 }
             }
         }
-        for (version, _release) in &manifest.binaries.releases {
+        for version in manifest.binaries.releases.keys() {
             validate_version(version)?;
         }
         Ok(manifest)
@@ -195,11 +195,11 @@ impl ManifestV2 {
             } else {
                 // Current assets are too old for this binary -- find newest compatible
                 let mut best: Option<&str> = None;
-                for (v, _rel) in &self.assets.releases {
-                    if v.as_str() >= min.as_str() {
-                        if best.is_none() || v.as_str() > best.unwrap() {
-                            best = Some(v.as_str());
-                        }
+                for v in self.assets.releases.keys() {
+                    if v.as_str() >= min.as_str()
+                        && (best.is_none() || v.as_str() > best.unwrap())
+                    {
+                        best = Some(v.as_str());
                     }
                 }
                 best.map(String::from).unwrap_or_else(|| self.assets.current.clone())
@@ -306,11 +306,11 @@ pub fn cleanup_unused_assets(
 ) -> Result<Vec<PathBuf>> {
     let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for (_version, release) in &manifest.assets.releases {
+    for release in manifest.assets.releases.values() {
         if release.deprecated {
             continue;
         }
-        for (_arch, assets) in &release.arches {
+        for assets in release.arches.values() {
             for (name, entry) in assets {
                 referenced.insert(hash_filename(name, &entry.hash));
             }

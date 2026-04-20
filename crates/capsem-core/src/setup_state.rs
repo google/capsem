@@ -107,8 +107,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("setup-state.json");
 
-        let mut state = SetupState::default();
-        state.schema_version = 2;
+        let mut state = SetupState {
+            schema_version: 2,
+            ..SetupState::default()
+        };
         state.mark_done("welcome");
         state.mark_done("providers");
         state.security_preset = Some("medium".to_string());

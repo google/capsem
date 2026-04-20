@@ -1235,7 +1235,7 @@ impl DbReader {
                      FROM exec_events WHERE command LIKE ?1
                      ORDER BY timestamp DESC"
                 )?;
-                let rows = stmt.query_map(params![pattern], |row| read_exec_history_row(row))?;
+                let rows = stmt.query_map(params![pattern], read_exec_history_row)?;
                 for r in rows { entries.push(r?); }
             } else {
                 let mut stmt = self.conn.prepare(
@@ -1244,7 +1244,7 @@ impl DbReader {
                             process_name, mcp_call_id
                      FROM exec_events ORDER BY timestamp DESC"
                 )?;
-                let rows = stmt.query_map([], |row| read_exec_history_row(row))?;
+                let rows = stmt.query_map([], read_exec_history_row)?;
                 for r in rows { entries.push(r?); }
             }
         }
@@ -1258,7 +1258,7 @@ impl DbReader {
                      FROM audit_events WHERE argv LIKE ?1 OR exe LIKE ?1
                      ORDER BY timestamp DESC"
                 )?;
-                let rows = stmt.query_map(params![pattern], |row| read_audit_history_row(row))?;
+                let rows = stmt.query_map(params![pattern], read_audit_history_row)?;
                 for r in rows { entries.push(r?); }
             } else {
                 let mut stmt = self.conn.prepare(
@@ -1266,7 +1266,7 @@ impl DbReader {
                             tty, session_id, audit_id, parent_exe, exit_code
                      FROM audit_events ORDER BY timestamp DESC"
                 )?;
-                let rows = stmt.query_map([], |row| read_audit_history_row(row))?;
+                let rows = stmt.query_map([], read_audit_history_row)?;
                 for r in rows { entries.push(r?); }
             }
         }
@@ -1751,8 +1751,8 @@ mod tests {
         assert_eq!(s.net_allowed, 3);
         assert_eq!(s.net_denied, 1);
         assert_eq!(s.net_error, 1);
-        assert_eq!(s.net_bytes_sent, 100 + 500 + 50 + 0 + 10);
-        assert_eq!(s.net_bytes_received, 200 + 900 + 100 + 0 + 0);
+        assert_eq!(s.net_bytes_sent, 100 + 500 + 50 + 10);
+        assert_eq!(s.net_bytes_received, 200 + 900 + 100);
         assert_eq!(s.model_call_count, 3);
         assert_eq!(s.total_input_tokens, 100 + 50 + 30);
         assert_eq!(s.total_output_tokens, 200 + 75 + 60);

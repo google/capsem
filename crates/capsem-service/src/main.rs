@@ -214,6 +214,28 @@ pub struct ProvisionOptions<'a> {
     pub description: Option<String>,
 }
 
+/// Clean up filesystem artifacts for an instance whose record has already
+/// been removed from the instances map. Called OUTSIDE the instances mutex
+/// so `remove_dir_all` on a large session dir cannot stall concurrent
+/// instance-map handlers.
+fn scrub_evicted_instance(id: &str, info: &InstanceInfo) {
+    if info.persistent {
+        info!(id, "persistent VM process died, preserving session dir");
+    } else {
+        info!(id, "ephemeral VM process died, removing session files");
+        if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
+            warn!(
+                id,
+                path = %info.session_dir.display(),
+                error = %e,
+                "failed to remove ephemeral session dir -- orphaned on disk"
+            );
+        }
+    }
+    let _ = std::fs::remove_file(&info.uds_path);
+    let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
+}
+
 impl ServiceState {
     /// Build the Unix socket path for a VM instance.
     ///
@@ -244,32 +266,31 @@ impl ServiceState {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn cleanup_stale_instances(&self) {
+    /// Probe instance PIDs and evict entries whose process is gone.
+    ///
+    /// Two-phase so the instances mutex is held only for the PID probe +
+    /// map removal. The returned entries still have session dirs / UDS
+    /// sockets on disk -- the caller is responsible for scrubbing those
+    /// OUTSIDE the lock, otherwise a concurrent `instances.lock()` caller
+    /// would wait for `remove_dir_all` to finish.
+    #[must_use = "evicted entries still have filesystem artifacts; pass each to scrub_evicted_instance"]
+    fn drain_dead_instances(&self) -> Vec<(String, InstanceInfo)> {
         let mut instances = self.instances.lock().unwrap();
-        let mut dead_ids = Vec::new();
-        for (id, info) in instances.iter() {
-            let res = unsafe { nix::libc::kill(info.pid as i32, 0) };
-            if res != 0 {
-                dead_ids.push(id.clone());
-            }
-        }
-        for id in dead_ids {
+        let dead_ids: Vec<String> = instances
+            .iter()
+            .filter(|(_, info)| unsafe { nix::libc::kill(info.pid as i32, 0) } != 0)
+            .map(|(id, _)| id.clone())
+            .collect();
+        dead_ids
+            .into_iter()
+            .filter_map(|id| instances.remove(&id).map(|info| (id, info)))
+            .collect()
+    }
+
+    fn cleanup_stale_instances(&self) {
+        for (id, info) in self.drain_dead_instances() {
             info!(id, "removing stale instance record");
-            if let Some(info) = instances.remove(&id) {
-                if info.persistent {
-                    // Persistent VMs: preserve session dir, just clean up socket
-                    info!(id, "persistent VM process died, preserving session dir");
-                } else {
-                    // Ephemeral VMs: clean up everything
-                    info!(id, "ephemeral VM process died, removing session files");
-                    if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
-                        warn!(id, path = %info.session_dir.display(), error = %e,
-                              "failed to remove ephemeral session dir -- orphaned on disk");
-                    }
-                }
-                let _ = std::fs::remove_file(&info.uds_path);
-                let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
-            }
+            scrub_evicted_instance(&id, &info);
         }
     }
 
@@ -278,7 +299,6 @@ impl ServiceState {
         options: ProvisionOptions,
     ) -> Result<()> {
         let ProvisionOptions { id, ram_mb, cpus, version_override, persistent, env, from, description } = options;
-        self.cleanup_stale_instances();
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
@@ -297,6 +317,19 @@ impl ServiceState {
             if registry.contains(id) {
                 return Err(anyhow!("persistent VM \"{}\" already exists. Use `capsem resume {}` to reconnect.", id, id));
             }
+        }
+
+        // Stale-record reclamation only runs when we'd otherwise reject the
+        // provision. The probe acquires the instances mutex that many other
+        // handlers contend for, and with the lock-released-before-fs-io
+        // contract of `cleanup_stale_instances` the cost is minimal, but
+        // this still skips an avoidable acquisition on the common path.
+        let cleanup_needed = {
+            let instances = self.instances.lock().unwrap();
+            instances.contains_key(id) || instances.len() >= max_concurrent_vms
+        };
+        if cleanup_needed {
+            self.cleanup_stale_instances();
         }
 
         {
@@ -1214,10 +1247,10 @@ fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
             info.model_call_count = Some(stats.model_call_count);
         }
         if let Ok(fc) = reader.file_event_count() {
-            info.total_file_events = Some(fc as u64);
+            info.total_file_events = Some(fc);
         }
         if let Ok(mcp) = reader.mcp_call_stats() {
-            info.total_mcp_calls = Some(mcp.total as u64);
+            info.total_mcp_calls = Some(mcp.total);
         }
     }
 }
@@ -1846,7 +1879,7 @@ async fn handle_mcp_refresh(
     // Send McpRefreshTools to all running instances.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
-        instances.iter().map(|(_, info)| info.uds_path.clone()).collect::<Vec<_>>()
+        instances.values().map(|info| info.uds_path.clone()).collect::<Vec<_>>()
     };
     for uds_path in &uds_paths {
         let id = state.next_job_id();
@@ -2465,17 +2498,30 @@ async fn handle_run(
     let ram_bytes = ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
 
-    // 1. Provision ephemeral VM
-    state.provision_sandbox(ProvisionOptions {
-        id: &id,
-        ram_mb,
-        cpus,
-        version_override: Some(state.current_version.clone()),
-        persistent: false,
-        env: payload.env,
-        from: None,
-        description: None,
+    // 1. Provision ephemeral VM. `provision_sandbox` is synchronous and
+    // does heavy I/O (APFS clonefile, rootfs.img fsync, child spawn);
+    // offload to the blocking pool, matching `handle_provision` -- the
+    // tokio::process::Command::spawn inside still works because
+    // spawn_blocking preserves the runtime handle via thread-locals.
+    let state_clone = Arc::clone(&state);
+    let id_clone = id.clone();
+    let version = state.current_version.clone();
+    let env = payload.env.clone();
+    let provision_result = tokio::task::spawn_blocking(move || {
+        state_clone.provision_sandbox(ProvisionOptions {
+            id: &id_clone,
+            ram_mb,
+            cpus,
+            version_override: Some(version),
+            persistent: false,
+            env,
+            from: None,
+            description: None,
+        })
     })
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
+    provision_result
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
 
     // 2. Register session in main.db
@@ -3233,6 +3279,57 @@ mod tests {
         let instances = state.instances.lock().unwrap();
         assert_eq!(instances.len(), 1);
         assert!(instances.contains_key("live"));
+    }
+
+    // -----------------------------------------------------------------------
+    // drain_dead_instances: probe-and-evict contract, filesystem work is the
+    // caller's responsibility. Exists so `cleanup_stale_instances` can release
+    // the instances mutex BEFORE performing remove_dir_all -- otherwise every
+    // handler that touches instances.lock() blocks on slow fs I/O.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn drain_dead_instances_returns_only_dead_entries() {
+        let state = make_test_state();
+        insert_fake_instance(&state, "live", std::process::id());
+        insert_fake_instance(&state, "dead", 99999999);
+
+        let evicted = state.drain_dead_instances();
+
+        assert_eq!(evicted.len(), 1);
+        assert_eq!(evicted[0].0, "dead");
+        let map = state.instances.lock().unwrap();
+        assert!(map.contains_key("live"));
+        assert!(!map.contains_key("dead"));
+    }
+
+    #[test]
+    fn drain_dead_instances_empty_when_all_alive() {
+        let state = make_test_state();
+        insert_fake_instance(&state, "live-1", std::process::id());
+        insert_fake_instance(&state, "live-2", std::process::id());
+
+        let evicted = state.drain_dead_instances();
+
+        assert!(evicted.is_empty());
+        assert_eq!(state.instances.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn drain_dead_instances_releases_mutex_before_returning() {
+        // Regression guard: the whole point of splitting drain from the
+        // filesystem scrub is that the mutex must be FREE by the time
+        // drain returns. If this test ever fails, the locking protocol
+        // has regressed and concurrent handlers will block on cleanup I/O.
+        let state = make_test_state();
+        insert_fake_instance(&state, "dead", 99999999);
+
+        let _evicted = state.drain_dead_instances();
+
+        assert!(
+            state.instances.try_lock().is_ok(),
+            "mutex still held after drain_dead_instances returned"
+        );
     }
 
     // -----------------------------------------------------------------------
