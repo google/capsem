@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   See `/dev-rust-patterns` lesson 18.
 
 ### Fixed
+- **AI traffic parsers no longer build a full JSON DOM for tool call args
+  and responses.** Three places in `crates/capsem-core/src/net/ai_traffic/`
+  parsed LLM SSE payloads into `serde_json::Value` only to stringify them
+  (Gemini `functionCall.args` in `google.rs`, Gemini `functionResponse.response`
+  in `request_parser.rs`) or not use them at all (OpenAI Responses API
+  `ResponseInfo.output`). Switched the two stringified sites to
+  `Box<serde_json::value::RawValue>` so the fragment is kept as a lazy byte
+  slice and re-emitted verbatim without an intermediate `BTreeMap`/`Vec` DOM
+  allocation; deleted the unused OpenAI `output` field entirely. Enabled the
+  workspace `serde_json` `raw_value` feature. Added two regression tests
+  (`stream_function_call_preserves_arg_bytes_verbatim`,
+  `google_function_response_preserves_bytes_verbatim`) pinning the byte-
+  verbatim preservation behavior -- RawValue keeps whitespace and key order
+  as-sent, where `Value` would re-serialize to canonical-compact form. See
+  `/dev-rust-patterns` lesson 6.
 - **Companion processes no longer leak across interrupted test runs.**
   `just test -n 4` under ctrl-C / pytest-xdist worker death / SIGKILL left
   `capsem-gateway` and `capsem-tray` reparented to PID 1 because their only

@@ -79,7 +79,7 @@ mod wire {
     #[derive(Deserialize)]
     pub struct FunctionCall {
         pub name: Option<String>,
-        pub args: Option<serde_json::Value>,
+        pub args: Option<Box<serde_json::value::RawValue>>,
     }
 
     #[derive(Deserialize)]
@@ -176,7 +176,7 @@ impl ProviderStreamParser for GoogleStreamParser {
                                 let call_id = name.clone();
                                 let arguments = fc.args
                                     .as_ref()
-                                    .map(|v| v.to_string())
+                                    .map(|v| v.get().to_string())
                                     .unwrap_or_else(|| "{}".into());
 
                                 let idx = self.block_index;
@@ -321,6 +321,31 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"ge
         assert_eq!(summary.tool_calls[0].call_id, "get_weather");
         let args: serde_json::Value = serde_json::from_str(&summary.tool_calls[0].arguments).unwrap();
         assert_eq!(args["city"], "NYC");
+    }
+
+    #[test]
+    fn stream_function_call_preserves_arg_bytes_verbatim() {
+        // args is stored as RawValue, so the emitted arguments string is the
+        // exact byte slice from the wire -- whitespace, key order, and all.
+        // A serde_json::Value would have re-serialized to canonical compact form.
+        let raw = b"\
+data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\" : \"NYC\" , \"units\":\"imperial\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}\n\
+\n";
+
+        let mut sse_parser = SseParser::new();
+        let sse_events = sse_parser.feed(raw);
+        let mut parser = GoogleStreamParser::new();
+        let mut llm_events = Vec::new();
+        for sse in &sse_events {
+            llm_events.extend(parser.parse_event(sse));
+        }
+
+        let summary = collect_summary(&llm_events);
+        assert_eq!(summary.tool_calls.len(), 1);
+        assert_eq!(
+            summary.tool_calls[0].arguments,
+            r#"{"city" : "NYC" , "units":"imperial"}"#
+        );
     }
 
     // ── Stream parser: thinking ─────────────────────────────────────

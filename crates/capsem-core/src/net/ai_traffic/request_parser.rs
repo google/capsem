@@ -345,7 +345,7 @@ mod google_wire {
     #[derive(Deserialize)]
     pub struct FunctionResponse {
         pub name: Option<String>,
-        pub response: Option<serde_json::Value>,
+        pub response: Option<Box<serde_json::value::RawValue>>,
     }
 
     #[derive(Deserialize)]
@@ -402,7 +402,7 @@ fn parse_google(body: &[u8]) -> RequestMeta {
                     let name = fr.name.clone().unwrap_or_default();
                     let content_text = fr.response
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     tool_results.push(ToolResultMeta {
                         // Gemini doesn't have call_id -- generate unique IDs
@@ -634,6 +634,21 @@ mod tests {
         assert_eq!(meta.tool_results.len(), 1);
         assert!(meta.tool_results[0].call_id.starts_with("gemini_get_weather_"));
         assert!(meta.tool_results[0].content_preview.contains("72F"));
+    }
+
+    #[test]
+    fn google_function_response_preserves_bytes_verbatim() {
+        // response is stored as RawValue, so content_preview holds the exact
+        // byte slice from the wire -- whitespace, key order, and all.
+        // A serde_json::Value would have re-serialized to canonical compact form.
+        let body = br#"{"contents":[{"parts":[{"functionResponse":{"name":"get_weather","response":{"temp" : "72F" , "humidity":  "50%"}}}],"role":"function"}]}"#;
+
+        let meta = parse_request(ProviderKind::Google, body);
+        assert_eq!(meta.tool_results.len(), 1);
+        assert_eq!(
+            meta.tool_results[0].content_preview,
+            r#"{"temp" : "72F" , "humidity":  "50%"}"#
+        );
     }
 
     // ── Adversarial ─────────────────────────────────────────────────

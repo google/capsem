@@ -102,7 +102,6 @@ mod wire {
         pub id: Option<String>,
         pub model: Option<String>,
         pub usage: Option<ResponseUsage>,
-        pub output: Option<Vec<serde_json::Value>>,
     }
 
     #[derive(Deserialize)]
