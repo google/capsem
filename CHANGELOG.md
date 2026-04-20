@@ -25,6 +25,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   See `/dev-rust-patterns` lesson 18.
 
 ### Fixed
+- **Tray action dispatch no longer stalls its tokio worker on fork/exec.**
+  `launch_ui` and `launch_ui_action` in `crates/capsem-tray/src/main.rs`
+  called `std::process::Command::spawn` synchronously from the async
+  `dispatch_action` path. Because the tray runs a `new_current_thread`
+  tokio runtime (one worker), each Connect / New Session / Save / Fork
+  click briefly froze status polling and further action dispatch during
+  the `posix_spawn`/`fork+exec` syscall. Swapping to
+  `tokio::process::Command` would not have helped -- its `spawn()` still
+  invokes the same blocking syscall. Both launches now run on a
+  dedicated `std::thread::spawn` (not `tokio::task::spawn_blocking`, whose
+  bounded worker pool is the wrong fit for the reaper's long
+  `Child::wait()`) and the child is now reaped, eliminating zombie
+  accumulation on the long-lived tray process. Deduped the two
+  near-identical launch bodies behind `find_capsem_app_binary` + a pure
+  `build_launch_invocation` helper, covered by 6 new unit tests pinning
+  deep-link construction for the direct-binary and `open -a Capsem`
+  fallback paths. Also fixed a `clippy::redundant_closure` around
+  `tray_lock_path`. See `/dev-rust-patterns` "Blocking-in-async
+  anti-pattern" and `/dev-bug-review`.
 - **`POST /fork/{id}` and `POST /sandboxes` (provision) no longer block
   the tokio reactor during heavy filesystem work.** `handle_fork` called
   `capsem_core::auto_snapshot::clone_sandbox_state` directly from the axum

@@ -57,10 +57,7 @@ fn main() -> Result<()> {
     // (2) refuse to start if another tray already holds the singleton. Both
     // conditions are expected (stale launch, double-spawn race) and resolved
     // by exiting 0 -- not Err -- so the caller sees success.
-    let lock_path = args
-        .lock_path
-        .clone()
-        .unwrap_or_else(|| tray_lock_path());
+    let lock_path = args.lock_path.clone().unwrap_or_else(tray_lock_path);
     match capsem_guard::install(args.parent_pid, &lock_path) {
         Ok(Some(_guards)) => {
             // `_guards` is bound here and held for the process's lifetime.
@@ -81,6 +78,19 @@ fn main() -> Result<()> {
             // should keep running for.
             info!(error = %e, "tray refusing to run without a live capsem-service; exiting 0");
             return Ok(());
+        }
+    }
+
+    // Headless mode for tests: the companion-lifecycle suite exercises
+    // parent-watch + singleton by spawning real tray binaries. Those runs
+    // don't need a menu-bar icon, and creating real NSStatusItems on every
+    // test flashes the user's menu bar. Gate the UI behind an env var;
+    // when set, the tray still holds the guard/lock and idles until the
+    // parent dies, which is what the tests observe.
+    if std::env::var_os("CAPSEM_TRAY_HEADLESS").is_some() {
+        info!("tray started in headless mode (no menu bar icon)");
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
         }
     }
 
@@ -345,94 +355,124 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
 }
 
 fn launch_ui(vm_id: Option<&str>) {
-    info!(vm_id = ?vm_id, "launching Capsem.app");
-
-    // On macOS, `open -a Capsem --args X` only delivers X when the app is
-    // NOT already running. When it is, `open` just brings the existing
-    // window to front and the args are dropped -- the single-instance
-    // plugin callback never fires because no second process spawns.
-    //
-    // Invoking the binary path directly always spawns a process. If Capsem
-    // is already running, tauri-plugin-single-instance detects the second
-    // launch, forwards argv to the running instance via its IPC socket,
-    // and the new process exits. If not, the new process becomes the
-    // primary instance.
-    #[cfg(target_os = "macos")]
-    let binary_candidates: [std::path::PathBuf; 2] = [
-        std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app"),
-        std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-app"))
-            .unwrap_or_default(),
-    ];
-    #[cfg(target_os = "linux")]
-    let binary_candidates: [std::path::PathBuf; 2] = [
-        std::path::PathBuf::from("/usr/bin/capsem-app"),
-        std::path::PathBuf::from("/usr/local/bin/capsem-app"),
-    ];
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let binary_candidates: [std::path::PathBuf; 0] = [];
-
-    let binary = binary_candidates.iter().find(|p| p.exists());
-
-    let mut cmd = if let Some(path) = binary {
-        std::process::Command::new(path)
-    } else {
-        // Fallback for uninstalled dev environments: LaunchServices lookup.
-        // Works only when the app isn't already running.
-        warn!("capsem-app binary not found in install locations; falling back to `open -a Capsem`");
-        let mut c = std::process::Command::new("open");
-        c.args(["-a", "Capsem"]);
-        if vm_id.is_some() {
-            c.arg("--args");
-        }
-        c
-    };
-
-    if let Some(id) = vm_id {
-        cmd.args(["--connect", id]);
-    }
-
-    match cmd.spawn() {
-        Ok(_) => info!(vm_id = ?vm_id, "Capsem.app launch dispatched"),
-        Err(e) => warn!("failed to launch UI: {e}"),
-    }
+    launch_capsem_app(vm_id, None);
 }
 
 /// Launch the UI with a VM deep-link plus an action hint (e.g. "save", "fork").
 /// The UI opens the VM tab and dispatches the action (opens the relevant modal)
 /// -- actions requiring a user-supplied name belong in the UI, not the tray.
 fn launch_ui_action(vm_id: &str, action: &str) {
-    info!(%vm_id, %action, "launching Capsem.app for action");
+    launch_capsem_app(Some(vm_id), Some(action));
+}
 
+/// Platform-specific install candidates for the Capsem.app binary.
+///
+/// Kept separate from `build_launch_invocation` so the construction logic
+/// stays pure and unit-testable -- filesystem probes happen here.
+fn find_capsem_app_binary() -> Option<std::path::PathBuf> {
     #[cfg(target_os = "macos")]
-    let binary_candidates: [std::path::PathBuf; 2] = [
+    let candidates: [std::path::PathBuf; 2] = [
         std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app"),
         std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-app"))
+            .map(|h| {
+                std::path::PathBuf::from(h)
+                    .join("Applications/Capsem.app/Contents/MacOS/capsem-app")
+            })
             .unwrap_or_default(),
     ];
     #[cfg(target_os = "linux")]
-    let binary_candidates: [std::path::PathBuf; 2] = [
+    let candidates: [std::path::PathBuf; 2] = [
         std::path::PathBuf::from("/usr/bin/capsem-app"),
         std::path::PathBuf::from("/usr/local/bin/capsem-app"),
     ];
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let binary_candidates: [std::path::PathBuf; 0] = [];
+    let candidates: [std::path::PathBuf; 0] = [];
 
-    let binary = binary_candidates.iter().find(|p| p.exists());
-    let mut cmd = if let Some(path) = binary {
-        std::process::Command::new(path)
-    } else {
-        warn!("capsem-app binary not found; falling back to `open -a Capsem`");
-        let mut c = std::process::Command::new("open");
-        c.args(["-a", "Capsem", "--args"]);
-        c
-    };
-    cmd.args(["--connect", vm_id, "--action", action]);
-    match cmd.spawn() {
-        Ok(_) => info!(%vm_id, %action, "UI action dispatched"),
-        Err(e) => warn!("failed to launch UI: {e}"),
+    candidates.into_iter().find(|p| p.exists())
+}
+
+/// Build the (program, args) pair for launching the Capsem desktop app.
+///
+/// Pure, unit-tested. Exists so we can verify deep-link construction
+/// (--connect / --action forwarding, `open --args` fallback) without
+/// actually executing a binary.
+///
+/// On macOS, `open -a Capsem --args X` only delivers X when the app is
+/// NOT already running. Invoking the binary path directly always spawns
+/// a process; tauri-plugin-single-instance then forwards argv to the
+/// running instance via its IPC socket.
+fn build_launch_invocation(
+    binary: Option<&std::path::Path>,
+    vm_id: Option<&str>,
+    action: Option<&str>,
+) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
+    let mut deep_link: Vec<std::ffi::OsString> = Vec::new();
+    if let Some(id) = vm_id {
+        deep_link.push("--connect".into());
+        deep_link.push(id.into());
     }
+    if let Some(a) = action {
+        deep_link.push("--action".into());
+        deep_link.push(a.into());
+    }
+
+    match binary {
+        Some(path) => (path.as_os_str().to_owned(), deep_link),
+        None => {
+            let mut args: Vec<std::ffi::OsString> = vec!["-a".into(), "Capsem".into()];
+            if !deep_link.is_empty() {
+                args.push("--args".into());
+                args.extend(deep_link);
+            }
+            ("open".into(), args)
+        }
+    }
+}
+
+/// Spawn the Capsem desktop app on a dedicated OS thread.
+///
+/// Two reasons this is `std::thread::spawn`, not `tokio::spawn_blocking`:
+///
+/// 1. The tray's tokio runtime is `new_current_thread` (a single worker).
+///    `std::process::Command::spawn` invokes `posix_spawn`/`fork+exec`,
+///    which counts as blocking I/O per `/dev-rust-patterns`. Blocking
+///    the single worker would freeze status polling and action dispatch.
+/// 2. The reaper `wait()` below blocks for the Capsem.app lifetime
+///    (minutes to hours). Tokio's docs explicitly warn that
+///    `spawn_blocking` workers should not be held that long -- they come
+///    from a bounded pool meant for short operations. A plain OS thread
+///    is the right tool for a long-lived reaper.
+///
+/// The reaper is why we hold onto the `Child` instead of dropping it --
+/// a dropped `std::process::Child` leaves a zombie until the tray itself
+/// exits, which on a long-running companion process means zombies
+/// accumulate for every user-initiated action.
+fn launch_capsem_app(vm_id: Option<&str>, action: Option<&str>) {
+    info!(?vm_id, ?action, "launching Capsem.app");
+
+    let vm_id = vm_id.map(str::to_string);
+    let action = action.map(str::to_string);
+
+    std::thread::spawn(move || {
+        let binary = find_capsem_app_binary();
+        if binary.is_none() {
+            warn!(
+                "capsem-app binary not found in install locations; falling back to `open -a Capsem`"
+            );
+        }
+        let (program, args) =
+            build_launch_invocation(binary.as_deref(), vm_id.as_deref(), action.as_deref());
+
+        let mut cmd = std::process::Command::new(&program);
+        cmd.args(&args);
+        match cmd.spawn() {
+            Ok(mut child) => {
+                info!(?vm_id, ?action, "Capsem.app launch dispatched");
+                let _ = child.wait();
+            }
+            Err(e) => warn!("failed to launch UI: {e}"),
+        }
+    });
 }
 
 /// Default path for the tray singleton lockfile.
@@ -450,6 +490,86 @@ fn tray_lock_path() -> std::path::PathBuf {
         std::path::PathBuf::from(home).join(".capsem/run/tray.lock")
     } else {
         std::path::PathBuf::from("/tmp/capsem-tray.lock")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    fn os(s: &str) -> OsString {
+        OsString::from(s)
+    }
+
+    #[test]
+    fn direct_binary_no_vm_id_no_action() {
+        let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
+        let (program, args) = build_launch_invocation(Some(&binary), None, None);
+        assert_eq!(program, binary.as_os_str());
+        assert!(args.is_empty(), "no deep-link args expected, got {args:?}");
+    }
+
+    #[test]
+    fn direct_binary_connects_to_vm() {
+        let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
+        let (program, args) = build_launch_invocation(Some(&binary), Some("vm-123"), None);
+        assert_eq!(program, binary.as_os_str());
+        assert_eq!(args, vec![os("--connect"), os("vm-123")]);
+    }
+
+    #[test]
+    fn direct_binary_with_action_requires_vm_id() {
+        let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
+        let (program, args) =
+            build_launch_invocation(Some(&binary), Some("vm-42"), Some("save"));
+        assert_eq!(program, binary.as_os_str());
+        assert_eq!(
+            args,
+            vec![os("--connect"), os("vm-42"), os("--action"), os("save")]
+        );
+    }
+
+    #[test]
+    fn fallback_open_no_args_when_no_deep_link() {
+        // Without vm_id/action, `open -a Capsem` is enough -- no `--args`.
+        // Appending `--args` with nothing after it would still work but is
+        // unnecessary noise.
+        let (program, args) = build_launch_invocation(None, None, None);
+        assert_eq!(program, os("open"));
+        assert_eq!(args, vec![os("-a"), os("Capsem")]);
+    }
+
+    #[test]
+    fn fallback_open_forwards_vm_id() {
+        // Regression guard: the pre-refactor launch_ui added `--args` only
+        // when vm_id was Some, and launch_ui_action always added `--args`.
+        // Check both paths go through one helper with consistent behavior.
+        let (program, args) = build_launch_invocation(None, Some("vm-9"), None);
+        assert_eq!(program, os("open"));
+        assert_eq!(
+            args,
+            vec![os("-a"), os("Capsem"), os("--args"), os("--connect"), os("vm-9")]
+        );
+    }
+
+    #[test]
+    fn fallback_open_forwards_vm_id_and_action() {
+        let (program, args) = build_launch_invocation(None, Some("vm-9"), Some("fork"));
+        assert_eq!(program, os("open"));
+        assert_eq!(
+            args,
+            vec![
+                os("-a"),
+                os("Capsem"),
+                os("--args"),
+                os("--connect"),
+                os("vm-9"),
+                os("--action"),
+                os("fork"),
+            ]
+        );
     }
 }
 
