@@ -1,124 +1,150 @@
 # Sprint: credential-pipeline -- tracker
 
-See `plan.md` for context, scope, and exit criteria.
+See `plan.md` for full context. See `MASTER.md` for follow-up sprints.
 
-## Tasks
+## Phase 0: Reconnaissance  [DONE]
 
-### Phase 0: Reconnaissance
+- [x] Walk every callsite of `detect_*`. Producers: `capsem/src/setup.rs:243`
+      + `capsem-service/src/main.rs:1717`. Public surface to preserve:
+      `HostConfig`, `DetectedConfigSummary`, `KeyValidation`, `detect()`,
+      `detect_and_write_to_settings()`, `validate_api_key()`.
+- [x] Builder-side `src/capsem/builder/config.py::_load_ai_providers`
+      uses Pydantic `extra='ignore'`. Unknown TOML sections silently
+      stripped. `config/defaults.json` and
+      `frontend/src/lib/mock-settings.generated.ts` do not change.
+- [x] My Mac diagnosis:
+      - Anthropic: ANTHROPIC_API_KEY unset; ~/.claude/settings.json
+        present but no literal `apiKey` field — Claude Code on macOS
+        uses `apiKeyHelper` (script path in that JSON) or login
+        keychain. New sources needed: `exec_from_json`, `mac_keychain`.
+      - Gemini: `GEMINI_API_KEY=AIza...` in env AND ADC file present
+        — two distinct credentials, UI must show two rows.
+      - Skills: 4 in `~/.claude/skills/`. MCP: 27+ entries in
+        `~/.claude.json` + `~/.claude/settings.json`. Both invisible
+        today.
+- [x] Inventory: `capsem_setting` must be a first-class source kind
+      so user-typed values show up in the report with correct
+      provenance.
 
-- [ ] Read all existing `guest/config/ai/*.toml` and note the current
-      `[<provider>.api_key]` + `[<provider>.files.*]` shape so the
-      `[<provider>.detect]` addition lives alongside, not replaces.
-- [ ] Walk every callsite of the `detect_*` functions in `host_config.rs`
-      (service `/setup/detect`, CLI setup steps, MCP export). Record the
-      public surface we must keep intact.
-- [ ] Read `src/capsem/builder/` entry points (providers.py, the thing
-      that consumes `guest/config/ai/*.toml`) and confirm it tolerates
-      unknown TOML keys -- the new `[detect]` section must not break the
-      builder before step 4.
-- [ ] Confirm on my Mac: which sources do I actually have for Anthropic
-      right now? Check `ANTHROPIC_API_KEY` env, `~/.claude/settings.json`,
-      `~/.anthropic/api_key`. One of them should explain why the wizard
-      missed it.
-- [ ] Read `gws` docs / GitHub releases page to confirm:
-      auth file paths, encryption-key behavior, which env vars override.
+## Phase 1: Commit 1 — core walker
 
-### Phase 1: Landing gear -- spec loader + walker (no behavior change)
+`feat(core): declarative detection + connectors scaffold`
 
-- [ ] New `crates/capsem-core/src/host_config/detect_spec.rs`:
-      `DetectSpec`, `SourceSpec`, `SourceKind` (Env / PlainFile /
-      JsonField / JsonContains), parser for `[<provider>.detect]`.
-- [ ] `DetectionReport`, `SourceOutcome`, `DetectionStatus`. Serializable.
-- [ ] Walker: `fn walk(spec: &DetectSpec, home: &Path) -> DetectionReport`.
-      Pure function, no I/O outside the home dir passed in. Fully
-      unit-testable.
-- [ ] Unit tests per source kind: env matched / env empty /
-      plain_file missing / plain_file whitespace-only /
-      json_field missing / json_field present / json_contains matched /
-      json_contains markers-missing.
-- [ ] Load the three existing provider TOMLs into `DetectSpec` from disk
-      without adding `[detect]` sections yet -- confirm round-trip.
-- [ ] `cargo test -p capsem-core detect_spec::` green.
-
-### Phase 2: Switch over (replace `detect_*`, delete old)
-
-- [ ] Add `[anthropic.detect]`, `[google.detect]`, `[openai.detect]` to
-      the three existing TOMLs. Two credential kinds for Anthropic
-      (api_key, claude_oauth); three for Google (api_key, adc,
-      -- workspace added later); one for OpenAI.
-- [ ] Replace `detect_anthropic_key` / `detect_google_key` / etc. with
-      calls to `walk(load_spec(provider))`. Keep `HostConfig` shape
-      identical so no downstream breaks.
-- [ ] Port existing unit tests to drive the walker with fixture home
-      dirs. Delete the `detect_*` fn-level tests.
+- [ ] Split `crates/capsem-core/src/host_config.rs` into a module
+      directory. Existing content moves to `mod.rs` verbatim. Make
+      helpers `pub(super)` so submodules can reuse:
+      `extract_json_string_field`, `non_empty_env`, `read_key_file`.
+- [ ] `host_config/types.rs` — `DetectionReport` (scalar +
+      inventory variants), `SourceOutcome`, `DetectionStatus`,
+      `SourceSpec`, `Agent`, `InventoryItem`, `Origin`.
+- [ ] `host_config/spec.rs` — loader + `DetectRegistry` embedded via
+      `include_dir!`. Resolves `~` in paths. Tolerates unknown TOML
+      keys.
+- [ ] `host_config/walker.rs` — `detect(registry, ctx)`. One private
+      handler per source kind. Inventory dedupe by `name`, merge
+      `agents` + `origins`.
+- [ ] Unit tests per source kind (match / not_found / invalid /
+      unsupported) via injected `DetectContext`.
+- [ ] Inventory walker tests: dedupe, origins carried, per-source
+      counts.
+- [ ] `mac_keychain` round-trip under `#[cfg(target_os="macos")]`
+      + `CAPSEM_KEYCHAIN_TESTS=1`; cheap not-found smoke runs
+      everywhere.
+- [ ] Golden JSON test pinning `DetectionReport` shape.
+- [ ] Append `[[<slot>.sources]]` tables to `guest/config/ai/*.toml`
+      for `ai.anthropic.api_key`, `ai.anthropic.claude.credentials_json`,
+      `ai.google.api_key`, `ai.google.gemini.google_adc_json`,
+      `ai.openai.api_key`.
+- [ ] `guest/config/detect/host.toml` — `repository.*` +
+      `vm.environment.ssh.public_key`.
+- [ ] `guest/config/detect/connectors.toml` —
+      `connectors.mcp_servers` + `connectors.skills` +
+      placeholder comments for workspace / gcloud / github.
+- [ ] `config/defaults.json` — add `connectors` top-level group
+      (keep scope minimal per unresolved #3 in plan.md).
+- [ ] Replace private `detect_*` fns with walker calls;
+      `detect_host_config()` builds `HostConfig` from scalar reports;
+      `detect_and_write_to_settings()` writes only scalars with
+      `writeback = true` and `selected != capsem_setting`.
+- [ ] Delete `DETECT_SETTING_MAP` / `DETECT_FILE_MAP` constants.
+- [ ] Delete old `detect_anthropic_key` / `detect_google_key` /
+      `detect_openai_key` / `detect_claude_oauth` / `detect_google_adc`
+      and their unit tests.
 - [ ] `cargo test -p capsem-core` green.
-- [ ] `cargo test -p capsem --bin capsem` green.
-- [ ] `just smoke` green on my Mac. Re-verify my Anthropic key is now
-      detected (Phase 0 diagnosis will say which source).
-- [ ] **Commit:** `refactor(host_config): declarative credential detection`
+- [ ] `cargo clippy -p capsem-core --all-targets` green.
+- [ ] `just test` Python portion green (confirms Pydantic
+      `extra='ignore'` still drops new sections).
+- [ ] `CHANGELOG.md` entry under Unreleased > Changed.
+- [ ] Commit.
 
-### Phase 3: Inspection surface
+## Phase 2: Commit 2 — CLI + service endpoint
 
-- [ ] `GET /setup/detect` response adds `reports: DetectionReport[]`
-      alongside the existing `DetectedConfigSummary`. Shape frozen.
-- [ ] `capsem setup --explain` -- new subcommand flag that walks the spec
-      and prints the report table to stdout. Exits 0 whether or not
-      anything was found.
-- [ ] `ProvidersStep.svelte`: drop `providerDefs` array, iterate the
-      reports. Badge per credential kind. "Why?" disclosure shows the
-      source list.
-- [ ] Vitest covering the disclosure rendering.
-- [ ] Screenshot via chrome-devtools MCP: verify the new per-kind layout.
-- [ ] **Commit:** `feat(setup): inspectable credential detection reports`
+`feat(cli,service): capsem detect + /detect endpoint`
 
-### Phase 4: Google Workspace provider
+- [ ] `crates/capsem/src/detect.rs` — `run_detect(opts)` formatter
+      with `--json`, `--slot`, `--group`, `--verbose`, `--why`.
+      Resolves display names via settings tree.
+- [ ] `crates/capsem/src/main.rs` — register `Detect` subcommand
+      with the flags above.
+- [ ] `crates/capsem-service/src/main.rs` — `handle_detect()` at
+      `GET /detect` returns `Vec<DetectionReport>`. `GET /setup/detect`
+      becomes a thin wrapper that also includes the legacy
+      `DetectedConfigSummary` for one release.
+- [ ] `tests/capsem-install/test_detect_cli.py` — `--json` returns
+      valid JSON; `--group ai.anthropic` narrows; `--slot
+      connectors.skills -v` lists items; `--why ai.anthropic.api_key`
+      prints source outcomes.
+- [ ] `just smoke` green. `capsem detect` on my Mac matches exit
+      criteria (Anthropic found, Gemini two rows, MCP ≥27, skills 4).
+- [ ] `CHANGELOG.md` entry under Unreleased > Added.
+- [ ] Commit.
 
-- [ ] New `guest/config/ai/google_workspace.toml` with:
-      - `[google_workspace]` metadata
-      - `[google_workspace.cli]` (key=gws, version_command)
-      - `[google_workspace.api_key]` NOT present -- workspace is not
-        api-key based. Instead:
-      - `[google_workspace.detect]` with sources:
-        env `GOOGLE_WORKSPACE_CLI_TOKEN` (kind=env),
-        env `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` (kind=env_path),
-        file `~/.config/gws/<keyring-blob>` (path TBD -- confirm from docs)
-      - `[google_workspace.network]` with `*.googleapis.com` and
-        workspace-specific domains (`*.google.com`? TBD).
-      - `[google_workspace.install]` brew manager, package
-        `googleworkspace-cli`. npm fallback `@googleworkspace/cli` for
-        Linux guests.
-      - `[google_workspace.files.*]` to inject the detected credential
-        into `/root/.config/gws/` inside the guest.
-- [ ] `src/capsem/builder/` -- verify multi-provider-per-family works
-      (google + google_workspace side-by-side). Extend if needed.
-- [ ] `just build-assets` green. Rootfs contains gws binary.
-- [ ] `just shell` boots, `gws --help` works, `gws drive files list`
-      succeeds against the detected credential (or fails with a clean
-      auth error if no creds detected on host).
-- [ ] Frontend: Google provider row now shows three credential kinds
-      (api_key, adc, workspace_oauth).
-- [ ] **Commit:** `feat(providers): add Google Workspace via gws CLI`
+## Phase 3: Commit 3 — Frontend
 
-### Phase 5: Polish + docs
+`feat(frontend): provenance badges + Connectors inventory`
 
-- [ ] Settings > AI Providers: same "Why?" disclosure, so post-install
-      inspection doesn't require re-opening the wizard.
-- [ ] Update `skills/dev-capsem/SKILL.md` with a pointer to
-      `guest/config/ai/` as the single source of truth for providers.
-- [ ] (Optional) `docs/` page: "Adding an AI provider" -- walks through
-      the TOML spec end-to-end.
-- [ ] `just test` full pass.
+- [ ] `frontend/src/lib/types/onboarding.ts` — `DetectionReport`,
+      `ScalarReport`, `InventoryReport`, `SourceOutcome`,
+      `DetectionStatus`.
+- [ ] `frontend/src/lib/api.ts` — `getDetectionReports()` on
+      `/detect`.
+- [ ] `ProvidersStep.svelte` — drop hardcoded `providerDefs`;
+      iterate scalar reports under `ai.*`; per-row "Why?" disclosure
+      listing sources with status icons.
+- [ ] `SettingsPage.svelte` — provenance badge next to each
+      detectable leaf (small dot + tooltip). New Connectors section
+      rendering the two inventory slots: count summary, expandable
+      list of items with per-item agents.
+- [ ] Vitest: badge status→colour mapping, disclosure rendering.
+- [ ] `pnpm run check` + `npx vitest run` green.
+- [ ] Chrome DevTools MCP verification: `just ui`, navigate to
+      wizard ProvidersStep (Anthropic two rows), Settings > AI
+      (badges), Settings > Connectors (expand mcp_servers + skills).
+      Screenshot each.
+- [ ] `CHANGELOG.md` entry under Unreleased > Added.
+- [ ] Commit.
+
+## Phase 4: Testing gate + cleanup
+
+- [ ] `just test` full pass (Rust + frontend + Python + integration).
 - [ ] `just run "capsem-doctor"` green.
-- [ ] **Commit:** `docs(providers): spec + inspection, closing sprint`
+- [ ] Walk CHANGELOG entries across the three commits for clarity.
+- [ ] No debug prints / TODO / temporary hacks left.
+- [ ] Review whether `/simplify` needs to run on core/walker.rs.
 
-## Notes
+## Notes / discoveries (append as we go)
 
-- The guest-side already being declarative is what makes this sprint
-  tractable -- half the work is shaped by the existing per-provider
-  TOMLs. We're adding a `[detect]` section, not a new system.
-- `DetectionReport` shape needs to be frozen early (step 1) because the
-  UI and CLI consumers diverge fast if it changes mid-sprint.
-- gws auth details are partly TBD -- Phase 0 must confirm the actual
-  paths from the gws docs, not guess.
-- Keep the existing `detect_and_write_to_settings` signature intact; it
-  is called from settings and test paths we do not want to chase.
+- Public surface to preserve:
+  `HostConfig`, `DetectedConfigSummary`, `KeyValidation`, `detect()`,
+  `detect_and_write_to_settings()`, `validate_api_key()`.
+- Builder safety: Pydantic `extra='ignore'` already confirmed via
+  Phase 0 — new TOML sections are invisible to the generator, so no
+  goldens move.
+- New source kinds discovered during recon: `exec_from_json` (run
+  a script named in a JSON field) and `mac_keychain` (wrap
+  `security find-generic-password -w`). Without these the current
+  Anthropic detection miss can't be fixed.
+- Settings tree as the display taxonomy — no parallel "domains"
+  concept introduced, per direction from user.
+- Writeback preserved exactly as-is for all detected credentials,
+  matching current behavior.
