@@ -346,7 +346,11 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
+        --ignore=tests/capsem-build-chain \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+    echo "=== Python: Build chain tests (serial) ==="
+    uv run python -m pytest tests/capsem-build-chain/ -v --tb=short
 
     # ---- Stage 6: legacy VM scripts + bench ---------------------------------
     echo "=== Injection test ==="
@@ -572,7 +576,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     # surfaced an intermittent `sandbox not found: shared-<id>` under the
     # combined load of 5 concurrent services (2 MCP + 2 svc + 1 gateway).
     # Not worth the flakiness until the underlying race is pinned down.
-    uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" &
+    uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" -n 2 --dist=loadfile &
     PID_MCP=$!
     uv run python -m pytest tests/capsem-service/ tests/capsem-cli/ -v --tb=short -m "integration" -n 2 --dist=loadfile &
     PID_SVC=$!
