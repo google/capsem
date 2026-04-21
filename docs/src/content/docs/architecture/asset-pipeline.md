@@ -50,22 +50,36 @@ assets/
 
 ## Manifest Format
 
-The manifest (`assets/manifest.json`) records BLAKE3 hashes and file sizes for every asset, organized per-architecture:
+The manifest (`assets/manifest.json`, format 2) is a single top-level file covering every arch. Asset versions and binary versions are tracked independently with compatibility ranges (`min_binary`, `min_assets`):
 
 ```json
 {
-  "latest": "0.12.1",
-  "releases": {
-    "0.12.1": {
-      "arm64": {
-        "assets": [
-          {"filename": "vmlinuz", "hash": "<64-char blake3 hex>", "size": 7797248},
-          {"filename": "initrd.img", "hash": "<blake3>", "size": 2680689},
-          {"filename": "rootfs.squashfs", "hash": "<blake3>", "size": 462032896}
-        ]
-      },
-      "x86_64": {
-        "assets": [...]
+  "format": 2,
+  "assets": {
+    "current": "2026.0421.30",
+    "releases": {
+      "2026.0421.30": {
+        "date": "2026-04-21",
+        "deprecated": false,
+        "min_binary": "1.0.0",
+        "arches": {
+          "arm64": {
+            "vmlinuz":         {"hash": "<64-char blake3>", "size": 7797248},
+            "initrd.img":      {"hash": "<blake3>",         "size": 2314963},
+            "rootfs.squashfs": {"hash": "<blake3>",         "size": 454230016}
+          },
+          "x86_64": { "...": "..." }
+        }
+      }
+    }
+  },
+  "binaries": {
+    "current": "1.0.1776688771",
+    "releases": {
+      "1.0.1776688771": {
+        "date": "2026-04-21",
+        "deprecated": false,
+        "min_assets": "2026.0421.30"
       }
     }
   }
@@ -73,9 +87,10 @@ The manifest (`assets/manifest.json`) records BLAKE3 hashes and file sizes for e
 ```
 
 Key points:
-- **Filenames are bare** (e.g., `"vmlinuz"`, not `"arm64/vmlinuz"`) -- the arch nesting provides the context
-- **Hashes are BLAKE3**, 64-character hexadecimal strings
-- A legacy **flat format** (`releases[version].assets` without arch nesting) is also supported for backward compatibility
+- **Single file, not per-arch.** Arches are nested under `assets.releases.<ver>.arches.<arch>`.
+- **Filenames are bare** (`"vmlinuz"`, not `"arm64/vmlinuz"`) -- the arch map provides the context.
+- **Hashes are BLAKE3**, 64 lowercase hex characters. Format is validated by `asset_manager.rs`; non-format-2 manifests are rejected.
+- **Compatibility is explicit.** `min_binary` on an asset release and `min_assets` on a binary release define the allowed pairings for upgrades and downloads.
 
 ### Two manifest producers
 
@@ -84,7 +99,7 @@ Key points:
 | `docker.py:generate_checksums()` | `just build-assets` | After full image builds |
 | `scripts/gen_manifest.py` | `just _pack-initrd` | After injecting updated guest binaries into initrd |
 
-Both detect per-arch directory structure in `assets/` and produce the nested format automatically.
+Both emit the same format-2 schema. `scripts/create_hash_assets.py` then creates `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the content-addressable names used by the installed layout.
 
 ## Compile-Time Hash Embedding
 

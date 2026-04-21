@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Docs described a fictional manifest schema.**
+  `docs/src/content/docs/architecture/custom-images.md` claimed every build
+  produced `assets/{arch}/manifest.json` with a bill-of-materials schema
+  containing `packages[]` and `vulnerabilities[]` arrays -- none of which
+  ever existed. `docs/src/content/docs/architecture/asset-pipeline.md`
+  showed a different wrong schema (`{"latest", "releases": {<ver>: {<arch>:
+  {"assets": []}}}}`) and mentioned legacy flat-format compatibility that
+  `asset_manager.rs` no longer accepts. Both pages now document the real
+  `assets/manifest.json` format 2 schema (top-level `format`, `assets.
+  {current, releases.<ver>.{date, deprecated, min_binary, arches.<arch>.
+  <filename>.{hash, size}}}`, `binaries.{current, releases}`) and the
+  `min_binary`/`min_assets` compatibility contract. Docs site builds
+  green.
+
 - **`tests/capsem-build-chain/test_manifest_regen.py` was testing a ghost
   layout and had been silently skipping every assertion.** The fixture read
   `assets/<arch>/manifest.json` (per-arch) and the tests iterated a flat

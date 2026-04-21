@@ -240,28 +240,42 @@ The `PATH` is set by the host at boot via the settings registry -- do not set PA
 
 ## Manifest
 
-Every build produces `assets/{arch}/manifest.json` -- a complete bill of materials:
+Every build produces `assets/manifest.json` (format 2) -- a single top-level file covering every arch. It records BLAKE3 hashes and file sizes for each asset and ties asset versions to compatible binary versions:
 
 ```json
 {
-  "version": "0.13.0",
-  "build_timestamp": "2026-03-26T14:30:00Z",
-  "architectures": [{
-    "arch": "arm64",
-    "assets": [
-      {"filename": "rootfs.squashfs", "size": 888741888, "b3": "a1b2c3..."},
-      {"filename": "vmlinuz", "size": 12582912, "b3": "d4e5f6..."}
-    ],
-    "packages": [
-      {"name": "coreutils", "version": "9.1-1", "manager": "apt", "b3": "..."},
-      {"name": "numpy", "version": "1.26.4", "manager": "pip", "b3": "..."}
-    ],
-    "vulnerabilities": [
-      {"package": "curl", "cve": "CVE-2024-XXXX", "severity": "HIGH", "fixed_in": "7.88.2"}
-    ]
-  }]
+  "format": 2,
+  "assets": {
+    "current": "2026.0421.30",
+    "releases": {
+      "2026.0421.30": {
+        "date": "2026-04-21",
+        "deprecated": false,
+        "min_binary": "1.0.0",
+        "arches": {
+          "arm64": {
+            "vmlinuz":         {"hash": "<64-char blake3>", "size": 7797248},
+            "initrd.img":      {"hash": "<64-char blake3>", "size": 2314963},
+            "rootfs.squashfs": {"hash": "<64-char blake3>", "size": 454230016}
+          }
+        }
+      }
+    }
+  },
+  "binaries": {
+    "current": "1.0.1776688771",
+    "releases": {
+      "1.0.1776688771": {
+        "date": "2026-04-21",
+        "deprecated": false,
+        "min_assets": "2026.0421.30"
+      }
+    }
+  }
 }
 ```
+
+The runtime boots only when the asset hashes match. `min_binary`/`min_assets` gate which binary and asset versions are compatible with each other.
 
 ## Corporate Deployment
 
