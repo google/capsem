@@ -28,6 +28,18 @@ CARGO_MODERATE_DAYS = 3
 CARGO_PROFILES = ("target/debug", "target/release", "target/llvm-cov-target/debug")
 CARGO_DEPS_EXTS = (".o", ".rlib", ".rmeta", ".d")
 CARGO_KIND_DIRS = ("build", ".fingerprint", "incremental")
+# Per-kind size caps enforced AFTER the mtime-based prune. The age prune
+# alone is insufficient: an active dev session touches every dep/incremental
+# dir on every build, so the 2-3 day age threshold never fires and target/
+# grows unbounded (72 GB observed; 23 GB alone in incremental/). Budgets
+# picked empirically to retain a useful warm cache without letting the
+# footprint run away.
+CARGO_KIND_BUDGETS_GB = {
+    "deps": 12.0,
+    "incremental": 3.0,
+    "build": 1.0,
+    ".fingerprint": 0.5,
+}
 TMP_DIR_PREFIXES = ("capsem-test-", "capsem-e2e-", "capsem-gw-", "capsem-install-")
 
 
@@ -184,6 +196,78 @@ def clean_tmp_fixtures(tmp_dir: Path, dry_run: bool, verbose: bool) -> StageResu
     return StageResult("tmp", removed, time.monotonic() - start)
 
 
+def _entry_size_bytes(entry: os.DirEntry) -> int:
+    """Size of entry: the file's own bytes for a file, total bytes for a dir."""
+    try:
+        if entry.is_symlink():
+            return 0
+        if entry.is_file(follow_symlinks=False):
+            return entry.stat(follow_symlinks=False).st_size
+        if entry.is_dir(follow_symlinks=False):
+            total = 0
+            for root_dir, _dirs, files in os.walk(entry.path):
+                for name in files:
+                    try:
+                        total += os.lstat(os.path.join(root_dir, name)).st_size
+                    except OSError:
+                        continue
+            return total
+    except OSError:
+        return 0
+    return 0
+
+
+def _prune_to_size_budget(
+    parent: Path,
+    budget_bytes: int,
+    entry_filter,
+    dry_run: bool,
+    verbose: bool,
+) -> int:
+    """Delete oldest entries under `parent` until total size is <= budget_bytes.
+
+    `entry_filter(entry)` must return True for entries eligible for pruning;
+    ineligible entries are ignored (their size is NOT counted toward budget
+    either, so this keeps the cap honest for what it's allowed to touch).
+
+    Strategy: size every eligible entry, sort oldest-mtime first, delete in
+    order until the running total drops to/under the budget. Newest entries
+    are preserved so a warm cache survives.
+
+    Returns the number of entries removed.
+    """
+    if not parent.is_dir():
+        return 0
+    try:
+        scored: list[tuple[float, int, Path]] = []
+        total = 0
+        for entry in os.scandir(parent):
+            if not entry_filter(entry):
+                continue
+            try:
+                mtime = entry.stat(follow_symlinks=False).st_mtime
+            except OSError:
+                continue
+            size = _entry_size_bytes(entry)
+            scored.append((mtime, size, Path(entry.path)))
+            total += size
+    except OSError:
+        return 0
+    if total <= budget_bytes:
+        return 0
+    scored.sort(key=lambda t: t[0])  # oldest first
+    removed = 0
+    for _mtime, size, path in scored:
+        if total <= budget_bytes:
+            break
+        if verbose:
+            print(f"  rm {path} (size={size / 1024 / 1024:.0f} MB, over-budget)")
+        if _rm(path, dry_run):
+            total -= size
+            removed += 1
+    return removed
+
+
 def _target_release_has_old_content(target: Path, older_than_days: int = 1) -> bool:
     """Cheap heuristic: does target/release/ hold any file older than N days at depth <=2?"""
     release = target / "release"
@@ -289,7 +373,47 @@ def clean_cargo_artifacts(
             if _rm(doc, dry_run):
                 removed += 1
 
+    # Size-budget pass: the mtime prune above rarely fires during active
+    # dev (every build touches every artifact), so enforce a hard cap per
+    # kind directory. Oldest entries get evicted first; newest stay.
+    budget_removed = 0
+    for profile_rel in CARGO_PROFILES:
+        profile = root / profile_rel
+        if not profile.is_dir():
+            continue
+
+        deps = profile / "deps"
+        if deps.is_dir():
+            budget_removed += _prune_to_size_budget(
+                deps,
+                int(CARGO_KIND_BUDGETS_GB["deps"] * 1024 ** 3),
+                # Only count/prune the cargo-generated artifact extensions;
+                # leave test binaries and other files alone.
+                entry_filter=lambda e: (
+                    e.is_file(follow_symlinks=False)
+                    and e.name.endswith(CARGO_DEPS_EXTS)
+                ),
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+
+        for kind in CARGO_KIND_DIRS:
+            kind_dir = profile / kind
+            if not kind_dir.is_dir():
+                continue
+            budget_removed += _prune_to_size_budget(
+                kind_dir,
+                int(CARGO_KIND_BUDGETS_GB[kind] * 1024 ** 3),
+                entry_filter=lambda e: e.is_dir(follow_symlinks=False),
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+
+    removed += budget_removed
+
     detail = f"threshold={days}d {'aggressive' if aggressive else 'moderate'}"
+    if budget_removed:
+        detail += f", budget={budget_removed}"
     return StageResult("cargo", removed, time.monotonic() - start, detail)
 
 

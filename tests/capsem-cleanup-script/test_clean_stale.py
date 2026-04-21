@@ -285,6 +285,91 @@ def test_cargo_prune_respects_threshold(tmp_path: Path):
     assert not (debug / "incremental" / "stale").exists()
 
 
+def test_cargo_budget_evicts_oldest_incremental_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """When incremental/ exceeds its size budget, oldest dirs get evicted.
+
+    Regression: the age-based prune alone left 23 GB of incremental/ on disk
+    during active dev because every build touches every session dir, so
+    nothing ever crossed the 2-3 day age threshold. The size budget enforces
+    a cap regardless of mtime freshness; oldest entries lose first.
+    """
+    # Shrink the budget so a realistic fixture exceeds it without needing GBs.
+    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 0.000_01)  # ~10 KB
+    incremental = tmp_path / "target" / "debug" / "incremental"
+    incremental.mkdir(parents=True)
+    # Three session dirs, each 8 KB. Combined 24 KB > 10 KB budget.
+    for idx, age_days in enumerate([5, 2, 0]):  # oldest ... newest
+        sess = incremental / f"s-{idx}"
+        sess.mkdir()
+        (sess / "blob").write_bytes(b"\x00" * 8192)
+        t = time.time() - age_days * 86400
+        os.utime(sess, (t, t))
+    # Confirm nothing is "old" enough for the age-based prune (days <= 2 days ago
+    # after aggressive threshold of 2d would prune s-0 only, leaving 16 KB > budget).
+    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
+    remaining = sorted(p.name for p in incremental.iterdir())
+    # Budget pass must have evicted oldest (s-0, then s-1) until under 10 KB cap.
+    # Newest s-2 (8 KB) must survive -- it's the warm cache we want to keep.
+    assert "s-2" in remaining, f"newest session dir must survive, got {remaining}"
+    assert "s-0" not in remaining, (
+        f"oldest session dir must be evicted by budget, got {remaining}"
+    )
+    # Detail string should mention the budget pass fired.
+    assert "budget=" in result.detail, (
+        f"StageResult.detail should report budget evictions, got: {result.detail!r}"
+    )
+
+
+def test_cargo_budget_no_op_when_under_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """With plenty of slack under the budget, the prune does nothing."""
+    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 1.0)  # 1 GB cap
+    incremental = tmp_path / "target" / "debug" / "incremental"
+    incremental.mkdir(parents=True)
+    sess = incremental / "fresh"
+    sess.mkdir()
+    (sess / "blob").write_bytes(b"\x00" * 1024)  # 1 KB, miles under budget
+
+    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
+    assert sess.exists(), "entry under budget must be kept"
+    assert "budget=" not in result.detail, (
+        f"no budget evictions expected, got: {result.detail!r}"
+    )
+
+
+def test_cargo_budget_deps_only_counts_cargo_extensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Budget on deps/ must only touch cargo's .rlib/.o/.rmeta/.d output.
+
+    Test binaries and other files (no extension, or extensions we don't
+    manage) must survive even if the dir exceeds budget overall.
+    """
+    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "deps", 0.000_01)  # ~10 KB
+    deps = tmp_path / "target" / "debug" / "deps"
+    deps.mkdir(parents=True)
+
+    old_rlib = deps / "libcrate-aaa.rlib"
+    old_rlib.write_bytes(b"\x00" * 8192)
+    os.utime(old_rlib, (time.time() - 5 * 86400, time.time() - 5 * 86400))
+
+    new_rlib = deps / "libcrate-bbb.rlib"
+    new_rlib.write_bytes(b"\x00" * 8192)
+    # Test binary -- no .rlib/.o/.rmeta/.d extension, must survive.
+    test_bin = deps / "test_mycrate-abc123"
+    test_bin.write_bytes(b"\x00" * 8192)
+    os.utime(test_bin, (time.time() - 30 * 86400, time.time() - 30 * 86400))
+
+    # Under the default age threshold (3 days), the ancient test_bin would be
+    # targeted if the script counted it -- but the entry_filter scopes to
+    # cargo extensions only, so the budget pass must leave it alone.
+    clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
+    assert test_bin.exists(), "test binary must not be pruned by the budget pass"
+    # Budget drops the oldest .rlib first -- old_rlib must be gone.
+    assert not old_rlib.exists(), "oldest .rlib should have been evicted"
+
+
 def test_cargo_prune_aggressive_drops_doc(tmp_path: Path):
     """When target/release has old content, aggressive mode is used and target/doc
     is dropped if nothing recent lives inside it."""

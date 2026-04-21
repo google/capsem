@@ -94,6 +94,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
 ### Fixed
+- **`_clean-stale` now caps each cargo kind directory by size, so
+  target/ stops growing unbounded during active dev.** The age-only
+  prune (remove entries older than 2-3 days) never fired in practice
+  because every build touches every `deps/`, `incremental/`, `build/`,
+  and `.fingerprint/` entry -- nothing ever crossed the age threshold
+  and the recipe's report said `cargo removed=0` while `target/` sat
+  at 72 GB on `/System/Volumes/Data` (23 GB of that in
+  `target/debug/incremental/` alone; push to 100% full triggered
+  ENOSPC in several integration tests). Added a second pass to
+  `scripts/clean_stale.py::clean_cargo_artifacts` that, for each
+  profile (debug/release/llvm-cov-target), enforces a per-kind size
+  budget (`deps` 12 GB, `incremental` 3 GB, `build` 1 GB,
+  `.fingerprint` 500 MB) by deleting oldest-mtime entries until the
+  total drops under cap. Newest entries survive so a warm build cache
+  is preserved. `deps/` pruning scopes to cargo-generated extensions
+  (`.rlib`, `.o`, `.rmeta`, `.d`) -- test binaries are left alone.
+  Added 3 tests (budget evicts oldest, no-op under cap, deps filter
+  scopes by extension); existing 16 clean_stale tests still pass.
+  Measured on this machine: 72 GB -> 30 GB, 110,400 entries evicted
+  in 21 s.
+- **Artifact capture no longer fills the disk with rootfs.img copies.**
+  `tests/helpers/service.py::preserve_tmp_dir_on_failure` recursively
+  copied every file from a failing test's `/var/folders/.../capsem-test-*`
+  tmpdir into `test-artifacts/`, including per-VM `sessions/<id>/system/rootfs.img`
+  (~2 GB each, plus the `auto_snapshots/0/system/rootfs.img` clones).
+  29 failure dirs consumed 18 GB apparent / ~9 GB real (APFS clone
+  sharing) on /System/Volumes/Data -- enough to push the host to 100%
+  and cause downstream ENOSPC failures in other tests. Taught the
+  `shutil.copytree` ignore callback to skip (a) files named `rootfs.img`
+  / `rootfs.img.backing`, (b) any regular file larger than
+  `ARTIFACT_MAX_FILE_BYTES` (25 MB), and (c) sockets/FIFOs (pre-existing).
+  Added a rotation pass: after every preserve, only the
+  `ARTIFACT_MAX_KEPT_DIRS` most-recent subdirs under `test-artifacts/`
+  survive (default 20). Landed `tests/test_preserve_artifacts.py` with
+  5 pytests pinning these invariants (rootfs skipped, oversize skipped,
+  logs/session.db preserved, no-op when no failures, rotation keeps N).
+- **`tests/capsem-security/test_binary_perms.py::test_agent_binaries_555`
+  is green on macOS again.** `capsem-builder`'s container agent build
+  runs `chmod 555 /output/<binary>` inside the build container
+  (`src/capsem/builder/docker.py::container_compile_agent` line 444),
+  but Docker-for-Mac bind-mount semantics let the 0o755 executable
+  bits survive on the host side for `capsem-pty-agent` and
+  `capsem-net-proxy` (capsem-mcp-server and capsem-sysutil came out
+  0o555 cleanly -- same chmod, different result, macOS Docker
+  filesystem weirdness). The initrd-pack recipe already re-applied
+  `chmod 555` to its copies, but the on-disk `target/linux-agent/<arch>/`
+  files remained 0o755, tripping the invariant check. Added an
+  explicit `chmod 555 "$RELEASE_DIR"/{capsem-pty-agent,...}` step
+  right after the `uv run capsem-builder agent` invocation in the
+  `_pack-initrd` recipe so the invariant is enforced every time the
+  build runs, regardless of what the container filesystem decides to
+  preserve.
 - **`just test-install` no longer passes dpkg-deb a two-path mess
   after a version bump.** The repack step did
   `DEB=$(ls /cargo-target/debug/bundle/deb/*.deb)` -- when the persistent
