@@ -605,6 +605,8 @@ async fn spawn_mcp_aggregator(
     let mut child = tokio::process::Command::new(&aggregator_bin)
         .env("CAPSEM_VM_ID", vm_id)
         .env("CAPSEM_TRACE_ID", trace_id)
+        .arg("--parent-pid").arg(std::process::id().to_string())
+        .arg("--lock-path").arg(session_dir.join("mcp-aggregator.lock"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::from(stderr_file))

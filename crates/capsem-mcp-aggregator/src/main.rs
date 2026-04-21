@@ -20,10 +20,23 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tracing::{debug, error, info, warn};
 use tokio::sync::Mutex;
+use clap::Parser;
 
 use capsem_core::mcp::aggregator::*;
 use capsem_core::mcp::server_manager::McpServerManager;
 use capsem_core::mcp::types::McpServerDef;
+
+#[derive(Parser, Debug)]
+#[command(name = "capsem-mcp-aggregator", about = "MCP aggregator subprocess")]
+struct Args {
+    /// PID of the parent process
+    #[arg(long)]
+    parent_pid: Option<u32>,
+
+    /// Path for the singleton lockfile
+    #[arg(long)]
+    lock_path: Option<std::path::PathBuf>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -49,6 +62,25 @@ async fn main() -> Result<()> {
     let trace_id = std::env::var("CAPSEM_TRACE_ID").unwrap_or_else(|_| "unknown".into());
     let root_span = tracing::info_span!("aggregator", vm_id = %vm_id, trace_id = %trace_id);
     let _root_span_guard = root_span.enter();
+
+    let args = Args::parse();
+
+    if let (Some(pid), Some(lock)) = (args.parent_pid, args.lock_path) {
+        match capsem_guard::install(Some(pid), &lock) {
+            Ok(Some(guards)) => {
+                // Keep the guards alive for the process's lifetime.
+                Box::leak(Box::new(guards));
+            }
+            Ok(None) => {
+                info!(lock = %lock.display(), "another instance holds the lock; exiting 0");
+                return Ok(());
+            }
+            Err(e) => {
+                warn!(error = %e, "refusing to run without live parent; exiting 0");
+                return Ok(());
+            }
+        }
+    }
 
     info!("capsem-mcp-aggregator starting");
 

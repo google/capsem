@@ -375,6 +375,28 @@ async fn main() -> Result<()> {
 
     info!("capsem-mcp-builtin starting");
 
+    let parent_pid = std::env::var("CAPSEM_PARENT_PID").ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    let session_dir = std::env::var("CAPSEM_SESSION_DIR").ok();
+
+    if let (Some(pid), Some(dir)) = (parent_pid, session_dir) {
+        let lock_path = std::path::PathBuf::from(dir).join("mcp-builtin.lock");
+        match capsem_guard::install(Some(pid), &lock_path) {
+            Ok(Some(guards)) => {
+                // Keep the guards alive for the process's lifetime.
+                Box::leak(Box::new(guards));
+            }
+            Ok(None) => {
+                info!(lock = %lock_path.display(), "another instance holds the lock; exiting 0");
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "refusing to run without live parent; exiting 0");
+                return Ok(());
+            }
+        }
+    }
+
     // Domain policy from env vars.
     let allow: Vec<String> = std::env::var("CAPSEM_DOMAIN_ALLOW")
         .unwrap_or_default()

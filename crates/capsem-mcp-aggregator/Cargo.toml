@@ -19,6 +19,8 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reqwest.workspace = true
+clap = { workspace = true, features = ["derive"] }
+capsem-guard = { version = "1.0.1776688771", path = "../capsem-guard" }
 
 [lints]
 workspace = true

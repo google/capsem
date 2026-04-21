@@ -228,6 +228,7 @@ impl McpServerManager {
         for (k, v) in &def.env {
             cmd.env(k, v);
         }
+        cmd.env("CAPSEM_PARENT_PID", std::process::id().to_string());
 
         let transport = TokioChildProcess::new(cmd)
             .with_context(|| format!("failed to spawn stdio MCP server '{}'", def.name))?;

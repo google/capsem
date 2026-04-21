@@ -24,6 +24,7 @@ regex.workspace = true
 scraper = "0.25"
 walkdir = "2"
 blake3 = "1"
+capsem-guard = { version = "1.0.1776688771", path = "../capsem-guard" }
 
 [lints]
 workspace = true
