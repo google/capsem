@@ -77,12 +77,12 @@ Source: `crates/capsem-service/src/main.rs` routes registered at lines 2671--271
 | GET | `/setup/assets` | `main.rs:1666 handle_asset_status` | `test_svc_setup.py::TestSetupAssets::{test_assets_lists_three_expected_artifacts,test_assets_reports_ready_when_all_present}` | Yes -- shape + ready<->present invariant |
 | ~~POST /setup/assets/download~~ | removed | removed in 24633a5 | n/a | **REMOVED** (dead code, no caller) |
 | POST | `/setup/corp-config` | `main.rs:1709 handle_corp_config` | `test_svc_setup.py::TestSetupCorpConfig::{test_corp_config_inline_toml,test_corp_config_rejects_invalid_toml,test_corp_config_rejects_empty_payload}` | Yes -- inline TOML round-trip via /settings corp_locked flag, malformed and empty payload rejection |
-| GET | `/mcp/servers` | `main.rs:1740 handle_mcp_servers` | none | **BLIND SPOT** -- `capsem_mcp_servers` MCP tool exists but has no test; service endpoint also untested |
-| GET | `/mcp/tools` | `main.rs:1775 handle_mcp_tools` | none | **BLIND SPOT** -- `capsem_mcp_tools` MCP tool exists but has no test; service endpoint also untested |
-| GET | `/mcp/policy` | `main.rs:1795 handle_mcp_policy` | none | **BLIND SPOT** -- no MCP tool wraps this; no test of any kind |
-| POST | `/mcp/tools/refresh` | `main.rs:1819 handle_mcp_refresh` | none | **BLIND SPOT** -- no test of any kind |
-| POST | `/mcp/tools/{name}/approve` | `main.rs:1835 handle_mcp_approve` | none | **BLIND SPOT** -- no test of any kind |
-| POST | `/mcp/tools/{name}/call` | `main.rs:1854 handle_mcp_call` | none | **BLIND SPOT** -- `capsem_mcp_call` MCP tool exists but has no test; service endpoint also untested |
+| GET | `/mcp/servers` | `main.rs:1740 handle_mcp_servers` | `test_svc_mcp_api.py::TestMcpServers::test_servers_returns_list` | Yes -- shape + field types |
+| GET | `/mcp/tools` | `main.rs:1775 handle_mcp_tools` | `test_svc_mcp_api.py::TestMcpTools::test_tools_returns_list` | Yes -- returns [] under isolated HOME with no cache |
+| GET | `/mcp/policy` | `main.rs:1795 handle_mcp_policy` | `test_svc_mcp_api.py::TestMcpPolicy::test_policy_returns_merged_shape` | Yes -- shape + default_tool_permission defaulting to "allow" |
+| POST | `/mcp/tools/refresh` | `main.rs:1819 handle_mcp_refresh` | `test_svc_mcp_api.py::TestMcpToolsRefresh::test_refresh_no_instances_succeeds` | Yes -- instances=0 when no running VMs |
+| POST | `/mcp/tools/{name}/approve` | `main.rs:1835 handle_mcp_approve` | `test_svc_mcp_api.py::TestMcpApprove::test_approve_unknown_tool_rejected` | Partial -- 404 path; happy path needs a populated tool cache (requires downstream aggregator) |
+| POST | `/mcp/tools/{name}/call` | `main.rs:1854 handle_mcp_call` | `test_svc_mcp_api.py::TestMcpCall::{test_call_without_running_session_rejected,test_call_unknown_tool_with_running_vm_rejected}` | Partial -- 503 no-session path and IPC-plumbing-reaches-aggregator path; downstream happy path tracked as follow-up |
 | GET | `/history/{id}` | `main.rs:1944 handle_history` | none | **BLIND SPOT** -- no test of any kind |
 | GET | `/history/{id}/processes` | `main.rs:1967 handle_history_processes` | none | **BLIND SPOT** -- no test of any kind |
 | GET | `/history/{id}/counts` | `main.rs:1984 handle_history_counts` | none | **BLIND SPOT** -- no test of any kind |

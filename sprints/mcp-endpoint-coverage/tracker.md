@@ -24,7 +24,7 @@ See `plan.md` for context and exit criteria.
 - [x] `/fork/{id}` -- `tests/capsem-service/test_svc_fork.py`
 - [x] `/settings`, `/settings/presets`, `/settings/presets/{id}`, `/settings/lint`, `/settings/validate-key` -- `tests/capsem-service/test_svc_settings.py`
 - [x] `/setup/state`, `/setup/detect`, `/setup/complete`, `/setup/assets`, `/setup/corp-config` -- `tests/capsem-service/test_svc_setup.py`
-- [ ] `/mcp/servers`, `/mcp/tools`, `/mcp/policy`, `/mcp/tools/refresh`, `/mcp/tools/{name}/approve`, `/mcp/tools/{name}/call`
+- [x] `/mcp/servers`, `/mcp/tools`, `/mcp/policy`, `/mcp/tools/refresh`, `/mcp/tools/{name}/approve`, `/mcp/tools/{name}/call` -- `tests/capsem-service/test_svc_mcp_api.py`. `/mcp/tools/{name}/call` happy path against a downstream aggregator remains a follow-up (same gap as `test_mcp_call.py`)
 
 ### T3: Gateway layering decision
 - [ ] Decide: (a) new `tests/capsem-gateway-e2e/` suite against real service, or (b) document the layering and leave gateway mocked
