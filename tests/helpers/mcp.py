@@ -5,8 +5,30 @@ that were previously duplicated across every MCP test module.
 """
 
 import json
+import subprocess
 
 from .constants import EXEC_READY_TIMEOUT
+
+
+def kill_mcp_proc(proc: subprocess.Popen, timeout: int = 5) -> None:
+    """Terminate a capsem-mcp subprocess and close its stdio pipe fds.
+
+    The MCP server is spawned with stdin=PIPE, stdout=PIPE so the test
+    can speak JSON-RPC to it. Popen does not close those pipes when the
+    process exits -- the caller must. Under
+    `filterwarnings = ["error"]` in pyproject.toml, leaving them open
+    surfaces as a PytestUnraisableExceptionWarning on every test using
+    the fixture and turns the whole directory red.
+    """
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    for pipe in (proc.stdin, proc.stdout, proc.stderr):
+        if pipe is not None and not pipe.closed:
+            pipe.close()
 
 
 def parse_content(result):

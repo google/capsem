@@ -27,6 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the justfile's `_pack-initrd` recipe. Covered by three new unit
   tests in `tests/capsem-build-chain/test_agent_perms.py`.
 
+- **Every `tests/capsem-mcp/` and `tests/capsem-e2e/` MCP test errored
+  under `filterwarnings = ["error"]`.** Both dirs spawn `capsem-mcp`
+  with `stdin=PIPE, stdout=PIPE` to speak JSON-RPC, then tore the proc
+  down with `proc.terminate() + proc.wait()` -- Popen does not close
+  PIPE fds on its own, so each test leaked two
+  `_io.FileIO` / `_io.TextIOWrapper` handles. pytest's strict mode
+  surfaced them as `ExceptionGroup: multiple unraisable exception
+  warnings (2 sub-exceptions)` at setup-teardown boundaries, turning
+  69 capsem-mcp tests into `ERROR` and 4 capsem-e2e tests into
+  `FAILED`. Added `kill_mcp_proc(proc, timeout=5)` in
+  `tests/helpers/mcp.py` -- terminates (or kills), waits, then closes
+  `proc.stdin / stdout / stderr` if non-None and not already closed.
+  Rewired `tests/capsem-mcp/conftest.py::_kill_proc` through it and
+  replaced four inline `proc.terminate(); proc.wait()` pairs in
+  `tests/capsem-e2e/test_e2e_mcp.py`. Post-fix: 116 passed, 0 errors
+  across both dirs. Covered by a unit test in
+  `tests/test_leak_detection.py` that spawns a
+  `sys.executable -c "sys.stdin.read()"` child with all three pipes,
+  calls `kill_mcp_proc`, and asserts `.closed` on each.
+
 - **Missing built artifacts silently skipped tests instead of failing.**
   Tests that depend on `assets/<arch>/manifest.json`,
   `assets/<arch>/initrd.img`, `entitlements.plist`, or

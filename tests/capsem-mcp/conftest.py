@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
-from helpers.mcp import content_text, parse_content, wait_exec_ready as mcp_wait_exec_ready
+from helpers.mcp import content_text, kill_mcp_proc, parse_content, wait_exec_ready as mcp_wait_exec_ready
 from helpers.service import preserve_tmp_dir_on_failure
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -108,12 +108,9 @@ def _make_mcp_session(uds_path):
 
 
 def _kill_proc(proc, timeout=5):
-    proc.terminate()
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+    # Delegates to helpers.mcp.kill_mcp_proc so stdio pipe fds get
+    # closed; terminate() + wait() alone leaves the PIPEs open until GC.
+    kill_mcp_proc(proc, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------

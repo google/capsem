@@ -15,6 +15,9 @@ import uuid
 import pytest
 
 from pathlib import Path
+
+from helpers.mcp import kill_mcp_proc
+
 from .conftest import RealService
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -120,8 +123,7 @@ class TestMcpLifecycle:
             ids = [s["id"] for s in result.get("sandboxes", [])]
             assert name not in ids
         finally:
-            proc.terminate()
-            proc.wait(timeout=5)
+            kill_mcp_proc(proc)
 
     def test_exec_via_mcp(self, service):
         """MCP exec returns correct output from VM."""
@@ -153,8 +155,7 @@ class TestMcpLifecycle:
 
             client.call_tool("capsem_delete", {"id": name})
         finally:
-            proc.terminate()
-            proc.wait(timeout=5)
+            kill_mcp_proc(proc)
 
     def test_file_io_via_mcp(self, service):
         """MCP write_file + read_file roundtrip."""
@@ -188,8 +189,7 @@ class TestMcpLifecycle:
 
             client.call_tool("capsem_delete", {"id": name})
         finally:
-            proc.terminate()
-            proc.wait(timeout=5)
+            kill_mcp_proc(proc)
 
     def test_tools_list(self, service):
         """MCP server reports available tools."""
@@ -203,5 +203,4 @@ class TestMcpLifecycle:
             assert "capsem_delete" in tool_names
             assert "capsem_list" in tool_names
         finally:
-            proc.terminate()
-            proc.wait(timeout=5)
+            kill_mcp_proc(proc)

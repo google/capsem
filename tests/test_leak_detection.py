@@ -220,3 +220,35 @@ def test_missing_required_artifacts_lists_missing_when_env_set(tmp_path):
         {"present": present, "missing": missing},
     )
     assert got == ["missing"]
+
+
+# ---------------------------------------------------------------------------
+# MCP proc-teardown helper. The capsem-mcp fixtures and the capsem-e2e MCP
+# tests spawn capsem-mcp via subprocess.Popen with stdin=PIPE, stdout=PIPE,
+# then terminate + wait on shutdown without closing the PIPE fds. Under
+# filterwarnings=error that leaks as PytestUnraisableExceptionWarning on
+# every test in the dir. kill_mcp_proc centralizes the correct sequence.
+# ---------------------------------------------------------------------------
+
+
+def test_kill_mcp_proc_closes_stdio_pipes():
+    import subprocess
+    import sys
+
+    from helpers.mcp import kill_mcp_proc
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    kill_mcp_proc(proc)
+
+    assert proc.returncode is not None, "process should be reaped"
+    # All three pipe fds must be closed so no ResourceWarning escapes at
+    # test teardown. Before the fix, only proc.returncode was set; the
+    # PIPE fds stayed open until GC.
+    assert proc.stdin is None or proc.stdin.closed
+    assert proc.stdout is None or proc.stdout.closed
+    assert proc.stderr is None or proc.stderr.closed
