@@ -77,6 +77,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+- **`just cross-compile` no longer requires the release Tauri signing
+  keys for dev builds.** The recipe read `private/tauri/capsem.key`
+  and `private/tauri/password.txt` on the host and passed them to the
+  container unconditionally. For any dev who doesn't have those files
+  (everyone outside release CI), both env vars became empty strings,
+  which Tauri 2 treats as "try to sign with an empty key" and aborts
+  with `failed to decode secret key: incorrect updater private key
+  password: Missing comment in secret key`. The real release keys are
+  injected via GitHub Actions secrets (`TAURI_SIGNING_PRIVATE_KEY` +
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in
+  `.github/workflows/release.yaml`); dev builds only need *a* valid
+  key so `cargo tauri build` completes. Now the host only passes the
+  signing env vars when both `private/tauri/capsem.key` and
+  `private/tauri/password.txt` actually exist; otherwise the container
+  generates a throwaway dev key into
+  `/cargo-target/dev-tauri-private` (persistent across runs via the
+  existing `capsem-host-target-<arch>` volume) with
+  `cargo tauri signer generate --ci --force`. The generated key has a
+  fixed password of `dev` -- its signatures are worthless for
+  release-updater verification, but the bundle builds.
 - **`just cross-compile` no longer dies with `Invalid cross-device link`
   when rustup self-updates inside the host-builder container.**
   `rust-toolchain.toml` pins `channel = "stable"`, so every time a new

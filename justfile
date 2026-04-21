@@ -448,12 +448,21 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     # Sync assets layout for Tauri build
     rm -rf assets/current
     if [ -d "assets/$TARGET_ARCH" ]; then cp -r "assets/$TARGET_ARCH" assets/current; fi
-    # Load Tauri signing key if available
-    TAURI_KEY=""
-    TAURI_PWD=""
-    if [ -f "$ROOT/private/tauri/capsem.key" ]; then
+    # If the host has the real release signing keys under private/tauri/,
+    # inject them into the container. Otherwise the container generates a
+    # throwaway dev-only key inline -- the authoritative release keys
+    # live in GitHub Actions secrets (TAURI_SIGNING_PRIVATE_KEY +
+    # TAURI_SIGNING_PRIVATE_KEY_PASSWORD in
+    # .github/workflows/release.yaml) and are only applied on publish.
+    # Dev builds just need SOME key so `cargo tauri build` can complete.
+    SIGNING_ARGS=()
+    if [ -f "$ROOT/private/tauri/capsem.key" ] && [ -f "$ROOT/private/tauri/password.txt" ]; then
         TAURI_KEY=$(cat "$ROOT/private/tauri/capsem.key")
         TAURI_PWD=$(cat "$ROOT/private/tauri/password.txt")
+        SIGNING_ARGS=(
+            -e "TAURI_SIGNING_PRIVATE_KEY=$TAURI_KEY"
+            -e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_PWD"
+        )
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
@@ -464,8 +473,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     fi
     docker run --rm \
         $KVM_FLAG \
-        -e "TAURI_SIGNING_PRIVATE_KEY=$TAURI_KEY" \
-        -e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_PWD" \
+        "${SIGNING_ARGS[@]}" \
         -e "TARGET_ARCH=$TARGET_ARCH" \
         -e "RUST_TARGET=$RUST_TARGET" \
         -e "DPKG_ARCH=$DPKG_ARCH" \
@@ -484,6 +492,20 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
+               echo '--- Resolve Tauri signing key ---' && \
+               DEV_KEY=/cargo-target/dev-tauri-private && \
+               if [ -z \"\${TAURI_SIGNING_PRIVATE_KEY:-}\" ]; then \
+                   if [ ! -f \"\$DEV_KEY\" ]; then \
+                       echo '    no host signing key; generating dev-only key (not for release distribution)' && \
+                       cargo tauri signer generate --ci --force -w \"\$DEV_KEY\" -p 'dev' >/dev/null; \
+                   else \
+                       echo \"    reusing dev key at \$DEV_KEY\"; \
+                   fi && \
+                   export TAURI_SIGNING_PRIVATE_KEY=\$(cat \"\$DEV_KEY\") && \
+                   export TAURI_SIGNING_PRIVATE_KEY_PASSWORD='dev'; \
+               else \
+                   echo '    using host-injected signing key'; \
+               fi && \
                echo '--- Build Tauri app ---' && \
                cd crates/capsem-app && cargo tauri build --target \$RUST_TARGET --bundles deb && cd ../.. && \
                echo '--- Validate artifacts ---' && \
