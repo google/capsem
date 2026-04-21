@@ -390,7 +390,7 @@ _clean-host-image:
     set -euo pipefail
     docker rmi capsem-host-builder:latest 2>/dev/null || true
     docker rmi capsem-install-test:latest 2>/dev/null || true
-    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup capsem-install-target capsem-install-cargo; do
+    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup capsem-install-target capsem-install-cargo capsem-install-rustup; do
         docker volume rm "$vol" 2>/dev/null || true
     done
     echo "Cleaned host builder image and volumes."
@@ -774,6 +774,7 @@ test-install: _build-host
         -v "$PWD":/src \
         -v capsem-install-target:/cargo-target \
         -v capsem-install-cargo:/usr/local/cargo/registry \
+        -v capsem-install-rustup:/usr/local/rustup \
         "$IMAGE" /usr/lib/systemd/systemd
     # Wait for systemd to be ready
     for i in $(seq 1 30); do
@@ -782,8 +783,12 @@ test-install: _build-host
         fi
         sleep 0.5
     done
-    # Fix ownership for capsem user builds
-    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo"
+    # Fix ownership for capsem user builds. /usr/local/rustup is included
+    # because rustup self-updates (triggered by rust-toolchain.toml's
+    # channel = "stable") try to write /usr/local/rustup/tmp/, which is
+    # root-owned in the baked image -- without this chown, cargo build as
+    # the capsem user dies with `Permission denied (os error 13)`.
+    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup"
     echo "Building host binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo build {{host_crates}}"

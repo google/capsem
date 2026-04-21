@@ -77,6 +77,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+- **`just test-install` no longer dies with `Permission denied`
+  when rustup tries to self-update.** Same root class as the
+  `just cross-compile` EXDEV fix: the `capsem-install-test` image
+  extends `capsem-host-builder` and inherits its `/usr/local/rustup`
+  (root-owned from image build). The test-install recipe runs `cargo
+  build` as the non-root `capsem` user, so rustup's
+  channel-sync-on-first-cargo attempt to write
+  `/usr/local/rustup/tmp/` is denied (`os error 13`). Added a
+  dedicated `capsem-install-rustup:/usr/local/rustup` named-volume
+  mount to the systemd-container `docker run`, added
+  `/usr/local/rustup` to the chown pass, and added the volume to the
+  `_clean-host-image` cleanup list. Mirrors the `capsem-rustup`
+  pattern introduced for cross-compile; using a separate volume keeps
+  the two images' rustup states from cross-contaminating if they ever
+  drift to different stable channels.
 - **`just test` / `just smoke` no longer hang on a pnpm interactive
   prompt.** The `_pnpm-install` helper ran `pnpm install
   --frozen-lockfile` with no `CI` env var, so whenever the on-disk
