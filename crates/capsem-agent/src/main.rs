@@ -1043,6 +1043,15 @@ fn write_nofollow(path: &str, data: &[u8], mode: u32) -> io::Result<()> {
         .open(path)?;
     file.write_all(data)?;
     let _ = file.set_permissions(std::fs::Permissions::from_mode(mode));
+    // On VirtioFS, close alone triggers FUSE_FLUSH which virtiofsd is free
+    // to no-op -- the write stays in Apple VZ's in-process virtiofsd and
+    // only reaches the host backing store opportunistically. A
+    // capsem_suspend immediately after write_file then tears down VZ
+    // before the data lands on host, and the resumed VM (with a fresh
+    // virtiofsd) sees ENOENT. FUSE_FSYNC is a core FUSE opcode virtiofsd
+    // must honor, so sync_all gives us a durability contract: when
+    // write_file returns, the data is visible via the host filesystem.
+    file.sync_all()?;
     Ok(())
 }
 

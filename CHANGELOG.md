@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test blocks.
 
 ### Fixed
+- **`capsem-agent` `write_nofollow`: fsync before returning so
+  `capsem_write_file` is durable across an immediate `capsem_suspend`.**
+  Previously the agent did open+write+close without fsync. On VirtioFS, close
+  only triggers FUSE_FLUSH (which virtiofsd is free to no-op), so the write
+  could still be buffered inside Apple VZ's in-process virtiofsd when a
+  caller immediately suspended the VM. VZ tore down virtiofsd before the
+  data reached the host backing store, and the resumed VM (with a fresh
+  virtiofsd) saw ENOENT. Surfaced as a concurrency flake of
+  `tests/capsem-mcp/test_state_transitions.py::test_suspend_and_resume_persistent`
+  under `just test` stage 5 -- 2 ms between write_file returning and the
+  suspend request is not enough time for Apple's virtiofsd to drain.
+  `file.sync_all()` sends FUSE_FSYNC, a core FUSE opcode virtiofsd must
+  honor, giving write_file a real durability contract.
 - **`capsem-logger/src/writer.rs`: `clippy::type_complexity` in
   `exec_event_insert_populates_row` test.** The test declared an
   8-element tuple type on the destructuring binding for a
