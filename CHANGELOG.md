@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **CAPSEM_REQUIRE_ARTIFACTS pre-flight falsely failed `just test` Stage 5
+  on a successful build.** `tests/conftest.py::_REQUIRED_ARTIFACTS` declared
+  the manifest at `assets/<arch>/manifest.json`, but the canonical layout
+  is flat top-level (`assets/manifest.json`). Every production reader --
+  `capsem-service` boot at `crates/capsem-service/src/main.rs:2740`,
+  `capsem setup` at `crates/capsem/src/setup.rs:187`, `scripts/gen_manifest.py`,
+  `scripts/check-release-workflow.sh` -- and the builder's
+  `generate_checksums` writer at `src/capsem/builder/docker.py:700` all agree
+  on the flat path. The per-arch entry was introduced with the gate itself
+  in this release cycle and never resolved on a real build, so the pre-flight
+  exited with a confusing "missing: ['assets/<arch>/manifest.json']" right
+  after Stage 1-4 had produced the actual manifest. Fixed by correcting the
+  path in `_REQUIRED_ARTIFACTS` and adding
+  `test_required_artifacts_manifest_path_is_flat` in
+  `tests/test_leak_detection.py` to pin the canonical location so this can't
+  drift again.
+
 ### Security
 - **Bumped Astro to 6.1.8 across frontend, docs, and site packages** to clear
   advisory GHSA-j687-52p2-xcff (moderate XSS in `define:vars` via incomplete

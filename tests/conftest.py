@@ -122,7 +122,11 @@ threading.excepthook = _thread_exception_hook
 _PROJECT_ROOT = Path(__file__).parent.parent
 _ARCH = "arm64" if os.uname().machine == "arm64" else "x86_64"
 _REQUIRED_ARTIFACTS = {
-    "assets/<arch>/manifest.json": _PROJECT_ROOT / "assets" / _ARCH / "manifest.json",
+    # Manifest is flat/top-level (single file covering all arches). Every
+    # production reader -- capsem-service boot, capsem setup, gen_manifest,
+    # release workflow -- and the builder's generate_checksums writer agree
+    # on this path. A per-arch entry here never resolved on a real build.
+    "assets/manifest.json": _PROJECT_ROOT / "assets" / "manifest.json",
     "assets/<arch>/initrd.img": _PROJECT_ROOT / "assets" / _ARCH / "initrd.img",
     "entitlements.plist": _PROJECT_ROOT / "entitlements.plist",
     "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,

@@ -222,6 +222,24 @@ def test_missing_required_artifacts_lists_missing_when_env_set(tmp_path):
     assert got == ["missing"]
 
 
+def test_required_artifacts_manifest_path_is_flat():
+    """The asset manifest lives at assets/manifest.json, not per-arch.
+
+    Every production reader (capsem-service boot, capsem setup, gen_manifest,
+    release workflow) and the builder's generate_checksums writer agree on
+    the flat top-level path. A per-arch path in _REQUIRED_ARTIFACTS would
+    never resolve on a freshly built tree and would fail the CI gate for a
+    successful build -- which is exactly how we found this.
+    """
+    from tests.conftest import _PROJECT_ROOT, _REQUIRED_ARTIFACTS
+
+    assert "assets/manifest.json" in _REQUIRED_ARTIFACTS
+    assert (
+        _REQUIRED_ARTIFACTS["assets/manifest.json"]
+        == _PROJECT_ROOT / "assets" / "manifest.json"
+    )
+
+
 # ---------------------------------------------------------------------------
 # MCP proc-teardown helper. The capsem-mcp fixtures and the capsem-e2e MCP
 # tests spawn capsem-mcp via subprocess.Popen with stdin=PIPE, stdout=PIPE,
