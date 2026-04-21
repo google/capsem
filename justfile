@@ -340,14 +340,21 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     #   Stage 7's `just test-install`, which runs it inside Docker with
     #   CAPSEM_DEB_INSTALLED=1 (the skip flag live_system tests respect).
     echo "=== Python: ALL tests (n=4 parallel) ==="
-    uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
+    # CAPSEM_REQUIRE_ARTIFACTS=1: fail the suite if any of assets/<arch>/
+    # manifest.json, initrd.img, entitlements.plist, or target/linux-agent/
+    # <arch>/ is missing. Stages 1-4 already produced them (this recipe
+    # depends on _check-assets + _pack-initrd + _sign); if anything is
+    # absent it means an earlier stage silently dropped its output, and
+    # we want that to fail loudly here rather than manifest as a pile of
+    # individually-skipped tests whose absence goes unnoticed.
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
     echo "=== Python: Build chain tests (serial) ==="
-    uv run python -m pytest tests/capsem-build-chain/ -v --tb=short
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ -v --tb=short
 
     # ---- Stage 6: legacy VM scripts + bench ---------------------------------
     echo "=== Injection test ==="

@@ -110,6 +110,59 @@ def _thread_exception_hook(args: threading.ExceptHookArgs) -> None:
 threading.excepthook = _thread_exception_hook
 
 
+# CI pre-flight. Tests that depend on built artifacts (manifest.json,
+# initrd.img, cross-compiled agent binaries) use pytest.skip() when the
+# artifact is absent so local dev runs don't fail on a fresh checkout.
+# In CI those artifacts are expected to be built by earlier `just test`
+# stages, so a skip there means the suite shipped a silently-weaker
+# signal than the author intended. Gate with `CAPSEM_REQUIRE_ARTIFACTS=1`
+# (CI sets this explicitly) rather than the ambient `CI` env, which is
+# set by every developer's Docker dev-loop and would turn local iteration
+# into a fail-fast trap.
+_PROJECT_ROOT = Path(__file__).parent.parent
+_ARCH = "arm64" if os.uname().machine == "arm64" else "x86_64"
+_REQUIRED_ARTIFACTS = {
+    "assets/<arch>/manifest.json": _PROJECT_ROOT / "assets" / _ARCH / "manifest.json",
+    "assets/<arch>/initrd.img": _PROJECT_ROOT / "assets" / _ARCH / "initrd.img",
+    "entitlements.plist": _PROJECT_ROOT / "entitlements.plist",
+    "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,
+}
+
+
+def _missing_required_artifacts(
+    env: "os._Environ[str] | dict[str, str]",
+    required: dict[str, Path],
+) -> list[str]:
+    """Labels of artifacts in `required` that don't exist on disk.
+
+    Returns an empty list unless `env["CAPSEM_REQUIRE_ARTIFACTS"]` is set
+    to a truthy value -- locally we want missing artifacts to skip
+    dependent tests, not fail the run.
+    """
+    if not env.get("CAPSEM_REQUIRE_ARTIFACTS"):
+        return []
+    return [label for label, path in required.items() if not path.exists()]
+
+
+def pytest_sessionstart(session):
+    """Fail fast in CI if any required artifact is missing.
+
+    Runs before collection, so a missing artifact stops the whole run
+    rather than surfacing as a pile of individually-skipped tests whose
+    absence goes unnoticed.
+    """
+    missing = _missing_required_artifacts(os.environ, _REQUIRED_ARTIFACTS)
+    if missing:
+        pytest.exit(
+            "CAPSEM_REQUIRE_ARTIFACTS=1 but the following artifacts are "
+            f"missing: {missing}. Run `just build-assets` (for assets/) "
+            "and `uv run capsem-builder agent` (for target/linux-agent/) "
+            "before invoking pytest. Locally, unset the env var to let "
+            "tests skip on missing artifacts.",
+            returncode=1,
+        )
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield

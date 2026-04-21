@@ -21,6 +21,7 @@ from conftest import (
     _ancestry,
     _CAUGHT_THREAD_EXCEPTIONS,
     _is_pytest_descendant,
+    _missing_required_artifacts,
     _thread_exception_hook,
     get_capsem_processes,
 )
@@ -188,3 +189,34 @@ def test_thread_exception_hook_captures_daemon_thread_exception():
         # fail the real run on a test-planted fake.
         while len(_CAUGHT_THREAD_EXCEPTIONS) > before:
             _CAUGHT_THREAD_EXCEPTIONS.pop()
+
+
+# ---------------------------------------------------------------------------
+# CI artifact gate. Locally, tests that depend on built artifacts (manifest,
+# initrd, cross-compiled agent) skip when those artifacts are absent. In CI
+# that silent skip is a bug -- stages earlier in `just test` were supposed
+# to build the artifact, and a skip masks the breakage. `CAPSEM_REQUIRE
+# _ARTIFACTS=1` flips the gate to fail-fast.
+# ---------------------------------------------------------------------------
+
+
+def test_missing_required_artifacts_returns_empty_when_env_unset(tmp_path):
+    # Without the opt-in env var, the gate is inert even if paths are missing.
+    missing_path = tmp_path / "does-not-exist"
+    assert _missing_required_artifacts({}, {"fake": missing_path}) == []
+    # Empty string is falsy too -- do not strict-gate on a blank env var.
+    assert _missing_required_artifacts(
+        {"CAPSEM_REQUIRE_ARTIFACTS": ""},
+        {"fake": missing_path},
+    ) == []
+
+
+def test_missing_required_artifacts_lists_missing_when_env_set(tmp_path):
+    present = tmp_path / "exists"
+    present.write_text("x")
+    missing = tmp_path / "missing"
+    got = _missing_required_artifacts(
+        {"CAPSEM_REQUIRE_ARTIFACTS": "1"},
+        {"present": present, "missing": missing},
+    )
+    assert got == ["missing"]

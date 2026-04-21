@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Missing built artifacts silently skipped tests instead of failing.**
+  Tests that depend on `assets/<arch>/manifest.json`,
+  `assets/<arch>/initrd.img`, `entitlements.plist`, or
+  `target/linux-agent/<arch>/` use `pytest.skip()` when the artifact is
+  absent so a fresh local checkout doesn't fail the suite. In CI, where
+  earlier `just test` stages are expected to produce those artifacts, a
+  skip means an earlier stage silently dropped its output -- and the
+  skipped tests dropping out of the gate disguises the breakage as a
+  green run. Added `pytest_sessionstart` pre-flight in
+  `tests/conftest.py`: when `CAPSEM_REQUIRE_ARTIFACTS=1` is set
+  (justfile's `test` recipe now sets it for both the parallel stage-5a
+  and serial stage-5b pytest invocations), the hook fails the session
+  before collection if any required artifact is missing, with a
+  specific message pointing at the build command needed. Local runs
+  without the env var are unchanged -- skips still work. Covered by
+  two new unit tests in `tests/test_leak_detection.py` pinning both
+  branches of `_missing_required_artifacts`.
+
 - **Python test warnings were never promoted to errors.** `pyproject.toml`
   `[tool.pytest.ini_options]` had no `filterwarnings`, so
   `DeprecationWarning`, `ResourceWarning`, and (critically)
