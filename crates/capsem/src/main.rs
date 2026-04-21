@@ -109,7 +109,7 @@ const GROUPED_HELP: &str = "\
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Path to the service Unix Domain Socket
     #[arg(long)]
@@ -616,6 +616,107 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+async fn check_service_health() -> Result<Vec<String>> {
+    let mut issues = Vec::new();
+    let status = service_install::service_status().await?;
+
+    if !status.running {
+        issues.push("Service is not running. Run `capsem start` to start the service.".into());
+        return Ok(issues);
+    }
+
+    let home = crate::paths::capsem_home().unwrap_or_default();
+    let sock = home.join("run/service.sock");
+    let my_version = env!("CARGO_PKG_VERSION");
+
+    // Check service version via UDS
+    let svc_version = async {
+        let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
+        let (reader, mut writer) = tokio::io::split(stream);
+        writer.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.ok()?;
+        let mut buf = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf).await.ok()?;
+        let body = String::from_utf8_lossy(&buf);
+        let json_start = body.find('{')?;
+        let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
+        v.get("version")?.as_str().map(String::from)
+    }.await;
+
+    match svc_version {
+        Some(ref v) if v == my_version => {}
+        Some(ref v) => issues.push(format!("Service is STALE (running v{}, binary is v{}) -- restart service", v, my_version)),
+        None => issues.push("Service is STALE (socket dead or no /version endpoint)".into()),
+    }
+
+    let port_path = home.join("run/gateway.port");
+    let token_path = home.join("run/gateway.token");
+    match (std::fs::read_to_string(&port_path), std::fs::read_to_string(&token_path)) {
+        (Ok(port_str), Ok(token)) => {
+            let port = port_str.trim();
+            let token = token.trim();
+            let client = reqwest::Client::new();
+
+            // Check gateway version (unauthenticated health endpoint)
+            let health_url = format!("http://127.0.0.1:{}/health", port);
+            let gw_version: Option<String> = async {
+                let r = client.get(&health_url)
+                    .timeout(std::time::Duration::from_secs(2))
+                    .send().await.ok()?;
+                let v: serde_json::Value = r.json().await.ok()?;
+                v.get("version")?.as_str().map(String::from)
+            }.await;
+
+            // Check token validity (authenticated endpoint)
+            let auth_url = format!("http://127.0.0.1:{}/list", port);
+            let token_ok = client.get(&auth_url)
+                .header("Authorization", format!("Bearer {}", token))
+                .timeout(std::time::Duration::from_secs(2))
+                .send().await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+
+            match (gw_version, token_ok) {
+                (Some(ref v), true) if v == my_version => {}
+                (Some(ref v), true) => {
+                    issues.push(format!("Gateway is STALE (running v{}, binary is v{}) -- restart service", v, my_version));
+                }
+                (Some(_), false) => {
+                    issues.push(format!("Gateway token MISMATCH (port {}) -- restart service", port));
+                }
+                (None, _) => {
+                    issues.push(format!("Gateway is DOWN (port {} not responding)", port));
+                }
+            }
+        }
+        _ => issues.push("Gateway files not found (no token/port files)".into()),
+    }
+
+    if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
+        let manifest_path = assets_dir.join("manifest.json");
+        match std::fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
+        {
+            Some(m) => {
+                let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+                match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
+                    Ok(resolved) => {
+                        if !resolved.kernel.exists() { issues.push(format!("Kernel asset is MISSING: {}", resolved.kernel.display())); }
+                        if !resolved.initrd.exists() { issues.push(format!("Initrd asset is MISSING: {}", resolved.initrd.display())); }
+                        if !resolved.rootfs.exists() { issues.push(format!("Rootfs asset is MISSING: {}", resolved.rootfs.display())); }
+                    }
+                    Err(e) => issues.push(format!("Failed to resolve assets: {}", e)),
+                }
+            }
+            None => issues.push("Manifest file not found in assets directory".into()),
+        }
+    } else {
+        issues.push("Assets directory not found".into());
+    }
+
+    Ok(issues)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -647,8 +748,22 @@ async fn main() -> Result<()> {
     // even for commands that call std::process::exit (exec, run).
     tokio::spawn(update::refresh_update_cache_if_stale());
 
+    if cli.command.is_none() {
+        let issues = check_service_health().await?;
+        if !issues.is_empty() {
+            eprintln!("\x1b[31;1m[!] Background service has issues:\x1b[0m");
+            for issue in issues {
+                eprintln!("  - {}", issue);
+            }
+            eprintln!();
+        }
+        // Print default grouped help
+        println!("{}", GROUPED_HELP);
+        return Ok(());
+    }
+
     // Commands that don't need the service
-    match &cli.command {
+    match cli.command.as_ref().unwrap() {
         Commands::Misc(MiscCommands::Version) => {
             println!(
                 "capsem {} (build {} ts={})",
@@ -833,7 +948,7 @@ async fn main() -> Result<()> {
 
     let client = UdsClient::new(uds_path, auto_launch);
 
-    match &cli.command {
+    match cli.command.as_ref().unwrap() {
         Commands::Session(SessionCommands::Create { name, ram, cpu, env, from }) => {
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
@@ -1421,9 +1536,17 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn parse_no_subcommand() {
+        let cli = Cli::try_parse_from(["capsem"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
     fn parse_create_with_name() {
         let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { name, ram, cpu, .. }) => {
                 assert_eq!(name, Some("my-vm".into()));
                 assert_eq!(ram, 4);
@@ -1436,7 +1559,7 @@ mod tests {
     #[test]
     fn parse_create_ephemeral() {
         let cli = Cli::parse_from(["capsem", "create"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { name, .. }) => {
                 assert_eq!(name, None);
             }
@@ -1447,7 +1570,7 @@ mod tests {
     #[test]
     fn parse_create_with_resources() {
         let cli = Cli::parse_from(["capsem", "create", "--ram", "8", "--cpu", "2"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { ram, cpu, .. }) => {
                 assert_eq!(ram, 8);
                 assert_eq!(cpu, 2);
@@ -1459,7 +1582,7 @@ mod tests {
     #[test]
     fn parse_resume() {
         let cli = Cli::parse_from(["capsem", "resume", "mydev"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Resume"),
         }
@@ -1468,7 +1591,7 @@ mod tests {
     #[test]
     fn parse_attach_alias_for_resume() {
         let cli = Cli::parse_from(["capsem", "attach", "mydev"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Resume via attach alias"),
         }
@@ -1477,7 +1600,7 @@ mod tests {
     #[test]
     fn parse_suspend() {
         let cli = Cli::parse_from(["capsem", "suspend", "vm-123"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Suspend { session }) => assert_eq!(session, "vm-123"),
             _ => panic!("expected Suspend"),
         }
@@ -1486,7 +1609,7 @@ mod tests {
     #[test]
     fn parse_shell_positional() {
         let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Shell { session, name }) => {
                 assert_eq!(session, Some("my-vm".into()));
                 assert_eq!(name, None);
@@ -1498,7 +1621,7 @@ mod tests {
     #[test]
     fn parse_shell_by_name() {
         let cli = Cli::parse_from(["capsem", "shell", "-n", "mydev"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Shell { name, session }) => {
                 assert_eq!(name, Some("mydev".into()));
                 assert_eq!(session, None);
@@ -1511,7 +1634,7 @@ mod tests {
     fn parse_shell_bare() {
         // Bare `capsem shell` = temp session + auto-destroy
         let cli = Cli::parse_from(["capsem", "shell"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Shell { name, session }) => {
                 assert_eq!(name, None);
                 assert_eq!(session, None);
@@ -1523,7 +1646,7 @@ mod tests {
     #[test]
     fn parse_persist() {
         let cli = Cli::parse_from(["capsem", "persist", "vm-123", "mydev"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Persist { session, name }) => {
                 assert_eq!(session, "vm-123");
                 assert_eq!(name, "mydev");
@@ -1535,7 +1658,7 @@ mod tests {
     #[test]
     fn parse_purge() {
         let cli = Cli::parse_from(["capsem", "purge"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Purge { all }) => assert!(!all),
             _ => panic!("expected Purge"),
         }
@@ -1544,7 +1667,7 @@ mod tests {
     #[test]
     fn parse_purge_all() {
         let cli = Cli::parse_from(["capsem", "purge", "--all"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Purge { all }) => assert!(all),
             _ => panic!("expected Purge --all"),
         }
@@ -1553,7 +1676,7 @@ mod tests {
     #[test]
     fn parse_run() {
         let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Run { command, timeout, env }) => {
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, 60); // default
@@ -1566,7 +1689,7 @@ mod tests {
     #[test]
     fn parse_run_with_timeout() {
         let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Run { command, timeout, env }) => {
                 assert_eq!(command, "ls -la");
                 assert_eq!(timeout, 120);
@@ -1579,13 +1702,13 @@ mod tests {
     #[test]
     fn parse_list() {
         let cli = Cli::parse_from(["capsem", "list"]);
-        assert!(matches!(cli.command, Commands::Session(SessionCommands::List { quiet: false })));
+        assert!(matches!(cli.command.unwrap(), Commands::Session(SessionCommands::List { quiet: false })));
     }
 
     #[test]
     fn parse_list_quiet() {
         let cli = Cli::parse_from(["capsem", "list", "-q"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::List { quiet }) => assert!(quiet),
             _ => panic!("expected List"),
         }
@@ -1594,7 +1717,7 @@ mod tests {
     #[test]
     fn parse_list_quiet_long() {
         let cli = Cli::parse_from(["capsem", "list", "--quiet"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::List { quiet }) => assert!(quiet),
             _ => panic!("expected List"),
         }
@@ -1604,7 +1727,7 @@ mod tests {
     fn parse_status() {
         // `capsem status` is now the service status command
         let cli = Cli::parse_from(["capsem", "status"]);
-        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Status)));
+        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Status)));
     }
 
     #[test]
@@ -1636,7 +1759,7 @@ mod tests {
     #[test]
     fn parse_exec() {
         let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
                 assert_eq!(session, "my-vm");
                 assert_eq!(command, "echo hello");
@@ -1649,7 +1772,7 @@ mod tests {
     #[test]
     fn parse_exec_with_timeout() {
         let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
                 assert_eq!(session, "my-vm");
                 assert_eq!(command, "make build");
@@ -1662,7 +1785,7 @@ mod tests {
     #[test]
     fn parse_delete() {
         let cli = Cli::parse_from(["capsem", "delete", "vm-123"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Delete { session }) => assert_eq!(session, "vm-123"),
             _ => panic!("expected Delete"),
         }
@@ -1671,7 +1794,7 @@ mod tests {
     #[test]
     fn parse_info() {
         let cli = Cli::parse_from(["capsem", "info", "vm-1"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Info { session, json }) => {
                 assert_eq!(session, "vm-1");
                 assert!(!json);
@@ -1683,7 +1806,7 @@ mod tests {
     #[test]
     fn parse_info_json() {
         let cli = Cli::parse_from(["capsem", "info", "--json", "vm-1"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Info { session, json }) => {
                 assert_eq!(session, "vm-1");
                 assert!(json);
@@ -1695,7 +1818,7 @@ mod tests {
     #[test]
     fn parse_logs_with_tail() {
         let cli = Cli::parse_from(["capsem", "logs", "--tail", "50", "vm-1"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Logs { session, tail }) => {
                 assert_eq!(session, "vm-1");
                 assert_eq!(tail, Some(50));
@@ -1707,7 +1830,7 @@ mod tests {
     #[test]
     fn parse_logs_without_tail() {
         let cli = Cli::parse_from(["capsem", "logs", "vm-1"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Logs { session, tail }) => {
                 assert_eq!(session, "vm-1");
                 assert_eq!(tail, None);
@@ -1719,7 +1842,7 @@ mod tests {
     #[test]
     fn parse_restart() {
         let cli = Cli::parse_from(["capsem", "restart", "mydev"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Restart { name }) => assert_eq!(name, "mydev"),
             _ => panic!("expected Restart"),
         }
@@ -1728,13 +1851,13 @@ mod tests {
     #[test]
     fn parse_version() {
         let cli = Cli::parse_from(["capsem", "version"]);
-        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Version)));
+        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Version)));
     }
 
     #[test]
     fn parse_create_with_env() {
         let cli = Cli::parse_from(["capsem", "create", "-e", "FOO=bar", "-e", "BAZ=qux"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { env, .. }) => {
                 assert_eq!(env, vec!["FOO=bar", "BAZ=qux"]);
             }
@@ -1745,7 +1868,7 @@ mod tests {
     #[test]
     fn parse_create_with_env_long() {
         let cli = Cli::parse_from(["capsem", "create", "--env", "API_KEY=secret123"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { env, .. }) => {
                 assert_eq!(env, vec!["API_KEY=secret123"]);
             }
@@ -1756,7 +1879,7 @@ mod tests {
     #[test]
     fn parse_create_no_env() {
         let cli = Cli::parse_from(["capsem", "create"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { env, .. }) => {
                 assert!(env.is_empty());
             }
@@ -1767,31 +1890,31 @@ mod tests {
     #[test]
     fn parse_doctor() {
         let cli = Cli::parse_from(["capsem", "doctor"]);
-        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Doctor { fast: false })));
+        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Doctor { fast: false })));
     }
 
     #[test]
     fn parse_install() {
         let cli = Cli::parse_from(["capsem", "install"]);
-        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Install)));
+        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Install)));
     }
 
     #[test]
     fn parse_start() {
         let cli = Cli::parse_from(["capsem", "start"]);
-        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Start)));
+        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Start)));
     }
 
     #[test]
     fn parse_stop() {
         let cli = Cli::parse_from(["capsem", "stop"]);
-        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Stop)));
+        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Stop)));
     }
 
     #[test]
     fn parse_setup_non_interactive() {
         let cli = Cli::parse_from(["capsem", "setup", "--non-interactive"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, .. }) => {
                 assert!(non_interactive);
                 assert_eq!(preset, None);
@@ -1804,7 +1927,7 @@ mod tests {
     #[test]
     fn parse_setup_with_preset_and_force() {
         let cli = Cli::parse_from(["capsem", "setup", "--preset", "high", "--force"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Setup { preset, force, .. }) => {
                 assert_eq!(preset, Some("high".into()));
                 assert!(force);
@@ -1816,7 +1939,7 @@ mod tests {
     #[test]
     fn parse_setup_with_corp_config() {
         let cli = Cli::parse_from(["capsem", "setup", "--corp-config", "https://example.com/corp.toml", "--non-interactive"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Setup { corp_config, non_interactive, .. }) => {
                 assert_eq!(corp_config, Some("https://example.com/corp.toml".into()));
                 assert!(non_interactive);
@@ -1828,13 +1951,13 @@ mod tests {
     #[test]
     fn parse_completions_bash() {
         let cli = Cli::parse_from(["capsem", "completions", "bash"]);
-        assert!(matches!(cli.command, Commands::Misc(MiscCommands::Completions { shell: clap_complete::Shell::Bash })));
+        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Completions { shell: clap_complete::Shell::Bash })));
     }
 
     #[test]
     fn parse_uninstall() {
         let cli = Cli::parse_from(["capsem", "uninstall"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(!yes),
             _ => panic!("expected Uninstall"),
         }
@@ -1843,7 +1966,7 @@ mod tests {
     #[test]
     fn parse_uninstall_yes() {
         let cli = Cli::parse_from(["capsem", "uninstall", "--yes"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(yes),
             _ => panic!("expected Uninstall"),
         }
@@ -1852,7 +1975,7 @@ mod tests {
     #[test]
     fn parse_update() {
         let cli = Cli::parse_from(["capsem", "update"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Update { yes, assets }) => {
                 assert!(!yes);
                 assert!(!assets);
@@ -1864,7 +1987,7 @@ mod tests {
     #[test]
     fn parse_update_yes() {
         let cli = Cli::parse_from(["capsem", "update", "--yes"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Update { yes, assets }) => {
                 assert!(yes);
                 assert!(!assets);
@@ -1876,7 +1999,7 @@ mod tests {
     #[test]
     fn parse_update_assets() {
         let cli = Cli::parse_from(["capsem", "update", "--assets"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Update { yes, assets }) => {
                 assert!(!yes);
                 assert!(assets);
@@ -1913,7 +2036,7 @@ mod tests {
     #[test]
     fn parse_fork() {
         let cli = Cli::parse_from(["capsem", "fork", "my-vm", "my-image"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Fork { session, name, description }) => {
                 assert_eq!(session, "my-vm");
                 assert_eq!(name, "my-image");
@@ -1926,7 +2049,7 @@ mod tests {
     #[test]
     fn parse_fork_with_description() {
         let cli = Cli::parse_from(["capsem", "fork", "vm1", "img1", "-d", "My description"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Fork { session, name, description }) => {
                 assert_eq!(session, "vm1");
                 assert_eq!(name, "img1");
@@ -1939,7 +2062,7 @@ mod tests {
     #[test]
     fn parse_create_with_from() {
         let cli = Cli::parse_from(["capsem", "create", "--from", "base-session"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { from, name, .. }) => {
                 assert_eq!(from, Some("base-session".into()));
                 assert_eq!(name, None);
@@ -1952,7 +2075,7 @@ mod tests {
     fn parse_create_with_from_image_alias() {
         // --image is a backward-compat alias for --from
         let cli = Cli::parse_from(["capsem", "create", "--image", "old-img"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { from, .. }) => {
                 assert_eq!(from, Some("old-img".into()));
             }
@@ -1963,7 +2086,7 @@ mod tests {
     #[test]
     fn parse_create_with_name_and_from() {
         let cli = Cli::parse_from(["capsem", "create", "-n", "my-session", "--from", "my-src"]);
-        match cli.command {
+        match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { name, from, .. }) => {
                 assert_eq!(name, Some("my-session".into()));
                 assert_eq!(from, Some("my-src".into()));
