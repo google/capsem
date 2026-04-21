@@ -2161,12 +2161,11 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
 
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
 ///
-/// Sends the shutdown signal and removes the instance from the registry
-/// immediately, then spawns a background task to wait for process exit and
-/// force-kill if needed. Callers do not block on process teardown.
-///
-/// Callers that need the session DB (e.g. handle_run telemetry rollup) can
-/// use the returned pid with `wait_for_process_exit` before reading.
+/// Sends the shutdown signal, awaits actual process exit (escalating to
+/// SIGKILL via wait_for_process_exit on a 5s budget), and cleans up the
+/// UDS socket files before returning. Callers can read the session DB or
+/// rename the session dir as soon as this returns -- there is no
+/// outstanding background task.
 async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf, bool, u32)> {
     let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
@@ -2187,16 +2186,17 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
     }
 
     // Remove from active instances immediately so the service considers this
-    // VM gone. The spawned child-exit handler may also call remove (idempotent).
+    // VM gone. The child-exit handler at spawn time may also call remove
+    // (idempotent).
     tracing::warn!(id, "shutdown_vm_process removing instance");
     state.instances.lock().unwrap().remove(id);
 
-    // Background: wait for process exit, force-kill if stuck, clean up socket.
-    tokio::spawn(async move {
-        wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
-        let _ = std::fs::remove_file(&uds_path);
-        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-    });
+    // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
+    // sockets. Synchronous: callers must not see "shutdown returned" while
+    // the process is still alive (leak detector + suspend/resume rely on it).
+    wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
+    let _ = std::fs::remove_file(&uds_path);
+    let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
     Some((session_dir, persistent, pid))
 }
@@ -2297,21 +2297,10 @@ async fn handle_stop(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if let Some((session_dir, persistent, pid)) = shutdown_vm_process(&state, &id).await {
-        // Wait for process to actually exit before returning, so resume
-        // doesn't race with the old process on the same socket.
-        if pid > 0 {
-            for _ in 0..10 {
-                if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-            if unsafe { nix::libc::kill(pid as i32, 0) } == 0 {
-                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
+    // shutdown_vm_process now waits for actual process exit and cleans the
+    // socket inline -- when it returns, resume can immediately reuse the
+    // path without a SO_REUSEADDR-style race.
+    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id).await {
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
@@ -2326,13 +2315,8 @@ async fn handle_delete(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Shut down if running, then ensure the process is dead before returning.
-    // wait_for_process_exit polls for graceful exit and escalates to SIGKILL
-    // on timeout (and waits for SIGKILL to land). The leak detector relies
-    // on `kill(pid,0)` returning ESRCH before the test fixture moves on, so
-    // this must be synchronous.
-    let session_dir = if let Some((session_dir, _, pid)) = shutdown_vm_process(&state, &id).await {
-        wait_for_process_exit(pid, std::time::Duration::from_secs(2)).await;
+    // shutdown_vm_process waits for actual exit + cleans sockets inline.
+    let session_dir = if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id).await {
         session_dir
     } else {
         // Not running -- check persistent registry for stopped VM
@@ -2605,19 +2589,13 @@ async fn handle_run(
     // 3. Wait for VM socket to appear
     let uds_path = state.instance_socket_path(&id);
     if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
-        // Send Shutdown IPC / SIGTERM and then wait for the child to
-        // actually exit before renaming. Rename on an open-for-write
-        // dir is safe (fds survive) but any path-based reopens the
-        // child might do during shutdown (log rotation, db reopen)
-        // would ENOENT -- so we let it finish flushing first. The
-        // 5s bound matches shutdown_vm_process's own reaper.
-        let pid = shutdown_vm_process(&state, &id)
-            .await
-            .map(|(_, _, p)| p)
-            .unwrap_or(0);
-        if pid > 0 {
-            wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
-        }
+        // Wait for the child to actually exit before renaming. Rename on
+        // an open-for-write dir is safe (fds survive) but any path-based
+        // reopens the child might do during shutdown (log rotation, db
+        // reopen) would ENOENT -- so we let it finish flushing first.
+        // shutdown_vm_process now blocks until exit (5s budget, SIGKILL
+        // fallback) and cleans the UDS socket inline.
+        let _ = shutdown_vm_process(&state, &id).await;
         let dir = session_dir;
         let state_clone = Arc::clone(&state);
         let id_owned = id.clone();
@@ -2635,11 +2613,10 @@ async fn handle_run(
         payload.timeout_secs,
     ).await;
 
-    // 5. Tear down VM process and build response.
-    let pid = shutdown_vm_process(&state, &id).await.map(|(_, _, p)| p).unwrap_or(0);
-    if pid > 0 {
-        wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
-    }
+    // 5. Tear down VM process and build response. shutdown_vm_process
+    // blocks until the process is actually gone -- the leak detector
+    // (and downstream session-DB reads) need that guarantee.
+    let _ = shutdown_vm_process(&state, &id).await;
 
     let response = match exec_result {
         Ok(ProcessToService::ExecResult { stdout, stderr, exit_code, .. }) => {
@@ -2654,9 +2631,9 @@ async fn handle_run(
     };
 
     // 6. Roll up session counters before returning, so callers see consistent
-    //    data in main.db. Wait for the process to exit so DbWriter has flushed.
+    //    data in main.db. shutdown_vm_process above already awaited exit, so
+    //    the DbWriter has flushed.
     if let Some(idx) = index {
-        wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
         let session_db_path = session_dir.join("session.db");
         if session_db_path.exists() {
             if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
