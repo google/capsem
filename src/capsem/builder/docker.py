@@ -33,6 +33,20 @@ GUEST_BINARIES = [
     "capsem-sysutil",
 ]
 
+
+def enforce_guest_binary_perms(paths: list[Path]) -> None:
+    """Apply chmod 555 to guest binaries on the host.
+
+    The container-native build chmods inside the container, but Docker-for-Mac
+    bind-mount semantics sometimes let an exec/write bit survive on the host.
+    Re-applying on the host guarantees the guest-binary read-only invariant
+    (CLAUDE.md) regardless of container runtime quirks.
+    """
+    for p in paths:
+        if not p.exists():
+            raise FileNotFoundError(p)
+        os.chmod(p, 0o555)
+
 # Scripts/tools that must be in rootfs build context (not cross-compiled Rust).
 ROOTFS_ARTIFACTS = ["capsem-doctor", "capsem-bench", "snapshots"]
 ROOTFS_ARTIFACT_DIRS = ["capsem_bench", "diagnostics"]
@@ -453,6 +467,7 @@ def container_compile_agent(
             raise RuntimeError(f"Binary is empty: {dst}")
         copied.append(dst)
 
+    enforce_guest_binary_perms(copied)
     return copied
 
 
@@ -503,6 +518,7 @@ def cross_compile_agent(
         if dst.stat().st_size == 0:
             raise RuntimeError(f"Binary is empty: {dst}")
         copied.append(dst)
+    enforce_guest_binary_perms(copied)
     return copied
 
 

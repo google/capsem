@@ -1211,13 +1211,9 @@ _pack-initrd:
     else
         echo "=== Agent binaries up to date, skipping cross-compile ==="
     fi
-    # Enforce the guest-binary 555 invariant (CLAUDE.md). capsem-builder's
-    # container path chmod 555s inside the build container, but Docker-for-Mac
-    # bind-mount semantics sometimes let an executable bit survive on the host
-    # side -- this reapplies the mode every time so the invariant check
-    # (tests/capsem-security/test_binary_perms.py) stays green regardless.
-    chmod 555 "$RELEASE_DIR"/capsem-pty-agent "$RELEASE_DIR"/capsem-net-proxy \
-              "$RELEASE_DIR"/capsem-mcp-server "$RELEASE_DIR"/capsem-sysutil
+    # Note: capsem-builder enforces 0o555 on the host after the container build
+    # (src/capsem/builder/docker.py::enforce_guest_binary_perms). No redundant
+    # chmod needed here.
     echo "=== Repack initrd ==="
     WORKDIR=$(mktemp -d)
     cd "$WORKDIR"

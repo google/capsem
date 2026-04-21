@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Guest binaries landed on the host with 0o755 instead of 0o555 after
+  container-native agent builds.** `capsem-builder agent` on macOS cross-
+  compiles inside a Linux container and `chmod 555`s the binaries before
+  copying them to the bind-mounted `target/linux-agent/<arch>/` output.
+  Docker-for-Mac bind-mount semantics non-deterministically dropped the
+  host-side mode, so `capsem-pty-agent` and `capsem-net-proxy` could
+  surface as `0o755` while `capsem-mcp-server` and `capsem-sysutil`
+  stayed `0o555`. The guest-binary read-only invariant (CLAUDE.md) then
+  only held when the `_pack-initrd` justfile recipe ran its compensating
+  chmod downstream; any caller invoking the builder directly or running
+  `tests/capsem-security/test_binary_perms.py::test_agent_binaries_555`
+  before repack saw the bad modes. Added
+  `enforce_guest_binary_perms(paths)` in `src/capsem/builder/docker.py`
+  and called it at the end of both `container_compile_agent` and
+  `cross_compile_agent`, so the invariant is applied at the source by
+  the builder itself. Removed the now-redundant compensating `chmod 555`
+  in the justfile's `_pack-initrd` recipe. Covered by three new unit
+  tests in `tests/capsem-build-chain/test_agent_perms.py`.
+
 - **Missing built artifacts silently skipped tests instead of failing.**
   Tests that depend on `assets/<arch>/manifest.json`,
   `assets/<arch>/initrd.img`, `entitlements.plist`, or
