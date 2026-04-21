@@ -1,4 +1,23 @@
-"""Shared fixtures for capsem-gateway integration tests."""
+"""Shared fixtures for capsem-gateway integration tests.
+
+Scope: gateway layer only. These tests cover the TCP-to-UDS proxy shell --
+routing, auth, CORS, lifecycle, terminal WebSocket handshake, SPA static
+serving -- using a pytest-local `MockServiceHandler` as the UDS backend.
+They deliberately do NOT verify that the downstream capsem-service
+endpoints behave correctly under real inputs; that correctness is owned
+by:
+
+  tests/capsem-service/    (every HTTP handler against the real service)
+  tests/capsem-mcp/        (every #[tool] in capsem-mcp against a live
+                            capsem-mcp -> capsem-service -> VM chain)
+  tests/capsem-e2e/        (full CLI -> gateway -> service -> VM paths
+                            for a handful of flagship flows)
+
+If a gateway-proxied response shape changes (e.g. /list returns a new
+field), update the mock here AND the corresponding service test in
+tests/capsem-service/. If you find yourself writing an assertion about
+what the service should return, you're in the wrong directory.
+"""
 
 import json
 import os

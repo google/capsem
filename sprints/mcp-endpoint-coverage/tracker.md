@@ -27,15 +27,15 @@ See `plan.md` for context and exit criteria.
 - [x] `/mcp/servers`, `/mcp/tools`, `/mcp/policy`, `/mcp/tools/refresh`, `/mcp/tools/{name}/approve`, `/mcp/tools/{name}/call` -- `tests/capsem-service/test_svc_mcp_api.py`. `/mcp/tools/{name}/call` happy path against a downstream aggregator remains a follow-up (same gap as `test_mcp_call.py`)
 
 ### T3: Gateway layering decision
-- [ ] Decide: (a) new `tests/capsem-gateway-e2e/` suite against real service, or (b) document the layering and leave gateway mocked
-- [ ] Implement the chosen option
-- [ ] If (a): at minimum one smoke test per gateway-proxied route that hits a real VM
+- [x] Decide: picked (b) document the layering. See "Gateway layering" below.
+- [x] Implement: added scope-setting docstring to `tests/capsem-gateway/conftest.py` pointing to `tests/capsem-service/`, `tests/capsem-mcp/`, and `tests/capsem-e2e/` for downstream correctness
+- [x] (a) not pursued -- reason in "Gateway layering"
 
 ### T4: Testing gate
-- [x] `uv run pytest tests/capsem-mcp/ tests/capsem-service/` -- 165 passed, 4 skipped, 1 xfailed
+- [x] `uv run pytest tests/capsem-mcp/ tests/capsem-service/ tests/capsem-lifecycle/` -- 2026-04-21: 192 passed, 4 skipped (after HOME isolation + settings/setup/mcp-api suites landed)
 - [ ] `just test` -- full suite not yet re-run
 - [ ] `just run "capsem-doctor"` -- VM smoke not yet re-run
-- [ ] Coverage matrix shows zero blind spots (remaining held rows are the settings/setup/mcp-api groups above)
+- [x] Coverage matrix shows zero blind spots for the endpoints this sprint targets. Remaining partial entries: `/mcp/tools/{name}/approve` happy path and `/mcp/tools/{name}/call` downstream happy path (both require a populated aggregator, tracked as a follow-up).
 
 ### T5: Changelog + commit
 - [x] `CHANGELOG.md` entries under `## [Unreleased]` for the two behavior-changing commits
@@ -65,3 +65,18 @@ See `plan.md` for context and exit criteria.
 - **Commits 7--9 (settings, setup/onboarding, mcp-api) are held.** These endpoints read/write `$HOME/.capsem/`. An initial fix that added `env["HOME"] = tmp_dir` to `tests/helpers/service.py` and `tests/capsem-mcp/conftest.py::capsem_service` was reverted in the working tree during debug-agent handoff. Until the HOME-isolation design lands, writing tests for these endpoints would either read/write the developer's real config (wrong) or skip the meaningful assertions.
 
 - **HOME isolation landed using both `CAPSEM_HOME` and `HOME`.** `capsem_core::paths::capsem_home_opt()` honors `CAPSEM_HOME` with priority over `$HOME/.capsem`, so that env var is the right override for write paths (settings, setup-state, corp.toml). `$HOME` on its own still controls read-only detection (`/setup/detect` reads `~/.gitconfig`, `~/.ssh`, `~/.anthropic`, `~/.claude`, `~/.gemini`, `~/.config/openai`, `gh auth token`, `~/.config/gcloud`). Setting only `CAPSEM_HOME` would leave detect reading the developer's real credentials during tests; setting only `HOME` would still resolve to `$HOME/.capsem` via the fallback and work for writes but fight the abstraction. Setting both in `tests/helpers/service.py::ServiceInstance.start` and `tests/capsem-mcp/conftest.py::_start_capsem_service` gives full isolation: MCP + service + lifecycle suites (192 passed, 4 skipped) all green.
+
+- **`/setup/detect` env-var credentials leak through `os.environ.copy()`.** `/setup/detect` checks `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` before falling back to file paths. Fixtures inherit the test-runner's shell env, so these presence flags reflect the dev's actual env regardless of `HOME`/`CAPSEM_HOME`. `test_svc_setup.py::test_detect_returns_summary_shape` therefore asserts shape + file-based presence only. If a future test needs a deterministic presence check, sanitize the env in the fixture first.
+
+- **`config/integration-test-corp.toml` references `network.default_action`, which is not in `config/defaults.json`.** Corp-config install validates TOML syntax but silently accepts unknown setting IDs (they're written to `corp.toml` but never surface in the settings tree). Low-severity drift: either `network.default_action` was renamed/removed or this is a forward-looking placeholder. Worth a drift ticket; out of scope for this sprint.
+
+## Gateway layering
+
+**Decision: (b)** document `tests/capsem-gateway/` as layer-specific and point downstream-endpoint correctness at `tests/capsem-service/` + `tests/capsem-mcp/` + `tests/capsem-e2e/`. Reasoning:
+
+- Gateway tests cover the TCP-to-UDS shell: routing, auth, CORS, terminal WebSocket handshake, SPA static serving, lifecycle. Those concerns are layer-local and well-served by the MockServiceHandler.
+- Downstream endpoint correctness is already fully owned by `tests/capsem-service/` (every HTTP handler) and `tests/capsem-mcp/` (every `#[tool]` over the live `capsem-mcp -> capsem-service -> VM` stack). Adding a third "gateway + real service" layer would duplicate those assertions and multiply the VM boot cost by another suite.
+- The real-service path through the gateway is already smoke-covered by `tests/capsem-e2e/` (`test_e2e_lifecycle.py`, `test_e2e_mcp.py`) -- the CLI hits the service through the same HTTP surface the gateway proxies.
+- A scope-setting docstring at `tests/capsem-gateway/conftest.py` records the split so future contributors don't write service-correctness assertions against the mock.
+
+Follow-up (out of scope): the CI-runs-VM-tests gap flagged in the Discoveries section also affects `tests/capsem-e2e/`, so option (a) would not actually close a CI blind spot today.
