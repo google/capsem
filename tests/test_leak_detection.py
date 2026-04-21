@@ -10,13 +10,20 @@ rejects a cmdline read.
 import os
 import subprocess
 import sys
+import threading
 import time
 from unittest.mock import MagicMock
 
 import psutil
 import pytest
 
-from conftest import _ancestry, _is_pytest_descendant, get_capsem_processes
+from conftest import (
+    _ancestry,
+    _CAUGHT_THREAD_EXCEPTIONS,
+    _is_pytest_descendant,
+    _thread_exception_hook,
+    get_capsem_processes,
+)
 
 
 class _FakeProc:
@@ -141,3 +148,43 @@ def test_ancestry_returns_empty_for_missing_pid():
     # Use a very large PID that is vanishingly unlikely to be in use.
     assert _ancestry(2**31 - 1) == set()
     assert not _is_pytest_descendant(2**31 - 1)
+
+
+# ---------------------------------------------------------------------------
+# Global thread-exception hook. Daemon threads that raise (typical source:
+# async fixture teardown races, server loops) previously surfaced as
+# PytestUnhandledThreadExceptionWarning -- reported, but not gating. With
+# the hook installed at conftest import time, every such exception is
+# captured and pytest_sessionfinish fails the session.
+# ---------------------------------------------------------------------------
+
+
+def test_thread_exception_hook_is_installed():
+    # Installed unconditionally at conftest import so even fixture setup
+    # and collection-phase thread leaks are caught.
+    assert threading.excepthook is _thread_exception_hook
+
+
+def test_thread_exception_hook_captures_daemon_thread_exception():
+    before = len(_CAUGHT_THREAD_EXCEPTIONS)
+
+    def boom():
+        raise ValueError("expected-test-exception-please-ignore")
+
+    t = threading.Thread(target=boom, daemon=True)
+    t.start()
+    t.join(timeout=2)
+    assert not t.is_alive()
+
+    try:
+        # join() returns only after the thread finishes, by which time
+        # the interpreter has already invoked threading.excepthook.
+        assert len(_CAUGHT_THREAD_EXCEPTIONS) == before + 1
+        last = _CAUGHT_THREAD_EXCEPTIONS[-1]
+        assert last.exc_type is ValueError
+        assert "expected-test-exception" in str(last.exc_value)
+    finally:
+        # Pop our synthetic exception so the session-finish gate does not
+        # fail the real run on a test-planted fake.
+        while len(_CAUGHT_THREAD_EXCEPTIONS) > before:
+            _CAUGHT_THREAD_EXCEPTIONS.pop()

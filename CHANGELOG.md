@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Unhandled exceptions in daemon threads were not failing the test
+  suite.** Python surfaces thread exceptions as
+  `PytestUnhandledThreadExceptionWarning`, which is reported but has
+  never been gating in `pyproject.toml`. Real races (e.g. today's
+  `MockWsProcess` teardown hitting `loop.stop()` while
+  `run_until_complete` was awaiting) shipped green until someone
+  eyeballed the warning in a test run. `tests/conftest.py` now installs
+  a process-wide `threading.excepthook` at import time (covers
+  collection, fixture setup, and every test) that records each caught
+  exception in `_CAUGHT_THREAD_EXCEPTIONS` and prints the traceback to
+  stderr in real time. `pytest_sessionfinish` fails the session if that
+  list is non-empty. Per-process (each xdist worker gates its own;
+  thread exceptions are process-local, unlike process leaks which need
+  cross-worker visibility). Covered by two new tests in
+  `tests/test_leak_detection.py`: hook-is-installed, and
+  captures-real-daemon-thread-exception. Also removed the stale
+  `tests/capsem-build-chain/conftest.py.bak` (orphaned after the
+  `capsem-cli` -> `capsem` / `capsem-ui` -> `capsem-app` rename).
+
 - **Leak detector false-positived sibling `capsem-mcp` processes.** The
   per-test `check_leaks` fixture and the `pytest_sessionfinish` gate in
   `tests/conftest.py` defined "leak" as any `capsem-*` PID on the host

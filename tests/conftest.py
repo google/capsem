@@ -22,7 +22,9 @@ Leak detection strategy (xdist-safe):
 import json
 import os
 import sys
+import threading
 import time
+import traceback
 from pathlib import Path
 import psutil
 import pytest
@@ -70,6 +72,42 @@ def _snapshot_baseline_pids() -> set[int]:
 
 
 _BASELINE_PIDS: set[int] = _snapshot_baseline_pids()
+
+
+# Unhandled exceptions escaping daemon threads. Historically these surfaced
+# only as PytestUnhandledThreadExceptionWarning -- reported but non-gating,
+# so real races (e.g. MockWsProcess teardown hitting loop.stop() while
+# run_until_complete was awaiting) shipped green. Install a process-wide
+# hook at conftest import time so nothing is missed during collection or
+# fixture setup; pytest_sessionfinish fails the session if the list is
+# non-empty. Workers check their own list; the controller checks its own
+# and inherits via attribution-style cross-process visibility only if
+# needed (thread exceptions are process-local, so per-process gating is
+# sufficient and matches pytest's own warning reporting).
+_CAUGHT_THREAD_EXCEPTIONS: list[threading.ExceptHookArgs] = []
+
+
+def _thread_exception_hook(args: threading.ExceptHookArgs) -> None:
+    """Record and report an unhandled exception from a thread.
+
+    Also prints the traceback to stderr immediately so correlation is
+    possible in real-time test output, not only at session end.
+    """
+    _CAUGHT_THREAD_EXCEPTIONS.append(args)
+    print(
+        f"\n@@@ UNHANDLED THREAD EXCEPTION in {args.thread.name} @@@",
+        file=sys.stderr,
+    )
+    traceback.print_exception(
+        args.exc_type, args.exc_value, args.exc_traceback, file=sys.stderr
+    )
+
+
+# Install immediately at import. A session-scope autouse fixture would miss
+# exceptions that happen before it runs (collection phase, module-level
+# side effects in conftest.py loading, early session fixtures in other
+# conftests).
+threading.excepthook = _thread_exception_hook
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -257,14 +295,29 @@ def _load_attribution() -> dict[int, dict]:
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Leak gate. Runs in every pytest process; only the controller acts.
+    """Process-leak + thread-exception gate.
 
-    Workers must not gate: each worker sees every other worker's still-
-    running fixture processes on the shared host. The xdist controller's
-    sessionfinish runs AFTER all workers report done, so the host is the
-    source of truth there. Single-process runs hit this path too (no
-    PYTEST_XDIST_WORKER env, no PYTEST_XDIST_WORKER_COUNT).
+    Runs in every pytest process. Thread-exception gating happens first and
+    is process-local, so workers gate their own (unlike leaks, which need
+    cross-worker visibility and must be gated by the controller alone).
     """
+    # Thread-exception gate. A non-empty list means at least one daemon
+    # thread in THIS pytest process raised without being handled. Fail
+    # this process -- for xdist, that propagates to the controller via
+    # the worker's exit status.
+    if _CAUGHT_THREAD_EXCEPTIONS:
+        print(
+            f"\n@@@ {len(_CAUGHT_THREAD_EXCEPTIONS)} UNHANDLED THREAD EXCEPTION(S) @@@",
+            file=sys.stderr,
+        )
+        for args in _CAUGHT_THREAD_EXCEPTIONS:
+            print(
+                f"  {args.exc_type.__name__}: {args.exc_value} "
+                f"(thread={args.thread.name})",
+                file=sys.stderr,
+            )
+        session.exitstatus = 1
+
     if os.environ.get("PYTEST_XDIST_WORKER") is not None:
         return  # worker: attribution was flushed in check_leaks
 
