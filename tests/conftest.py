@@ -80,6 +80,42 @@ def pytest_runtest_makereport(item, call):
         FAILED_NODEIDS.append(rep.nodeid)
 
 
+def _ancestry(pid: int) -> set[int]:
+    """Set of ancestor PIDs for `pid`, walked up via psutil until init.
+
+    Excludes `pid` itself. Returns an empty set if `pid` does not exist or
+    its parent chain cannot be walked. Robust against processes that die
+    mid-walk.
+    """
+    ancestors: set[int] = set()
+    try:
+        proc = psutil.Process(pid)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return ancestors
+    while True:
+        try:
+            parent = proc.parent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            break
+        if parent is None:
+            break
+        ancestors.add(parent.pid)
+        proc = parent
+    return ancestors
+
+
+def _is_pytest_descendant(pid: int) -> bool:
+    """True if `pid`'s ancestor chain includes this pytest process.
+
+    Used to scope leak detection to processes actually spawned by pytest
+    (directly or transitively). Sibling processes that happen to share a
+    `capsem-*` name -- e.g. Claude Code's own `capsem-mcp` stdio
+    subprocess, or a `capsem-service` started in another shell -- have no
+    pytest ancestor and must not be flagged as leaks.
+    """
+    return os.getpid() in _ancestry(pid)
+
+
 def get_capsem_processes() -> dict[int, dict]:
     """Return {pid: {name, cmdline}} for every process whose name starts with 'capsem-'.
 
@@ -173,6 +209,12 @@ def check_leaks(request):
             continue
         if pid in _FIRST_SEEN:
             continue
+        # Scope to pytest's own process tree. Sibling tools on the host
+        # (Claude Code's capsem-mcp stdio subprocess, a dev capsem-service
+        # running in another shell) also match the capsem-* name filter
+        # but aren't ours to flag.
+        if not _is_pytest_descendant(pid):
+            continue
         _FIRST_SEEN[pid] = (nodeid, info)
         new_records.append({
             "pid": pid,
@@ -249,9 +291,22 @@ def pytest_sessionfinish(session, exitstatus):
     lines = []
     for pid, info in sorted(leaks.items()):
         attrib = attribution.get(pid)
+        # Prove the suspect is ours before flagging. Attribution = a per-test
+        # check_leaks fixture recorded this PID in its worker; that's the
+        # strong signal, and it survives worker exit (the jsonl outlives the
+        # worker, whose PID no longer walkable once it's dead). Absent
+        # attribution, fall back to an ancestry walk from the controller.
+        # A PID with neither attribution nor a pytest ancestor is a sibling
+        # tool on the host (Claude Code's capsem-mcp, a manual dev run) --
+        # skip it rather than false-positive.
+        if attrib is None and not _is_pytest_descendant(pid):
+            continue
         origin = attrib["nodeid"] if attrib else "<unknown>"
         worker = attrib["worker"] if attrib else "?"
         lines.append(f"[{worker}] {origin} {pid} {info['name']} {info['cmdline']}\n")
+
+    if not lines:
+        return  # every suspect was a sibling process, not ours
 
     with open(LEAK_REPORT_LOG, "w") as f:
         f.writelines(lines)

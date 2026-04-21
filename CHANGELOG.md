@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Leak detector false-positived sibling `capsem-mcp` processes.** The
+  per-test `check_leaks` fixture and the `pytest_sessionfinish` gate in
+  `tests/conftest.py` defined "leak" as any `capsem-*` PID on the host
+  not present in the import-time baseline. That caught sibling tools
+  sharing the host with pytest -- notably Claude Code's own
+  `capsem-mcp` stdio subprocess (spawned by the `claude` CLI, not
+  pytest) -- and attributed them to whichever test happened to run
+  first. Example report: `[master] tests/capsem-build-chain/test_
+  cargo_build.py::test_all_binaries_exist 49423 capsem-mcp
+  target/debug/capsem-mcp` (PID 49423's PPID chain: `claude` ->
+  terminal shell; pytest never in the chain). Added `_ancestry(pid)` +
+  `_is_pytest_descendant(pid)` (walk `psutil.Process.parent()` up to
+  init) and gated both sites: `check_leaks` only records first-seen
+  when the suspect is actually descended from this pytest process,
+  and `pytest_sessionfinish` only flags suspects with either
+  attribution (recorded by a worker's `check_leaks`) or a live
+  ancestry link to the controller. Sibling processes pass neither
+  gate and are silently ignored. Covered by three new unit tests in
+  `tests/test_leak_detection.py` (ancestry of init excludes self;
+  ancestry of own subprocess includes self; ancestry of nonexistent
+  PID is empty).
+
 - **`PytestUnhandledThreadExceptionWarning` from `test_gw_terminal.py`
   module teardown.** The `MockWsProcess` daemon thread in
   `tests/capsem-gateway/test_gw_terminal.py` ran
