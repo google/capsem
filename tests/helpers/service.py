@@ -189,6 +189,7 @@ class ServiceInstance:
                 self.proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.wait()
             self.proc = None
 
         if self._log_file:
