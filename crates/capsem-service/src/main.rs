@@ -2993,7 +2993,7 @@ async fn main() -> Result<()> {
 /// always writes the absolute session dir as `<run_dir>/sessions/<id>` or
 /// `<run_dir>/persistent/<id>`. Pure -- no side effects -- so the matching
 /// is unit-testable without spawning real processes.
-fn find_orphan_capsem_pids(ps_output: &str, run_dir: &Path) -> Vec<i32> {
+fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path) -> Vec<i32> {
     let run_dir_str = run_dir.display().to_string();
     let marker = format!("--session-dir {run_dir_str}");
     let mut pids = Vec::new();
@@ -3017,7 +3017,7 @@ fn find_orphan_capsem_pids(ps_output: &str, run_dir: &Path) -> Vec<i32> {
 /// run_dir. See [`find_orphan_capsem_pids`] for the why; this wrapper shells
 /// out to `ps`, applies the match, and escalates SIGTERM -> 2s poll ->
 /// SIGKILL. Best effort: silent if `ps` is missing or nothing matches.
-fn reap_orphan_capsem_processes(run_dir: &Path) {
+fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
     let output = match std::process::Command::new("ps")
         .args(["-ax", "-o", "pid=,command="])
         .output()
@@ -3288,6 +3288,51 @@ async fn spawn_companions(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
+
+    #[test]
+    fn find_orphan_capsem_pids_matches_capsem_process_under_run_dir() {
+        let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-abc");
+        let ps = "\
+  1502 /path/to/target/debug/capsem-process --env CAPSEM_VM_ID=orphan --id orphan --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan --uds-path /tmp/capsem/abc.sock
+  1742 /path/to/target/debug/capsem-process --id victim --session-dir /var/folders/XY/T/capsem-test-abc/persistent/victim --uds-path /tmp/capsem/def.sock
+";
+        let pids = find_orphan_capsem_pids(ps, &run_dir);
+        assert_eq!(pids, vec![1502, 1742]);
+    }
+
+    #[test]
+    fn find_orphan_capsem_pids_skips_processes_for_other_run_dirs() {
+        let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-mine");
+        let ps = "\
+  1502 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-other/sessions/foo
+  1742 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-mine/sessions/bar
+";
+        let pids = find_orphan_capsem_pids(ps, &run_dir);
+        assert_eq!(pids, vec![1742], "must not match neighbouring test run dirs");
+    }
+
+    #[test]
+    fn find_orphan_capsem_pids_skips_non_capsem_process_binaries() {
+        let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-abc");
+        // A stray cargo invocation that happens to mention the run_dir path.
+        let ps = "\
+  99 /bin/cargo build --manifest-path /var/folders/XY/T/capsem-test-abc/Cargo.toml
+  1502 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan
+";
+        let pids = find_orphan_capsem_pids(ps, &run_dir);
+        assert_eq!(pids, vec![1502], "match must require 'capsem-process' in the line");
+    }
+
+    #[test]
+    fn find_orphan_capsem_pids_returns_empty_on_no_match() {
+        let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-empty");
+        let ps = "\
+  1 /sbin/launchd
+  42 /usr/bin/bash
+";
+        let pids = find_orphan_capsem_pids(ps, &run_dir);
+        assert!(pids.is_empty());
+    }
 
     fn test_magika() -> Mutex<magika::Session> {
         Mutex::new(

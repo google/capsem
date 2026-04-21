@@ -1,15 +1,28 @@
 """Root conftest: sys.path wiring + artifact capture + leak detection.
 
-Leak detection:
-- Baseline snapshot of capsem-* processes at session start.
-- Track first-seen nodeid for each new capsem-* PID across the run.
-- At session end, report only PIDs that are STILL ALIVE and were not in the
-  baseline -- these are the real leaks. Session-scoped fixtures that correctly
-  clean up on teardown won't be reported, even though they spawned mid-run.
+Leak detection strategy (xdist-safe):
+
+- Baseline capsem-* PIDs at conftest import time (every process inherits its
+  own baseline; pre-existing orphans are never flagged).
+- Per-test check_leaks records "first-seen" attribution for any new
+  capsem-* PID the worker observes. Writes one JSONL entry per PID to
+  tests/leak-attribution.jsonl so attribution survives across worker
+  processes.
+- pytest_sessionfinish:
+    Worker processes (PYTEST_XDIST_WORKER set): do NOT fail, do NOT gate.
+    Workers see each other's still-running fixture processes on the host
+    and can't reliably tell whose child is whose, so worker-level gating
+    false-positives constantly.
+    Controller / single-process (PYTEST_XDIST_WORKER unset): this runs
+    AFTER every worker has finished, so the host is the source of truth.
+    Settle with exponential backoff, filter by baseline, look up
+    attribution from the JSONL, fail the session if anything remains.
 """
 
+import json
 import os
 import sys
+import time
 from pathlib import Path
 import psutil
 import pytest
@@ -26,19 +39,25 @@ FAILED_NODEIDS: list[str] = []
 # survive the normal shutil.rmtree teardown.
 ARTIFACTS_ROOT = Path(__file__).parent.parent / "test-artifacts"
 LEAK_REPORT_LOG = Path(__file__).parent.parent / "tests" / "leak-report.log"
+# Shared cross-process attribution log. Workers append; controller reads.
+LEAK_ATTRIBUTION_LOG = Path(__file__).parent.parent / "tests" / "leak-attribution.jsonl"
 
-# PID -> (nodeid, {name, cmdline}). Records the first test where this PID
-# was observed alive. Used to attribute real leaks back to a specific test.
+# PID -> (nodeid, {name, cmdline}). Records the first test this process saw
+# each new capsem-* PID alive in. Used to attribute real leaks back to a
+# specific test. Per-process state; workers also flush to the shared jsonl
+# so the xdist controller can recover attribution at session end.
 _FIRST_SEEN: dict[int, tuple[str, dict]] = {}
 
-# Baseline captured at conftest import time: every capsem-* process alive
-# before pytest ran its first test. Populated below (one call per worker
-# process, since xdist workers import this module independently). A fixture-
-# based baseline would miss pre-existing orphans in the xdist controller,
-# which never executes session-scoped fixtures but DOES run
-# pytest_sessionfinish -- the controller would then report every pre-
-# existing orphan as a leak.
+
 def _snapshot_baseline_pids() -> set[int]:
+    """capsem-* PIDs alive at conftest import time.
+
+    Captured at import so every pytest process (controller, workers, single)
+    has a consistent baseline. A fixture-based baseline would miss pre-
+    existing orphans in the xdist controller, which never executes session
+    fixtures but DOES run pytest_sessionfinish -- it would then flag every
+    pre-existing orphan as a leak.
+    """
     pids: set[int] = set()
     for proc in psutil.process_iter(['pid', 'name']):
         try:
@@ -64,7 +83,7 @@ def pytest_runtest_makereport(item, call):
 def get_capsem_processes() -> dict[int, dict]:
     """Return {pid: {name, cmdline}} for every process whose name starts with 'capsem-'.
 
-    Matches on the kernel-reported name only (psutil name()). Checking cmdline
+    Matches on the kernel-reported name only (psutil name()). Scanning cmdline
     args false-positives on every tool invoked from /Users/*/capsem-next/...
     and on any cargo/rustc command that carries `-p capsem-*`.
     """
@@ -82,11 +101,45 @@ def get_capsem_processes() -> dict[int, dict]:
     return procs
 
 
+def _settle_suspects(
+    suspects: dict[int, dict],
+    total_budget_s: float,
+    initial_delay_s: float,
+    max_delay_s: float,
+) -> dict[int, dict]:
+    """Poll with exponential backoff, dropping suspects as they die.
+
+    Returns whatever's still alive when either the suspect set drains
+    (no real leaks) or total_budget_s elapses (real leaks remain). Mirrors
+    capsem_core::poll::poll_until -- cheap when things settle quickly,
+    bounded when they don't.
+    """
+    deadline = time.monotonic() + total_budget_s
+    delay = initial_delay_s
+    alive = dict(suspects)
+    while alive:
+        time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+        live_now = get_capsem_processes()
+        alive = {pid: info for pid, info in alive.items() if pid in live_now}
+        if not alive or time.monotonic() >= deadline:
+            break
+        delay = min(delay * 2, max_delay_s)
+    return alive
+
+
 @pytest.fixture(scope="session", autouse=True)
-def _clear_leak_log():
-    """Truncate the leak log at session start so it only reflects this run."""
+def _reset_leak_logs():
+    """Truncate leak logs at session start so they only reflect this run.
+
+    Only the top-level process should truncate -- if workers truncated,
+    they'd wipe each other's attribution data under -n.
+    """
+    if os.environ.get("PYTEST_XDIST_WORKER") is not None:
+        return  # worker: let the controller's truncation stand
     if LEAK_REPORT_LOG.exists():
         LEAK_REPORT_LOG.unlink()
+    if LEAK_ATTRIBUTION_LOG.exists():
+        LEAK_ATTRIBUTION_LOG.unlink()
 
 
 @pytest.fixture(autouse=True)
@@ -94,50 +147,103 @@ def check_leaks(request):
     """Record first-sighting of each new capsem-* PID for later attribution.
 
     Does NOT fail per-test. Session-scoped fixtures legitimately keep
-    processes alive across many tests; flagging them on every test would
-    drown real leaks in noise. The real leak check fires in
-    pytest_sessionfinish against processes still alive at the end.
+    processes alive across many tests; flagging them per-test would drown
+    real leaks in noise. The controller's pytest_sessionfinish does the
+    actual gate once all workers have finished.
     """
     nodeid = request.node.nodeid
     yield
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    new_records = []
     for pid, info in get_capsem_processes().items():
         if pid in _BASELINE_PIDS:
             continue
-        _FIRST_SEEN.setdefault(pid, (nodeid, info))
+        if pid in _FIRST_SEEN:
+            continue
+        _FIRST_SEEN[pid] = (nodeid, info)
+        new_records.append({
+            "pid": pid,
+            "nodeid": nodeid,
+            "worker": worker,
+            "name": info["name"],
+            "cmdline": info["cmdline"],
+        })
+    if new_records:
+        # Append JSONL so workers coexist without locking. Individual line
+        # writes are atomic up to PIPE_BUF (4 KiB on macOS/Linux); keep each
+        # record under that limit by truncating cmdline below.
+        LEAK_ATTRIBUTION_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(LEAK_ATTRIBUTION_LOG, "a") as f:
+            for rec in new_records:
+                if len(rec["cmdline"]) > 3000:
+                    rec["cmdline"] = rec["cmdline"][:3000] + "...<truncated>"
+                f.write(json.dumps(rec) + "\n")
+
+
+def _load_attribution() -> dict[int, dict]:
+    """Merge every worker's first-seen records. Last writer wins per PID."""
+    attribution: dict[int, dict] = {}
+    if not LEAK_ATTRIBUTION_LOG.exists():
+        return attribution
+    try:
+        with open(LEAK_ATTRIBUTION_LOG) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    attribution[int(rec["pid"])] = rec
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    continue
+    except OSError:
+        pass
+    return attribution
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Report leaks (capsem-* still alive not in baseline) and fail session.
+    """Leak gate. Runs in every pytest process; only the controller acts.
 
-    With pytest-xdist, session fixtures + per-test check_leaks run in WORKER
-    processes only. The xdist controller also runs pytest_sessionfinish but
-    never populated _FIRST_SEEN or saw the per-test lifecycles, so it can
-    only attribute every leak as <unknown>. Let the workers report their own
-    leaks (with real attribution) and have the controller stay silent.
+    Workers must not gate: each worker sees every other worker's still-
+    running fixture processes on the shared host. The xdist controller's
+    sessionfinish runs AFTER all workers report done, so the host is the
+    source of truth there. Single-process runs hit this path too (no
+    PYTEST_XDIST_WORKER env, no PYTEST_XDIST_WORKER_COUNT).
     """
-    if os.environ.get("PYTEST_XDIST_WORKER") is None and os.environ.get(
-        "PYTEST_XDIST_WORKER_COUNT"
-    ):
-        # Running in the xdist controller -- workers already reported.
+    if os.environ.get("PYTEST_XDIST_WORKER") is not None:
+        return  # worker: attribution was flushed in check_leaks
+
+    suspects = {pid: info for pid, info in get_capsem_processes().items() if pid not in _BASELINE_PIDS}
+    if not suspects:
         return
 
-    current = get_capsem_processes()
-    leaks = {pid: info for pid, info in current.items() if pid not in _BASELINE_PIDS}
+    # capsem-guard polls parent liveness every 100ms and exits on death,
+    # but companions (gateway, tray, mcp-aggregator, mcp-builtin) may run
+    # brief cleanup after guard triggers. 15s covers pessimistic cases
+    # (SIGTERM -> 15s ServiceInstance.stop grace -> SIGKILL -> guard
+    # detects -> companion exits) without noticeable overhead when things
+    # settle fast (loop exits early).
+    leaks = _settle_suspects(suspects, total_budget_s=15.0, initial_delay_s=0.05, max_delay_s=0.5)
     if not leaks:
         return
 
-    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    # Attribution sources: _FIRST_SEEN for same-process runs, jsonl for the
+    # xdist controller.
+    attribution = _load_attribution()
+    for pid, (nodeid, info) in _FIRST_SEEN.items():
+        attribution.setdefault(pid, {"nodeid": nodeid, "worker": "master", **info})
+
     lines = []
     for pid, info in sorted(leaks.items()):
-        attribution = _FIRST_SEEN.get(pid)
-        origin = attribution[0] if attribution else "<unknown>"
+        attrib = attribution.get(pid)
+        origin = attrib["nodeid"] if attrib else "<unknown>"
+        worker = attrib["worker"] if attrib else "?"
         lines.append(f"[{worker}] {origin} {pid} {info['name']} {info['cmdline']}\n")
 
-    # Append so multiple xdist workers' reports coexist in one log.
-    with open(LEAK_REPORT_LOG, "a") as f:
+    with open(LEAK_REPORT_LOG, "w") as f:
         f.writelines(lines)
 
-    print(f"\n@@@ CAPSEM PROCESS LEAKS (worker={worker}) @@@", file=sys.stderr)
+    print("\n@@@ CAPSEM PROCESS LEAKS @@@", file=sys.stderr)
     for line in lines:
         print(line.rstrip(), file=sys.stderr)
     print(f"({len(lines)} leaked process(es); see {LEAK_REPORT_LOG})", file=sys.stderr)

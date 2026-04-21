@@ -83,3 +83,4 @@ site/.astro/
 
 # Leak report log from integration tests
 tests/leak-report.log
+tests/leak-attribution.jsonl
