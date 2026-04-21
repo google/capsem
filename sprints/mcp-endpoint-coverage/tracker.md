@@ -23,7 +23,7 @@ See `plan.md` for context and exit criteria.
 - [x] `/files/{id}`, `/files/{id}/content` (GET + POST) -- `tests/capsem-service/test_svc_files.py`
 - [x] `/fork/{id}` -- `tests/capsem-service/test_svc_fork.py`
 - [x] `/settings`, `/settings/presets`, `/settings/presets/{id}`, `/settings/lint`, `/settings/validate-key` -- `tests/capsem-service/test_svc_settings.py`
-- [ ] `/setup/state`, `/setup/detect`, `/setup/complete`, `/setup/assets`, `/setup/corp-config`
+- [x] `/setup/state`, `/setup/detect`, `/setup/complete`, `/setup/assets`, `/setup/corp-config` -- `tests/capsem-service/test_svc_setup.py`
 - [ ] `/mcp/servers`, `/mcp/tools`, `/mcp/policy`, `/mcp/tools/refresh`, `/mcp/tools/{name}/approve`, `/mcp/tools/{name}/call`
 
 ### T3: Gateway layering decision

@@ -71,12 +71,12 @@ Source: `crates/capsem-service/src/main.rs` routes registered at lines 2671--271
 | POST | `/settings/presets/{id}` | `main.rs:1593 handle_apply_preset` | `test_svc_settings.py::TestPresets::{test_apply_preset_returns_refreshed_tree,test_apply_unknown_preset_rejected}` | Yes |
 | POST | `/settings/lint` | `main.rs:1603 handle_lint_config` | `test_svc_settings.py::TestLint::test_lint_returns_array` + Rust unit at `main.rs:3976` | Yes |
 | POST | `/settings/validate-key` | `main.rs:1609 handle_validate_key` | `test_svc_settings.py::TestValidateKey::{test_validate_key_unknown_provider_rejected,test_validate_key_empty_key_not_valid,test_validate_key_bogus_anthropic_returns_invalid}` | Yes -- unknown provider, empty key short-circuit, live call against api.anthropic.com |
-| GET | `/setup/state` | `main.rs:1623 handle_get_setup_state` | none | **BLIND SPOT** -- no test of any kind |
-| GET | `/setup/detect` | `main.rs:1642 handle_detect_host_config` | none | **BLIND SPOT** -- no test of any kind |
-| POST | `/setup/complete` | `main.rs:1655 handle_complete_onboarding` | none | **BLIND SPOT** -- no test of any kind |
-| GET | `/setup/assets` | `main.rs:1666 handle_asset_status` | none | **BLIND SPOT** -- no test of any kind |
-| POST | `/setup/assets/download` | `main.rs:1698 handle_trigger_download` | none | **BLIND SPOT** -- no test of any kind |
-| POST | `/setup/corp-config` | `main.rs:1709 handle_corp_config` | none | **BLIND SPOT** -- no test of any kind |
+| GET | `/setup/state` | `main.rs:1623 handle_get_setup_state` | `test_svc_setup.py::TestSetupState::test_state_defaults_when_missing` | Yes -- shape + default values when setup-state.json is absent |
+| GET | `/setup/detect` | `main.rs:1642 handle_detect_host_config` | `test_svc_setup.py::TestSetupDetect::test_detect_returns_summary_shape` | Yes -- shape + file-based presence flags false under isolated HOME |
+| POST | `/setup/complete` | `main.rs:1655 handle_complete_onboarding` | `test_svc_setup.py::TestSetupState::test_complete_sets_onboarding_flag` | Yes -- flips onboarding_completed and persists to /setup/state |
+| GET | `/setup/assets` | `main.rs:1666 handle_asset_status` | `test_svc_setup.py::TestSetupAssets::{test_assets_lists_three_expected_artifacts,test_assets_reports_ready_when_all_present}` | Yes -- shape + ready<->present invariant |
+| ~~POST /setup/assets/download~~ | removed | removed in 24633a5 | n/a | **REMOVED** (dead code, no caller) |
+| POST | `/setup/corp-config` | `main.rs:1709 handle_corp_config` | `test_svc_setup.py::TestSetupCorpConfig::{test_corp_config_inline_toml,test_corp_config_rejects_invalid_toml,test_corp_config_rejects_empty_payload}` | Yes -- inline TOML round-trip via /settings corp_locked flag, malformed and empty payload rejection |
 | GET | `/mcp/servers` | `main.rs:1740 handle_mcp_servers` | none | **BLIND SPOT** -- `capsem_mcp_servers` MCP tool exists but has no test; service endpoint also untested |
 | GET | `/mcp/tools` | `main.rs:1775 handle_mcp_tools` | none | **BLIND SPOT** -- `capsem_mcp_tools` MCP tool exists but has no test; service endpoint also untested |
 | GET | `/mcp/policy` | `main.rs:1795 handle_mcp_policy` | none | **BLIND SPOT** -- no MCP tool wraps this; no test of any kind |
