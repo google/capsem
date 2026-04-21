@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`capsem_read_file` returned ENOENT on real files after `capsem_resume`
+  under concurrent load.** The guest agent's post-resume rebind polled
+  `/mnt/shared/workspace` with `Path::exists`, which only drives a FUSE
+  `GETATTR`. Under `pytest -n 4 --dist=loadfile` (4 concurrent VMs sharing
+  one host's virtiofsd pool) virtiofsd could answer GETATTR on the
+  workspace dir before it had populated its child-inode map, so `exists()`
+  returned true, the agent `mount --bind /mnt/shared/workspace /root`'d an
+  empty view, and every subsequent `/root/<file>` read returned ENOENT
+  even though the host file was durably on disk (604319f already made
+  write_file flush to host). Fix in `rebind_workspace_after_resume`
+  (`crates/capsem-agent/src/main.rs`): warm-poll now calls
+  `std::fs::read_dir(...).next()`, forcing a FUSE `READDIR` round-trip
+  and proving virtiofsd has enumerated child inodes. Warming timeout
+  (1 s total, 50 × 20 ms) is unchanged. If warming never completes the
+  rebind now aborts instead of binding against an empty subtree, so the
+  failure surfaces loudly in `read_file` rather than silently corrupting
+  `/root`. Verified against the previously-flaky
+  `tests/capsem-mcp/test_state_transitions.py::test_suspend_and_resume_persistent`
+  under `-n 4 --dist=loadfile` (1/1 fail pre-fix, 5/5 pass post-fix).
+
 - **`PytestUnknownMarkWarning` on `benchmark` marker.** Registered
   `benchmark` in `pyproject.toml [tool.pytest.ini_options].markers` so
   `tests/capsem-serial/test_parallel_benchmark.py`'s

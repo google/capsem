@@ -531,23 +531,35 @@ fn rebind_workspace_after_resume() {
         eprintln!("[capsem-agent] rebind: virtiofs remount failed; /root will be stale");
         return;
     }
-    // Warm the virtiofs: on first mount after VM restore, the kernel's FUSE
-    // lookup is lazy and a path stat returns ENOENT until the virtio-fs
-    // device has exchanged its init handshake with the new host virtiofsd.
-    // If we mount --bind before that, the bind captures the stale (empty)
-    // subtree and /root stays inaccessible.
+    // Warm the virtiofs: on first mount after VM restore, FUSE lookups are
+    // lazy. A plain stat (GETATTR) on the workspace dir can succeed before
+    // virtiofsd has populated its child-inode map, and a bind against that
+    // half-ready subtree leaves /root ENOENT-ing every child file.
+    // std::fs::read_dir forces a real READDIR round-trip -- once that
+    // succeeds, virtiofsd has enumerated the directory and subsequent
+    // LOOKUPs on children will resolve. If warming never completes we abort
+    // rather than binding against an empty view: the HTTP read_file will
+    // fail loudly instead of silently returning ENOENT on a real file.
     let workspace_src = std::path::Path::new("/mnt/shared/workspace");
+    let mut warmed_attempts = 0;
     let mut warmed = false;
-    for _ in 0..50 {
-        if workspace_src.exists() {
+    for attempt in 1..=50 {
+        if std::fs::read_dir(workspace_src)
+            .ok()
+            .and_then(|mut it| it.next())
+            .is_some()
+        {
             warmed = true;
+            warmed_attempts = attempt;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     if !warmed {
-        eprintln!("[capsem-agent] rebind: /mnt/shared/workspace never appeared; bind may fail");
+        eprintln!("[capsem-agent] rebind: /mnt/shared/workspace not enumerable after 1s; aborting (no /root bind)");
+        return;
     }
+    eprintln!("[capsem-agent] rebind: virtiofs warmed after {warmed_attempts} attempts");
     let _ = run(&["mkdir", "-p", "/root"]);
     if !run(&["mount", "--bind", "/mnt/shared/workspace", "/root"]) {
         eprintln!("[capsem-agent] rebind: /root bind-mount failed");
