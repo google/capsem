@@ -23,37 +23,45 @@ class TestGatewayLifecycle:
         gw = GatewayInstance(uds_path=mock_service.socket_path)
         gw.start()
         run_dir = gw.run_dir
+        try:
+            # Verify files exist while running
+            assert (run_dir / "gateway.token").exists()
+            assert (run_dir / "gateway.port").exists()
+            assert (run_dir / "gateway.pid").exists()
 
-        # Verify files exist while running
-        assert (run_dir / "gateway.token").exists()
-        assert (run_dir / "gateway.port").exists()
-        assert (run_dir / "gateway.pid").exists()
+            # Send SIGTERM
+            os.kill(gw.proc.pid, signal.SIGTERM)
+            gw.proc.wait(timeout=10)
 
-        # Send SIGTERM
-        os.kill(gw.proc.pid, signal.SIGTERM)
-        gw.proc.wait(timeout=10)
+            # Give cleanup a moment
+            time.sleep(0.5)
 
-        # Give cleanup a moment
-        time.sleep(0.5)
-
-        # Files should be cleaned up
-        assert not (run_dir / "gateway.token").exists(), "token not cleaned after SIGTERM"
-        assert not (run_dir / "gateway.port").exists(), "port not cleaned after SIGTERM"
-        assert not (run_dir / "gateway.pid").exists(), "pid not cleaned after SIGTERM"
+            # Files should be cleaned up
+            assert not (run_dir / "gateway.token").exists(), "token not cleaned after SIGTERM"
+            assert not (run_dir / "gateway.port").exists(), "port not cleaned after SIGTERM"
+            assert not (run_dir / "gateway.pid").exists(), "pid not cleaned after SIGTERM"
+        finally:
+            # stop() closes the gateway.log file handle even when the proc
+            # is already dead from the SIGTERM above. Without this the log
+            # fd is leaked to GC; pytest's filterwarnings=error surfaces it
+            # as PytestUnraisableExceptionWarning.
+            gw.stop()
 
     def test_sigint_cleans_up_files(self, mock_service):
         """SIGINT (Ctrl-C) triggers graceful shutdown."""
         gw = GatewayInstance(uds_path=mock_service.socket_path)
         gw.start()
         run_dir = gw.run_dir
+        try:
+            assert (run_dir / "gateway.token").exists()
 
-        assert (run_dir / "gateway.token").exists()
+            os.kill(gw.proc.pid, signal.SIGINT)
+            gw.proc.wait(timeout=10)
+            time.sleep(0.5)
 
-        os.kill(gw.proc.pid, signal.SIGINT)
-        gw.proc.wait(timeout=10)
-        time.sleep(0.5)
-
-        assert not (run_dir / "gateway.token").exists(), "token not cleaned after SIGINT"
+            assert not (run_dir / "gateway.token").exists(), "token not cleaned after SIGINT"
+        finally:
+            gw.stop()
 
     def test_two_gateways_on_different_ports(self, mock_service):
         """Two gateway instances can run simultaneously on different ports."""

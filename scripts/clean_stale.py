@@ -134,7 +134,8 @@ def clean_orphan_sockets(sockets_dir: Path, dry_run: bool, verbose: bool) -> Sta
     removed = 0
     errors = 0
     try:
-        entries = list(os.scandir(sockets_dir))
+        with os.scandir(sockets_dir) as it:
+            entries = list(it)
     except OSError:
         return StageResult("sockets", 0, time.monotonic() - start)
 
@@ -172,7 +173,8 @@ def clean_tmp_fixtures(tmp_dir: Path, dry_run: bool, verbose: bool) -> StageResu
     cutoff = time.time() - TMP_DIR_MAX_AGE_S
     removed = 0
     try:
-        entries = list(os.scandir(tmp_dir))
+        with os.scandir(tmp_dir) as it:
+            entries = list(it)
     except OSError:
         return StageResult("tmp", 0, time.monotonic() - start)
 
@@ -241,16 +243,17 @@ def _prune_to_size_budget(
     try:
         scored: list[tuple[float, int, Path]] = []
         total = 0
-        for entry in os.scandir(parent):
-            if not entry_filter(entry):
-                continue
-            try:
-                mtime = entry.stat(follow_symlinks=False).st_mtime
-            except OSError:
-                continue
-            size = _entry_size_bytes(entry)
-            scored.append((mtime, size, Path(entry.path)))
-            total += size
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                if not entry_filter(entry):
+                    continue
+                try:
+                    mtime = entry.stat(follow_symlinks=False).st_mtime
+                except OSError:
+                    continue
+                size = _entry_size_bytes(entry)
+                scored.append((mtime, size, Path(entry.path)))
+                total += size
     except OSError:
         return 0
     if total <= budget_bytes:
@@ -275,28 +278,33 @@ def _target_release_has_old_content(target: Path, older_than_days: int = 1) -> b
         return False
     cutoff = time.time() - older_than_days * 86400
     try:
-        for entry in os.scandir(release):
-            try:
-                st = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if not entry.is_dir(follow_symlinks=False):
-                if st.st_mtime < cutoff:
-                    return True
-                continue
-            # Depth 2
-            try:
-                sub = os.scandir(entry.path)
-            except OSError:
-                continue
-            with sub:
-                for child in sub:
-                    try:
-                        cst = child.stat(follow_symlinks=False)
-                    except OSError:
-                        continue
-                    if cst.st_mtime < cutoff:
+        # Context-manage both scandir iterators so an early `return True`
+        # does not leak the iterator's underlying fd -- under
+        # filterwarnings=error, pytest surfaces the leak as
+        # PytestUnraisableExceptionWarning and fails the session.
+        with os.scandir(release) as entries:
+            for entry in entries:
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if not entry.is_dir(follow_symlinks=False):
+                    if st.st_mtime < cutoff:
                         return True
+                    continue
+                # Depth 2
+                try:
+                    sub = os.scandir(entry.path)
+                except OSError:
+                    continue
+                with sub:
+                    for child in sub:
+                        try:
+                            cst = child.stat(follow_symlinks=False)
+                        except OSError:
+                            continue
+                        if cst.st_mtime < cutoff:
+                            return True
     except OSError:
         return False
     return False
@@ -325,21 +333,22 @@ def clean_cargo_artifacts(
         deps = profile / "deps"
         if deps.is_dir():
             try:
-                for entry in os.scandir(deps):
-                    if not entry.is_file(follow_symlinks=False):
-                        continue
-                    if not entry.name.endswith(CARGO_DEPS_EXTS):
-                        continue
-                    try:
-                        mtime = entry.stat(follow_symlinks=False).st_mtime
-                    except OSError:
-                        continue
-                    if mtime >= cutoff:
-                        continue
-                    if verbose:
-                        print(f"  rm {entry.path}")
-                    if _rm(Path(entry.path), dry_run):
-                        removed += 1
+                with os.scandir(deps) as entries:
+                    for entry in entries:
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        if not entry.name.endswith(CARGO_DEPS_EXTS):
+                            continue
+                        try:
+                            mtime = entry.stat(follow_symlinks=False).st_mtime
+                        except OSError:
+                            continue
+                        if mtime >= cutoff:
+                            continue
+                        if verbose:
+                            print(f"  rm {entry.path}")
+                        if _rm(Path(entry.path), dry_run):
+                            removed += 1
             except OSError:
                 pass
 
@@ -348,19 +357,20 @@ def clean_cargo_artifacts(
             if not kind_dir.is_dir():
                 continue
             try:
-                for entry in os.scandir(kind_dir):
-                    if not entry.is_dir(follow_symlinks=False):
-                        continue
-                    try:
-                        mtime = entry.stat(follow_symlinks=False).st_mtime
-                    except OSError:
-                        continue
-                    if mtime >= cutoff:
-                        continue
-                    if verbose:
-                        print(f"  rm {entry.path}")
-                    if _rm(Path(entry.path), dry_run):
-                        removed += 1
+                with os.scandir(kind_dir) as entries:
+                    for entry in entries:
+                        if not entry.is_dir(follow_symlinks=False):
+                            continue
+                        try:
+                            mtime = entry.stat(follow_symlinks=False).st_mtime
+                        except OSError:
+                            continue
+                        if mtime >= cutoff:
+                            continue
+                        if verbose:
+                            print(f"  rm {entry.path}")
+                        if _rm(Path(entry.path), dry_run):
+                            removed += 1
             except OSError:
                 pass
 
@@ -420,26 +430,27 @@ def clean_cargo_artifacts(
 def _dir_has_no_recent(root: Path, cutoff: float) -> bool:
     """True if no file under `root` (depth <= 2) has mtime >= cutoff."""
     try:
-        for entry in os.scandir(root):
-            try:
-                st = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if st.st_mtime >= cutoff:
-                return False
-            if entry.is_dir(follow_symlinks=False):
+        with os.scandir(root) as entries:
+            for entry in entries:
                 try:
-                    sub = os.scandir(entry.path)
+                    st = entry.stat(follow_symlinks=False)
                 except OSError:
                     continue
-                with sub:
-                    for child in sub:
-                        try:
-                            cst = child.stat(follow_symlinks=False)
-                        except OSError:
-                            continue
-                        if cst.st_mtime >= cutoff:
-                            return False
+                if st.st_mtime >= cutoff:
+                    return False
+                if entry.is_dir(follow_symlinks=False):
+                    try:
+                        sub = os.scandir(entry.path)
+                    except OSError:
+                        continue
+                    with sub:
+                        for child in sub:
+                            try:
+                                cst = child.stat(follow_symlinks=False)
+                            except OSError:
+                                continue
+                            if cst.st_mtime >= cutoff:
+                                return False
     except OSError:
         return True
     return True

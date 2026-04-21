@@ -662,6 +662,13 @@ class TestServiceRestartSequenceKeepsGatewayHealthy:
             f"budget ({self.ENSURE_SERVICE_SLEEP_SECS}s): {survivors}"
         )
 
+        # svc_a.proc is reaped; close its log fd before svc_b reuses the
+        # tmp_dir. svc_a.stop() would also shutil.rmtree the dir, which
+        # would wipe svc_b's workspace -- close the log manually instead.
+        if svc_a._log_file is not None:
+            svc_a._log_file.close()
+            svc_a._log_file = None
+
         # Start svc_b reusing tmp_dir and gateway port. Port reuse is the
         # whole point of this test -- it would be a no-op on the bug if
         # we let svc_b pick a fresh port.
@@ -720,6 +727,7 @@ class TestRapidServiceRestartIsRobust:
         # other test or the real :19222 that the user may have bound.
         port = 30000 + (os.getpid() % 5000)
         shared_tmp = Path(tempfile.mkdtemp(prefix="capsem-rapid-restart-"))
+        spawned: list[subprocess.Popen] = []
         try:
             prev_proc: subprocess.Popen | None = None
             prev_children: list[int] = []
@@ -744,6 +752,7 @@ class TestRapidServiceRestartIsRobust:
                         )
 
                 proc = _spawn_service_on_fixed_port(shared_tmp, port)
+                spawned.append(proc)
                 try:
                     _wait_for_gateway_port_file(shared_tmp, port, timeout=5.0)
                 except TimeoutError as e:
@@ -770,6 +779,13 @@ class TestRapidServiceRestartIsRobust:
                 os.kill(prev_proc.pid, signal.SIGTERM)
                 prev_proc.wait(timeout=5)
         finally:
+            # Close every spawned service's log-file handle -- Popen does
+            # not close file objects passed as stdout; filterwarnings=error
+            # promotes the leak to a hard failure.
+            for proc in spawned:
+                log_file = getattr(proc, "_log_file", None)
+                if log_file is not None and not log_file.closed:
+                    log_file.close()
             shutil.rmtree(shared_tmp, ignore_errors=True)
 
 
@@ -781,6 +797,11 @@ def _spawn_service_on_fixed_port(
     Mirrors ServiceInstance.start() but lets us pin `--gateway-port` so
     consecutive services collide on the same port (the real `just ui`
     scenario). Returns the Popen handle; caller owns shutdown.
+
+    The log-file handle is stashed on the returned proc as
+    `proc._log_file` so the caller can close it after `proc.wait()` --
+    Popen does not close file objects passed as stdout/stderr, and
+    filterwarnings=error promotes the leaked fd to a hard failure.
     """
     from helpers.service import (
         SERVICE_BINARY, PROCESS_BINARY, GATEWAY_BINARY, TRAY_BINARY, ASSETS_DIR,
@@ -793,6 +814,7 @@ def _spawn_service_on_fixed_port(
     env["RUST_LOG"] = "info"
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
     env["CAPSEM_TRAY_HEADLESS"] = "1"
+    log_file = open(log_path, "w")
     proc = subprocess.Popen(
         [
             str(SERVICE_BINARY),
@@ -805,9 +827,10 @@ def _spawn_service_on_fixed_port(
             "--foreground",
         ],
         env=env,
-        stdout=open(log_path, "w"),
+        stdout=log_file,
         stderr=subprocess.STDOUT,
     )
+    proc._log_file = log_file  # type: ignore[attr-defined]
     # Wait for service UDS to accept.
     start = time.time()
     while time.time() - start < 15:

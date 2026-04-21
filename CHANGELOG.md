@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Python test warnings were never promoted to errors.** `pyproject.toml`
+  `[tool.pytest.ini_options]` had no `filterwarnings`, so
+  `DeprecationWarning`, `ResourceWarning`, and (critically)
+  `PytestUnraisableExceptionWarning` were reported but never gated. Real
+  fd / socket / thread-resource leaks in both tests and production
+  scripts therefore shipped green. Set `filterwarnings = ["error"]` and
+  fixed every leak surfaced:
+  - `scripts/clean_stale.py` -- all six `os.scandir(...)` call sites
+    were either unbracketed (iterator GC'd eventually, but not
+    deterministically) or, in `_target_release_has_old_content` and
+    `_dir_has_no_recent`, returned early mid-iteration leaving the
+    iterator open. Wrapped each in `with os.scandir(...) as entries:`
+    so the underlying fd is released on scope exit regardless of
+    return path.
+  - `tests/test_exec_lock.py` -- the `_spawn_holder` helper returned
+    a `subprocess.Popen` with `stdout=PIPE, stderr=PIPE`; tests
+    `.wait()`'d but never closed the pipe fds. Hoisted the two
+    callers into `with ... as holder:` blocks so Popen's own
+    `__exit__` closes the pipes.
+  - `tests/capsem-gateway/test_gw_terminal.py` -- `ws_env` fixture
+    teardown called `svc_server.shutdown()` (stops
+    `serve_forever`) but never `svc_server.server_close()` (releases
+    the UDS listen socket). Added the close plus
+    `svc_thread.join()`.
+  - `tests/capsem-gateway/test_gw_lifecycle.py` -- the SIGTERM /
+    SIGINT lifecycle tests called `gw.start()` but never
+    `gw.stop()`, so the gateway log-file handle leaked even though
+    the gateway process was killed by signal. Wrapped the asserts
+    in `try/finally: gw.stop()`.
+  - `tests/capsem-service/test_companion_lifecycle.py` -- the
+    restart-with-same-run-dir test needed svc_a's log fd closed
+    without destroying the shared tmp_dir (svc_b reuses it);
+    added an explicit `svc_a._log_file.close()` between the two
+    services. `_spawn_service_on_fixed_port` opened its own log
+    file anonymously (`stdout=open(log_path, "w")`) so the
+    six-rapid-restarts test could not reach it; it now stashes
+    the handle on `proc._log_file` and the test closes every
+    spawned service's log file in its finally block.
+
 - **Unhandled exceptions in daemon threads were not failing the test
   suite.** Python surfaces thread exceptions as
   `PytestUnhandledThreadExceptionWarning`, which is reported but has

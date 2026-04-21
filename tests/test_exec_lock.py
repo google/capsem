@@ -41,8 +41,10 @@ def _try_acquire(lock_path, timeout=5):
 def test_acquire_blocks_concurrent_holder(tmp_path):
     """Second acquire on a held lock must exit non-zero with a clear message."""
     lock = tmp_path / "concurrent.lock"
-    holder = _spawn_holder(lock, hold_seconds=2)
-    try:
+    # Popen as a context manager closes stdout/stderr pipes on exit --
+    # without it, pytest's filterwarnings=error surfaces the leftover
+    # _io.FileIO handles as PytestUnraisableExceptionWarning.
+    with _spawn_holder(lock, hold_seconds=2) as holder:
         assert holder.stdout.readline().strip() == "HELD", (
             "holder failed to acquire before probe"
         )
@@ -54,16 +56,15 @@ def test_acquire_blocks_concurrent_holder(tmp_path):
         assert str(lock) in err, (
             f"stderr should include the lock path, got: {err!r}"
         )
-    finally:
         holder.wait(timeout=5)
 
 
 def test_acquire_reacquires_after_holder_exits(tmp_path):
     """Once the holder releases (process exit), the lock must be reclaimable."""
     lock = tmp_path / "reacquire.lock"
-    holder = _spawn_holder(lock, hold_seconds=0.1)
-    assert holder.stdout.readline().strip() == "HELD"
-    holder.wait(timeout=5)
+    with _spawn_holder(lock, hold_seconds=0.1) as holder:
+        assert holder.stdout.readline().strip() == "HELD"
+        holder.wait(timeout=5)
     rc, err = _try_acquire(lock)
     assert rc == 0, f"re-acquire after holder exit should succeed, stderr: {err!r}"
 

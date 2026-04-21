@@ -30,6 +30,15 @@ testpaths = ["tests"]
 # tests/capsem-mcp/test_lifecycle.py and tests/capsem-install/test_lifecycle.py
 # fight over the `test_lifecycle` module name.
 addopts = "--import-mode=importlib"
+# Promote every warning to an error by default. Without this, real bugs
+# have shipped green -- DeprecationWarning masking future breakage,
+# ResourceWarning masking fd/socket leaks, and
+# PytestUnhandledThreadExceptionWarning masking daemon-thread races
+# (tests/conftest.py now also captures those via threading.excepthook).
+# Add targeted "ignore::..." entries below only with a one-line rationale.
+filterwarnings = [
+    "error",
+]
 markers = [
     "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
     "integration: Service/CLI integration tests (require capsem-service + VM)",

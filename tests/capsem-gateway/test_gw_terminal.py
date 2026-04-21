@@ -134,7 +134,12 @@ def ws_env():
 
     gw.stop()
     mock_ws.stop()
+    # shutdown() only asks serve_forever() to return; server_close()
+    # releases the listening UDS socket. Skipping it leaks the fd and
+    # pytest surfaces it as PytestUnraisableExceptionWarning.
     svc_server.shutdown()
+    svc_server.server_close()
+    svc_thread.join(timeout=5)
 
 
 class TestTerminalWebSocket:
