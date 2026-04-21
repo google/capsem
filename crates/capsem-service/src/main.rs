@@ -557,12 +557,14 @@ impl ServiceState {
             // That's exactly when we want to preserve process.log /
             // mcp-aggregator.stderr.log / serial.log / session.db for
             // post-mortem, rather than silently `remove_dir_all`.
-            tracing::warn!(id_clone, "provision_sandbox child exit handler removing instance");
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
             if let Some(info) = removed {
+                tracing::warn!(id_clone, "child exited unexpectedly (no explicit shutdown), preserving session dir");
                 if !info.persistent {
                     state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
                 }
+            } else {
+                tracing::debug!(id_clone, "child exited after explicit shutdown");
             }
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
@@ -2188,7 +2190,7 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
     // Remove from active instances immediately so the service considers this
     // VM gone. The child-exit handler at spawn time may also call remove
     // (idempotent).
-    tracing::warn!(id, "shutdown_vm_process removing instance");
+    tracing::debug!(id, "shutdown_vm_process removing instance");
     state.instances.lock().unwrap().remove(id);
 
     // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
@@ -2840,6 +2842,14 @@ async fn main() -> Result<()> {
         magika: Mutex::new(magika_session),
     });
 
+    // Reap capsem-process orphans from any prior service run sharing this
+    // run_dir. A previous service that crashed (SIGKILL) or was killed by
+    // tests left its per-VM processes alive; they still reference our
+    // run_dir via --session-dir and will never die on their own. Do this
+    // BEFORE stale-socket removal so the orphans get a chance to clean up
+    // their own sockets on SIGTERM.
+    reap_orphan_capsem_processes(&run_dir);
+
     // Check for running instances to reattach
     info!("scanning for existing sandboxes in {}", instances_dir.display());
     if let Ok(entries) = std::fs::read_dir(&instances_dir) {
@@ -2967,6 +2977,94 @@ async fn main() -> Result<()> {
         .context("server error")?;
 
     Ok(())
+}
+
+/// Parse `ps -ax -o pid=,command=` output and return the PIDs of every
+/// `capsem-process` instance whose `--session-dir` lives inside `run_dir`.
+///
+/// A SIGKILL to capsem-service (crash, OOM, `svc.proc.kill()` in recovery
+/// tests) does not propagate to children, so every per-VM `capsem-process`
+/// it spawned becomes an orphan with its `--session-dir` still pointing
+/// under the dead service's run_dir. When a replacement service starts on
+/// the same run_dir it must reap these orphans or the host accumulates
+/// wedged Apple VZ instances and leaked vsock ports.
+///
+/// Matches on the `--session-dir <run_dir>/` prefix because the spawn-side
+/// always writes the absolute session dir as `<run_dir>/sessions/<id>` or
+/// `<run_dir>/persistent/<id>`. Pure -- no side effects -- so the matching
+/// is unit-testable without spawning real processes.
+fn find_orphan_capsem_pids(ps_output: &str, run_dir: &Path) -> Vec<i32> {
+    let run_dir_str = run_dir.display().to_string();
+    let marker = format!("--session-dir {run_dir_str}");
+    let mut pids = Vec::new();
+    for line in ps_output.lines() {
+        let line = line.trim_start();
+        if !line.contains("capsem-process") {
+            continue;
+        }
+        if !line.contains(&marker) {
+            continue;
+        }
+        let Some((pid_str, _)) = line.split_once(char::is_whitespace) else { continue };
+        if let Ok(pid) = pid_str.parse::<i32>() {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+/// Reap `capsem-process` orphans from a prior service run that shared this
+/// run_dir. See [`find_orphan_capsem_pids`] for the why; this wrapper shells
+/// out to `ps`, applies the match, and escalates SIGTERM -> 2s poll ->
+/// SIGKILL. Best effort: silent if `ps` is missing or nothing matches.
+fn reap_orphan_capsem_processes(run_dir: &Path) {
+    let output = match std::process::Command::new("ps")
+        .args(["-ax", "-o", "pid=,command="])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let orphan_pids = find_orphan_capsem_pids(&stdout, run_dir);
+    if orphan_pids.is_empty() {
+        return;
+    }
+
+    tracing::warn!(
+        count = orphan_pids.len(),
+        ?orphan_pids,
+        "reaping capsem-process orphans from previous service run"
+    );
+
+    for pid in &orphan_pids {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(*pid),
+            nix::sys::signal::Signal::SIGTERM,
+        );
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let survivors: Vec<i32> = orphan_pids.iter()
+            .copied()
+            .filter(|&pid| unsafe { nix::libc::kill(pid, 0) } == 0)
+            .collect();
+        if survivors.is_empty() {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(count = survivors.len(), ?survivors, "orphan capsem-process did not exit, SIGKILLing");
+            for pid in survivors {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
+            }
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 /// Kill every per-VM `capsem-process` the service has spawned.
