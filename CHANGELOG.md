@@ -102,6 +102,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
 ### Fixed
+- **Leak detector: eliminate false positives and xdist-controller double-reporting.**
+  `tests/conftest.py`'s `get_capsem_processes` was matching `'capsem-' in arg`
+  across every process's full cmdline, so `cargo build -p capsem-*`, `rustc`
+  driving a capsem crate, and every unrelated tool invoked from a path
+  containing `capsem-next/` showed up as a "leak". The per-test check_leaks
+  fixture also logged a line for every session-scoped fixture process on every
+  test it outlived, so a single shared_vm in a 20-test file produced 20 false
+  leak entries. On top of that, under `-n 4` the xdist controller process --
+  which never runs session-scoped fixtures or tests -- also ran
+  `pytest_sessionfinish` with an empty baseline and re-reported every capsem
+  process as `<unknown>`. Rewrote the detector: match on `psutil` process
+  name starting with `capsem-` (no cmdline scanning); snapshot the baseline
+  at conftest import time so the xdist controller sees one too; per-test
+  fixture now only records first-seen attribution; real leak check fires
+  once at `pytest_sessionfinish` against processes still alive not in the
+  baseline; skip the check entirely in the xdist controller and let each
+  worker report its own leaks with real attribution. Verified
+  `tests/capsem-build-chain/` and `tests/capsem-mcp/ -n 4` now produce no
+  false-positive leak entries.
 - **Improved VM process cleanup in delete handler.** Replaced fixed wait loops with bounded polling and SIGKILL fallback in `handle_delete` to ensure robust cleanup of `capsem-process` instances during deletion.
 - **Fixed zombie process leak in service test helper.** Added `wait()` after `kill()` in `ServiceInstance.stop` to ensure child processes are fully reaped.
 - **Wired capsem-guard into MCP subprocesses.** Added `capsem-guard` to `capsem-mcp-aggregator` and `capsem-mcp-builtin` to ensure they exit when their parent process dies, eliminating leaks.
