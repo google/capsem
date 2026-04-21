@@ -3032,7 +3032,8 @@ fn kill_all_vm_processes(state: &ServiceState) {
         return;
     }
     let mut signaled_any_vm = false;
-    for (pid, uds_path, session_dir, persistent) in pids_and_sockets {
+    for (pid, uds_path, session_dir, persistent) in &pids_and_sockets {
+        let pid = *pid;
         if pid > 0 {
             // SIGTERM first so capsem-process gets a chance to run its own cleanup
             // (save state, unmount virtiofs). Graceful_shutdown is already holding
@@ -3049,17 +3050,31 @@ fn kill_all_vm_processes(state: &ServiceState) {
     if !signaled_any_vm {
         return;
     }
-    // Brief grace period, then SIGKILL survivors.
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let survivors: Vec<u32> = {
-        let instances = state.instances.lock().unwrap();
-        instances.values()
-            .map(|i| i.pid)
+    
+    // Bounded wait: poll for up to 2 seconds
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(2);
+    let poll_interval = std::time::Duration::from_millis(100);
+    
+    loop {
+        let survivors: Vec<u32> = pids_and_sockets.iter()
+            .map(|(pid, _, _, _)| *pid)
             .filter(|&pid| pid > 0 && unsafe { nix::libc::kill(pid as i32, 0) } == 0)
-            .collect()
-    };
-    for pid in survivors {
-        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+            .collect();
+            
+        if survivors.is_empty() {
+            break;
+        }
+        
+        if start.elapsed() >= timeout {
+            tracing::warn!(count = survivors.len(), "some VMs survived SIGTERM, escalating to SIGKILL");
+            for pid in survivors {
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+            }
+            break;
+        }
+        
+        std::thread::sleep(poll_interval);
     }
 }
 

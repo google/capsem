@@ -102,6 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
 ### Fixed
+- **Improved service-side VM process cleanup.** Replaced fixed 500ms sleep with a bounded polling loop (up to 2s) and SIGKILL fallback in `kill_all_vm_processes` to ensure robust cleanup of `capsem-process` instances.
 - **`_clean-stale` now caps each cargo kind directory by size, so
   target/ stops growing unbounded during active dev.** The age-only
   prune (remove entries older than 2-3 days) never fired in practice
