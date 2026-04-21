@@ -60,6 +60,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   match.
 
 ### Added
+- **`tests/test_repack_deb.py` -- 6 pytests that exercise
+  `scripts/repack-deb.sh` directly in under a second.** Previously the
+  repack step was only validated through `just test-install`, which
+  takes minutes (Tauri build + systemd container + pnpm install)
+  before any repack-related bug surfaces. The new harness builds a
+  minimal fixture `.deb` with `dpkg-deb -b`, seeds fake companion
+  binaries, and invokes the script end-to-end; coverage includes the
+  happy path (all six companion binaries land at `/usr/bin/<name>`
+  with mode 0755), `DEBIAN/postinst` copy fidelity, loud failure when
+  a companion binary is missing, loud failure when the input path
+  contains an embedded newline (regression for the `ls *.deb`
+  multi-match bug), the build-timestamp stamp on `Version:`, and
+  output-defaults-to-overwriting-input semantics. Skipped with a
+  clear message when `dpkg-deb` is not on PATH (macOS default); runs
+  in Linux CI and inside the `capsem-install-test` container.
+  Verified in-container: 6 passed in 0.17s.
 - **`just test` now records an in-VM capsem-bench baseline on every
   run.** The stage-6 "Benchmarks" step used to call
   `{{binary}} "capsem-bench"`, which clap parsed as a host-side
@@ -77,6 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+### Fixed
 - **`just test-install` no longer passes dpkg-deb a two-path mess
   after a version bump.** The repack step did
   `DEB=$(ls /cargo-target/debug/bundle/deb/*.deb)` -- when the persistent
