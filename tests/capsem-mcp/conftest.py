@@ -143,6 +143,8 @@ def _start_capsem_service():
     env = os.environ.copy()
     env["RUST_LOG"] = "debug"
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
+    env["CAPSEM_HOME"] = str(tmp_dir)
+    env["HOME"] = str(tmp_dir)
 
     log_path = tmp_dir / "service.log"
     stderr_path = tmp_dir / "service.stderr.log"
@@ -201,7 +203,7 @@ def _start_capsem_service():
     return uds_path, teardown
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def capsem_service():
     """Start a dedicated capsem-service on a random socket.
 

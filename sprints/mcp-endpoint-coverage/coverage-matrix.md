@@ -65,12 +65,12 @@ Source: `crates/capsem-service/src/main.rs` routes registered at lines 2671--271
 | GET | `/service-logs` | `main.rs:1355 handle_service_logs` | none | **BLIND SPOT** -- no test of any kind (the `capsem_service_logs` MCP tool bypasses this and reads the log file directly on disk) |
 | POST | `/reload-config` | `main.rs:1526 handle_reload_config` | `test_gw_proxy_advanced.py` (gateway mock only -- excluded) | **BLIND SPOT** -- only gateway mock test, no real-service test |
 | POST | `/fork/{id}` | `main.rs:1052 handle_fork` | `test_lifecycle_benchmark.py::_run_fork_benchmark` (capsem-serial, not capsem-service/lifecycle) | Smoke -- benchmark calls the endpoint, asserts size_bytes and data survives; no dedicated service-layer test. Also has Rust unit tests at `main.rs:3432--3522` |
-| GET | `/settings` | `main.rs:1562 handle_get_settings` | `main.rs:3955 handle_get_settings_returns_tree` (Rust unit only) | **BLIND SPOT** -- no Python integration test |
-| POST | `/settings` | `main.rs:1568 handle_save_settings` | `main.rs:3982 handle_save_settings_rejects_unknown_key` (Rust unit only) | **BLIND SPOT** -- no Python integration test |
-| GET | `/settings/presets` | `main.rs:1587 handle_get_presets` | `main.rs:3966 handle_get_presets_returns_list` (Rust unit only) | **BLIND SPOT** -- no Python integration test |
-| POST | `/settings/presets/{id}` | `main.rs:1593 handle_apply_preset` | none | **BLIND SPOT** -- no test of any kind |
-| POST | `/settings/lint` | `main.rs:1603 handle_lint_config` | `main.rs:3976 handle_lint_config_returns_array` (Rust unit only) | **BLIND SPOT** -- no Python integration test |
-| POST | `/settings/validate-key` | `main.rs:1609 handle_validate_key` | none | **BLIND SPOT** -- no test of any kind |
+| GET | `/settings` | `main.rs:1562 handle_get_settings` | `test_svc_settings.py::TestSettingsTree::test_settings_response_shape` + Rust unit at `main.rs:3955` | Yes |
+| POST | `/settings` | `main.rs:1568 handle_save_settings` | `test_svc_settings.py::TestSettingsTree::{test_save_settings_round_trips,test_save_settings_rejects_unknown_key}` + Rust unit at `main.rs:3982` | Yes -- round-trip via GET and unknown-key rejection |
+| GET | `/settings/presets` | `main.rs:1587 handle_get_presets` | `test_svc_settings.py::TestPresets::test_presets_lists_medium_and_high` + Rust unit at `main.rs:3966` | Yes |
+| POST | `/settings/presets/{id}` | `main.rs:1593 handle_apply_preset` | `test_svc_settings.py::TestPresets::{test_apply_preset_returns_refreshed_tree,test_apply_unknown_preset_rejected}` | Yes |
+| POST | `/settings/lint` | `main.rs:1603 handle_lint_config` | `test_svc_settings.py::TestLint::test_lint_returns_array` + Rust unit at `main.rs:3976` | Yes |
+| POST | `/settings/validate-key` | `main.rs:1609 handle_validate_key` | `test_svc_settings.py::TestValidateKey::{test_validate_key_unknown_provider_rejected,test_validate_key_empty_key_not_valid,test_validate_key_bogus_anthropic_returns_invalid}` | Yes -- unknown provider, empty key short-circuit, live call against api.anthropic.com |
 | GET | `/setup/state` | `main.rs:1623 handle_get_setup_state` | none | **BLIND SPOT** -- no test of any kind |
 | GET | `/setup/detect` | `main.rs:1642 handle_detect_host_config` | none | **BLIND SPOT** -- no test of any kind |
 | POST | `/setup/complete` | `main.rs:1655 handle_complete_onboarding` | none | **BLIND SPOT** -- no test of any kind |

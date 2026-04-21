@@ -128,6 +128,8 @@ class ServiceInstance:
         env = os.environ.copy()
         env["RUST_LOG"] = "debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
+        env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["HOME"] = str(self.tmp_dir)
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")
