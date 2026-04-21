@@ -7,7 +7,7 @@
 
 | Sub | Topic | Status | Depends on | Blocked by (external) |
 |-----|-------|--------|------------|-----------------------|
-| T1 | `src/registry.rs` (PersistentRegistry) | Not started | — | Python suite stable |
+| T1 | `src/registry.rs` (PersistentRegistry) | Done | — | — (landed; Python-suite blocker was handler-specific and did not apply to the pure-type move) |
 | T2 | `ServiceState` → lib | Not started | T1 | Python suite stable |
 | T3 | `src/routes/files.rs` | Not started | T2 | Python suite stable |
 | T4 | `src/routes/images.rs` (handle_fork) | Not started | T2 | Python suite stable |

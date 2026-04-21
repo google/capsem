@@ -16,7 +16,7 @@ use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
 use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use capsem_core::poll::{poll_until, PollOpts};
 use tower_http::trace::TraceLayer;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 
 mod startup;
@@ -24,6 +24,7 @@ mod startup;
 use capsem_service::api;
 use capsem_service::api::*;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
+use capsem_service::registry::{PersistentRegistry, PersistentVmEntry};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -35,93 +36,6 @@ struct Args {
     #[arg(long)] gateway_port: Option<u16>,
     #[arg(long)] tray_binary: Option<PathBuf>,
     #[arg(long)] assets_dir: Option<PathBuf>,
-}
-
-// ---------------------------------------------------------------------------
-// Persistent VM registry (JSON-backed)
-// ---------------------------------------------------------------------------
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct PersistentVmEntry {
-    name: String,
-    ram_mb: u64,
-    cpus: u32,
-    base_version: String,
-    created_at: String,
-    session_dir: PathBuf,
-    #[serde(skip_serializing_if = "Option::is_none", default, alias = "source_image")]
-    forked_from: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    description: Option<String>,
-    #[serde(default)]
-    suspended: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    checkpoint_path: Option<String>,
-    /// User-provided env vars from /provision -- replayed on every resume so the
-    /// guest sees the same environment after stop+resume cycles.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    env: Option<std::collections::HashMap<String, String>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-struct PersistentRegistryData {
-    vms: HashMap<String, PersistentVmEntry>,
-}
-
-struct PersistentRegistry {
-    path: PathBuf,
-    data: PersistentRegistryData,
-}
-
-impl PersistentRegistry {
-    fn load(path: PathBuf) -> Self {
-        let data = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        Self { path, data }
-    }
-
-    fn save(&self) -> Result<()> {
-        let json = serde_json::to_string_pretty(&self.data)?;
-        // Atomic write: write to temp file, fsync, then rename.
-        // Prevents torn writes on crash from losing all persistent VM state.
-        let tmp_path = self.path.with_extension("json.tmp");
-        let mut f = std::fs::File::create(&tmp_path)?;
-        std::io::Write::write_all(&mut f, json.as_bytes())?;
-        f.sync_all()?;
-        std::fs::rename(&tmp_path, &self.path)?;
-        Ok(())
-    }
-
-    fn register(&mut self, entry: PersistentVmEntry) -> Result<()> {
-        if self.data.vms.contains_key(&entry.name) {
-            return Err(anyhow!("persistent VM \"{}\" already exists. Use resume to reconnect.", entry.name));
-        }
-        self.data.vms.insert(entry.name.clone(), entry);
-        self.save()
-    }
-
-    fn unregister(&mut self, name: &str) -> Result<()> {
-        self.data.vms.remove(name);
-        self.save()
-    }
-
-    fn get(&self, name: &str) -> Option<&PersistentVmEntry> {
-        self.data.vms.get(name)
-    }
-
-    fn get_mut(&mut self, name: &str) -> Option<&mut PersistentVmEntry> {
-        self.data.vms.get_mut(name)
-    }
-
-    fn list(&self) -> impl Iterator<Item = &PersistentVmEntry> {
-        self.data.vms.values()
-    }
-
-    fn contains(&self, name: &str) -> bool {
-        self.data.vms.contains_key(name)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3835,101 +3749,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // PersistentRegistry
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn persistent_registry_roundtrip() {
-        let dir = std::env::temp_dir().join("capsem-test-registry");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test_registry.json");
-        let _ = std::fs::remove_file(&path);
-
-        let mut registry = PersistentRegistry::load(path.clone());
-        assert_eq!(registry.data.vms.len(), 0);
-
-        registry.register(PersistentVmEntry {
-            name: "mydev".into(),
-            ram_mb: 4096,
-            cpus: 4,
-            base_version: "0.1.0".into(),
-            created_at: "12345".into(),
-            session_dir: dir.join("mydev"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            checkpoint_path: None,
-        env: None,
-        }).unwrap();
-
-        assert!(registry.contains("mydev"));
-        assert_eq!(registry.get("mydev").unwrap().ram_mb, 4096);
-
-        // Reload from disk
-        let registry2 = PersistentRegistry::load(path.clone());
-        assert!(registry2.contains("mydev"));
-        assert_eq!(registry2.get("mydev").unwrap().cpus, 4);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn persistent_registry_rejects_duplicate() {
-        let dir = std::env::temp_dir().join("capsem-test-registry-dup");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test_registry.json");
-        let _ = std::fs::remove_file(&path);
-
-        let mut registry = PersistentRegistry::load(path);
-        let entry = PersistentVmEntry {
-            name: "dup".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.1.0".into(),
-            created_at: "12345".into(),
-            session_dir: dir.join("dup"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            checkpoint_path: None,
-        env: None,
-        };
-        registry.register(entry.clone()).unwrap();
-        let err = registry.register(entry).unwrap_err();
-        assert!(err.to_string().contains("already exists"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn persistent_registry_unregister() {
-        let dir = std::env::temp_dir().join("capsem-test-registry-unreg");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test_registry.json");
-        let _ = std::fs::remove_file(&path);
-
-        let mut registry = PersistentRegistry::load(path);
-        registry.register(PersistentVmEntry {
-            name: "tmp".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.1.0".into(),
-            created_at: "12345".into(),
-            session_dir: dir.join("tmp"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            checkpoint_path: None,
-        env: None,
-        }).unwrap();
-        assert!(registry.contains("tmp"));
-        registry.unregister("tmp").unwrap();
-        assert!(!registry.contains("tmp"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    // -----------------------------------------------------------------------
     // Provision rejects duplicate persistent VM
     // -----------------------------------------------------------------------
 
@@ -4153,43 +3972,6 @@ mod tests {
     // Suspend/resume registry fixes (issues #4-8)
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn persistent_registry_get_mut() {
-        let dir = std::env::temp_dir().join("capsem-test-registry-getmut");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test_registry.json");
-        let _ = std::fs::remove_file(&path);
-
-        let mut registry = PersistentRegistry::load(path);
-        registry.register(PersistentVmEntry {
-            name: "mutvm".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.1.0".into(),
-            created_at: "12345".into(),
-            session_dir: dir.join("mutvm"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            checkpoint_path: None,
-        env: None,
-        }).unwrap();
-
-        // Mutate via get_mut
-        let entry = registry.get_mut("mutvm").unwrap();
-        entry.suspended = true;
-        entry.checkpoint_path = Some("checkpoint.vzsave".into());
-        let _ = registry.save();
-
-        assert!(registry.get("mutvm").unwrap().suspended);
-        assert_eq!(
-            registry.get("mutvm").unwrap().checkpoint_path.as_deref(),
-            Some("checkpoint.vzsave")
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     #[tokio::test]
     async fn handle_list_shows_suspended_status() {
         let (state, _dir) = make_test_state_with_tempdir();
@@ -4299,80 +4081,6 @@ mod tests {
         let result = handle_suspend(State(state), Path("nonexistent".into())).await;
         let err = result.unwrap_err();
         assert_eq!(err.0, StatusCode::NOT_FOUND);
-    }
-
-    #[test]
-    fn resume_clears_suspended_flag_in_registry() {
-        let dir = std::env::temp_dir().join("capsem-test-resume-flag");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test_registry.json");
-        let _ = std::fs::remove_file(&path);
-
-        let mut registry = PersistentRegistry::load(path.clone());
-        registry.register(PersistentVmEntry {
-            name: "resumevm".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.1.0".into(),
-            created_at: "12345".into(),
-            session_dir: dir.join("resumevm"),
-            forked_from: None,
-            description: None,
-            suspended: true,
-            checkpoint_path: Some("checkpoint.vzsave".into()),
-        env: None,
-        }).unwrap();
-
-        // Verify suspended initially
-        assert!(registry.get("resumevm").unwrap().suspended);
-        assert!(registry.get("resumevm").unwrap().checkpoint_path.is_some());
-
-        // Simulate what resume_sandbox does after spawning the process
-        if let Some(entry) = registry.get_mut("resumevm") {
-            entry.suspended = false;
-            entry.checkpoint_path = None;
-        }
-        let _ = registry.save();
-
-        // Verify cleared
-        assert!(!registry.get("resumevm").unwrap().suspended);
-        assert!(registry.get("resumevm").unwrap().checkpoint_path.is_none());
-
-        // Verify persists to disk
-        let registry2 = PersistentRegistry::load(path);
-        assert!(!registry2.get("resumevm").unwrap().suspended);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn suspended_flag_roundtrips_through_json() {
-        let entry = PersistentVmEntry {
-            name: "jsonvm".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.1.0".into(),
-            created_at: "12345".into(),
-            session_dir: PathBuf::from("/tmp/jsonvm"),
-            forked_from: None,
-            description: None,
-            suspended: true,
-            checkpoint_path: Some("checkpoint.vzsave".into()),
-        env: None,
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let parsed: PersistentVmEntry = serde_json::from_str(&json).unwrap();
-        assert!(parsed.suspended);
-        assert_eq!(parsed.checkpoint_path.as_deref(), Some("checkpoint.vzsave"));
-    }
-
-    #[test]
-    fn suspended_flag_defaults_to_false_when_missing() {
-        // Old registry entries won't have the suspended field
-        let json = r#"{"name":"old","ram_mb":2048,"cpus":2,"base_version":"0.1.0","created_at":"0","session_dir":"/tmp/old"}"#;
-        let entry: PersistentVmEntry = serde_json::from_str(json).unwrap();
-        assert!(!entry.suspended, "suspended should default to false");
-        assert!(entry.checkpoint_path.is_none(), "checkpoint_path should default to None");
     }
 
     // -----------------------------------------------------------------------

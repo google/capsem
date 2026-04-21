@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`capsem-service`: `PersistentRegistry` extracted from `main.rs` into its
+  own `capsem_service::registry` module.** Pure code motion: `PersistentVmEntry`,
+  `PersistentRegistryData`, and `PersistentRegistry` with its eight methods
+  (`load`, `save`, `register`, `unregister`, `get`, `get_mut`, `list`,
+  `contains`) now live in `crates/capsem-service/src/registry.rs` and are
+  re-imported by `main.rs`. Seven registry-only tests move with the types;
+  seven new tests drive the module to 100% line coverage (corrupt-JSON
+  load, missing-file load, `get` / `get_mut` / `contains` miss paths,
+  `list` iteration, atomic temp-rename on save). Moved tests switch from
+  ad-hoc `env::temp_dir()` + manual cleanup to `tempfile::TempDir` to
+  eliminate cross-run path collisions. `main.rs` drops from 4,855 to
+  4,563 lines. No behavior change; first step of the
+  `capsem-service-split-followup` sprint (T1).
+
 ### Added
 - **Unit-coverage lifts on six files to recover the `unit` codecov flag.**
   Workspace line coverage had regressed below the 80% unit target after
