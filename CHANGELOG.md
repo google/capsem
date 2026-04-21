@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- **`capsem delete` and `capsem purge` no longer pay the 2.7s graceful
+  shutdown floor.** Previously `shutdown_vm_process` unconditionally sent
+  `ServiceToProcess::Shutdown` via IPC, which armed capsem-process's 2.5s
+  self-timer (giving the guest agent `SHUTDOWN_GRACE_SECS` to SIGTERM bash
+  gracefully before SIGKILL) before the caller could observe process
+  exit. Delete/purge don't need that grace because the session dir (with
+  its workspace and bash history) is about to be removed anyway. Added a
+  `graceful: bool` parameter to `shutdown_vm_process`; `handle_delete` and
+  `handle_purge` now pass `false`, which SIGTERMs capsem-process directly
+  (its `CFRunLoopStop` handler from 9b14618 makes this a clean exit) with
+  a 1s poll before escalating to SIGKILL. `handle_stop` and `handle_run`
+  keep graceful=true (persistent VMs need bash history preserved;
+  handle_run reads session.db after teardown). Observed delete mean
+  dropped from 2782 ms to ~70 ms across 3 benchmark runs, unblocking
+  `tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark`
+  under `just test` stage 5.
+
 ### Changed
 - **Convention: Rust unit tests live in a sibling `tests.rs`, not an inline
   `mod tests { ... }` block.** Documented in `CLAUDE.md` (Code Style) and

@@ -2077,27 +2077,50 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
 
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
 ///
-/// Sends the shutdown signal, awaits actual process exit (escalating to
-/// SIGKILL via wait_for_process_exit on a 5s budget), and cleans up the
-/// UDS socket files before returning. Callers can read the session DB or
-/// rename the session dir as soon as this returns -- there is no
-/// outstanding background task.
-async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf, bool, u32)> {
+/// When `graceful` is true: sends `ServiceToProcess::Shutdown` via IPC so
+/// the guest agent can `sync()` and bash can run traps / save history, then
+/// waits up to 5s for natural exit. The in-process 2.5s self-timer in
+/// capsem-process (capsem-process/src/vsock.rs, ServiceToProcess::Shutdown
+/// branch) sets the floor at ~2.5s. Required for `handle_stop` on
+/// persistent VMs (preserves workspace state) and `handle_run` (session DB
+/// rollup reads main.db after exit).
+///
+/// When `graceful` is false: skips the IPC and sends SIGTERM directly to
+/// capsem-process. Its SIGTERM handler (capsem-process/src/main.rs, added
+/// in 9b14618) calls `CFRunLoopStop` so the process exits as soon as the
+/// main runloop returns -- typically well under 500ms. VZ tears down the
+/// VM when capsem-process exits, which kills the agent and bash without
+/// grace. Use for `delete` / `purge`: the workspace is about to be removed,
+/// so guest `sync()` and bash history are irrelevant. Polls up to 1s and
+/// escalates to SIGKILL on miss.
+///
+/// Either way, UDS socket / `.ready` files are removed inline and the
+/// instance is removed from the registry before return. The leak detector
+/// and suspend/resume both rely on "process is gone when this returns".
+async fn shutdown_vm_process(state: &ServiceState, id: &str, graceful: bool) -> Option<(PathBuf, bool, u32)> {
     let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(id)?;
         (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent)
     };
 
-    // Send shutdown command via IPC (or SIGTERM as fallback).
-    let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
-    if let Ok(stream) = stream_res {
-        if let Ok(std_stream) = stream.into_std() {
-            if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
-                let _ = tx.send(ServiceToProcess::Shutdown).await;
+    if graceful {
+        // Send shutdown command via IPC (or SIGTERM as fallback).
+        let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
+        if let Ok(stream) = stream_res {
+            if let Ok(std_stream) = stream.into_std() {
+                if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
+                    let _ = tx.send(ServiceToProcess::Shutdown).await;
+                }
             }
+        } else if pid > 0 {
+            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
         }
     } else if pid > 0 {
+        // Fast path: SIGTERM capsem-process directly. CFRunLoopStop fires
+        // before the guest's SHUTDOWN_GRACE_SECS sleep or the 2.5s in-process
+        // self-timer would, so delete/purge don't pay for bash's graceful
+        // exit when the VM is about to be destroyed anyway.
         let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
     }
 
@@ -2110,7 +2133,12 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
     // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
     // sockets. Synchronous: callers must not see "shutdown returned" while
     // the process is still alive (leak detector + suspend/resume rely on it).
-    wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
+    let exit_timeout = if graceful {
+        std::time::Duration::from_secs(5)
+    } else {
+        std::time::Duration::from_secs(1)
+    };
+    wait_for_process_exit(pid, exit_timeout).await;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
@@ -2215,8 +2243,9 @@ async fn handle_stop(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // shutdown_vm_process now waits for actual process exit and cleans the
     // socket inline -- when it returns, resume can immediately reuse the
-    // path without a SO_REUSEADDR-style race.
-    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id).await {
+    // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
+    // get bash history + filesystem sync before teardown.
+    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, true).await {
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
@@ -2231,8 +2260,9 @@ async fn handle_delete(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // shutdown_vm_process waits for actual exit + cleans sockets inline.
-    let session_dir = if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id).await {
+    // Delete fast-paths through SIGTERM + 1s poll: session dir is about
+    // to be removed, guest sync() and bash history don't matter.
+    let session_dir = if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await {
         session_dir
     } else {
         // Not running -- check persistent registry for stopped VM
@@ -2368,7 +2398,10 @@ async fn handle_purge(
         let id = id.clone();
         let persistent = *persistent;
         async move {
-            if let Some((session_dir, _, _pid)) = shutdown_vm_process(state_ref, &id).await {
+            // Purge fast-paths for the same reason as delete: every VM
+            // here is being destroyed, so the 2.5s graceful floor is pure
+            // waste per VM. join_all still runs them concurrently.
+            if let Some((session_dir, _, _pid)) = shutdown_vm_process(state_ref, &id, false).await {
                 Some((id, session_dir, persistent))
             } else {
                 None
@@ -2510,8 +2543,10 @@ async fn handle_run(
         // reopens the child might do during shutdown (log rotation, db
         // reopen) would ENOENT -- so we let it finish flushing first.
         // shutdown_vm_process now blocks until exit (5s budget, SIGKILL
-        // fallback) and cleans the UDS socket inline.
-        let _ = shutdown_vm_process(&state, &id).await;
+        // fallback) and cleans the UDS socket inline. Graceful because
+        // preserve_failed_session_dir inspects session logs that capsem-process
+        // is still flushing.
+        let _ = shutdown_vm_process(&state, &id, true).await;
         let dir = session_dir;
         let state_clone = Arc::clone(&state);
         let id_owned = id.clone();
@@ -2531,8 +2566,9 @@ async fn handle_run(
 
     // 5. Tear down VM process and build response. shutdown_vm_process
     // blocks until the process is actually gone -- the leak detector
-    // (and downstream session-DB reads) need that guarantee.
-    let _ = shutdown_vm_process(&state, &id).await;
+    // (and downstream session-DB reads) need that guarantee. Graceful so
+    // the DbWriter has a chance to flush before we read session.db at step 6.
+    let _ = shutdown_vm_process(&state, &id, true).await;
 
     let response = match exec_result {
         Ok(ProcessToService::ExecResult { stdout, stderr, exit_code, .. }) => {
