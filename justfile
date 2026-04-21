@@ -797,11 +797,18 @@ test-install: _build-host
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
         "cd /src/frontend && pnpm install && pnpm build"
     echo "Building Tauri .deb..."
+    # Clear stale bundles before the build: /cargo-target is a persistent
+    # Docker volume, and any previous version's .deb lingers there. The
+    # subsequent `ls *.deb` pickup would otherwise match both the stale
+    # and current files -- `ls -t | head -1` below is belt-and-braces for
+    # the same class of bug.
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "rm -f /cargo-target/debug/bundle/deb/*.deb"
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls /cargo-target/debug/bundle/deb/*.deb) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug'
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug'
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"

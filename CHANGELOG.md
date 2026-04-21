@@ -77,6 +77,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+- **`just test-install` no longer passes dpkg-deb a two-path mess
+  after a version bump.** The repack step did
+  `DEB=$(ls /cargo-target/debug/bundle/deb/*.deb)` -- when the persistent
+  `capsem-install-target` volume still held a previous version's `.deb`
+  (e.g. today's `0.16.1` -> `1.0.1776688771` bump left the old file
+  sitting next to the new one), the glob matched both and `$()`
+  captured them joined by a newline. `scripts/repack-deb.sh` then got
+  one path-with-embedded-newline, which `dpkg-deb` tried to open as a
+  single file and bailed with `No such file or directory`. Added
+  `rm -f /cargo-target/debug/bundle/deb/*.deb` before the Tauri build
+  so the bundle dir always starts empty, and switched the lookup to
+  `ls -t ... | head -1` as belt-and-braces for the same class of
+  bug.
 - **Linux builds of `capsem-process` / `capsem-service` compile again.**
   Two sites in `crates/capsem-process/src/vsock.rs` called
   `capsem_core::hypervisor::apple_vz::run_on_main_thread(...)` inside
