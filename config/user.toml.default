@@ -9,46 +9,43 @@
 
 [settings]
 # -- AI Providers (all enabled by default) --
-# "ai.anthropic.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "ai.anthropic.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
-# "ai.anthropic.domains" = { value = "*.anthropic.com, *.claude.com", modified = "2026-02-25T00:00:00Z" }
+# "ai.anthropic.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }
+# "ai.anthropic.api_key" = { value = "", modified = "2026-04-21T00:00:00Z" }
+# "ai.anthropic.domains" = { value = "*.anthropic.com, *.claude.com", modified = "2026-04-21T00:00:00Z" }
 # -- Claude Code boot files (written to ~/.claude/ in guest at boot) --
 # "ai.anthropic.claude.settings_json" -- bypassPermissions + disable telemetry/updates
 # "ai.anthropic.claude.state_json" -- skip onboarding/trust dialogs
-# "ai.openai.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "ai.openai.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
-# "ai.openai.domains" = { value = "*.openai.com", modified = "2026-02-25T00:00:00Z" }
-# "ai.google.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "ai.google.api_key" = { value = "", modified = "2026-02-25T00:00:00Z" }
-# "ai.google.domains" = { value = "*.googleapis.com", modified = "2026-02-25T00:00:00Z" }
+# "ai.openai.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }
+# "ai.openai.api_key" = { value = "", modified = "2026-04-21T00:00:00Z" }
+# "ai.openai.domains" = { value = "*.openai.com", modified = "2026-04-21T00:00:00Z" }
+# "ai.google.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }
+# "ai.google.api_key" = { value = "", modified = "2026-04-21T00:00:00Z" }
+# "ai.google.domains" = { value = "*.googleapis.com", modified = "2026-04-21T00:00:00Z" }
 # -- Gemini CLI boot files (written to ~/.gemini/ in guest at boot) --
 # "ai.google.gemini.settings_json" -- yolo mode + disable telemetry/updates/sandbox
-# "ai.google.gemini.projects_json" = { value = "{\"projects\":{\"/root\":\"root\"}}", modified = "2026-02-25T00:00:00Z" }
-# "ai.google.gemini.trusted_folders_json" = { value = "{\"/root\":\"TRUST_FOLDER\"}", modified = "2026-02-25T00:00:00Z" }
-# "ai.google.gemini.installation_id" = { value = "your-uuid-here", modified = "2026-02-25T00:00:00Z" }
+# "ai.google.gemini.projects_json" = { value = "{\"projects\":{\"/root\":\"root\"}}", modified = "2026-04-21T00:00:00Z" }
+# "ai.google.gemini.trusted_folders_json" = { value = "{\"/root\":\"TRUST_FOLDER\"}", modified = "2026-04-21T00:00:00Z" }
+# "ai.google.gemini.installation_id" = { value = "your-uuid-here", modified = "2026-04-21T00:00:00Z" }
 
-# -- Package Registries (enabled by default) --
-# "registry.github.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "registry.npm.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "registry.pypi.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "registry.crates.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "registry.debian.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "registry.elie.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
+# -- Repository Providers --
+# "repository.providers.github.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }
+# "repository.providers.github.token" = { value = "", modified = "2026-04-21T00:00:00Z" }
+# "repository.providers.gitlab.allow" = { value = false, modified = "2026-04-21T00:00:00Z" }
+# "repository.providers.gitlab.token" = { value = "", modified = "2026-04-21T00:00:00Z" }
 
-# -- Network --
-# "network.default_action" = { value = "deny", modified = "2026-02-25T00:00:00Z" }
-# "network.log_bodies" = { value = false, modified = "2026-02-25T00:00:00Z" }
-# "network.max_body_capture" = { value = 4096, modified = "2026-02-25T00:00:00Z" }
+# -- VM Resources --
+# "vm.resources.scratch_disk_size_gb" = { value = 16, modified = "2026-04-21T00:00:00Z" }
+# "vm.resources.retention_days" = { value = 30, modified = "2026-04-21T00:00:00Z" }
+# "vm.resources.log_bodies" = { value = false, modified = "2026-04-21T00:00:00Z" }
+# "vm.resources.max_body_capture" = { value = 4096, modified = "2026-04-21T00:00:00Z" }
+# "vm.resources.max_sessions" = { value = 100, modified = "2026-04-21T00:00:00Z" }
 
-# -- Session --
-# "session.retention_days" = { value = 30, modified = "2026-02-25T00:00:00Z" }
+# -- VM Environment --
+# "vm.environment.ssh.public_key" = { value = "", modified = "2026-04-21T00:00:00Z" }
 
 # -- Appearance --
-# "appearance.dark_mode" = { value = true, modified = "2026-02-25T00:00:00Z" }
-# "appearance.font_size" = { value = 14, modified = "2026-02-25T00:00:00Z" }
+# "appearance.dark_mode" = { value = true, modified = "2026-04-21T00:00:00Z" }
+# "appearance.font_size" = { value = 14, modified = "2026-04-21T00:00:00Z" }
 
-# -- VM --
-# "vm.scratch_disk_size_gb" = { value = 8, modified = "2026-02-25T00:00:00Z" }
-
-# -- Guest Environment (dynamic, prefix-based) --
-# "guest.env.EDITOR" = { value = "vim", modified = "2026-02-25T00:00:00Z" }
+# -- Guest Environment (dynamic, prefix-based `guest.env.*`) --
+# "guest.env.EDITOR" = { value = "vim", modified = "2026-04-21T00:00:00Z" }
