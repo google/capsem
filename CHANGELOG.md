@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`scripts/create_hash_assets.py` left stale hash-tagged aliases that lied
+  about their content.** The script creates `<stem>-<hex16>.<ext>` hardlinks
+  mirroring manifest entries so the dev layout matches the installed layout.
+  It unconditionally unlinked-and-relinked each expected destination, but
+  never swept hash-tagged files left over from prior builds -- and because
+  `_pack-initrd` replaces `initrd.img` with fresh content on every run, the
+  re-link step kept re-pointing those stale names at the new inode. End
+  state in this repo: `assets/arm64/` held five `initrd-<hex>.img` names
+  all hardlinked to one inode, but only one hex prefix matched the current
+  content hash; the other four names claimed hashes they no longer had.
+  Nothing in production reads the stale names (`asset_manager.rs` derives
+  the filename from the manifest hash), but the content-addressable naming
+  contract was quietly broken and any downgrade/rollback path that
+  resurrected an older manifest would have served wrong bytes behind the
+  right name. Rewrote the script to enumerate every `<stem>-<hex16>(.ext)?`
+  filename in each arch dir and delete those not in the expected set before
+  (re)creating current hardlinks. Covered by three new unit tests in
+  `tests/capsem-build-chain/test_create_hash_assets.py`.
+
 - **CAPSEM_REQUIRE_ARTIFACTS pre-flight falsely failed `just test` Stage 5
   on a successful build.** `tests/conftest.py::_REQUIRED_ARTIFACTS` declared
   the manifest at `assets/<arch>/manifest.json`, but the canonical layout
