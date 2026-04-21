@@ -221,8 +221,29 @@ enter T7 without a written choice in `T7-process.md`.
       lib.
 - [ ] `cargo test -p capsem-service` ≥ 144 + new tests added per
       sub-sprint, 0 failed.
-- [ ] `cargo llvm-cov -p capsem-service --summary-only`: ≥ T0 numbers on
-      new modules.
+- [ ] `cargo llvm-cov -p capsem-service --summary-only`: **≥ 80% line
+      coverage on every new module** (`registry.rs`, `routes/*.rs`,
+      `state.rs`, `process.rs`). This matches the `unit` codecov flag
+      target in `codecov.yml`. The extraction must *reduce* the crate's
+      uncovered line count, not just redistribute it -- a refactor that
+      leaves `main.rs` at <500 lines but `routes/*.rs` under-tested
+      would fail the `unit` status all the same. Per-sub-sprint floors:
+  - T1 `registry.rs`: ≥ 90% (already targeted at ~90% above).
+  - T3 `routes/files.rs`: ≥ 85%. Untested branches to hit are listed
+    above -- add `resolve_workspace_path` parent-doesn't-exist and
+    canonicalize-error cases; cover `list_dir_recursive` against a
+    seeded tempdir so the depth/hidden-file/symlink branches execute.
+  - T4 `routes/images.rs`: ≥ 80%. `handle_fork` is hard to isolate; at
+    minimum cover the pre-spawn validation path (source missing, name
+    conflict) via a stub `ServiceState`.
+  - T5 `routes/mcp.rs`: mcp-endpoint-coverage owns the floor here; this
+    sub-sprint inherits whatever it produces.
+  - T6 `routes/history.rs`: ≥ 85%. All four handlers are thin SQL
+    wrappers; seed a `test_rollup_db()`-shaped fixture and exercise
+    empty-vs-populated for each.
+  - T7 `process.rs`: ≥ 80% under Path A (pure `Command` builder is
+    trivially testable); skipped under Path B until the behavior
+    decision writes its own floor.
 - [ ] `just test` green end-to-end (enforced gate once Python suite
       stabilizes).
 - [ ] `just run "capsem-doctor"` green.

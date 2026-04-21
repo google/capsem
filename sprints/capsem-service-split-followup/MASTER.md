@@ -28,6 +28,13 @@
 - T0 shipped in commit `4bc7827`.
 - `cargo test -p capsem-service`: 144 passing (62 lib + 82 main).
 - `main.rs`: 4,855 lines (still monolithic for handlers).
+- **`capsem-service/src/main.rs` line coverage: 47%** (1,882 uncovered
+  lines). This is the single largest drag on the workspace `unit`
+  codecov flag, which sits at 77.49% versus the 80% target in
+  `codecov.yml`. This sprint is therefore also the path to recovering
+  that flag -- the `### Definition of done` in `plan.md` enforces a
+  per-module coverage floor so the split actually *reduces* uncovered
+  lines instead of just moving them.
 
 ## Just recipes
 
