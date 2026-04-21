@@ -80,3 +80,6 @@ site/dist/
 site/node_modules/
 site/.astro/
 .pnpm-store/
+
+# Leak report log from integration tests
+tests/leak-report.log
