@@ -659,9 +659,19 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             (capsem_proto::SHUTDOWN_GRACE_SECS * 1000) + 500
                         )).await;
                         let _ = tokio::task::spawn_blocking(move || {
-                            capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
+                            // Apple VZ requires stop() on the main thread
+                            // (where CFRunLoopRun is); KVM has no such
+                            // constraint so the direct call is fine.
+                            #[cfg(target_os = "macos")]
+                            {
+                                capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
+                                    vm_clone.blocking_lock().stop()
+                                })
+                            }
+                            #[cfg(not(target_os = "macos"))]
+                            {
                                 vm_clone.blocking_lock().stop()
-                            })
+                            }
                         }).await;
                         std::process::exit(0);
                     });
@@ -705,12 +715,24 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             let path = full_path.clone();
                             let path_for_sync = path.clone();
                             tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                                // Apple VZ requires pause/save_state on the main
+                                // thread; KVM's default impl returns
+                                // "not supported by this hypervisor backend" and
+                                // the `?` propagates -- which is the right answer
+                                // for a KVM guest that doesn't have checkpointing.
+                                #[cfg(target_os = "macos")]
                                 capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
                                     let v = vm_arc.blocking_lock();
                                     v.pause().context("failed to pause")?;
                                     v.save_state(&path).context("failed to save state")?;
                                     Ok(())
                                 })?;
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    let v = vm_arc.blocking_lock();
+                                    v.pause().context("failed to pause")?;
+                                    v.save_state(&path).context("failed to save state")?;
+                                }
                                 // saveMachineStateToURL's completion fires
                                 // before the OS finishes flushing the .vzsave
                                 // to disk. The next process's restore can race

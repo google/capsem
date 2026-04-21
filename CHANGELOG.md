@@ -77,6 +77,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+- **Linux builds of `capsem-process` / `capsem-service` compile again.**
+  Two sites in `crates/capsem-process/src/vsock.rs` called
+  `capsem_core::hypervisor::apple_vz::run_on_main_thread(...)` inside
+  the Stop and Suspend command handlers. The `apple_vz` module is
+  gated on `#[cfg(target_os = "macos")]` (see
+  `capsem-core/src/hypervisor/mod.rs:7`), so both sites broke
+  `cargo build` on Linux with `cannot find 'apple_vz' in 'hypervisor'`
+  -- surfaced by `just test-install`'s in-container
+  `cargo build {{host_crates}}` step. Wrapped each call in
+  `#[cfg(target_os = "macos")]` with a non-macOS branch that invokes
+  the `VmHandle` methods directly; Apple VZ has a main-thread
+  constraint (CFRunLoop) that KVM does not, and KVM's trait default
+  returns "not supported" for `pause`/`save_state`, which `?`
+  propagates -- the correct behaviour for a backend without
+  checkpoint support. Also silenced `-D warnings` on
+  `capsem-service::spawn_companions`'s `tray_bin` parameter, which is
+  consumed only by the `#[cfg(target_os = "macos")]` tray-spawn block
+  and therefore unused on Linux. Added
+  `#[cfg(not(target_os = "macos"))] let _ = tray_bin;` to mark the
+  intent without changing the cross-platform signature.
 - **`just test-install` no longer dies with `Permission denied`
   when rustup tries to self-update.** Same root class as the
   `just cross-compile` EXDEV fix: the `capsem-install-test` image

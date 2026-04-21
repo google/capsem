@@ -227,7 +227,10 @@ impl ServiceState {
             .collect();
         dead_ids
             .into_iter()
-            .filter_map(|id| instances.remove(&id).map(|info| (id, info)))
+            .filter_map(|id| {
+                tracing::warn!(id, "drain_dead_instances removing instance");
+                instances.remove(&id).map(|info| (id, info))
+            })
             .collect()
     }
 
@@ -553,6 +556,7 @@ impl ServiceState {
             // That's exactly when we want to preserve process.log /
             // mcp-aggregator.stderr.log / serial.log / session.db for
             // post-mortem, rather than silently `remove_dir_all`.
+            tracing::warn!(id_clone, "provision_sandbox child exit handler removing instance");
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
             if let Some(info) = removed {
                 if !info.persistent {
@@ -715,6 +719,7 @@ impl ServiceState {
             let _ = child.wait().await;
             info!(name_clone, "capsem-process exited, cleaning up");
             // Persistent VMs: remove from instances but keep session dir.
+            tracing::warn!(name_clone, "resume_sandbox child exit handler removing instance");
             state_clone.instances.lock().unwrap().remove(&name_clone);
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
@@ -2190,6 +2195,7 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str) -> Option<(PathBuf,
 
     // Remove from active instances immediately so the service considers this
     // VM gone. The spawned child-exit handler may also call remove (idempotent).
+    tracing::warn!(id, "shutdown_vm_process removing instance");
     state.instances.lock().unwrap().remove(id);
 
     // Background: wait for process exit, force-kill if stuck, clean up socket.
@@ -2250,6 +2256,7 @@ async fn handle_suspend(
         if pid > 0 {
             let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
         }
+        tracing::warn!(id, "handle_suspend (timeout) removing instance");
         state.instances.lock().unwrap().remove(&id);
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
@@ -2273,6 +2280,7 @@ async fn handle_suspend(
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
+    tracing::warn!(id, "handle_suspend (success) removing instance");
     state.instances.lock().unwrap().remove(&id);
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
@@ -3109,6 +3117,13 @@ async fn spawn_companions(
     gateway_port: Option<u16>,
     tray_bin: Option<PathBuf>,
 ) -> Vec<tokio::process::Child> {
+    // tray_bin is only consumed by the macOS-gated tray-spawn block below.
+    // On Linux there's no system tray, so the parameter is intentionally
+    // unused -- silence the unused-variable warning without breaking the
+    // platform-agnostic signature.
+    #[cfg(not(target_os = "macos"))]
+    let _ = tray_bin;
+
     let mut children = Vec::new();
 
     // Log files for companion processes. Tests set CAPSEM_RUN_DIR for isolation;
