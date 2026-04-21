@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`PytestUnknownMarkWarning` on `benchmark` marker.** Registered
+  `benchmark` in `pyproject.toml [tool.pytest.ini_options].markers` so
+  `tests/capsem-serial/test_parallel_benchmark.py`'s
+  `pytest.mark.benchmark` no longer emits the warning. Warnings are
+  errors per CLAUDE.md.
+
 - **Stage-5 flake: pytest `check_leaks` fixture crashing at teardown.** Under
   concurrent load, macOS `sysctl(KERN_PROCARGS2)` can deny cmdline access for
   an unrelated host process; psutil surfaces that as an uncaught `SystemError`

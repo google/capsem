@@ -45,6 +45,7 @@ markers = [
     "cleanup: VM cleanup verification tests (process, socket, session dir)",
     "codesign: Codesigning strict tests (FAIL not skip when unsigned)",
     "serial: Serial console and boot timing tests",
+    "benchmark: Host-side benchmarks (parallel VMs, capsem-bench) -- slow, run with `-m benchmark`",
     "session_lifecycle: Session.db lifecycle tests (exists, schema, events, shutdown)",
     "config_runtime: Config runtime tests (CPU, RAM, blocked domains in guest)",
     "recipe: Just recipe smoke tests (run-service, doctor, build)",
