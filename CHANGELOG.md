@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Unit-coverage lifts on six files to recover the `unit` codecov flag.**
+  Workspace line coverage had regressed below the 80% unit target after
+  several service/CLI mains grew. Added 55 new tests across
+  `capsem-core/src/vm/terminal.rs` (was 0%, now ~100%),
+  `capsem-core/src/net/policy_config/types.rs` (was 45%),
+  `capsem-core/src/net/policy_config/corp_provision.rs` (was 40%; tests
+  exercise install/read/refresh paths against a tempdir plus the
+  stale-TTL guard), `capsem-core/src/net/policy_config/loader.rs` (was
+  79%, new coverage on `parse_mcp_section` / `parse_mcp_section_json` /
+  `validate_setting_value`), `capsem-logger/src/writer.rs` (ExecEvent,
+  McpCall, AuditEvent roundtrips plus `try_write` and `:memory:` reader
+  rejection), and `capsem-process/src/helpers.rs`
+  (`query_max_fs_event_id`). Workspace unit coverage moved from 76.79%
+  to 77.49% lines / 80.78% regions / 78.85% functions; the remaining
+  gap to 80% lines is concentrated in `capsem-service/src/main.rs`,
+  `capsem/src/main.rs`, and `capsem-process/src/vsock.rs` and is tracked
+  by `sprints/capsem-service-split-followup/`.
+
+### Fixed
+- **Flaky env-var race in `policy_config/loader.rs` tests.**
+  `user_config_path_override_via_env`, `corp_config_path_override_via_env`,
+  and `corp_config_path_default` each mutated `CAPSEM_USER_CONFIG` /
+  `CAPSEM_CORP_CONFIG` at process scope, so parallel cargo-test execution
+  could observe one test's `set_var` while another asserted the env was
+  unset. Merged the three into one `env_var_path_resolution` test that
+  snapshots and restores prior values. No production behavior change --
+  these env vars are set once at startup in prod.
+
 ### Changed
 - **Marketing tagline updated to "The fastest way to ship with AI securely."**
   Replaces the previous "Native AI Agent Security" / "Sandbox AI coding agents..."
@@ -102,6 +131,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
 ### Fixed
+- **Service reaps `capsem-process` orphans on startup when reusing a run_dir.**
+  A SIGKILL to capsem-service (crash, OOM, or `svc.proc.kill()` in the
+  recovery test suite) does not propagate to its per-VM children. The
+  children kept running with their `--session-dir` still pointing at the
+  dead service's run_dir, holding Apple VZ VMs, vsock ports, and sockets
+  indefinitely. When a replacement service started on the same run_dir it
+  only removed stale socket files -- the orphan processes themselves
+  persisted across the entire test session.
+  Added `find_orphan_capsem_pids` + `reap_orphan_capsem_processes` in
+  `crates/capsem-service/src/main.rs`: on startup (after creating
+  `instances/`, before socket cleanup), shell out to `ps`, filter
+  `capsem-process` lines whose cmdline contains `--session-dir <run_dir>`,
+  SIGTERM them, poll up to 2s, SIGKILL survivors. The matcher is a pure
+  function with four unit tests in `#[cfg(test)]` covering happy path,
+  unrelated run_dir, non-capsem-process binaries that happen to mention
+  the run_dir, and empty input. After the fix, the recovery tests
+  (`tests/capsem-recovery/test_orphaned_process.py`,
+  `test_service_health_after_recovery.py`) leave zero surviving
+  `capsem-process` children.
+- **Leak detector: controller-only gate + cross-process attribution.**
+  Under `-n 4`, each xdist worker ran its own `pytest_sessionfinish` and
+  flagged every other worker's session-scoped fixture processes as a
+  "leak", because workers cannot distinguish their own children from
+  peers' on the shared host. The in-worker gate also fired mid-teardown
+  against processes that would have exited a second later via
+  capsem-guard. Restructured: workers now only record first-seen
+  attribution to `tests/leak-attribution.jsonl` (shared append log) and
+  do NOT fail their session; the controller / single-process runner does
+  the real gate at `pytest_sessionfinish`, after every worker has
+  finished, when the host is the source of truth. The controller settles
+  suspects with an exponential-backoff poll (50 ms -> 500 ms, 15 s
+  budget) mirroring `capsem_core::poll::poll_until`, filters by the
+  conftest-import-time baseline, merges worker attribution from the
+  jsonl, and writes a deduped report to `tests/leak-report.log`. Verified
+  `tests/capsem-mcp/ + tests/capsem-recovery/ -n 4` now finishes with
+  zero reported leaks and zero surviving `capsem-*` processes on the host.
 - **Leak detector: eliminate false positives and xdist-controller double-reporting.**
   `tests/conftest.py`'s `get_capsem_processes` was matching `'capsem-' in arg`
   across every process's full cmdline, so `cargo build -p capsem-*`, `rustc`

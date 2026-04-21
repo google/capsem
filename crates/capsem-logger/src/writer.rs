@@ -831,5 +831,174 @@ mod tests {
             .unwrap();
         assert_eq!(files, 12);
     }
+
+    #[test]
+    fn try_write_on_open_writer_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = DbWriter::open(&dir.path().join("t.db"), 64).unwrap();
+        let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
+            timestamp: std::time::SystemTime::now(),
+            action: crate::events::FileAction::Created,
+            path: "/x".into(),
+            size: None,
+        }));
+        assert!(accepted);
+    }
+
+    #[test]
+    fn reader_for_in_memory_writer_fails() {
+        let writer = DbWriter::open_in_memory(16).unwrap();
+        match writer.reader() {
+            Err(rusqlite::Error::InvalidPath(_)) => {}
+            Err(other) => panic!("expected InvalidPath, got {other:?}"),
+            Ok(_) => panic!("expected reader() to fail for :memory:"),
+        }
+    }
+
+    #[test]
+    fn path_accessor_returns_configured_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("mydb.db");
+        let writer = DbWriter::open(&p, 16).unwrap();
+        assert_eq!(writer.path(), p);
+    }
+
+    #[test]
+    fn exec_event_insert_then_update_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("exec.db");
+
+        {
+            let writer = DbWriter::open(&db_path, 64).unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            rt.block_on(async {
+                writer.write(WriteOp::ExecEvent(crate::events::ExecEvent {
+                    timestamp: std::time::SystemTime::now(),
+                    exec_id: 42,
+                    command: "ls -la".into(),
+                    source: "mcp".into(),
+                    mcp_call_id: Some(7),
+                    trace_id: Some("t1".into()),
+                    process_name: Some("capsem".into()),
+                })).await;
+
+                writer.write(WriteOp::ExecEventComplete(crate::events::ExecEventComplete {
+                    exec_id: 42,
+                    exit_code: 0,
+                    duration_ms: 120,
+                    stdout_preview: Some("out".into()),
+                    stderr_preview: None,
+                    stdout_bytes: 128,
+                    stderr_bytes: 0,
+                    pid: Some(1234),
+                })).await;
+            });
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid): (
+            String, String, i64, i64, Option<String>, Option<String>, i64, Option<i64>,
+        ) = conn.query_row(
+            "SELECT command, source, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
+             FROM exec_events WHERE exec_id = 42",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+        ).unwrap();
+        assert_eq!(command, "ls -la");
+        assert_eq!(source, "mcp");
+        assert_eq!(exit, 0);
+        assert_eq!(duration, 120);
+        assert_eq!(stdout_preview.as_deref(), Some("out"));
+        assert!(stderr_preview.is_none());
+        assert_eq!(stdout_bytes, 128);
+        assert_eq!(pid, Some(1234));
+    }
+
+    #[test]
+    fn mcp_call_insert_populates_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("mcp.db");
+
+        {
+            let writer = DbWriter::open(&db_path, 64).unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            rt.block_on(async {
+                writer.write(WriteOp::McpCall(crate::events::McpCall {
+                    timestamp: std::time::SystemTime::now(),
+                    server_name: "github".into(),
+                    method: "tools/call".into(),
+                    tool_name: Some("list_issues".into()),
+                    request_id: Some("r1".into()),
+                    request_preview: Some("{}".into()),
+                    response_preview: None,
+                    decision: "allowed".into(),
+                    duration_ms: 50,
+                    error_message: None,
+                    process_name: Some("agent".into()),
+                    bytes_sent: 64,
+                    bytes_received: 128,
+                })).await;
+            });
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let (server, method, tool, decision, sent, recv): (
+            String, String, Option<String>, String, i64, i64,
+        ) = conn.query_row(
+            "SELECT server_name, method, tool_name, decision, bytes_sent, bytes_received FROM mcp_calls",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).unwrap();
+        assert_eq!(server, "github");
+        assert_eq!(method, "tools/call");
+        assert_eq!(tool.as_deref(), Some("list_issues"));
+        assert_eq!(decision, "allowed");
+        assert_eq!(sent, 64);
+        assert_eq!(recv, 128);
+    }
+
+    #[test]
+    fn audit_event_insert_populates_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("audit.db");
+
+        {
+            let writer = DbWriter::open(&db_path, 64).unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            rt.block_on(async {
+                writer.write(WriteOp::AuditEvent(crate::events::AuditEvent {
+                    timestamp: std::time::SystemTime::now(),
+                    pid: 100,
+                    ppid: 1,
+                    uid: 501,
+                    exe: "/usr/bin/ls".into(),
+                    comm: Some("ls".into()),
+                    argv: "ls -la".into(),
+                    cwd: Some("/tmp".into()),
+                    tty: None,
+                    session_id: Some(42),
+                    audit_id: Some("a1".into()),
+                    exec_event_id: Some(7),
+                    parent_exe: Some("/bin/bash".into()),
+                })).await;
+            });
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let (pid, ppid, uid, exe, argv, cwd, parent_exe): (
+            i64, i64, i64, String, String, Option<String>, Option<String>,
+        ) = conn.query_row(
+            "SELECT pid, ppid, uid, exe, argv, cwd, parent_exe FROM audit_events",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+        ).unwrap();
+        assert_eq!(pid, 100);
+        assert_eq!(ppid, 1);
+        assert_eq!(uid, 501);
+        assert_eq!(exe, "/usr/bin/ls");
+        assert_eq!(argv, "ls -la");
+        assert_eq!(cwd.as_deref(), Some("/tmp"));
+        assert_eq!(parent_exe.as_deref(), Some("/bin/bash"));
+    }
 }
 

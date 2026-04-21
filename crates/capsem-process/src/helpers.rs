@@ -45,4 +45,41 @@ mod tests {
         let result = clone_fd(-1);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn query_max_fs_event_id_on_empty_db_is_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("empty.db");
+        let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+        assert_eq!(query_max_fs_event_id(&writer), 0);
+    }
+
+    #[test]
+    fn query_max_fs_event_id_reflects_highest_row() {
+        use capsem_logger::writer::WriteOp;
+        use capsem_logger::events::{FileEvent, FileAction};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("events.db");
+        let writer = capsem_logger::DbWriter::open(&db_path, 64).unwrap();
+
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        rt.block_on(async {
+            for i in 0..3 {
+                writer.write(WriteOp::FileEvent(FileEvent {
+                    timestamp: std::time::SystemTime::now(),
+                    action: FileAction::Created,
+                    path: format!("/tmp/f{i}"),
+                    size: Some(1),
+                })).await;
+            }
+        });
+
+        // Drop the writer so the batch is flushed and visible to the reader.
+        drop(writer);
+
+        // Reopen to query the final max id.
+        let reader_writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+        assert_eq!(query_max_fs_event_id(&reader_writer), 3);
+    }
 }
