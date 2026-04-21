@@ -901,8 +901,8 @@ fn extract_field(line: &str, key: &str) -> Option<String> {
     let start = line.find(key)? + key.len();
     let rest = &line[start..];
     // Value ends at next space (or end of line), unless quoted
-    if rest.starts_with('"') {
-        let end = rest[1..].find('"')? + 2;
+    if let Some(stripped) = rest.strip_prefix('"') {
+        let end = stripped.find('"')? + 2;
         Some(rest[..end].to_string())
     } else {
         let end = rest.find(' ').unwrap_or(rest.len());

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`capsem-agent` failed to compile under `clippy::manual-strip`.** The
+  `extract_field` audit-log parser in `crates/capsem-agent/src/main.rs`
+  hand-rolled a `starts_with('"')` + `rest[1..]` prefix strip that clippy
+  1.93's `manual_strip` lint (denied via `-D warnings`) refused. Rewrote
+  to `rest.strip_prefix('"')`; semantics unchanged (`stripped.find('"') + 2`
+  still yields the same end offset into `rest`).
+
 - **`capsem_read_file` returned ENOENT on real files after `capsem_resume`
   under concurrent load.** The guest agent's post-resume rebind polled
   `/mnt/shared/workspace` with `Path::exists`, which only drives a FUSE
