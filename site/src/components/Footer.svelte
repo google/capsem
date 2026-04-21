@@ -12,7 +12,7 @@
           <span class="text-lg font-bold text-heading-dark tracking-tight">{SITE.name}</span>
         </a>
         <p class="mt-3 text-sm text-muted-dark max-w-xs">
-          Sandbox AI agents in air-gapped Linux VMs with full network visibility.
+          {SITE.tagline}
         </p>
         <div class="mt-6">
           <a href={SITE.github} target="_blank" rel="noopener noreferrer" class="text-muted-dark hover:text-heading-dark transition-colors">

@@ -99,7 +99,7 @@ const GROUPED_HELP: &str = "\
 #[command(
     author,
     version,
-    about = "Sandboxes AI agents in air-gapped Linux VMs",
+    about = "The fastest way to ship with AI securely.",
     long_about = None,
     styles = cli_styles(),
     help_template = "{about-with-newline}Version: {version}\n\n{usage-heading} {usage}\n{after-help}\n\n\x1b[36;1;4mOptions:\x1b[0m\n{options}",

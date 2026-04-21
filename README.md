@@ -5,6 +5,7 @@
 <h1 align="center">Capsem</h1>
 
 <p align="center">
+  <strong>The fastest way to ship with AI securely.</strong><br/>
   Sandbox AI coding agents in hardware-isolated Linux VMs on macOS and Linux.<br/>
   Full network control, HTTPS inspection, MCP tool routing, and per-session telemetry.
 </p>

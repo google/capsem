@@ -81,7 +81,7 @@ cat > "$WORK_DIR/welcome.html" <<'WELCOME_EOF'
 <html>
 <body>
 <h1>Capsem</h1>
-<p>Sandboxes AI agents in air-gapped Linux VMs on macOS.</p>
+<p>The fastest way to ship with AI securely.</p>
 <p>This installer will:</p>
 <ul>
   <li>Install Capsem.app to /Applications</li>

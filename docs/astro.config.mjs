@@ -8,7 +8,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Capsem',
-      description: 'Sandbox AI agents in air-gapped Linux VMs on macOS.',
+      description: 'The fastest way to ship with AI securely.',
       logo: {
         src: './src/assets/logo.png',
       },

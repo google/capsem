@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Marketing tagline updated to "The fastest way to ship with AI securely."**
+  Replaces the previous "Native AI Agent Security" / "Sandbox AI coding agents..."
+  phrasing across the marketing site hero, footer, and meta tags; the docs site
+  splash and description; the workspace `Cargo.toml` package description; the
+  `capsem --help` about line; the `capsem setup` welcome; the macOS `.pkg`
+  installer welcome page; and the README header.
+
 ### Added
 - **Integration-test fixtures archive their tmp_dir on failure.** When any
   test that spins up a capsem-service via `tests/helpers/service.py::ServiceInstance`,

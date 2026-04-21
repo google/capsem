@@ -10,8 +10,8 @@
     <div class="max-w-3xl">
       <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight text-heading leading-[1.08]">
         <span class="gradient-text">CAPSEM</span><br />
-        Native AI Agent<br />
-        Security
+        The fastest way to<br />
+        ship with AI securely.
       </h1>
 
       <p class="mt-6 text-lg md:text-xl text-body max-w-xl leading-relaxed">

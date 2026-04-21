@@ -182,7 +182,7 @@ type BgDownloadHandle = tokio::task::JoinHandle<anyhow::Result<()>>;
 
 async fn step_welcome(capsem_dir: &Path, state: &mut SetupState) -> Result<Option<BgDownloadHandle>> {
     println!("[2/6] Welcome to Capsem!");
-    println!("  Capsem sandboxes AI agents in air-gapped Linux VMs.");
+    println!("  The fastest way to ship with AI securely.");
 
     let manifest_path = capsem_dir.join("assets").join("manifest.json");
     let manifest_bytes = match std::fs::read_to_string(&manifest_path) {

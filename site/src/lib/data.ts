@@ -2,7 +2,7 @@
 
 export const SITE = {
   name: "Capsem",
-  tagline: "Native AI Agent Security",
+  tagline: "The fastest way to ship with AI securely.",
   description:
     "A Rust-powered hypervisor that sandboxes every AI coding agent in its own air-gapped Linux VM. See everything, control everything.",
   installCmd: "curl -fsSL https://capsem.org/install.sh | sh",
