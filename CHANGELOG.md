@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Convention: Rust unit tests live in a sibling `tests.rs`, not an inline
+  `mod tests { ... }` block.** Documented in `CLAUDE.md` (Code Style) and
+  `skills/dev-testing/SKILL.md` (with extraction recipe and rationale).
+  Codifies the pattern just applied across `policy_config`, `session`,
+  `capsem-proto`, and `virtio_fs`. Agents writing new Rust modules should
+  default to the sibling pattern; reviewers should push back on new inline
+  test blocks.
+
 ### Fixed
 - **`capsem-logger/src/writer.rs`: `clippy::type_complexity` in
   `exec_event_insert_populates_row` test.** The test declared an

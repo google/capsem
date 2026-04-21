@@ -9,7 +9,7 @@ just doctor        # Check tools (first time)
 just build-assets  # Build kernel + rootfs (first time, needs docker via Colima on macOS)
 just shell         # Build + boot VM (~10s)
 just smoke         # Fast path: doctor + integration tests
-just install       # Smoke + install to ~/.capsem/
+just install       # Build release .pkg/.deb and install to ~/.capsem/
 just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
 ```
 
@@ -31,6 +31,7 @@ crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
 crates/capsem-tray/            System tray (polls gateway, quick actions)
 crates/capsem-proto/           Shared protocol types (host-guest, service-process IPC)
 crates/capsem-logger/          Session DB schema, queries, async writer
+crates/capsem-guard/           Companion lifecycle primitives (parent-watch + flock singleton)
 frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + Preline
 site/                     Marketing website (Astro + Svelte 5)
 docs/                     Documentation site (Astro Starlight)
@@ -104,6 +105,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 - **Minimize code.** Delete dead code, inline single-use helpers. Every line must earn its place.
 - **`capsem-core` is the shared library.** Service, process, CLI, and agent crates are thin shells. Business logic lives in core.
 - **One way to do things.** Don't introduce a second pattern when one exists.
+- **Rust tests live in a sibling `tests.rs`.** In the parent module declare `#[cfg(test)] mod tests;` and put all `#[test]` functions in `tests.rs` next to it. Never append an inline `mod tests { ... }` block at the bottom of a production file -- it buries prod code under scroll-past test fixtures and doubles the file size for every Read and grep. See `/dev-testing`.
 
 ## Invariants (do not break)
 

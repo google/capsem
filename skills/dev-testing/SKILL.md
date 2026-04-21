@@ -42,6 +42,12 @@ Anti-patterns when a test flakes under `-n 4`:
 
 The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each = 8 GB / 8 cores). If concurrency surfaces a flake, fix the product, then re-run. Bumping `-n` higher (8, 12) is the natural follow-on once n=4 is stable -- real users will run more.
 
+### Orphan processes across runs are a product bug (not a test bug)
+
+If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker death, host crash) and the NEXT run flakes with "vm-ready never asserted", UDS "connection refused", or mysterious HTTP 500s -- the cause is companion processes from the interrupted run still alive under PID 1. `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` will make the flake vanish, but that is cleanup-after-the-fact. The fix is on the COMPANION side: every spawned companion (gateway, tray, and any new one) must use `capsem-guard::install(parent_pid, lock_path)` to enforce (a) refuse-standalone, (b) singleton, (c) self-exit on parent death. See `/dev-rust-patterns` lesson 18. Regression tests live in `tests/capsem-service/test_companion_lifecycle.py` -- never remove them; when adding a new companion, extend that file.
+
+**Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
+
 ## Adversarial testing
 
 Capsem is a security product. Every security-relevant feature needs tests that actively try to break invariants. Think like an attacker:
@@ -98,13 +104,51 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 
 ## Where tests live
 
-- Rust unit: `#[cfg(test)] mod tests` in each module
+- **Rust unit: sibling `tests.rs` file, not inline `mod tests { ... }`.** See the next subsection.
 - Rust integration: `crates/capsem-core/tests/`
 - In-VM diagnostics: `guest/artifacts/diagnostics/test_*.py` (see dev-testing-vm)
 - Hypervisor: KVM + Apple VZ tests (see dev-testing-hypervisor)
 - Frontend: `frontend/src/lib/__tests__/` (see dev-testing-frontend)
 - Python (builder): `tests/test_*.py`
 - Python integration (service daemon): `tests/capsem-*/` directories, each with its own conftest.py and pytest marker
+
+### Rust unit tests: sibling `tests.rs` pattern
+
+**Every Rust module keeps its unit tests in a sibling `tests.rs`, not an inline `mod tests { ... }` block.** The parent module declares:
+
+```rust
+// foo.rs  OR  foo/mod.rs
+// ... production code ...
+
+#[cfg(test)]
+mod tests;
+```
+
+and the tests go in `tests.rs` in the same directory:
+
+```rust
+// tests.rs -- sibling of foo.rs or child of foo/
+use super::*;
+
+#[test]
+fn roundtrip() { ... }
+```
+
+**Why.** Inline `#[cfg(test)] mod tests { ... }` blocks are appended at the bottom of prod files and commonly hit 50–99% of the file's line count. That means every Read, grep, and scroll to reach production code walks past thousands of test lines first. Several modules in this codebase hit 4,000+ lines that way before extraction. Agents and humans both read faster when prod code isn't buried.
+
+**Mechanics.**
+- `tests.rs` is a submodule of the parent file -- `use super::*;` works, private items are visible, `#[cfg(test)]` on the `mod tests;` declaration still gates compilation.
+- For files that don't yet have a sibling directory (e.g. `lib.rs`, `foo.rs`), put `tests.rs` next to them in the same `src/` directory.
+- For files that are already `foo/mod.rs`, put `tests.rs` inside `foo/`.
+- Attributes on the inline `mod tests` block (e.g. `#[allow(unused_imports)]`) move onto the declaration: `#[cfg(test)]\n#[allow(unused_imports)]\nmod tests;`.
+
+**Extraction recipe** (for any remaining inline `mod tests { ... }`):
+1. Move the block body (everything between the outer `{` and `}`) into a new sibling `tests.rs`.
+2. Dedent one indentation level so contents read as top-level items.
+3. Replace the old inline block with `#[cfg(test)] mod tests;` (plus any attributes that were on the original).
+4. `cargo test -p <crate>` -- should pass identically.
+
+**When to push back.** If you see a new PR or agent output adding an inline `mod tests { ... }` block, request it be moved to `tests.rs` before merge. Exceptions are narrow: tiny helper modules under ~50 lines total where inline tests plus prod code fit on one screen, or a module that's already a test-only helper.
 
 ## Integration test suites
 
