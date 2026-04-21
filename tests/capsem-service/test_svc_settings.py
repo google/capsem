@@ -8,7 +8,28 @@ so mutations here never touch the developer's real ~/.capsem/.
 
 import pytest
 
+from helpers.service import ServiceInstance
+
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def isolated_client():
+    """One-off service whose CAPSEM_HOME is not shared with other tests.
+
+    The session-scoped `service_env` is reused by every test in the
+    `tests/capsem-service/` worker. Preset application writes keys like
+    `mcp.default_tool_permission = "warn"` into that shared CAPSEM_HOME,
+    which then leaks into `test_svc_mcp_api.py::test_policy_returns_merged_shape`
+    (which expects the unset-default `"allow"`). Any test that mutates
+    user.toml state other tests depend on should use this fixture instead.
+    """
+    svc = ServiceInstance()
+    svc.start()
+    try:
+        yield svc.client()
+    finally:
+        svc.stop()
 
 
 class TestSettingsTree:
@@ -68,9 +89,14 @@ class TestPresets:
             for key in ("id", "name", "description", "settings"):
                 assert key in preset, f"preset missing '{key}': {preset}"
 
-    def test_apply_preset_returns_refreshed_tree(self, client):
-        """POST /settings/presets/{id} applies settings and returns the new tree."""
-        resp = client.post("/settings/presets/high", {})
+    def test_apply_preset_returns_refreshed_tree(self, isolated_client):
+        """POST /settings/presets/{id} applies settings and returns the new tree.
+
+        Uses `isolated_client` because the `high` preset mutates shared
+        CAPSEM_HOME state (e.g. mcp.default_tool_permission = "warn") that
+        leaks into sibling files' assertions about the unset default.
+        """
+        resp = isolated_client.post("/settings/presets/high", {})
         assert resp is not None
         # apply_preset returns the same shape as GET /settings.
         for key in ("tree", "issues", "presets"):

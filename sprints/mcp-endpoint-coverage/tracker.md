@@ -34,7 +34,7 @@ See `plan.md` for context and exit criteria.
 ### T4: Testing gate
 - [x] `uv run pytest tests/capsem-mcp/ tests/capsem-service/ tests/capsem-lifecycle/` -- 2026-04-21: 192 passed, 4 skipped (after HOME isolation + settings/setup/mcp-api suites landed)
 - [ ] `just test` -- full suite not yet re-run
-- [ ] `just run "capsem-doctor"` -- VM smoke not yet re-run
+- [x] `just exec "capsem-doctor"` -- 301 passed, 4 skipped, RESULT: PASS (2026-04-21). Covers sandbox, utilities, virtiofs, overlay, workspace, and workflow suites end-to-end inside the guest.
 - [x] Coverage matrix shows zero blind spots for the endpoints this sprint targets. Remaining partial entries: `/mcp/tools/{name}/approve` happy path and `/mcp/tools/{name}/call` downstream happy path (both require a populated aggregator, tracked as a follow-up).
 
 ### T5: Changelog + commit
@@ -67,6 +67,8 @@ See `plan.md` for context and exit criteria.
 - **HOME isolation landed using both `CAPSEM_HOME` and `HOME`.** `capsem_core::paths::capsem_home_opt()` honors `CAPSEM_HOME` with priority over `$HOME/.capsem`, so that env var is the right override for write paths (settings, setup-state, corp.toml). `$HOME` on its own still controls read-only detection (`/setup/detect` reads `~/.gitconfig`, `~/.ssh`, `~/.anthropic`, `~/.claude`, `~/.gemini`, `~/.config/openai`, `gh auth token`, `~/.config/gcloud`). Setting only `CAPSEM_HOME` would leave detect reading the developer's real credentials during tests; setting only `HOME` would still resolve to `$HOME/.capsem` via the fallback and work for writes but fight the abstraction. Setting both in `tests/helpers/service.py::ServiceInstance.start` and `tests/capsem-mcp/conftest.py::_start_capsem_service` gives full isolation: MCP + service + lifecycle suites (192 passed, 4 skipped) all green.
 
 - **`/setup/detect` env-var credentials leak through `os.environ.copy()`.** `/setup/detect` checks `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` before falling back to file paths. Fixtures inherit the test-runner's shell env, so these presence flags reflect the dev's actual env regardless of `HOME`/`CAPSEM_HOME`. `test_svc_setup.py::test_detect_returns_summary_shape` therefore asserts shape + file-based presence only. If a future test needs a deterministic presence check, sanitize the env in the fixture first.
+
+- **Applying a preset leaks mutated `user.toml` into sibling tests sharing the session-scoped service.** `test_apply_preset_returns_refreshed_tree` writes preset settings (e.g. `mcp.default_tool_permission = "warn"` from the `high` preset) into the session-scoped CAPSEM_HOME. `test_policy_returns_merged_shape` in `test_svc_mcp_api.py` asserts the unset default (`"allow"`), so test order started mattering. Fixed by adding an `isolated_client` fixture in `test_svc_settings.py` that spins up its own `ServiceInstance`; `test_apply_preset_returns_refreshed_tree` uses it. The pattern is: any settings-mutation test whose write is observable from a sibling file must run on an isolated service. Follow-up if more such tests appear: hoist the fixture into a shared helper.
 
 - **`config/integration-test-corp.toml` references `network.default_action`, which is not in `config/defaults.json`.** Corp-config install validates TOML syntax but silently accepts unknown setting IDs (they're written to `corp.toml` but never surface in the settings tree). Low-severity drift: either `network.default_action` was renamed/removed or this is a forward-looking placeholder. Worth a drift ticket; out of scope for this sprint.
 
