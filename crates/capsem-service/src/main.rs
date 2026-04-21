@@ -14,6 +14,7 @@ use axum::{
 use tokio::net::UnixListener;
 use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
 use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
+use capsem_core::poll::{poll_until, PollOpts};
 use tower_http::trace::TraceLayer;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -2144,25 +2145,17 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
     if pid == 0 {
         return;
     }
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
-            return;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
-            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
-            // Wait up to 2s for SIGKILL to take effect
-            for _ in 0..20 {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
-                    return;
-                }
-            }
-            tracing::error!(pid, "VM process survived SIGKILL");
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let pid_i32 = pid as i32;
+    let exited = || async move {
+        (unsafe { nix::libc::kill(pid_i32, 0) } != 0).then_some(())
+    };
+    if poll_until(PollOpts::new("vm-process-exit", timeout), exited).await.is_ok() {
+        return;
+    }
+    tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
+    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_i32), nix::sys::signal::Signal::SIGKILL);
+    if poll_until(PollOpts::new("vm-process-sigkill", std::time::Duration::from_secs(2)), exited).await.is_err() {
+        tracing::error!(pid, "VM process survived SIGKILL");
     }
 }
 
@@ -2334,38 +2327,12 @@ async fn handle_delete(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Shut down if running, then ensure the process is dead before returning.
-    // shutdown_vm_process sends graceful Shutdown + spawns a background reaper.
-    // Give the process 500ms to flush session DB, then SIGKILL if still alive.
+    // wait_for_process_exit polls for graceful exit and escalates to SIGKILL
+    // on timeout (and waits for SIGKILL to land). The leak detector relies
+    // on `kill(pid,0)` returning ESRCH before the test fixture moves on, so
+    // this must be synchronous.
     let session_dir = if let Some((session_dir, _, pid)) = shutdown_vm_process(&state, &id).await {
-        if pid > 0 {
-            // Bounded wait for graceful exit (up to 2s)
-            let start = std::time::Instant::now();
-            let timeout = std::time::Duration::from_secs(2);
-            let mut exited = false;
-            while start.elapsed() < timeout {
-                if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
-                    exited = true;
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-            
-            // Force-kill if still alive
-            if !exited {
-                tracing::warn!(pid, "VM process did not exit gracefully, sending SIGKILL");
-                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
-                
-                // Wait for SIGKILL to take effect (up to 1s)
-                let start = std::time::Instant::now();
-                let timeout = std::time::Duration::from_secs(1);
-                while start.elapsed() < timeout {
-                    if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-            }
-        }
+        wait_for_process_exit(pid, std::time::Duration::from_secs(2)).await;
         session_dir
     } else {
         // Not running -- check persistent registry for stopped VM
@@ -2668,8 +2635,11 @@ async fn handle_run(
         payload.timeout_secs,
     ).await;
 
-    // 5. Tear down VM process and build response immediately.
+    // 5. Tear down VM process and build response.
     let pid = shutdown_vm_process(&state, &id).await.map(|(_, _, p)| p).unwrap_or(0);
+    if pid > 0 {
+        wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await;
+    }
 
     let response = match exec_result {
         Ok(ProcessToService::ExecResult { stdout, stderr, exit_code, .. }) => {
@@ -3051,10 +3021,10 @@ fn kill_all_vm_processes(state: &ServiceState) {
             let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
             signaled_any_vm = true;
         }
-        let _ = std::fs::remove_file(&uds_path);
+        let _ = std::fs::remove_file(uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         if !persistent {
-            let _ = std::fs::remove_dir_all(&session_dir);
+            let _ = std::fs::remove_dir_all(session_dir);
         }
     }
     if !signaled_any_vm {
