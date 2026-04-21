@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Inline `#[cfg(test)] mod tests { ... }` blocks extracted to sibling
+  `tests.rs` files across four hot-path modules.** Pure mechanical code
+  motion -- each block moved verbatim (dedented one level) into a new
+  `tests.rs` alongside its parent, and the parent now declares
+  `#[cfg(test)] mod tests;`. Test visibility is identical to inline;
+  zero behavior change. Before / after line counts:
+  `capsem-core/src/net/policy_config/mod.rs` 4,364 → 38
+  (tests.rs 4,325); `capsem-core/src/session/mod.rs` 1,230 → 12
+  (tests.rs 1,217); `capsem-proto/src/lib.rs` 1,722 → 403
+  (tests.rs 1,318); `capsem-core/src/hypervisor/kvm/virtio_fs/mod.rs`
+  1,218 → 313 (tests.rs 904). Net: ~7,800 lines of test code no longer
+  sits between file open and production definitions, which was the
+  single biggest friction when agents or humans navigate these files.
+  Full suite green: `cargo test -p capsem-core` 1,464 pass;
+  `cargo test -p capsem-proto` 144 pass; clippy clean on every
+  touched crate.
+
+### Changed
 - **`capsem-service`: `PersistentRegistry` extracted from `main.rs` into its
   own `capsem_service::registry` module.** Pure code motion: `PersistentVmEntry`,
   `PersistentRegistryData`, and `PersistentRegistry` with its eight methods
