@@ -30,6 +30,7 @@ class MockWsProcess:
         self._server = None
         self._loop = None
         self._thread = None
+        self._shutdown = None
 
     def start(self):
         self._loop = asyncio.new_event_loop()
@@ -44,13 +45,23 @@ class MockWsProcess:
 
     def _run(self):
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
+        try:
+            self._loop.run_until_complete(self._serve())
+        finally:
+            self._loop.close()
 
     async def _serve(self):
         self._server = await websockets.unix_serve(
             self._handler, self.sock_path,
         )
-        await self._server.serve_forever()
+        # Park on an Event instead of serve_forever(): serve_forever() only
+        # returns on task cancellation, which complicates cross-thread shutdown.
+        self._shutdown = asyncio.Event()
+        try:
+            await self._shutdown.wait()
+        finally:
+            self._server.close()
+            await self._server.wait_closed()
 
     async def _handler(self, ws):
         try:
@@ -61,11 +72,13 @@ class MockWsProcess:
             pass
 
     def stop(self):
-        if self._server:
-            self._server.close()
-        if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        if self._thread:
+        # Signal shutdown on the loop thread so _serve() can close the
+        # server cleanly and run_until_complete() can return on its own.
+        # Calling loop.stop() here would kill the loop mid-await and raise
+        # "Event loop stopped before Future completed." on the worker thread.
+        if self._loop is not None and self._shutdown is not None:
+            self._loop.call_soon_threadsafe(self._shutdown.set)
+        if self._thread is not None:
             self._thread.join(timeout=5)
 
 
@@ -229,3 +242,39 @@ class TestTerminalWebSocket:
                 pass  # Also expected
 
         asyncio.run(run())
+
+
+def test_mock_ws_process_stop_does_not_leak_thread_exception():
+    """MockWsProcess.stop() must shut the loop down cleanly.
+
+    Regression test for a teardown race where stop() called loop.stop()
+    while the daemon thread was inside run_until_complete(serve_forever()),
+    which raises "Event loop stopped before Future completed." on the
+    worker thread. That leak surfaced as PytestUnhandledThreadExceptionWarning.
+    """
+    captured: list[threading.ExceptHookArgs] = []
+    original_hook = threading.excepthook
+
+    def hook(args: threading.ExceptHookArgs) -> None:
+        captured.append(args)
+
+    threading.excepthook = hook
+    tmp_dir = Path(tempfile.mkdtemp(prefix="mockws-", dir="/tmp"))
+    try:
+        sock_path = str(tmp_dir / "ws.sock")
+        proc = MockWsProcess(sock_path)
+        proc.start()
+        proc.stop()
+        # Allow any late-arriving exception to be delivered to the hook.
+        time.sleep(0.1)
+        assert proc._thread is not None and not proc._thread.is_alive(), (
+            "worker thread did not exit after stop()"
+        )
+        assert not captured, (
+            "MockWsProcess worker thread raised: "
+            f"{captured[0].exc_type.__name__}: {captured[0].exc_value}"
+        )
+    finally:
+        threading.excepthook = original_hook
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)

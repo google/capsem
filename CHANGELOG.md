@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`PytestUnhandledThreadExceptionWarning` from `test_gw_terminal.py`
+  module teardown.** The `MockWsProcess` daemon thread in
+  `tests/capsem-gateway/test_gw_terminal.py` ran
+  `loop.run_until_complete(server.serve_forever())`, and `stop()` tore
+  the loop down with `loop.call_soon_threadsafe(loop.stop)`. Stopping a
+  running loop while `run_until_complete` is awaiting a pending future
+  is the exact case that raises `RuntimeError: Event loop stopped
+  before Future completed.` on the worker thread; pytest picked it up
+  at module teardown (visible on the last test, e.g.
+  `test_ws_nonexistent_vm_closes`). Replaced `serve_forever()` with an
+  `asyncio.Event`-based shutdown: `_serve` parks on the event and closes
+  the server in its `finally`; `stop()` just sets the event via
+  `call_soon_threadsafe`, letting `run_until_complete` return cleanly
+  and the worker thread exit. Added a direct regression test
+  (`test_mock_ws_process_stop_does_not_leak_thread_exception`) that
+  installs a `threading.excepthook` and fails if any exception escapes
+  the worker thread.
+
 - **`capsem-agent` failed to compile under `clippy::manual-strip`.** The
   `extract_field` audit-log parser in `crates/capsem-agent/src/main.rs`
   hand-rolled a `starts_with('"')` + `rest[1..]` prefix strip that clippy
