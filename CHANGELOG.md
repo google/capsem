@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`capsem-logger/src/writer.rs`: `clippy::type_complexity` in
+  `exec_event_insert_populates_row` test.** The test declared an
+  8-element tuple type on the destructuring binding for a
+  `Connection::query_row` call; clippy flagged it under
+  `--all-targets -- -D warnings`. Replaced the outer type annotation
+  with per-column `let` bindings inside the closure, which also makes
+  each column's expected type read at the call site rather than in a
+  parallel tuple. No behavior change; `cargo test -p capsem-logger`
+  still 210 pass.
+
 ### Changed
 - **Inline `#[cfg(test)] mod tests { ... }` blocks extracted to sibling
   `tests.rs` files across four hot-path modules.** Pure mechanical code

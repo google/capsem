@@ -896,13 +896,21 @@ mod tests {
         }
 
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid): (
-            String, String, i64, i64, Option<String>, Option<String>, i64, Option<i64>,
-        ) = conn.query_row(
+        let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid) = conn.query_row(
             "SELECT command, source, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
              FROM exec_events WHERE exec_id = 42",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+            |r| {
+                let command: String = r.get(0)?;
+                let source: String = r.get(1)?;
+                let exit: i64 = r.get(2)?;
+                let duration: i64 = r.get(3)?;
+                let stdout_preview: Option<String> = r.get(4)?;
+                let stderr_preview: Option<String> = r.get(5)?;
+                let stdout_bytes: i64 = r.get(6)?;
+                let pid: Option<i64> = r.get(7)?;
+                Ok((command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid))
+            },
         ).unwrap();
         assert_eq!(command, "ls -la");
         assert_eq!(source, "mcp");
