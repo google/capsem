@@ -2338,17 +2338,27 @@ async fn handle_delete(
     // Give the process 500ms to flush session DB, then SIGKILL if still alive.
     let session_dir = if let Some((session_dir, _, pid)) = shutdown_vm_process(&state, &id).await {
         if pid > 0 {
-            // Wait up to 500ms for graceful exit (DB flush, cleanup)
-            for _ in 0..10 {
+            // Bounded wait for graceful exit (up to 2s)
+            let start = std::time::Instant::now();
+            let timeout = std::time::Duration::from_secs(2);
+            let mut exited = false;
+            while start.elapsed() < timeout {
                 if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
+                    exited = true;
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
+            
             // Force-kill if still alive
-            if unsafe { nix::libc::kill(pid as i32, 0) } == 0 {
+            if !exited {
+                tracing::warn!(pid, "VM process did not exit gracefully, sending SIGKILL");
                 let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
-                for _ in 0..10 {
+                
+                // Wait for SIGKILL to take effect (up to 1s)
+                let start = std::time::Instant::now();
+                let timeout = std::time::Duration::from_secs(1);
+                while start.elapsed() < timeout {
                     if unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
                         break;
                     }

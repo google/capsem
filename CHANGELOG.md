@@ -102,6 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
 ### Fixed
+- **Improved VM process cleanup in delete handler.** Replaced fixed wait loops with bounded polling and SIGKILL fallback in `handle_delete` to ensure robust cleanup of `capsem-process` instances during deletion.
 - **Fixed zombie process leak in service test helper.** Added `wait()` after `kill()` in `ServiceInstance.stop` to ensure child processes are fully reaped.
 - **Wired capsem-guard into MCP subprocesses.** Added `capsem-guard` to `capsem-mcp-aggregator` and `capsem-mcp-builtin` to ensure they exit when their parent process dies, eliminating leaks.
 - **Improved service-side VM process cleanup.** Replaced fixed 500ms sleep with a bounded polling loop (up to 2s) and SIGKILL fallback in `kill_all_vm_processes` to ensure robust cleanup of `capsem-process` instances.
