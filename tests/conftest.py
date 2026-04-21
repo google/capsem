@@ -86,18 +86,31 @@ def get_capsem_processes() -> dict[int, dict]:
     Matches on the kernel-reported name only (psutil name()). Scanning cmdline
     args false-positives on every tool invoked from /Users/*/capsem-next/...
     and on any cargo/rustc command that carries `-p capsem-*`.
+
+    cmdline is fetched lazily per capsem-* proc rather than via
+    `process_iter(['pid', 'name', 'cmdline'])`. Attr-prefetch reads every
+    host proc's cmdline through psutil's as_dict, and on macOS a single
+    sysctl(KERN_PROCARGS2) denial for an unrelated system proc surfaces as
+    an uncaught SystemError that drops out of process_iter before our
+    per-iteration try/except can run. Fetch per-proc, catch per-proc.
     """
     procs: dict[int, dict] = {}
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+    for proc in psutil.process_iter(['pid', 'name']):
         try:
             name = proc.info['name'] or ''
-            if name.startswith('capsem-'):
-                procs[proc.info['pid']] = {
-                    'name': name,
-                    'cmdline': ' '.join(proc.info['cmdline'] or []),
-                }
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+        if not name.startswith('capsem-'):
+            continue
+        try:
+            cmdline = ' '.join(proc.cmdline() or [])
+        except (psutil.Error, OSError, SystemError):
+            # PermissionError (subclass of OSError) covers KERN_PROCARGS2 denials;
+            # SystemError is the psutil C-extension wrapper around the same thing.
+            # Either way we know this is a capsem-* proc, so record it with a
+            # blank cmdline rather than drop it.
+            cmdline = ''
+        procs[proc.info['pid']] = {'name': name, 'cmdline': cmdline}
     return procs
 
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Stage-5 flake: pytest `check_leaks` fixture crashing at teardown.** Under
+  concurrent load, macOS `sysctl(KERN_PROCARGS2)` can deny cmdline access for
+  an unrelated host process; psutil surfaces that as an uncaught `SystemError`
+  / `PermissionError` that dropped out of `process_iter(['pid','name','cmdline'])`
+  before the existing per-iteration `try/except` could run, taking down the
+  teardown of whichever test held the turn (observed on
+  `test_cors_on_authenticated_endpoint`). Fix: `tests/conftest.py`'s
+  `get_capsem_processes` now iterates without attr-prefetching cmdline and
+  fetches cmdline lazily with a per-proc `try/except (psutil.Error, OSError,
+  SystemError)`. Unit coverage in `tests/test_leak_detection.py`.
+
 ### Performance
 - **`capsem delete` and `capsem purge` no longer pay the 2.7s graceful
   shutdown floor.** Previously `shutdown_vm_process` unconditionally sent
