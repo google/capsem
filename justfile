@@ -1128,7 +1128,12 @@ _check-assets:
     fi
 
 _pnpm-install:
-    cd frontend && pnpm install --frozen-lockfile
+    # CI=true suppresses pnpm's interactive "remove and reinstall
+    # node_modules?" prompt, which hangs `just test` / `just smoke`
+    # when the store layout drifts from the lockfile. Matches the
+    # `CI=true pnpm install` already used in cross-compile and
+    # test-install below.
+    cd frontend && CI=true pnpm install --frozen-lockfile
 
 _frontend: _pnpm-install
     cd frontend && pnpm build

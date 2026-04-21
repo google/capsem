@@ -77,6 +77,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the
   lifecycle benchmark. Host-side lifecycle/fork regressions remain
   gated today.
+- **`just test` / `just smoke` no longer hang on a pnpm interactive
+  prompt.** The `_pnpm-install` helper ran `pnpm install
+  --frozen-lockfile` with no `CI` env var, so whenever the on-disk
+  `node_modules` store drifted from the lockfile (version bump, pnpm
+  upgrade, stale npm artifacts, manual edits), pnpm asked `The
+  modules directory at ... will be removed and reinstalled from
+  scratch. Proceed? (Y/n)` on stdin and sat there forever in a
+  non-interactive just-test run. Added `CI=true` to the invocation --
+  same idiom already used in the cross-compile docker bash and the
+  test-install container at lines 494 / 792 of the justfile -- which
+  tells pnpm to auto-accept defaults instead of prompting.
 - **`just cross-compile` no longer requires the release Tauri signing
   keys for dev builds.** The recipe read `private/tauri/capsem.key`
   and `private/tauri/password.txt` on the host and passed them to the
