@@ -13,7 +13,7 @@
     ]
   },
   "dependencies": {
-    "astro": "^6.0.0",
+    "astro": "^6.1.8",
     "@astrojs/svelte": "^8.0.0",
     "svelte": "^5.0.0",
     "tailwindcss": "^4.0.0",

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Bumped Astro to 6.1.8 across frontend, docs, and site packages** to clear
+  advisory GHSA-j687-52p2-xcff (moderate XSS in `define:vars` via incomplete
+  `</script>` tag sanitization; patched in Astro >=6.1.6). `just test` Stage 1
+  runs `cd frontend && pnpm audit` and was failing because
+  `frontend/pnpm-lock.yaml` had locked Astro to 6.1.4 despite the caret range.
+  Grepped the tree for `define:vars` and found zero usages -- exploitability
+  in this codebase was nil, but `pnpm audit` gates on version, not usage, so
+  the `test` recipe couldn't pass until the lockfiles refreshed. `docs/` and
+  `site/` were bumped in the same commit because they were also on affected
+  Astro versions.
+
 ### Fixed
 - **Guest binaries landed on the host with 0o755 instead of 0o555 after
   container-native agent builds.** `capsem-builder agent` on macOS cross-
