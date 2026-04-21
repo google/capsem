@@ -22,6 +22,16 @@ TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
 
+ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
+ARTIFACT_SKIP_NAMES = frozenset({
+    # Multi-GB VM disk images -- regenerable from the build, would burn
+    # disk at ~2 GB per failure and we've been there.
+    "rootfs.img",
+    "rootfs.img.backing",
+})
+ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
+
+
 def preserve_tmp_dir_on_failure(tmp_dir):
     """Copy tmp_dir to test-artifacts/ when this worker saw any failure.
 
@@ -29,7 +39,14 @@ def preserve_tmp_dir_on_failure(tmp_dir):
     tmp dir, so service.log, sessions/<vm>/process.log, sessions/<vm>/serial.log,
     and session.db survive for post-mortem. No-op on clean sessions.
 
-    Skips sockets and FIFOs (shutil.copy2 can't read them).
+    Skip rules (see constants above):
+      - Sockets / FIFOs -- shutil.copy2 can't read them.
+      - Files named in `ARTIFACT_SKIP_NAMES` (rootfs.img etc.) -- regenerable
+        multi-GB artifacts that exploded disk on a 100%-full macOS volume.
+      - Any regular file larger than `ARTIFACT_MAX_FILE_BYTES` -- safety net
+        for whatever large artifact I haven't thought of yet.
+    Also rotates `test-artifacts/` after each preserve, keeping only the
+    most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
     try:
         from tests.conftest import FAILED_NODEIDS, ARTIFACTS_ROOT
@@ -49,20 +66,44 @@ def preserve_tmp_dir_on_failure(tmp_dir):
         src_path = Path(src)
         skip = []
         for name in names:
+            if name in ARTIFACT_SKIP_NAMES:
+                skip.append(name)
+                continue
             try:
-                mode = (src_path / name).lstat().st_mode
-                if statmod.S_ISSOCK(mode) or statmod.S_ISFIFO(mode):
-                    skip.append(name)
+                st = (src_path / name).lstat()
             except OSError:
-                pass
+                continue
+            if statmod.S_ISSOCK(st.st_mode) or statmod.S_ISFIFO(st.st_mode):
+                skip.append(name)
+                continue
+            # Size cap only for regular files (directories recurse and
+            # get sized per-file on the next call).
+            if statmod.S_ISREG(st.st_mode) and st.st_size > ARTIFACT_MAX_FILE_BYTES:
+                skip.append(name)
         return skip
 
     try:
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copytree(tmp_dir, dest, ignore=_skip_unsupported, dirs_exist_ok=True)
         print(f"ARTIFACT: preserved {tmp_dir} -> {dest}", file=sys.stderr)
+        _rotate_artifacts(ARTIFACTS_ROOT, ARTIFACT_MAX_KEPT_DIRS)
     except Exception as e:
         print(f"ARTIFACT: preserve failed for {tmp_dir}: {e}", file=sys.stderr)
+
+
+def _rotate_artifacts(root, keep):
+    """Delete oldest `test-artifacts/<...>` dirs beyond `keep` most-recent."""
+    if not root.exists():
+        return
+    try:
+        dirs = sorted(
+            (p for p in root.iterdir() if p.is_dir()),
+            key=lambda p: p.name,  # names begin with YYYYMMDD-HHMMSS so string sort == chronological
+        )
+        for stale in dirs[:-keep] if keep > 0 else []:
+            shutil.rmtree(stale, ignore_errors=True)
+    except OSError as e:
+        print(f"ARTIFACT: rotation skipped: {e}", file=sys.stderr)
 
 
 class ServiceInstance:
