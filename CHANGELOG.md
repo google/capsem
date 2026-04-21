@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`tests/capsem-build-chain/test_manifest_regen.py` was testing a ghost
+  layout and had been silently skipping every assertion.** The fixture read
+  `assets/<arch>/manifest.json` (per-arch) and the tests iterated a flat
+  `{filename: hash-hex-string}` schema, but the real manifest is top-level
+  `assets/manifest.json` with a nested v2 schema (`assets.releases.<ver>
+  .arches.<arch>.<filename>.{hash,size}`). Both the path and the schema
+  predate a refactor that was never propagated here, so the fixture's
+  `pytest.skip()` fired unconditionally and all four tests reported as
+  `s` in build-chain runs -- meaning the suite never actually verified
+  manifest/asset consistency. Rewrote the fixture to read the real
+  manifest and scope to the current release + host arch. Rewrote every
+  test against the nested schema: shape check, per-file existence, b3sum
+  match, and a strict `test_no_extra_assets` that allows manifest-listed
+  names plus their `<stem>-<hex16>.<ext>` hash-tagged aliases and rejects
+  everything else. Verified live on the current tree (4 passed) and
+  proved the stale-alias gate with a planted `initrd-deadbeef12345678.img`
+  that correctly fails the check.
+
 - **`scripts/create_hash_assets.py` left stale hash-tagged aliases that lied
   about their content.** The script creates `<stem>-<hex16>.<ext>` hardlinks
   mirroring manifest entries so the dev layout matches the installed layout.
