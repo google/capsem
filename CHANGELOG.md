@@ -62,6 +62,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **capsem-process kept running after `setup_vsock` returned Err,
+  turning every handshake failure into a 30-second service-side poll
+  timeout.** The tokio task at `capsem-process/src/main.rs:424` just
+  logged the error and exited, leaving the parent process alive with
+  no `.ready` sentinel and no working control channel. The service
+  polled `.ready` until its 30s deadline then reported a generic
+  "exec-ready timeout" with no specific diagnosis. Now `std::process
+  ::exit(1)` on vsock-setup failure so the service's child-exit
+  handler reclaims the instance in <1s and callers (tests, CLI, MCP)
+  see the failure promptly. Residual 4% tail failure seen under
+  xdist stress is tracked in `sprints/vsock-resume-reconnect/ISSUE.md`
+  (the real root cause is an Apple VZ half-open vsock after resume;
+  the fix here just makes it surface cleanly).
 - **`wait_for_vm_ready` poll hammered the sentinel 600× per 30s window
   while every other caller used 10× fewer polls.** `main.rs::wait_for_vm_ready`
   was the only site in the codebase constructing `PollOpts { max_delay:

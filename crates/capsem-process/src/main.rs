@@ -443,7 +443,15 @@ async fn run_async_main_loop(
             db: db_for_vsock,
             pty_log,
         }).await {
+            // Handshake or other vsock setup failed. Without an explicit
+            // exit, capsem-process keeps running with no .ready sentinel
+            // and no working control channel -- the service sees no exit,
+            // polls .ready for 30s, and every command times out. Exiting
+            // here lets the service's child-exit handler clean up the
+            // instance promptly so the caller (test, CLI, MCP) sees the
+            // failure in <1s instead of 30s.
             error!("vsock failed: {e:#}");
+            std::process::exit(1);
         }
     });
 
