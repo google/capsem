@@ -772,7 +772,13 @@ test-install: _build-host
         echo "Building $IMAGE Docker image..."
         docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
     fi
-    CONTAINER="capsem-install-test-$$"
+    # Stable container name + preemptive rm -f handles any container leaked
+    # by a previous run that aborted before reaching cleanup (e.g. cargo
+    # SIGTERM under Colima OOM). The EXIT trap below guarantees cleanup on
+    # any exit path of *this* run so the leak can't start over.
+    CONTAINER="capsem-install-test"
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; just _docker-gc >/dev/null 2>&1 || true' EXIT
     echo "Starting systemd container..."
     docker run -d --name "$CONTAINER" \
         --privileged --cgroupns=host \
@@ -822,12 +828,6 @@ test-install: _build-host
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 "$CONTAINER" bash -c \
         "cd /src && uv run pytest tests/capsem-install/ -v --tb=short"
-    EXIT_CODE=$?
-    echo "Cleaning up container..."
-    docker stop "$CONTAINER" >/dev/null 2>&1
-    docker rm "$CONTAINER" >/dev/null 2>&1
-    just _docker-gc
-    exit $EXIT_CODE
 
 # Wait for CI to build and publish a tag.
 # Usage: just release          (uses latest vX.Y.Z tag on HEAD)

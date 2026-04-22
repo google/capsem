@@ -62,6 +62,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **`just test-install` leaked a systemd container on every failed run,
+  eventually SIGTERM-killing the next build with exit 143.**
+  The `test-install` recipe gave each run a unique container name
+  (`capsem-install-test-$$`) and only cleaned it up on the happy path.
+  Any failed `docker exec` (cargo build, Tauri build, dpkg, pytest)
+  short-circuited the script under `set -euo pipefail` before the
+  `docker stop`/`docker rm` at the end, leaving the privileged systemd
+  container running. Stacked containers squatted Colima's 8 GiB VM
+  across runs, and the next build's parallel rustc processes OOM-killed
+  mid-compile -- visible as `error: Recipe test-install failed with
+  exit code 143` with no pytest output. Also removed dead `EXIT_CODE=$?
+  ... exit $EXIT_CODE` bookkeeping that `set -e` had made unreachable
+  on the failure path. Fixed by switching to a stable container name,
+  preemptively `docker rm -f`ing it at the top of the recipe, and
+  installing an `EXIT` trap so cleanup runs on any exit path.
 - **Docs described a fictional manifest schema.**
   `docs/src/content/docs/architecture/custom-images.md` claimed every build
   produced `assets/{arch}/manifest.json` with a bill-of-materials schema
