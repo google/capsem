@@ -62,6 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **`just test-install` had no durable cushion against Colima disk/cache
+  exhaustion.** The recipe relied on `_docker-gc`'s `until=72h` filters
+  (too conservative to recover recent images / build cache) and on the
+  persistent `capsem-install-target` cargo volume never going out of
+  bounds. In practice the volume grew to 18.7 GB across sprint version
+  bumps and images accumulated until Colima disk pressure compounded
+  any OOM already in play. Added two self-healing preflight checks to
+  `test-install`: (a) if Colima's `/var/lib/docker` has <10 GB free,
+  run `docker image prune -af` + `docker builder prune -af` (no until=
+  filter); (b) if the `capsem-install-target` volume has passed 25 GB,
+  `docker volume rm` it. Both are no-ops in the common case so they
+  don't thrash the cache every run. Linux hosts skip (a) since they
+  don't use Colima. Guarded `colima ssh` with `</dev/null` so callers
+  that pipe stdin into `just` can't stall the check.
 - **`just test-install` leaked a systemd container on every failed run,
   eventually SIGTERM-killing the next build with exit 143.**
   The `test-install` recipe gave each run a unique container name

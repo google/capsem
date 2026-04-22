@@ -772,6 +772,33 @@ test-install: _build-host
         echo "Building $IMAGE Docker image..."
         docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
     fi
+    # Durable disk cushion. Both checks are no-ops in the common case
+    # (plenty of Colima headroom, cache under 25 GB) so they don't thrash
+    # the build cache every run -- they only fire when we're about to
+    # fail anyway.
+    # (a) If Colima has <10 GB free on /var/lib/docker, reclaim images +
+    #     build cache aggressively (no until= filter). Linux hosts skip.
+    if command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then
+        FREE_GB=$(colima ssh -- df -BG /var/lib/docker </dev/null 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')
+        if [[ "${FREE_GB:-}" =~ ^[0-9]+$ ]] && [ "$FREE_GB" -lt 10 ]; then
+            echo "Low Colima disk (${FREE_GB} GB free) -- pruning images + build cache..."
+            docker image prune -af >/dev/null 2>&1 || true
+            docker builder prune -af >/dev/null 2>&1 || true
+        fi
+    fi
+    # (b) If the persistent cargo-target volume has grown past 25 GB,
+    #     reset it. It caches debug artifacts across runs, but every
+    #     crate version bump leaves dead code behind and the volume
+    #     grows unbounded otherwise.
+    VOLUME_LINE=$(docker system df -v 2>/dev/null | grep "^capsem-install-target " || true)
+    if [ -n "$VOLUME_LINE" ]; then
+        VOLUME_SIZE=$(echo "$VOLUME_LINE" | awk '{print $NF}')
+        VOLUME_GB=$(echo "$VOLUME_SIZE" | grep -oE '^[0-9]+' | head -1)
+        if [[ "${VOLUME_GB:-}" =~ ^[0-9]+$ ]] && echo "$VOLUME_SIZE" | grep -q "GB$" && [ "$VOLUME_GB" -gt 25 ]; then
+            echo "capsem-install-target is ${VOLUME_SIZE} -- resetting (>25 GB threshold)..."
+            docker volume rm capsem-install-target >/dev/null 2>&1 || true
+        fi
+    fi
     # Stable container name + preemptive rm -f handles any container leaked
     # by a previous run that aborted before reaching cleanup (e.g. cargo
     # SIGTERM under Colima OOM). The EXIT trap below guarantees cleanup on
