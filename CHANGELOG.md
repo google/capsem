@@ -62,6 +62,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **Artifact preserver left `sessions/` and `persistent/` empty in the
+  archive when tests failed under contention.** The helper used
+  `shutil.copytree` with an `ignore` filter. When capsem-process was
+  still alive during teardown (SIGKILL hadn't reaped it yet) and was
+  writing/unlinking files concurrently, copytree's error-accumulation
+  model created the destination subdirectories but silently failed to
+  populate them -- exactly the `persistent/<vm>/` directories that
+  hold `process.log` / `serial.log` / `session.db` needed to debug
+  suspend/resume failures. Replaced the `copytree`+`ignore` pattern
+  with a manual `os.walk` + per-file copy loop so a single flaky file
+  no longer takes out its whole parent subdir, with a stderr summary
+  (`copied=N skipped=... errors=N`) and the first 10 error reasons
+  surfaced so future regressions don't debug in the dark. Added
+  regression tests for the concurrent-unlink race and for a >25 MB
+  sibling file coexisting with small log files.
 - **`just test-install` had no durable cushion against Colima disk/cache
   exhaustion.** The recipe relied on `_docker-gc`'s `until=72h` filters
   (too conservative to recover recent images / build cache) and on the

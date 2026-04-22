@@ -105,6 +105,71 @@ def test_no_op_when_no_failures(artifact_env, tmp_path, monkeypatch):
     )
 
 
+def test_preserve_survives_concurrent_unlink(artifact_env, tmp_path, monkeypatch):
+    """Regression: under test teardown, capsem-process may still be alive
+    and deleting files while preserve walks the tree. A file listed by
+    os.walk but unlinked before copy2 runs must NOT cause its whole
+    parent subdir to vanish. Previously, shutil.copytree's error
+    accumulation combined with an ignore filter could leave sessions/
+    and persistent/ empty in the archive."""
+    src = _seed_tmp_dir(tmp_path)
+    # Point a new skip path at a file that exists during os.walk but
+    # will be unlinked before the copy phase reaches it. Emulate by
+    # monkeypatching shutil.copy2 to unlink the source before copying.
+    import shutil
+    original_copy2 = shutil.copy2
+    poison_target = src / "sessions" / "v1" / "poison.log"
+    poison_target.write_text("will vanish")
+
+    def _racing_copy2(s, d, *args, **kwargs):
+        # Simulate: a sibling is deleted just before this copy runs.
+        if poison_target.exists():
+            poison_target.unlink()
+        return original_copy2(s, d, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "copy2", _racing_copy2)
+    svc_mod.preserve_tmp_dir_on_failure(src)
+
+    copied = _copied_files(artifact_env)
+    # Critical logs must still be archived despite the racing unlink.
+    must_exist = {"service.log", "logs/gateway.log",
+                  "sessions/v1/session.db", "sessions/v1/process.log"}
+    for rel in must_exist:
+        assert any(p.endswith(rel) for p in copied), (
+            f"{rel} must survive concurrent unlink; archive: {sorted(copied)}"
+        )
+
+
+def test_preserve_logs_survive_oversize_sibling(artifact_env, tmp_path):
+    """Regression: a >25 MB file (checkpoint.vzsave, rootfs.img) sitting
+    next to process.log and serial.log must not prevent those log files
+    from being archived. Guards against the copytree/ignore fragility
+    that left persistent/<vm>/ empty in real failure runs."""
+    src = _seed_tmp_dir(tmp_path)
+    # Add more files in persistent/<vm>/ layout to match the real failure.
+    vmdir = src / "persistent" / "vm-abc"
+    vmdir.mkdir(parents=True)
+    (vmdir / "process.log").write_text("persistent process logs\n")
+    (vmdir / "serial.log").write_text("persistent serial logs\n")
+    (vmdir / "session.db").write_bytes(b"\x00" * 512)
+    # The smoking gun: a 30 MB file named checkpoint.vzsave.
+    (vmdir / "checkpoint.vzsave").write_bytes(b"\x00" * (30 * 1024 * 1024))
+
+    svc_mod.preserve_tmp_dir_on_failure(src)
+    copied = _copied_files(artifact_env)
+    must_exist = {
+        "persistent/vm-abc/process.log",
+        "persistent/vm-abc/serial.log",
+        "persistent/vm-abc/session.db",
+    }
+    for rel in must_exist:
+        assert any(p.endswith(rel) for p in copied), (
+            f"{rel} missing from archive despite oversize sibling; got: {sorted(copied)}"
+        )
+    # The oversize sibling must NOT be in the archive.
+    assert not any(p.endswith("checkpoint.vzsave") for p in copied)
+
+
 def test_rotation_keeps_only_most_recent_n(artifact_env, tmp_path, monkeypatch):
     # Shrink the cap for a fast test.
     monkeypatch.setattr(svc_mod, "ARTIFACT_MAX_KEPT_DIRS", 3)

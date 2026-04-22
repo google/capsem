@@ -28,6 +28,9 @@ ARTIFACT_SKIP_NAMES = frozenset({
     # disk at ~2 GB per failure and we've been there.
     "rootfs.img",
     "rootfs.img.backing",
+    # VM memory checkpoints -- ~100MB+ per suspend, skip to save space.
+    # The logs in the same directory are what we need for debugging.
+    "checkpoint.vzsave",
 })
 ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
 
@@ -45,6 +48,14 @@ def preserve_tmp_dir_on_failure(tmp_dir):
         multi-GB artifacts that exploded disk on a 100%-full macOS volume.
       - Any regular file larger than `ARTIFACT_MAX_FILE_BYTES` -- safety net
         for whatever large artifact I haven't thought of yet.
+
+    Uses a manual os.walk + per-file copy loop rather than shutil.copytree
+    with an ignore filter. Past incidents showed copytree creating the
+    destination subdirs (sessions/, persistent/) but leaving them empty
+    when capsem-process was still alive and rewriting/deleting files
+    concurrently during teardown. A per-file try/except isolates those
+    transient errors so one flaky file doesn't vanish the entire subtree.
+
     Also rotates `test-artifacts/` after each preserve, keeping only the
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
@@ -62,33 +73,75 @@ def preserve_tmp_dir_on_failure(tmp_dir):
     ts = time.strftime("%Y%m%d-%H%M%S")
     dest = ARTIFACTS_ROOT / f"{ts}-{worker}-{tag}" / tmp_dir.name
 
-    def _skip_unsupported(src, names):
-        src_path = Path(src)
-        skip = []
-        for name in names:
-            if name in ARTIFACT_SKIP_NAMES:
-                skip.append(name)
-                continue
-            try:
-                st = (src_path / name).lstat()
-            except OSError:
-                continue
-            if statmod.S_ISSOCK(st.st_mode) or statmod.S_ISFIFO(st.st_mode):
-                skip.append(name)
-                continue
-            # Size cap only for regular files (directories recurse and
-            # get sized per-file on the next call).
-            if statmod.S_ISREG(st.st_mode) and st.st_size > ARTIFACT_MAX_FILE_BYTES:
-                skip.append(name)
-        return skip
+    copied = 0
+    skipped_name = 0
+    skipped_size = 0
+    skipped_type = 0
+    errors = []
 
     try:
         dest.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(tmp_dir, dest, ignore=_skip_unsupported, dirs_exist_ok=True)
-        print(f"ARTIFACT: preserved {tmp_dir} -> {dest}", file=sys.stderr)
+        # topdown=True so we can prune by emptying dirnames in-place if
+        # needed; onerror catches listdir failures so a single unreadable
+        # subdir doesn't abort the whole walk.
+        def _on_walk_error(err):
+            errors.append(f"walk {err.filename}: {err}")
+        for src_dir, dirnames, filenames in os.walk(tmp_dir, topdown=True, onerror=_on_walk_error):
+            src_path = Path(src_dir)
+            rel = src_path.relative_to(tmp_dir)
+            dst_dir = dest / rel
+            try:
+                dst_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                errors.append(f"mkdir {dst_dir}: {e}")
+                continue
+            for name in filenames:
+                if name in ARTIFACT_SKIP_NAMES:
+                    skipped_name += 1
+                    continue
+                src_file = src_path / name
+                dst_file = dst_dir / name
+                try:
+                    st = src_file.lstat()
+                except OSError as e:
+                    errors.append(f"lstat {src_file}: {e}")
+                    continue
+                mode = st.st_mode
+                if statmod.S_ISSOCK(mode) or statmod.S_ISFIFO(mode):
+                    skipped_type += 1
+                    continue
+                if statmod.S_ISLNK(mode):
+                    # Preserve as symlink -- don't chase the target.
+                    # Dangling symlinks under concurrent teardown would
+                    # otherwise fail copy2 and (with copytree) poison
+                    # the whole subdir.
+                    try:
+                        target = os.readlink(src_file)
+                        os.symlink(target, dst_file)
+                        copied += 1
+                    except OSError as e:
+                        errors.append(f"symlink {src_file}: {e}")
+                    continue
+                if statmod.S_ISREG(mode) and st.st_size > ARTIFACT_MAX_FILE_BYTES:
+                    skipped_size += 1
+                    continue
+                try:
+                    shutil.copy2(src_file, dst_file)
+                    copied += 1
+                except OSError as e:
+                    errors.append(f"copy {src_file}: {e}")
+        print(
+            f"ARTIFACT: preserved {tmp_dir} -> {dest} "
+            f"(copied={copied} skipped_name={skipped_name} "
+            f"skipped_size={skipped_size} skipped_type={skipped_type} "
+            f"errors={len(errors)})",
+            file=sys.stderr,
+        )
+        for err in errors[:10]:
+            print(f"  ! {err}", file=sys.stderr)
         _rotate_artifacts(ARTIFACTS_ROOT, ARTIFACT_MAX_KEPT_DIRS)
     except Exception as e:
-        print(f"ARTIFACT: preserve failed for {tmp_dir}: {e}", file=sys.stderr)
+        print(f"ARTIFACT: preserve fatal for {tmp_dir}: {e}", file=sys.stderr)
 
 
 def _rotate_artifacts(root, keep):
