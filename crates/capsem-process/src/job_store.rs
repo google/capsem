@@ -21,6 +21,21 @@ impl JobStore {
             snapshot_ready: Mutex::new(None),
         }
     }
+
+    /// Drain every pending job and oneshot, answering each with an Error.
+    /// Called when the control-channel reader has died so callers waiting on
+    /// the oneshots (see `ipc.rs` Exec/WriteFile/ReadFile handlers) get a
+    /// prompt failure instead of a 30s IPC timeout.
+    pub(crate) fn fail_all(&self, message: &str) {
+        let pending: Vec<_> = self.jobs.lock().unwrap().drain().collect();
+        for (_id, tx) in pending {
+            let _ = tx.send(JobResult::Error { message: message.to_string() });
+        }
+        if let Some(tx) = self.snapshot_ready.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+        *self.active_exec.lock().unwrap() = None;
+    }
 }
 
 #[cfg_attr(test, derive(Debug))]
@@ -249,6 +264,45 @@ mod tests {
             JobResult::Error { message } => assert_eq!(message, "internal failure"),
             _ => panic!("wrong variant"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // fail_all drains every pending oneshot with an Error
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fail_all_resolves_every_pending_oneshot() {
+        let job_store = Arc::new(JobStore::new());
+        // Register three pending jobs + a snapshot_ready waiter.
+        let (tx1, rx1) = oneshot::channel::<JobResult>();
+        let (tx2, rx2) = oneshot::channel::<JobResult>();
+        let (tx3, rx3) = oneshot::channel::<JobResult>();
+        let (snap_tx, snap_rx) = oneshot::channel::<()>();
+        {
+            let mut jobs = job_store.jobs.lock().unwrap();
+            jobs.insert(1, tx1);
+            jobs.insert(2, tx2);
+            jobs.insert(3, tx3);
+        }
+        *job_store.snapshot_ready.lock().unwrap() = Some(snap_tx);
+        *job_store.active_exec.lock().unwrap() = Some((1, b"buffered".to_vec()));
+
+        // Regression guard: this is the crucial behavior -- callers awaiting
+        // these oneshots must see an immediate result, not hang forever and
+        // let the parent IPC call time out at 30s.
+        job_store.fail_all("control channel closed: decode error");
+
+        for rx in [rx1, rx2, rx3] {
+            match rx.await {
+                Ok(JobResult::Error { message }) => {
+                    assert!(message.contains("control channel closed"));
+                }
+                other => panic!("expected JobResult::Error, got {other:?}"),
+            }
+        }
+        assert!(snap_rx.await.is_ok(), "snapshot_ready waiter must be resolved");
+        assert!(job_store.active_exec.lock().unwrap().is_none());
+        assert!(job_store.jobs.lock().unwrap().is_empty());
     }
 
     // -----------------------------------------------------------------------

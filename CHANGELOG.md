@@ -62,6 +62,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **`wait_for_vm_ready` poll hammered the sentinel 600× per 30s window
+  while every other caller used 10× fewer polls.** `main.rs::wait_for_vm_ready`
+  was the only site in the codebase constructing `PollOpts { max_delay:
+  50ms }` directly; every peer (`service-connect`, `service-socket`,
+  `gateway-ready`, `shell-socket`, guest `vsock-connect`, `reconnect`)
+  uses `PollOpts::new` with the project-standard 500ms max_delay.
+  Aligned this one site to the convention. Cuts sentinel-check traffic
+  per second by 10× under contention without changing the 30s overall
+  timeout.
+- **Control-channel reader could silently wedge a VM for 30 seconds
+  per command and kept the `.ready` sentinel fresh the whole time.**
+  When `capsem-process`'s `ctrl_f_read` loop hit any decode/read error
+  (e.g. desync, short-read, oversize frame), it logged and `break`ed
+  without cleaning up. In-flight `Exec`/`ReadFile`/`WriteFile` oneshots
+  registered in `job_store.jobs` never resolved, so the `ipc.rs` tasks
+  awaiting them hung indefinitely; meanwhile `.ready` stayed on disk
+  and `vm_ready` stayed `true`, so every subsequent `POST /exec` passed
+  `wait_for_vm_ready` and then timed out at 30s too. Added
+  `JobStore::fail_all(message)` which drains pending oneshots with
+  `JobResult::Error`; the reader's error path now calls it and also
+  removes `.ready`, clears `vm_ready`, so in-flight callers get an
+  immediate error and new callers fail fast at the readiness check.
+- **Handshake reads/writes ran sync on the async runtime, and every
+  failure was silently swallowed.** `setup_vsock` did blocking
+  `read_control_msg`/`write_control_msg` directly inside the async fn,
+  so under contention (N VMs booting at once) all tokio workers could
+  block on vsock I/O simultaneously -- runtime starvation slowed every
+  handshake and gave guests enough time to hit their own timeouts,
+  leading to protocol desync. Worse, `let _ = read_control_msg(...)`
+  at the Ready and BootReady reads plus every `let _ =
+  write_control_msg(...)` in the restore branch meant a half-failed
+  handshake still reached `vm_ready.store(true)` and `.ready` sentinel
+  creation, so callers sent commands into a broken vsock. Moved the
+  handshake into `tokio::task::spawn_blocking`, propagated every read
+  and write error with context, and gated `vm_ready`/`.ready` on the
+  handshake actually succeeding.
 - **Artifact preserver left `sessions/` and `persistent/` empty in the
   archive when tests failed under contention.** The helper used
   `shutil.copytree` with an `ignore` filter. When capsem-process was

@@ -103,54 +103,72 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     let terminal = terminal_conn.unwrap();
     let control = control_conn.unwrap();
-    let mut ctrl_file = clone_fd(control.fd)?;
 
-    let _ = read_control_msg(&mut ctrl_file); // Initial Ready
-    info!(category = "boot_timeline", from = "Booting", to = "Handshaking", trigger = "ready_received", "state transition");
+    // Handshake runs on the blocking pool, not on the tokio runtime worker
+    // that setup_vsock is executing on. The reads and writes here are sync
+    // (std::fs::File on a vsock fd) and under contention -- many VMs booting
+    // at once -- doing them inline starves the runtime: every worker blocks
+    // on vsock I/O simultaneously, handshakes crawl, guests hit their own
+    // timeouts, and the protocol desyncs. Off-loading to spawn_blocking
+    // keeps the runtime responsive.
+    // Errors propagate (previously `let _ = ...` silently ignored failures,
+    // leaving the guest and host out of sync while we marched ahead to
+    // create the `.ready` sentinel).
+    let control_fd = control.fd;
+    let cli_env_for_handshake = cli_env.clone();
+    let guest_config_for_handshake = guest_config.clone();
+    let is_restore_for_handshake = is_restore;
+    let handshake = tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut ctrl_file = clone_fd(control_fd)?;
+        read_control_msg(&mut ctrl_file)
+            .map_err(|e| anyhow::anyhow!("initial Ready read failed: {e:#}"))?;
+        info!(category = "boot_timeline", from = "Booting", to = "Handshaking", trigger = "ready_received", "state transition");
 
-    if is_restore {
-        info!("Abbreviated handshake for restored VM -- resyncing clock and timezone");
-        let epoch_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let _ = write_control_msg(
-            &mut ctrl_file,
-            &HostToGuest::BootConfig { epoch_secs },
-        );
-        // Re-inject timezone in case host TZ changed since suspend.
-        if let Ok(link) = std::fs::read_link("/etc/localtime") {
-            if let Some(s) = link.to_str() {
-                if let Some(idx) = s.find("/zoneinfo/") {
-                    let tz = &s[idx + "/zoneinfo/".len()..];
-                    let _ = write_control_msg(
-                        &mut ctrl_file,
-                        &HostToGuest::SetEnv {
-                            key: "TZ".into(),
-                            value: tz.to_string(),
-                        },
-                    );
-                    if let Ok(tz_data) = std::fs::read("/etc/localtime") {
-                        let _ = write_control_msg(
+        if is_restore_for_handshake {
+            info!("Abbreviated handshake for restored VM -- resyncing clock and timezone");
+            let epoch_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            write_control_msg(&mut ctrl_file, &HostToGuest::BootConfig { epoch_secs })
+                .map_err(|e| anyhow::anyhow!("restore BootConfig write failed: {e:#}"))?;
+            // Re-inject timezone in case host TZ changed since suspend.
+            if let Ok(link) = std::fs::read_link("/etc/localtime") {
+                if let Some(s) = link.to_str() {
+                    if let Some(idx) = s.find("/zoneinfo/") {
+                        let tz = &s[idx + "/zoneinfo/".len()..];
+                        write_control_msg(
                             &mut ctrl_file,
-                            &HostToGuest::FileWrite {
-                                id: 0,
-                                path: "/etc/localtime".into(),
-                                data: tz_data,
-                                mode: 0o644,
-                            },
-                        );
+                            &HostToGuest::SetEnv { key: "TZ".into(), value: tz.to_string() },
+                        ).map_err(|e| anyhow::anyhow!("restore SetEnv TZ write failed: {e:#}"))?;
+                        if let Ok(tz_data) = std::fs::read("/etc/localtime") {
+                            write_control_msg(
+                                &mut ctrl_file,
+                                &HostToGuest::FileWrite {
+                                    id: 0,
+                                    path: "/etc/localtime".into(),
+                                    data: tz_data,
+                                    mode: 0o644,
+                                },
+                            ).map_err(|e| anyhow::anyhow!("restore FileWrite /etc/localtime failed: {e:#}"))?;
+                        }
                     }
                 }
             }
+            write_control_msg(&mut ctrl_file, &HostToGuest::BootConfigDone)
+                .map_err(|e| anyhow::anyhow!("restore BootConfigDone write failed: {e:#}"))?;
+        } else {
+            send_boot_config(&mut ctrl_file, &cli_env_for_handshake, Some(guest_config_for_handshake))
+                .map_err(|e| anyhow::anyhow!("send_boot_config failed: {e:#}"))?;
         }
-        let _ = write_control_msg(&mut ctrl_file, &HostToGuest::BootConfigDone);
-    } else {
-        send_boot_config(&mut ctrl_file, &cli_env, Some(guest_config))?;
-    }
 
-    let _ = read_control_msg(&mut ctrl_file); // BootReady
-    info!(category = "boot_timeline", from = "Handshaking", to = "Running", trigger = "booted", "state transition");
+        read_control_msg(&mut ctrl_file)
+            .map_err(|e| anyhow::anyhow!("BootReady read failed: {e:#}"))?;
+        info!(category = "boot_timeline", from = "Handshaking", to = "Running", trigger = "booted", "state transition");
+        Ok(())
+    }).await
+        .map_err(|e| anyhow::anyhow!("handshake task panicked: {e}"))?;
+    handshake?;
 
     let _ = ipc_tx.send(ProcessToService::StateChanged {
         id: vm_id.clone(),
@@ -160,6 +178,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     vm_ready.store(true, Ordering::Release);
 
     // Signal readiness to service via sentinel file (avoids IPC polling).
+    // Only created after the handshake actually succeeded -- previously
+    // this ran unconditionally, so a silently-failed handshake still
+    // published `.ready` and callers sent commands into a broken vsock.
     let ready_path = uds_path.with_extension("ready");
     if let Err(e) = std::fs::File::create(&ready_path) {
         warn!("failed to create ready sentinel: {e}");
@@ -491,6 +512,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let exec_start_times: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>> =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let exec_times_ctrl = Arc::clone(&exec_start_times);
+    // Captured so the reader task can tear down readiness if it dies:
+    // deleting .ready stops new commands at wait_for_vm_ready, and
+    // fail_all on the job_store resolves any in-flight oneshots so
+    // callers fail fast instead of timing out at 30s.
+    let ready_path_for_reader = ready_path.clone();
+    let vm_ready_for_reader = Arc::clone(&vm_ready);
+    let js_for_teardown = Arc::clone(&job_store);
     tokio::task::spawn_blocking(move || {
         loop {
             match read_control_msg(&mut ctrl_f_read) {
@@ -567,6 +595,15 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 }
                 Err(e) => {
                     error!("control channel closed: {e:#}");
+                    // Reader is dead -- nothing else will resolve the oneshots
+                    // registered in job_store. Poison them so every in-flight
+                    // Exec/ReadFile/WriteFile caller sees an immediate
+                    // JobResult::Error instead of its 30s IPC timeout. Also
+                    // tear down the readiness signals so new callers can't
+                    // pile up more commands that will also never respond.
+                    js_for_teardown.fail_all(&format!("control channel closed: {e:#}"));
+                    vm_ready_for_reader.store(false, Ordering::Release);
+                    let _ = std::fs::remove_file(&ready_path_for_reader);
                     break;
                 }
             }
