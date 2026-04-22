@@ -62,6 +62,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **Suspend/resume: VM survives Apple VZ post-resume vsock half-opens
+  and post-handshake connection resets.** The host's vsock layer now
+  runs a continuous accept loop for the VM's lifetime and hot-swaps
+  the underlying fd into stable terminal/control reader-writer bridges
+  via dedicated re-key channels. When a connection resets
+  (`BrokenPipe` / `ConnectionReset` pre-handshake, any read/write
+  error mid-session) the bridges drop the dead fd, clear all
+  framing buffers (no `0x81A08329` "control frame too large" misread
+  of a MessagePack map header as a length header), and block on the
+  rekey channel for a fresh fd produced by the guest's own reconnect
+  loop. The initial handshake retries up to 3× on narrow retryable
+  errors only (`BrokenPipe` / `ConnectionReset` at any level of the
+  `anyhow::Error` source chain — `UnexpectedEof` and decode errors
+  fail fast because they indicate a genuinely wedged guest, not the
+  half-open-vsock race). Errors in `perform_handshake` now propagate
+  with `.context()` so the underlying `std::io::Error` stays in the
+  source chain and classification works without string matching.
+  All 11 pre-refactor invariants survive: 10s heartbeat, terminal
+  resize, lifecycle port for guest shutdown/suspend, audit port,
+  exec duration tracking, VZ main-thread dispatch for pause/save/stop,
+  fsync-after-save, error-path Unfreeze, deferred_conns processing,
+  handshake on spawn_blocking, and reader-break `JobStore::fail_all`
+  poisoning when the rekey channel itself closes. Stress harness
+  (`test_stress_suspend_resume.py`, 50 iterations × 8 workers) goes
+  from 45-48/50 to 47/50; the remaining 3 failures are an independent
+  loop-device I/O error on the persistent overlay after restore (see
+  `sprints/vsock-resume-reconnect/plan.md` for the handoff). Plan
+  and tracker for the sprint live at
+  `sprints/vsock-resume-reconnect/{plan,tracker}.md`.
 - **capsem-process kept running after `setup_vsock` returned Err,
   turning every handshake failure into a 30-second service-side poll
   timeout.** The tokio task at `capsem-process/src/main.rs:424` just

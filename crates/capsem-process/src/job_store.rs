@@ -54,7 +54,7 @@ pub(crate) enum JobResult {
 /// 4. Sends `Unfreeze` to the guest regardless of operation success or timeout.
 #[allow(dead_code)]
 pub(crate) async fn with_quiescence<F, Fut>(
-    ctrl_cmd_tx: &std::sync::mpsc::Sender<HostToGuest>,
+    ctrl_cmd_tx: &tokio::sync::mpsc::Sender<HostToGuest>,
     job_store: &Arc<JobStore>,
     timeout: std::time::Duration,
     op: F,
@@ -70,6 +70,7 @@ where
     info!("Sending PrepareSnapshot to guest");
     ctrl_cmd_tx
         .send(HostToGuest::PrepareSnapshot)
+        .await
         .map_err(|e| anyhow::anyhow!("failed to send PrepareSnapshot: {}", e))?;
 
     // Wait for SnapshotReady with timeout
@@ -79,18 +80,18 @@ where
             let op_result = op().await;
 
             info!("Operation complete, sending Unfreeze to guest");
-            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze);
+            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze).await;
             op_result
         }
         Ok(Err(_)) => {
             // Channel closed without receiving
             warn!("SnapshotReady channel closed prematurely, aborting operation and unfreezing");
-            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze);
+            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze).await;
             anyhow::bail!("SnapshotReady channel closed prematurely");
         }
         Err(_) => {
             warn!("Timeout waiting for SnapshotReady, aborting operation and unfreezing");
-            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze);
+            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze).await;
             anyhow::bail!("timed out waiting for SnapshotReady");
         }
     }
@@ -342,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn quiescence_timeout_fires() {
         let job_store = Arc::new(JobStore::new());
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, mut _rx) = tokio::sync::mpsc::channel::<HostToGuest>(16);
 
         // 1. Never send SnapshotReady
         let start = std::time::Instant::now();
@@ -359,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn quiescence_success_runs_operation() {
         let job_store = Arc::new(JobStore::new());
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, mut _rx) = tokio::sync::mpsc::channel::<HostToGuest>(16);
 
         // Simulate the guest sending SnapshotReady
         {
@@ -389,7 +390,7 @@ mod tests {
     #[tokio::test]
     async fn quiescence_channel_closed_returns_error() {
         let job_store = Arc::new(JobStore::new());
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, mut _rx) = tokio::sync::mpsc::channel::<HostToGuest>(16);
 
         // Drop the sender without sending, simulating channel close
         {
