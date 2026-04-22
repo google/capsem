@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Asset hash verification at boot was silently disabled on every release.**
+  `crates/capsem-core/src/vm/boot.rs` read three expected hashes via
+  `option_env!("VMLINUZ_HASH")` / `"INITRD_HASH"` / `"ROOTFS_HASH"`, but
+  nothing in the build chain ever set those env vars -- no `rustc-env=`
+  emit from any `build.rs`, no shell-level pre-seed in CI, no `capsem-core
+  /build.rs` at all. Every shipped binary therefore reached
+  `VmConfig::build()` with `expected_*_hash: None`, skipping the hash
+  check on kernel, initrd, and rootfs. Casual corruption, asset/manifest
+  drift, or an attacker with write access to `assets/` all went
+  undetected at boot. The compile-time embedding approach is also
+  incompatible with the project's independent binary/asset release
+  model (`min_binary`/`min_assets` compatibility ranges) -- baking
+  specific hashes into a binary would tie every binary release to one
+  asset release.
+  Replaced the `option_env!` path with runtime manifest lookup. New
+  `asset_manager::load_manifest_for_assets(assets)` reads `manifest.json`
+  from the assets dir or its parent; new `ManifestV2::
+  expected_hashes_current(arch)` returns the kernel/initrd/rootfs hashes
+  for the current release on the host arch. `boot_vm` now feeds those
+  to `VmConfig::builder`, so the hash check fires on every boot that has
+  a manifest. Missing or malformed manifest falls back to disabled
+  verification with an explicit `[boot-audit] asset hash verification
+  disabled` log line, keeping dev loops without a manifest working.
+  Tamper resistance for release environments now depends on manifest
+  signature verification in the asset-download path; that path is a
+  separate, tracked gap.
+  Updated `docs/src/content/docs/architecture/asset-pipeline.md` to
+  describe the runtime-lookup flow (replacing the old "Compile-Time
+  Hash Embedding" section) and fixed the mermaid diagram to match.
+  Covered by 8 new unit tests in `crates/capsem-core/src/asset_manager.rs`
+  covering `expected_hashes_current`, `load_manifest_for_assets`, and
+  the `aarch64 -> arm64` arch mapping.
+
 ### Fixed
 - **Docs described a fictional manifest schema.**
   `docs/src/content/docs/architecture/custom-images.md` claimed every build

@@ -137,9 +137,27 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        if let Some(hash) = option_env!("VMLINUZ_HASH") {
-            info!("[boot-audit] kernel hash verification enabled");
-            builder = builder.expected_kernel_hash(hash);
+        // Load expected asset hashes from the manifest on disk. This supports
+        // independent binary/asset upgrades: the binary ships hash-agnostic,
+        // the manifest is authoritative for the installed release. Missing or
+        // malformed manifest disables hash verification (dev loops without a
+        // manifest still boot). Tamper resistance relies on manifest signature
+        // verification elsewhere in the asset-download path.
+        let expected_hashes = crate::asset_manager::load_manifest_for_assets(assets)
+            .and_then(|m| m.expected_hashes_current(crate::asset_manager::host_manifest_arch()));
+        match expected_hashes {
+            Some(ref h) => info!(
+                "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
+                &h.kernel[..16],
+                &h.initrd[..16],
+                &h.rootfs[..16],
+            ),
+            None => info!("[boot-audit] asset hash verification disabled (no manifest match for arch={})",
+                crate::asset_manager::host_manifest_arch()),
+        }
+
+        if let Some(ref h) = expected_hashes {
+            builder = builder.expected_kernel_hash(&h.kernel);
         }
 
         let initrd_path = initrd_override
@@ -148,8 +166,8 @@ pub fn boot_vm(
         if initrd_path.exists() {
             info!("[boot-audit] initrd: {} (exists=true)", initrd_path.display());
             builder = builder.initrd_path(initrd_path);
-            if let Some(hash) = option_env!("INITRD_HASH") {
-                builder = builder.expected_initrd_hash(hash);
+            if let Some(ref h) = expected_hashes {
+                builder = builder.expected_initrd_hash(&h.initrd);
             }
         } else {
             info!("[boot-audit] initrd: {} (exists=false)", initrd_path.display());
@@ -167,8 +185,8 @@ pub fn boot_vm(
         if let Some(ref rootfs) = rootfs_path {
             info!("[boot-audit] rootfs: {} (exists={})", rootfs.display(), rootfs.exists());
             builder = builder.disk_path(rootfs);
-            if let Some(hash) = option_env!("ROOTFS_HASH") {
-                builder = builder.expected_disk_hash(hash);
+            if let Some(ref h) = expected_hashes {
+                builder = builder.expected_disk_hash(&h.rootfs);
             }
         } else {
             info!("[boot-audit] rootfs: none");

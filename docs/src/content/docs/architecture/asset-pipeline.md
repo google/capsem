@@ -101,15 +101,17 @@ Key points:
 
 Both emit the same format-2 schema. `scripts/create_hash_assets.py` then creates `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the content-addressable names used by the installed layout.
 
-## Compile-Time Hash Embedding
+## Runtime Hash Verification
 
-`crates/capsem-app/build.rs` runs at compile time and extracts hashes from `manifest.json`:
+Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic; the manifest on disk is authoritative.
 
-1. Maps `CARGO_CFG_TARGET_ARCH` to manifest key (`aarch64` -> `arm64`, `x86_64` -> `x86_64`)
-2. Looks up `releases[version][arch].assets` (per-arch), falls back to `releases[version].assets` (flat)
-3. Sets environment variables: `VMLINUZ_HASH`, `INITRD_HASH`, `ROOTFS_HASH`
+At boot (`crates/capsem-core/src/vm/boot.rs`):
 
-At runtime, `boot.rs` reads these via `option_env!()` and passes them to `VmConfig::builder()`. The hashes are baked into the binary -- they cannot be modified at runtime.
+1. `asset_manager::load_manifest_for_assets(assets)` reads `manifest.json` from the assets dir or its parent.
+2. `ManifestV2::expected_hashes_current(host_manifest_arch())` looks up the kernel/initrd/rootfs hashes for the current release on the host arch (`aarch64` -> `arm64` mapped).
+3. The hashes are passed to `VmConfig::builder()` via `expected_kernel_hash` / `expected_initrd_hash` / `expected_disk_hash`; `VmConfig::build()` hashes the files and refuses to boot on mismatch.
+
+If the manifest is missing or the arch entry is absent (fresh checkout, no assets built yet) hash verification is skipped and a `[boot-audit] asset hash verification disabled` line is logged. Tamper resistance in release environments relies on manifest signature verification in the asset-download path, not on the binary embedding hashes directly.
 
 ## Runtime Asset Resolution
 
@@ -165,14 +167,13 @@ Assets are verified at multiple points:
 | After download | `asset_manager.rs` | Temp file deleted, download retried |
 | Before boot | `vm/config.rs` | `ConfigError::HashMismatch`, boot prevented |
 
-Both use BLAKE3 with 64-character hex format. The download check uses the manifest hash; the boot check uses the compile-time embedded hash.
+Both use BLAKE3 with 64-character hex format. Both checks source their expected hashes from the same `manifest.json` on disk -- the boot check just re-reads it via `load_manifest_for_assets()` at `boot_vm()` time.
 
 ## Per-Architecture Isolation
 
-- `host_arch()` is determined at **compile time** via `#[cfg(target_arch)]`
-- A Capsem binary supports exactly **one architecture** (no runtime switching)
-- `build.rs` extracts hashes for the **target architecture only**
-- The manifest has **separate hash entries per arch** -- no cross-arch confusion is possible
+- A Capsem binary supports exactly **one architecture** (no runtime switching); `std::env::consts::ARCH` is used to select the manifest arch key.
+- `host_manifest_arch()` maps `aarch64` -> `arm64` (the key used in the manifest).
+- The manifest has **separate hash entries per arch** -- no cross-arch confusion is possible.
 
 ```mermaid
 flowchart LR
@@ -182,13 +183,10 @@ flowchart LR
         Builder --> Checksums[manifest.json]
     end
 
-    subgraph Compile
-        Checksums --> BuildRS[build.rs]
-        BuildRS --> EnvVars[VMLINUZ_HASH etc.]
-    end
-
     subgraph Runtime
-        EnvVars --> Boot[boot_vm]
+        Checksums --> LoadManifest[load_manifest_for_assets]
+        LoadManifest --> ExpectedHashes[expected_hashes_current]
+        ExpectedHashes --> Boot[boot_vm]
         Assets --> Resolve[resolve_assets_dir]
         Resolve --> Boot
         Boot --> Verify[verify_hash BLAKE3]

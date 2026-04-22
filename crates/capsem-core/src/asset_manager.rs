@@ -124,6 +124,59 @@ pub struct ResolvedAssets {
     pub asset_version: String,
 }
 
+/// BLAKE3 hashes for the three canonical boot assets of one arch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpectedAssetHashes {
+    pub kernel: String,
+    pub initrd: String,
+    pub rootfs: String,
+}
+
+/// Map `std::env::consts::ARCH` names to the keys used under
+/// `manifest.assets.releases.<ver>.arches`. Unknown arches pass through.
+pub fn map_rustc_arch_to_manifest(rustc_arch: &str) -> &str {
+    match rustc_arch {
+        "aarch64" => "arm64",
+        other => other,
+    }
+}
+
+/// Host arch as a manifest key (e.g. "arm64", "x86_64").
+pub fn host_manifest_arch() -> &'static str {
+    map_rustc_arch_to_manifest(std::env::consts::ARCH)
+}
+
+/// Load `manifest.json` from the assets dir (installed layout) or its parent
+/// (dev tree layout where `assets` is already `assets/<arch>/`). Returns
+/// `None` on missing file, read error, parse error, or schema mismatch --
+/// boot-time hash verification then falls back to "disabled" so dev loops
+/// without a manifest keep working.
+pub fn load_manifest_for_assets(assets: &Path) -> Option<ManifestV2> {
+    let mut candidates: Vec<PathBuf> = vec![assets.join("manifest.json")];
+    if let Some(parent) = assets.parent() {
+        candidates.push(parent.join("manifest.json"));
+    }
+    for path in candidates {
+        if !path.is_file() {
+            continue;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match ManifestV2::from_json(&content) {
+                Ok(m) => return Some(m),
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %path.display(), "manifest parse failed");
+                    return None;
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "manifest read failed");
+                return None;
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Hash-based filename derivation
 // ---------------------------------------------------------------------------
@@ -215,6 +268,20 @@ impl ManifestV2 {
             initrd: resolve_one("initrd.img")?,
             rootfs: resolve_one("rootfs.squashfs")?,
             asset_version,
+        })
+    }
+
+    /// Expected hashes for the canonical boot triple (kernel/initrd/rootfs)
+    /// from the current asset release on the given arch. Returns `None` if
+    /// the current release or arch entry is missing, or if any of the three
+    /// canonical filenames is absent from that arch's asset map.
+    pub fn expected_hashes_current(&self, arch: &str) -> Option<ExpectedAssetHashes> {
+        let release = self.assets.releases.get(&self.assets.current)?;
+        let assets = release.arches.get(arch)?;
+        Some(ExpectedAssetHashes {
+            kernel: assets.get("vmlinuz")?.hash.clone(),
+            initrd: assets.get("initrd.img")?.hash.clone(),
+            rootfs: assets.get("rootfs.squashfs")?.hash.clone(),
         })
     }
 
@@ -617,6 +684,78 @@ mod tests {
     fn manifest_rejects_wrong_format() {
         let json = SAMPLE_V2_MANIFEST.replace("\"format\": 2", "\"format\": 99");
         assert!(ManifestV2::from_json(&json).is_err());
+    }
+
+    #[test]
+    fn expected_hashes_current_returns_arch_hashes() {
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let h = m.expected_hashes_current("arm64").unwrap();
+        assert_eq!(h.kernel, "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c");
+        assert_eq!(h.initrd, "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456");
+        assert_eq!(h.rootfs, "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee");
+    }
+
+    #[test]
+    fn expected_hashes_current_returns_none_for_unknown_arch() {
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        assert!(m.expected_hashes_current("riscv64").is_none());
+    }
+
+    #[test]
+    fn expected_hashes_current_returns_none_when_canonical_asset_missing() {
+        // Manifest with arm64 present but missing rootfs.squashfs entry.
+        let json = SAMPLE_V2_MANIFEST.replace(
+            r#""rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }"#,
+            r#""rootfs.placeholder": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }"#,
+        );
+        let m = ManifestV2::from_json(&json).unwrap();
+        assert!(m.expected_hashes_current("arm64").is_none());
+    }
+
+    #[test]
+    fn host_manifest_arch_maps_aarch64_to_arm64() {
+        // Static check: the function maps the rustc arch name (aarch64) to the
+        // manifest arch key (arm64). On an aarch64 host this yields "arm64";
+        // on x86_64 it yields "x86_64". We can only test the arm's value if
+        // we run on that arch, so pin the full mapping table instead.
+        assert_eq!(map_rustc_arch_to_manifest("aarch64"), "arm64");
+        assert_eq!(map_rustc_arch_to_manifest("x86_64"), "x86_64");
+        // Unknown arches pass through (leaves the caller to fail resolution).
+        assert_eq!(map_rustc_arch_to_manifest("riscv64"), "riscv64");
+    }
+
+    #[test]
+    fn load_manifest_for_assets_reads_flat_adjacent_layout() {
+        // ~/.capsem/assets/ style: manifest.json lives in the assets dir.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
+        let m = load_manifest_for_assets(dir.path()).unwrap();
+        assert_eq!(m.assets.current, "2026.0415.1");
+    }
+
+    #[test]
+    fn load_manifest_for_assets_reads_per_arch_layout() {
+        // Dev-tree style: assets passed in is assets/arm64/, manifest.json
+        // lives at assets/manifest.json (one level up).
+        let dir = tempfile::tempdir().unwrap();
+        let arm64 = dir.path().join("arm64");
+        std::fs::create_dir(&arm64).unwrap();
+        std::fs::write(dir.path().join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
+        let m = load_manifest_for_assets(&arm64).unwrap();
+        assert_eq!(m.assets.current, "2026.0415.1");
+    }
+
+    #[test]
+    fn load_manifest_for_assets_returns_none_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_manifest_for_assets(dir.path()).is_none());
+    }
+
+    #[test]
+    fn load_manifest_for_assets_returns_none_on_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), "not json").unwrap();
+        assert!(load_manifest_for_assets(dir.path()).is_none());
     }
 
     #[test]
