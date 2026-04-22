@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Verify manifest signatures at boot before trusting asset hashes.**
+  The previous commit wired asset hash verification to the on-disk
+  `manifest.json`, but an attacker with write access to `assets/` could
+  swap both the rootfs and the manifest to match. Closed the gap with
+  minisign signature verification: the release pubkey
+  (`config/manifest-sign.pub`, key id `93A070CBB288AC9B`) is now baked
+  into `capsem-core` via `include_str!`, and
+  `asset_manager::load_verified_manifest_for_assets` rejects any
+  manifest whose sibling `.minisig` is missing or invalid. Release
+  builds (`cfg!(debug_assertions) == false`) hard-fail on a manifest
+  without a valid signature; debug builds allow unsigned manifests so
+  local dev loops with locally built assets keep working. Added the
+  `minisign-verify = "0.2"` crate; covered by 9 new unit tests
+  including verify-accepts/rejects-tampered-manifest/rejects-mangled-
+  signature/rejects-wrong-pubkey/bails-when-sig-required-but-missing/
+  accepts-unsigned-when-allowed/bails-on-bad-signature and a regression
+  guard that the baked pubkey file parses as valid minisign. Updated
+  `docs/src/content/docs/architecture/asset-pipeline.md` to describe
+  the full tamper-resistance chain.
+
 - **Asset hash verification at boot was silently disabled on every release.**
   `crates/capsem-core/src/vm/boot.rs` read three expected hashes via
   `option_env!("VMLINUZ_HASH")` / `"INITRD_HASH"` / `"ROOTFS_HASH"`, but

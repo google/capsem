@@ -146,6 +146,101 @@ pub fn host_manifest_arch() -> &'static str {
     map_rustc_arch_to_manifest(std::env::consts::ARCH)
 }
 
+/// Minisign public key baked into the binary. Used to verify signatures on
+/// downloaded manifests in release builds. Stored in `config/manifest-sign.pub`
+/// (key id 93A070CBB288AC9B).
+const MANIFEST_SIGN_PUBKEY_FILE: &str = include_str!("../../../config/manifest-sign.pub");
+
+/// Verify a manifest's minisign signature against a given pubkey.
+///
+/// `pubkey_file` is the full two-line minisign pubkey file content (with the
+/// `untrusted comment:` header); `manifest_bytes` is exactly what was signed
+/// (the bytes on disk, not a parsed-and-reserialized copy); `sig_file` is the
+/// four-line `.minisig` file content.
+pub fn verify_manifest_signature(
+    pubkey_file: &str,
+    manifest_bytes: &[u8],
+    sig_file: &str,
+) -> Result<()> {
+    let pubkey = minisign_verify::PublicKey::decode(pubkey_file.trim())
+        .map_err(|e| anyhow::anyhow!("decode pubkey: {e}"))?;
+    let sig = minisign_verify::Signature::decode(sig_file)
+        .map_err(|e| anyhow::anyhow!("decode signature: {e}"))?;
+    pubkey
+        .verify(manifest_bytes, &sig, false)
+        .map_err(|e| anyhow::anyhow!("verify: {e}"))?;
+    Ok(())
+}
+
+/// Verify a manifest signature against the baked-in release key.
+pub fn verify_manifest_with_baked_key(manifest_bytes: &[u8], sig_file: &str) -> Result<()> {
+    verify_manifest_signature(MANIFEST_SIGN_PUBKEY_FILE, manifest_bytes, sig_file)
+}
+
+/// Load a manifest from disk with minisign signature verification.
+///
+/// Looks for `manifest.json` in `assets/` and `assets.parent()`, the same
+/// search used by `load_manifest_for_assets`. For each candidate, if a
+/// sibling `manifest.json.minisig` exists, verifies the signature against
+/// the baked release pubkey. `require_signature` controls what happens when
+/// the `.minisig` is missing:
+///
+///   * `true` (release) -- bail. A manifest on disk with no signature is
+///     untrusted and must not drive hash verification.
+///   * `false` (debug)  -- warn + proceed. Keeps dev loops working when a
+///     locally built manifest hasn't been signed.
+///
+/// Signature-mismatch always bails, regardless of the flag.
+///
+/// Returns `Ok(None)` only if no `manifest.json` is found at any candidate
+/// path.
+pub fn load_verified_manifest_for_assets(
+    assets: &Path,
+    require_signature: bool,
+) -> Result<Option<ManifestV2>> {
+    let mut candidates: Vec<PathBuf> = vec![assets.join("manifest.json")];
+    if let Some(parent) = assets.parent() {
+        candidates.push(parent.join("manifest.json"));
+    }
+    for path in candidates {
+        if !path.is_file() {
+            continue;
+        }
+        let manifest_bytes = std::fs::read(&path)
+            .with_context(|| format!("read {}", path.display()))?;
+        let sig_path = {
+            let mut p = path.clone();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("manifest.json");
+            p.set_file_name(format!("{name}.minisig"));
+            p
+        };
+        if sig_path.is_file() {
+            let sig_text = std::fs::read_to_string(&sig_path)
+                .with_context(|| format!("read {}", sig_path.display()))?;
+            verify_manifest_with_baked_key(&manifest_bytes, &sig_text)
+                .with_context(|| format!("verify {}", sig_path.display()))?;
+            tracing::info!(path = %path.display(), "manifest signature verified");
+        } else if require_signature {
+            anyhow::bail!(
+                "manifest signature missing at {} (required in release builds)",
+                sig_path.display()
+            );
+        } else {
+            tracing::warn!(
+                path = %path.display(),
+                "manifest.json.minisig not found; skipping signature verification (debug build)"
+            );
+        }
+        let content = std::str::from_utf8(&manifest_bytes)
+            .context("manifest is not valid UTF-8")?;
+        return Ok(Some(ManifestV2::from_json(content)?));
+    }
+    Ok(None)
+}
+
 /// Load `manifest.json` from the assets dir (installed layout) or its parent
 /// (dev tree layout where `assets` is already `assets/<arch>/`). Returns
 /// `None` on missing file, read error, parse error, or schema mismatch --
@@ -756,6 +851,89 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("manifest.json"), "not json").unwrap();
         assert!(load_manifest_for_assets(dir.path()).is_none());
+    }
+
+    // Test-only minisign keypair. Generated with `minisign -G -W`; only the
+    // pubkey and a sample signature are baked in. Used to exercise the
+    // verify_manifest_signature path without needing the real release key.
+    const TEST_PUBKEY: &str = "untrusted comment: minisign public key D2FF2FA8B3C45D80\nRWSAXcSzqC//0ussmV+rXA7RVjSb7oBJxZA/Ao9jSOz3yVIv8vcHBOLS\n";
+    const TEST_MANIFEST_BYTES: &[u8] = b"{\"hello\":\"world\",\"format\":2}";
+    const TEST_SIGNATURE: &str = "untrusted comment: capsem test fixture\nRUSAXcSzqC//0gYG4blIb+435YYxZ665oOig9zIb4BG6alNMXB5/WnDFnKR5SHSfxsi+yyJGNuyDkmPTku5gPusVanpI9YR1MQ4=\ntrusted comment: capsem test fixture\nwyK54SForvZTNYj5/Vn/sScn9kPTutpmSZ27MaZAV8QAspbtH1NKTrCuEw9VVb8r/EOOUWycImpo95puXB/KDg==\n";
+
+    #[test]
+    fn verify_manifest_signature_accepts_valid_signature() {
+        verify_manifest_signature(TEST_PUBKEY, TEST_MANIFEST_BYTES, TEST_SIGNATURE).unwrap();
+    }
+
+    #[test]
+    fn verify_manifest_signature_rejects_tampered_manifest() {
+        let tampered = b"{\"hello\":\"tampered\",\"format\":2}";
+        assert!(verify_manifest_signature(TEST_PUBKEY, tampered, TEST_SIGNATURE).is_err());
+    }
+
+    #[test]
+    fn verify_manifest_signature_rejects_mangled_signature() {
+        // Flip one base64 character in the signature line.
+        let mangled = TEST_SIGNATURE.replace(
+            "RUSAXcSzqC//0gYG4blIb+435YYxZ665oOig9zIb4BG6alNMXB5/WnDFnKR5SHSfxsi+yyJGNuyDkmPTku5gPusVanpI9YR1MQ4=",
+            "RUSAXcSzqC//0gYG4blIb+435YYxZ665oOig9zIb4BG6alNMXB5/WnDFnKR5SHSfxsi+yyJGNuyDkmPTku5gPusVanpI9YR1MQaa=",
+        );
+        assert!(verify_manifest_signature(TEST_PUBKEY, TEST_MANIFEST_BYTES, &mangled).is_err());
+    }
+
+    #[test]
+    fn verify_manifest_signature_rejects_wrong_pubkey() {
+        // Flip a byte in the pubkey's b64 body. The decode might pass (still
+        // 32 bytes of valid b64) but verification must fail.
+        let wrong = TEST_PUBKEY.replace(
+            "RWSAXcSzqC//0ussmV+rXA7RVjSb7oBJxZA/Ao9jSOz3yVIv8vcHBOLS",
+            "RWSAXcSzqC//0ussmV+rXA7RVjSb7oBJxZA/Ao9jSOz3yVIv8vcHBBBB",
+        );
+        assert!(verify_manifest_signature(&wrong, TEST_MANIFEST_BYTES, TEST_SIGNATURE).is_err());
+    }
+
+    #[test]
+    fn load_verified_manifest_returns_none_when_no_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = load_verified_manifest_for_assets(dir.path(), true).unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn load_verified_manifest_bails_when_sig_required_but_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
+        let err = load_verified_manifest_for_assets(dir.path(), true).unwrap_err();
+        assert!(
+            format!("{err}").contains("signature missing"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_verified_manifest_accepts_unsigned_when_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
+        let m = load_verified_manifest_for_assets(dir.path(), false).unwrap().unwrap();
+        assert_eq!(m.assets.current, "2026.0415.1");
+    }
+
+    #[test]
+    fn load_verified_manifest_bails_on_bad_signature_even_if_unsigned_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
+        std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
+        let err = load_verified_manifest_for_assets(dir.path(), false).unwrap_err();
+        assert!(format!("{err}").contains("verify"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn baked_pubkey_file_is_parseable_minisign_format() {
+        // Regression guard: if config/manifest-sign.pub ever gets replaced
+        // with a malformed file, this fires before the binary starts
+        // rejecting every signed manifest.
+        minisign_verify::PublicKey::decode(MANIFEST_SIGN_PUBKEY_FILE.trim())
+            .expect("baked pubkey must decode as minisign PublicKey");
     }
 
     #[test]

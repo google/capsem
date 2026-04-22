@@ -137,13 +137,25 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        // Load expected asset hashes from the manifest on disk. This supports
-        // independent binary/asset upgrades: the binary ships hash-agnostic,
-        // the manifest is authoritative for the installed release. Missing or
-        // malformed manifest disables hash verification (dev loops without a
-        // manifest still boot). Tamper resistance relies on manifest signature
-        // verification elsewhere in the asset-download path.
-        let expected_hashes = crate::asset_manager::load_manifest_for_assets(assets)
+        // Load expected asset hashes from the manifest on disk. Tamper model:
+        // the binary ships with the release minisign pubkey baked in; the
+        // manifest on disk is verified against that pubkey before its asset
+        // hashes are trusted. Release builds hard-fail if the manifest exists
+        // but is unsigned or signature-invalid (can't verify == can't trust).
+        // Debug builds allow unsigned manifests so dev loops with locally
+        // built assets keep working.
+        let require_sig = !cfg!(debug_assertions);
+        let manifest = match crate::asset_manager::load_verified_manifest_for_assets(assets, require_sig) {
+            Ok(m) => m,
+            Err(e) => {
+                if require_sig {
+                    return Err(e).context("manifest verification failed (release build)");
+                }
+                warn!("[boot-audit] manifest verification failed; proceeding without expected hashes: {e:#}");
+                None
+            }
+        };
+        let expected_hashes = manifest
             .and_then(|m| m.expected_hashes_current(crate::asset_manager::host_manifest_arch()));
         match expected_hashes {
             Some(ref h) => info!(

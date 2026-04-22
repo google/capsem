@@ -45,6 +45,7 @@ bytes = "1"
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
+minisign-verify = "0.2"
 regex = { workspace = true }
 scraper = "0.25"
 
