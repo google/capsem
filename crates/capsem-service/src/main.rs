@@ -1414,12 +1414,7 @@ async fn send_ipc_command(uds_path: &std::path::Path, cmd: ServiceToProcess, tim
 async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Result<(), String> {
     let ready_path = uds_path.with_extension("ready");
     capsem_core::poll::poll_until(
-        capsem_core::poll::PollOpts {
-            label: "vm-ready",
-            timeout: std::time::Duration::from_secs(timeout_secs),
-            initial_delay: std::time::Duration::from_millis(5),
-            max_delay: std::time::Duration::from_millis(50),
-        },
+        capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs)),
         || {
             let ready = ready_path.clone();
             async move {
