@@ -89,7 +89,7 @@ pub(crate) async fn handle_ipc_connection(
                         job_store.jobs.lock().unwrap().insert(id, j_tx);
 
                         // Set as active exec to start capturing output
-                        *job_store.active_exec.lock().unwrap() = Some((id, Vec::new()));
+                        *job_store.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
 
                         let _ = ctrl_tx.send(ServiceToProcess::Exec { id, command }).await;
                         match j_rx.await {

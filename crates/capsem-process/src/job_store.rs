@@ -2,15 +2,39 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use anyhow::Result;
 use capsem_proto::HostToGuest;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Notify};
 use tracing::{info, warn};
 
 pub(crate) struct JobStore {
     pub(crate) jobs: Mutex<HashMap<u64, oneshot::Sender<JobResult>>>,
-    /// Currently active exec job ID and its captured output.
-    pub(crate) active_exec: Mutex<Option<(u64, Vec<u8>)>>,
+    /// Currently active exec job: the id, captured stdout, and a notifier
+    /// the EXEC-port reader thread fires once it has finished depositing
+    /// captured bytes. The ExecDone handler awaits this before reading
+    /// captured, so no-output commands don't pay a blanket timeout to
+    /// cover the deposit race.
+    pub(crate) active_exec: Mutex<Option<ActiveExec>>,
     /// Channel for snapshot ready signal.
     pub(crate) snapshot_ready: Mutex<Option<oneshot::Sender<()>>>,
+}
+
+/// State for an in-flight exec. `deposited` is notified once by the
+/// EXEC-port reader thread after it has written `captured` under the
+/// active_exec lock; ExecDone uses it to distinguish "empty stdout" from
+/// "deposit still in flight" without sleeping unconditionally.
+pub(crate) struct ActiveExec {
+    pub(crate) id: u64,
+    pub(crate) captured: Vec<u8>,
+    pub(crate) deposited: Arc<Notify>,
+}
+
+impl ActiveExec {
+    pub(crate) fn new(id: u64) -> Self {
+        Self {
+            id,
+            captured: Vec::new(),
+            deposited: Arc::new(Notify::new()),
+        }
+    }
 }
 
 impl JobStore {
@@ -34,7 +58,11 @@ impl JobStore {
         if let Some(tx) = self.snapshot_ready.lock().unwrap().take() {
             let _ = tx.send(());
         }
-        *self.active_exec.lock().unwrap() = None;
+        // Wake any ExecDone handler parked on the deposit notifier -- it
+        // will then take an empty captured and drop the stale entry.
+        if let Some(active) = self.active_exec.lock().unwrap().take() {
+            active.deposited.notify_waiters();
+        }
     }
 }
 
@@ -138,12 +166,13 @@ mod tests {
         let store = JobStore::new();
         assert!(store.active_exec.lock().unwrap().is_none());
 
-        *store.active_exec.lock().unwrap() = Some((42, Vec::new()));
-        assert!(store.active_exec.lock().unwrap().is_some());
-
-        let (id, buf) = store.active_exec.lock().unwrap().as_ref().unwrap().clone();
-        assert_eq!(id, 42);
-        assert!(buf.is_empty());
+        *store.active_exec.lock().unwrap() = Some(ActiveExec::new(42));
+        {
+            let guard = store.active_exec.lock().unwrap();
+            let active = guard.as_ref().unwrap();
+            assert_eq!(active.id, 42);
+            assert!(active.captured.is_empty());
+        }
 
         *store.active_exec.lock().unwrap() = None;
         assert!(store.active_exec.lock().unwrap().is_none());
@@ -151,17 +180,13 @@ mod tests {
 
     #[test]
     fn job_store_active_exec_captures_data() {
-        let store = JobStore {
-            jobs: Mutex::new(HashMap::new()),
-            active_exec: Mutex::new(Some((1, Vec::new()))),
-            snapshot_ready: Mutex::new(None),
-        };
-        // Simulate output capture
-        if let Some((_, ref mut captured)) = *store.active_exec.lock().unwrap() {
-            captured.extend_from_slice(b"hello ");
-            captured.extend_from_slice(b"world");
+        let store = JobStore::new();
+        *store.active_exec.lock().unwrap() = Some(ActiveExec::new(1));
+        if let Some(ref mut active) = *store.active_exec.lock().unwrap() {
+            active.captured.extend_from_slice(b"hello ");
+            active.captured.extend_from_slice(b"world");
         }
-        let captured = store.active_exec.lock().unwrap().as_ref().unwrap().1.clone();
+        let captured = store.active_exec.lock().unwrap().as_ref().unwrap().captured.clone();
         assert_eq!(captured, b"hello world");
     }
 
@@ -286,7 +311,11 @@ mod tests {
             jobs.insert(3, tx3);
         }
         *job_store.snapshot_ready.lock().unwrap() = Some(snap_tx);
-        *job_store.active_exec.lock().unwrap() = Some((1, b"buffered".to_vec()));
+        {
+            let mut active = ActiveExec::new(1);
+            active.captured = b"buffered".to_vec();
+            *job_store.active_exec.lock().unwrap() = Some(active);
+        }
 
         // Regression guard: this is the crucial behavior -- callers awaiting
         // these oneshots must see an immediate result, not hang forever and

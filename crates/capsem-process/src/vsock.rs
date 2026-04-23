@@ -311,7 +311,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 }
                 ServiceToProcess::TerminalResize { cols, rows } => { let _ = hub_tx.send(HostToGuest::Resize { cols, rows }).await; }
                 ServiceToProcess::Exec { id, command } => {
-                    *js_for_cmd.active_exec.lock().unwrap() = Some((id, Vec::new()));
+                    *js_for_cmd.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
                     db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
                         timestamp: std::time::SystemTime::now(), exec_id: id, command: command.clone(),
                         source: "api".into(), mcp_call_id: None, trace_id: None, process_name: None,
@@ -322,7 +322,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::ReadFile { id, path } => { let _ = hub_tx.send(HostToGuest::FileRead { id, path }).await; }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
-                    let session_for_flush = session_dir.clone();
                     let h_tx = hub_tx.clone();
                     let j_s = Arc::clone(&js_for_cmd);
                     let v_m = Arc::clone(&vm_handle_for_cmd);
@@ -335,11 +334,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
                                     let v = v_m.blocking_lock();
                                     v.pause()?;
-                                    // Push the APFS page cache for the persistent overlay's
-                                    // backing rootfs.img to disk. Without this, the checkpoint
-                                    // and the on-disk backing can disagree, and the resumed
-                                    // guest surfaces I/O errors on loop0 (see ISSUE.md).
-                                    capsem_core::flush_overlay_backing(&session_for_flush)?;
                                     v.save_state(&full_path)?;
                                     Ok(())
                                 })?;
@@ -347,7 +341,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 {
                                     let v = v_m.blocking_lock();
                                     v.pause()?;
-                                    capsem_core::flush_overlay_backing(&session_for_flush)?;
                                     v.save_state(&full_path)?;
                                 }
                                 Ok(())
@@ -498,9 +491,20 @@ fn dispatch_aux_connection(
                             Ok(n) => local_buf.extend_from_slice(&read_buf[..n]),
                         }
                     }
-                    if let Some((active_id, ref mut captured)) = *js.active_exec.lock().unwrap() {
-                        if active_id == id { *captured = local_buf; }
-                    }
+                    // Deposit captured bytes and signal ExecDone it can
+                    // proceed. notify_one stores a permit if ExecDone is
+                    // not yet parked, so the common "deposit finishes
+                    // first" path wakes ExecDone immediately.
+                    let notify = {
+                        let mut guard = js.active_exec.lock().unwrap();
+                        if let Some(ref mut active) = *guard {
+                            if active.id == id {
+                                active.captured = local_buf;
+                                Some(active.deposited.clone())
+                            } else { None }
+                        } else { None }
+                    };
+                    if let Some(n) = notify { n.notify_one(); }
                 }
                 drop(conn);
             });
@@ -558,17 +562,25 @@ fn dispatch_aux_connection(
 async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_logger::DbWriter>) {
     match msg {
         GuestToHost::ExecDone { id, exit_code } => {
-            // The guest closes the EXEC socket before sending ExecDone, but the host's
-            // EXEC thread might still be reading or acquiring the lock. Give it a tiny
-            // window to finish depositing the stdout before we resolve the job.
-            let has_data = js.active_exec.lock().unwrap().as_ref().map(|(a_id, b)| *a_id == id && !b.is_empty()).unwrap_or(false);
-            if !has_data {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // The guest closes the EXEC socket before sending ExecDone, and
+            // the host's EXEC-port reader thread may still be finishing its
+            // read loop + deposit. Wait on the deposit notifier so we read
+            // the actual captured buffer, not a stale empty one. Short
+            // timeout guards against lost connections (guest never opened
+            // the EXEC port) so we still return in bounded time.
+            let notify = js.active_exec.lock().unwrap().as_ref()
+                .filter(|a| a.id == id).map(|a| a.deposited.clone());
+            if let Some(n) = notify {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    n.notified(),
+                ).await;
             }
-            let stdout = js.active_exec.lock().unwrap().take().map(|(_, b)| b).unwrap_or_default();
-            
+            let stdout = js.active_exec.lock().unwrap().take()
+                .filter(|a| a.id == id).map(|a| a.captured).unwrap_or_default();
+
             db.try_write(capsem_logger::WriteOp::ExecEventComplete(capsem_logger::ExecEventComplete {
-                exec_id: id, exit_code, duration_ms: 0, 
+                exec_id: id, exit_code, duration_ms: 0,
                 stdout_preview: Some(String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into()),
                 stderr_preview: None, stdout_bytes: stdout.len() as u64, stderr_bytes: 0, pid: None,
             }));

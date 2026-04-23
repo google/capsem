@@ -62,6 +62,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **`ExecDone` always stalled 500ms on no-output commands, taxing every
+  fork and every internal `sync`.** `handle_guest_msg(ExecDone)` in
+  `crates/capsem-process/src/vsock.rs` used `captured.is_empty()` as a
+  heuristic for "EXEC-reader thread hasn't finished depositing yet" and
+  unconditionally slept 500ms on that branch. The heuristic cannot
+  distinguish "deposit still in flight" from "command legitimately
+  produced no stdout", so `true`, `sleep`, `exit`, and the
+  `fsfreeze -f /; sync; fsfreeze -u /` pipeline `handle_fork` uses to
+  quiesce the guest filesystem each paid 500ms of dead time per call.
+  Visible as `test_fork_benchmark` (fork_ms mean ~110ms -> ~621ms,
+  blowing the 500ms gate) and a broader regression: any command with
+  no stdout took 520-570ms instead of 20-50ms.
+  Replaced the heuristic with a proper deposit signal. `JobStore::
+  active_exec` now holds an `ActiveExec { id, captured, deposited:
+  Arc<tokio::sync::Notify> }`; the EXEC-port reader thread calls
+  `notify_one()` after writing `captured` under the active_exec lock,
+  and the `ExecDone` handler awaits `.notified()` with a 100ms bound
+  (short safety net for guest never opening the EXEC port). Common
+  path: deposit lands first, permit stored, `notified()` resolves
+  immediately -- no sleep. Racy path: deposit arrives while ExecDone
+  is parked, Notify wakes it; ExecDone reads the real captured bytes.
+  Covered by `crates/capsem-process/src/vsock/tests.rs::
+  exec_done_with_empty_stdout_resolves_without_500ms_stall`, which
+  pre-deposits an empty `ActiveExec`, notifies, and asserts ExecDone
+  returns under 100ms; fails at 503ms on the old code. `fail_all`
+  also wakes any parked ExecDone on the deposit notifier so control-
+  channel close doesn't leave the handler stuck.
+
 - **`wait_for_vm_ready` backoff overshot VM ready-time by ~500ms,
   regressing every `provision -> exec-ready` wait.** A recent alignment
   of `wait_for_vm_ready` onto `PollOpts::new`'s project-wide defaults

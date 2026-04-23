@@ -141,3 +141,55 @@ async fn collect_errors_when_channel_closes_early() {
     };
     assert!(format!("{err:#}").contains("vsock channel closed"));
 }
+
+// -----------------------------------------------------------------------
+// handle_guest_msg(ExecDone) must not stall on commands with no stdout.
+//
+// Prior behavior (bug): a blanket `sleep(500ms)` fired whenever the
+// captured buffer was empty, so every no-output command (true, sleep,
+// exit, the fsfreeze pipeline used by /fork) paid 500ms of dead time.
+// Here the EXEC thread has already deposited its (empty) result before
+// ExecDone arrives, which is the common fast path; the handler must
+// return immediately.
+// -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
+    use crate::job_store::{JobStore, JobResult};
+    use capsem_proto::GuestToHost;
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let js = Arc::new(JobStore::new());
+    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+
+    let id: u64 = 42;
+    let (tx, rx) = oneshot::channel::<JobResult>();
+    js.jobs.lock().unwrap().insert(id, tx);
+
+    // Simulate the dispatch path: the ServiceToProcess::Exec handler has
+    // set active_exec, and the EXEC-port reader thread has already
+    // deposited its (empty) local_buf and signalled completion. ExecDone
+    // arriving after that must return immediately -- no blanket stall.
+    let active = crate::job_store::ActiveExec::new(id);
+    active.deposited.notify_one();
+    *js.active_exec.lock().unwrap() = Some(active);
+
+    let start = std::time::Instant::now();
+    handle_guest_msg(GuestToHost::ExecDone { id, exit_code: 0 }, &js, &db).await;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    assert!(
+        elapsed_ms < 100,
+        "ExecDone stalled {elapsed_ms}ms on empty-stdout command (budget 100ms)"
+    );
+
+    let result = rx.await.expect("job oneshot must resolve");
+    match result {
+        JobResult::Exec { stdout, exit_code, .. } => {
+            assert!(stdout.is_empty(), "no-output command should return empty stdout");
+            assert_eq!(exit_code, 0);
+        }
+        other => panic!("expected Exec result, got {other:?}"),
+    }
+}
