@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1776984283] - 2026-04-24
+
+### Fixed (CI)
+- install-test: chown entire /src to capsem uid (was only /src/frontend);
+  Tauri build.rs hit EACCES under the narrower chown.
+
 ## [1.0.1776982455] - 2026-04-24
 
 ### Fixed (CI)
