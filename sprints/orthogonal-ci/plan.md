@@ -1,5 +1,14 @@
 # Sprint: Orthogonal CI -- Separate Binary and Asset Pipelines
 
+## Status
+
+**2026-04-23** -- v1.0 release is being cut today with the **combined** workflow (release.yaml builds both binary and assets on every tag). This is a one-time bootstrap: the first v1.0 release needs to ship both so there is a prior asset release for subsequent binary-only releases to reference. The split lands in a follow-up.
+
+Current state:
+- `release.yaml` (single workflow, tag `v*`) -- still builds everything, still valid for v1.0.
+- Prereqs list below is complete (v2 manifest, hash filenames, manifest accumulation all done).
+- Deliverables 1, 2, 4, 5, 6, 11, 12 are the actual split work -- start after v1.0 ships.
+
 ## What
 
 Split the single release pipeline into two independent CI workflows: one for binaries (Rust + frontend), one for VM assets (kernel, rootfs, initrd). Each publishes independently and updates its own section of the v2 manifest. Binary releases no longer rebuild assets; asset releases no longer rebuild binaries.
