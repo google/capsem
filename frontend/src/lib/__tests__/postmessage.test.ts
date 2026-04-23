@@ -26,12 +26,7 @@ describe('parseIframeMessage', () => {
   });
 
   it('rejects missing type', () => {
-    expect(parseIframeMessage({ cols: 80 })).toBeNull();
-  });
-
-  // ready
-  it('parses ready', () => {
-    expect(parseIframeMessage({ type: 'ready' })).toEqual({ type: 'ready' });
+    expect(parseIframeMessage({ title: 'x' })).toBeNull();
   });
 
   // clipboard-request
@@ -39,35 +34,27 @@ describe('parseIframeMessage', () => {
     expect(parseIframeMessage({ type: 'clipboard-request' })).toEqual({ type: 'clipboard-request' });
   });
 
-  // terminal-resize
-  it('parses valid terminal-resize', () => {
-    expect(parseIframeMessage({ type: 'terminal-resize', cols: 80, rows: 24 }))
-      .toEqual({ type: 'terminal-resize', cols: 80, rows: 24 });
+  // connected
+  it('parses connected', () => {
+    expect(parseIframeMessage({ type: 'connected' })).toEqual({ type: 'connected' });
   });
 
-  it('floors non-integer cols/rows', () => {
-    expect(parseIframeMessage({ type: 'terminal-resize', cols: 80.9, rows: 24.7 }))
-      .toEqual({ type: 'terminal-resize', cols: 80, rows: 24 });
+  // disconnected
+  it('parses disconnected with reason', () => {
+    expect(parseIframeMessage({ type: 'disconnected', reason: 'ws closed' }))
+      .toEqual({ type: 'disconnected', reason: 'ws closed' });
   });
 
-  it('rejects cols < 1', () => {
-    expect(parseIframeMessage({ type: 'terminal-resize', cols: 0, rows: 24 })).toBeNull();
+  it('defaults disconnected reason to empty string when missing', () => {
+    expect(parseIframeMessage({ type: 'disconnected' }))
+      .toEqual({ type: 'disconnected', reason: '' });
   });
 
-  it('rejects cols > 500', () => {
-    expect(parseIframeMessage({ type: 'terminal-resize', cols: 501, rows: 24 })).toBeNull();
-  });
-
-  it('rejects rows < 1', () => {
-    expect(parseIframeMessage({ type: 'terminal-resize', cols: 80, rows: 0 })).toBeNull();
-  });
-
-  it('rejects rows > 200', () => {
-    expect(parseIframeMessage({ type: 'terminal-resize', cols: 80, rows: 201 })).toBeNull();
-  });
-
-  it('rejects non-number cols', () => {
-    expect(parseIframeMessage({ type: 'terminal-resize', cols: '80', rows: 24 })).toBeNull();
+  it('truncates disconnected reason at 256 chars', () => {
+    const long = 'r'.repeat(300);
+    const result = parseIframeMessage({ type: 'disconnected', reason: long });
+    expect(result).not.toBeNull();
+    expect(result!.type === 'disconnected' && result!.reason.length).toBe(256);
   });
 
   // title-update
@@ -113,9 +100,9 @@ describe('parseIframeMessage', () => {
       .toEqual({ type: 'error', code: 'ws-closed', message: 'bye' });
   });
 
-  it('parses valid error with ticket-expired', () => {
-    expect(parseIframeMessage({ type: 'error', code: 'ticket-expired', message: 'expired' }))
-      .toEqual({ type: 'error', code: 'ticket-expired', message: 'expired' });
+  it('parses valid error with token-failed', () => {
+    expect(parseIframeMessage({ type: 'error', code: 'token-failed', message: 'no token' }))
+      .toEqual({ type: 'error', code: 'token-failed', message: 'no token' });
   });
 
   it('rejects error with invalid code', () => {
@@ -151,38 +138,6 @@ describe('parseParentMessage', () => {
 
   it('rejects unknown type', () => {
     expect(parseParentMessage({ type: 'nope' })).toBeNull();
-  });
-
-  // vm-id
-  it('parses valid vm-id', () => {
-    expect(parseParentMessage({ type: 'vm-id', vmId: 'my-vm-01' }))
-      .toEqual({ type: 'vm-id', vmId: 'my-vm-01' });
-  });
-
-  it('rejects vm-id starting with dash', () => {
-    expect(parseParentMessage({ type: 'vm-id', vmId: '-bad' })).toBeNull();
-  });
-
-  it('rejects vm-id starting with underscore', () => {
-    expect(parseParentMessage({ type: 'vm-id', vmId: '_bad' })).toBeNull();
-  });
-
-  it('rejects vm-id with special chars', () => {
-    expect(parseParentMessage({ type: 'vm-id', vmId: 'vm@#$' })).toBeNull();
-  });
-
-  it('rejects vm-id over 64 chars', () => {
-    expect(parseParentMessage({ type: 'vm-id', vmId: 'a'.repeat(65) })).toBeNull();
-  });
-
-  it('accepts vm-id at exactly 64 chars', () => {
-    const id = 'a'.repeat(64);
-    expect(parseParentMessage({ type: 'vm-id', vmId: id }))
-      .toEqual({ type: 'vm-id', vmId: id });
-  });
-
-  it('rejects non-string vm-id', () => {
-    expect(parseParentMessage({ type: 'vm-id', vmId: 123 })).toBeNull();
   });
 
   // theme-change
@@ -239,24 +194,6 @@ describe('parseParentMessage', () => {
   // focus
   it('parses focus', () => {
     expect(parseParentMessage({ type: 'focus' })).toEqual({ type: 'focus' });
-  });
-
-  // ws-ticket
-  it('parses valid ws-ticket', () => {
-    expect(parseParentMessage({ type: 'ws-ticket', ticket: 'tok123', gatewayUrl: 'ws://localhost:19222' }))
-      .toEqual({ type: 'ws-ticket', ticket: 'tok123', gatewayUrl: 'ws://localhost:19222' });
-  });
-
-  it('rejects ws-ticket with ticket over 256 chars', () => {
-    expect(parseParentMessage({ type: 'ws-ticket', ticket: 'x'.repeat(257), gatewayUrl: 'ws://localhost' })).toBeNull();
-  });
-
-  it('rejects ws-ticket with non-string ticket', () => {
-    expect(parseParentMessage({ type: 'ws-ticket', ticket: 42, gatewayUrl: 'ws://localhost' })).toBeNull();
-  });
-
-  it('rejects ws-ticket with non-string gatewayUrl', () => {
-    expect(parseParentMessage({ type: 'ws-ticket', ticket: 'tok', gatewayUrl: 42 })).toBeNull();
   });
 
   // clipboard-paste
