@@ -841,7 +841,11 @@ test-install: _build-host
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo build {{host_crates}}"
     echo "Building frontend..."
-    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src/frontend/node_modules 2>/dev/null || true"
+    # pnpm/vite writes temp files in /src/frontend itself (not just
+    # node_modules). On GitHub runners the bind-mounted /src is owned by
+    # uid 1001 (runner), but the container builds as uid 1000 (capsem),
+    # so astro's tmp write hits EACCES unless we chown the whole dir.
+    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src/frontend 2>/dev/null || true"
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
         "cd /src/frontend && pnpm install && pnpm build"
     echo "Building Tauri .deb..."
