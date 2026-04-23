@@ -76,6 +76,7 @@ class RealService:
                 "--uds-path", str(self.uds_path),
                 "--assets-dir", str(assets_dir),
                 "--process-binary", str(PROCESS_BINARY),
+                "--parent-pid", str(os.getpid()),
                 "--foreground",
             ],
             env=env,

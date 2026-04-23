@@ -36,6 +36,11 @@ struct Args {
     #[arg(long)] gateway_port: Option<u16>,
     #[arg(long)] tray_binary: Option<PathBuf>,
     #[arg(long)] assets_dir: Option<PathBuf>,
+    /// When set, exit the moment this PID goes away. Used by the pytest
+    /// fixture to bound service lifetime to the test runner so an aborted
+    /// pytest (Ctrl-C, xdist worker crash) can't leak a service + its
+    /// companions. Real users never pass this.
+    #[arg(long)] parent_pid: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2632,6 +2637,19 @@ async fn main() -> Result<()> {
 
     info!("capsem-service starting up");
     info!(args = ?args, run_dir = %run_dir.display(), "environment initialized");
+
+    // Optional parent-watch. Symmetric with the companion (tray/gateway)
+    // reaper: if the test harness that spawned us dies abruptly, bail
+    // rather than linger. Only armed when --parent-pid is passed.
+    if let Some(ppid) = args.parent_pid {
+        match capsem_guard::watch_parent_or_exit(Some(ppid)) {
+            Ok(()) => {}
+            Err(e) => {
+                info!(parent_pid = ppid, "parent watch not armed: {e}; exiting 0");
+                return Ok(());
+            }
+        }
+    }
 
     let instances_dir = run_dir.join("instances");
     let sessions_dir = run_dir.join("sessions");

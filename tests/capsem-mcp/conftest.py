@@ -156,6 +156,7 @@ def _start_capsem_service():
             "--process-binary", str(PROCESS_BINARY),
             "--gateway-binary", str(GATEWAY_BINARY),
             "--gateway-port", "0",
+            "--parent-pid", str(os.getpid()),
             "--foreground",
         ],
         env=env,

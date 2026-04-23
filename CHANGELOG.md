@@ -62,28 +62,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
-- **Suspend/resume: post-restore loop-device I/O errors on the persistent
-  overlay (~8% of cycles).** Guest writes to the loop-backed ext4 overlay
-  arrive via VirtioFS FUSE and sit in the macOS APFS page cache. Apple VZ's
-  `saveMachineStateToURL` does not propagate those through to disk on its
-  own, so the checkpoint and the on-disk backing `rootfs.img` could
-  disagree; on resume the guest kernel issued writes against what it
-  believed was up-to-date storage, the loop driver rejected them, and the
-  overlay ext4 went into a hard I/O-error state (`loop: Write error at
-  byte offset ...`, `EXT4-fs (loop0): failed to convert unwritten extents
-  to written extents -- potential data loss!`). The guest's control
-  channel died with the filesystem and the host reported `initial
-  handshake failed: BootReady read failed: failed to fill whole buffer`.
-  New `capsem_core::flush_overlay_backing` opens `$session/guest/system/
-  rootfs.img` and calls `sync_all`; the suspend path in
-  `capsem-process/src/vsock.rs` invokes it after `pause()` succeeds and
-  before `save_state`, so the backing file is durable on APFS before the
-  checkpoint is written. Covered by three unit tests in `capsem-core/src
-  /lib.rs` (happy path, ephemeral-VM no-op, and a path-guard test that
-  fails if a typo moves the target off `guest/system/rootfs.img`). Spun
-  out of `sprints/loop-device-io-after-resume/` after the VZ path-
-  canonicalization and vsock half-open fixes closed the earlier modes
-  but left this tail.
+- **Test infra: capsem-service leaked across aborted pytest runs.** The
+  companion reaper in `capsem-guard` only bounds tray and gateway to
+  their parent service -- the service itself had no parent-watch. When
+  pytest exited abnormally (Ctrl-C, xdist worker crash, hang followed
+  by SIGKILL) the session-scoped fixture teardown never fired, and
+  `capsem-service` plus its tray+gateway sat around until manually
+  killed. `capsem-service` now accepts an optional `--parent-pid` flag
+  that wires `capsem_guard::watch_parent_or_exit` into startup,
+  symmetric with the existing companion behaviour: on parent death the
+  service exits within ~100 ms, which lets the companion reaper take
+  the tray and gateway down with it. Real daemon launches that omit
+  `--parent-pid` are unaffected. Wired into the three pytest fixtures
+  that spawn their own service (`tests/helpers/service.py`,
+  `tests/capsem-mcp/conftest.py`, `tests/capsem-e2e/conftest.py`) so
+  each one pins service lifetime to its worker. Verified end-to-end by
+  spawning the service under a bash wrapper, killing the wrapper, and
+  confirming `capsem-service` exits within ~100 ms; and by running the
+  `test_stress_suspend_resume.py -n 8` harness and observing
+  `pgrep -lf target/debug/capsem` return empty after teardown.
 - **Suspend/resume: VZErrorDomain Code=12 "permission denied" on restore
   from a `/var/folders/...` path.** Apple VZ's
   `restoreMachineStateFromURL` enforces strict path matching between
