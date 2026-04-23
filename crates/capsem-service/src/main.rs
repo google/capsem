@@ -70,6 +70,19 @@ struct ServiceState {
     /// and for the resume spawn + wait_for_vm_ready window. See
     /// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
     save_restore_lock: tokio::sync::Mutex<()>,
+    /// Serializes VM teardown (delete / stop / purge per-VM / handle_run)
+    /// across all VMs managed by this service. N concurrent shutdowns starve
+    /// each other of the resources each capsem-process needs to (a) let VZ
+    /// tear down the guest, (b) run the DbWriter's WAL checkpoint on Drop,
+    /// and (c) clean up the session UDS files. Under that contention a
+    /// single teardown can exceed `wait_for_process_exit`'s 1s fast-path
+    /// budget -- at which point the service SIGKILLs capsem-process mid-
+    /// checkpoint, leaving a non-empty WAL and (in the worst case) orphaned
+    /// sockets. Same serialization pattern as `save_restore_lock`: one
+    /// critical-section operation in flight at a time, in-process only,
+    /// sufficient because production runs exactly one capsem-service per
+    /// user-host.
+    shutdown_lock: tokio::sync::Mutex<()>,
 }
 
 struct InstanceInfo {
@@ -2118,6 +2131,15 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
 /// instance is removed from the registry before return. The leak detector
 /// and suspend/resume both rely on "process is gone when this returns".
 async fn shutdown_vm_process(state: &ServiceState, id: &str, graceful: bool) -> Option<(PathBuf, bool, u32)> {
+    // Serialize VM teardown across the service. Concurrent deletes under
+    // load starve each other: VZ guest teardown + DbWriter WAL checkpoint +
+    // socket cleanup all compete, and a single shutdown can exceed the 1s
+    // fast-path exit budget, which SIGKILLs capsem-process mid-checkpoint
+    // and leaves a non-empty session.db-wal on disk (see
+    // tests/capsem-session-lifecycle/test_wal_cleanup.py).
+    // See docs/src/content/docs/gotchas/serialized-vm-shutdown.md.
+    let _shutdown_guard = state.shutdown_lock.lock().await;
+
     let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(id)?;
@@ -2844,6 +2866,7 @@ async fn main() -> Result<()> {
         current_version,
         magika: Mutex::new(magika_session),
         save_restore_lock: tokio::sync::Mutex::new(()),
+        shutdown_lock: tokio::sync::Mutex::new(()),
     });
 
     // Reap capsem-process orphans from any prior service run sharing this

@@ -69,6 +69,7 @@ fn make_test_state() -> Arc<ServiceState> {
         current_version: "0.0.0".into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
+        shutdown_lock: tokio::sync::Mutex::new(()),
     })
 }
 
@@ -265,6 +266,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         current_version: "0.0.0".into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
+        shutdown_lock: tokio::sync::Mutex::new(()),
     })
 }
 
@@ -625,6 +627,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         current_version: "0.0.0".into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
+        shutdown_lock: tokio::sync::Mutex::new(()),
     });
     (state, dir)
 }
@@ -1099,6 +1102,7 @@ fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<ServiceState>
         current_version: "0.0.0".into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
+        shutdown_lock: tokio::sync::Mutex::new(()),
     });
     (state, dir)
 }

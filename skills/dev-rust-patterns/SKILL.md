@@ -114,6 +114,27 @@ struct FunctionCall {
 - **Arc for shared state**: VM state, proxy config, and telemetry handles are `Arc`-wrapped for sharing across tasks.
 - **Per-connection tasks**: The MITM proxy spawns a new tokio task per connection. Each task owns its TLS state and upstream connection. No shared mutable state between connections.
 
+### Host-serialization locks for per-host critical sections
+
+When a service orchestrates N sibling child processes on a single host and some operations cannot safely run two-at-a-time on that host -- whether because of a framework constraint (Apple VZ save/restore) or because of shared-resource starvation (VZ teardown + WAL checkpoint + virtiofs drain all competing for main-thread and I/O bandwidth) -- park a `tokio::sync::Mutex<()>` on the service's shared state struct and acquire it at the top of the handler for the whole duration of the critical section. `Mutex<()>` isn't a weird construction: the unit value is the lock-token, the type signals "pure serialization, no protected payload". `Semaphore::new(1)` is equivalent -- pick one and stay consistent.
+
+Current instances in `crates/capsem-service/src/main.rs`:
+
+- **`save_restore_lock`**: serializes Apple VZ `saveMachineStateToURL` / `restoreMachineStateFromURL` across sibling VMs. Concurrent save/restore corrupts the VirtioFS ring state on the unlucky VM, surfaces as ext4-on-loop0 I/O errors after resume. Held through `handle_suspend` (IPC + child-exit wait) and `handle_resume` (spawn + `wait_for_vm_ready`). See `docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
+
+- **`shutdown_lock`**: serializes VM teardown across `handle_delete` / `handle_stop` / `handle_purge` / `handle_run`. Without it, N concurrent deletes under load starve each other of the bandwidth each `capsem-process` needs to exit cleanly within the 1s fast-path budget; past the budget the service SIGKILLs mid-checkpoint and leaves a non-empty `session.db-wal`. Held through `shutdown_vm_process` for the whole `SIGTERM` + `wait_for_process_exit` window.
+
+When to reach for this pattern:
+
+- Symptom is "works solo, fails under concurrency on the same host."
+- Root cause is a *per-host* resource, not per-VM: Apple VZ main thread, virtiofsd, DbWriter checkpoint, APFS fsync.
+- Production runs exactly one service per host per user, so an in-process tokio mutex is enough -- no need for a file-lock or distributed primitive.
+
+When NOT to reach for it:
+
+- If the contention is per-VM (two handlers acting on the same VM), protect the VM entry in `instances: Mutex<HashMap<...>>` instead.
+- If the "contention" is really a durability race (writer thread hasn't flushed), the right fix is usually the signal-handler explicit-cleanup pattern below, not another serialization lock.
+
 ## Logging
 
 - `tracing` crate with `FmtSpan::CLOSE` for timing spans

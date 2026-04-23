@@ -62,6 +62,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **VM teardown races under load left `session.db-wal` non-empty after
+  `capsem delete`.** `handle_delete`'s fast path SIGTERMs
+  capsem-process and waits 1s for exit before escalating to SIGKILL.
+  Under N concurrent deletes on one host, each capsem-process's exit
+  path -- Apple VZ guest teardown on the main thread, virtiofs drain,
+  `DbWriter::Drop`'s writer-thread join + `PRAGMA
+  wal_checkpoint(TRUNCATE)` -- compete for the same main-thread + I/O
+  bandwidth, and one teardown can blow the 1s budget. SIGKILL then
+  fires mid-checkpoint, leaving a large WAL file on disk (395 kB in
+  the failing `test_wal_absent_after_clean_shutdown` artifact).
+  Fixed by serializing VM teardown at the service layer: added
+  `ServiceState::shutdown_lock: tokio::sync::Mutex<()>`, acquired at
+  the top of `shutdown_vm_process` and held through the entire
+  `SIGTERM` + `wait_for_process_exit` window. Same pattern as the
+  existing `save_restore_lock`: one critical-section operation in
+  flight per host at a time, in-process tokio mutex since production
+  runs exactly one service per user-host. `handle_purge`'s
+  `join_all` of concurrent teardowns now effectively serializes
+  through the lock -- intentional trade of concurrency for
+  correctness; purge is an admin operation, not latency-sensitive.
+  Documented in `skills/dev-rust-patterns/SKILL.md` alongside
+  `save_restore_lock` as the "host-serialization locks" pattern, and
+  the follow-up refactor (signal-driven explicit cleanup in
+  capsem-process so cleanup-correctness doesn't depend on the
+  SIGKILL budget) is scoped in
+  `sprints/explicit-shutdown-cleanup/ISSUE.md`.
+
 - **Gateway auth rejections were invisible in the log, so
   curl-returns-`000` under load was untriaged.** The gateway's
   `auth_middleware` silently returned 401/429 with no structured log
