@@ -314,13 +314,21 @@ jobs:
 
       - name: Build companion binaries
         run: |
-          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-gateway -p capsem-tray
+          cargo build --release \
+            -p capsem \
+            -p capsem-service \
+            -p capsem-process \
+            -p capsem-mcp \
+            -p capsem-mcp-aggregator \
+            -p capsem-mcp-builtin \
+            -p capsem-gateway \
+            -p capsem-tray
 
       - name: Codesign companion binaries
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+          for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
             codesign --sign "$APPLE_SIGNING_IDENTITY" --entitlements entitlements.plist --force "target/release/$bin"
           done
 
@@ -419,7 +427,15 @@ jobs:
       - name: Install Tauri system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev xdg-utils xvfb
+          sudo apt-get install -y \
+            libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            xdg-utils \
+            xvfb
 
       - uses: pnpm/action-setup@v5
         with:
