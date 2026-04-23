@@ -174,13 +174,9 @@ impl Drop for DbWriter {
 
 /// The writer thread loop: block-then-drain batching.
 fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
-    loop {
-        // 1. Block until at least one op arrives.
-        //    Returns None when all Senders are dropped (clean shutdown).
-        let Some(first_op) = rx.blocking_recv() else {
-            break;
-        };
-
+    // 1. Block until at least one op arrives. Returns None when all
+    //    Senders are dropped (clean shutdown) and ends the loop.
+    while let Some(first_op) = rx.blocking_recv() {
         let mut batch = Vec::with_capacity(128);
         batch.push(first_op);
 
