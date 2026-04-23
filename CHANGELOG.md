@@ -62,6 +62,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **Gateway auth rejections were invisible in the log, so
+  curl-returns-`000` under load was untriaged.** The gateway's
+  `auth_middleware` silently returned 401/429 with no structured log
+  line, and the default env filter was `capsem_gateway=info` -- so
+  tower_http's per-request spans and hyper's connection-level
+  complaints (malformed header, RST during read) also never made it
+  into `gateway.log`. When a concurrent `just test` run surfaced
+  `test_empty_bearer_returns_401` as `000` instead of `401`, there
+  was nothing in the preserved test artifacts to diagnose from.
+  Fixed by (a) broadening the default filter to
+  `capsem_gateway=info,tower_http=debug,hyper=info` so connection-
+  level events land in the log, (b) logging auth rejections at
+  `info!`/`warn!` (401 / 429 respectively) with `method`, `path`,
+  and a `shape` field that classifies the Authorization header
+  without leaking its value (e.g. `bearer-empty`, `bearer-no-space`,
+  `basic`, `unknown-scheme`, `non-ascii`), and (c) installing a
+  panic hook so any panicked request handler surfaces an
+  `ERROR gateway panic` rather than vanishing into a dropped
+  connection. No behaviour change on the happy path; diagnostic-only
+  for the flaky load-time failure mode. Covered by
+  `classify_auth_header` unit tests (absent/empty/non-ascii/bearer
+  shape matrix).
+
 - **`ExecDone` always stalled 500ms on no-output commands, taxing every
   fork and every internal `sync`.** `handle_guest_msg(ExecDone)` in
   `crates/capsem-process/src/vsock.rs` used `captured.is_empty()` as a

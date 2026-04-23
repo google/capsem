@@ -66,9 +66,24 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "capsem_gateway=info".into()),
+                // tower_http + hyper at debug so request-level and connection-level
+                // failures (parse errors, early RST, malformed headers) land in the
+                // gateway log; without these, auth-path flakes surface as curl "000"
+                // with nothing on the gateway side to explain it.
+                .unwrap_or_else(|_| "capsem_gateway=info,tower_http=debug,hyper=info".into()),
         )
         .init();
+
+    // Surface any gateway panic in the log instead of letting it vanish into
+    // the void -- under test load a panicked task would otherwise just drop
+    // the connection, leaving the client with no response and no trace.
+    std::panic::set_hook(Box::new(|info| {
+        tracing::error!(
+            panic = %info,
+            location = info.location().map(|l| format!("{l}")).unwrap_or_default(),
+            "gateway panic"
+        );
+    }));
 
     let args = Args::parse();
 

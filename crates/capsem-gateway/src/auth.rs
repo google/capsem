@@ -7,9 +7,32 @@ use axum::extract::State;
 use axum::http::{Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::AppState;
+
+/// Classify the shape of an authorization header for diagnostic logs. Never
+/// returns token bytes -- only the structural shape -- so it's safe to log
+/// at info level without leaking secrets.
+fn classify_auth_header(raw: Option<&http::HeaderValue>) -> &'static str {
+    let Some(v) = raw else { return "absent" };
+    let bytes = v.as_bytes();
+    if bytes.is_empty() { return "empty" }
+    let Ok(s) = v.to_str() else { return "non-ascii" };
+    if let Some(rest) = s.strip_prefix("Bearer ") {
+        if rest.is_empty() { "bearer-empty" }
+        else if rest.trim().is_empty() { "bearer-whitespace" }
+        else { "bearer-present" }
+    } else if s.starts_with("Bearer") {
+        "bearer-no-space"
+    } else if s.starts_with("bearer") {
+        "bearer-lowercase"
+    } else if s.starts_with("Basic ") {
+        "basic"
+    } else {
+        "unknown-scheme"
+    }
+}
 
 /// Maximum auth failures per window before returning 429.
 const MAX_AUTH_FAILURES: u32 = 20;
@@ -149,14 +172,18 @@ pub async fn auth_middleware(
     if header_valid || query_valid {
         next.run(req).await
     } else {
+        let shape = classify_auth_header(req.headers().get("authorization"));
+        let method = req.method().clone();
         let throttled = state.auth_failures.record_failure().await;
         if throttled {
+            warn!(%method, path, shape, "auth rejected (429 throttled)");
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 axum::Json(serde_json::json!({"error": "too many failed auth attempts"})),
             )
                 .into_response()
         } else {
+            info!(%method, path, shape, "auth rejected (401)");
             (
                 StatusCode::UNAUTHORIZED,
                 axum::Json(serde_json::json!({"error": "unauthorized"})),
@@ -201,6 +228,42 @@ mod tests {
                 auth_middleware,
             ))
             .with_state(state)
+    }
+
+    // --- Header shape classification (diagnostic logging) ---
+
+    #[test]
+    fn classify_absent() {
+        assert_eq!(classify_auth_header(None), "absent");
+    }
+
+    #[test]
+    fn classify_empty_value() {
+        let hv = http::HeaderValue::from_bytes(b"").unwrap();
+        assert_eq!(classify_auth_header(Some(&hv)), "empty");
+    }
+
+    #[test]
+    fn classify_non_ascii() {
+        let hv = http::HeaderValue::from_bytes(&[0x80, 0x81]).unwrap();
+        assert_eq!(classify_auth_header(Some(&hv)), "non-ascii");
+    }
+
+    #[test]
+    fn classify_bearer_shapes() {
+        let cases = [
+            ("Bearer abc123", "bearer-present"),
+            ("Bearer ", "bearer-empty"),
+            ("Bearer    ", "bearer-whitespace"),
+            ("Bearerabc", "bearer-no-space"),
+            ("bearer tok", "bearer-lowercase"),
+            ("Basic dG9rOg==", "basic"),
+            ("X-Custom tok", "unknown-scheme"),
+        ];
+        for (input, expected) in cases {
+            let hv = http::HeaderValue::from_str(input).unwrap();
+            assert_eq!(classify_auth_header(Some(&hv)), expected, "input={input:?}");
+        }
     }
 
     // --- Token generation ---
