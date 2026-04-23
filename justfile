@@ -837,15 +837,16 @@ test-install: _build-host
     # root-owned in the baked image -- without this chown, cargo build as
     # the capsem user dies with `Permission denied (os error 13)`.
     docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup"
+    # On GitHub runners the bind-mounted /src is owned by uid 1001
+    # (runner), but the container builds as uid 1000 (capsem). Anything
+    # that tries to write into /src (pnpm/vite temp files, Tauri build.rs
+    # generating context into OUT_DIR but traversing /src, cargo's lock
+    # checks, etc.) hits EACCES. Chown the whole tree once up front.
+    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src 2>/dev/null || true"
     echo "Building host binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo build {{host_crates}}"
     echo "Building frontend..."
-    # pnpm/vite writes temp files in /src/frontend itself (not just
-    # node_modules). On GitHub runners the bind-mounted /src is owned by
-    # uid 1001 (runner), but the container builds as uid 1000 (capsem),
-    # so astro's tmp write hits EACCES unless we chown the whole dir.
-    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src/frontend 2>/dev/null || true"
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
         "cd /src/frontend && pnpm install && pnpm build"
     echo "Building Tauri .deb..."
