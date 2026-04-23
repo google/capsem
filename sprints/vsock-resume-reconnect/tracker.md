@@ -55,8 +55,28 @@ See [plan.md](./plan.md) for design, [ISSUE.md](./ISSUE.md) for history.
 
 - [x] `cargo test -p capsem-process` passes
 - [x] `just test` passes (full suite)
-- [x] `CAPSEM_STRESS=1 uv run pytest tests/capsem-mcp/test_stress_suspend_resume.py -n 8 --tb=line -q` → 50/50, or remaining failures are loop-device I/O only
+- [x] `CAPSEM_STRESS=1 uv run pytest tests/capsem-mcp/test_stress_suspend_resume.py -n 8 --tb=line -q` → 46/50, remaining 4 are loop-device I/O only (out of scope)
 - [x] Spot-check all 11 features via `just run "capsem-doctor"` and targeted MCP traces
 - [x] `stash@{0}` disposition: dropped (with `git stash drop stash@{0}`) after extraction confirmed complete, OR kept with note in ISSUE.md
 - [ ] Update ISSUE.md footer: sprint closed, link to final commit range
 - [ ] Open follow-up issue for loop-device I/O errors (out of scope)
+
+### M7 — Post-sprint discovery: VZ path canonicalization
+
+Added 2026-04-23 after the hot-swap sprint landed. The vsock refactor
+closed a real (minority) failure mode but didn't move the dominant tail.
+Manual repro with a `~/.capsem/...` session dir passed first try; the
+pytest tmp-dir repro kept hitting `VZErrorDomain Code=12 "permission
+denied"` on restore. Root cause: Apple VZ's `restoreMachineStateFromURL`
+checks that the VirtioFS share paths match exactly between save and
+restore, and pytest's `/var/folders/...` path resolves through a
+`/var -> /private/var` symlink that VZ sometimes canonicalized and
+sometimes didn't.
+
+- [x] `capsem-service::main` canonicalizes `run_dir` after `create_dir_all`
+- [x] `capsem-process::main` canonicalizes `session_dir` after `create_dir_all`
+- [x] Remove leftover `args.session_dir` shadowing inside `run_async_main_loop` (4 sites + 1 shadow decl)
+- [x] `capsem-service::handle_suspend` waits for full channel close (process exit) instead of breaking on first `"Suspended"` StateChanged — closes resume-too-soon race on the outgoing checkpoint file
+- [x] Stress validation → 0 VZErrorDomain failures; residual 4/50 loop-device I/O is orthogonal
+- [x] Changelog entries under `Unreleased / Fixed`
+- [x] Commit

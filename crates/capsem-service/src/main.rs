@@ -2167,14 +2167,16 @@ async fn handle_suspend(
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to send suspend command: {e}")))?;
 
-    // Wait for StateChanged { state: "Suspended" } or process exit
+    // Wait for process exit (channel closed). The process sends StateChanged {"Suspended"}
+    // right before exiting. We must wait for full exit to avoid a race condition where
+    // a subsequent resume request fails with permission denied because the old process
+    // hasn't released the checkpoint file yet.
     let mut suspended = false;
     let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         while let Ok(msg) = rx.recv().await {
             if let ProcessToService::StateChanged { state, .. } = msg {
                 if state == "Suspended" {
                     suspended = true;
-                    break;
                 }
             }
         }
@@ -2608,9 +2610,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let run_dir = capsem_core::paths::capsem_run_dir();
-
+    let mut run_dir = capsem_core::paths::capsem_run_dir();
     let _ = std::fs::create_dir_all(&run_dir);
+    if let Ok(resolved) = run_dir.canonicalize() {
+        run_dir = resolved;
+    }
 
     let log_path = run_dir.join("service.log");
     let log_file = std::fs::OpenOptions::new()

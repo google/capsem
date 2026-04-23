@@ -62,6 +62,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **Suspend/resume: VZErrorDomain Code=12 "permission denied" on restore
+  from a `/var/folders/...` path.** Apple VZ's
+  `restoreMachineStateFromURL` enforces strict path matching between
+  `saveMachineStateToURL` and restore -- the VirtioFS share paths
+  (and any path referenced by the preserved VM state) must resolve
+  identically. Under pytest the tmp_dir lands at
+  `/var/folders/lv/.../capsem-test-xxx` which is a symlink chain
+  through `/var -> /private/var`. If the save path was the symlink
+  form and the restore resolved to `/private/var/...` (or vice versa),
+  VZ rejected the restore with a security error and the VM entered
+  an unrecoverable state (guest kernel came back up on a wedged loop
+  device, stress harness showed 21-100+ `permission denied` entries
+  per failing `process.log`). Both `capsem-service` and
+  `capsem-process` now call `std::fs::canonicalize()` on their
+  respective root paths (`run_dir` / `session_dir`) immediately after
+  `create_dir_all`, so every downstream derivation (checkpoint path,
+  VirtioFS share host_path, machine identifier, session.db, workspace
+  dir, `CAPSEM_SESSION_DIR` env for guest MCP, auto-snapshot
+  scheduler, MCP aggregator) uses the canonical
+  `/private/var/...` form from both the pre-suspend and post-resume
+  process. A reproduction outside pytest (using `~/.capsem/...`,
+  which doesn't cross the `/var` symlink) passed first try -- the bug
+  was pytest-path-specific. Stress harness (50 iters × 8 workers)
+  goes from 4.4% VZ-permission-denied failures to 0, with the
+  remaining 8% tail being the unrelated loop-device I/O error on
+  the persistent overlay (tracked separately in
+  `sprints/vsock-resume-reconnect/plan.md`).
+- **Suspend: resume-too-soon race where the old `capsem-process`
+  still held the checkpoint file.** `capsem-service::handle_suspend`
+  previously returned as soon as the child emitted
+  `StateChanged { state: "Suspended" }`, but the child broadcasts that
+  event *before* its `save_state` finalizer syncs and the process
+  exits. A quick subsequent `capsem_resume` could therefore race the
+  outgoing process's `.vzsave` fsync / exit, and VZ would see either a
+  partially-written checkpoint or contention over the backing file.
+  `handle_suspend` now drains the broadcast channel until it closes
+  (the child has exited) or a 15s timeout fires, guaranteeing the old
+  process is fully gone before returning to the caller.
 - **Suspend/resume: VM survives Apple VZ post-resume vsock half-opens
   and post-handshake connection resets.** The host's vsock layer now
   runs a continuous accept loop for the VM's lifetime and hot-swaps

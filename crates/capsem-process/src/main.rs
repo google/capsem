@@ -98,12 +98,17 @@ fn main() -> Result<()> {
     info!(id = %args.id, "capsem-sandbox-process starting");
 
     std::fs::create_dir_all(&args.session_dir)?;
-    capsem_core::create_virtiofs_session(&args.session_dir, 2)?;
-    let guest_dir = capsem_core::guest_share_dir(&args.session_dir);
+    let mut session_dir = args.session_dir.clone();
+    if let Ok(resolved) = session_dir.canonicalize() {
+        session_dir = resolved;
+    }
+    
+    capsem_core::create_virtiofs_session(&session_dir, 2)?;
+    let guest_dir = capsem_core::guest_share_dir(&session_dir);
     let virtiofs_shares = vec![VirtioFsShare { tag: "capsem".into(), host_path: guest_dir, read_only: false }];
 
-    let machine_identifier_path = args.session_dir.join("machine_identifier");
-    let serial_log_path = args.session_dir.join("serial.log");
+    let machine_identifier_path = session_dir.join("machine_identifier");
+    let serial_log_path = session_dir.join("serial.log");
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),
@@ -117,7 +122,7 @@ fn main() -> Result<()> {
         checkpoint_path: args
             .checkpoint_path
             .clone()
-            .map(|p| if p.is_absolute() { p } else { args.session_dir.join(p) }),
+            .map(|p| if p.is_absolute() { p } else { session_dir.join(p) }),
         machine_identifier_path: Some(&machine_identifier_path),
         serial_log_path: Some(&serial_log_path),
     })?;
@@ -127,7 +132,7 @@ fn main() -> Result<()> {
         let full_path = if std::path::Path::new(cp).is_absolute() {
             std::path::PathBuf::from(cp)
         } else {
-            args.session_dir.join(cp)
+            session_dir.join(cp)
         };
         let _ = std::fs::remove_file(full_path);
     }
@@ -146,8 +151,9 @@ fn main() -> Result<()> {
     }
 
     let trace_id_for_loop = trace_id.clone();
+    let session_dir_for_loop = session_dir.clone();
     rt.spawn(async move {
-        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm, trace_id_for_loop).await {
+        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm, trace_id_for_loop, session_dir_for_loop).await {
             error!("async loop failed: {e:#}");
             std::process::exit(1);
         }
@@ -190,17 +196,18 @@ async fn run_async_main_loop(
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
     _sm: capsem_core::host_state::HostStateMachine,
     trace_id: String,
+    session_dir: std::path::PathBuf,
 ) -> Result<()> {
     let job_store = Arc::new(JobStore::new());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
-    let db = Arc::new(capsem_logger::DbWriter::open(&args.session_dir.join("session.db"), 256)?);
+    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 256)?);
 
     // Start host file monitor to record fs_events.
     // _fs_monitor must live until the process exits to keep the watcher alive.
-    let workspace_dir = args.session_dir.join("workspace");
+    let workspace_dir = session_dir.join("workspace");
     let _fs_monitor = match capsem_core::fs_monitor::FsMonitor::start(
         workspace_dir.clone(),
         workspace_dir.clone(),
@@ -232,8 +239,8 @@ async fn run_async_main_loop(
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mut builtin_env = std::collections::HashMap::new();
-    builtin_env.insert("CAPSEM_SESSION_DIR".into(), args.session_dir.to_string_lossy().to_string());
-    let db_path = args.session_dir.join("session.db");
+    builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
+    let db_path = session_dir.join("session.db");
     builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
     let mcp_servers = capsem_core::mcp::build_server_list_with_builtin(
         &user_sf.mcp.clone().unwrap_or_default(),
@@ -255,7 +262,7 @@ async fn run_async_main_loop(
         .unwrap_or(300) as u64;
 
     let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
-        args.session_dir.clone(),
+        session_dir.clone(),
         snap_auto_max,
         snap_manual_max,
         std::time::Duration::from_secs(snap_interval),
@@ -288,7 +295,7 @@ async fn run_async_main_loop(
     // Spawn the isolated MCP aggregator subprocess.
     let aggregator_client = spawn_mcp_aggregator(
         &mcp_servers,
-        &args.session_dir,
+        &session_dir,
         &args.id,
         &trace_id,
     ).await?;
@@ -394,7 +401,6 @@ async fn run_async_main_loop(
     // is needed here -- tokio::broadcast would race with VM resume and drop
     // the first ~100ms of post-resume output.
 
-    let session_dir = args.session_dir.clone();
     let net_state_clone = Arc::clone(&net_state);
     let mitm_config_clone = Arc::clone(&mitm_config);
     let mcp_config_clone = Arc::clone(&mcp_config);
@@ -431,7 +437,7 @@ async fn run_async_main_loop(
             ctrl_rx,
             terminal_output: terminal_output_clone,
             job_store: job_store_clone,
-            session_dir,
+            session_dir: session_dir.clone(),
             cli_env,
             guest_config,
             mitm_config: mitm_config_clone,
