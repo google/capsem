@@ -177,6 +177,33 @@ pub fn verify_manifest_with_baked_key(manifest_bytes: &[u8], sig_file: &str) -> 
     verify_manifest_signature(MANIFEST_SIGN_PUBKEY_FILE, manifest_bytes, sig_file)
 }
 
+/// Verify a manifest signature against the baked release key OR -- if
+/// that fails and `dev_pub_path` points at a readable file -- against an
+/// optional developer pubkey. Used so `just install` can deploy a dev
+/// keypair once and every release-build binary installed from it trusts
+/// that dev key's signatures, without a runtime bypass of verification.
+/// Dev-key trust is deliberately scoped to the sibling pubkey file; an
+/// attacker who can write to `~/.capsem/assets/` can already rewrite
+/// both the manifest and its signature, so allowing a dev key there is
+/// not a security regression.
+pub fn verify_manifest_with_baked_or_dev_key(
+    manifest_bytes: &[u8],
+    sig_file: &str,
+    dev_pub_path: Option<&Path>,
+) -> Result<()> {
+    match verify_manifest_with_baked_key(manifest_bytes, sig_file) {
+        Ok(()) => Ok(()),
+        Err(baked_err) => {
+            let dev = dev_pub_path.filter(|p| p.is_file()).ok_or(baked_err)?;
+            let dev_pub = std::fs::read_to_string(dev)
+                .with_context(|| format!("read {}", dev.display()))?;
+            verify_manifest_signature(&dev_pub, manifest_bytes, sig_file).with_context(|| {
+                format!("dev key at {} did not verify either", dev.display())
+            })
+        }
+    }
+}
+
 /// Load a manifest from disk with minisign signature verification.
 ///
 /// Looks for `manifest.json` in `assets/` and `assets.parent()`, the same
@@ -220,8 +247,16 @@ pub fn load_verified_manifest_for_assets(
         if sig_path.is_file() {
             let sig_text = std::fs::read_to_string(&sig_path)
                 .with_context(|| format!("read {}", sig_path.display()))?;
-            verify_manifest_with_baked_key(&manifest_bytes, &sig_text)
-                .with_context(|| format!("verify {}", sig_path.display()))?;
+            // Accept either the baked release key or a sibling dev key at
+            // `<manifest_dir>/manifest-sign.dev.pub` (deployed by
+            // `just install`). See `verify_manifest_with_baked_or_dev_key`.
+            let dev_pub = path.parent().map(|p| p.join("manifest-sign.dev.pub"));
+            verify_manifest_with_baked_or_dev_key(
+                &manifest_bytes,
+                &sig_text,
+                dev_pub.as_deref(),
+            )
+            .with_context(|| format!("verify {}", sig_path.display()))?;
             tracing::info!(path = %path.display(), "manifest signature verified");
         } else if require_signature {
             anyhow::bail!(
@@ -925,6 +960,74 @@ mod tests {
         std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
         let err = load_verified_manifest_for_assets(dir.path(), false).unwrap_err();
         assert!(format!("{err}").contains("verify"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn dev_key_accepts_signature_baked_key_rejects() {
+        // Test fixture is signed with TEST_PUBKEY. The baked release key
+        // does NOT match, so `verify_manifest_with_baked_or_dev_key` must
+        // fall through to the dev key and accept.
+        let dir = tempfile::tempdir().unwrap();
+        let dev = dir.path().join("manifest-sign.dev.pub");
+        std::fs::write(&dev, TEST_PUBKEY).unwrap();
+        verify_manifest_with_baked_or_dev_key(
+            TEST_MANIFEST_BYTES,
+            TEST_SIGNATURE,
+            Some(dev.as_path()),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn dev_key_missing_falls_back_to_baked_error() {
+        // No dev key supplied: the baked-key failure must propagate
+        // unchanged so callers see the real reason verification failed.
+        let err = verify_manifest_with_baked_or_dev_key(
+            TEST_MANIFEST_BYTES,
+            TEST_SIGNATURE,
+            None,
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("verify"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn dev_key_path_not_a_file_falls_back_to_baked_error() {
+        // Path points at something that isn't a regular file -- treat as
+        // absent, preserving the baked-key error.
+        let dir = tempfile::tempdir().unwrap();
+        let err = verify_manifest_with_baked_or_dev_key(
+            TEST_MANIFEST_BYTES,
+            TEST_SIGNATURE,
+            Some(dir.path()), // directory, not a file
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("verify"));
+    }
+
+    #[test]
+    fn dev_key_both_invalid_surfaces_dev_error() {
+        // Dev key is deployed but doesn't match either. Error chain must
+        // mention the dev key path so debugging is possible.
+        let dir = tempfile::tempdir().unwrap();
+        let dev = dir.path().join("manifest-sign.dev.pub");
+        let wrong = TEST_PUBKEY.replace(
+            "RWSAXcSzqC//0ussmV+rXA7RVjSb7oBJxZA/Ao9jSOz3yVIv8vcHBOLS",
+            "RWSAXcSzqC//0ussmV+rXA7RVjSb7oBJxZA/Ao9jSOz3yVIv8vcHBBBB",
+        );
+        std::fs::write(&dev, wrong).unwrap();
+        let err = verify_manifest_with_baked_or_dev_key(
+            TEST_MANIFEST_BYTES,
+            TEST_SIGNATURE,
+            Some(dev.as_path()),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("dev key") && msg.contains("did not verify"),
+            "expected dev-key error chain, got: {msg}"
+        );
     }
 
     #[test]

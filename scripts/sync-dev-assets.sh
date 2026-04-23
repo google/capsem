@@ -28,12 +28,52 @@ fi
 
 mkdir -p "$DST/$ARCH"
 
+# Dev-key signing for the locally built manifest. Release binaries refuse
+# to boot when manifest.json has no sibling manifest.json.minisig (see
+# crates/capsem-core/src/asset_manager.rs::load_verified_manifest_for_assets).
+# `just install` ships release binaries, so without a dev-side signature
+# every locally built sandbox fails to boot with "manifest signature
+# missing". The binary additionally trusts a sibling manifest-sign.dev.pub
+# via verify_manifest_with_baked_or_dev_key; this block generates that
+# key on first install, signs the local manifest, and deploys the pubkey
+# next to the manifest so dev boots succeed.
+sign_manifest_with_dev_key() {
+    local manifest="$1"
+    local dst_dir="$2"
+    if ! command -v minisign >/dev/null 2>&1; then
+        echo "WARNING: minisign not installed; locally built manifest will be"
+        echo "         unsigned and release binaries will refuse to boot it."
+        echo "         Fix: brew install minisign (macOS) or apt install minisign (Linux)."
+        return 0
+    fi
+    local key_dir="$HOME/.capsem/dev-keys"
+    local priv="$key_dir/manifest-sign.dev.key"
+    local pub="$key_dir/manifest-sign.dev.pub"
+    mkdir -p "$key_dir"
+    chmod 700 "$key_dir"
+    if [[ ! -f "$priv" || ! -f "$pub" ]]; then
+        echo "Generating dev minisign keypair at $key_dir (first install)"
+        # -W: no password, so sync-dev-assets can run unattended.
+        minisign -G -f -W -p "$pub" -s "$priv" >/dev/null
+        chmod 600 "$priv"
+    fi
+    # Sign the manifest as a sibling .minisig. -f overwrites a stale sig
+    # from a previous run. No comment so stdin prompting is skipped.
+    minisign -S -f -s "$priv" -m "$manifest" -t "capsem dev key" >/dev/null
+    # Deploy pubkey next to manifest -- capsem-core reads it from there.
+    cp -f "$pub" "$dst_dir/manifest-sign.dev.pub"
+}
+
 # Short-circuit when ~/.capsem/assets is a symlink back to the repo's
 # assets/ (the dev-loop convenience set up by `just install` for the
 # hot-iteration flow). cp would otherwise exit 1 on every "identical
 # (not copied)" pair and kill the recipe under `set -e`.
 if [[ "$SRC" -ef "$DST" ]]; then
     echo "Skipped sync: $DST resolves to $SRC (symlinked dev layout)"
+    # Still sign the (shared) manifest in-place -- the release binary
+    # reads it from $DST, which here points at $SRC, so signing either
+    # lands the .minisig where the binary looks.
+    sign_manifest_with_dev_key "$DST/manifest.json" "$DST"
     exit 0
 fi
 
@@ -51,6 +91,9 @@ for src_file in "$SRC/$ARCH"/*; do
     fi
     cp -f "$src_file" "$dst_file"
 done
+
+# Sign the freshly copied manifest and deploy the dev pubkey next to it.
+sign_manifest_with_dev_key "$DST/manifest.json" "$DST"
 
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.
 # They would otherwise keep occupying ~450MB/install.
