@@ -1,13 +1,19 @@
 """Stress variant of test_suspend_and_resume_persistent.
 
-Parametrized 50x so pytest-xdist can distribute executions across workers.
-This file is a targeted repro harness for the suspend/resume vsock race
-tracked in `sprints/vsock-resume-reconnect/ISSUE.md` -- it is GATED behind
-the `CAPSEM_STRESS` env var so `just test` runs don't get swamped.
+Parametrized 50x. MUST run serially (`-n 1` under pytest-xdist, or
+without xdist). Running at higher concurrency spawns multiple
+capsem-service processes, and the ServiceState::save_restore_lock
+that serializes Apple VZ save/restore on the host is scoped to a
+single service -- see docs/gotchas/concurrent-suspend-resume.mdx for
+the full story. A deployed host always has exactly one service, so
+the serial measurement matches production; -n 2+ measures a state
+that never occurs outside the test harness.
+
+Gated behind `CAPSEM_STRESS` so `just test` runs don't get swamped.
 
 Run with:
     CAPSEM_STRESS=1 uv run pytest tests/capsem-mcp/test_stress_suspend_resume.py \
-        -n 8 --tb=line -q
+        -n 1 --tb=line -q
 """
 
 import os

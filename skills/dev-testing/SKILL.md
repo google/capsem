@@ -48,6 +48,14 @@ If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker 
 
 **Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
 
+### When `-n 1` is actually the right answer: multi-service-only gotchas
+
+One narrow class of concurrency bug belongs at `-n 1`, not `-n 4`: **bugs that only exist when two `capsem-service` processes run on the same host**. Apple's Virtualization.framework does not tolerate overlapping `saveMachineStateToURL` / `restoreMachineStateFromURL` calls on sibling VMs, and we serialize with a per-service `tokio::sync::Mutex` (`ServiceState::save_restore_lock`). That lock is in-process, so it only serializes VMs inside one service. Production always has exactly one service per host per user, so the lock is sufficient in real deployments.
+
+`tests/capsem-mcp/test_stress_suspend_resume.py` runs under pytest-xdist, which spawns one `capsem-service` per worker. At `-n 2+`, worker A's service can't see worker B's lock, and you re-expose the bug that never happens in production. This is the one case where the "n=4 dogfoods concurrency" rule doesn't apply -- the concurrency being tested would never happen outside the test harness. Keep this harness at `-n 1`. Full context and the failure signature live in `docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
+
+This is NOT a blanket license to run any flaky test at `-n 1`. If you're tempted to demote another test, first ask: *"Would this failure occur in production with one capsem-service and N VMs?"* If yes, it belongs at `-n 4`; fix the product.
+
 ## Adversarial testing
 
 Capsem is a security product. Every security-relevant feature needs tests that actively try to break invariants. Think like an attacker:

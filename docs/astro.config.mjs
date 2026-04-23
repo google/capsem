@@ -48,6 +48,10 @@ export default defineConfig({
           autogenerate: { directory: 'debugging' },
         },
         {
+          label: 'Gotchas / FAQ',
+          autogenerate: { directory: 'gotchas' },
+        },
+        {
           label: 'Development',
           autogenerate: { directory: 'development' },
         },

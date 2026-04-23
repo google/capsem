@@ -61,6 +61,15 @@ struct ServiceState {
     current_version: String,
     /// Magika file-type detection session (thread-safe, shared)
     magika: Mutex<magika::Session>,
+    /// Serializes Apple VZ save_state and restore_state calls across all VMs
+    /// managed by this service. Apple's Virtualization.framework does not
+    /// tolerate concurrent save/restore on sibling VMs: when two VZ instances
+    /// each call saveMachineStateToURL (or one calls save_state while another
+    /// is mid-restore), one of them can come back with ext4-on-loop0 I/O
+    /// errors after resume. Held for the full suspend IPC + child-exit wait,
+    /// and for the resume spawn + wait_for_vm_ready window. See
+    /// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
+    save_restore_lock: tokio::sync::Mutex<()>,
 }
 
 struct InstanceInfo {
@@ -2149,6 +2158,12 @@ async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Apple VZ corrupts the VirtioFS-backed overlay of a sibling VM if two
+    // save_state / restore_state calls overlap. Serialize across all VMs
+    // managed by this service. Held for the whole handler; released when
+    // the child has exited and the checkpoint is durable.
+    let _vz_guard = state.save_restore_lock.lock().await;
+
     let (uds_path, pid) = {
         let mut instances = state.instances.lock().unwrap();
         let i = instances.get_mut(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
@@ -2294,9 +2309,19 @@ async fn handle_resume(
     State(state): State<Arc<ServiceState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
+    // See handle_suspend: same lock, same reason. Restore happens in the
+    // freshly spawned capsem-process's boot, so the lock must bridge the
+    // spawn and the readiness sentinel for a sibling save_state not to
+    // overlap with the restoreMachineStateFromURL call.
+    let _vz_guard = state.save_restore_lock.lock().await;
+
     match state.resume_sandbox(&name, None, None) {
         Ok(id) => {
             let uds_path = state.instance_socket_path(&id);
+            if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
+                error!(name, "resume ready-wait failed: {e}");
+                return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("resume failed: {e}")));
+            }
             Ok(Json(ProvisionResponse { id, uds_path: Some(uds_path) }))
         }
         Err(e) => {
@@ -2807,6 +2832,7 @@ async fn main() -> Result<()> {
         manifest,
         current_version,
         magika: Mutex::new(magika_session),
+        save_restore_lock: tokio::sync::Mutex::new(()),
     });
 
     // Reap capsem-process orphans from any prior service run sharing this
@@ -2904,14 +2930,22 @@ async fn main() -> Result<()> {
     // by up to 5s on every startup while polling gateway.token into existence
     // -- fatal under parallel test load. Companions are stateless and can come
     // up after the service is already serving clients.
-    let companions = Arc::new(std::sync::Mutex::new(Vec::<tokio::process::Child>::new()));
+    struct CompanionManager {
+        children: Vec<tokio::process::Child>,
+        spawn_task: Option<tokio::task::JoinHandle<()>>,
+    }
+    let companions = Arc::new(std::sync::Mutex::new(CompanionManager {
+        children: Vec::new(),
+        spawn_task: None,
+    }));
     let companions_for_spawn = Arc::clone(&companions);
     let service_sock_for_spawn = service_sock.clone();
     let run_dir_for_spawn = run_dir.clone();
     let gateway_binary = args.gateway_binary;
     let gateway_port = args.gateway_port;
     let tray_binary = args.tray_binary;
-    tokio::spawn(async move {
+    
+    let spawn_task = tokio::spawn(async move {
         let spawned = spawn_companions(
             &service_sock_for_spawn,
             &run_dir_for_spawn,
@@ -2920,8 +2954,9 @@ async fn main() -> Result<()> {
             tray_binary,
         )
         .await;
-        companions_for_spawn.lock().unwrap().extend(spawned);
+        companions_for_spawn.lock().unwrap().children.extend(spawned);
     });
+    companions.lock().unwrap().spawn_task = Some(spawn_task);
 
     let shutdown_state = state.clone();
     let companions_for_shutdown = Arc::clone(&companions);
@@ -2934,11 +2969,27 @@ async fn main() -> Result<()> {
             // downstream `_ensure-service` (which itself sleeps 500ms before
             // spawning the next service) would race with companion exit and
             // the new gateway would fail to bind :19222.
-            let mut children = std::mem::take(&mut *companions_for_shutdown.lock().unwrap());
-            for child in &mut children {
+            
+            // Scoped so the MutexGuard is definitely dropped before the
+            // awaits below; relying on `drop(manager)` alone was fragile
+            // enough that the compiler's Send analysis tripped once the
+            // surrounding future gained other Send requirements.
+            let children = {
+                let mut manager = companions_for_shutdown.lock().unwrap();
+                if let Some(task) = manager.spawn_task.take() {
+                    task.abort();
+                }
+                std::mem::take(&mut manager.children)
+            };
+
+            info!(count = children.len(), "killing companions");
+            for mut child in children {
+                info!(pid = child.id(), "killing companion process");
                 let _ = child.kill().await;
             }
+            info!("killing all VM processes");
             kill_all_vm_processes(&shutdown_state);
+            info!("shutdown complete");
         })
         .await
         .context("server error")?;

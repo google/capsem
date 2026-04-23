@@ -62,6 +62,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **Suspend/resume: sibling-VM save_state overlap corrupted the
+  persistent overlay.** Apple's Virtualization.framework does not
+  tolerate overlapping `saveMachineStateToURL` /
+  `restoreMachineStateFromURL` calls across sibling VMs on the same
+  host: the VirtioFS ring state captured inside the vzsave ends up
+  referencing FUSE descriptors the host has torn down or re-keyed on
+  behalf of another VM mid-operation. On the unlucky VM, resume
+  surfaces as cascading `I/O error, dev loop0` plus
+  `EXT4-fs (loop0): failed to convert unwritten extents to written
+  extents -- potential data loss!` in the guest, and
+  `initial handshake failed: BootReady read failed: failed to fill
+  whole buffer` on the host. The 8% tail from
+  `sprints/loop-device-io-after-resume/` was this. Added
+  `ServiceState::save_restore_lock` (a `tokio::sync::Mutex<()>`) held
+  across the full body of `handle_suspend` (until the per-VM
+  `capsem-process` has exited and the checkpoint is durable) and
+  across `handle_resume` (until `wait_for_vm_ready` confirms the
+  new process's `.ready` sentinel). Production runs exactly one
+  `capsem-service` per host per user, so per-service serialization is
+  sufficient there. Stress harness
+  `tests/capsem-mcp/test_stress_suspend_resume.py` now documents that
+  it must run at `-n 1`: multiple xdist workers spawn multiple
+  services and the in-service lock cannot coordinate across them,
+  re-exposing the bug in a state that never occurs in production.
+  With the lock, `CAPSEM_STRESS=1 ... -n 1` runs 50/50 (was noisy
+  around 46-50/50 before). Scoped the pre-existing MutexGuard in
+  `with_graceful_shutdown` into its own block so the compiler's Send
+  analysis survives the new tokio mutex in `ServiceState`. Full
+  gotcha writeup at `docs/src/content/docs/gotchas/
+  concurrent-suspend-resume.md`; skills updated in
+  `skills/dev-testing/SKILL.md` to call out the one legitimate `-n 1`
+  test.
 - **Test infra: capsem-service leaked across aborted pytest runs.** The
   companion reaper in `capsem-guard` only bounds tray and gateway to
   their parent service -- the service itself had no parent-watch. When
