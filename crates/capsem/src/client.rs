@@ -100,6 +100,11 @@ pub struct SessionInfo {
     pub total_file_events: Option<u64>,
     #[serde(default)]
     pub model_call_count: Option<u64>,
+    /// Tail of `process.log` from the last failed boot when
+    /// `status == "Defunct"`. Rendered inline by `capsem list` so a
+    /// crashed VM shows its own reason on screen.
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -805,6 +810,7 @@ mod tests {
                     denied_requests: None,
                     total_file_events: None,
                     model_call_count: None,
+                    last_error: None,
                 },
                 SessionInfo {
                     id: "mydev".into(),
@@ -829,6 +835,7 @@ mod tests {
                     denied_requests: None,
                     total_file_events: None,
                     model_call_count: None,
+                    last_error: None,
                 },
             ],
         };

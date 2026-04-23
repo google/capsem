@@ -570,6 +570,8 @@ fn provision_persistent_rejects_duplicate_name() {
             forked_from: None,
             description: None,
             suspended: false,
+            defunct: false,
+            last_error: None,
             checkpoint_path: None,
         env: None,
         });
@@ -741,6 +743,8 @@ async fn handle_fork_from_persistent_registry() {
             forked_from: None,
             description: None,
             suspended: false,
+            defunct: false,
+            last_error: None,
             checkpoint_path: None,
         env: None,
         });
@@ -793,6 +797,8 @@ async fn handle_list_shows_suspended_status() {
             forked_from: None,
             description: None,
             suspended: true,
+            defunct: false,
+            last_error: None,
             checkpoint_path: Some("checkpoint.vzsave".into()),
         env: None,
         });
@@ -811,6 +817,8 @@ async fn handle_list_shows_suspended_status() {
             forked_from: None,
             description: None,
             suspended: false,
+            defunct: false,
+            last_error: None,
             checkpoint_path: None,
         env: None,
         });
@@ -841,6 +849,8 @@ async fn handle_info_shows_suspended_status() {
             forked_from: None,
             description: None,
             suspended: true,
+            defunct: false,
+            last_error: None,
             checkpoint_path: Some("checkpoint.vzsave".into()),
         env: None,
         });

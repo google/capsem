@@ -885,6 +885,49 @@ async fn main() -> Result<()> {
                     None => println!("Assets:    no manifest found"),
                 }
             }
+
+            // Surface defunct sandboxes prominently -- a boot failure
+            // otherwise only appears as a line in `capsem list`, and the
+            // first command users reach for after "it doesn't work" is
+            // `capsem status`. One-line banner + hint at `capsem logs`.
+            if status.running {
+                let home = crate::paths::capsem_home().unwrap_or_default();
+                let sock = home.join("run/service.sock");
+                let list_client = client::UdsClient::new(sock, false);
+                if let Ok(resp) = list_client
+                    .get::<client::ApiResponse<client::ListResponse>>("/list")
+                    .await
+                {
+                    if let Ok(list) = resp.into_result() {
+                        let defunct: Vec<&client::SessionInfo> = list
+                            .sessions
+                            .iter()
+                            .filter(|s| s.status == "Defunct")
+                            .collect();
+                        if !defunct.is_empty() {
+                            println!();
+                            println!(
+                                "Defunct:   {} sandbox(es) failed to boot -- run `capsem logs <name>`",
+                                defunct.len()
+                            );
+                            for s in &defunct {
+                                let name = s.name.as_deref().unwrap_or(&s.id);
+                                if let Some(err) = &s.last_error {
+                                    let last = err
+                                        .lines()
+                                        .rev()
+                                        .find(|line| !line.trim().is_empty())
+                                        .unwrap_or("(log empty)");
+                                    println!("  - {}: {}", name, last);
+                                } else {
+                                    println!("  - {}", name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             return Ok(());
         }
         Commands::Misc(MiscCommands::Start) => {
@@ -1056,6 +1099,32 @@ async fn main() -> Result<()> {
                     let uptime = format_uptime(s.uptime_secs);
                     println!("{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
                         s.id, name, s.status, ram, cpus, uptime);
+                    // Defunct rows: show the tail of process.log inline so
+                    // the user doesn't need a separate `capsem logs` call
+                    // to see why boot failed.
+                    if s.status == "Defunct" {
+                        if let Some(err) = &s.last_error {
+                            let last = err
+                                .lines()
+                                .rev()
+                                .find(|line| !line.trim().is_empty())
+                                .unwrap_or("(log empty)");
+                            println!("  ! {}", last);
+                            println!("  (`capsem logs {}` for full context)", s.id);
+                        }
+                    }
+                }
+                let defunct = resp
+                    .sessions
+                    .iter()
+                    .filter(|s| s.status == "Defunct")
+                    .count();
+                if defunct > 0 {
+                    println!();
+                    println!(
+                        "{} defunct sandbox(es). Run `capsem logs <name>` to debug.",
+                        defunct
+                    );
                 }
             }
         }

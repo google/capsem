@@ -25,6 +25,21 @@ pub struct PersistentVmEntry {
     pub description: Option<String>,
     #[serde(default)]
     pub suspended: bool,
+    /// `true` when the most recent boot of this VM died before reaching
+    /// ready (e.g. signed-manifest mismatch, asset hash drift, Apple VZ
+    /// entitlement missing). Cleared on the next successful boot. Used
+    /// by `capsem list` / `capsem status` to mark the VM `Defunct`
+    /// instead of the misleading `Stopped`, and by `capsem logs <id>`
+    /// to surface the preserved process.log. A crashed ephemeral VM has
+    /// no registry entry; for those the `-failed-*` session dir is the
+    /// only signal.
+    #[serde(default)]
+    pub defunct: bool,
+    /// Short tail of `process.log` from the last crash. Cached here so
+    /// `capsem list` / `capsem status` can describe the failure without
+    /// each tool re-reading the session dir on every call.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub checkpoint_path: Option<String>,
     /// User-provided env vars from /provision -- replayed on every resume so the
@@ -113,6 +128,8 @@ mod tests {
             forked_from: None,
             description: None,
             suspended: false,
+            defunct: false,
+            last_error: None,
             checkpoint_path: None,
             env: None,
         }

@@ -465,7 +465,22 @@ impl ServiceState {
             let _ = child.wait().await;
             info!(id_clone, "capsem-process exited, cleaning up");
             
-            // If this was a persistent VM and checkpoint.vzsave exists, mark it suspended
+            // An ephemeral VM's removal from the instances map below is
+            // the trigger for preserve_failed_session_dir; if `removed`
+            // is Some, the child exited without going through an
+            // explicit shutdown handler (crash / SIGTERM / OOM). For
+            // persistent VMs we also flip the registry's `defunct`
+            // flag + snapshot the process.log tail so `capsem list` /
+            // `status` show the failure instead of a silent "Stopped".
+            let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
+            let unexpected_exit = removed.is_some();
+
+            // Persistent-VM registry bookkeeping. Checkpoint takes
+            // precedence: a graceful suspend writes checkpoint.vzsave
+            // which we must honor regardless of whether the exit looked
+            // "unexpected". `defunct` only fires when the process died
+            // WITHOUT writing a checkpoint AND without an explicit
+            // shutdown handler removing the instance first.
             {
                 let mut registry = state_clone.persistent_registry.lock().unwrap();
                 if let Some(entry) = registry.data.vms.get_mut(&id_clone) {
@@ -474,31 +489,30 @@ impl ServiceState {
                         info!(id_clone, "Checkpoint file found, marking VM as suspended");
                         entry.suspended = true;
                         entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
-                        if let Err(e) = registry.save() {
-                            error!(id_clone, "failed to save persistent registry: {e}");
-                        }
+                        entry.defunct = false;
+                        entry.last_error = None;
                     } else {
-                        // Ensure it's not stuck in a suspended state if it crashed or was stopped manually
                         entry.suspended = false;
                         entry.checkpoint_path = None;
-                        if let Err(e) = registry.save() {
-                            error!(id_clone, "failed to save persistent registry: {e}");
+                        if unexpected_exit {
+                            entry.defunct = true;
+                            entry.last_error = Some(read_process_log_tail(&session_dir_clone, 20));
+                        } else {
+                            // Graceful stop / delete path -- not a crash.
+                            entry.defunct = false;
+                            entry.last_error = None;
                         }
+                    }
+                    if let Err(e) = registry.save() {
+                        error!(id_clone, "failed to save persistent registry: {e}");
                     }
                 }
             }
 
-            // If the VM was ephemeral and died without going through
-            // handle_stop / handle_run / handle_purge / handle_delete
-            // (crash, SIGTERM, OOM), nothing else will ever touch its
-            // session dir. Those explicit handlers all call
-            // shutdown_vm_process which removes the entry from the map
-            // BEFORE this handler fires -- so when `removed` is Some,
-            // we're in the "died unexpectedly" case by definition.
-            // That's exactly when we want to preserve process.log /
-            // mcp-aggregator.stderr.log / serial.log / session.db for
-            // post-mortem, rather than silently `remove_dir_all`.
-            let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
+            // Ephemeral session dirs: preserve on unexpected exit so
+            // process.log / mcp-aggregator.stderr.log / serial.log /
+            // session.db survive for post-mortem. `find_failed_session_dir`
+            // + handle_logs surface them to `capsem logs`.
             if let Some(info) = removed {
                 tracing::warn!(id_clone, "child exited unexpectedly (no explicit shutdown), preserving session dir");
                 if !info.persistent {
@@ -523,6 +537,8 @@ impl ServiceState {
                 forked_from: from.clone(),
                 description: description.clone(),
                 suspended: false,
+                defunct: false,
+                last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
             })?;
@@ -725,6 +741,52 @@ impl ServiceState {
             asset_version: "dev".to_string(),
         })
     }
+}
+
+/// Read the last `n` lines of `<session_dir>/process.log`. Returns a
+/// placeholder string when the log is absent or unreadable, so callers
+/// can always embed SOMETHING meaningful in a user-facing error.
+fn read_process_log_tail(session_dir: &std::path::Path, n: usize) -> String {
+    let log_path = session_dir.join("process.log");
+    let content = match std::fs::read_to_string(&log_path) {
+        Ok(c) => c,
+        Err(e) => return format!("(could not read {}: {e})", log_path.display()),
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    let tail = if lines.len() > n {
+        &lines[lines.len() - n..]
+    } else {
+        &lines[..]
+    };
+    tail.join("\n")
+}
+
+/// Find the most recent `sessions/<id>-failed-<suffix>/` directory for a
+/// given VM id. Returns `None` when no failed session has been preserved
+/// (e.g. the VM id is simply unknown). Used by `handle_logs` so a user
+/// running `capsem logs <id>` after a boot crash sees the logs that
+/// `preserve_failed_session_dir` saved instead of a 404.
+fn find_failed_session_dir(run_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
+    let sessions_dir = run_dir.join("sessions");
+    let entries = std::fs::read_dir(&sessions_dir).ok()?;
+    let prefix = format!("{id}-failed-");
+    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        let mtime = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        match &best {
+            Some((_, existing)) if *existing >= mtime => {}
+            _ => best = Some((path, mtime)),
+        }
+    }
+    best.map(|(p, _)| p)
 }
 
 use axum::http::StatusCode;
@@ -1114,6 +1176,8 @@ async fn handle_fork(
             forked_from: Some(id.clone()),
             description: payload.description.clone(),
             suspended: false,
+            defunct: false,
+            last_error: None,
             checkpoint_path: None,
             env: None,
         }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1168,7 +1232,62 @@ async fn handle_provision(
 
     match provision_result {
         Ok(_) => {
+            // Wait briefly for either the `.ready` sentinel or the
+            // child-exit handler to remove the VM from the instances
+            // map (indicating a boot crash). Without this poll, `capsem
+            // create` prints the VM id and exits 0 while the guest is
+            // already dead -- the user then runs `capsem list`, sees
+            // "Stopped", and has no idea why. Polling here and
+            // returning the tail of process.log makes failures loud,
+            // directly in the CLI output.
+            //
+            // 5s is enough to catch synchronous boot failures (missing
+            // asset, signed-manifest mismatch, Apple VZ entitlement
+            // missing -- all < 1s) without penalizing slow-but-valid
+            // boots. Timing out returns success; the user can then
+            // follow up with `capsem logs` / status.
             let uds_path = state.instance_socket_path(&id);
+            let ready_path = uds_path.with_extension("ready");
+            let deadline =
+                tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            let crash_detected = loop {
+                if ready_path.exists() {
+                    break false;
+                }
+                let still_alive =
+                    state.instances.lock().unwrap().contains_key(&id);
+                if !still_alive {
+                    break true;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    break false; // still booting -- give the user the id
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            };
+            if crash_detected {
+                // Prefer the persistent entry's cached last_error (already
+                // computed by the child-exit handler) to avoid re-reading
+                // the log; fall back to find_failed_session_dir for
+                // ephemeral VMs whose dir was renamed to `-failed-*`.
+                let cached = {
+                    let registry = state.persistent_registry.lock().unwrap();
+                    registry.get(&id).and_then(|e| e.last_error.clone())
+                };
+                let tail = cached.unwrap_or_else(|| {
+                    match find_failed_session_dir(&state.run_dir, &id) {
+                        Some(dir) => read_process_log_tail(&dir, 20),
+                        None => "(no preserved log found)".to_string(),
+                    }
+                });
+                error!(id, "capsem-process exited before reaching ready");
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "sandbox {id} failed to boot. process.log tail:\n\n{tail}\n\n\
+                         (full logs: `capsem logs {id}`)"
+                    ),
+                ));
+            }
             Ok(Json(ProvisionResponse { id, uds_path: Some(uds_path) }))
         }
         Err(e) => {
@@ -1228,13 +1347,22 @@ async fn handle_list(
         }
     }
 
-    // Stopped/Suspended persistent VMs (not in instances map)
+    // Stopped/Suspended/Defunct persistent VMs (not in instances map).
+    // `Defunct` surfaces a boot failure so users see the problem in
+    // `capsem list` instead of a misleading "Stopped" -- last_error
+    // carries the tail of process.log for one-line diagnosis.
     {
         let registry = state.persistent_registry.lock().unwrap();
         let instances = state.instances.lock().unwrap();
         for entry in registry.list() {
             if !instances.contains_key(&entry.name) {
-                let status = if entry.suspended { "Suspended" } else { "Stopped" };
+                let status = if entry.defunct {
+                    "Defunct"
+                } else if entry.suspended {
+                    "Suspended"
+                } else {
+                    "Stopped"
+                };
                 let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
                 info.name = Some(entry.name.clone());
                 info.ram_mb = Some(entry.ram_mb);
@@ -1242,6 +1370,9 @@ async fn handle_list(
                 info.version = Some(entry.base_version.clone());
                 info.forked_from = entry.forked_from.clone();
                 info.description = entry.description.clone();
+                if entry.defunct {
+                    info.last_error = entry.last_error.clone();
+                }
                 sandboxes.push(info);
             }
         }
@@ -1294,11 +1425,17 @@ async fn handle_info(
         }
     }
 
-    // Check stopped/suspended persistent VMs
+    // Check stopped/suspended/defunct persistent VMs
     {
         let registry = state.persistent_registry.lock().unwrap();
         if let Some(entry) = registry.get(&id) {
-            let status = if entry.suspended { "Suspended" } else { "Stopped" };
+            let status = if entry.defunct {
+                "Defunct"
+            } else if entry.suspended {
+                "Suspended"
+            } else {
+                "Stopped"
+            };
             let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
             info.name = Some(entry.name.clone());
             info.ram_mb = Some(entry.ram_mb);
@@ -1306,6 +1443,9 @@ async fn handle_info(
             info.version = Some(entry.base_version.clone());
             info.forked_from = entry.forked_from.clone();
             info.description = entry.description.clone();
+            if entry.defunct {
+                info.last_error = entry.last_error.clone();
+            }
             info.size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
             return Ok(Json(info));
         }
@@ -1352,9 +1492,24 @@ async fn handle_logs(
             i.session_dir.clone()
         } else {
             let registry = state.persistent_registry.lock().unwrap();
-            registry.get(&id)
-                .map(|e| e.session_dir.clone())
-                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+            match registry.get(&id).map(|e| e.session_dir.clone()) {
+                Some(dir) => dir,
+                None => {
+                    // VM might have crashed on boot. preserve_failed_session_dir
+                    // renames `sessions/<id>` to `sessions/<id>-failed-<suffix>`,
+                    // so the most recent `<id>-failed-*` still has the logs the
+                    // user needs to debug the crash. Without this branch
+                    // `capsem logs <id>` just returns 404 after a boot failure,
+                    // which is exactly when logs matter most.
+                    match find_failed_session_dir(&state.run_dir, &id) {
+                        Some(dir) => dir,
+                        None => return Err(AppError(
+                            StatusCode::NOT_FOUND,
+                            format!("sandbox not found: {id}"),
+                        )),
+                    }
+                }
+            }
         }
     };
 
@@ -2444,6 +2599,8 @@ async fn handle_persist(
             forked_from: forked_from.clone(),
             description: None,
             suspended: false,
+            defunct: false,
+            last_error: None,
             checkpoint_path: None,
             env: env.clone(),
         }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

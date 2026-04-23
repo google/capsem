@@ -110,6 +110,12 @@ pub struct SandboxInfo {
     pub total_file_events: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
+    /// Short tail of `process.log` from the last failed boot. Populated
+    /// only when `status == "Defunct"`. Renders in `capsem list` /
+    /// `capsem status` so a crashed VM tells the user *why* without
+    /// requiring a separate `capsem logs <id>` round-trip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
 }
 
 impl SandboxInfo {
@@ -139,6 +145,7 @@ impl SandboxInfo {
             denied_requests: None,
             total_file_events: None,
             model_call_count: None,
+            last_error: None,
         }
     }
 }
