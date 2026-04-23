@@ -360,7 +360,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             #[cfg(target_os = "macos")]
                             let _ = capsem_core::hypervisor::apple_vz::run_on_main_thread(move || { v_m.blocking_lock().stop() });
                             #[cfg(not(target_os = "macos"))]
-                            v_m.blocking_lock().stop();
+                            let _ = v_m.blocking_lock().stop();
                         }).await;
                         std::process::exit(0);
                     });
