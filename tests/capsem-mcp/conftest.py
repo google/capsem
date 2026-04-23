@@ -264,7 +264,7 @@ def shared_vm(capsem_service):
 
 
 @pytest.fixture
-def fresh_vm(mcp_session):
+def fresh_vm(request, mcp_session):
     """Factory: creates a uniquely named VM, deletes it on teardown."""
     created = []
 
@@ -276,6 +276,11 @@ def fresh_vm(mcp_session):
         return vm_name
 
     yield _create
+
+    from tests.conftest import FAILED_NODEIDS
+    if request.node.nodeid in FAILED_NODEIDS:
+        print(f"\n@@@ Skipping cleanup for {created} due to failure", file=sys.stderr)
+        return
 
     for vm_id in created:
         try:

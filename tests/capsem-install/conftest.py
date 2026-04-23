@@ -123,6 +123,20 @@ def _kill_service() -> None:
         try:
             pid = int(pidfile.read_text().strip())
             os.kill(pid, signal.SIGTERM)
+            
+            # Bounded wait + SIGKILL fallback
+            start = time.time()
+            while time.time() - start < 5:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.2)
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         except (ValueError, ProcessLookupError, PermissionError):
             pass
         pidfile.unlink(missing_ok=True)
