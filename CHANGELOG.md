@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1776980020] - 2026-04-23
+
 ### Security
 - **Verify manifest signatures at boot before trusting asset hashes.**
   The previous commit wired asset hash verification to the on-disk
