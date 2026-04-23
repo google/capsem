@@ -1427,8 +1427,19 @@ async fn send_ipc_command(uds_path: &std::path::Path, cmd: ServiceToProcess, tim
 /// Falls back to IPC Ping if the sentinel never appears (defensive).
 async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Result<(), String> {
     let ready_path = uds_path.with_extension("ready");
+    // Override the PollOpts::new defaults (50ms / 500ms): VM ready-time is
+    // sub-second in the common case and the sentinel check is a single stat,
+    // so 500ms max_delay overshoots readiness by ~500ms and blows the
+    // exec_ready / boot_ready latency gates. Peer callers (service-connect,
+    // gateway-ready) wait for remote processes with seconds-scale startup
+    // where 500ms is appropriate; this poll is different.
+    let opts = capsem_core::poll::PollOpts {
+        initial_delay: std::time::Duration::from_millis(5),
+        max_delay: std::time::Duration::from_millis(50),
+        ..capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
+    };
     capsem_core::poll::poll_until(
-        capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs)),
+        opts,
         || {
             let ready = ready_path.clone();
             async move {

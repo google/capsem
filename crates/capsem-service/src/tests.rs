@@ -68,6 +68,7 @@ fn make_test_state() -> Arc<ServiceState> {
         manifest: None,
         current_version: "0.0.0".into(),
         magika: test_magika(),
+        save_restore_lock: tokio::sync::Mutex::new(()),
     })
 }
 
@@ -263,6 +264,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         manifest: None,
         current_version: "0.0.0".into(),
         magika: test_magika(),
+        save_restore_lock: tokio::sync::Mutex::new(()),
     })
 }
 
@@ -622,6 +624,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         manifest: None,
         current_version: "0.0.0".into(),
         magika: test_magika(),
+        save_restore_lock: tokio::sync::Mutex::new(()),
     });
     (state, dir)
 }
@@ -1095,6 +1098,7 @@ fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<ServiceState>
         manifest: None,
         current_version: "0.0.0".into(),
         magika: test_magika(),
+        save_restore_lock: tokio::sync::Mutex::new(()),
     });
     (state, dir)
 }
@@ -1357,4 +1361,35 @@ fn download_nonexistent_file_resolve_ok_but_not_exists() {
     assert!(result.is_ok());
     let (_, resolved) = result.unwrap();
     assert!(!resolved.exists());
+}
+
+// wait_for_vm_ready polls a cheap local sentinel file. Typical VM boot
+// ready-time is sub-second, so the backoff must not overshoot readiness
+// by hundreds of ms -- that shows up directly in provision->exec latency.
+#[tokio::test]
+async fn wait_for_vm_ready_detects_ready_within_tight_overshoot() {
+    let dir = tempfile::tempdir().unwrap();
+    let uds_path = dir.path().join("vm.sock");
+    let ready_path = uds_path.with_extension("ready");
+
+    // Simulate a VM that becomes ready ~200ms after provision. Real VM
+    // boots land in the 400-700ms range, so 200ms is a conservative stand-in.
+    let ready_clone = ready_path.clone();
+    let creator = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        std::fs::write(&ready_clone, b"").unwrap();
+    });
+
+    let start = std::time::Instant::now();
+    wait_for_vm_ready(&uds_path, 30).await.expect("ready should be detected");
+    let elapsed_ms = start.elapsed().as_millis();
+    creator.await.unwrap();
+
+    // Overshoot budget: a tight poll curve should catch the sentinel
+    // within ~100ms of it appearing. A 500ms max_delay would miss the
+    // 200ms creation and catch it at ~350ms instead.
+    assert!(
+        elapsed_ms < 300,
+        "wait_for_vm_ready overshot: {elapsed_ms}ms (ready created at ~200ms, budget 300ms)"
+    );
 }

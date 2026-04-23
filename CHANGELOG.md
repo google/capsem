@@ -62,6 +62,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **`wait_for_vm_ready` backoff overshot VM ready-time by ~500ms,
+  regressing every `provision -> exec-ready` wait.** A recent alignment
+  of `wait_for_vm_ready` onto `PollOpts::new`'s project-wide defaults
+  (50ms initial / 500ms max) was correct for peer pollers that wait on
+  remote processes with seconds-scale startup, but wrong for this hot
+  path: the ready-sentinel is a cheap local `stat` on a sub-second
+  latency gate, so with max_delay=500ms the exponential curve lands
+  attempts at t=50/150/350/750/1250ms and misses a VM that becomes
+  ready at t~=550ms until the next 500ms boundary. Visible as
+  `test_avg_exec_latency_3_concurrent_vms` / `test_lifecycle_benchmark`
+  (exec_ready mean ~570ms -> ~1287ms) and `test_fork_benchmark`
+  boot_ready mean (~680ms -> ~784ms). Restored the tight backoff
+  (5ms/50ms) inline on this one call site, documenting why it diverges
+  from `PollOpts::new` defaults. Covered by
+  `crates/capsem-service/src/tests.rs::
+  wait_for_vm_ready_detects_ready_within_tight_overshoot`, which
+  creates a `.ready` file after 200ms and asserts detection under
+  300ms.
+
 - **Suspend/resume: sibling-VM save_state overlap corrupted the
   persistent overlay.** Apple's Virtualization.framework does not
   tolerate overlapping `saveMachineStateToURL` /
