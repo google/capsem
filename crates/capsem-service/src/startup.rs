@@ -77,6 +77,70 @@ fn parse_version_body(response: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Host-wide flock guarding Apple VZ save_state / restore_state so the
+/// serialization reaches across sibling `capsem-service` processes (e.g.
+/// pytest-xdist `-n 4` workers).
+///
+/// The existing `ServiceState::save_restore_lock` (`tokio::sync::Mutex<()>`)
+/// only serializes inside one service -- that's fine for production because
+/// a deployed host always runs exactly one service per user. Under the test
+/// harness four services coexist, each with its own tokio mutex, so a
+/// sibling worker's save_state can still overlap ours. Apple's VZ framework
+/// does not tolerate that overlap; the victim VM comes back corrupted
+/// ("susp-... never became exec-ready after warm resume"). See
+/// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
+///
+/// Lock file lives at `/tmp/capsem-vz-save-restore-<uid>.lock` -- outside
+/// any `CAPSEM_HOME`/`CAPSEM_RUN_DIR` override so every sibling service
+/// on the same host agrees on one path, and scoped by uid so multi-user
+/// hosts don't collide. `/tmp` is always writable and survives a suspend;
+/// the flock releases automatically on crash (fd close).
+pub struct VzHostLock {
+    _flock: Flock<std::fs::File>,
+}
+
+impl VzHostLock {
+    fn lock_path() -> std::path::PathBuf {
+        let uid = unsafe { nix::libc::getuid() };
+        std::path::PathBuf::from(format!("/tmp/capsem-vz-save-restore-{uid}.lock"))
+    }
+
+    /// Acquire the host-wide lock, waiting up to `timeout` for a sibling
+    /// service to release it. Returns `Ok(Some(lock))` on success,
+    /// `Ok(None)` on timeout (caller decides whether to fail or proceed).
+    pub fn acquire(timeout: Duration) -> Result<Option<Self>> {
+        let path = Self::lock_path();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let file = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(&path)
+                .with_context(|| {
+                    format!("failed to open vz host lock {}", path.display())
+                })?;
+            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+                Ok(flock) => return Ok(Some(Self { _flock: flock })),
+                Err((_file, nix::errno::Errno::EWOULDBLOCK)) => {
+                    if Instant::now() >= deadline {
+                        return Ok(None);
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err((_file, e)) => {
+                    return Err(anyhow::anyhow!(
+                        "flock failed on {}: {}",
+                        path.display(),
+                        e
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// A filesystem-held advisory lock (flock) guarding service startup. Dropping
 /// this handle releases the lock (fd close or explicit LOCK_UN) -- so a crash
 /// during startup does NOT leave the lock held.

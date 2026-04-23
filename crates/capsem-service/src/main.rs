@@ -2089,6 +2089,37 @@ async fn handle_history_transcript(
     }))
 }
 
+/// Acquire the host-wide VZ save/restore flock (`startup::VzHostLock`)
+/// from an async context. The underlying `flock(2)` syscall is blocking
+/// and can wait on a sibling service; wrap in `spawn_blocking` so we
+/// don't stall a tokio worker.
+///
+/// Default wait budget is 60s -- the longest single suspend under `-n 4`
+/// test load observed is ~15s, so 60s absorbs the typical p99. Returning
+/// 503 on timeout tells the caller "try again" instead of blocking
+/// indefinitely.
+async fn acquire_vz_host_lock() -> Result<startup::VzHostLock, AppError> {
+    let result = tokio::task::spawn_blocking(|| {
+        startup::VzHostLock::acquire(std::time::Duration::from_secs(60))
+    })
+    .await
+    .map_err(|e| AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("vz host lock task panicked: {e}"),
+    ))?;
+    match result {
+        Ok(Some(guard)) => Ok(guard),
+        Ok(None) => Err(AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "another process holds the Apple VZ save/restore lock; retry shortly".into(),
+        )),
+        Err(e) => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("vz host lock acquire failed: {e:#}"),
+        )),
+    }
+}
+
 /// Wait for a process to exit, force-killing after timeout.
 async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
     if pid == 0 {
@@ -2196,6 +2227,9 @@ async fn handle_suspend(
     // managed by this service. Held for the whole handler; released when
     // the child has exited and the checkpoint is durable.
     let _vz_guard = state.save_restore_lock.lock().await;
+    // Plus a host-wide flock so serialization survives pytest-xdist's
+    // per-worker `capsem-service` processes. See `VzHostLock`.
+    let _vz_host_guard = acquire_vz_host_lock().await?;
 
     let (uds_path, pid) = {
         let mut instances = state.instances.lock().unwrap();
@@ -2347,6 +2381,7 @@ async fn handle_resume(
     // spawn and the readiness sentinel for a sibling save_state not to
     // overlap with the restoreMachineStateFromURL call.
     let _vz_guard = state.save_restore_lock.lock().await;
+    let _vz_host_guard = acquire_vz_host_lock().await?;
 
     match state.resume_sandbox(&name, None, None) {
         Ok(id) => {
