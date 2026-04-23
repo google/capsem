@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1776981476] - 2026-04-23
+
+### Fixed (CI)
+- test-install runner now installs libgtk-3-dev + libwebkit2gtk-4.1-dev
+  + libayatana-appindicator3-dev + librsvg2-dev + libxdo-dev + libssl-dev
+  so `_build-host` can `cargo build` the tray / tauri-adjacent crates.
+
+
 ## [1.0.1776980282] - 2026-04-23
 
 ## [1.0.1776980020] - 2026-04-23
