@@ -275,6 +275,24 @@ async fn handle_token(
     Json(serde_json::json!({ "token": state.token })).into_response()
 }
 
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,7 +433,7 @@ mod tests {
             .layer(
                 tower_http::cors::CorsLayer::new()
                     .allow_origin(AllowOrigin::predicate(|origin, _| {
-                        origin.to_str().map_or(false, |s| {
+                        origin.to_str().is_ok_and(|s| {
                             s.starts_with("http://localhost")
                                 || s.starts_with("http://127.0.0.1")
                                 || s.starts_with("https://localhost")
@@ -630,23 +648,5 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(resp.status(), http::StatusCode::OK);
-    }
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = tokio::signal::ctrl_c();
-    #[cfg(unix)]
-    {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to register SIGTERM handler");
-        tokio::select! {
-            _ = ctrl_c => {}
-            _ = sigterm.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        ctrl_c.await.ok();
     }
 }

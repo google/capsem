@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn valid_max_length_id() {
-        let id: String = std::iter::repeat('a').take(64).collect();
+        let id = "a".repeat(64);
         assert!(validate_vm_id(&id).is_ok());
     }
 
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn rejects_too_long_id() {
-        let id: String = std::iter::repeat('a').take(65).collect();
+        let id = "a".repeat(65);
         assert!(validate_vm_id(&id).is_err());
     }
 
@@ -810,7 +810,7 @@ mod tests {
                     // Wait for client's "ready" text
                     while let Some(Ok(msg)) = read.next().await {
                         match msg {
-                            TungsteniteMessage::Text(t) if t.to_string() == "ready" => {
+                            TungsteniteMessage::Text(t) if t == "ready" => {
                                 // Now send binary and ping from process side
                                 write
                                     .send(TungsteniteMessage::Binary(vec![10, 20, 30].into()))
@@ -853,7 +853,7 @@ mod tests {
                 Ok(Some(Ok(TungsteniteMessage::Ping(_)))) => {
                     // Ping relayed from process
                 }
-                Ok(Some(Ok(TungsteniteMessage::Text(t)))) if t.to_string() == "done" => {
+                Ok(Some(Ok(TungsteniteMessage::Text(t)))) if t == "done" => {
                     got_text = true;
                     break;
                 }
