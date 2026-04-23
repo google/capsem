@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1776982455] - 2026-04-24
+
+### Fixed (CI)
+- install-test container: chown full /src/frontend (not just node_modules)
+  so vite/astro temp writes work when runner uid (1001) != container uid (1000).
+
 ## [1.0.1776981476] - 2026-04-23
 
 ### Fixed (CI)

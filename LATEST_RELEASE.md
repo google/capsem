@@ -1,6 +1,5 @@
-version: 1.0.1776981476
+version: 1.0.1776982455
 ---
 ### Fixed (CI)
-- test-install runner now installs libgtk-3-dev + libwebkit2gtk-4.1-dev
-  + libayatana-appindicator3-dev + librsvg2-dev + libxdo-dev + libssl-dev
-  so `_build-host` can `cargo build` the tray / tauri-adjacent crates.
+- install-test container: chown full /src/frontend (not just node_modules)
+  so vite/astro temp writes work when runner uid (1001) != container uid (1000).
