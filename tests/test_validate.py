@@ -797,6 +797,8 @@ class TestE302:
         (artifacts / "capsem-doctor").write_text("#!/bin/sh")
         (artifacts / "capsem-bench").write_text("#!/bin/sh")
         (artifacts / "snapshots").write_text("#!/usr/bin/env python3")
+        (artifacts / "capsem_bench").mkdir()
+        (artifacts / "capsem_bench" / "__init__.py").write_text("")
         diags_dir = artifacts / "diagnostics"
         diags_dir.mkdir()
         (diags_dir / "conftest.py").write_text("# test")

@@ -61,11 +61,6 @@ def enforce_guest_binary_perms(paths: list[Path]) -> None:
             raise FileNotFoundError(p)
         os.chmod(p, 0o555)
 
-# Scripts/tools that must be in rootfs build context (not cross-compiled Rust).
-ROOTFS_ARTIFACTS = ["capsem-doctor", "capsem-bench", "snapshots"]
-ROOTFS_ARTIFACT_DIRS = ["capsem_bench", "diagnostics"]
-
-
 def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
     arch = config.build.architectures[arch_name]
@@ -765,7 +760,7 @@ def prepare_build_context(
         if diag_src.is_dir():
             shutil.copytree(str(diag_src), str(diag_dst), dirs_exist_ok=True)
         # Rootfs artifact scripts (doctor, bench, snapshots, etc.)
-        for name in ROOTFS_ARTIFACTS:
+        for name in ROOTFS_SCRIPTS:
             src = artifacts / name
             if src.is_file():
                 shutil.copy2(str(src), str(context_dir / name))

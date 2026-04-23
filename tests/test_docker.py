@@ -16,7 +16,7 @@ import pytest
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import (
     GUEST_BINARIES,
-    ROOTFS_ARTIFACTS,
+    ROOTFS_SCRIPTS,
     build_version_script,
     container_compile_agent,
     cross_compile_agent,
@@ -109,8 +109,8 @@ class TestRenderRootfs:
         assert "snapshots" in rendered_arm64
 
     def test_rootfs_includes_all_artifacts(self, rendered_arm64):
-        """Every ROOTFS_ARTIFACTS entry must appear as a COPY line."""
-        for artifact in ROOTFS_ARTIFACTS:
+        """Every ROOTFS_SCRIPTS entry must appear as a COPY line."""
+        for artifact in ROOTFS_SCRIPTS:
             assert f"COPY {artifact}" in rendered_arm64, (
                 f"{artifact} missing from rootfs Dockerfile"
             )
@@ -1245,7 +1245,7 @@ class TestContainerCompileAgentShellScript:
 class TestPrepareBuildContextArtifacts:
     """Tests for rootfs artifact handling in prepare_build_context.
 
-    Verifies that ROOTFS_ARTIFACTS entries are copied when present and
+    Verifies that ROOTFS_SCRIPTS entries are copied when present and
     silently skipped when missing, and that directory artifacts (diagnostics,
     capsem_bench) behave the same way.
     """
@@ -1261,7 +1261,7 @@ class TestPrepareBuildContextArtifacts:
         (config / "capsem-ca.crt").write_text("fake cert")
         for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
             (artifacts / name).write_text(f"content of {name}")
-        for name in ROOTFS_ARTIFACTS:
+        for name in ROOTFS_SCRIPTS:
             (artifacts / name).write_text(f"content of {name}")
         diag = artifacts / "diagnostics"
         diag.mkdir()
@@ -1274,7 +1274,7 @@ class TestPrepareBuildContextArtifacts:
         return repo
 
     def test_missing_rootfs_artifact_silently_skipped(self, real_config, fake_repo, tmp_path):
-        # Remove one ROOTFS_ARTIFACT from fake repo
+        # Remove one ROOTFS_SCRIPT from fake repo
         (fake_repo / "guest" / "artifacts" / "snapshots").unlink()
         ctx = tmp_path / "ctx"
         ctx.mkdir()
@@ -1288,7 +1288,7 @@ class TestPrepareBuildContextArtifacts:
         ctx = tmp_path / "ctx"
         ctx.mkdir()
         prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
-        for name in ROOTFS_ARTIFACTS:
+        for name in ROOTFS_SCRIPTS:
             assert (ctx / name).is_file(), f"{name} not copied to build context"
 
     def test_missing_diagnostics_dir_no_crash(self, real_config, fake_repo, tmp_path):
@@ -1307,18 +1307,18 @@ class TestPrepareBuildContextArtifacts:
 
 
 class TestRootfsArtifactConstants:
-    """Consistency checks for ROOTFS_ARTIFACTS and ROOTFS_ARTIFACT_DIRS."""
+    """Consistency checks for ROOTFS_SCRIPTS and ROOTFS_SCRIPT_DIRS."""
 
     def test_rootfs_artifacts_no_duplicates(self):
-        assert len(ROOTFS_ARTIFACTS) == len(set(ROOTFS_ARTIFACTS))
+        assert len(ROOTFS_SCRIPTS) == len(set(ROOTFS_SCRIPTS))
 
     def test_rootfs_artifact_dirs_no_duplicates(self):
-        from capsem.builder.docker import ROOTFS_ARTIFACT_DIRS
-        assert len(ROOTFS_ARTIFACT_DIRS) == len(set(ROOTFS_ARTIFACT_DIRS))
+        from capsem.builder.docker import ROOTFS_SCRIPT_DIRS
+        assert len(ROOTFS_SCRIPT_DIRS) == len(set(ROOTFS_SCRIPT_DIRS))
 
     def test_all_rootfs_artifacts_have_copy_in_template(self, rendered_arm64):
-        """Every ROOTFS_ARTIFACTS entry must have a COPY and a chmod line."""
-        for artifact in ROOTFS_ARTIFACTS:
+        """Every ROOTFS_SCRIPTS entry must have a COPY and a chmod line."""
+        for artifact in ROOTFS_SCRIPTS:
             assert f"COPY {artifact} " in rendered_arm64, (
                 f"{artifact} missing COPY line in Dockerfile.rootfs.j2"
             )

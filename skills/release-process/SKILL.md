@@ -48,7 +48,7 @@ preflight (30s) ──> build-assets (arm64 + x86_64, 10 min) ──> build-app-
 | `preflight` | macos-14 | -- | Fail-fast: Apple cert, Tauri key, notarization |
 | `build-assets` | ubuntu arm64 + x86_64 | preflight | Kernel + rootfs via Docker |
 | `test` | macos-14 | preflight | Unit tests + coverage, frontend, audit |
-| `build-app-macos` | macos-14 | preflight, build-assets | Tauri build, codesign, notarize, DMG |
+| `build-app-macos` | macos-14 | preflight, build-assets | Tauri `.app` build, companion binaries, `scripts/build-pkg.sh`, notarize + staple `.pkg` |
 | `build-app-linux` | ubuntu arm64 + x86_64 | preflight, build-assets | Tauri build, deb (+ AppImage on x86_64) |
 | `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Merge latest.json, sign manifest, GitHub release |
 
@@ -97,10 +97,23 @@ Fix: `scripts/fix_p12_legacy.sh` then `gh secret set APPLE_CERTIFICATE < private
 
 ### Notarization
 
-CI uses `--skip-stapling` (async). First-time can take hours. Verify locally:
+Shipping artifact on macOS is a **`.pkg`** (productbuild), not a `.dmg`. Flow:
+
+1. `cargo tauri build --bundles app --skip-stapling` -- builds `.app` only (Tauri skips stapling the inner app; we staple the outer `.pkg`).
+2. `scripts/build-pkg.sh` -- productbuilds `Capsem-$VERSION.pkg` with the `.app` + companion binaries + `manifest.json`. Heavy VM assets are downloaded on first use by the postinstall.
+3. `xcrun notarytool submit ... --wait --timeout 30m` -- synchronous.
+4. `xcrun stapler staple` + `xcrun stapler validate`.
+
+Verify credentials locally (before touching a tag):
 ```bash
 xcrun notarytool history --key private/apple-certificate/capsem.p8 --key-id KEY_ID --issuer ISSUER_ID
 ```
+
+**403 "A required agreement is missing or has expired"** -- Apple periodically refreshes the Developer Program License Agreement, Paid Apps Agreement, etc. Only the **Account Holder** (not Admin/Developer) can accept. Check banners at both:
+- https://developer.apple.com/account (Program License Agreement)
+- https://appstoreconnect.apple.com → Agreements, Tax, and Banking (Free/Paid Apps)
+
+Propagation can lag 1-5 min after accepting. `notarytool history` must return a list (possibly empty) before you tag -- the CI preflight step runs the same check and fails fast on 403.
 
 ## CI secrets
 
@@ -123,8 +136,10 @@ Local backups: `private/apple-certificate/` and `private/tauri/` (gitignored).
 ```bash
 gh release view vX.Y.Z
 gh release download vX.Y.Z --pattern manifest.json -D /tmp/verify
-gh release download vX.Y.Z --pattern '*.dmg' -D /tmp/verify
-hdiutil attach /tmp/verify/Capsem*.dmg -nobrowse -readonly
+gh release download vX.Y.Z --pattern '*.pkg' -D /tmp/verify
+pkgutil --check-signature /tmp/verify/Capsem-*.pkg
+spctl -a -vv -t install /tmp/verify/Capsem-*.pkg      # Gatekeeper accepts notarized+stapled
+xcrun stapler validate /tmp/verify/Capsem-*.pkg       # Staple ticket present
 ```
 
 ## Documentation site
