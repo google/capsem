@@ -229,6 +229,14 @@ exec +CMD: run-service
     {{cli_binary}} run "{{CMD}}"
 
 
+# Build kernel only for one arch (CI-facing primitive).
+build-kernel arch: _install-tools
+    uv run capsem-builder build guest/ --arch {{arch}} --template kernel --output {{assets_dir}}/
+
+# Build rootfs only for one arch (CI-facing primitive).
+build-rootfs arch: _install-tools
+    uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
+
 # VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch to build one.
 build-assets arch="": _install-tools _clean-stale
     #!/bin/bash

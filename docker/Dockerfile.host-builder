@@ -95,20 +95,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
 ENV CARGO_TARGET_DIR=/cargo-target
 ENV PKG_CONFIG_ALLOW_CROSS=1
 
-RUN mkdir -p /usr/local/cargo \
-    && cat > /usr/local/cargo/config.toml << 'CARGO_EOF'
-[target.x86_64-unknown-linux-gnu]
-linker = "x86_64-linux-gnu-gcc"
-
-[target.aarch64-unknown-linux-gnu]
-linker = "aarch64-linux-gnu-gcc"
-
-[target.aarch64-unknown-linux-musl]
-linker = "rust-lld"
-
-[target.x86_64-unknown-linux-musl]
-linker = "rust-lld"
-CARGO_EOF
+RUN mkdir -p /usr/local/cargo && printf '%s\n' \
+    '[target.x86_64-unknown-linux-gnu]' \
+    'linker = "x86_64-linux-gnu-gcc"' \
+    '' \
+    '[target.aarch64-unknown-linux-gnu]' \
+    'linker = "aarch64-linux-gnu-gcc"' \
+    '' \
+    '[target.aarch64-unknown-linux-musl]' \
+    'linker = "rust-lld"' \
+    '' \
+    '[target.x86_64-unknown-linux-musl]' \
+    'linker = "rust-lld"' \
+    > /usr/local/cargo/config.toml
 
 # ---- Extension point: macOS cross-compilation (future) ----
 # To add osxcross for macOS targets:
