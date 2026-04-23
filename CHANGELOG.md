@@ -62,6 +62,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **Signal-driven explicit cleanup for capsem-process background-thread
+  owners.** Companion fix to the `shutdown_lock` host-serialization
+  landed earlier on this branch: even with one teardown at a time, the
+  previous code relied on tokio-runtime-drop ordering to run
+  `DbWriter::Drop` (join writer thread + `PRAGMA
+  wal_checkpoint(TRUNCATE)`) and `FsMonitor` quiescence inside the
+  service's 1s SIGTERM-to-SIGKILL budget. Non-deterministic under any
+  unrelated slowdown (APFS fsync spike, busy writer queue, slow VZ
+  teardown) and still flaky on the observed
+  `test_wal_absent_after_clean_shutdown` failure (428512-byte WAL).
+  Fixed by hoisting the background-thread owners into a `Shutdown`
+  struct owned by `main()` so the SIGTERM handler can drain them
+  synchronously before calling `CFRunLoopStop`. New primitives:
+  `capsem_logger::DbWriter::shutdown_blocking(&self)` (Arc-safe,
+  idempotent -- switches `tx`/`join_handle` to
+  `std::sync::Mutex<Option<...>>` so callers holding any `Arc<DbWriter>`
+  can deterministically drain the writer thread; existing `Drop`
+  delegates to it), and
+  `capsem_core::fs_monitor::FsMonitor::shutdown_and_join(&self)` (signals
+  the event loop to flush and joins its worker thread). The handler
+  drains `FsMonitor` first (fs_events fan into DbWriter), then DbWriter,
+  both inside `tokio::task::spawn_blocking` so we don't stall a tokio
+  worker on the thread joins; `CFRunLoopStop` runs only after the drain
+  completes. Added `CAPSEM_TEST_SLOW_CHECKPOINT_MS` test-only env var in
+  `writer_loop` that inserts a sleep before the final checkpoint --
+  proves that explicit cleanup waits for the checkpoint where an
+  implicit Drop path would race the SIGKILL budget. Documented the
+  pattern in `/dev-rust-patterns` next to the host-serialization pattern.
+  Covered by four new `capsem-logger::writer` tests
+  (`shutdown_blocking_through_arc_flushes_wal`,
+  `shutdown_blocking_is_idempotent`, `write_after_shutdown_is_noop`,
+  `slow_checkpoint_hook_delays_shutdown`); the
+  `test_wal_absent_after_clean_shutdown` integration test now passes
+  clean under `-n 4` alongside the rest of `capsem-session-lifecycle`,
+  `capsem-cleanup`, `capsem-recovery`, `capsem-stress`, and the full
+  `capsem-service` suite.
+
 - **VM teardown races under load left `session.db-wal` non-empty after
   `capsem delete`.** `handle_delete`'s fast path SIGTERMs
   capsem-process and waits 1s for exit before escalating to SIGKILL.

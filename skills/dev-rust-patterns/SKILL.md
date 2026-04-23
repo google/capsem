@@ -135,6 +135,67 @@ When NOT to reach for it:
 - If the contention is per-VM (two handlers acting on the same VM), protect the VM entry in `instances: Mutex<HashMap<...>>` instead.
 - If the "contention" is really a durability race (writer thread hasn't flushed), the right fix is usually the signal-handler explicit-cleanup pattern below, not another serialization lock.
 
+### Signal-driven explicit cleanup for background-thread owners
+
+Any long-running Rust process that owns background threads (SQLite writer, notify PollWatcher, MCP aggregator subprocess, vsock relay) and runs under a bounded SIGTERM-to-SIGKILL budget must NOT rely on `Drop` + tokio-runtime-drop ordering to finish cleanup. On SIGTERM, hand owned resources to the signal handler and drain them synchronously BEFORE letting the main run loop return.
+
+Symptom when this is missing: under concurrent teardowns on one host, the service SIGKILLs a child mid-checkpoint or mid-flush. Visible as `session.db-wal` left non-empty, missing `fs_events` rows, dangling aggregator subprocesses. Works solo, fails under `-n 4`.
+
+Concrete primitives in this tree:
+
+- **`DbWriter::shutdown_blocking(&self)`** — takes the stored mpsc sender, joins the writer thread, runs the final `PRAGMA wal_checkpoint(TRUNCATE)`. Arc-safe: other `Arc<DbWriter>` clones remain valid but their writes become no-ops. Idempotent. Drop delegates to it.
+- **`FsMonitor::shutdown_and_join(&self)`** — sends on the shutdown channel so the event loop runs its final flush, then joins the thread. Must run BEFORE DbWriter shutdown, because fs_events fan into DbWriter.
+- **`CAPSEM_TEST_SLOW_CHECKPOINT_MS`** — test-only env var in `writer_loop` that inserts a sleep before the final checkpoint. Use in tests that need to distinguish explicit cleanup from implicit runtime-drop ordering.
+
+Canonical wiring in `crates/capsem-process/src/main.rs`:
+
+```rust
+struct Shutdown {
+    db: Option<Arc<DbWriter>>,
+    fs_monitor: Option<FsMonitor>,
+}
+
+impl Shutdown {
+    fn drain_blocking(&mut self) {
+        // fs_events fan into DbWriter -- flush fs_monitor first.
+        if let Some(m) = self.fs_monitor.take() { m.shutdown_and_join(); }
+        if let Some(db) = self.db.take() { db.shutdown_blocking(); }
+    }
+}
+
+// Populate as owners are constructed:
+shutdown.lock().await.db = Some(Arc::clone(&db));
+shutdown.lock().await.fs_monitor = Some(monitor);
+
+// Signal handler drains through spawn_blocking, then stops the run loop:
+rt.spawn(async move {
+    /* wait on SIGTERM/SIGINT */
+    let mut owned = std::mem::take(&mut *shutdown.lock().await);
+    let _ = tokio::task::spawn_blocking(move || owned.drain_blocking()).await;
+    unsafe { core_foundation_sys::runloop::CFRunLoopStop(...); }
+});
+```
+
+Key properties:
+
+1. **Deterministic order.** The drain order is explicit (fs_monitor -> db), not "whatever reverse-declaration-order Drop happens to give us after tokio aborts tasks."
+2. **Synchronous join.** The handler waits for each background thread to finish. No "hope the task finishes before the runtime drops."
+3. **Run loop stops last.** `CFRunLoopStop` (macOS) fires only after drain returns. Main returns afterwards; the remaining tokio-runtime drop is now a no-op fast path because the heavy work already completed.
+4. **Arc-safe shutdown APIs.** `shutdown_blocking(&self)` works through a shared `Arc<DbWriter>` — callers don't have to chase down every clone. Use `std::sync::Mutex<Option<Sender>>` internally; the hot-path `write()` clones the sender under the lock and releases it before `.await`.
+
+When to reach for this pattern:
+
+- The process has `std::thread::spawn` or `tokio::task::spawn_blocking` workers that run durability-critical work on shutdown (WAL checkpoint, queue flush, child-process wait).
+- A parent sends SIGTERM then SIGKILLs after a short, fixed budget.
+- Today's cleanup relies on Drop running inside tokio task abort — i.e., you can't draw a line between "cleanup finished" and "run loop exited."
+
+Call out when NOT to use it:
+
+- One-shot CLIs that exit on natural task completion (no run loop, no signal window).
+- Workers whose only side effects are in-memory (no durability to lose).
+
+When adding a new long-running process or a new background-thread owner, wire it through `Shutdown` from day one. Don't ship a new binary that "should be fine because Drop will run" — under load, Drop won't run in time.
+
 ## Logging
 
 - `tracing` crate with `FmtSpan::CLOSE` for timing spans

@@ -13,15 +13,43 @@ use capsem_core::{
     boot_vm, BootOptions, VirtioFsShare,
     VsockConnection,
 };
+use capsem_core::fs_monitor::FsMonitor;
+use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use tokio::net::UnixListener;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 
 use helpers::query_max_fs_event_id;
 use job_store::JobStore;
 use vsock::VsockOptions;
+
+/// Owns the background-thread resources that MUST drain before the main
+/// run loop stops. Populated by `run_async_main_loop` once DbWriter and
+/// FsMonitor are constructed, drained by the SIGTERM handler before it
+/// calls `CFRunLoopStop`. See the sprint doc at
+/// `sprints/explicit-shutdown-cleanup/` and /dev-rust-patterns
+/// "Signal-driven explicit cleanup".
+#[derive(Default)]
+struct Shutdown {
+    db: Option<Arc<DbWriter>>,
+    fs_monitor: Option<FsMonitor>,
+}
+
+impl Shutdown {
+    /// Drain in order: fs_events fan into DbWriter, so FsMonitor must
+    /// finish its final flush before the DbWriter runs its checkpoint.
+    /// Blocking — caller should run this from `spawn_blocking`.
+    fn drain_blocking(&mut self) {
+        if let Some(fs_monitor) = self.fs_monitor.take() {
+            fs_monitor.shutdown_and_join();
+        }
+        if let Some(db) = self.db.take() {
+            db.shutdown_blocking();
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -150,35 +178,53 @@ fn main() -> Result<()> {
         );
     }
 
+    let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown::default()));
+
     let trace_id_for_loop = trace_id.clone();
     let session_dir_for_loop = session_dir.clone();
+    let shutdown_for_loop = Arc::clone(&shutdown);
     rt.spawn(async move {
-        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm, trace_id_for_loop, session_dir_for_loop).await {
+        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm, trace_id_for_loop, session_dir_for_loop, shutdown_for_loop).await {
             error!("async loop failed: {e:#}");
             std::process::exit(1);
         }
     });
 
-    // Instrumentation: trace signals
+    // Signal-driven explicit cleanup. On SIGTERM/SIGINT, synchronously
+    // drain the background-thread owners in the `Shutdown` struct
+    // (FsMonitor -> DbWriter) BEFORE stopping the main run loop. Without
+    // this, teardown relies on tokio-runtime-drop ordering and can miss
+    // the service's 1s SIGKILL budget mid-checkpoint, leaving a dirty
+    // `session.db-wal`. See /dev-rust-patterns "Signal-driven explicit
+    // cleanup for background-thread owners".
+    let shutdown_for_sig = Arc::clone(&shutdown);
     rt.spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
-        tokio::select! {
-            _ = sigterm.recv() => {
-                tracing::warn!("capsem-process received SIGTERM");
-                #[cfg(target_os = "macos")]
-                unsafe {
-                    core_foundation_sys::runloop::CFRunLoopStop(core_foundation_sys::runloop::CFRunLoopGetMain());
-                }
-            }
-            _ = sigint.recv() => {
-                tracing::warn!("capsem-process received SIGINT");
-                #[cfg(target_os = "macos")]
-                unsafe {
-                    core_foundation_sys::runloop::CFRunLoopStop(core_foundation_sys::runloop::CFRunLoopGetMain());
-                }
-            }
+        let signal_name = tokio::select! {
+            _ = sigterm.recv() => "SIGTERM",
+            _ = sigint.recv() => "SIGINT",
+        };
+        tracing::warn!(signal = signal_name, "capsem-process received signal, draining background owners");
+
+        // Take the Shutdown struct out from under the async mutex so we
+        // can hand it to `spawn_blocking` for the synchronous join. The
+        // join itself blocks on thread handles, which we must not do on
+        // a tokio worker.
+        let mut owned = {
+            let mut guard = shutdown_for_sig.lock().await;
+            std::mem::take(&mut *guard)
+        };
+        let _ = tokio::task::spawn_blocking(move || {
+            owned.drain_blocking();
+        })
+        .await;
+        tracing::warn!(signal = signal_name, "background owners drained, stopping run loop");
+
+        #[cfg(target_os = "macos")]
+        unsafe {
+            core_foundation_sys::runloop::CFRunLoopStop(core_foundation_sys::runloop::CFRunLoopGetMain());
         }
     });
 
@@ -197,6 +243,7 @@ async fn run_async_main_loop(
     _sm: capsem_core::host_state::HostStateMachine,
     trace_id: String,
     session_dir: std::path::PathBuf,
+    shutdown: Arc<Mutex<Shutdown>>,
 ) -> Result<()> {
     let job_store = Arc::new(JobStore::new());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
@@ -204,24 +251,26 @@ async fn run_async_main_loop(
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 256)?);
+    // Register the DbWriter with the SIGTERM handler BEFORE any work that
+    // produces writes. If the signal fires before the workspace monitor
+    // starts, we still want a clean checkpoint.
+    shutdown.lock().await.db = Some(Arc::clone(&db));
 
     // Start host file monitor to record fs_events.
-    // _fs_monitor must live until the process exits to keep the watcher alive.
     let workspace_dir = session_dir.join("workspace");
-    let _fs_monitor = match capsem_core::fs_monitor::FsMonitor::start(
+    match capsem_core::fs_monitor::FsMonitor::start(
         workspace_dir.clone(),
         workspace_dir.clone(),
         Arc::clone(&db),
     ) {
         Ok(monitor) => {
             info!("host file monitor started");
-            Some(monitor)
+            shutdown.lock().await.fs_monitor = Some(monitor);
         }
         Err(e) => {
             error!("failed to start host file monitor: {e}");
-            None
         }
-    };
+    }
 
     // Load settings files once and derive everything from them.
     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();

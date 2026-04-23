@@ -45,12 +45,19 @@ pub enum WriteOp {
 /// Callers send `WriteOp` values through an mpsc channel. The writer thread
 /// blocks until ops arrive, drains the queue, and executes them in a single
 /// transaction for efficiency.
+///
+/// Shutdown is explicit-cleanup safe via `shutdown_blocking(&self)`: callers
+/// holding an `Arc<DbWriter>` can deterministically drop the stored sender
+/// and join the writer thread without waiting for `Drop` to run when the
+/// last Arc clone disappears. This matters under the 1s SIGTERM-to-SIGKILL
+/// budget that the service enforces on `capsem-process` teardown -- see
+/// /dev-rust-patterns "Signal-driven explicit cleanup".
 pub struct DbWriter {
-    /// Wrapped in Option so Drop can take+drop it BEFORE joining the thread.
-    /// Without this, Drop would deadlock: join waits for the thread, but the
-    /// thread waits for all Senders to drop, and self.tx drops AFTER Drop body.
-    tx: Option<tokio::sync::mpsc::Sender<WriteOp>>,
-    join_handle: Option<std::thread::JoinHandle<()>>,
+    /// Stored sender. `shutdown_blocking` takes it out; `write` clones it
+    /// under the lock and releases the lock before `.await` so hot-path
+    /// latency is unaffected. Cloning an mpsc::Sender is cheap (it's an Arc).
+    tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<WriteOp>>>,
+    join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
     db_path: PathBuf,
 }
 
@@ -76,8 +83,8 @@ impl DbWriter {
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
-            tx: Some(tx),
-            join_handle: Some(join_handle),
+            tx: std::sync::Mutex::new(Some(tx)),
+            join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path,
         })
     }
@@ -97,15 +104,20 @@ impl DbWriter {
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
-            tx: Some(tx),
-            join_handle: Some(join_handle),
+            tx: std::sync::Mutex::new(Some(tx)),
+            join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
         })
     }
 
+    /// Clone the stored sender so async work can happen outside the lock.
+    fn clone_sender(&self) -> Option<tokio::sync::mpsc::Sender<WriteOp>> {
+        self.tx.lock().unwrap().clone()
+    }
+
     /// Non-blocking send from async context. Yields if channel full (backpressure).
     pub async fn write(&self, op: WriteOp) {
-        if let Some(tx) = &self.tx {
+        if let Some(tx) = self.clone_sender() {
             if let Err(e) = tx.send(op).await {
                 warn!(error = %e, "db writer channel closed, dropping write op");
             }
@@ -114,7 +126,29 @@ impl DbWriter {
 
     /// Try to send without blocking. Returns false if the channel is full or closed.
     pub fn try_write(&self, op: WriteOp) -> bool {
-        self.tx.as_ref().is_some_and(|tx| tx.try_send(op).is_ok())
+        self.tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|tx| tx.try_send(op).is_ok())
+    }
+
+    /// Deterministically shut down the writer thread: drop the stored
+    /// sender and join. Safe to call through a shared `Arc<DbWriter>` --
+    /// other Arc clones stay valid but subsequent `write` calls become
+    /// no-ops. Idempotent. Blocks until the writer thread drains its queue
+    /// and runs the final `PRAGMA wal_checkpoint(TRUNCATE)`. Call from a
+    /// blocking thread (e.g. via `tokio::task::spawn_blocking`).
+    ///
+    /// Outstanding `write` callers that cloned the sender before this
+    /// method ran may still have Sender clones in flight; the join waits
+    /// for those clones to drop naturally as their `send().await` returns.
+    pub fn shutdown_blocking(&self) {
+        let _ = self.tx.lock().unwrap().take();
+        let handle = self.join_handle.lock().unwrap().take();
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
     }
 
     /// Open a read-only connection to the same DB file (WAL concurrent reader).
@@ -134,13 +168,7 @@ impl DbWriter {
 
 impl Drop for DbWriter {
     fn drop(&mut self) {
-        // Drop tx FIRST to unblock the writer thread's blocking_recv().
-        // Without this, join() below would deadlock: the thread waits for
-        // all Senders to drop, but field drops happen AFTER the Drop body.
-        self.tx.take();
-        if let Some(handle) = self.join_handle.take() {
-            let _ = handle.join();
-        }
+        self.shutdown_blocking();
     }
 }
 
@@ -167,6 +195,16 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
         // 3. Execute entire batch in a single transaction.
         if let Err(e) = execute_batch(&conn, &batch) {
             warn!(error = %e, count = batch.len(), "db write batch failed");
+        }
+    }
+
+    // Test hook: lets `test_wal_absent_after_clean_shutdown`-style tests
+    // simulate a slow checkpoint so the explicit-cleanup path can be
+    // distinguished from implicit tokio-runtime-drop ordering. Gated on
+    // an env var so it's a no-op in production.
+    if let Ok(ms) = std::env::var("CAPSEM_TEST_SLOW_CHECKPOINT_MS") {
+        if let Ok(ms) = ms.parse::<u64>() {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
         }
     }
 
@@ -830,6 +868,99 @@ mod tests {
             )
             .unwrap();
         assert_eq!(files, 12);
+    }
+
+    #[test]
+    fn shutdown_blocking_through_arc_flushes_wal() {
+        // Verifies the explicit-cleanup contract: callers holding
+        // Arc<DbWriter> can drain the writer thread synchronously through
+        // &self, without waiting for the last Arc clone to drop. This is
+        // the path taken by capsem-process's SIGTERM handler.
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("shutdown.db");
+        let writer = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        rt.block_on(async {
+            writer
+                .write(WriteOp::FileEvent(crate::events::FileEvent {
+                    timestamp: std::time::SystemTime::now(),
+                    action: crate::events::FileAction::Created,
+                    path: "/x".into(),
+                    size: Some(1),
+                }))
+                .await;
+        });
+
+        // Additional Arc clone stays alive across shutdown; the explicit
+        // shutdown must not require the clone to drop first.
+        let _keep = Arc::clone(&writer);
+        writer.shutdown_blocking();
+
+        let wal_path = dir.path().join("shutdown.db-wal");
+        if wal_path.exists() {
+            assert_eq!(
+                std::fs::metadata(&wal_path).unwrap().len(),
+                0,
+                "WAL must be checkpointed after shutdown_blocking"
+            );
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "durable write must survive shutdown_blocking");
+    }
+
+    #[test]
+    fn shutdown_blocking_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = DbWriter::open(&dir.path().join("idemp.db"), 16).unwrap();
+        writer.shutdown_blocking();
+        // Second call must not panic or double-join.
+        writer.shutdown_blocking();
+    }
+
+    #[test]
+    fn write_after_shutdown_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = DbWriter::open(&dir.path().join("no.db"), 16).unwrap();
+        writer.shutdown_blocking();
+        assert!(!writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
+            timestamp: std::time::SystemTime::now(),
+            action: crate::events::FileAction::Created,
+            path: "/after".into(),
+            size: None,
+        })));
+    }
+
+    #[test]
+    fn slow_checkpoint_hook_delays_shutdown() {
+        // Sets CAPSEM_TEST_SLOW_CHECKPOINT_MS on the spawned writer thread
+        // (env var is inherited by the thread). Asserts shutdown_blocking
+        // waits for the delayed checkpoint rather than returning early --
+        // which is precisely what an implicit runtime-drop path would fail
+        // to guarantee under a tight SIGKILL budget.
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: std::env::set_var is unsafe on 2024 edition -- single
+        // writer in this test, no concurrent readers.
+        unsafe { std::env::set_var("CAPSEM_TEST_SLOW_CHECKPOINT_MS", "200") };
+        let writer = DbWriter::open(&dir.path().join("slow.db"), 16).unwrap();
+        let start = std::time::Instant::now();
+        writer.shutdown_blocking();
+        let elapsed = start.elapsed();
+        unsafe { std::env::remove_var("CAPSEM_TEST_SLOW_CHECKPOINT_MS") };
+        assert!(
+            elapsed >= std::time::Duration::from_millis(150),
+            "shutdown_blocking must wait for slow checkpoint (elapsed={elapsed:?})"
+        );
+        let wal_path = dir.path().join("slow.db-wal");
+        if wal_path.exists() {
+            assert_eq!(std::fs::metadata(&wal_path).unwrap().len(), 0);
+        }
     }
 
     #[test]

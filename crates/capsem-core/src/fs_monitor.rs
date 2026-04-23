@@ -80,6 +80,12 @@ struct QueuedEvent {
 pub struct FsMonitor {
     _watcher: PollWatcher,
     shutdown_tx: mpsc::Sender<()>,
+    /// JoinHandle stored so `shutdown_and_join` can sequence "fs_monitor
+    /// fully flushed" before the caller tears down the DbWriter. Without
+    /// this, the pending-event flush at shutdown raced with the WAL
+    /// checkpoint -- the signal-driven explicit-cleanup pattern in
+    /// capsem-process relies on fs events landing before the checkpoint.
+    join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl FsMonitor {
@@ -107,18 +113,33 @@ impl FsMonitor {
         info!(dir = %watch_dir.display(), poll_ms = POLL_INTERVAL_MS,
               "host fs-monitor started (poll mode, FSEvents unreliable for VirtioFS)");
 
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()
-                .expect("fs_monitor runtime");
-            rt.block_on(Self::event_loop(event_rx, shutdown_rx, strip_prefix, db));
-        });
+        let join_handle = std::thread::Builder::new()
+            .name("capsem-fs-monitor".into())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .expect("fs_monitor runtime");
+                rt.block_on(Self::event_loop(event_rx, shutdown_rx, strip_prefix, db));
+            })
+            .expect("failed to spawn fs_monitor thread");
 
         Ok(Self {
             _watcher: watcher,
             shutdown_tx,
+            join_handle: std::sync::Mutex::new(Some(join_handle)),
         })
+    }
+
+    /// Signal the event loop to flush and exit, then block until the
+    /// worker thread has run its final flush into `DbWriter`. Idempotent.
+    /// Call from a blocking context (e.g. `tokio::task::spawn_blocking`).
+    pub fn shutdown_and_join(&self) {
+        let _ = self.shutdown_tx.blocking_send(());
+        let handle = self.join_handle.lock().unwrap().take();
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
     }
 
     /// Process notify events: queue on receive, flush on timer.
