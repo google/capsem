@@ -28,10 +28,29 @@ fi
 
 mkdir -p "$DST/$ARCH"
 
+# Short-circuit when ~/.capsem/assets is a symlink back to the repo's
+# assets/ (the dev-loop convenience set up by `just install` for the
+# hot-iteration flow). cp would otherwise exit 1 on every "identical
+# (not copied)" pair and kill the recipe under `set -e`.
+if [[ "$SRC" -ef "$DST" ]]; then
+    echo "Skipped sync: $DST resolves to $SRC (symlinked dev layout)"
+    exit 0
+fi
+
 cp "$SRC/manifest.json" "$DST/manifest.json.tmp"
 mv "$DST/manifest.json.tmp" "$DST/manifest.json"
 
-cp -f "$SRC/$ARCH"/* "$DST/$ARCH/"
+# Per-file copy so one "identical" pair doesn't kill the loop. Same-inode
+# pairs happen when individual files are hardlinked (APFS clonefile from a
+# prior `just install` run) or when the src/dst arch dir is symlinked.
+for src_file in "$SRC/$ARCH"/*; do
+    [[ -e "$src_file" ]] || continue
+    dst_file="$DST/$ARCH/$(basename "$src_file")"
+    if [[ "$src_file" -ef "$dst_file" ]]; then
+        continue
+    fi
+    cp -f "$src_file" "$dst_file"
+done
 
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.
 # They would otherwise keep occupying ~450MB/install.
