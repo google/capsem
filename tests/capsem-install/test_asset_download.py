@@ -25,8 +25,16 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import INSTALL_DIR
+
+# The installed layout mounts a proper Linux ELF at INSTALL_DIR/capsem via
+# dpkg (in the Docker install harness) or simulate-install.sh (local dev).
+# Hardcoding `target/debug/capsem` crashed the Docker test harness with
+# `Exec format error` because $PWD/target/debug/capsem is the macOS host
+# build, not the Linux binary -- CARGO_TARGET_DIR=/cargo-target inside the
+# container never lands binaries under /src/target.
+CAPSEM_BIN = INSTALL_DIR / "capsem"
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CAPSEM_BIN = REPO_ROOT / "target" / "debug" / "capsem"
 
 
 def _arch() -> str:
@@ -127,7 +135,7 @@ def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_update_assets_downloads_missing(tmp_path: Path, http_fixture):
+def test_update_assets_downloads_missing(tmp_path: Path, http_fixture, installed_layout):
     base_url, serve_dir = http_fixture
     arch = _arch()
 
@@ -175,7 +183,7 @@ def test_update_assets_downloads_missing(tmp_path: Path, http_fixture):
             assert mode == 0o444, f"{target} perms {oct(mode)} != 0o444"
 
 
-def test_update_assets_idempotent_when_hashes_match(tmp_path: Path, http_fixture):
+def test_update_assets_idempotent_when_hashes_match(tmp_path: Path, http_fixture, installed_layout):
     base_url, serve_dir = http_fixture
     arch = _arch()
 
@@ -207,7 +215,7 @@ def test_update_assets_idempotent_when_hashes_match(tmp_path: Path, http_fixture
     assert "up to date" in r2.stdout.lower() or "already" in r2.stdout.lower()
 
 
-def test_update_assets_hash_mismatch_fails(tmp_path: Path, http_fixture):
+def test_update_assets_hash_mismatch_fails(tmp_path: Path, http_fixture, installed_layout):
     base_url, serve_dir = http_fixture
     arch = _arch()
 
@@ -242,7 +250,7 @@ def test_update_assets_hash_mismatch_fails(tmp_path: Path, http_fixture):
     assert leftovers == [], f"stale tmp files: {leftovers}"
 
 
-def test_update_assets_404_fails(tmp_path: Path, http_fixture):
+def test_update_assets_404_fails(tmp_path: Path, http_fixture, installed_layout):
     base_url, serve_dir = http_fixture
     arch = _arch()
 

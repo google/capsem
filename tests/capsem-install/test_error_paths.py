@@ -31,6 +31,13 @@ class TestErrorPaths:
         service_bin = INSTALL_DIR / "capsem-service"
         original = service_bin.read_bytes()
         try:
+            # unlink-then-write: writing over the mapped binary of a still-
+            # running service process raises ETXTBSY on Linux. Unlinking
+            # the path breaks the inode association; a subsequent write
+            # creates a fresh inode so any lingering exec handle on the
+            # old inode doesn't block us. The `finally` does the same
+            # restore so a flaky cleanup can't wedge the installed prefix.
+            service_bin.unlink()
             service_bin.write_text("#!/bin/sh\nexit 1\n")
             service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
 
@@ -41,6 +48,7 @@ class TestErrorPaths:
                 f"expected error message: {result.stdout}{result.stderr}"
             )
         finally:
+            service_bin.unlink(missing_ok=True)
             service_bin.write_bytes(original)
             service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
 

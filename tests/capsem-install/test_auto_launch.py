@@ -77,7 +77,11 @@ class TestAutoLaunch:
         original = service_bin.read_bytes()
 
         try:
-            # Replace service binary with a stub that exits immediately with error
+            # unlink-then-write: overwriting the mapped binary of a still-
+            # running service process raises ETXTBSY on Linux. Unlinking
+            # breaks the inode association so the subsequent write lands
+            # on a fresh inode.
+            service_bin.unlink()
             service_bin.write_text("#!/bin/sh\nexit 1\n")
             service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
 
@@ -90,6 +94,7 @@ class TestAutoLaunch:
             )
         finally:
             # Restore original binary
+            service_bin.unlink(missing_ok=True)
             service_bin.write_bytes(original)
             service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
 
