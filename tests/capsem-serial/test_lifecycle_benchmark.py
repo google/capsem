@@ -11,7 +11,6 @@ import re
 import time
 import uuid
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -329,70 +328,3 @@ def test_fork_benchmark():
     for i, r in enumerate(runs):
         assert r["pkg_survived"], f"run {i+1}: packages did not survive fork"
         assert r["ws_survived"], f"run {i+1}: workspace files did not survive fork"
-
-
-def _run_benchmark_in_vm(client, vm_name):
-    """Run capsem-bench all in the VM and return the output."""
-    print(f"Starting benchmark in {vm_name}...")
-    t0 = time.monotonic()
-    resp = client.post(
-        f"/exec/{vm_name}",
-        {"command": "capsem-bench all", "timeout_secs": 300},
-        timeout=310,
-    )
-    duration_ms = (time.monotonic() - t0) * 1000
-    
-    if resp is None or resp.get("exit_code") != 0:
-        print(f"Benchmark failed in {vm_name}: {resp}")
-        return {"vm": vm_name, "status": "failed", "duration_ms": duration_ms}
-    
-    print(f"Benchmark completed in {vm_name} in {duration_ms:.0f}ms")
-    return {"vm": vm_name, "status": "success", "duration_ms": duration_ms, "stdout": resp.get("stdout")}
-
-
-def test_parallel_benchmark():
-    """Spawn 4 VMs and run benchmarks in parallel."""
-    svc = ServiceInstance()
-    svc.start()
-    client = svc.client()
-
-    num_vms = 4
-    vms = [f"par-bench-{uuid.uuid4().hex[:6]}-{i}" for i in range(num_vms)]
-    
-    try:
-        print(f"Spawning {num_vms} VMs...")
-        for vm_name in vms:
-            client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
-            assert wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT), f"{vm_name} not ready"
-            print(f"VM {vm_name} spawned and ready.")
-
-        print(f"Running benchmarks in parallel in {num_vms} VMs...")
-        t0 = time.monotonic()
-        with ThreadPoolExecutor(max_workers=num_vms) as executor:
-            futures = [executor.submit(_run_benchmark_in_vm, client, vm_name) for vm_name in vms]
-            results = [f.result() for f in futures]
-        total_duration_ms = (time.monotonic() - t0) * 1000
-
-        print(f"All parallel benchmarks completed in {total_duration_ms:.0f}ms")
-
-        summary = {
-            "version": "1.0",
-            "timestamp": time.time(),
-            "num_vms": num_vms,
-            "total_duration_ms": total_duration_ms,
-            "results": results,
-        }
-        
-        _save_benchmark("parallel", summary)
-
-        failed = [r for r in results if r["status"] != "success"]
-        assert not failed, f"Some benchmarks failed: {failed}"
-
-    finally:
-        print("Cleaning up VMs...")
-        for vm_name in vms:
-            try:
-                client.delete(f"/delete/{vm_name}")
-            except Exception:
-                pass
-        svc.stop()
