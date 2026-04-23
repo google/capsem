@@ -322,6 +322,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::ReadFile { id, path } => { let _ = hub_tx.send(HostToGuest::FileRead { id, path }).await; }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
+                    let session_for_flush = session_dir.clone();
                     let h_tx = hub_tx.clone();
                     let j_s = Arc::clone(&js_for_cmd);
                     let v_m = Arc::clone(&vm_handle_for_cmd);
@@ -334,6 +335,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
                                     let v = v_m.blocking_lock();
                                     v.pause()?;
+                                    // Push the APFS page cache for the persistent overlay's
+                                    // backing rootfs.img to disk. Without this, the checkpoint
+                                    // and the on-disk backing can disagree, and the resumed
+                                    // guest surfaces I/O errors on loop0 (see ISSUE.md).
+                                    capsem_core::flush_overlay_backing(&session_for_flush)?;
                                     v.save_state(&full_path)?;
                                     Ok(())
                                 })?;
@@ -341,6 +347,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 {
                                     let v = v_m.blocking_lock();
                                     v.pause()?;
+                                    capsem_core::flush_overlay_backing(&session_for_flush)?;
                                     v.save_state(&full_path)?;
                                 }
                                 Ok(())

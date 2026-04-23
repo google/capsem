@@ -62,6 +62,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `aarch64 -> arm64` arch mapping.
 
 ### Fixed
+- **Suspend/resume: post-restore loop-device I/O errors on the persistent
+  overlay (~8% of cycles).** Guest writes to the loop-backed ext4 overlay
+  arrive via VirtioFS FUSE and sit in the macOS APFS page cache. Apple VZ's
+  `saveMachineStateToURL` does not propagate those through to disk on its
+  own, so the checkpoint and the on-disk backing `rootfs.img` could
+  disagree; on resume the guest kernel issued writes against what it
+  believed was up-to-date storage, the loop driver rejected them, and the
+  overlay ext4 went into a hard I/O-error state (`loop: Write error at
+  byte offset ...`, `EXT4-fs (loop0): failed to convert unwritten extents
+  to written extents -- potential data loss!`). The guest's control
+  channel died with the filesystem and the host reported `initial
+  handshake failed: BootReady read failed: failed to fill whole buffer`.
+  New `capsem_core::flush_overlay_backing` opens `$session/guest/system/
+  rootfs.img` and calls `sync_all`; the suspend path in
+  `capsem-process/src/vsock.rs` invokes it after `pause()` succeeds and
+  before `save_state`, so the backing file is durable on APFS before the
+  checkpoint is written. Covered by three unit tests in `capsem-core/src
+  /lib.rs` (happy path, ephemeral-VM no-op, and a path-guard test that
+  fails if a typo moves the target off `guest/system/rootfs.img`). Spun
+  out of `sprints/loop-device-io-after-resume/` after the VZ path-
+  canonicalization and vsock half-open fixes closed the earlier modes
+  but left this tail.
 - **Suspend/resume: VZErrorDomain Code=12 "permission denied" on restore
   from a `/var/folders/...` path.** Apple VZ's
   `restoreMachineStateFromURL` enforces strict path matching between

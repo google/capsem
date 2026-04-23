@@ -101,6 +101,24 @@ pub fn guest_share_dir(session_dir: &Path) -> std::path::PathBuf {
     session_dir.join("guest")
 }
 
+/// Flush the host page cache for the persistent overlay's backing `rootfs.img`.
+///
+/// Guest writes to the loop-backed ext4 overlay arrive via VirtioFS FUSE and
+/// sit in the macOS APFS page cache. Apple VZ's `saveMachineStateToURL` does
+/// not propagate those through to disk on its own, so a resumed VM can issue
+/// reads against a stale backing file and the kernel reports `I/O error, dev
+/// loop0`. Call this *after* the VM is paused (guest no longer writes) and
+/// *before* `save_state` so the checkpoint and the backing image agree.
+///
+/// No-op if the backing image does not exist (ephemeral VMs).
+pub fn flush_overlay_backing(session_dir: &Path) -> std::io::Result<()> {
+    let path = guest_share_dir(session_dir).join("system").join("rootfs.img");
+    if !path.exists() {
+        return Ok(());
+    }
+    std::fs::OpenOptions::new().write(true).open(&path)?.sync_all()
+}
+
 /// Create a sparse scratch disk image file.
 ///
 /// The file is created with the given size using `set_len` (sparse -- doesn't
@@ -215,6 +233,41 @@ mod tests {
         assert_eq!(dir_meta.mode() & 0o777, 0o700);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn flush_overlay_backing_with_existing_img_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_virtiofs_session(tmp.path(), 1).unwrap();
+
+        let img = tmp.path().join("guest/system/rootfs.img");
+        let before = std::fs::metadata(&img).unwrap().len();
+
+        flush_overlay_backing(tmp.path()).unwrap();
+
+        // fsync must not alter file size or truncate.
+        assert_eq!(std::fs::metadata(&img).unwrap().len(), before);
+    }
+
+    #[test]
+    fn flush_overlay_backing_missing_img_is_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No create_virtiofs_session: the backing file is absent, as on an
+        // ephemeral VM. Must not error and must not create the file.
+        flush_overlay_backing(tmp.path()).unwrap();
+        assert!(!tmp.path().join("guest/system/rootfs.img").exists());
+    }
+
+    #[test]
+    fn flush_overlay_backing_targets_guest_system_rootfs_img() {
+        // Guard against typos in the path. Put a directory at the exact
+        // expected location; opening it for write must fail, proving the
+        // helper resolved to this path and not silently skipped it.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_at_img_path = tmp.path().join("guest/system/rootfs.img");
+        std::fs::create_dir_all(&dir_at_img_path).unwrap();
+
+        assert!(flush_overlay_backing(tmp.path()).is_err());
     }
 
     #[test]
