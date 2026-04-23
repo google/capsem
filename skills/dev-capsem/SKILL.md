@@ -24,6 +24,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 | `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent + file I/O), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay), `sysutil.rs` (lifecycle multi-call: shutdown/halt/poweroff/reboot/suspend) |
 | `capsem-logger` | Session DB schema, queries, async writer. | `schema.rs`, `writer.rs`, `events.rs` |
 | `capsem-proto` | Shared protocol types. | `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost) |
+| `capsem-guard` | Companion-process lifecycle primitives: parent-watch + singleton flock. Used by gateway and tray to refuse-standalone, enforce one-instance, and self-exit when the service dies (incl. SIGKILL). | `src/lib.rs` (`install`, `Singleton`, `watch_parent_or_exit`) |
 
 Rule: if logic could be reused or tested without a specific crate, it belongs in `capsem-core`.
 

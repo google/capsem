@@ -12,97 +12,81 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Command | What it does |
 |---------|-------------|
 | `just doctor` | Check all required tools, colored output, structured recap |
-| `just doctor-fix` | Doctor + auto-fix all fixable issues in dependency order |
-| `just ui` | Tauri dev with hot reload (frontend + Rust) |
-| `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM) |
+| `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
+| `just shell` | Daily driver: cross-compile + repack initrd + build + sign + boot temp VM + shell (~10s) |
+| `just exec "CMD"` | Run CMD in a fresh temp VM (auto-provisioned and destroyed) |
+| `just run-service` | Start capsem-service daemon (builds, signs, launches or reuses) |
+| `just ui` | Tauri dev with hot reload (service + Astro dev server on :5173 in Tauri webview) |
+| `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM, mock data) |
 | `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
-| `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`). |
-| `just run` | Cross-compile + repack initrd + build + sign + boot VM (~10s) |
-| `just run "CMD"` | Same but run CMD instead of interactive shell |
-| `just smoke` | test + repack + sign + boot + session DB validation (~30s) |
-| `just test` | ALL tests: unit (warnings-as-errors) + cross-compile + frontend + all integration + injection + bench |
-| `just cross-compile [arch]` | Full Linux build in container (agent + deb + AppImage) |
-| `just build-assets` | Full VM asset rebuild via capsem-builder (kernel + rootfs) |
-| `just build-kernel [arch]` | Kernel only (default: arm64) |
-| `just build-rootfs [arch]` | Rootfs only (default: arm64) |
-| `just bench` | In-VM benchmarks (disk I/O, rootfs, CLI startup, HTTP) |
-| `just inspect-session [id]` | Session DB integrity + event summary |
+| `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
+| `just build-assets [arch]` | Full VM asset rebuild via capsem-builder (kernel + rootfs). Default: both arches. |
+| `just smoke` | Fast path: audit + doctor --fast + injection + integration + parallel pytest groups (~30s) |
+| `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
+| `just test-gateway` | Gateway unit + Python mock-UDS tests (no VM needed) |
+| `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
+| `just test-install` | Install e2e in Docker + systemd (real .deb, dpkg -i, pytest) |
+| `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |
+| `just cross-compile [arch]` | Full Linux build in container (agent + deb) |
+| `just bench` | In-VM benchmarks (disk I/O, rootfs, CLI startup, HTTP) + host lifecycle benchmarks |
+| `just inspect-session [args]` | Session DB integrity + event summary |
 | `just list-sessions` | Table of recent sessions with event counts |
-| `just query-session "SQL"` | Run SQL against latest session DB |
-| `just query-session "SQL" <id>` | Run SQL against specific session DB |
-| `just update-fixture <path>` | Copy + scrub real session DB as test fixture |
+| `just query-session "SQL" [id]` | Run SQL against a session DB (latest with a DB by default) |
+| `just update-fixture <src>` | Copy + scrub real session DB as test fixture |
 | `just update-prices` | Refresh model pricing JSON |
-| `just install` | doctor + test + release .app + sign + /Applications |
-| `just cut-release` | Bump version, stamp changelog, tag, push, wait for CI |
+| `just update-deps` | `cargo update` + `pnpm update` |
+| `just logs` | Tail `~/.capsem/run/service.log` |
+| `just sandbox-logs <id>` | View process + serial logs for a specific sandbox |
+| `just build-host-image` | Build/refresh the `capsem-host-builder` Docker image |
+| `just install` | Build release .pkg/.deb + install it locally (postinstall handles codesign, PATH, service registration) |
+| `just release [tag]` | Wait for CI to build + publish a pushed tag |
+| `just cut-release` | Run test, bump version, stamp changelog, tag, push, wait for CI |
 | `just clean` | Remove all build artifacts |
-| `just clean-all` | clean + Docker prune (full reset) |
-| **Integration test recipes** | |
-| `just test-service` | Service HTTP API tests (provision, exec, logs, delete) |
-| `just test-cli` | CLI integration tests via subprocess |
-| `just test-mcp` | MCP black-box tests |
-| `just test-session` | Session.db telemetry tests |
-| `just test-snapshots` | Snapshot lifecycle tests |
-| `just test-isolation` | Multi-VM isolation tests |
-| `just test-security` | Security invariant tests |
-| `just test-config` | Config obedience tests |
-| `just test-bootstrap` | Setup/install flow tests (no VM) |
-| `just test-stress` | 5-VM concurrency + rapid create/delete |
-| `just test-build-chain` | Build chain E2E: cargo build -> codesign -> pack -> manifest -> boot |
-| `just test-guest` | Guest validation: network, services, filesystem, env |
-| `just test-cleanup` | VM cleanup: process killed, socket removed, no zombies |
-| `just test-codesign` | Codesigning strict: all binaries signed (FAIL not skip) |
-| `just test-serial` | Serial console logs + boot timing < 30s |
-| `just test-session-lifecycle` | Session.db lifecycle: exists, schema, events, survives shutdown |
-| `just test-config-runtime` | Config applied in guest: CPU, RAM, blocked domains |
-| `just test-recipes` | Just recipe smoke tests (no VM) |
-| `just test-recovery` | Recovery: stale sockets, orphaned processes, double service |
-| `just test-rootfs` | Rootfs artifact validation (no VM) |
-| `just test-session-exhaustive` | Exhaustive per-table session.db data + FK validation |
-| `just test-vm` | All VM-requiring Phase 3 tests combined |
+| `just clean all` | clean + Docker prune (full reset) |
 
 ## When to use which
 
 | What changed | Command |
 |-------------|---------|
-| Rust host code | `just smoke` (E2E) or `just test` (unit) |
-| Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks) |
+| Rust host code | `just smoke` (E2E) or `just test` (full) |
+| Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks initrd) |
 | `capsem-init` | `just smoke` (auto-repacks) |
 | In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just smoke` |
-| Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just run` |
+| Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just shell` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
-| Telemetry pipelines | `just run "<cmd>"` then `just inspect-session` |
-| Service HTTP API | `just test-service` |
-| CLI subcommands | `just test-cli` |
-| MCP server/gateway | `just test-mcp` |
-| Session.db schema or writer | `just test-session` + `just test-session-lifecycle` + `just test-session-exhaustive` |
-| VM lifecycle (create/delete) | `just test-cleanup` + `just test-recovery` |
-| Network policy or proxy | `just test-guest` + `just test-config-runtime` |
-| Codesigning or entitlements | `just test-codesign` |
-| Build pipeline | `just test-build-chain` |
-| Rootfs artifacts | `just test-rootfs` |
-| Just recipes | `just test-recipes` |
+| Frontend standalone (no VM) | `just dev-frontend` |
+| Tauri binary (not dev) | `just build-ui` then `just run-ui` |
+| Telemetry pipelines | `just exec "<cmd>"` then `just inspect-session` |
+| Gateway code | `just test-gateway` (unit) or `just test-gateway-e2e` (real VMs) |
+| Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
+| Install / postinst / systemd flow | `just test-install` |
 | Pre-release | `just test` |
 | Ship | `just cut-release` |
 
 ## Dependency chains
 
 ```
-run            -> audit + _check-assets + _generate-settings + _pack-initrd -> _sign -> _compile -> _frontend
-test           -> audit + _install-tools + _generate-settings + _check-assets + _pack-initrd
-                  (Rust warnings-as-errors + llvm-cov + cross-compile + frontend + ALL Python tests
-                   + injection + integration + benchmarks)
-test-vm        -> test-build-chain + test-guest + test-cleanup + test-codesign + test-serial
-                  + test-session-lifecycle + test-config-runtime + test-recovery
-build-assets   -> doctor + _install-tools + audit (capsem-builder: kernel + rootfs)
-install        -> doctor + test
-cut-release    -> test
+shell            -> _check-assets + _pack-initrd + _ensure-service (_sign + build)
+ui               -> _ensure-setup + _pnpm-install + run-service
+run-service      -> _check-assets + _pack-initrd + _ensure-service
+exec             -> run-service
+build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-builder kernel + rootfs)
+build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app)
+smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
+test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
+                    + _check-assets + _pack-initrd
+bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
+test-gateway-e2e -> _check-assets + _pack-initrd + _sign
+test-install     -> _build-host
+install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
+cut-release      -> test + _stamp-version
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).
 
 ## Docker disk management
 
-Docker builds (build-assets, cross-compile, test-install) accumulate images, build cache, and stopped containers inside the Colima VM. The `_docker-gc` recipe runs automatically after each of these recipes to prevent unbounded disk growth:
+Docker builds (`build-assets`, `cross-compile`, `test-install`) accumulate images, build cache, and stopped containers inside the Colima VM. The `_docker-gc` helper runs automatically after each of these recipes to prevent unbounded disk growth:
 
 - Removes stopped containers
 - Prunes unused images older than 72h
@@ -111,7 +95,7 @@ Docker builds (build-assets, cross-compile, test-install) accumulate images, bui
 
 The Colima VM uses a Virtualization.framework raw disk that only grows, never shrinks on its own. Without `fstrim`, Docker prune frees space inside the VM but macOS never gets it back. This is why `_docker-gc` always trims after pruning.
 
-For a full manual reset: `just clean-all` (removes all build artifacts + aggressive Docker prune).
+For a full manual reset: `just clean all` (removes all build artifacts + aggressive Docker prune).
 
 ## Tauri gotcha: frontend is embedded at cargo build time
 
@@ -134,20 +118,20 @@ When debugging build issues, check `target/build.log` first. When writing new bu
 
 ```bash
 just doctor        # Check tools (colored output, shows fixable issues)
-just doctor-fix    # Auto-fix missing targets, cargo tools, config files
+just doctor fix    # Auto-fix missing targets, cargo tools, config files
 just build-assets  # Build kernel + rootfs (~10 min, needs docker)
-just run           # Boot the VM
+just shell         # Boot a temp VM and drop into a shell
 ```
 
 Or use bootstrap which does all of this:
 
 ```bash
-sh scripts/bootstrap.sh   # Installs deps + runs doctor --fix
+sh scripts/bootstrap.sh   # Installs deps + runs doctor fix
 ```
 
 ## Daily dev
 
-`just run` is the daily driver. It cross-compiles the guest agent, repacks the initrd, builds the host binary, codesigns, and boots the VM. Pass a command string to run non-interactively and exit.
+`just shell` is the daily driver. It cross-compiles the guest agent, repacks the initrd, builds the host binary, codesigns, boots the VM, and drops into a shell. For a one-shot command use `just exec "CMD"`. For UI iteration use `just ui` (Tauri dev with hot reload).
 
 ## Builder CLI
 
@@ -165,6 +149,6 @@ uv run capsem-builder inspect guest/      # Show config summary
 
 On macOS, agent binaries are compiled inside a Linux container (docker) via `cross_compile_agent()` in `docker.py`. This avoids needing `rust-lld`, musl targets, or `llvm-tools` on the host. On Linux (CI), cargo builds natively.
 
-`just cross-compile [arch]` is a debug/verification tool that builds everything in a container: agent binaries, frontend, and the full Tauri app (deb + AppImage). It's not in the daily `just run` path -- `_pack-initrd` calls `cross_compile_agent()` directly for agent-only builds.
+`just cross-compile [arch]` is a debug/verification tool that builds everything in a container: agent binaries, frontend, and the full Tauri `.deb`. It's not in the daily `just shell` path -- `_pack-initrd` calls `cross_compile_agent()` directly for agent-only builds.
 
 Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts separately to prevent cache clobbering.

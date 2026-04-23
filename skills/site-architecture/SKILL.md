@@ -16,7 +16,8 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 - **capsem-mcp** (MCP server): stdio-based MCP server for AI agents (Claude Code, Gemini CLI). Bridges MCP tool calls to capsem-service HTTP API.
 - **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides `/status` (cached 1s), `/terminal/{id}` (WebSocket relay to per-VM UDS), and transparent fallback proxy to capsem-service. The frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
 - **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `frontend/dist` as offline fallback when gateway is unreachable.
-- **capsem-tray** (system tray): standalone menu bar process. Polls the gateway for VM status, shows running/stopped counts, and provides quick actions (open dashboard, quit). Runs in its own process, isolated from the service.
+- **capsem-tray** (system tray): menu-bar companion process. Polls the gateway for VM status, shows running/stopped counts, and provides quick actions (open dashboard, quit). Non-standalone: refuses to run without `--parent-pid` pointing at a live capsem-service, acquires a system-wide singleton lock at `~/.capsem/run/tray.lock` (only one tray ever in the menu bar), and self-exits within 500ms when its parent dies. Contract enforced by `capsem-guard` on the companion side, not the spawner.
+- **capsem-guard** (shared library): parent-watch + singleton primitives used by capsem-tray and capsem-gateway. Provides `watch_parent_or_exit`, `Singleton::try_acquire`, and the umbrella `install(parent_pid, lock_path)`. Guarantees companions die with their parent and can't run standalone or as multiple instances -- closes the orphan-accumulation class of bug that `kill_on_drop(true)` alone cannot cover under SIGKILL/OOM/test-harness termination. See `/dev-rust-patterns` lesson 18.
 
 **Guest-side:**
 - **capsem-init** (`capsem-init`): PID 1, sets up air-gapped networking, mounts filesystems, deploys guest binaries, launches daemons, writes boot timing JSONL
@@ -241,7 +242,7 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 - `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
 
-**Service registration**: LaunchAgent `com.capsem.service` (macOS) or systemd user unit `capsem.service` (Linux). KeepAlive/Restart=always. Service auto-launches gateway and tray as companion processes.
+**Service registration**: LaunchAgent `com.capsem.service` (macOS) or systemd user unit `capsem.service` (Linux). KeepAlive/Restart=always. Service auto-launches gateway and tray as companion processes, passing `--parent-pid` so companions self-exit when the service dies (see capsem-guard, `/dev-rust-patterns` lesson 18).
 
 **Auto-launch cascade**: capsem-service starts -> spawns capsem-gateway (port 19222) + capsem-tray. All three are separate processes.
 
