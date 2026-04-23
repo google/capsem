@@ -186,6 +186,7 @@ def _start_capsem_service():
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
+            print(f"\n@@@ capsem-service did not exit within 10s, killing it", file=sys.stderr)
             proc.kill()
             proc.wait()
 
