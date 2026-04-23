@@ -288,6 +288,36 @@ class TestCheckGuestConfig:
 # ---------------------------------------------------------------------------
 
 
+def _create_all_source_files(tmp_path, *, skip=None):
+    """Create all required source files for check_source_files(), optionally
+    skipping one by name so tests can verify detection of that missing file."""
+    from capsem.builder.docker import (
+        ROOTFS_SCRIPTS,
+        ROOTFS_SCRIPT_DIRS,
+        ROOTFS_SUPPORT_FILES,
+    )
+    artifacts = tmp_path / "guest" / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    config = tmp_path / "config"
+    config.mkdir(exist_ok=True)
+    # Individual files
+    all_files = ["capsem-init"] + list(ROOTFS_SUPPORT_FILES) + list(ROOTFS_SCRIPTS)
+    for name in all_files:
+        if name != skip:
+            (artifacts / name).write_text("stub")
+    # Directories
+    for name in ROOTFS_SCRIPT_DIRS:
+        if name != skip:
+            (artifacts / name).mkdir(exist_ok=True)
+    # capsem_bench needs __main__.py
+    bench_pkg = artifacts / "capsem_bench"
+    if bench_pkg.is_dir():
+        (bench_pkg / "__main__.py").write_text("stub")
+    # CA cert
+    if skip != "capsem-ca.crt":
+        (config / "capsem-ca.crt").write_text("stub cert")
+
+
 class TestCheckSourceFiles:
     def test_all_present(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
@@ -409,6 +439,12 @@ class TestCheckSourceFiles:
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem-ca.crt" in result.detail
+
+    def test_missing_snapshots(self, tmp_path):
+        _create_all_source_files(tmp_path, skip="snapshots")
+        result = check_source_files(tmp_path)
+        assert result.passed is False
+        assert "snapshots" in result.detail
 
 
 # ---------------------------------------------------------------------------

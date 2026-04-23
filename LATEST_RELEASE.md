@@ -1,13 +1,11 @@
-version: 0.16.1
+version: 0.16.2
 ---
+### Fixed
+- **`snapshots` tool missing from release VM images** -- the `snapshots` CLI was only injected via `just _pack-initrd` (local dev), which is not run during CI release builds. Added `snapshots` to the rootfs Dockerfile so it ships with every release. Also fixed `snapshots` permissions from 755 to 555 (matching guest binary security invariant).
+
 ### Added
-- **KVM boot diagnostics** -- when vCPU creation fails on Linux, Capsem now runs automatic diagnostic probes: kernel version, nested KVM status, KVM capabilities, and a fresh-VM-without-IRQCHIP test to isolate the root cause. All results logged at ERROR level so they appear without `RUST_LOG=debug`.
-- **`scripts/kvm-diagnostic.py`** -- standalone diagnostic script for manual KVM environment debugging. Tests 7 phases: /dev/kvm basics, capabilities, Capsem boot sequence, no-irqchip mode, reversed ordering, split IRQCHIP, and environment info.
+- **Multi-layer safeguards against missing guest artifacts** -- single source of truth (`ROOTFS_SCRIPTS`, `ROOTFS_SCRIPT_DIRS`, `ROOTFS_SUPPORT_FILES` constants in `docker.py`) imported by builder doctor, config validator, and used by `prepare_build_context()`. CI release workflow now validates source artifacts pre-build (macOS) and rootfs binary content via squashfs mount (Linux). In-VM `capsem-doctor` now fails (not skips) when required guest binaries are missing.
 
 ### Fixed
-- **KVM boot errors are now actionable** -- `/dev/kvm` missing explains how to enable KVM (modprobe, BIOS). Permission denied suggests `usermod -aG kvm`. EEXIST on vCPU creation explains restricted/nested KVM and points to the diagnostic script.
-- **Linux boot failure shows macOS error message** -- `gui.rs` said "unsigned binary or missing entitlement" on all platforms. Now shows platform-specific guidance: KVM troubleshooting on Linux, entitlement info on macOS.
-- **LATEST_RELEASE.md stale at v0.15.1** -- boot screen showed wrong version. Regenerated from CHANGELOG.md.
-
-### Changed
-- **`just doctor` rewritten as standalone scripts** -- moved from 265-line inline justfile recipe to `scripts/doctor-common.sh` + platform-specific `doctor-macos.sh` and `doctor-linux.sh`. Colored output (green/red/yellow), structured recap table, and auto-fix: detects fixable issues (missing rustup targets, cargo tools, broken symlinks) and prompts to fix them automatically. `--fix` flag for non-interactive auto-fix.
+- **`just doctor-fix` fails on fresh machines** -- `build-assets` triggered `_ensure-setup` which ran `doctor` which failed on missing assets, creating a circular dependency. Fix commands now set `CAPSEM_SKIP_ASSET_CHECK=1` and `touch .dev-setup` to break the cycle. Guest binary checks are also skipped when asset check is skipped (no assets = no binaries). Fixes bail on first failure instead of continuing to run dependent steps.
+- **Docker cross-arch builds fail (legacy builder cache poisoning)** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, reusing arm64 layers for x86_64 builds. Fixed by requiring Docker BuildKit (buildx). Added buildx and Colima Rosetta checks to `just doctor` and `scripts/bootstrap.sh`.

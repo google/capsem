@@ -310,6 +310,12 @@ def check_source_files(repo_root: Path) -> CheckResult:
         "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
         "config/capsem-ca.crt": repo_root / "config" / "capsem-ca.crt",
     }
+    for name in ROOTFS_SUPPORT_FILES:
+        required[f"guest/artifacts/{name}"] = artifacts / name
+    for name in ROOTFS_SCRIPTS:
+        required[f"guest/artifacts/{name}"] = artifacts / name
+    for name in ROOTFS_SCRIPT_DIRS:
+        required[f"guest/artifacts/{name}/"] = artifacts / name
 
     missing = []
     for label, path in required.items():

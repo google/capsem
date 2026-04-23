@@ -935,6 +935,8 @@ class TestPrepareBuildContext:
         assert (context_dir / "snapshots").is_file()
         assert (context_dir / "capsem_bench").is_dir()
         assert (context_dir / "capsem_bench" / "__main__.py").is_file()
+        # Snapshot CLI must be in rootfs context
+        assert (context_dir / "snapshots").is_file()
 
     def test_kernel_context_has_defconfig_and_init(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"

@@ -33,6 +33,20 @@ GUEST_BINARIES = [
     "capsem-sysutil",
 ]
 
+# --- Single source of truth for rootfs artifacts from guest/artifacts/ ---
+# Scripts and tools that must be copied into the rootfs build context and
+# appear in the rendered Dockerfile.  doctor.py and validate.py import these
+# constants so there is exactly ONE list to maintain.
+
+# Individual files -> /usr/local/bin/ (chmod 755)
+ROOTFS_SCRIPTS = ["capsem-doctor", "capsem-bench", "snapshots"]
+
+# Directories copied into context (special destinations in Dockerfile)
+ROOTFS_SCRIPT_DIRS = ["capsem_bench", "diagnostics"]
+
+# Shell config / text files (not executable scripts)
+ROOTFS_SUPPORT_FILES = ["capsem-bashrc", "banner.txt", "tips.txt"]
+
 
 def enforce_guest_binary_perms(paths: list[Path]) -> None:
     """Apply chmod 555 to guest binaries on the host.
@@ -739,7 +753,6 @@ def prepare_build_context(
             str(repo_root / "config" / "capsem-ca.crt"),
             str(context_dir / "capsem-ca.crt"),
         )
-        # Shell config
         artifacts = repo_root / "guest" / "artifacts"
         for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
             shutil.copy2(
@@ -756,10 +769,11 @@ def prepare_build_context(
             src = artifacts / name
             if src.is_file():
                 shutil.copy2(str(src), str(context_dir / name))
-        # capsem_bench package directory
-        bench_pkg = artifacts / "capsem_bench"
-        if bench_pkg.is_dir():
-            shutil.copytree(str(bench_pkg), str(context_dir / "capsem_bench"), dirs_exist_ok=True)
+        # Script directories
+        for name in ROOTFS_SCRIPT_DIRS:
+            src = artifacts / name
+            if src.is_dir():
+                shutil.copytree(str(src), str(context_dir / name), dirs_exist_ok=True)
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 

@@ -704,11 +704,28 @@ class TestE301:
 # ---------------------------------------------------------------------------
 
 
+def _create_all_artifacts(artifacts_dir, *, skip=None):
+    """Create all required artifacts, optionally skipping one by name."""
+    from capsem.builder.docker import (
+        ROOTFS_SCRIPTS,
+        ROOTFS_SCRIPT_DIRS,
+        ROOTFS_SUPPORT_FILES,
+    )
+    (artifacts_dir / "capsem-ca.crt").write_text("cert")
+    all_files = ["capsem-init"] + list(ROOTFS_SUPPORT_FILES) + list(ROOTFS_SCRIPTS)
+    for name in all_files:
+        if name != skip:
+            (artifacts_dir / name).write_text("stub")
+    for name in ROOTFS_SCRIPT_DIRS:
+        if name != skip:
+            (artifacts_dir / name).mkdir(exist_ok=True)
+
+
 class TestE302:
     def test_missing_capsem_init(self, guest_valid):
         artifacts = guest_valid / "artifacts"
         artifacts.mkdir()
-        (artifacts / "capsem-ca.crt").write_text("cert")
+        _create_all_artifacts(artifacts, skip="capsem-init")
         diags = validate_guest(guest_valid, artifacts_dir=artifacts)
         assert _has_code(diags, "E302")
 
