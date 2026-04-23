@@ -1179,24 +1179,37 @@ fn control_loop(
                 if ctrl_tx.send(msg).is_err() { break; }
             }
             Ok(HostToGuest::PrepareSnapshot) => {
-                // sync() flushes dirty caches to the underlying FS (the host
-                // via virtiofsd, or the block device). Then best-effort
-                // fsfreeze: VirtioFS returns ENOTSUP because FUSE doesn't
-                // implement the freeze_fs ioctl. That's fine -- Apple VZ
-                // pauses the VM before save_state, which stops all guest
-                // writes anyway. Proceed with SnapshotReady regardless so
-                // the host never hangs waiting for a reply it won't get.
-                eprintln!("[capsem-agent] PrepareSnapshot: syncing and freezing /");
+                // Belt-and-suspender: sync() + BLKFLSBUF + fsync on /dev/loop0.
+                // The actual quiescence guarantee for Apple VZ save_state lives
+                // in capsem-service::ServiceState::save_restore_lock, which
+                // serializes save/restore across sibling VMs. This extra
+                // guest-side flush is defense-in-depth: if a future kernel or
+                // VirtioFS combo ever lets dirty loop-device pages slip past
+                // sync(), this covers it. Measurement at -n 1 shows stripping
+                // BLKFLSBUF here leaves the pass rate at 50/50 -- the flush
+                // alone is not what fixes the bug.
+                // fsfreeze on the overlayfs root is not called: it always
+                // returns ENOTSUP on this kernel.
+                eprintln!("[capsem-agent] PrepareSnapshot: syncing and flushing /dev/loop0");
                 unsafe { libc::sync(); }
-                match std::process::Command::new("fsfreeze").args(["-f", "/"]).status() {
-                    Ok(st) if st.success() => {}
-                    Ok(st) => {
-                        eprintln!("[capsem-agent] fsfreeze -f not available ({st}); continuing after sync");
+
+                // Open /dev/loop0 and flush its buffers.
+                let fd = unsafe { libc::open(c"/dev/loop0".as_ptr(), libc::O_RDWR) };
+                if fd >= 0 {
+                    const BLKFLSBUF: i32 = 0x1261;
+                    unsafe {
+                        if libc::ioctl(fd, BLKFLSBUF.try_into().unwrap()) != 0 {
+                            eprintln!("[capsem-agent] ioctl(BLKFLSBUF) failed: {}", std::io::Error::last_os_error());
+                        }
+                        if libc::fsync(fd) != 0 {
+                            eprintln!("[capsem-agent] fsync failed: {}", std::io::Error::last_os_error());
+                        }
+                        libc::close(fd);
                     }
-                    Err(e) => {
-                        eprintln!("[capsem-agent] fsfreeze exec failed: {e}; continuing after sync");
-                    }
+                } else {
+                    eprintln!("[capsem-agent] failed to open /dev/loop0 for flush: {}", std::io::Error::last_os_error());
                 }
+
                 if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() { break; }
             }
             Ok(HostToGuest::Unfreeze) => {
