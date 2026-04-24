@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1777013185] - 2026-04-24
+
+### Diagnostic (CI)
+- Preflight now enumerates all keychain identities to surface whether
+  a Developer ID Installer cert is present (productsign needs it, codesign
+  does not).
+
 ## [1.0.1776987645] - 2026-04-24
 
 ### Fixed (CI)
