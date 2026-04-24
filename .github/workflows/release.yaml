@@ -276,7 +276,8 @@ jobs:
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
           security set-keychain-settings -t 3600 build.keychain
-          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" \
+              -T /usr/bin/codesign -T /usr/bin/productsign -T /usr/bin/productbuild
           security set-key-partition-list -S apple-tool:,apple: -k "" build.keychain
           security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
 
