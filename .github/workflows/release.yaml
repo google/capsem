@@ -362,13 +362,13 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          xcrun notarytool submit "Capsem-$VERSION.pkg" \
+          xcrun notarytool submit "packages/Capsem-$VERSION.pkg" \
             --key "$APPLE_API_KEY_PATH" \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
             --wait --timeout 30m
-          xcrun stapler staple "Capsem-$VERSION.pkg"
-          xcrun stapler validate "Capsem-$VERSION.pkg"
+          xcrun stapler staple "packages/Capsem-$VERSION.pkg"
+          xcrun stapler validate "packages/Capsem-$VERSION.pkg"
 
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
@@ -377,11 +377,11 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release-artifacts
-          if [ ! -f "Capsem-$VERSION.pkg" ]; then
+          if [ ! -f "packages/Capsem-$VERSION.pkg" ]; then
             echo "::error::Capsem-$VERSION.pkg not produced by build-pkg.sh"
             exit 1
           fi
-          cp "Capsem-$VERSION.pkg" release-artifacts/
+          cp "packages/Capsem-$VERSION.pkg" release-artifacts/
           cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
 
