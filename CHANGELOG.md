@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1777059098] - 2026-04-24
+
+### Fixed (CI)
+- Raise pnpm audit threshold to high/critical (was default=low); a new
+  moderate postcss CVE in dev-only deps kept failing the release.
+
 ## [1.0.1777058736] - 2026-04-24
 
 ### Fixed (CI)

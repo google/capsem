@@ -1,5 +1,5 @@
-version: 1.0.1777058736
+version: 1.0.1777059098
 ---
 ### Fixed (CI)
-- Trust productsign + productbuild on p12 import so .pkg signing
-  doesn't hang on a GUI keychain prompt.
+- Raise pnpm audit threshold to high/critical (was default=low); a new
+  moderate postcss CVE in dev-only deps kept failing the release.
