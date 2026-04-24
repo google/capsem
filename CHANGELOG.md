@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1777061711] - 2026-04-24
+
+### Fixed (CI)
+- Notarize + stapler + artifact collection now reference the pkg at
+  packages/ (build-pkg.sh writes there, not CWD).
+
 ## [1.0.1777059098] - 2026-04-24
 
 ### Fixed (CI)
