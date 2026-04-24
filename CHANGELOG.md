@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1777065213] - 2026-04-24
+
+### Fixed (CI)
+- Codesign companion binaries with --options runtime + --timestamp;
+  notary rejected the .pkg because the 8 companion binaries lacked
+  hardened runtime.
+
 ## [1.0.1777061711] - 2026-04-24
 
 ### Fixed (CI)

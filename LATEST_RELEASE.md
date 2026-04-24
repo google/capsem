@@ -1,5 +1,6 @@
-version: 1.0.1777061711
+version: 1.0.1777065213
 ---
 ### Fixed (CI)
-- Notarize + stapler + artifact collection now reference the pkg at
-  packages/ (build-pkg.sh writes there, not CWD).
+- Codesign companion binaries with --options runtime + --timestamp;
+  notary rejected the .pkg because the 8 companion binaries lacked
+  hardened runtime.
