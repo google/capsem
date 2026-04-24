@@ -1,5 +1,5 @@
-version: 1.0.1777014595
+version: 1.0.1777058736
 ---
-### Added (release)
-- Sign the .pkg installer with a Developer ID Installer certificate
-  (requires APPLE_INSTALLER_SIGNING_IDENTITY secret + combined p12).
+### Fixed (CI)
+- Trust productsign + productbuild on p12 import so .pkg signing
+  doesn't hang on a GUI keychain prompt.

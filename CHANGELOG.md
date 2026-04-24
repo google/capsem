@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1777058736] - 2026-04-24
+
+### Fixed (CI)
+- Trust productsign + productbuild on p12 import so .pkg signing
+  doesn't hang on a GUI keychain prompt.
+
 ## [1.0.1777014595] - 2026-04-24
 
 ### Added (release)
