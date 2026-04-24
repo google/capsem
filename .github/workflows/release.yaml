@@ -36,13 +36,14 @@ jobs:
           fi
           echo "codesigning identities:"
           echo "$IDENTITY"
-          # Enumerate ALL identities (not just codesigning) so we know
-          # whether a Developer ID Installer cert is present for .pkg
-          # signing. productsign needs the installer identity; codesign
-          # needs the application identity.
-          echo ""
-          echo "All identities (incl. installer):"
-          security find-identity -v "$KEYCHAIN" || true
+          # Installer cert is not a codesigning identity; check with full list.
+          INSTALLER=$(security find-identity -v "$KEYCHAIN" | grep "Developer ID Installer" || true)
+          if [ -z "$INSTALLER" ]; then
+            echo "::error::No Developer ID Installer identity found. productsign (.pkg signing) will fail."
+            echo "::error::Export a combined p12 containing both Application and Installer certs."
+            exit 1
+          fi
+          echo "installer identity: $INSTALLER"
           security delete-keychain "$KEYCHAIN"
           rm cert.p12
 
@@ -348,7 +349,7 @@ jobs:
             "target/release" \
             "assets" \
             "$VERSION" \
-            "${{ secrets.APPLE_SIGNING_IDENTITY }}"
+            "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
 
       - name: Notarize and staple .pkg
         env:
