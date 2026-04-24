@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1777014595] - 2026-04-24
+
+### Added (release)
+- Sign the .pkg installer with a Developer ID Installer certificate
+  (requires APPLE_INSTALLER_SIGNING_IDENTITY secret + combined p12).
+
 ## [1.0.1777013185] - 2026-04-24
 
 ### Diagnostic (CI)

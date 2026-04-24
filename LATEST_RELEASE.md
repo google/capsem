@@ -1,6 +1,5 @@
-version: 1.0.1777013185
+version: 1.0.1777014595
 ---
-### Diagnostic (CI)
-- Preflight now enumerates all keychain identities to surface whether
-  a Developer ID Installer cert is present (productsign needs it, codesign
-  does not).
+### Added (release)
+- Sign the .pkg installer with a Developer ID Installer certificate
+  (requires APPLE_INSTALLER_SIGNING_IDENTITY secret + combined p12).
