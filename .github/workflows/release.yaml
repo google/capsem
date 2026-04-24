@@ -34,7 +34,15 @@ jobs:
             echo "::error::macOS requires legacy 3DES. Re-export with: scripts/fix_p12_legacy.sh"
             exit 1
           fi
-          echo "Signing identity: $IDENTITY"
+          echo "codesigning identities:"
+          echo "$IDENTITY"
+          # Enumerate ALL identities (not just codesigning) so we know
+          # whether a Developer ID Installer cert is present for .pkg
+          # signing. productsign needs the installer identity; codesign
+          # needs the application identity.
+          echo ""
+          echo "All identities (incl. installer):"
+          security find-identity -v "$KEYCHAIN" || true
           security delete-keychain "$KEYCHAIN"
           rm cert.p12
 
