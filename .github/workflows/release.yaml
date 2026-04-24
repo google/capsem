@@ -342,7 +342,12 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
-            codesign --sign "$APPLE_SIGNING_IDENTITY" --entitlements entitlements.plist --force "target/release/$bin"
+            codesign --sign "$APPLE_SIGNING_IDENTITY" \
+              --options runtime \
+              --timestamp \
+              --entitlements entitlements.plist \
+              --force \
+              "target/release/$bin"
           done
 
       - name: Build .pkg installer
