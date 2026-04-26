@@ -199,6 +199,43 @@
           }
         }
       },
+      "ollama": {
+        "name": "Ollama",
+        "description": "Local open-source models via Ollama or llama.cpp",
+        "enabled_by": "ai.ollama.allow",
+        "collapsed": false,
+        "allow": {
+          "name": "Allow Ollama",
+          "description": "Enable API access to Ollama (host.docker.internal).",
+          "type": "bool",
+          "default": true,
+          "meta": {
+            "rules": {
+              "default": {
+                "get": true,
+                "post": true
+              }
+            }
+          }
+        },
+        "api_key": {
+          "name": "Ollama API Key",
+          "description": "API key for Ollama. Injected as OLLAMA_API_KEY env var.",
+          "type": "apikey",
+          "default": "",
+          "meta": {
+            "env_vars": [
+              "OLLAMA_API_KEY"
+            ]
+          }
+        },
+        "domains": {
+          "name": "Ollama Domains",
+          "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+          "type": "text",
+          "default": "host.docker.internal, llama.local, *.llama.local"
+        }
+      },
       "openai": {
         "name": "OpenAI",
         "description": "OpenAI API provider",

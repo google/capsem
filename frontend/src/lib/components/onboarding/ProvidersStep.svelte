@@ -51,6 +51,7 @@
         { id: 'anthropic', name: 'Anthropic', settingId: 'ai.anthropic.api_key' },
         { id: 'openai', name: 'OpenAI', settingId: 'ai.openai.api_key' },
         { id: 'google', name: 'Google AI', settingId: 'ai.google.api_key' },
+        { id: 'ollama', name: 'Ollama', settingId: 'ai.ollama.api_key' },
         { id: 'github', name: 'GitHub', settingId: 'repository.providers.github.token' },
       ];
 

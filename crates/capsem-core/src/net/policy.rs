@@ -82,6 +82,8 @@ pub struct NetworkPolicy {
     pub log_bodies: bool,
     /// Maximum bytes of body preview to capture in telemetry.
     pub max_body_capture: usize,
+    /// Upstream aliases for local routing (e.g. "ollama.local" -> "http://127.0.0.1:11434")
+    pub host_aliases: std::collections::HashMap<String, String>,
 }
 
 /// Default max body capture size (4 KB).
@@ -100,6 +102,7 @@ impl NetworkPolicy {
             default_allow_write,
             log_bodies: true,
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
+            host_aliases: std::collections::HashMap::new(),
         }
     }
 

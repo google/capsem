@@ -201,10 +201,14 @@ def run_cmd(
 
 
 def detect_runtime() -> str:
-    """Validate docker is available, raising with fix guidance if missing."""
+    """Validate docker/podman is available, raising with fix guidance if missing."""
     result = check_container_runtime()
     if not result.passed:
         raise RuntimeError(f"{result.name}: {result.detail}\n  fix: {result.fix}")
+    
+    # Check what the doctor found in the detail string
+    if "podman" in result.detail.lower():
+        return "podman"
     return "docker"
 
 
@@ -234,9 +238,10 @@ def sync_container_clock() -> None:
         "%Y-%m-%dT%H:%M:%SZ"
     )
 
+    runtime = detect_runtime()
     try:
         run_cmd(
-            ["docker", "run", "--rm", "--privileged",
+            [runtime, "run", "--rm", "--privileged",
              "alpine", "date", "-s", now],
             capture=True, echo=False,
         )

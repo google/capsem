@@ -221,14 +221,11 @@ fn parse_mcp_section(toml_str: &str, source: PolicySource) -> Vec<McpServerDef> 
     };
     let mut servers = Vec::new();
     for (key, val) in mcp_table {
-        // Skip global config keys that aren't server definitions
-        if key == "global_policy" 
-            || key == "default_tool_permission" 
-            || key == "health_check_interval_secs"
-            || key == "server_enabled"
-            || key == "tool_permissions"
-        {
-            continue;
+        // Skip known McpUserConfig fields so they don't produce TOML parse errors
+        match key.as_str() {
+            "global_policy" | "default_tool_permission" | "health_check_interval_secs" |
+            "servers" | "server_enabled" | "tool_permissions" => continue,
+            _ => {}
         }
 
         let toml_str = match toml::to_string(val) {
@@ -273,14 +270,11 @@ fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServer
     };
     let mut servers = Vec::new();
     for (key, val) in mcp_obj {
-        // Skip global config keys that aren't server definitions
-        if key == "global_policy" 
-            || key == "default_tool_permission" 
-            || key == "health_check_interval_secs"
-            || key == "server_enabled"
-            || key == "tool_permissions"
-        {
-            continue;
+        // Skip known McpUserConfig fields
+        match key.as_str() {
+            "global_policy" | "default_tool_permission" | "health_check_interval_secs" |
+            "servers" | "server_enabled" | "tool_permissions" => continue,
+            _ => {}
         }
 
         let server: McpServerToml = match serde_json::from_value(val.clone()) {

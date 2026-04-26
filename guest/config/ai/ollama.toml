@@ -1,0 +1,17 @@
+[ollama]
+name = "Ollama"
+description = "Local open-source models via Ollama or llama.cpp"
+enabled = true
+
+[ollama.api_key]
+name = "Ollama API Key"
+env_vars = ["OLLAMA_API_KEY"]
+
+[ollama.endpoint]
+name = "Ollama Endpoint"
+default = "http://127.0.0.1:11434"
+
+[ollama.network]
+domains = ["host.docker.internal", "llama.local", "*.llama.local"]
+allow_get = true
+allow_post = true

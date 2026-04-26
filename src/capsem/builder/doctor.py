@@ -39,35 +39,39 @@ class CheckResult:
 
 
 def check_container_runtime() -> CheckResult:
-    """Check for docker on PATH."""
-    if shutil.which("docker"):
-        try:
-            result = subprocess.run(
-                ["docker", "--version"],
-                capture_output=True, text=True, timeout=10,
-            )
-            version = result.stdout.strip()
-            return CheckResult(
-                name="container-runtime",
-                passed=True,
-                detail=version,
-            )
-        except Exception:
-            return CheckResult(
-                name="container-runtime",
-                passed=True,
-                detail="docker (version unknown)",
-            )
+    """Check for a running docker or podman daemon."""
+    for runtime in ("docker", "podman"):
+        if shutil.which(runtime):
+            try:
+                # Use `info` to verify the daemon is actually running, not just the CLI installed.
+                subprocess.run(
+                    [runtime, "info"],
+                    capture_output=True, text=True, check=True, timeout=10,
+                )
+                
+                result = subprocess.run(
+                    [runtime, "--version"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                version = result.stdout.strip()
+                return CheckResult(
+                    name="container-runtime",
+                    passed=True,
+                    detail=version,
+                )
+            except Exception:
+                continue
+
     is_mac = sys.platform == "darwin"
     fix = (
-        "brew install colima docker && colima start --vm-type vz --vz-rosetta"
+        "brew install colima docker && colima start --vm-type vz --vz-rosetta\n         or brew install podman && podman machine init && podman machine start"
         if is_mac
-        else "sudo apt install docker.io"
+        else "sudo apt install docker.io or podman"
     )
     return CheckResult(
         name="container-runtime",
         passed=False,
-        detail="docker not found on PATH",
+        detail="docker or podman daemon not found or not running",
         fix=fix,
     )
 

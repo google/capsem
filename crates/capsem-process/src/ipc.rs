@@ -158,13 +158,11 @@ pub(crate) async fn handle_ipc_connection(
                 ServiceToProcess::ReloadConfig => {
                     info!("Reloading policies from disk");
                     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+                    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
 
-                    let new_domain = Arc::new(capsem_core::net::policy_config::settings_to_domain_policy(&capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf)));
-                    let new_network = Arc::new(capsem_core::net::policy_config::build_network_policy(&capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf)));
-
-                    let user_mcp = user_sf.mcp.clone().unwrap_or_default();
-                    let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
-                    let new_mcp = Arc::new(user_mcp.to_policy(&corp_mcp));
+                    let new_domain = Arc::new(merged.domain);
+                    let new_network = Arc::new(merged.network);
+                    let new_mcp = Arc::new(merged.mcp);
 
                     *net_state.policy.write().unwrap() = new_network;
                     *mcp_config.domain_policy.write().unwrap() = Arc::clone(&new_domain);
