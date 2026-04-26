@@ -27,6 +27,6 @@
       {disabled ? 'opacity-50 cursor-not-allowed' : ''}"
     value={String(leaf.effective_value)}
     {disabled}
-    onchange={(e) => onchange((e.target as HTMLInputElement).value)}
+    oninput={(e) => onchange((e.target as HTMLInputElement).value)}
   />
 </div>

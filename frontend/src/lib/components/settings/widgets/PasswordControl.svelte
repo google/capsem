@@ -54,7 +54,7 @@
         value={value}
         placeholder={leaf.metadata.prefix ? `${leaf.metadata.prefix}...` : ''}
         {disabled}
-        onchange={(e) => onchange((e.target as HTMLInputElement).value)}
+        oninput={(e) => onchange((e.target as HTMLInputElement).value)}
       />
       <button
         type="button"

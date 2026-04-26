@@ -627,6 +627,12 @@ impl MergedPolicies {
             .find(|s| s.id == "ai.ollama.domains")
             .and_then(|s| s.effective_value.as_text())
             .unwrap_or("");
+            
+        let ollama_endpoint = resolved
+            .iter()
+            .find(|s| s.id == "ai.ollama.endpoint")
+            .and_then(|s| s.effective_value.as_text())
+            .unwrap_or("http://127.0.0.1:11434");
         
         for domain in parse_domain_list(ollama_domains) {
             // Strip wildcard for routing if present
@@ -636,7 +642,7 @@ impl MergedPolicies {
                 domain.clone()
             };
             if !host_aliases.contains_key(&key) {
-                host_aliases.insert(key, "http://127.0.0.1:11434".to_string());
+                host_aliases.insert(key, ollama_endpoint.to_string());
             }
         }
 
