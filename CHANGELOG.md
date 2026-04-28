@@ -4,8 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ## [Unreleased]
+
+### Fixed
+- **Fixed OverflowError in KVM diagnostic script.**
+  Casted the TSS address `0xFFFBD000` to a signed 32-bit integer when passing to `fcntl.ioctl` in `scripts/kvm-diagnostic.py` to avoid `OverflowError` on platforms where Python expects a signed integer. Fixed in both Phase 3 and Phase 5.
 
 ## [1.0.1777065213] - 2026-04-24
 
