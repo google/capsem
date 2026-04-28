@@ -114,7 +114,7 @@ def main():
         sys.exit(1)
 
     check("KVM_SET_TSS_ADDR(0xFFFBD000)",
-          lambda: fcntl.ioctl(vm1, KVM_SET_TSS_ADDR, 0xFFFBD000))
+          lambda: fcntl.ioctl(vm1, KVM_SET_TSS_ADDR, struct.unpack("i", struct.pack("I", 0xFFFBD000))[0]))
 
     check("KVM_SET_IDENTITY_MAP_ADDR(0xFFFBC000)",
           lambda: fcntl.ioctl(vm1, KVM_SET_IDENTITY_MAP_ADDR,
@@ -172,7 +172,7 @@ def main():
         if vcpu_first is not None:
             os.close(vcpu_first)
             check("KVM_SET_TSS_ADDR(0xFFFBD000)",
-                  lambda: fcntl.ioctl(vm3, KVM_SET_TSS_ADDR, 0xFFFBD000))
+                  lambda: fcntl.ioctl(vm3, KVM_SET_TSS_ADDR, struct.unpack("i", struct.pack("I", 0xFFFBD000))[0]))
             check("KVM_SET_IDENTITY_MAP_ADDR(0xFFFBC000)",
                   lambda: fcntl.ioctl(vm3, KVM_SET_IDENTITY_MAP_ADDR,
                                       struct.pack("Q", 0xFFFBC000)))
