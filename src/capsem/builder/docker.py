@@ -404,7 +404,7 @@ def create_squashfs(
         "debian:bookworm-slim", "bash", "-c",
         f"apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && apt-get install -y squashfs-tools zstd && "
         f"mkdir /rootfs && tar xf /assets/{tar_name} -C /rootfs && "
-        f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend",
+        f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend && chown {os.getuid()}:{os.getgid()} /assets/{out_name}",
     ])
 
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Fixed file ownership issue in build-assets.**
+  Added a `chown` command in the container after `mksquashfs` is run to restore ownership of `rootfs.squashfs` to the host user's UID and GID.
+
 ## [1.0.1777065213] - 2026-04-24
 
 ### Fixed (CI)
