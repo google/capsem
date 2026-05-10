@@ -86,8 +86,8 @@ fn collect_settings(
     if table.contains_key("type") {
         // Leaf setting -- deserialize the object into SettingDefRaw
         let val = serde_json::Value::Object(table.clone());
-        let def: SettingDefRaw = serde_json::from_value(val)
-            .unwrap_or_else(|e| panic!("bad setting '{path}': {e}"));
+        let def: SettingDefRaw =
+            serde_json::from_value(val).unwrap_or_else(|e| panic!("bad setting '{path}': {e}"));
         // Inherit enabled_by from parent group, unless this IS the toggle itself
         let enabled_by = if parent.enabled_by.as_deref() == Some(path) {
             None

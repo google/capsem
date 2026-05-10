@@ -1,0 +1,49 @@
+[package]
+name = "capsem-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+capsem-core = { path = ".." }
+
+# Pinned so a hickory-proto upgrade in the workspace flows through to
+# the fuzz harness automatically; capsem-core re-exports nothing from
+# hickory directly so the fuzz target only depends on our wrappers.
+
+[[bin]]
+name = "parse_query"
+path = "fuzz_targets/parse_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "build_nxdomain"
+path = "fuzz_targets/build_nxdomain.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "build_servfail"
+path = "fuzz_targets/build_servfail.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "round_trip"
+path = "fuzz_targets/round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+# Standalone workspace -- cargo-fuzz convention. Keeps the libFuzzer
+# instrumentation flags (-Cpasses=sancov-module, etc.) from leaking
+# into the parent workspace's normal builds.

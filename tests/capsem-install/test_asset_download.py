@@ -44,6 +44,18 @@ def _arch() -> str:
     return "x86_64"
 
 
+def _binary_version() -> str:
+    """Query the installed binary's compiled-in version.
+
+    asset_manager constructs URLs from CARGO_PKG_VERSION (the running binary),
+    not the manifest's binaries.current. The fixture release dir has to match
+    that or every download 404s. Cached -- shells out once per test session.
+    """
+    out = subprocess.check_output([str(CAPSEM_BIN), "--version"], text=True)
+    # `capsem 1.0.1777065213` -> `1.0.1777065213`
+    return out.strip().split()[-1]
+
+
 def _blake3(data: bytes) -> str:
     # Prefer the `blake3` module if present (capsem uses it), fall back to
     # shelling out to `b3sum` which is a dev-env requirement via `just doctor`.
@@ -146,8 +158,9 @@ def test_update_assets_downloads_missing(tmp_path: Path, http_fixture, installed
         "rootfs.squashfs": b"test-rootfs-bytes-" + os.urandom(64),
     }
 
-    # Asset version directory matches release_url(asset_version) pattern.
-    release_dir = serve_dir / "v2030.0101.1"
+    # GitHub releases are tagged by binary version (v1.0.{ts}), not asset
+    # version. asset filenames inside the release are arch-prefixed.
+    release_dir = serve_dir / f"v{_binary_version()}"
     release_dir.mkdir()
     for name, blob in files.items():
         (release_dir / f"{arch}-{name}").write_bytes(blob)
@@ -192,7 +205,7 @@ def test_update_assets_idempotent_when_hashes_match(tmp_path: Path, http_fixture
         "initrd.img": b"initrd",
         "rootfs.squashfs": b"rootfs",
     }
-    release_dir = serve_dir / "v2030.0101.1"
+    release_dir = serve_dir / f"v{_binary_version()}"
     release_dir.mkdir()
     for name, blob in files.items():
         (release_dir / f"{arch}-{name}").write_bytes(blob)
@@ -222,7 +235,7 @@ def test_update_assets_hash_mismatch_fails(tmp_path: Path, http_fixture, install
     declared = {"vmlinuz": b"the-right-bytes"}
     served_blob = b"the-WRONG-bytes"
 
-    release_dir = serve_dir / "v2030.0101.1"
+    release_dir = serve_dir / f"v{_binary_version()}"
     release_dir.mkdir()
     (release_dir / f"{arch}-vmlinuz").write_bytes(served_blob)
 
@@ -259,7 +272,7 @@ def test_update_assets_404_fails(tmp_path: Path, http_fixture, installed_layout)
         "initrd.img": b"i",
         "rootfs.squashfs": b"r",
     }
-    release_dir = serve_dir / "v2030.0101.1"
+    release_dir = serve_dir / f"v{_binary_version()}"
     release_dir.mkdir()
     # Serve only two of three to force a 404.
     (release_dir / f"{arch}-vmlinuz").write_bytes(files["vmlinuz"])

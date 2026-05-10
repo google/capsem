@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::os::unix::io::{FromRawFd, RawFd};
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 use super::memory::GuestMemoryRef;
 use super::serial::KvmSerialConsole;
@@ -93,7 +93,9 @@ impl VirtioDevice for VirtioConsoleDevice {
 impl Drop for VirtioConsoleDevice {
     fn drop(&mut self) {
         if self.tx_fd >= 0 {
-            unsafe { libc::close(self.tx_fd); }
+            unsafe {
+                libc::close(self.tx_fd);
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ describe('Settings export/import', () => {
       expect(parsed.version).toBe('1');
       expect(parsed.exported_at).toBeDefined();
       expect(typeof parsed.settings).toBe('object');
+      expect(typeof parsed.policy).toBe('object');
     });
 
     it('includes all leaf settings', () => {
@@ -41,6 +42,16 @@ describe('Settings export/import', () => {
       const bashrc = parsed.settings['vm.environment.shell.bashrc'];
       expect(bashrc.value).toHaveProperty('path');
       expect(bashrc.value).toHaveProperty('content');
+    });
+
+    it('includes named policy rules', () => {
+      const model = loadModel();
+      const parsed = JSON.parse(model.exportToJSON());
+      expect(parsed.policy.http.block_openai_github).toMatchObject({
+        on: 'http.request',
+        decision: 'block',
+        priority: 10,
+      });
     });
   });
 
@@ -113,6 +124,46 @@ describe('Settings export/import', () => {
       });
       const changes = model.importFromJSON(importData);
       expect(changes.get('vm.resources.cpu_count')).toBe(8);
+    });
+
+    it('returns changes for new named policy rules', () => {
+      const model = loadModel();
+      const importData = JSON.stringify({
+        version: '1',
+        exported_at: new Date().toISOString(),
+        settings: {},
+        policy: {
+          http: {
+            block_evil: {
+              on: 'http.request',
+              if: 'request.host == "evil.com"',
+              decision: 'block',
+              priority: 5,
+            },
+          },
+        },
+      });
+      const changes = model.importFromJSON(importData);
+      expect(changes.get('policy.http.block_evil')).toEqual({
+        on: 'http.request',
+        if: 'request.host == "evil.com"',
+        decision: 'block',
+        priority: 5,
+      });
+    });
+
+    it('throws on malformed policy import', () => {
+      const model = loadModel();
+      const importData = JSON.stringify({
+        version: '1',
+        settings: {},
+        policy: {
+          http: {
+            bad: { on: 'http.request', decision: 'block' },
+          },
+        },
+      });
+      expect(() => model.importFromJSON(importData)).toThrow('Invalid policy rule');
     });
 
     it('throws on invalid JSON', () => {

@@ -39,18 +39,18 @@ Cargo tools (auto-installed by `just doctor-fix`):
 
 On macOS, Docker runs inside a Colima VM. The default memory allocation may be too small -- the rootfs build runs apt installs, npm installs, and curl-based CLI installers concurrently, which can OOM-kill the build (exit code 137).
 
-**Minimum**: 4GB RAM. **Recommended**: 8GB RAM, 8 CPUs.
+**Minimum**: 12GB RAM. **Recommended**: 16GB RAM, 8 CPUs (Tauri's GTK/webkit2gtk dep chain pushes the install-test build past 8GB on cold caches; 12GB is the floor that doesn't OOM).
 
 ### Colima (macOS)
 
 ```bash
 # First-time setup
 brew install colima docker
-colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 
 # Restart with new resources
 colima stop
-colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 
 # Verify
 docker info | grep -E 'Total Memory|CPUs'
@@ -72,15 +72,36 @@ sudo apt install docker.io
 # 1. Clone and enter
 git clone <repo> && cd capsem
 
-# 2. Bootstrap (installs deps + runs doctor with auto-fix)
-sh scripts/bootstrap.sh
+# 2. Bootstrap (interactive: prompts [Y/n] before each install; --yes for CI)
+./bootstrap.sh
+#   ./bootstrap.sh --yes    # non-interactive
 
-# 3. Build VM assets (kernel + rootfs, ~10 min, needs Docker)
-just build-assets
-
-# 4. Boot the VM to verify everything works
+# 3. Boot the VM to verify everything works
 just run "echo hello from capsem"
 ```
+
+`bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs `just build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
+
+### What bootstrap installs
+
+Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to decline). `--yes` and non-tty input both auto-accept.
+
+| Phase | Tool | Channel |
+|-------|------|---------|
+| 1 (hard prereqs) | `bash`, `git`, `curl` | system package manager (you install) |
+| 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` |
+| 1 | `just` | `just.systems` -> `~/.local/bin` |
+| 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
+| 2 | Python deps | `uv sync` |
+| 2 (macOS) | `flock`, `pnpm` | `brew` |
+| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
+| 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
+| 2 | Frontend deps | `pnpm install --frozen-lockfile` |
+| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, build VM assets, pack initrd |
+
+### Kernel version
+
+`guest/config/build.toml` ships `kernel_branch = "auto"`, which makes `resolve_kernel_version` pick the newest non-EOL longterm release from `kernel.org/releases.json` and fetch its latest patch (e.g. `6.18.26`). Set `kernel_branch = "X.Y"` (e.g. `"6.6"`) to pin for reproducibility.
 
 Or step by step:
 
@@ -177,14 +198,14 @@ confirm signing works.
 ### `just doctor` fails
 Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (rustup targets before cargo tools before build-assets before pack-initrd). Non-fixable issues show install hints.
 
-### `just build-assets` fails with exit code 137
-The container runtime VM ran out of memory. Increase to 8GB:
-- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8`
+### `just build-assets` or `just test-install` fails with exit code 137 (or 143 mid-cargo-build)
+The container runtime VM ran out of memory. Bump Colima to at least 12GB (16GB recommended):
+- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`
 - Linux: Docker runs natively, no memory tuning needed
 
 ### `just build-assets` fails with "Release file not valid yet"
 The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Until=false` to work around this, but if you see this error on an old builder version:
-- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8` (resets clock)
+- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` (resets clock)
 - Docker Desktop: restart Docker Desktop
 
 ### `just build-assets` fails (other)
@@ -267,4 +288,4 @@ Registry order (each depends on the ones above it):
 - **Non-fixable checks use `fail()` with an install hint.** System tools (node, docker, etc.) can't be auto-installed safely.
 - **Platform-specific checks live in `doctor-macos.sh` / `doctor-linux.sh`.** Each defines `check_platform()` and `tool_hint()`.
 - **Test, don't just check.** The codesigning section compiles and signs a test binary. `docker buildx version` tests functionality, not just file existence.
-- **Bootstrap calls doctor.** `scripts/bootstrap.sh` checks bare minimums (bash, git, curl, rustup, just), installs Python/frontend deps, then runs `doctor-common.sh --fix`.
+- **Bootstrap calls doctor.** `bootstrap.sh` checks bare minimums (bash, git, curl, rustup, just), installs Python/frontend deps, then runs `doctor-common.sh --fix`.

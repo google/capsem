@@ -7,7 +7,7 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 
 use super::memory::GuestMemoryRef;
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
@@ -64,7 +64,8 @@ impl VirtioBlockDevice {
             .open(path)
             .with_context(|| format!("open block device: {}", path.display()))?;
 
-        let file_size = file.metadata()
+        let file_size = file
+            .metadata()
             .with_context(|| format!("stat block device: {}", path.display()))?
             .len();
         let capacity_sectors = file_size / SECTOR_SIZE;
@@ -103,7 +104,10 @@ impl VirtioBlockDevice {
         };
 
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
-        if offset.checked_add(total_len).map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE) {
+        if offset
+            .checked_add(total_len)
+            .map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE)
+        {
             return VIRTIO_BLK_S_IOERR;
         }
 
@@ -129,11 +133,7 @@ impl VirtioBlockDevice {
     }
 
     /// Process a write request: guest memory -> file.
-    fn process_write(
-        &mut self,
-        sector: u64,
-        data_descs: &[(u64, u32)],
-    ) -> u8 {
+    fn process_write(&mut self, sector: u64, data_descs: &[(u64, u32)]) -> u8 {
         if self.read_only {
             return VIRTIO_BLK_S_IOERR;
         }
@@ -149,7 +149,10 @@ impl VirtioBlockDevice {
         };
 
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
-        if offset.checked_add(total_len).map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE) {
+        if offset
+            .checked_add(total_len)
+            .map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE)
+        {
             return VIRTIO_BLK_S_IOERR;
         }
 
@@ -175,10 +178,7 @@ impl VirtioBlockDevice {
     }
 
     /// Process a get-ID request: copy device_id to guest buffer.
-    fn process_get_id(
-        &self,
-        data_descs: &[(u64, u32)],
-    ) -> u8 {
+    fn process_get_id(&self, data_descs: &[(u64, u32)]) -> u8 {
         let mem = match self.mem.as_ref() {
             Some(m) => m,
             None => return VIRTIO_BLK_S_IOERR,
@@ -199,7 +199,9 @@ impl VirtioBlockDevice {
     fn write_status(&self, gpa: u64, status: u8) {
         if let Some(mem) = self.mem.as_ref() {
             if let Some(ptr) = mem.gpa_to_host(gpa) {
-                unsafe { *ptr = status; }
+                unsafe {
+                    *ptr = status;
+                }
             }
         }
     }
@@ -346,9 +348,9 @@ impl VirtioDevice for VirtioBlockDevice {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::memory::{GuestMemory, RAM_BASE};
     use super::super::virtio_queue::{VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
+    use super::*;
     use std::io::Write as IoWrite;
 
     // -----------------------------------------------------------------------
@@ -431,10 +433,14 @@ mod tests {
         fn push_avail(&self, ring_index: u16, desc_head: u16, avail_idx: u16) {
             // Write ring entry
             let entry_offset = AVAIL_RING_OFFSET + 4 + (ring_index as u64) * 2;
-            self.mem.write_at(entry_offset, &desc_head.to_le_bytes()).unwrap();
+            self.mem
+                .write_at(entry_offset, &desc_head.to_le_bytes())
+                .unwrap();
             // Write avail idx
             let idx_offset = AVAIL_RING_OFFSET + 2;
-            self.mem.write_at(idx_offset, &avail_idx.to_le_bytes()).unwrap();
+            self.mem
+                .write_at(idx_offset, &avail_idx.to_le_bytes())
+                .unwrap();
         }
 
         /// Read status byte from guest memory at a given offset from RAM_BASE.
@@ -465,13 +471,7 @@ mod tests {
 
         /// Set up a simple 3-descriptor request: header + data + status.
         /// Returns (header_offset, data_offset, status_offset) relative to RAM_BASE.
-        fn setup_request(
-            &self,
-            type_: u32,
-            sector: u64,
-            data_len: u32,
-            data_writable: bool,
-        ) {
+        fn setup_request(&self, type_: u32, sector: u64, data_len: u32, data_writable: bool) {
             let header_offset = DATA_AREA_OFFSET;
             let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
             let status_offset = data_offset + data_len as u64;
@@ -479,8 +479,13 @@ mod tests {
             self.write_header(header_offset, type_, sector);
 
             // Desc 0: header (readable)
-            self.write_desc(0, RAM_BASE + header_offset, REQ_HEADER_SIZE as u32,
-                VRING_DESC_F_NEXT, 1);
+            self.write_desc(
+                0,
+                RAM_BASE + header_offset,
+                REQ_HEADER_SIZE as u32,
+                VRING_DESC_F_NEXT,
+                1,
+            );
             // Desc 1: data buffer
             let data_flags = if data_writable {
                 VRING_DESC_F_NEXT | VRING_DESC_F_WRITE
@@ -777,12 +782,21 @@ mod tests {
         let status1_offset = data1_offset + 512;
 
         h.write_header(hdr1_offset, VIRTIO_BLK_T_IN, 0);
-        h.write_desc(0, RAM_BASE + hdr1_offset, REQ_HEADER_SIZE as u32,
-            VRING_DESC_F_NEXT, 1);
-        h.write_desc(1, RAM_BASE + data1_offset, 512,
-            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 2);
-        h.write_desc(2, RAM_BASE + status1_offset, 1,
-            VRING_DESC_F_WRITE, 0);
+        h.write_desc(
+            0,
+            RAM_BASE + hdr1_offset,
+            REQ_HEADER_SIZE as u32,
+            VRING_DESC_F_NEXT,
+            1,
+        );
+        h.write_desc(
+            1,
+            RAM_BASE + data1_offset,
+            512,
+            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            2,
+        );
+        h.write_desc(2, RAM_BASE + status1_offset, 1, VRING_DESC_F_WRITE, 0);
 
         // Request 2: read sector 1 using descs 3-5
         let hdr2_offset = status1_offset + 64; // gap
@@ -790,16 +804,25 @@ mod tests {
         let status2_offset = data2_offset + 512;
 
         h.write_header(hdr2_offset, VIRTIO_BLK_T_IN, 1);
-        h.write_desc(3, RAM_BASE + hdr2_offset, REQ_HEADER_SIZE as u32,
-            VRING_DESC_F_NEXT, 4);
-        h.write_desc(4, RAM_BASE + data2_offset, 512,
-            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 5);
-        h.write_desc(5, RAM_BASE + status2_offset, 1,
-            VRING_DESC_F_WRITE, 0);
+        h.write_desc(
+            3,
+            RAM_BASE + hdr2_offset,
+            REQ_HEADER_SIZE as u32,
+            VRING_DESC_F_NEXT,
+            4,
+        );
+        h.write_desc(
+            4,
+            RAM_BASE + data2_offset,
+            512,
+            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            5,
+        );
+        h.write_desc(5, RAM_BASE + status2_offset, 1, VRING_DESC_F_WRITE, 0);
 
         // Both in avail ring
         h.push_avail(0, 0, 2); // desc head 0 at ring[0], avail_idx=2
-        // Write ring entry for second request
+                               // Write ring entry for second request
         let entry_offset = AVAIL_RING_OFFSET + 4 + 1 * 2; // ring[1]
         h.mem.write_at(entry_offset, &3u16.to_le_bytes()).unwrap();
 
@@ -871,14 +894,23 @@ mod tests {
         h.write_header(header_offset, VIRTIO_BLK_T_IN, 0);
 
         // Desc 0: header (valid)
-        h.write_desc(0, RAM_BASE + header_offset, REQ_HEADER_SIZE as u32,
-            VRING_DESC_F_NEXT, 1);
+        h.write_desc(
+            0,
+            RAM_BASE + header_offset,
+            REQ_HEADER_SIZE as u32,
+            VRING_DESC_F_NEXT,
+            1,
+        );
         // Desc 1: data buffer at invalid GPA (way outside RAM)
-        h.write_desc(1, 0xDEAD_0000, 512,
-            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 2);
+        h.write_desc(
+            1,
+            0xDEAD_0000,
+            512,
+            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            2,
+        );
         // Desc 2: status
-        h.write_desc(2, RAM_BASE + status_offset, 1,
-            VRING_DESC_F_WRITE, 0);
+        h.write_desc(2, RAM_BASE + status_offset, 1, VRING_DESC_F_WRITE, 0);
 
         h.push_avail(0, 0, 1);
         h.dev.queue_notify(0);

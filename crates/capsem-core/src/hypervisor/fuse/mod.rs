@@ -3,15 +3,15 @@
 //! Compiled on all Unix platforms (macOS + Linux) so tests run everywhere.
 //! The KVM-specific VirtioFS device (`kvm/virtio_fs/`) imports from here.
 
-pub mod protocol;
-pub mod inode_table;
 pub mod file_handles;
+pub mod inode_table;
+pub mod protocol;
 
+#[allow(unused_imports)] // Used by KVM backend (not compiled on macOS)
+pub use file_handles::{DirEntryData, FileHandleTable, OpenHandle};
+#[allow(unused_imports)] // Used by KVM backend (not compiled on macOS)
+pub use inode_table::{InodeEntry, InodeTable};
 pub use protocol::*;
-#[allow(unused_imports)] // Used by KVM backend (not compiled on macOS)
-pub use inode_table::{InodeTable, InodeEntry};
-#[allow(unused_imports)] // Used by KVM backend (not compiled on macOS)
-pub use file_handles::{FileHandleTable, OpenHandle, DirEntryData};
 
 use std::os::unix::fs::MetadataExt;
 
@@ -32,9 +32,7 @@ pub fn read_struct<T: Copy>(buf: &[u8]) -> Option<T> {
 }
 
 pub fn as_bytes<T: Sized>(val: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(val as *const T as *const u8, std::mem::size_of::<T>())
-    }
+    unsafe { std::slice::from_raw_parts(val as *const T as *const u8, std::mem::size_of::<T>()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,16 +97,22 @@ pub fn mode_to_dtype(mode: u32) -> u32 {
 
 pub fn extract_name(body: &[u8]) -> Option<&[u8]> {
     let end = body.iter().position(|&b| b == 0).unwrap_or(body.len());
-    if end == 0 { return None; }
+    if end == 0 {
+        return None;
+    }
     Some(&body[..end])
 }
 
 pub fn extract_two_names(body: &[u8]) -> Option<(&[u8], &[u8])> {
     let first_end = body.iter().position(|&b| b == 0)?;
-    if first_end == 0 { return None; }
+    if first_end == 0 {
+        return None;
+    }
     let rest = &body[first_end + 1..];
     let second_end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
-    if second_end == 0 { return None; }
+    if second_end == 0 {
+        return None;
+    }
     Some((&body[..first_end], &rest[..second_end]))
 }
 
@@ -121,7 +125,9 @@ pub fn io_error_to_errno(e: &std::io::Error) -> i32 {
 }
 
 pub fn errno() -> i32 {
-    std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(libc::EIO)
 }
 
 // ---------------------------------------------------------------------------
@@ -189,37 +195,65 @@ mod tests {
 
     // Name extraction
 
-    #[test] fn extract_name_null_terminated() {
+    #[test]
+    fn extract_name_null_terminated() {
         assert_eq!(extract_name(b"hello\0world"), Some(b"hello".as_slice()));
     }
-    #[test] fn extract_name_no_null() {
+    #[test]
+    fn extract_name_no_null() {
         assert_eq!(extract_name(b"hello"), Some(b"hello".as_slice()));
     }
-    #[test] fn extract_name_empty_returns_none() {
+    #[test]
+    fn extract_name_empty_returns_none() {
         assert!(extract_name(b"").is_none());
         assert!(extract_name(b"\0").is_none());
     }
-    #[test] fn two_names_works() {
+    #[test]
+    fn two_names_works() {
         let (a, b) = extract_two_names(b"old\0new\0").unwrap();
-        assert_eq!(a, b"old"); assert_eq!(b, b"new");
+        assert_eq!(a, b"old");
+        assert_eq!(b, b"new");
     }
-    #[test] fn two_names_no_second_null() {
+    #[test]
+    fn two_names_no_second_null() {
         let (a, b) = extract_two_names(b"old\0new").unwrap();
-        assert_eq!(a, b"old"); assert_eq!(b, b"new");
+        assert_eq!(a, b"old");
+        assert_eq!(b, b"new");
     }
 
     // Dirent alignment
 
-    #[test] fn dirent_align_already() { assert_eq!(dirent_align(24), 24); }
-    #[test] fn dirent_align_rounds() { assert_eq!(dirent_align(25), 32); }
-    #[test] fn dirent_align_zero() { assert_eq!(dirent_align(0), 0); }
+    #[test]
+    fn dirent_align_already() {
+        assert_eq!(dirent_align(24), 24);
+    }
+    #[test]
+    fn dirent_align_rounds() {
+        assert_eq!(dirent_align(25), 32);
+    }
+    #[test]
+    fn dirent_align_zero() {
+        assert_eq!(dirent_align(0), 0);
+    }
 
     // Mode to dtype
 
-    #[test] fn dtype_regular() { assert_eq!(mode_to_dtype(S_IFREG | 0o644), DT_REG); }
-    #[test] fn dtype_directory() { assert_eq!(mode_to_dtype(S_IFDIR | 0o755), DT_DIR); }
-    #[test] fn dtype_symlink() { assert_eq!(mode_to_dtype(S_IFLNK | 0o777), DT_LNK); }
-    #[test] fn dtype_unknown() { assert_eq!(mode_to_dtype(0), DT_UNKNOWN); }
+    #[test]
+    fn dtype_regular() {
+        assert_eq!(mode_to_dtype(S_IFREG | 0o644), DT_REG);
+    }
+    #[test]
+    fn dtype_directory() {
+        assert_eq!(mode_to_dtype(S_IFDIR | 0o755), DT_DIR);
+    }
+    #[test]
+    fn dtype_symlink() {
+        assert_eq!(mode_to_dtype(S_IFLNK | 0o777), DT_LNK);
+    }
+    #[test]
+    fn dtype_unknown() {
+        assert_eq!(mode_to_dtype(0), DT_UNKNOWN);
+    }
 
     // metadata_to_fuse_attr
 

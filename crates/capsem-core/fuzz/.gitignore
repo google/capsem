@@ -1,0 +1,7 @@
+# cargo-fuzz build outputs (libFuzzer-instrumented binaries)
+target/
+# Crash dumps -- regenerate locally; check in only the minimized
+# reproducer when triaging.
+artifacts/
+# Per-target Cargo.lock is auto-managed by cargo-fuzz.
+Cargo.lock

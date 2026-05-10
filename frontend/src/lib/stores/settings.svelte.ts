@@ -9,7 +9,10 @@ import type {
   SettingsNode,
   SettingsLeaf,
   SettingValue,
+  PolicyRuleConfig,
+  SettingsChangeValue,
 } from '../types/settings';
+import type { PolicyRuleType } from '../models/settings-model';
 
 class SettingsStore {
   model = $state<SettingsModel | null>(null);
@@ -76,8 +79,20 @@ class SettingsStore {
   // --- Mutations ---
 
   /** Stage a local change without persisting (for text/number/file fields). */
-  stage(id: string, value: SettingValue) {
+  stage(id: string, value: SettingsChangeValue) {
     this.model?.stage(id, value);
+  }
+
+  stagePolicyRule(type: PolicyRuleType, name: string, rule: PolicyRuleConfig) {
+    this.model?.stagePolicyRule(type, name, rule);
+  }
+
+  deletePolicyRule(type: PolicyRuleType, name: string) {
+    this.model?.deletePolicyRule(type, name);
+  }
+
+  stageGeneratedPolicyRules(): number {
+    return this.model?.stageGeneratedPolicyRules() ?? 0;
   }
 
   /** Persist all pending changes via the gateway settings API. */

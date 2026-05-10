@@ -24,9 +24,7 @@ pub fn generate_session_id() -> String {
     let rand_bits = nanos ^ std::process::id().wrapping_mul(2654435761);
     let suffix = rand_bits & 0xFFFF;
 
-    format!(
-        "{y:04}{m:02}{d:02}-{hours:02}{minutes:02}{seconds:02}-{suffix:04x}",
-    )
+    format!("{y:04}{m:02}{d:02}-{hours:02}{minutes:02}{seconds:02}-{suffix:04x}",)
 }
 
 /// Validate that a string looks like a valid session ID.
@@ -155,7 +153,16 @@ pub(crate) fn epoch_to_parts(secs: u64) -> (i64, u32, u32, u64, u64, u64) {
     let month_days = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut m = 0u32;
     for md in &month_days {

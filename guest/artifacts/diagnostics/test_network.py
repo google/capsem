@@ -13,7 +13,7 @@ from conftest import run
 
 
 # ---------------------------------------------------------------
-# Layer 1: Guest network plumbing (dummy0, dnsmasq, iptables)
+# Layer 1: Guest network plumbing (dummy0, capsem-dns-proxy, iptables)
 # ---------------------------------------------------------------
 
 
@@ -25,25 +25,81 @@ def test_dummy0_has_ip():
         f"10.0.0.1 not on dummy0:\n{result.stdout}"
 
 
-def test_dnsmasq_responds():
-    """dnsmasq must answer DNS queries on 127.0.0.1:53."""
-    result = run("getent hosts test-dns-probe.invalid", timeout=5)
-    assert "10.0.0.1" in result.stdout, \
-        f"dnsmasq did not resolve to 10.0.0.1: {result.stdout}"
+def test_dns_proxy_listening_udp():
+    """T3.4: capsem-dns-proxy must listen on UDP :1053."""
+    result = run("ss -lun 2>&1", timeout=5)
+    assert ":1053" in result.stdout, \
+        f"capsem-dns-proxy not listening on UDP 1053:\n{result.stdout}"
 
 
-@pytest.mark.parametrize("domain", [
-    "github.com",
-    "google.com",
-    "cloudflare.com",
-    "example.org",
-    "python.org",
-])
-def test_dns_all_resolve_to_local(domain):
-    """All DNS queries must resolve to 10.0.0.1 via fake dnsmasq."""
-    result = run(f"getent hosts {domain} 2>&1", timeout=5)
-    assert "10.0.0.1" in result.stdout, \
-        f"{domain} did not resolve to 10.0.0.1: {result.stdout}"
+def test_dns_proxy_listening_tcp():
+    """T3.4: capsem-dns-proxy must listen on TCP :1053."""
+    result = run("ss -ltn 2>&1", timeout=5)
+    assert ":1053" in result.stdout, \
+        f"capsem-dns-proxy not listening on TCP 1053:\n{result.stdout}"
+
+
+def test_iptables_redirect_dns_udp_to_1053():
+    """T3.4: iptables must REDIRECT UDP port 53 to 1053
+    (capsem-dns-proxy)."""
+    result = run(
+        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
+        timeout=5,
+    )
+    assert "1053" in result.stdout, \
+        f"no REDIRECT to 1053 (DNS proxy):\n{result.stdout}"
+    assert "udp dpt:53" in result.stdout, \
+        f"no UDP dport 53 redirect rule:\n{result.stdout}"
+
+
+def test_iptables_redirect_dns_tcp_to_1053():
+    """T3.4: iptables must REDIRECT TCP port 53 to 1053 (large
+    answers / TC-bit retries fall through TCP)."""
+    result = run(
+        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
+        timeout=5,
+    )
+    assert "tcp dpt:53" in result.stdout, \
+        f"no TCP dport 53 redirect rule:\n{result.stdout}"
+
+
+def test_dns_resolves_via_capsem_proxy():
+    """T3.4 acceptance: a real domain must resolve to a real IP via
+    the capsem-dns-proxy -> host hickory handler. Pre-T3.4 every
+    name resolved to 10.0.0.1; post-T3.4 we must get a real upstream
+    answer for an allowed domain."""
+    result = run("getent hosts elie.net", timeout=10)
+    assert result.returncode == 0, f"elie.net did not resolve:\n{result.stderr}"
+    assert "10.0.0.1" not in result.stdout, \
+        f"elie.net still resolves to dnsmasq sentinel 10.0.0.1:\n{result.stdout}"
+    # First whitespace token is the IP; accept IPv4 (3 dots) or
+    # IPv6 (>=2 colons). Some upstreams return AAAA-only on this
+    # name and getent honors the request's address family.
+    parts = result.stdout.split()
+    assert parts, f"empty getent output:\n{result.stdout!r}"
+    ip = parts[0]
+    is_v4 = ip.count(".") == 3
+    is_v6 = ip.count(":") >= 2
+    assert is_v4 or is_v6, \
+        f"unexpected IP shape {ip!r} in:\n{result.stdout}"
+
+
+def test_dns_nxdomain_propagates_from_upstream():
+    """T3.4 acceptance: a name that doesn't exist anywhere must
+    NXDOMAIN cleanly through the proxy. The `.invalid` TLD is
+    reserved by RFC 2606 to never resolve, so this is the cleanest
+    end-to-end NXDOMAIN test that doesn't depend on the user's
+    policy. Pre-T3 dnsmasq returned 10.0.0.1 for *everything*
+    including .invalid -- this test pins the cutover."""
+    result = run(
+        "getent hosts nope-this-does-not-exist-capsem-test.invalid 2>&1",
+        timeout=10,
+    )
+    # getent returns 2 (HOST_NOT_FOUND) on NXDOMAIN.
+    assert result.returncode != 0, \
+        f"`.invalid` domain unexpectedly resolved (pre-T3 dnsmasq behavior):\n{result.stdout}"
+    # And the legacy 10.0.0.1 sentinel is not in any output.
+    assert "10.0.0.1" not in result.stdout
 
 
 def test_iptables_redirect_443_to_10443():
@@ -56,8 +112,32 @@ def test_iptables_redirect_443_to_10443():
         f"no REDIRECT 443->10443:\n{result.stdout}"
 
 
+def test_iptables_redirect_80_to_10080():
+    """T2.2: iptables must REDIRECT port 80 to 10080 (plain HTTP)."""
+    result = run(
+        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
+        timeout=5,
+    )
+    # Look for a REDIRECT line carrying ports "80" and "10080".
+    assert "10080" in result.stdout, \
+        f"no REDIRECT to 10080 (plain HTTP path):\n{result.stdout}"
+    assert "dpt:80 " in result.stdout or " dpt:80\n" in result.stdout \
+        or "tcp dpt:80" in result.stdout, \
+        f"no dport 80 redirect rule:\n{result.stdout}"
+
+
+def test_iptables_redirect_11434_to_10080():
+    """T2.2: Ollama default port 11434 must REDIRECT to 10080 too."""
+    result = run(
+        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
+        timeout=5,
+    )
+    assert "11434" in result.stdout, \
+        f"no REDIRECT for 11434 (Ollama):\n{result.stdout}"
+
+
 # ---------------------------------------------------------------
-# Layer 2: Guest net-proxy (TCP 10443 -> vsock 5002)
+# Layer 2: Guest net-proxy (TCP 10443 / 10080 -> vsock 5002)
 # ---------------------------------------------------------------
 
 
@@ -71,7 +151,20 @@ def test_net_proxy_listening():
         timeout=10,
     )
     assert "OK" in result.stdout, \
-        f"cannot connect to net-proxy: {result.stderr.strip() or result.stdout.strip()}"
+        f"cannot connect to net-proxy (HTTPS): {result.stderr.strip() or result.stdout.strip()}"
+
+
+def test_net_proxy_http_listening():
+    """T2.2: capsem-net-proxy must also accept TCP on 127.0.0.1:10080."""
+    result = run(
+        "python3 -c \""
+        "import socket; s=socket.socket(); s.settimeout(3); "
+        "s.connect(('127.0.0.1', 10080)); "
+        "print('OK'); s.close()\"",
+        timeout=10,
+    )
+    assert "OK" in result.stdout, \
+        f"cannot connect to net-proxy (HTTP): {result.stderr.strip() or result.stdout.strip()}"
 
 
 def test_tcp_443_reaches_proxy():
@@ -329,14 +422,16 @@ def test_ai_provider_domain_blocked(domain, env_var):
             f"Connection to {domain} should be blocked: {result.stdout}"
 
 
-def test_http_port_80_not_proxied():
-    """Plain HTTP (port 80) must not be proxied."""
+def test_http_port_80_is_proxied():
+    """Plain HTTP (port 80) is inspected by the MITM proxy."""
     result = run(
         "curl -sI --connect-timeout 5 http://google.com 2>&1",
         timeout=15,
     )
-    assert result.returncode != 0, \
-        "HTTP port 80 should not be reachable"
+    assert result.returncode == 0, \
+        f"HTTP port 80 should be reachable through the proxy: {result.stdout}"
+    assert "HTTP/" in result.stdout, \
+        f"HTTP port 80 should return an HTTP response: {result.stdout}"
 
 
 def test_non_standard_port_fails():

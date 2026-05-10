@@ -18,6 +18,10 @@ name = "capsem-net-proxy"
 path = "src/net_proxy.rs"
 
 [[bin]]
+name = "capsem-dns-proxy"
+path = "src/dns_proxy.rs"
+
+[[bin]]
 name = "capsem-mcp-server"
 path = "src/mcp_server.rs"
 

@@ -1,6 +1,69 @@
 use super::*;
 
 // -------------------------------------------------------------------
+// MCP frame envelope
+// -------------------------------------------------------------------
+
+#[test]
+fn mcp_frame_roundtrip() {
+    let payload = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#;
+    let encoded = encode_mcp_frame(42, 0, "claude", payload).unwrap();
+
+    assert!(looks_like_mcp_frame_prefix(&encoded));
+    let total_len = u32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
+    assert_eq!(total_len, encoded.len() - 4);
+
+    let decoded = decode_mcp_frame_body(&encoded[4..]).unwrap();
+    assert_eq!(decoded.stream_id, 42);
+    assert_eq!(decoded.flags, 0);
+    assert_eq!(decoded.process_name, "claude");
+    assert_eq!(decoded.payload, payload);
+    assert!(!decoded.is_notification());
+}
+
+#[test]
+fn mcp_frame_notification_reserved_stream() {
+    let encoded = encode_mcp_frame(
+        0,
+        MCP_FRAME_FLAG_NOTIFICATION,
+        "codex",
+        br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+    )
+    .unwrap();
+    let decoded = decode_mcp_frame_body(&encoded[4..]).unwrap();
+    assert!(decoded.is_notification());
+}
+
+#[test]
+fn mcp_frame_rejects_stream_zero_without_notification_flag() {
+    assert!(encode_mcp_frame(0, 0, "codex", b"{}").is_err());
+}
+
+#[test]
+fn mcp_frame_rejects_notification_flag_on_nonzero_stream() {
+    assert!(encode_mcp_frame(7, MCP_FRAME_FLAG_NOTIFICATION, "codex", b"{}").is_err());
+}
+
+#[test]
+fn mcp_frame_rejects_reserved_flags() {
+    assert!(encode_mcp_frame(1, 0x8000, "codex", b"{}").is_err());
+}
+
+#[test]
+fn mcp_frame_prefix_rejects_bad_magic() {
+    let mut encoded = encode_mcp_frame(1, 0, "codex", b"{}").unwrap();
+    encoded[4] = b'X';
+    assert!(!looks_like_mcp_frame_prefix(&encoded));
+    assert!(decode_mcp_frame_body(&encoded[4..]).is_err());
+}
+
+#[test]
+fn mcp_frame_rejects_oversized_process_name() {
+    let name = "x".repeat(MCP_FRAME_MAX_PROCESS_NAME_LEN + 1);
+    assert!(encode_mcp_frame(1, 0, &name, b"{}").is_err());
+}
+
+// -------------------------------------------------------------------
 // HostToGuest roundtrip
 // -------------------------------------------------------------------
 
@@ -8,13 +71,17 @@ use super::*;
 fn roundtrip_boot_config() {
     let msg = HostToGuest::BootConfig {
         epoch_secs: 1708800000,
+        traceparent: String::new(),
     };
     let frame = encode_host_msg(&msg).unwrap();
     let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
     assert!(len < MAX_FRAME_SIZE);
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
-        HostToGuest::BootConfig { epoch_secs } => {
+        HostToGuest::BootConfig {
+            epoch_secs,
+            traceparent: _,
+        } => {
             assert_eq!(epoch_secs, 1708800000);
         }
         other => panic!("expected BootConfig, got {other:?}"),
@@ -114,7 +181,12 @@ fn roundtrip_file_write() {
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
-        HostToGuest::FileWrite { id, path, data, mode } => {
+        HostToGuest::FileWrite {
+            id,
+            path,
+            data,
+            mode,
+        } => {
             assert_eq!(id, 1);
             assert_eq!(path, "/workspace/test.txt");
             assert_eq!(data, b"hello world");
@@ -211,8 +283,14 @@ fn roundtrip_boot_ready() {
 fn roundtrip_boot_timing() {
     let msg = GuestToHost::BootTiming {
         stages: vec![
-            BootStage { name: "squashfs".into(), duration_ms: 50 },
-            BootStage { name: "network".into(), duration_ms: 120 },
+            BootStage {
+                name: "squashfs".into(),
+                duration_ms: 50,
+            },
+            BootStage {
+                name: "network".into(),
+                duration_ms: 120,
+            },
         ],
     };
     let frame = encode_guest_msg(&msg).unwrap();
@@ -220,8 +298,20 @@ fn roundtrip_boot_timing() {
     match decoded {
         GuestToHost::BootTiming { stages } => {
             assert_eq!(stages.len(), 2);
-            assert_eq!(stages[0], BootStage { name: "squashfs".into(), duration_ms: 50 });
-            assert_eq!(stages[1], BootStage { name: "network".into(), duration_ms: 120 });
+            assert_eq!(
+                stages[0],
+                BootStage {
+                    name: "squashfs".into(),
+                    duration_ms: 50
+                }
+            );
+            assert_eq!(
+                stages[1],
+                BootStage {
+                    name: "network".into(),
+                    duration_ms: 120
+                }
+            );
         }
         other => panic!("expected BootTiming, got {other:?}"),
     }
@@ -241,7 +331,10 @@ fn roundtrip_boot_timing_empty() {
 #[test]
 fn boot_timing_fails_as_host_msg() {
     let msg = GuestToHost::BootTiming {
-        stages: vec![BootStage { name: "test".into(), duration_ms: 1 }],
+        stages: vec![BootStage {
+            name: "test".into(),
+            duration_ms: 1,
+        }],
     };
     let frame = encode_guest_msg(&msg).unwrap();
     assert!(decode_host_msg(&frame[4..]).is_err());
@@ -451,6 +544,116 @@ fn decode_audit_record_garbage_fails() {
     assert!(decode_audit_record(&garbage).is_err());
 }
 
+#[test]
+fn vsock_dns_proxy_port_constant() {
+    // Pinned so an accidental renumbering shows up in the diff: T3
+    // wires both host (capsem-process dispatch) and guest
+    // (capsem-agent listener) on this exact port.
+    assert_eq!(VSOCK_PORT_DNS_PROXY, 5007);
+}
+
+#[test]
+fn vsock_port_constants_are_distinct() {
+    let ports = [
+        VSOCK_PORT_CONTROL,
+        VSOCK_PORT_TERMINAL,
+        VSOCK_PORT_SNI_PROXY,
+        VSOCK_PORT_LIFECYCLE,
+        VSOCK_PORT_EXEC,
+        VSOCK_PORT_AUDIT,
+        VSOCK_PORT_DNS_PROXY,
+    ];
+    let unique: std::collections::HashSet<_> = ports.iter().collect();
+    assert_eq!(unique.len(), ports.len(), "vsock port collision");
+}
+
+#[test]
+fn roundtrip_dns_request() {
+    let req = DnsRequest {
+        raw: vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0],
+        proto: "udp".into(),
+        process_name: Some("curl".into()),
+    };
+    let frame = encode_dns_request(&req).unwrap();
+    let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
+    assert!(len < MAX_FRAME_SIZE);
+    let decoded = decode_dns_request(&frame[4..]).unwrap();
+    assert_eq!(decoded, req);
+}
+
+#[test]
+fn roundtrip_dns_request_no_process_name() {
+    let req = DnsRequest {
+        raw: vec![0u8; 12],
+        proto: "tcp".into(),
+        process_name: None,
+    };
+    let frame = encode_dns_request(&req).unwrap();
+    let decoded = decode_dns_request(&frame[4..]).unwrap();
+    assert_eq!(decoded, req);
+}
+
+#[test]
+fn roundtrip_dns_response() {
+    let resp = DnsResponse {
+        raw: vec![0x12, 0x34, 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0],
+        decision: "denied".into(),
+        rcode: 3,
+    };
+    let frame = encode_dns_response(&resp).unwrap();
+    let decoded = decode_dns_response(&frame[4..]).unwrap();
+    assert_eq!(decoded, resp);
+}
+
+#[test]
+fn dns_envelope_is_compact() {
+    // 60-byte raw query + small metadata should fit comfortably
+    // under 200 bytes encoded -- ensures we don't accidentally pull
+    // in heavy framing (e.g. nested struct + named fields blow-up).
+    let req = DnsRequest {
+        raw: vec![0u8; 60],
+        proto: "udp".into(),
+        process_name: None,
+    };
+    let frame = encode_dns_request(&req).unwrap();
+    let payload_len = frame.len() - 4;
+    assert!(
+        payload_len < 200,
+        "DnsRequest payload {payload_len} bytes, expected < 200"
+    );
+}
+
+#[test]
+fn decode_dns_request_garbage_fails() {
+    assert!(decode_dns_request(&[0xFF, 0xFE]).is_err());
+}
+
+#[test]
+fn decode_dns_response_garbage_fails() {
+    assert!(decode_dns_response(&[0xFF, 0xFE]).is_err());
+}
+
+#[test]
+fn dns_envelope_is_disjoint_from_ipc_frames() {
+    // The DNS envelope is a freestanding RMP-encoded struct (NOT a
+    // tagged-enum like HostToGuest / GuestToHost). It must NOT
+    // accidentally trip the looks_like_ipc_frame heuristic, otherwise
+    // a stray DNS frame leaked to a tty would be mis-flagged as a
+    // control-channel leak. Spot-check that an encoded DnsRequest
+    // does NOT match the fixmap[1] / fixmap[2] enum-frame shape.
+    let req = DnsRequest {
+        raw: vec![0u8; 12],
+        proto: "udp".into(),
+        process_name: None,
+    };
+    let frame = encode_dns_request(&req).unwrap();
+    // Skip the 4-byte length prefix; check the RMP body.
+    assert!(
+        !looks_like_ipc_frame(&frame[4..]),
+        "DnsRequest accidentally matches the IPC enum frame shape"
+    );
+}
+
 // -------------------------------------------------------------------
 // Frame format
 // -------------------------------------------------------------------
@@ -474,10 +677,7 @@ fn frame_length_prefix_is_big_endian() {
 
 #[test]
 fn rmp_encoding_is_deterministic() {
-    let msg = HostToGuest::Resize {
-        cols: 80,
-        rows: 24,
-    };
+    let msg = HostToGuest::Resize { cols: 80, rows: 24 };
     let a = encode_host_msg(&msg).unwrap();
     let b = encode_host_msg(&msg).unwrap();
     assert_eq!(a, b);
@@ -510,7 +710,10 @@ fn guest_msg_fails_to_decode_as_host() {
     let frame = encode_guest_msg(&msg).unwrap();
     let result = decode_host_msg(&frame[4..]);
     // Pong only exists in GuestToHost, not HostToGuest, so this must fail.
-    assert!(result.is_err(), "decoding GuestToHost::Pong as HostToGuest should fail");
+    assert!(
+        result.is_err(),
+        "decoding GuestToHost::Pong as HostToGuest should fail"
+    );
 }
 
 #[test]
@@ -519,12 +722,18 @@ fn host_msg_fails_to_decode_as_guest() {
     let frame = encode_host_msg(&msg).unwrap();
     let result = decode_guest_msg(&frame[4..]);
     // Ping only exists in HostToGuest, not GuestToHost, so this must fail.
-    assert!(result.is_err(), "decoding HostToGuest::Ping as GuestToHost should fail");
+    assert!(
+        result.is_err(),
+        "decoding HostToGuest::Ping as GuestToHost should fail"
+    );
 }
 
 #[test]
 fn boot_config_fails_as_guest_msg() {
-    let msg = HostToGuest::BootConfig { epoch_secs: 1000 };
+    let msg = HostToGuest::BootConfig {
+        epoch_secs: 1000,
+        traceparent: String::new(),
+    };
     let frame = encode_host_msg(&msg).unwrap();
     let result = decode_guest_msg(&frame[4..]);
     assert!(result.is_err());
@@ -592,6 +801,7 @@ fn all_host_variants_fit() {
     let messages = vec![
         HostToGuest::BootConfig {
             epoch_secs: u64::MAX,
+            traceparent: String::new(),
         },
         HostToGuest::SetEnv {
             key: "K".into(),
@@ -644,8 +854,14 @@ fn all_guest_variants_fit() {
         GuestToHost::BootReady,
         GuestToHost::BootTiming {
             stages: vec![
-                BootStage { name: "squashfs".into(), duration_ms: 50 },
-                BootStage { name: "network".into(), duration_ms: 120 },
+                BootStage {
+                    name: "squashfs".into(),
+                    duration_ms: 50,
+                },
+                BootStage {
+                    name: "network".into(),
+                    duration_ms: 120,
+                },
             ],
         },
         GuestToHost::ExecDone {
@@ -742,11 +958,17 @@ fn ready_empty_version() {
 
 #[test]
 fn boot_config_zero_epoch() {
-    let msg = HostToGuest::BootConfig { epoch_secs: 0 };
+    let msg = HostToGuest::BootConfig {
+        epoch_secs: 0,
+        traceparent: String::new(),
+    };
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
-        HostToGuest::BootConfig { epoch_secs } => {
+        HostToGuest::BootConfig {
+            epoch_secs,
+            traceparent: _,
+        } => {
             assert_eq!(epoch_secs, 0);
         }
         other => panic!("expected BootConfig, got {other:?}"),
@@ -1004,9 +1226,7 @@ fn roundtrip_file_created_empty_path() {
 
 #[test]
 fn roundtrip_file_deleted_empty_path() {
-    let msg = GuestToHost::FileDeleted {
-        path: "".into(),
-    };
+    let msg = GuestToHost::FileDeleted { path: "".into() };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {
@@ -1062,7 +1282,12 @@ fn roundtrip_file_write_v2() {
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
-        HostToGuest::FileWrite { id, path, data, mode } => {
+        HostToGuest::FileWrite {
+            id,
+            path,
+            data,
+            mode,
+        } => {
             assert_eq!(id, 123);
             assert_eq!(path, "/tmp/test");
             assert_eq!(data, b"hello");
@@ -1085,7 +1310,10 @@ fn roundtrip_file_op_done() {
 
 #[test]
 fn roundtrip_error_msg() {
-    let msg = GuestToHost::Error { id: 789, message: "permission denied".into() };
+    let msg = GuestToHost::Error {
+        id: 789,
+        message: "permission denied".into(),
+    };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {
@@ -1191,12 +1419,18 @@ fn file_path_very_long() {
 #[test]
 fn exec_command_shell_metacharacters_preserved() {
     let cmd = "echo $(whoami) && rm -rf / | base64; curl http://evil.com";
-    let msg = HostToGuest::Exec { id: 1, command: cmd.into() };
+    let msg = HostToGuest::Exec {
+        id: 1,
+        command: cmd.into(),
+    };
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
         HostToGuest::Exec { command, .. } => {
-            assert_eq!(command, cmd, "Shell metacharacters must pass through unchanged");
+            assert_eq!(
+                command, cmd,
+                "Shell metacharacters must pass through unchanged"
+            );
         }
         other => panic!("expected Exec, got {other:?}"),
     }
@@ -1205,7 +1439,10 @@ fn exec_command_shell_metacharacters_preserved() {
 #[test]
 fn exec_command_with_null_bytes() {
     let cmd = "echo hello\0world";
-    let msg = HostToGuest::Exec { id: 1, command: cmd.into() };
+    let msg = HostToGuest::Exec {
+        id: 1,
+        command: cmd.into(),
+    };
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
@@ -1220,7 +1457,10 @@ fn exec_command_with_null_bytes() {
 
 #[test]
 fn exec_max_job_id() {
-    let msg = HostToGuest::Exec { id: u64::MAX, command: "echo".into() };
+    let msg = HostToGuest::Exec {
+        id: u64::MAX,
+        command: "echo".into(),
+    };
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
@@ -1231,7 +1471,10 @@ fn exec_max_job_id() {
 
 #[test]
 fn exec_done_max_job_id() {
-    let msg = GuestToHost::ExecDone { id: u64::MAX, exit_code: i32::MIN };
+    let msg = GuestToHost::ExecDone {
+        id: u64::MAX,
+        exit_code: i32::MIN,
+    };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {
@@ -1246,7 +1489,11 @@ fn exec_done_max_job_id() {
 #[test]
 fn file_content_with_binary_data() {
     let binary_data: Vec<u8> = (0..=255).collect();
-    let msg = GuestToHost::FileContent { id: 1, data: binary_data.clone(), path: "/f".into() };
+    let msg = GuestToHost::FileContent {
+        id: 1,
+        data: binary_data.clone(),
+        path: "/f".into(),
+    };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {
@@ -1258,7 +1505,10 @@ fn file_content_with_binary_data() {
 #[test]
 fn error_msg_very_long_message() {
     let long_msg = "x".repeat(100_000);
-    let msg = GuestToHost::Error { id: 1, message: long_msg.clone() };
+    let msg = GuestToHost::Error {
+        id: 1,
+        message: long_msg.clone(),
+    };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {

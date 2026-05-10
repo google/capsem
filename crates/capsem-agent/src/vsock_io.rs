@@ -61,7 +61,9 @@ pub fn vsock_connect(cid: u32, port: u32) -> io::Result<RawFd> {
     };
     if ret < 0 {
         let err = io::Error::last_os_error();
-        unsafe { libc::close(fd); }
+        unsafe {
+            libc::close(fd);
+        }
         return Err(err);
     }
 
@@ -80,12 +82,16 @@ fn set_io_timeouts(fd: RawFd) {
     };
     unsafe {
         libc::setsockopt(
-            fd, libc::SOL_SOCKET, libc::SO_SNDTIMEO,
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDTIMEO,
             &tv as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::timeval>() as libc::socklen_t,
         );
         libc::setsockopt(
-            fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO,
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
             &tv as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::timeval>() as libc::socklen_t,
         );
@@ -97,7 +103,7 @@ fn set_io_timeouts(fd: RawFd) {
 /// Uses the shared `RetryOpts` backoff (50ms initial, 500ms max, 30s timeout).
 /// Exits the process on timeout -- vsock is required for guest operation.
 pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
-    use capsem_proto::poll::{RetryOpts, retry_with_backoff};
+    use capsem_proto::poll::{retry_with_backoff, RetryOpts};
 
     // Leak a &'static str for the label so RetryOpts can use it.
     let static_label: &'static str = Box::leak(format!("vsock-{label}").into_boxed_str());
@@ -190,13 +196,16 @@ pub fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::io::IntoRawFd;
-    use std::thread;
     use std::os::unix::net::UnixStream;
+    use std::thread;
 
     #[test]
     fn vsock_connect_fails_gracefully_on_host() {
         let result = vsock_connect(VSOCK_HOST_CID, 9999);
-        assert!(result.is_err(), "vsock connect should fail on macOS/host machines gracefully");
+        assert!(
+            result.is_err(),
+            "vsock connect should fail on macOS/host machines gracefully"
+        );
     }
 
     #[test]
@@ -212,13 +221,20 @@ mod tests {
         read_exact_fd(server_fd, &mut buf).expect("read_exact_fd");
         assert_eq!(&buf, data);
 
-        unsafe { nix::libc::close(client_fd); }
+        unsafe {
+            nix::libc::close(client_fd);
+        }
         let mut small_buf = [0u8; 1];
         let eof_res = read_exact_fd(server_fd, &mut small_buf);
         assert!(eof_res.is_err());
-        assert_eq!(eof_res.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            eof_res.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
 
-        unsafe { nix::libc::close(server_fd); }
+        unsafe {
+            nix::libc::close(server_fd);
+        }
     }
 
     #[test]
@@ -248,7 +264,9 @@ mod tests {
         let (client, _server) = UnixStream::pair().unwrap();
         let fd = client.into_raw_fd();
         write_all_fd(fd, b"").expect("empty write should succeed");
-        unsafe { nix::libc::close(fd); }
+        unsafe {
+            nix::libc::close(fd);
+        }
     }
 
     #[test]
@@ -265,12 +283,16 @@ mod tests {
         let reader = thread::spawn(move || {
             let mut buf = vec![0u8; expected_len];
             read_exact_fd(server_fd, &mut buf).unwrap();
-            unsafe { nix::libc::close(server_fd); }
+            unsafe {
+                nix::libc::close(server_fd);
+            }
             buf
         });
 
         write_all_fd(client_fd, &data).expect("large write");
-        unsafe { nix::libc::close(client_fd); }
+        unsafe {
+            nix::libc::close(client_fd);
+        }
 
         let result = reader.join().unwrap();
         assert_eq!(result, data);
@@ -282,10 +304,15 @@ mod tests {
         let fd = client.into_raw_fd();
 
         // Set a 200ms send timeout so the test doesn't wait 30s.
-        let tv = libc::timeval { tv_sec: 0, tv_usec: 200_000 };
+        let tv = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 200_000,
+        };
         unsafe {
             libc::setsockopt(
-                fd, libc::SOL_SOCKET, libc::SO_SNDTIMEO,
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_SNDTIMEO,
                 &tv as *const _ as *const libc::c_void,
                 std::mem::size_of::<libc::timeval>() as libc::socklen_t,
             );
@@ -296,7 +323,9 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
 
-        unsafe { nix::libc::close(fd); }
+        unsafe {
+            nix::libc::close(fd);
+        }
     }
 
     #[test]
@@ -305,7 +334,9 @@ mod tests {
         let fd = client.into_raw_fd();
         let mut buf = [];
         read_exact_fd(fd, &mut buf).expect("zero-length read should succeed");
-        unsafe { nix::libc::close(fd); }
+        unsafe {
+            nix::libc::close(fd);
+        }
     }
 
     #[test]
@@ -315,7 +346,9 @@ mod tests {
         drop(server); // close read end
         let result = write_all_fd(client_fd, b"should fail");
         assert!(result.is_err());
-        unsafe { nix::libc::close(client_fd); }
+        unsafe {
+            nix::libc::close(client_fd);
+        }
     }
 
     #[test]

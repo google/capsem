@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use super::types::*;
 use super::registry::setting_definitions;
+use super::types::*;
+use std::collections::HashMap;
 
 /// Check if a setting is locked by corp.
 pub fn is_setting_corp_locked(id: &str, corp: &SettingsFile) -> bool {
@@ -17,7 +17,8 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
     let mut resolved = Vec::new();
 
     for def in &defs {
-        let (effective_value, source, modified) = resolve_value(&def.id, &def.default_value, user, corp);
+        let (effective_value, source, modified) =
+            resolve_value(&def.id, &def.default_value, user, corp);
         let corp_locked = corp.settings.contains_key(&def.id);
 
         resolved.push(ResolvedSetting {
@@ -50,7 +51,10 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
             id: key.clone(),
             category: "VM".to_string(),
             name: key.strip_prefix("guest.env.").unwrap_or(&key).to_string(),
-            description: format!("Guest environment variable: {}", key.strip_prefix("guest.env.").unwrap_or(&key)),
+            description: format!(
+                "Guest environment variable: {}",
+                key.strip_prefix("guest.env.").unwrap_or(&key)
+            ),
             setting_type: SettingType::Text,
             default_value: default,
             effective_value,
@@ -79,9 +83,17 @@ fn resolve_value(
     corp: &SettingsFile,
 ) -> (SettingValue, PolicySource, Option<String>) {
     if let Some(entry) = corp.settings.get(id) {
-        (entry.value.clone(), PolicySource::Corp, Some(entry.modified.clone()))
+        (
+            entry.value.clone(),
+            PolicySource::Corp,
+            Some(entry.modified.clone()),
+        )
     } else if let Some(entry) = user.settings.get(id) {
-        (entry.value.clone(), PolicySource::User, Some(entry.modified.clone()))
+        (
+            entry.value.clone(),
+            PolicySource::User,
+            Some(entry.modified.clone()),
+        )
     } else {
         (default.clone(), PolicySource::Default, None)
     }

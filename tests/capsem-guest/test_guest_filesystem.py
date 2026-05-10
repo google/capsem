@@ -15,9 +15,9 @@ class TestGuestFilesystem:
         assert "overlay" in stdout, f"Expected overlay rootfs, got: {stdout}"
 
     def test_overlay_tmpfs(self, guest_env):
-        """Overlay upper is backed by tmpfs or loop device."""
+        """Overlay upper is backed by tmpfs (block mode) or virtio-blk (virtiofs mode)."""
         client, name = guest_env
-        resp = client.post(f"/exec/{name}", {"command": "mount | grep -E 'overlay|tmpfs|/dev/loop'"})
+        resp = client.post(f"/exec/{name}", {"command": "mount | grep -E 'overlay|tmpfs|/dev/vd[a-z]'"})
         stdout = resp.get("stdout", "") if resp else ""
         assert "overlay" in stdout or "tmpfs" in stdout, f"Expected overlay/tmpfs mount, got: {stdout}"
 

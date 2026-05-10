@@ -10,6 +10,12 @@ pub enum Decision {
     Allowed,
     Denied,
     Error,
+    /// DNS-only outcome (T3.d): an admin-configured `DnsRedirect`
+    /// rule rewrote the answer to a local IP. The query never
+    /// touches the upstream resolver. `dns_events.decision =
+    /// "redirected"` lets ops query `WHERE decision = 'redirected'`
+    /// to see every override that fired in a session.
+    Redirected,
 }
 
 impl Decision {
@@ -18,6 +24,7 @@ impl Decision {
             Decision::Allowed => "allowed",
             Decision::Denied => "denied",
             Decision::Error => "error",
+            Decision::Redirected => "redirected",
         }
     }
 
@@ -26,8 +33,12 @@ impl Decision {
             "allowed" => Decision::Allowed,
             "denied" => Decision::Denied,
             "error" => Decision::Error,
+            "redirected" => Decision::Redirected,
             other => {
-                tracing::warn!(value = other, "unknown decision string in DB, treating as Error");
+                tracing::warn!(
+                    value = other,
+                    "unknown decision string in DB, treating as Error"
+                );
                 Decision::Error
             }
         }
@@ -36,7 +47,9 @@ impl Decision {
 
 /// Serialize SystemTime as f64 epoch seconds (for frontend compatibility).
 fn serialize_timestamp<S: serde::Serializer>(ts: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
-    let epoch = ts.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+    let epoch = ts
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
     s.serialize_f64(epoch.as_secs_f64())
 }
 
@@ -73,7 +86,10 @@ impl FileAction {
             "deleted" => FileAction::Deleted,
             "restored" => FileAction::Restored,
             other => {
-                tracing::warn!(value = other, "unknown file action string in DB, treating as Modified");
+                tracing::warn!(
+                    value = other,
+                    "unknown file action string in DB, treating as Modified"
+                );
                 FileAction::Modified
             }
         }
@@ -83,11 +99,18 @@ impl FileAction {
 /// A single filesystem event from the in-VM inotify watcher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEvent {
-    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub timestamp: SystemTime,
     pub action: FileAction,
     pub path: String,
     pub size: Option<u64>,
+    /// W6: ambient trace_id for the operation that triggered this event
+    /// (lower 16 hex of the W3C trace_id). None when no trace context.
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 /// A snapshot event (auto or manual) recorded for the stats UI.
@@ -95,7 +118,10 @@ pub struct FileEvent {
 /// lets the frontend compute per-snapshot file changes without directory walks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotEvent {
-    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub timestamp: SystemTime,
     pub slot: usize,
     pub origin: String,
@@ -103,12 +129,17 @@ pub struct SnapshotEvent {
     pub files_count: usize,
     pub start_fs_event_id: i64,
     pub stop_fs_event_id: i64,
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 /// A single network connection event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetEvent {
-    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub timestamp: SystemTime,
     pub domain: String,
     pub port: u16,
@@ -128,6 +159,16 @@ pub struct NetEvent {
     pub request_body_preview: Option<String>,
     pub response_body_preview: Option<String>,
     pub conn_type: Option<String>,
+    #[serde(default)]
+    pub policy_mode: Option<String>,
+    #[serde(default)]
+    pub policy_action: Option<String>,
+    #[serde(default)]
+    pub policy_rule: Option<String>,
+    #[serde(default)]
+    pub policy_reason: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 /// A tool call emitted by the model in a response.
@@ -137,9 +178,11 @@ pub struct ToolCallEntry {
     pub call_id: String,
     pub tool_name: String,
     pub arguments: Option<String>,
-    /// "native" (model built-in, executed in VM) or "mcp" (routed through MCP gateway).
+    /// "native" (model built-in, executed in VM) or "mcp" (routed through MCP endpoint).
     #[serde(default = "default_origin")]
     pub origin: String,
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 fn default_origin() -> String {
@@ -152,12 +195,17 @@ pub struct ToolResponseEntry {
     pub call_id: String,
     pub content_preview: Option<String>,
     pub is_error: bool,
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 /// A single MCP tool call event (one row per tools/call or tools/list request).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpCall {
-    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub timestamp: SystemTime,
     pub server_name: String,
     pub method: String,
@@ -172,13 +220,26 @@ pub struct McpCall {
     pub process_name: Option<String>,
     pub bytes_sent: u64,
     pub bytes_received: u64,
+    #[serde(default)]
+    pub policy_mode: Option<String>,
+    #[serde(default)]
+    pub policy_action: Option<String>,
+    #[serde(default)]
+    pub policy_rule: Option<String>,
+    #[serde(default)]
+    pub policy_reason: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 /// A denormalized AI model API call (one row per request+response cycle),
 /// with nested tool data inserted into separate tables.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCall {
-    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub timestamp: SystemTime,
     pub provider: String,
     pub model: Option<String>,
@@ -216,7 +277,10 @@ pub struct ModelCall {
 /// A structured exec command event (Layer 1: host-side recording of API-path commands).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecEvent {
-    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub timestamp: SystemTime,
     pub exec_id: u64,
     pub command: String,
@@ -240,10 +304,107 @@ pub struct ExecEventComplete {
     pub pid: Option<u32>,
 }
 
+/// A single DNS resolution event recorded by the host-side DNS proxy
+/// (T3). One row per query, with the policy decision + upstream
+/// resolver wall time + structured query / answer metadata. The
+/// `trace_id` correlates back to the same agent action that emitted
+/// the corresponding `net_events` / `model_calls` row -- a
+/// `dig anthropic.com` followed by a `curl https://anthropic.com/`
+/// shows up as one trace_id with one dns_events row + one net_events
+/// row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsEvent {
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
+    pub timestamp: SystemTime,
+    /// Query hostname, lowercased, no trailing dot
+    /// (e.g. "anthropic.com", not "anthropic.com.").
+    pub qname: String,
+    /// DNS qtype as a u16 (1 = A, 28 = AAAA, 16 = TXT, ...).
+    pub qtype: u16,
+    /// DNS qclass as a u16 (almost always 1 = IN).
+    pub qclass: u16,
+    /// DNS response code (0 = NoError, 2 = ServFail, 3 = NXDomain).
+    pub rcode: u16,
+    /// "allowed" / "denied" / "error" (mirrors `Decision::as_str`).
+    pub decision: String,
+    /// Policy rule that produced a Denied decision, e.g.
+    /// "api.openai.com", "*.openai.com", or "default". None for
+    /// Allowed / Error.
+    pub matched_rule: Option<String>,
+    /// "udp" or "tcp" -- the source-side transport from the guest
+    /// (NOT the upstream-side transport, which is always UDP today).
+    pub source_proto: Option<String>,
+    /// Optional process name from the guest agent. T3.3 ships None
+    /// because the agent can't reliably correlate a UDP source port
+    /// to a guest pid before the transient socket is gone; T5
+    /// hardening may revisit if `/proc/net/udp` poll timing improves.
+    pub process_name: Option<String>,
+    /// Wall time of the upstream resolve attempt in milliseconds.
+    /// 0 when the policy short-circuits (Denied) or input parsing
+    /// fails (Error).
+    pub upstream_resolver_ms: u64,
+    /// W6: ambient trace_id for the agent action that triggered this
+    /// DNS query. None when no trace context is set.
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    /// Policy engine mode that produced this decision, if any.
+    #[serde(default)]
+    pub policy_mode: Option<String>,
+    /// Typed policy action (`allow`, `ask`, `block`, `rewrite`) when
+    /// Policy V2 matched.
+    #[serde(default)]
+    pub policy_action: Option<String>,
+    /// Fully qualified policy rule id, e.g. `policy.dns.block_openai`.
+    #[serde(default)]
+    pub policy_rule: Option<String>,
+    /// Human-readable policy reason or fail-closed detail.
+    #[serde(default)]
+    pub policy_reason: Option<String>,
+}
+
+/// A Policy Hook decision attempt recorded by the host runtime.
+/// One row is written for every external hook call, including validation
+/// failures and fail-closed fallbacks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyHookEvent {
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
+    pub timestamp: SystemTime,
+    pub endpoint_id: String,
+    pub spec_version: String,
+    pub spec_hash: String,
+    pub decision_id: Option<String>,
+    pub callback: String,
+    /// "allow", "ask", "block", or "rewrite" when a valid hook response
+    /// was received. None for transport/schema failures.
+    pub decision: Option<String>,
+    pub rule_id: Option<String>,
+    pub reason: Option<String>,
+    pub latency_ms: u64,
+    /// "allowed", "denied", or "error".
+    pub status: String,
+    pub error: Option<String>,
+    /// Fail-closed/fail-open policy used after an error, when applicable.
+    pub fallback: Option<String>,
+    pub audit_tags: Vec<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
 /// A kernel audit event (Layer 3: execve syscalls captured by auditd).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
-    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub timestamp: SystemTime,
     pub pid: u32,
     pub ppid: u32,
@@ -257,6 +418,8 @@ pub struct AuditEvent {
     pub audit_id: Option<String>,
     pub exec_event_id: Option<i64>,
     pub parent_exe: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 #[cfg(test)]
@@ -266,9 +429,20 @@ mod tests {
 
     #[test]
     fn decision_roundtrip() {
-        for decision in [Decision::Allowed, Decision::Denied, Decision::Error] {
+        for decision in [
+            Decision::Allowed,
+            Decision::Denied,
+            Decision::Error,
+            Decision::Redirected,
+        ] {
             assert_eq!(Decision::parse_str(decision.as_str()), decision);
         }
+    }
+
+    #[test]
+    fn decision_redirected_string() {
+        assert_eq!(Decision::Redirected.as_str(), "redirected");
+        assert_eq!(Decision::parse_str("redirected"), Decision::Redirected);
     }
 
     #[test]
@@ -293,6 +467,11 @@ mod tests {
             request_body_preview: None,
             response_body_preview: None,
             conn_type: None,
+            policy_mode: None,
+            policy_action: None,
+            policy_rule: None,
+            policy_reason: None,
+            trace_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         let decoded: NetEvent = serde_json::from_str(&json).unwrap();
@@ -308,7 +487,11 @@ mod tests {
 
     #[test]
     fn file_action_roundtrip() {
-        for action in [FileAction::Created, FileAction::Modified, FileAction::Deleted] {
+        for action in [
+            FileAction::Created,
+            FileAction::Modified,
+            FileAction::Deleted,
+        ] {
             assert_eq!(FileAction::parse_str(action.as_str()), action);
         }
     }

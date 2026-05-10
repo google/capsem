@@ -133,7 +133,11 @@ class TestArchConfig:
     def test_defaults(self):
         a = _arch()
         assert a.base_image == "debian:bookworm-slim"
-        assert a.kernel_branch == "6.6"
+        # "auto" -> resolver picks newest non-EOL longterm kernel from
+        # kernel.org/releases.json. Pinning the digit here would cause this
+        # test to fail every time a new LTS series is released; the resolver
+        # itself is exercised by tests/capsem-builder/test_kernel_resolver.py.
+        assert a.kernel_branch == "auto"
         assert a.node_major == 24
 
     def test_custom_values(self):

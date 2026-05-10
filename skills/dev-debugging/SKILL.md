@@ -30,6 +30,20 @@ just inspect-session
 
 With a failing test in hand, investigate. Do not skip this step. Common diagnostic approaches:
 
+**MCP triage trio (run FIRST when an investigation is open-ended):**
+
+```
+capsem_panics { since: "1h" }       # any Rust panic in any host log? -> rank highest
+capsem_triage { id: "vm-1" }        # ranked recent ipc-warns + 4xx/5xx + slow_ops + session.db errors
+capsem_timeline { id: "vm-1", trace_id: "<X>" }   # follow ONE logical operation across exec/mcp/net/fs/model
+```
+
+These read post-W2 JSON logs (`~/.capsem/run/{service,mcp,gateway,tray}.log` + capsem-app's latest jsonl) and post-W6 session.db tables. The W4 `target=fs op=fsync duration_ms=...` markers feed `capsem_triage`'s slow-op rank; the W3 schema_hash check appears in `capsem_panics` output as `IPC handshake failed; refusing connection` events. Always start with `capsem_panics` -- a single panic outranks a hundred warns.
+
+**Cross-version mix?** The `service.start` log line emits `protocol_version=N, schema_hash=<hex>` per binary. If the support bundle (`capsem support-bundle`) shows two different schema_hash values across binaries, you're hitting the W3 cross-version-mix detection -- rebuild + restart the lagging binary.
+
+
+
 **Integration-test failures: read the preserved service log.** When any integration test fails, the test fixture (`tests/helpers/service.py::ServiceInstance`, the e2e `RealService`, and the MCP `_start_capsem_service`) archives its tmp_dir to `test-artifacts/<timestamp>-<worker>-<nodeid>/<tmp-basename>/` **before** the usual rmtree. The failing test's stderr has the exact path: look for a line `ARTIFACT: preserved /var/folders/... -> test-artifacts/...`. Inside that directory:
 
 ```

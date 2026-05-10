@@ -43,8 +43,8 @@ _reg cargo-audit      "cargo install cargo-audit" \
                       "Install cargo-audit"
 _reg b3sum            "cargo install b3sum --locked" \
                       "Install b3sum"
-_reg cargo-tauri      "cargo install cargo-tauri --locked" \
-                      "Install cargo-tauri"
+_reg cargo-tauri      "cargo install tauri-cli --locked" \
+                      "Install cargo-tauri (tauri-cli crate)"
 _reg entitlements     "git checkout entitlements.plist" \
                       "Restore entitlements.plist"
 _reg cargo-config     "git checkout .cargo/config.toml" \

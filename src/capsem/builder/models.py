@@ -50,7 +50,8 @@ class ArchConfig(BaseModel):
     base_image: str = "debian:bookworm-slim"
     docker_platform: str
     rust_target: str
-    kernel_branch: str = "6.6"
+    # "auto" -> resolver picks newest non-EOL LTS from kernel.org; "X.Y" pins.
+    kernel_branch: str = "auto"
     kernel_image: str
     defconfig: str
     node_major: int = 24

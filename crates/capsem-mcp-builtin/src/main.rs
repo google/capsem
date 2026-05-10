@@ -14,14 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use rmcp::handler::server::{
-    router::Router,
-    wrapper::Parameters,
-    ServerHandler,
-};
-use rmcp::model::{
-    Implementation, InitializeResult, ServerCapabilities,
-};
+use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
+use rmcp::model::{Implementation, InitializeResult, ServerCapabilities};
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{tool, tool_router, ServiceExt};
 use serde::{Deserialize, Serialize};
@@ -29,12 +23,20 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
-use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::mcp::types::JsonRpcResponse;
+use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_logger::DbWriter;
 
 // -- Tool parameter types --
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct EchoParams {
+    /// Text to echo back. Returned verbatim in the tool result. Use a
+    /// short string to isolate MCP transport overhead; longer strings
+    /// to characterize per-byte cost.
+    text: String,
+}
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct FetchHttpParams {
@@ -152,9 +154,7 @@ struct BuiltinHandler {
 
 impl ServerHandler for BuiltinHandler {
     fn get_info(&self) -> InitializeResult {
-        let caps = ServerCapabilities::builder()
-            .enable_tools()
-            .build();
+        let caps = ServerCapabilities::builder().enable_tools().build();
         let mut info = InitializeResult::new(caps);
         info.server_info = Implementation::new("capsem-local", env!("CARGO_PKG_VERSION"));
         info
@@ -163,12 +163,35 @@ impl ServerHandler for BuiltinHandler {
 
 #[tool_router]
 impl BuiltinHandler {
+    // -- Diagnostic tool --
+
+    #[tool(
+        name = "echo",
+        description = "Return the input text verbatim. Zero I/O, zero policy, no upstream -- exists to benchmark MCP transport overhead (gateway -> aggregator -> server -> response) without any other variable. Use the `text` parameter; the result is the same text wrapped in a tool-call response.",
+        annotations(
+            title = "Echo",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn echo(&self, Parameters(params): Parameters<EchoParams>) -> Result<String, String> {
+        Ok(params.text)
+    }
+
     // -- HTTP tools --
 
     #[tool(
         name = "fetch_http",
         description = "Fetch a URL and return its content. In 'markdown' mode (default), HTML is converted to markdown. In 'content' mode, plain text. In 'raw' mode, unchanged. Use start_index/max_length for pagination.",
-        annotations(title = "Fetch URL", read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+        annotations(
+            title = "Fetch URL",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn fetch_http(
         &self,
@@ -180,7 +203,13 @@ impl BuiltinHandler {
     #[tool(
         name = "grep_http",
         description = "Fetch a URL and search its content for a regex pattern. Returns matching lines with context. Use start_index/max_length for pagination.",
-        annotations(title = "Grep URL", read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+        annotations(
+            title = "Grep URL",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn grep_http(
         &self,
@@ -192,7 +221,13 @@ impl BuiltinHandler {
     #[tool(
         name = "http_headers",
         description = "Return HTTP status code and response headers for a URL. Optionally specify the HTTP method (default: GET).",
-        annotations(title = "HTTP headers", read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+        annotations(
+            title = "HTTP headers",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn http_headers(
         &self,
@@ -241,7 +276,8 @@ impl BuiltinHandler {
     ) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
-        let resp = file_tools::handle_revert_file(&to_args(&params), &sched, &ws, None, Some(&self.db));
+        let resp =
+            file_tools::handle_revert_file(&to_args(&params), &sched, &ws, None, Some(&self.db));
         extract_text(resp)
     }
 
@@ -304,9 +340,13 @@ impl BuiltinHandler {
 
 impl BuiltinHandler {
     fn snapshot_state(&self) -> Result<(Arc<Mutex<AutoSnapshotScheduler>>, PathBuf), String> {
-        let sched = self.scheduler.as_ref()
+        let sched = self
+            .scheduler
+            .as_ref()
             .ok_or("snapshot tools unavailable (no session directory)")?;
-        let ws = self.workspace_dir.as_ref()
+        let ws = self
+            .workspace_dir
+            .as_ref()
             .ok_or("snapshot tools unavailable (no workspace directory)")?;
         Ok((Arc::clone(sched), ws.clone()))
     }
@@ -358,29 +398,45 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
         .get("isError")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    if is_error { Err(text) } else { Ok(text) }
+    if is_error {
+        Err(text)
+    } else {
+        Ok(text)
+    }
 }
 
 // -- Main --
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "capsem_mcp_builtin=info".into()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+        service: "capsem-mcp-builtin",
+        sink: capsem_core::telemetry::LogSink::Stderr,
+        default_filter: "capsem_mcp_builtin=info",
+    })?;
 
     info!("capsem-mcp-builtin starting");
 
-    let parent_pid = std::env::var("CAPSEM_PARENT_PID").ok()
+    let parent_pid = std::env::var("CAPSEM_PARENT_PID")
+        .ok()
         .and_then(|s| s.parse::<u32>().ok());
     let session_dir = std::env::var("CAPSEM_SESSION_DIR").ok();
 
+    // Per-peer index for pool members (set by the aggregator's
+    // connect_stdio when spawning peer 1..N of a pooled server). Each
+    // peer gets its own lockfile so they don't fight over the singleton.
+    let peer_index: u32 = std::env::var("CAPSEM_BUILTIN_PEER_INDEX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
     if let (Some(pid), Some(dir)) = (parent_pid, session_dir) {
-        let lock_path = std::path::PathBuf::from(dir).join("mcp-builtin.lock");
+        let lock_name = if peer_index == 0 {
+            "mcp-builtin.lock".to_string()
+        } else {
+            format!("mcp-builtin-{peer_index}.lock")
+        };
+        let lock_path = std::path::PathBuf::from(dir).join(&lock_name);
         match capsem_guard::install(Some(pid), &lock_path) {
             Ok(Some(guards)) => {
                 // Keep the guards alive for the process's lifetime.
@@ -419,15 +475,13 @@ async fn main() -> Result<()> {
 
     // Session DB writer (optional).
     let db = match std::env::var("CAPSEM_SESSION_DB") {
-        Ok(path) => {
-            match DbWriter::open(std::path::Path::new(&path), 256) {
-                Ok(writer) => Arc::new(writer),
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to open session DB, telemetry disabled");
-                    Arc::new(DbWriter::open_in_memory(1).expect("in-memory DB"))
-                }
+        Ok(path) => match DbWriter::open(std::path::Path::new(&path), 256) {
+            Ok(writer) => Arc::new(writer),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open session DB, telemetry disabled");
+                Arc::new(DbWriter::open_in_memory(1).expect("in-memory DB"))
             }
-        }
+        },
         Err(_) => Arc::new(DbWriter::open_in_memory(1).expect("in-memory DB")),
     };
 
@@ -439,8 +493,8 @@ async fn main() -> Result<()> {
             if ws.exists() {
                 let sched = AutoSnapshotScheduler::new(
                     session_path,
-                    10,  // max auto snapshots
-                    12,  // max manual snapshots
+                    10, // max auto snapshots
+                    12, // max manual snapshots
                     std::time::Duration::from_secs(300),
                 );
                 info!(workspace = %ws.display(), "snapshot tools enabled");

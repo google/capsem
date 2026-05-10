@@ -1,7 +1,7 @@
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use anyhow::Result;
 use capsem_proto::HostToGuest;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{oneshot, Notify};
 use tracing::{info, warn};
 
@@ -15,6 +15,17 @@ pub(crate) struct JobStore {
     pub(crate) active_exec: Mutex<Option<ActiveExec>>,
     /// Channel for snapshot ready signal.
     pub(crate) snapshot_ready: Mutex<Option<oneshot::Sender<()>>>,
+    /// Pending-ack map for the control bridge's reliability layer:
+    /// every ackable HostToGuest (Exec / FileWrite / FileRead /
+    /// FileDelete) we write goes here keyed by `id`. The agent sends
+    /// `GuestToHost::Ack { id }` immediately on receipt; the bridge
+    /// removes the entry. On rekey we replay every entry still in the
+    /// map. Lives on `JobStore` so IPC handlers can also remove entries
+    /// once no caller is still waiting (for example quick file-operation
+    /// watchdog exhaustion), keeping the map bounded even when the agent
+    /// never acks. See `vsock.rs::setup_vsock` for the bridge end and
+    /// `ipc.rs::handle_ipc_connection` for the IPC end.
+    pub(crate) pending_acks: Mutex<HashMap<u64, HostToGuest>>,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -43,6 +54,7 @@ impl JobStore {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(None),
             snapshot_ready: Mutex::new(None),
+            pending_acks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -53,10 +65,15 @@ impl JobStore {
     pub(crate) fn fail_all(&self, message: &str) {
         let pending: Vec<_> = self.jobs.lock().unwrap().drain().collect();
         for (_id, tx) in pending {
-            let _ = tx.send(JobResult::Error { message: message.to_string() });
+            capsem_core::try_send!(
+                "job_fail_all",
+                tx.send(JobResult::Error {
+                    message: message.to_string()
+                })
+            );
         }
         if let Some(tx) = self.snapshot_ready.lock().unwrap().take() {
-            let _ = tx.send(());
+            capsem_core::try_send!("snapshot_ready_fail_all", tx.send(()));
         }
         // Wake any ExecDone handler parked on the deposit notifier -- it
         // will then take an empty captured and drop the stale entry.
@@ -66,12 +83,24 @@ impl JobStore {
     }
 }
 
-#[cfg_attr(test, derive(Debug))]
+#[derive(Debug)]
 pub(crate) enum JobResult {
-    Exec { stdout: Vec<u8>, stderr: Vec<u8>, exit_code: i32 },
-    WriteFile { success: bool, error: Option<String> },
-    ReadFile { data: Option<Vec<u8>>, error: Option<String> },
-    Error { message: String },
+    Exec {
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        exit_code: i32,
+    },
+    WriteFile {
+        success: bool,
+        error: Option<String>,
+    },
+    ReadFile {
+        data: Option<Vec<u8>>,
+        error: Option<String>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// Orchestrates a guest quiescence sequence around a provided async operation.
@@ -108,18 +137,27 @@ where
             let op_result = op().await;
 
             info!("Operation complete, sending Unfreeze to guest");
-            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze).await;
+            capsem_core::try_send!(
+                "ctrl_unfreeze_ok",
+                ctrl_cmd_tx.send(HostToGuest::Unfreeze).await
+            );
             op_result
         }
         Ok(Err(_)) => {
             // Channel closed without receiving
             warn!("SnapshotReady channel closed prematurely, aborting operation and unfreezing");
-            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze).await;
+            capsem_core::try_send!(
+                "ctrl_unfreeze_premature",
+                ctrl_cmd_tx.send(HostToGuest::Unfreeze).await
+            );
             anyhow::bail!("SnapshotReady channel closed prematurely");
         }
         Err(_) => {
             warn!("Timeout waiting for SnapshotReady, aborting operation and unfreezing");
-            let _ = ctrl_cmd_tx.send(HostToGuest::Unfreeze).await;
+            capsem_core::try_send!(
+                "ctrl_unfreeze_timeout",
+                ctrl_cmd_tx.send(HostToGuest::Unfreeze).await
+            );
             anyhow::bail!("timed out waiting for SnapshotReady");
         }
     }
@@ -186,7 +224,14 @@ mod tests {
             active.captured.extend_from_slice(b"hello ");
             active.captured.extend_from_slice(b"world");
         }
-        let captured = store.active_exec.lock().unwrap().as_ref().unwrap().captured.clone();
+        let captured = store
+            .active_exec
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .captured
+            .clone();
         assert_eq!(captured, b"hello world");
     }
 
@@ -213,7 +258,11 @@ mod tests {
             exit_code: 0,
         };
         match r {
-            JobResult::Exec { stdout, stderr, exit_code } => {
+            JobResult::Exec {
+                stdout,
+                stderr,
+                exit_code,
+            } => {
                 assert_eq!(stdout, b"output");
                 assert_eq!(stderr, b"err");
                 assert_eq!(exit_code, 0);
@@ -237,7 +286,10 @@ mod tests {
 
     #[test]
     fn job_result_write_file_success() {
-        let r = JobResult::WriteFile { success: true, error: None };
+        let r = JobResult::WriteFile {
+            success: true,
+            error: None,
+        };
         match r {
             JobResult::WriteFile { success, error } => {
                 assert!(success);
@@ -249,7 +301,10 @@ mod tests {
 
     #[test]
     fn job_result_write_file_error() {
-        let r = JobResult::WriteFile { success: false, error: Some("permission denied".into()) };
+        let r = JobResult::WriteFile {
+            success: false,
+            error: Some("permission denied".into()),
+        };
         match r {
             JobResult::WriteFile { success, error } => {
                 assert!(!success);
@@ -261,7 +316,10 @@ mod tests {
 
     #[test]
     fn job_result_read_file_with_data() {
-        let r = JobResult::ReadFile { data: Some(b"contents".to_vec()), error: None };
+        let r = JobResult::ReadFile {
+            data: Some(b"contents".to_vec()),
+            error: None,
+        };
         match r {
             JobResult::ReadFile { data, error } => {
                 assert_eq!(data.unwrap(), b"contents");
@@ -273,7 +331,10 @@ mod tests {
 
     #[test]
     fn job_result_read_file_not_found() {
-        let r = JobResult::ReadFile { data: None, error: Some("not found".into()) };
+        let r = JobResult::ReadFile {
+            data: None,
+            error: Some("not found".into()),
+        };
         match r {
             JobResult::ReadFile { data, error } => {
                 assert!(data.is_none());
@@ -285,7 +346,9 @@ mod tests {
 
     #[test]
     fn job_result_error() {
-        let r = JobResult::Error { message: "internal failure".into() };
+        let r = JobResult::Error {
+            message: "internal failure".into(),
+        };
         match r {
             JobResult::Error { message } => assert_eq!(message, "internal failure"),
             _ => panic!("wrong variant"),
@@ -330,7 +393,10 @@ mod tests {
                 other => panic!("expected JobResult::Error, got {other:?}"),
             }
         }
-        assert!(snap_rx.await.is_ok(), "snapshot_ready waiter must be resolved");
+        assert!(
+            snap_rx.await.is_ok(),
+            "snapshot_ready waiter must be resolved"
+        );
         assert!(job_store.active_exec.lock().unwrap().is_none());
         assert!(job_store.jobs.lock().unwrap().is_empty());
     }
@@ -346,12 +412,15 @@ mod tests {
             stdout: b"hello".to_vec(),
             stderr: vec![],
             exit_code: 0,
-        }).unwrap();
+        })
+        .unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(rx).unwrap();
         match result {
-            JobResult::Exec { stdout, exit_code, .. } => {
+            JobResult::Exec {
+                stdout, exit_code, ..
+            } => {
                 assert_eq!(stdout, b"hello");
                 assert_eq!(exit_code, 0);
             }
@@ -376,9 +445,13 @@ mod tests {
 
         // 1. Never send SnapshotReady
         let start = std::time::Instant::now();
-        let result = with_quiescence(&tx, &job_store, std::time::Duration::from_millis(100), || async {
-            Ok(())
-        }).await;
+        let result = with_quiescence(
+            &tx,
+            &job_store,
+            std::time::Duration::from_millis(100),
+            || async { Ok(()) },
+        )
+        .await;
 
         let elapsed = start.elapsed();
         assert!(result.is_err());
@@ -397,7 +470,7 @@ mod tests {
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 if let Some(sender) = js.snapshot_ready.lock().unwrap().take() {
-                    let _ = sender.send(());
+                    capsem_core::try_send!("test_snapshot_ready", sender.send(()));
                 }
             });
         }
@@ -410,7 +483,8 @@ mod tests {
                 e.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(())
             }
-        }).await;
+        })
+        .await;
 
         assert!(result.is_ok());
         assert!(executed.load(std::sync::atomic::Ordering::SeqCst));
@@ -431,11 +505,18 @@ mod tests {
             });
         }
 
-        let result = with_quiescence(&tx, &job_store, std::time::Duration::from_secs(5), || async {
-            Ok(())
-        }).await;
+        let result = with_quiescence(
+            &tx,
+            &job_store,
+            std::time::Duration::from_secs(5),
+            || async { Ok(()) },
+        )
+        .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("closed prematurely"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("closed prematurely"));
     }
 }

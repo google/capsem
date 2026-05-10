@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::types::{McpServerDef, McpTransport, PolicySource};
-use super::{SettingValue, SettingsFile};
+use super::{
+    is_policy_rule_key, parse_policy_rule_key, PolicyRuleConfig, SettingValue, SettingsFile,
+};
 
 // ---------------------------------------------------------------------------
 // File I/O
@@ -20,7 +22,9 @@ pub fn user_config_path() -> Option<std::path::PathBuf> {
 ///
 /// Priority: CAPSEM_CORP_CONFIG env > /etc/capsem/corp.toml > ~/.capsem/corp.toml
 pub fn corp_config_path() -> std::path::PathBuf {
-    corp_config_paths().into_iter().next()
+    corp_config_paths()
+        .into_iter()
+        .next()
         .unwrap_or_else(|| std::path::PathBuf::from("/etc/capsem/corp.toml"))
 }
 
@@ -73,20 +77,59 @@ const SETTING_ID_MIGRATIONS: &[(&str, &str)] = &[
     ("web.defaults.allow_write", "security.web.allow_write"),
     ("web.custom_allow", "security.web.custom_allow"),
     ("web.custom_block", "security.web.custom_block"),
-    ("web.search.google.allow", "security.services.search.google.allow"),
-    ("web.search.google.domains", "security.services.search.google.domains"),
-    ("web.search.bing.allow", "security.services.search.bing.allow"),
-    ("web.search.bing.domains", "security.services.search.bing.domains"),
-    ("web.search.duckduckgo.allow", "security.services.search.duckduckgo.allow"),
-    ("web.search.duckduckgo.domains", "security.services.search.duckduckgo.domains"),
-    ("registry.debian.allow", "security.services.registry.debian.allow"),
-    ("registry.debian.domains", "security.services.registry.debian.domains"),
+    (
+        "web.search.google.allow",
+        "security.services.search.google.allow",
+    ),
+    (
+        "web.search.google.domains",
+        "security.services.search.google.domains",
+    ),
+    (
+        "web.search.bing.allow",
+        "security.services.search.bing.allow",
+    ),
+    (
+        "web.search.bing.domains",
+        "security.services.search.bing.domains",
+    ),
+    (
+        "web.search.duckduckgo.allow",
+        "security.services.search.duckduckgo.allow",
+    ),
+    (
+        "web.search.duckduckgo.domains",
+        "security.services.search.duckduckgo.domains",
+    ),
+    (
+        "registry.debian.allow",
+        "security.services.registry.debian.allow",
+    ),
+    (
+        "registry.debian.domains",
+        "security.services.registry.debian.domains",
+    ),
     ("registry.npm.allow", "security.services.registry.npm.allow"),
-    ("registry.npm.domains", "security.services.registry.npm.domains"),
-    ("registry.pypi.allow", "security.services.registry.pypi.allow"),
-    ("registry.pypi.domains", "security.services.registry.pypi.domains"),
-    ("registry.crates.allow", "security.services.registry.crates.allow"),
-    ("registry.crates.domains", "security.services.registry.crates.domains"),
+    (
+        "registry.npm.domains",
+        "security.services.registry.npm.domains",
+    ),
+    (
+        "registry.pypi.allow",
+        "security.services.registry.pypi.allow",
+    ),
+    (
+        "registry.pypi.domains",
+        "security.services.registry.pypi.domains",
+    ),
+    (
+        "registry.crates.allow",
+        "security.services.registry.crates.allow",
+    ),
+    (
+        "registry.crates.domains",
+        "security.services.registry.crates.domains",
+    ),
 ];
 
 /// Rename old setting IDs to new ones in a loaded settings file.
@@ -105,10 +148,9 @@ pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), Strin
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create dir {}: {}", parent.display(), e))?;
     }
-    let content = toml::to_string_pretty(file)
-        .map_err(|e| format!("failed to serialize settings: {e}"))?;
-    std::fs::write(path, content)
-        .map_err(|e| format!("failed to write {}: {}", path.display(), e))
+    let content =
+        toml::to_string_pretty(file).map_err(|e| format!("failed to serialize settings: {e}"))?;
+    std::fs::write(path, content).map_err(|e| format!("failed to write {}: {}", path.display(), e))
 }
 
 /// Load both settings files from standard locations.
@@ -136,6 +178,8 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
                 if corp.mcp.is_none() && file.mcp.is_some() {
                     corp.mcp = file.mcp;
                 }
+                // Policy V2 config: first corp path wins per named rule.
+                corp.policy.merge_first_wins(file.policy);
             }
             Err(e) => {
                 tracing::warn!("corp settings at {}: {e}", path.display());
@@ -222,8 +266,8 @@ fn parse_mcp_section(toml_str: &str, source: PolicySource) -> Vec<McpServerDef> 
     let mut servers = Vec::new();
     for (key, val) in mcp_table {
         // Skip global config keys that aren't server definitions
-        if key == "global_policy" 
-            || key == "default_tool_permission" 
+        if key == "global_policy"
+            || key == "default_tool_permission"
             || key == "health_check_interval_secs"
             || key == "server_enabled"
             || key == "tool_permissions"
@@ -274,8 +318,8 @@ fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServer
     let mut servers = Vec::new();
     for (key, val) in mcp_obj {
         // Skip global config keys that aren't server definitions
-        if key == "global_policy" 
-            || key == "default_tool_permission" 
+        if key == "global_policy"
+            || key == "default_tool_permission"
             || key == "health_check_interval_secs"
             || key == "server_enabled"
             || key == "tool_permissions"
@@ -359,6 +403,7 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
         tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
         issues: super::lint::config_lint(&resolved),
         presets: super::presets::security_presets(),
+        policy: super::types::PolicyConfig::merged(&user.policy, &corp.policy),
     }
 }
 
@@ -374,6 +419,18 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
 pub fn batch_update_settings(
     changes: &HashMap<String, SettingValue>,
 ) -> Result<Vec<String>, String> {
+    let mut raw = HashMap::new();
+    for (id, value) in changes {
+        let json = serde_json::to_value(value)
+            .map_err(|e| format!("failed to encode setting {id}: {e}"))?;
+        raw.insert(id.clone(), json);
+    }
+    batch_update_settings_json(&raw)
+}
+
+pub fn batch_update_settings_json(
+    changes: &HashMap<String, serde_json::Value>,
+) -> Result<Vec<String>, String> {
     use super::registry::setting_definitions;
 
     if changes.is_empty() {
@@ -385,10 +442,55 @@ pub fn batch_update_settings(
     let mut user_file = load_settings_file(&user_path)?;
     let corp_file = load_settings_file(&corp_path)?;
     let defs = setting_definitions();
+    let mut setting_changes = HashMap::new();
+    let mut policy_changes = Vec::new();
 
     // Validate all changes upfront
     let mut errors = Vec::new();
     for (id, value) in changes {
+        if is_policy_rule_key(id) {
+            match parse_policy_rule_key(id) {
+                Ok((rule_type, _)) => {
+                    match corp_file.policy.contains_rule_key(id) {
+                        Ok(true) => {
+                            errors.push(format!("corp-locked: {id}"));
+                            continue;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            errors.push(e);
+                            continue;
+                        }
+                    }
+
+                    if value.is_null() {
+                        policy_changes.push((id.clone(), None));
+                        continue;
+                    }
+
+                    match serde_json::from_value::<PolicyRuleConfig>(value.clone()) {
+                        Ok(rule) if rule.on.policy_type() == rule_type => {
+                            policy_changes.push((id.clone(), Some(rule)));
+                        }
+                        Ok(_) => errors.push(format!(
+                            "policy rule '{id}' uses callback for a different policy type"
+                        )),
+                        Err(e) => errors.push(format!("invalid policy rule {id}: {e}")),
+                    }
+                }
+                Err(e) => errors.push(e),
+            }
+            continue;
+        }
+
+        let value = match serde_json::from_value::<SettingValue>(value.clone()) {
+            Ok(value) => value,
+            Err(e) => {
+                errors.push(format!("invalid value for {id}: {e}"));
+                continue;
+            }
+        };
+
         // Check known setting ID (allow dynamic guest.env.*)
         let is_dynamic = id.starts_with("guest.env.");
         let def = defs.iter().find(|d| d.id == *id);
@@ -404,9 +506,10 @@ pub fn batch_update_settings(
         }
 
         // Validate file values
-        if let Err(e) = validate_setting_value(id, value) {
+        if let Err(e) = validate_setting_value(id, &value) {
             errors.push(e);
         }
+        setting_changes.insert(id.clone(), value);
     }
 
     if !errors.is_empty() {
@@ -416,15 +519,22 @@ pub fn batch_update_settings(
     // All valid -- write to user.toml
     let now = crate::session::now_iso();
     let mut applied = Vec::new();
-    for (id, value) in changes {
+    for (id, value) in setting_changes {
         user_file.settings.insert(
             id.clone(),
             super::types::SettingEntry {
-                value: value.clone(),
+                value,
                 modified: now.clone(),
             },
         );
         applied.push(id.clone());
+    }
+    for (id, rule) in policy_changes {
+        match rule {
+            Some(rule) => user_file.policy.upsert_rule_key(&id, rule)?,
+            None => user_file.policy.remove_rule_key(&id)?,
+        }
+        applied.push(id);
     }
 
     write_settings_file(&user_path, &user_file)?;

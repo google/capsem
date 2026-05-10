@@ -2,8 +2,8 @@ use std::io::Read;
 use std::os::unix::io::{FromRawFd, RawFd};
 
 use anyhow::Result;
-use objc2::AllocAnyThread;
 use objc2::rc::Retained;
+use objc2::AllocAnyThread;
 use objc2_foundation::NSPipe;
 use objc2_virtualization::{
     VZFileHandleSerialPortAttachment, VZVirtioConsoleDeviceSerialPortConfiguration,
@@ -39,11 +39,12 @@ pub fn create_serial_port() -> Result<(
     let output_pipe = NSPipe::pipe();
 
     let serial_config = unsafe {
-        let attachment = VZFileHandleSerialPortAttachment::initWithFileHandleForReading_fileHandleForWriting(
-            VZFileHandleSerialPortAttachment::alloc(),
-            Some(&input_pipe.fileHandleForReading()),
-            Some(&output_pipe.fileHandleForWriting()),
-        );
+        let attachment =
+            VZFileHandleSerialPortAttachment::initWithFileHandleForReading_fileHandleForWriting(
+                VZFileHandleSerialPortAttachment::alloc(),
+                Some(&input_pipe.fileHandleForReading()),
+                Some(&output_pipe.fileHandleForWriting()),
+            );
 
         let config = VZVirtioConsoleDeviceSerialPortConfiguration::new();
         config.setAttachment(Some(&attachment));
@@ -65,7 +66,9 @@ pub fn create_serial_port() -> Result<(
     let input_write_fd = input_pipe.fileHandleForWriting().fileDescriptor();
     let input_write_fd_dup = unsafe { libc::dup(input_write_fd) };
     if input_write_fd_dup < 0 {
-        unsafe { libc::close(output_read_fd_dup); }
+        unsafe {
+            libc::close(output_read_fd_dup);
+        }
         return Err(anyhow::anyhow!(
             "dup() failed: {}",
             std::io::Error::last_os_error()
@@ -87,7 +90,12 @@ pub fn create_serial_port() -> Result<(
 #[cfg(test)]
 pub fn create_console_from_fd(read_fd: RawFd, input_fd: RawFd) -> AppleVzSerialConsole {
     let (tx, _rx) = broadcast::channel(256);
-    AppleVzSerialConsole { tx, read_fd, input_fd, _pipes: None }
+    AppleVzSerialConsole {
+        tx,
+        read_fd,
+        input_fd,
+        _pipes: None,
+    }
 }
 
 impl AppleVzSerialConsole {
@@ -239,7 +247,9 @@ mod tests {
         let mut rx = console.subscribe();
 
         // Close write end immediately
-        unsafe { libc::close(write_fd); }
+        unsafe {
+            libc::close(write_fd);
+        }
 
         console.spawn_reader();
 
@@ -264,13 +274,15 @@ mod tests {
 
     #[test]
     fn create_serial_port_returns_valid_config() {
-        let (config, console, ) = create_serial_port().unwrap();
+        let (config, console) = create_serial_port().unwrap();
         // The config should have an attachment set
         let attachment = unsafe { config.attachment() };
         assert!(attachment.is_some());
         // input_fd should be a valid file descriptor
         assert!(console.input_fd >= 0);
-        unsafe { libc::close(console.input_fd); }
+        unsafe {
+            libc::close(console.input_fd);
+        }
     }
 
     #[test]

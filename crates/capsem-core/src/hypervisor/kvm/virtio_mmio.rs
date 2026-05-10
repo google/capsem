@@ -216,7 +216,9 @@ impl MmioDevice for VirtioMmioTransport {
                 let config_offset = offset - CONFIG_SPACE;
                 let mut config_data = [0u8; 4];
                 let len = data.len().min(4);
-                state.device.read_config(config_offset, &mut config_data[..len]);
+                state
+                    .device
+                    .read_config(config_offset, &mut config_data[..len]);
                 data[..len].copy_from_slice(&config_data[..len]);
                 return;
             }
@@ -243,9 +245,11 @@ impl MmioDevice for VirtioMmioTransport {
             }
             DRIVER_FEATURES => {
                 if state.driver_features_sel == 0 {
-                    state.driver_features = (state.driver_features & 0xFFFF_FFFF_0000_0000) | val as u64;
+                    state.driver_features =
+                        (state.driver_features & 0xFFFF_FFFF_0000_0000) | val as u64;
                 } else {
-                    state.driver_features = (state.driver_features & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32);
+                    state.driver_features =
+                        (state.driver_features & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32);
                 }
             }
             DRIVER_FEATURES_SEL => {
@@ -289,14 +293,16 @@ impl MmioDevice for VirtioMmioTransport {
                 if val & STATUS_DRIVER_OK != 0 && !state.activated {
                     state.activated = true;
                     let mem = state.mem.clone();
-                    let queue_configs: Vec<QueueConfig> = state.queues.iter().map(|q| {
-                        QueueConfig {
+                    let queue_configs: Vec<QueueConfig> = state
+                        .queues
+                        .iter()
+                        .map(|q| QueueConfig {
                             desc_addr: q.desc_addr(),
                             driver_addr: q.driver_addr(),
                             device_addr: q.device_addr(),
                             size: q.num,
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     state.device.activate(mem, &queue_configs);
                 }
             }
@@ -347,8 +353,8 @@ impl MmioDevice for VirtioMmioTransport {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::memory::{GuestMemory, RAM_BASE};
+    use super::*;
 
     struct DummyDevice {
         activated: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -356,7 +362,11 @@ mod tests {
     }
 
     impl DummyDevice {
-        fn new() -> (Self, std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+        fn new() -> (
+            Self,
+            std::sync::Arc<std::sync::atomic::AtomicBool>,
+            std::sync::Arc<std::sync::atomic::AtomicU32>,
+        ) {
             let activated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let notify_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
             (
@@ -371,9 +381,15 @@ mod tests {
     }
 
     impl VirtioDevice for DummyDevice {
-        fn device_type(&self) -> u32 { 3 } // console
-        fn features(&self) -> u64 { 0x0000_0001_0000_0001 } // feature bits in both halves
-        fn queue_max_sizes(&self) -> &[u16] { &[256, 256] }
+        fn device_type(&self) -> u32 {
+            3
+        } // console
+        fn features(&self) -> u64 {
+            0x0000_0001_0000_0001
+        } // feature bits in both halves
+        fn queue_max_sizes(&self) -> &[u16] {
+            &[256, 256]
+        }
         fn read_config(&self, offset: u64, data: &mut [u8]) {
             // Config space: 4 bytes of 0xAA
             for (i, b) in data.iter_mut().enumerate() {
@@ -384,17 +400,24 @@ mod tests {
         }
         fn write_config(&self, _offset: u64, _data: &[u8]) {}
         fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
-            self.activated.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.activated
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
         fn queue_notify(&mut self, _queue_index: u32) {
-            self.notify_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.notify_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
-    fn make_transport() -> (VirtioMmioTransport, std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+    fn make_transport() -> (
+        VirtioMmioTransport,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        std::sync::Arc<std::sync::atomic::AtomicU32>,
+    ) {
         let mem = GuestMemory::new(4096).unwrap();
         let (dev, activated, notify_count) = DummyDevice::new();
-        let transport = VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(super::memory::RAM_BASE));
+        let transport =
+            VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(super::memory::RAM_BASE));
         (transport, activated, notify_count)
     }
 
@@ -501,10 +524,7 @@ mod tests {
 
         // DRIVER
         write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
-        assert_eq!(
-            read_u32(&t, STATUS),
-            STATUS_ACKNOWLEDGE | STATUS_DRIVER
-        );
+        assert_eq!(read_u32(&t, STATUS), STATUS_ACKNOWLEDGE | STATUS_DRIVER);
 
         // FEATURES_OK
         write_u32(
@@ -546,7 +566,11 @@ mod tests {
     fn queue_notify_after_activation() {
         let (t, _, notify_count) = make_transport();
         // Activate
-        write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+        write_u32(
+            &t,
+            STATUS,
+            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+        );
         // Notify
         write_u32(&t, QUEUE_NOTIFY, 0);
         assert_eq!(notify_count.load(std::sync::atomic::Ordering::SeqCst), 1);

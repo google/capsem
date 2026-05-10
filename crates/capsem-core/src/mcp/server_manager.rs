@@ -4,12 +4,12 @@
 //! - HTTP: Streamable HTTP endpoint via `StreamableHttpClientTransport`
 //! - Stdio: Subprocess via `TokioChildProcess` (for local/builtin servers)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
-use rmcp::model::{
-    CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams,
-};
+use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
 use rmcp::service::{Peer, RunningService};
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
@@ -20,24 +20,59 @@ use tracing::{debug, info, warn};
 
 use super::types::*;
 
-/// A connected host-side MCP server backed by rmcp.
+/// One rmcp client connection. For stdio-pool servers, the manager keeps
+/// several of these in a `ServerPool`.
 struct RunningServer {
     client: RunningService<RoleClient, ()>,
+}
+
+/// A pool of one-or-more rmcp connections to a single MCP server. Stdio
+/// servers may run with `peers.len() > 1` to bypass rmcp's
+/// per-`RunningService` mpsc → driver-task → stdin funnel; HTTP servers
+/// always use a single peer (HTTP/2 multiplexes natively).
+///
+/// `next` round-robins across `peers`, but only for tools whose original
+/// (post-namespace-strip) name appears in `pool_safe_tools`. Tools NOT in
+/// that allowlist pin to `peers[0]` so per-process state (e.g. the
+/// builtin's `Arc<Mutex<AutoSnapshotScheduler>>`) stays consistent.
+struct ServerPool {
+    peers: Vec<RunningServer>,
+    next: AtomicUsize,
+    pool_safe_tools: HashSet<String>,
+}
+
+impl ServerPool {
+    /// Pick a peer for a call to `original_tool_or_uri`. If the name is
+    /// in the safe list, round-robin; otherwise pin to `peers[0]`.
+    fn pick(&self, original: &str) -> &RunningServer {
+        let is_safe = self.pool_safe_tools.contains(original);
+        let idx = next_peer_index(self.peers.len(), is_safe, &self.next);
+        &self.peers[idx]
+    }
+}
+
+/// Round-robin picker, separated for unit-testability without rmcp.
+/// Returns 0 unless the pool has > 1 peer AND the tool is pool-safe.
+fn next_peer_index(peer_count: usize, is_pool_safe: bool, counter: &AtomicUsize) -> usize {
+    if peer_count <= 1 || !is_pool_safe {
+        return 0;
+    }
+    counter.fetch_add(1, Ordering::Relaxed) % peer_count
 }
 
 /// Manages host-side MCP server connections and provides a unified tool catalog.
 pub struct McpServerManager {
     definitions: Vec<McpServerDef>,
-    running: HashMap<String, RunningServer>,
+    running: HashMap<String, ServerPool>,
     http_client: reqwest::Client,
     // Unified, namespaced catalogs
     tool_catalog: Vec<McpToolDef>,
     resource_catalog: Vec<McpResourceDef>,
     prompt_catalog: Vec<McpPromptDef>,
     // Routing maps
-    tool_routing: HashMap<String, String>,     // namespaced_name -> server_name
-    resource_routing: HashMap<String, String>,  // namespaced_uri -> server_name
-    prompt_routing: HashMap<String, String>,    // namespaced_name -> server_name
+    tool_routing: HashMap<String, String>, // namespaced_name -> server_name
+    resource_routing: HashMap<String, String>, // namespaced_uri -> server_name
+    prompt_routing: HashMap<String, String>, // namespaced_name -> server_name
 }
 
 impl McpServerManager {
@@ -82,7 +117,7 @@ impl McpServerManager {
             resources = self.resource_catalog.len(),
             prompts = self.prompt_catalog.len(),
             servers = self.running.len(),
-            "MCP gateway catalog built"
+            "MCP aggregator catalog built"
         );
         Ok(())
     }
@@ -90,9 +125,20 @@ impl McpServerManager {
     /// Connect to a single server, run MCP handshake, populate catalogs.
     /// Public within the crate for testing (errors propagate, unlike initialize_all
     /// which warns and continues).
+    ///
+    /// For stdio servers with `pool_size > 1`, spawns N independent
+    /// subprocess clients. Catalog discovery happens against `peers[0]`
+    /// only; subsequent peers are pure dispatch backends so we don't pay
+    /// the `tools/list`/`resources/list`/`prompts/list` cost N times.
     pub(crate) async fn connect_and_initialize(&mut self, def: &McpServerDef) -> Result<()> {
+        // Stdio servers can be pooled; HTTP transports already multiplex
+        // via HTTP/2 so additional peers buy nothing at the transport
+        // level. Clamp `pool_size` to ≥ 1 (and to 1 for HTTP).
+        let requested_pool = def.pool_size.unwrap_or(1).max(1) as usize;
+        let pool_size = if def.is_stdio() { requested_pool } else { 1 };
+
         let client = if def.is_stdio() {
-            self.connect_stdio(def).await?
+            self.connect_stdio(def, 0).await?
         } else {
             self.connect_http(def).await?
         };
@@ -115,8 +161,8 @@ impl McpServerManager {
                         open_world_hint: a.open_world_hint.unwrap_or(true),
                     });
 
-                    let input_schema = serde_json::to_value(&*tool.input_schema)
-                        .unwrap_or(serde_json::json!({}));
+                    let input_schema =
+                        serde_json::to_value(&*tool.input_schema).unwrap_or(serde_json::json!({}));
 
                     self.tool_catalog.push(McpToolDef {
                         namespaced_name: ns_name.clone(),
@@ -125,6 +171,7 @@ impl McpServerManager {
                         input_schema,
                         server_name: def.name.clone(),
                         annotations,
+                        timeout_secs: None,
                     });
                     self.tool_routing.insert(ns_name, def.name.clone());
                 }
@@ -171,7 +218,11 @@ impl McpServerManager {
                     let arguments: Vec<serde_json::Value> = prompt
                         .arguments
                         .as_ref()
-                        .map(|args| args.iter().filter_map(|a| serde_json::to_value(a).ok()).collect())
+                        .map(|args| {
+                            args.iter()
+                                .filter_map(|a| serde_json::to_value(a).ok())
+                                .collect()
+                        })
                         .unwrap_or_default();
                     self.prompt_catalog.push(McpPromptDef {
                         namespaced_name: ns_name.clone(),
@@ -188,7 +239,43 @@ impl McpServerManager {
             }
         }
 
-        self.running.insert(def.name.clone(), RunningServer { client });
+        // Catalog discovery is done. Build the pool: peers[0] is the
+        // already-connected `client`; peers[1..pool_size] are spawned now
+        // for stdio servers. We DON'T list-tools again on the additional
+        // peers — they expose the same catalog by construction (same
+        // binary, same env), so re-querying just costs latency.
+        let mut peers = Vec::with_capacity(pool_size);
+        peers.push(RunningServer { client });
+        for i in 1..pool_size {
+            match self.connect_stdio(def, i as u32).await {
+                Ok(extra) => peers.push(RunningServer { client: extra }),
+                Err(e) => {
+                    warn!(
+                        server = %def.name,
+                        peer_index = i,
+                        error = %e,
+                        "failed to spawn additional pool peer; continuing with smaller pool"
+                    );
+                    break;
+                }
+            }
+        }
+
+        if pool_size > 1 {
+            info!(
+                server = %def.name,
+                pool_size = peers.len(),
+                pool_safe_tools = def.pool_safe_tools.len(),
+                "MCP server pool initialized"
+            );
+        }
+
+        let pool = ServerPool {
+            peers,
+            next: AtomicUsize::new(0),
+            pool_safe_tools: def.pool_safe_tools.iter().cloned().collect(),
+        };
+        self.running.insert(def.name.clone(), pool);
         Ok(())
     }
 
@@ -201,26 +288,37 @@ impl McpServerManager {
         if !def.headers.is_empty() {
             let mut headers = HashMap::new();
             for (key, val) in &def.headers {
-                let name: http::header::HeaderName = key.parse()
+                let name: http::header::HeaderName = key
+                    .parse()
                     .with_context(|| format!("invalid header name: {key}"))?;
-                let value: http::header::HeaderValue = val.parse()
+                let value: http::header::HeaderValue = val
+                    .parse()
                     .with_context(|| format!("invalid header value for {key}"))?;
                 headers.insert(name, value);
             }
             config = config.custom_headers(headers);
         }
-        let transport = StreamableHttpClientTransport::with_client(
-            self.http_client.clone(),
-            config,
-        );
+        let transport =
+            StreamableHttpClientTransport::with_client(self.http_client.clone(), config);
         ().serve(transport)
             .await
             .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
     }
 
     /// Spawn and connect to a stdio MCP server subprocess.
-    async fn connect_stdio(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
-        let command = def.command.as_deref()
+    ///
+    /// `peer_index` distinguishes pool members (0 = primary, 1..N =
+    /// secondaries). Forwarded as `CAPSEM_BUILTIN_PEER_INDEX` so the
+    /// builtin can pick a per-peer lockfile and avoid the singleton
+    /// guard's "another instance holds the lock; exiting 0" path.
+    async fn connect_stdio(
+        &self,
+        def: &McpServerDef,
+        peer_index: u32,
+    ) -> Result<RunningService<RoleClient, ()>> {
+        let command = def
+            .command
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("stdio server '{}' has no command", def.name))?;
 
         let mut cmd = tokio::process::Command::new(command);
@@ -229,6 +327,7 @@ impl McpServerManager {
             cmd.env(k, v);
         }
         cmd.env("CAPSEM_PARENT_PID", std::process::id().to_string());
+        cmd.env("CAPSEM_BUILTIN_PEER_INDEX", peer_index.to_string());
 
         let transport = TokioChildProcess::new(cmd)
             .with_context(|| format!("failed to spawn stdio MCP server '{}'", def.name))?;
@@ -260,7 +359,10 @@ impl McpServerManager {
 
     /// Count tools provided by a named server.
     pub fn tool_count_for_server(&self, name: &str) -> usize {
-        self.tool_catalog.iter().filter(|t| t.server_name == name).count()
+        self.tool_catalog
+            .iter()
+            .filter(|t| t.server_name == name)
+            .count()
     }
 
     /// Check if a server is currently connected.
@@ -270,35 +372,45 @@ impl McpServerManager {
 
     /// Look up a tool's peer and original name. Clone the peer so the caller
     /// can drop the manager lock before making the (potentially slow) RPC call.
+    ///
+    /// For pooled servers, the peer is round-robin-picked across the pool
+    /// when the original name is in `pool_safe_tools`; otherwise it pins
+    /// to `peers[0]`.
     pub fn lookup_tool_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
         let (server_name, original_name) = parse_namespaced(namespaced_name)
             .ok_or_else(|| anyhow::anyhow!("invalid namespaced tool name: {namespaced_name}"))?;
-        let server = self
+        let pool = self
             .running
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        let server = pool.pick(original_name);
         Ok((server.client.peer().clone(), original_name.to_string()))
     }
 
-    /// Look up a resource's peer and original URI.
+    /// Look up a resource's peer and original URI. Resource URIs are not
+    /// pool-routed (pool_safe_tools applies to tool names only); they pin
+    /// to `peers[0]`.
     pub fn lookup_resource_peer(&self, namespaced_uri: &str) -> Result<(Peer<RoleClient>, String)> {
         let (server_name, original_uri) = parse_resource_uri(namespaced_uri)
             .ok_or_else(|| anyhow::anyhow!("invalid namespaced resource URI: {namespaced_uri}"))?;
-        let server = self
+        let pool = self
             .running
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        let server = &pool.peers[0];
         Ok((server.client.peer().clone(), original_uri.to_string()))
     }
 
-    /// Look up a prompt's peer and original name.
+    /// Look up a prompt's peer and original name. Prompts pin to
+    /// `peers[0]` (pool routing applies to tool calls only).
     pub fn lookup_prompt_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
         let (server_name, original_name) = parse_namespaced(namespaced_name)
             .ok_or_else(|| anyhow::anyhow!("invalid namespaced prompt name: {namespaced_name}"))?;
-        let server = self
+        let pool = self
             .running
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        let server = &pool.peers[0];
         Ok((server.client.peer().clone(), original_name.to_string()))
     }
 
@@ -308,37 +420,12 @@ impl McpServerManager {
         namespaced_name: &str,
         arguments: serde_json::Value,
     ) -> Result<JsonRpcResponse> {
-        let (peer, original_name) = self.lookup_tool_peer(namespaced_name)?;
-
-        let args: Option<serde_json::Map<String, serde_json::Value>> = match arguments {
-            serde_json::Value::Object(map) if !map.is_empty() => Some(map),
-            _ => None,
-        };
-
-        let mut params = CallToolRequestParams::new(original_name.clone());
-        if let Some(args) = args {
-            params = params.with_arguments(args);
-        }
-
-        let result = peer.call_tool(params).await
-            .with_context(|| format!("tool call '{}' failed", original_name))?;
-
-        let result_json = serde_json::to_value(&result)
-            .context("failed to serialize tool result")?;
-        Ok(JsonRpcResponse::ok(None, result_json))
+        self.dispatch_call_tool(namespaced_name, arguments)?.await
     }
 
     /// Route a resources/read: parse namespaced URI, forward to server.
     pub async fn read_resource(&self, namespaced_uri: &str) -> Result<JsonRpcResponse> {
-        let (peer, original_uri) = self.lookup_resource_peer(namespaced_uri)?;
-
-        let params = ReadResourceRequestParams::new(original_uri.clone());
-        let result = peer.read_resource(params).await
-            .with_context(|| format!("resource read '{}' failed", original_uri))?;
-
-        let result_json = serde_json::to_value(&result)
-            .context("failed to serialize resource result")?;
-        Ok(JsonRpcResponse::ok(None, result_json))
+        self.dispatch_read_resource(namespaced_uri)?.await
     }
 
     /// Route a prompts/get: parse namespace, forward to server.
@@ -347,29 +434,109 @@ impl McpServerManager {
         namespaced_name: &str,
         arguments: serde_json::Value,
     ) -> Result<JsonRpcResponse> {
-        let (peer, original_name) = self.lookup_prompt_peer(namespaced_name)?;
+        self.dispatch_get_prompt(namespaced_name, arguments)?.await
+    }
 
+    /// Resolve a tools/call to an owned future. The lookup runs synchronously
+    /// against `&self`, then returns a `'static + Send` future that owns the
+    /// cloned `Peer`. Lets callers drop a sync RwLock guard before awaiting
+    /// the (potentially slow) RPC, so concurrent dispatches don't serialize
+    /// on the manager.
+    pub fn dispatch_call_tool(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
+        let (peer, original_name) = self.lookup_tool_peer(namespaced_name)?;
+        let args: Option<serde_json::Map<String, serde_json::Value>> = match arguments {
+            serde_json::Value::Object(map) if !map.is_empty() => Some(map),
+            _ => None,
+        };
+        let mut params = CallToolRequestParams::new(original_name.clone());
+        if let Some(args) = args {
+            params = params.with_arguments(args);
+        }
+        Ok(async move {
+            let result = peer
+                .call_tool(params)
+                .await
+                .with_context(|| format!("tool call '{}' failed", original_name))?;
+            let result_json =
+                serde_json::to_value(&result).context("failed to serialize tool result")?;
+            Ok(JsonRpcResponse::ok(None, result_json))
+        })
+    }
+
+    /// Resolve a resources/read to an owned future. See `dispatch_call_tool`.
+    pub fn dispatch_read_resource(
+        &self,
+        namespaced_uri: &str,
+    ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
+        let (peer, original_uri) = self.lookup_resource_peer(namespaced_uri)?;
+        let params = ReadResourceRequestParams::new(original_uri.clone());
+        Ok(async move {
+            let result = peer
+                .read_resource(params)
+                .await
+                .with_context(|| format!("resource read '{}' failed", original_uri))?;
+            let result_json =
+                serde_json::to_value(&result).context("failed to serialize resource result")?;
+            Ok(JsonRpcResponse::ok(None, result_json))
+        })
+    }
+
+    /// Resolve a prompts/get to an owned future. See `dispatch_call_tool`.
+    pub fn dispatch_get_prompt(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
+        let (peer, original_name) = self.lookup_prompt_peer(namespaced_name)?;
         let mut params = GetPromptRequestParams::new(original_name.clone());
         if let serde_json::Value::Object(map) = arguments {
             if !map.is_empty() {
                 params = params.with_arguments(map);
             }
         }
-
-        let result = peer.get_prompt(params).await
-            .with_context(|| format!("prompt get '{}' failed", original_name))?;
-
-        let result_json = serde_json::to_value(&result)
-            .context("failed to serialize prompt result")?;
-        Ok(JsonRpcResponse::ok(None, result_json))
+        Ok(async move {
+            let result = peer
+                .get_prompt(params)
+                .await
+                .with_context(|| format!("prompt get '{}' failed", original_name))?;
+            let result_json =
+                serde_json::to_value(&result).context("failed to serialize prompt result")?;
+            Ok(JsonRpcResponse::ok(None, result_json))
+        })
     }
 
     /// Shut down all server connections.
     pub async fn shutdown_all(&mut self) {
-        for (name, server) in self.running.drain() {
-            debug!(server = %name, "disconnecting MCP server");
-            if let Err(e) = server.client.cancel().await {
-                warn!(server = %name, error = %e, "error cancelling MCP server");
+        self.drain_running().await
+    }
+
+    /// Take ownership of all running server connections and return a future
+    /// that cancels them. Caller must drop any manager guard before awaiting.
+    /// Drains every peer in every pool.
+    pub fn drain_running(&mut self) -> impl Future<Output = ()> + Send + 'static {
+        let running = std::mem::take(&mut self.running);
+        async move {
+            for (name, pool) in running {
+                let peer_count = pool.peers.len();
+                if peer_count > 1 {
+                    debug!(server = %name, pool_size = peer_count, "disconnecting MCP server pool");
+                } else {
+                    debug!(server = %name, "disconnecting MCP server");
+                }
+                for (i, server) in pool.peers.into_iter().enumerate() {
+                    if let Err(e) = server.client.cancel().await {
+                        warn!(
+                            server = %name,
+                            peer_index = i,
+                            error = %e,
+                            "error cancelling MCP server peer"
+                        );
+                    }
+                }
             }
         }
     }
@@ -390,6 +557,8 @@ mod tests {
             command: None,
             args: vec![],
             env: HashMap::new(),
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
         }
     }
 
@@ -445,7 +614,10 @@ mod tests {
         let mgr = McpServerManager::new(vec![], reqwest::Client::new());
         let result = mgr.call_tool("noseparator", serde_json::json!({})).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid namespaced"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid namespaced"));
     }
 
     #[tokio::test]
@@ -468,7 +640,108 @@ mod tests {
         let mgr = McpServerManager::new(vec![], reqwest::Client::new());
         let result = mgr.lookup_tool_peer("noseparator");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid namespaced"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid namespaced"));
+    }
+
+    // ── ServerPool round-robin tests (T3 angle 2) ───────────────────
+
+    #[test]
+    fn next_peer_index_single_peer_always_zero() {
+        let counter = AtomicUsize::new(0);
+        // Pool of 1 peer ⇒ always idx 0 regardless of pool-safe flag.
+        for _ in 0..10 {
+            assert_eq!(next_peer_index(1, true, &counter), 0);
+            assert_eq!(next_peer_index(1, false, &counter), 0);
+        }
+        // Counter never bumped (we early-return).
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn next_peer_index_zero_peers_returns_zero() {
+        // Defensive: 0 peers shouldn't crash; returns 0 (caller should
+        // never invoke pick with empty pool but mod-by-zero would panic).
+        let counter = AtomicUsize::new(0);
+        assert_eq!(next_peer_index(0, true, &counter), 0);
+        assert_eq!(next_peer_index(0, false, &counter), 0);
+    }
+
+    #[test]
+    fn next_peer_index_unsafe_tool_pins_to_zero() {
+        let counter = AtomicUsize::new(0);
+        // Pool of 4 peers, but tool is NOT pool-safe ⇒ always idx 0.
+        for _ in 0..20 {
+            assert_eq!(next_peer_index(4, false, &counter), 0);
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn next_peer_index_safe_tool_round_robins() {
+        let counter = AtomicUsize::new(0);
+        let peer_count = 4;
+        // First peer_count calls cover every index exactly once.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..peer_count {
+            seen.insert(next_peer_index(peer_count, true, &counter));
+        }
+        assert_eq!(seen, (0..peer_count).collect::<HashSet<_>>());
+    }
+
+    #[test]
+    fn next_peer_index_safe_tool_balanced_over_many_calls() {
+        let counter = AtomicUsize::new(0);
+        let peer_count = 4;
+        let n = 4_000;
+        let mut hits = vec![0usize; peer_count];
+        for _ in 0..n {
+            hits[next_peer_index(peer_count, true, &counter)] += 1;
+        }
+        // Each peer hit exactly n / peer_count times (round-robin is
+        // deterministic, not random).
+        for h in &hits {
+            assert_eq!(*h, n / peer_count);
+        }
+    }
+
+    #[test]
+    fn next_peer_index_counter_wraps_cleanly_at_usize_overflow() {
+        // Round-robin uses fetch_add + modulo; if peer_count doesn't
+        // divide usize::MAX evenly the wraparound produces a non-uniform
+        // step at the wrap point. We accept that — the cost is one
+        // imbalanced bucket every 2^63 calls, which is irrelevant in
+        // practice. This test just asserts no panic at the boundary.
+        let counter = AtomicUsize::new(usize::MAX - 1);
+        assert!(next_peer_index(4, true, &counter) < 4);
+        assert!(next_peer_index(4, true, &counter) < 4); // wraps
+        assert!(next_peer_index(4, true, &counter) < 4); // post-wrap
+    }
+
+    #[test]
+    fn server_pool_pick_routes_pool_safe_via_round_robin() {
+        // Build a ServerPool by hand (no real RunningServer needed —
+        // pick() returns &RunningServer but the test only inspects the
+        // index it would have picked via next_peer_index).
+        // We can't synthesize RunningServer (no public ctor), so this
+        // test exercises the helper directly. Coverage of the
+        // ServerPool::pick branching arrives via the live integration
+        // test once a pool_size > 1 def is wired (see live integration
+        // tests below).
+        let counter = AtomicUsize::new(0);
+        let safe: HashSet<String> = ["echo".into()].iter().cloned().collect();
+        // Mimic the ServerPool::pick guard.
+        for tool in &["echo", "echo", "echo", "fetch_http"] {
+            let is_safe = safe.contains(*tool);
+            let idx = next_peer_index(3, is_safe, &counter);
+            if *tool == "echo" {
+                assert!(idx < 3, "echo should round-robin");
+            } else {
+                assert_eq!(idx, 0, "fetch_http (not in safe set) pins to 0");
+            }
+        }
     }
 
     /// Live integration test against DeepWiki's public MCP server (no auth).
@@ -486,6 +759,8 @@ mod tests {
             command: None,
             args: vec![],
             env: HashMap::new(),
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
         };
         let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
         // Call connect_and_initialize directly -- errors surface immediately
@@ -494,7 +769,10 @@ mod tests {
             .await
             .expect("failed to connect to DeepWiki MCP server");
 
-        assert!(mgr.is_running("deepwiki"), "server should be running after successful init");
+        assert!(
+            mgr.is_running("deepwiki"),
+            "server should be running after successful init"
+        );
         assert!(
             mgr.tool_count_for_server("deepwiki") > 0,
             "DeepWiki should expose at least one tool, got catalog: {:?}",
@@ -508,9 +786,9 @@ mod tests {
     /// Covers bearer_token auth, custom headers, and multi-server catalog building.
     #[tokio::test]
     async fn integration_live_configured_mcp_servers() {
-        use crate::net::policy_config::{load_settings_file, user_config_path};
         use crate::mcp::build_server_list;
         use crate::mcp::policy::McpUserConfig;
+        use crate::net::policy_config::{load_settings_file, user_config_path};
 
         let user_mcp = user_config_path()
             .and_then(|p| load_settings_file(&p).ok())

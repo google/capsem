@@ -82,5 +82,5 @@ site/.astro/
 .pnpm-store/
 
 # Leak report log from integration tests
-tests/leak-report.log
-tests/leak-attribution.jsonl
+tests/leak-report*.log
+tests/leak-attribution*.jsonl

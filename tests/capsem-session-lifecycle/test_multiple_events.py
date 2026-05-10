@@ -40,16 +40,24 @@ def test_net_event_has_domain_field(lifecycle_env, lifecycle_db):
     """Net events should have a non-empty domain field."""
     client, vm_name, _, _ = lifecycle_env
 
-    # Trigger a network request
+    client.post("/settings", {"security.web.custom_allow": "example.com"})
+    reload_response = client.post("/reload-config", {}, timeout=15)
+    assert reload_response["success"] is True
+
+    # Trigger a network request to an explicitly allowed domain.
     client.post(f"/exec/{vm_name}", {
         "command": "curl -s -o /dev/null https://example.com/ 2>&1 || true"
     })
 
-    time.sleep(3)
-
-    rows = lifecycle_db.execute(
-        "SELECT domain FROM net_events WHERE domain IS NOT NULL AND domain != ''"
-    ).fetchall()
+    deadline = time.time() + 5
+    rows = []
+    while time.time() < deadline:
+        rows = lifecycle_db.execute(
+            "SELECT domain FROM net_events WHERE domain IS NOT NULL AND domain != ''"
+        ).fetchall()
+        if rows:
+            break
+        time.sleep(0.2)
     assert len(rows) > 0, "Expected at least one net_event with a domain"
 
 

@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use capsem_core::{Hypervisor, VmConfig, VmHandle, SerialConsole};
+use capsem_core::{Hypervisor, SerialConsole, VmConfig, VmHandle};
 
 fn assets_dir() -> Option<PathBuf> {
     let dir = std::env::var("CAPSEM_ASSETS_DIR")
@@ -37,7 +37,9 @@ fn make_config(assets: &std::path::Path) -> VmConfig {
         builder = builder.disk_path(assets.join("rootfs.squashfs"));
     }
 
-    builder.build().expect("VmConfig should be valid with real assets")
+    builder
+        .build()
+        .expect("VmConfig should be valid with real assets")
 }
 
 // -----------------------------------------------------------------------
@@ -81,8 +83,7 @@ fn serial_console_trait_is_object_safe() {
 #[test]
 fn hypervisor_boot_fails_with_missing_kernel() {
     let _h = capsem_core::AppleVzHypervisor;
-    let config = VmConfig::builder()
-        .kernel_path("/nonexistent/vmlinuz");
+    let config = VmConfig::builder().kernel_path("/nonexistent/vmlinuz");
     // Should fail at build() -- missing kernel
     assert!(config.build().is_err());
 }
@@ -93,13 +94,13 @@ fn hypervisor_boot_fails_with_fake_kernel() {
     let kernel = tmp.path().join("vmlinuz");
     std::fs::write(&kernel, b"not a real kernel").unwrap();
 
-    let config = VmConfig::builder()
-        .kernel_path(&kernel)
-        .build()
-        .unwrap();
+    let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();
 
     let h = capsem_core::AppleVzHypervisor;
-    let ports = [capsem_core::VSOCK_PORT_CONTROL, capsem_core::VSOCK_PORT_TERMINAL];
+    let ports = [
+        capsem_core::VSOCK_PORT_CONTROL,
+        capsem_core::VSOCK_PORT_TERMINAL,
+    ];
     let result = h.boot(&config, &ports);
     // Fails gracefully (no entitlement or invalid kernel), does not panic
     assert!(result.is_err(), "boot with fake kernel should fail");
@@ -111,10 +112,7 @@ fn hypervisor_boot_with_empty_ports() {
     let kernel = tmp.path().join("vmlinuz");
     std::fs::write(&kernel, b"fake").unwrap();
 
-    let config = VmConfig::builder()
-        .kernel_path(&kernel)
-        .build()
-        .unwrap();
+    let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();
 
     let h = capsem_core::AppleVzHypervisor;
     // Empty ports array -- should still fail (no entitlement), not panic
@@ -140,7 +138,11 @@ fn vsock_connection_can_be_sent_to_thread() {
 fn vsock_connection_can_be_stored_in_vec() {
     let mut conns = Vec::new();
     for i in 0..10 {
-        conns.push(capsem_core::VsockConnection::new(i, 5000 + i as u32, Box::new(())));
+        conns.push(capsem_core::VsockConnection::new(
+            i,
+            5000 + i as u32,
+            Box::new(()),
+        ));
     }
     assert_eq!(conns.len(), 10);
     assert_eq!(conns[5].fd, 5);
@@ -163,7 +165,7 @@ fn hypervisor_boot_requires_entitlement() {
         capsem_core::VSOCK_PORT_CONTROL,
         capsem_core::VSOCK_PORT_TERMINAL,
         capsem_core::VSOCK_PORT_SNI_PROXY,
-        capsem_core::VSOCK_PORT_MCP_GATEWAY,
+        capsem_core::VSOCK_PORT_LIFECYCLE,
     ];
 
     let result = capsem_core::AppleVzHypervisor.boot(&config, &vsock_ports);
@@ -188,7 +190,10 @@ fn hypervisor_boot_returns_vsock_receiver() {
     };
 
     let config = make_config(&assets);
-    let ports = [capsem_core::VSOCK_PORT_CONTROL, capsem_core::VSOCK_PORT_TERMINAL];
+    let ports = [
+        capsem_core::VSOCK_PORT_CONTROL,
+        capsem_core::VSOCK_PORT_TERMINAL,
+    ];
 
     match capsem_core::AppleVzHypervisor.boot(&config, &ports) {
         Ok((_vm, mut rx)) => {

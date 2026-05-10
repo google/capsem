@@ -20,19 +20,35 @@ fn test_processor(dir: &Path) -> FuseProcessor {
 #[test]
 fn fs_device_type() {
     let dir = temp_share("dev-type");
-    assert_eq!(VirtioFsDevice::new("capsem", &dir, false, -1).unwrap().device_type(), VIRTIO_ID_FS);
+    assert_eq!(
+        VirtioFsDevice::new("capsem", &dir, false, -1)
+            .unwrap()
+            .device_type(),
+        VIRTIO_ID_FS
+    );
 }
 
 #[test]
 fn fs_features() {
     let dir = temp_share("features");
-    assert_ne!(VirtioFsDevice::new("capsem", &dir, false, -1).unwrap().features() & VIRTIO_F_VERSION_1, 0);
+    assert_ne!(
+        VirtioFsDevice::new("capsem", &dir, false, -1)
+            .unwrap()
+            .features()
+            & VIRTIO_F_VERSION_1,
+        0
+    );
 }
 
 #[test]
 fn fs_two_queues() {
     let dir = temp_share("queues");
-    assert_eq!(VirtioFsDevice::new("capsem", &dir, false, -1).unwrap().queue_max_sizes(), &[QUEUE_SIZE, QUEUE_SIZE]);
+    assert_eq!(
+        VirtioFsDevice::new("capsem", &dir, false, -1)
+            .unwrap()
+            .queue_max_sizes(),
+        &[QUEUE_SIZE, QUEUE_SIZE]
+    );
 }
 
 #[test]
@@ -68,10 +84,21 @@ fn init_response_version() {
     let dir = temp_share("init-ver");
     let mut proc = test_processor(&dir);
     let header = FuseInHeader {
-        len: 56, opcode: FUSE_INIT, unique: 1,
-        nodeid: 0, uid: 0, gid: 0, pid: 0, padding: 0,
+        len: 56,
+        opcode: FUSE_INIT,
+        unique: 1,
+        nodeid: 0,
+        uid: 0,
+        gid: 0,
+        pid: 0,
+        padding: 0,
     };
-    let init_in = FuseInitIn { major: 7, minor: 38, max_readahead: 131072, flags: 0 };
+    let init_in = FuseInitIn {
+        major: 7,
+        minor: 38,
+        max_readahead: 131072,
+        flags: 0,
+    };
     let mut req = fuse::as_bytes(&header).to_vec();
     req.extend_from_slice(fuse::as_bytes(&init_in));
 
@@ -92,7 +119,16 @@ const ENTRY_OUT_SIZE: usize = std::mem::size_of::<FuseEntryOut>();
 const ATTR_OUT_SIZE: usize = std::mem::size_of::<FuseAttrOut>();
 
 fn make_header(opcode: u32, nodeid: u64, unique: u64) -> FuseInHeader {
-    FuseInHeader { len: 0, opcode, unique, nodeid, uid: 0, gid: 0, pid: 0, padding: 0 }
+    FuseInHeader {
+        len: 0,
+        opcode,
+        unique,
+        nodeid,
+        uid: 0,
+        gid: 0,
+        pid: 0,
+        padding: 0,
+    }
 }
 
 fn build_request(header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
@@ -112,7 +148,9 @@ fn lookup(proc: &mut FuseProcessor, parent: u64, name: &str) -> Result<u64, i32>
     body.push(0);
     let resp = proc.handle_request(&build_request(&h, &body));
     let out: FuseOutHeader = fuse::read_struct(&resp).unwrap();
-    if out.error != 0 { return Err(out.error); }
+    if out.error != 0 {
+        return Err(out.error);
+    }
     let entry: FuseEntryOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
     Ok(entry.nodeid)
 }
@@ -120,10 +158,15 @@ fn lookup(proc: &mut FuseProcessor, parent: u64, name: &str) -> Result<u64, i32>
 /// OPEN a file by inode, return the file handle.
 fn open_file(proc: &mut FuseProcessor, nodeid: u64, flags: u32) -> Result<u64, i32> {
     let h = make_header(FUSE_OPEN, nodeid, 200);
-    let open_in = FuseOpenIn { flags, open_flags: 0 };
+    let open_in = FuseOpenIn {
+        flags,
+        open_flags: 0,
+    };
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&open_in)));
     let out: FuseOutHeader = fuse::read_struct(&resp).unwrap();
-    if out.error != 0 { return Err(out.error); }
+    if out.error != 0 {
+        return Err(out.error);
+    }
     let open_out: FuseOpenOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
     Ok(open_out.fh)
 }
@@ -155,7 +198,11 @@ fn getattr_root() {
     let resp = proc.handle_request(&build_request(&h, &[]));
     assert_eq!(response_error(&resp), 0);
     let attr_out: FuseAttrOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
-    assert_ne!(attr_out.attr.mode & S_IFDIR, 0, "root should be a directory");
+    assert_ne!(
+        attr_out.attr.mode & S_IFDIR,
+        0,
+        "root should be a directory"
+    );
 }
 
 #[test]
@@ -190,10 +237,22 @@ fn setattr_chmod() {
     let ino = lookup(&mut proc, 1, "f.txt").unwrap();
 
     let attr_in = FuseSetAttrIn {
-        valid: FATTR_MODE, padding: 0, fh: 0, size: 0,
-        lock_owner: 0, atime: 0, mtime: 0, ctime: 0,
-        atimensec: 0, mtimensec: 0, ctimensec: 0,
-        mode: 0o755, unused4: 0, uid: 0, gid: 0, unused5: 0,
+        valid: FATTR_MODE,
+        padding: 0,
+        fh: 0,
+        size: 0,
+        lock_owner: 0,
+        atime: 0,
+        mtime: 0,
+        ctime: 0,
+        atimensec: 0,
+        mtimensec: 0,
+        ctimensec: 0,
+        mode: 0o755,
+        unused4: 0,
+        uid: 0,
+        gid: 0,
+        unused5: 0,
     };
     let h = make_header(FUSE_SETATTR, ino, 3);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&attr_in)));
@@ -211,10 +270,22 @@ fn setattr_truncate() {
     let ino = lookup(&mut proc, 1, "big.txt").unwrap();
 
     let attr_in = FuseSetAttrIn {
-        valid: FATTR_SIZE, padding: 0, fh: 0, size: 3,
-        lock_owner: 0, atime: 0, mtime: 0, ctime: 0,
-        atimensec: 0, mtimensec: 0, ctimensec: 0,
-        mode: 0, unused4: 0, uid: 0, gid: 0, unused5: 0,
+        valid: FATTR_SIZE,
+        padding: 0,
+        fh: 0,
+        size: 3,
+        lock_owner: 0,
+        atime: 0,
+        mtime: 0,
+        ctime: 0,
+        atimensec: 0,
+        mtimensec: 0,
+        ctimensec: 0,
+        mode: 0,
+        unused4: 0,
+        uid: 0,
+        gid: 0,
+        unused5: 0,
     };
     let h = make_header(FUSE_SETATTR, ino, 4);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&attr_in)));
@@ -234,10 +305,22 @@ fn setattr_read_only_rejected() {
     let ino = lookup(&mut proc, 1, "f.txt").unwrap();
 
     let attr_in = FuseSetAttrIn {
-        valid: FATTR_MODE, padding: 0, fh: 0, size: 0,
-        lock_owner: 0, atime: 0, mtime: 0, ctime: 0,
-        atimensec: 0, mtimensec: 0, ctimensec: 0,
-        mode: 0o777, unused4: 0, uid: 0, gid: 0, unused5: 0,
+        valid: FATTR_MODE,
+        padding: 0,
+        fh: 0,
+        size: 0,
+        lock_owner: 0,
+        atime: 0,
+        mtime: 0,
+        ctime: 0,
+        atimensec: 0,
+        mtimensec: 0,
+        ctimensec: 0,
+        mode: 0o777,
+        unused4: 0,
+        uid: 0,
+        gid: 0,
+        unused5: 0,
     };
     let h = make_header(FUSE_SETATTR, ino, 5);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&attr_in)));
@@ -253,7 +336,10 @@ fn statfs_returns_data() {
     assert_eq!(response_error(&resp), 0);
     let kstatfs: FuseKStatfs = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
     assert!(kstatfs.blocks > 0, "statfs should report non-zero blocks");
-    assert!(kstatfs.bsize > 0, "statfs should report non-zero block size");
+    assert!(
+        kstatfs.bsize > 0,
+        "statfs should report non-zero block size"
+    );
 }
 
 #[test]
@@ -286,8 +372,14 @@ fn batch_forget_multiple() {
 
     let h = make_header(FUSE_BATCH_FORGET, 0, 1);
     let batch = FuseBatchForgetIn { count: 2, dummy: 0 };
-    let e1 = FuseForgetOne { nodeid: ino_a, nlookup: 1 };
-    let e2 = FuseForgetOne { nodeid: ino_b, nlookup: 1 };
+    let e1 = FuseForgetOne {
+        nodeid: ino_a,
+        nlookup: 1,
+    };
+    let e2 = FuseForgetOne {
+        nodeid: ino_b,
+        nlookup: 1,
+    };
     let mut body = fuse::as_bytes(&batch).to_vec();
     body.extend_from_slice(fuse::as_bytes(&e1));
     body.extend_from_slice(fuse::as_bytes(&e2));
@@ -310,8 +402,13 @@ fn open_read_write_release() {
 
     // READ
     let read_in = FuseReadIn {
-        fh, offset: 0, size: 1024, read_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh,
+        offset: 0,
+        size: 1024,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_READ, ino, 10);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
@@ -320,8 +417,13 @@ fn open_read_write_release() {
 
     // WRITE at offset 0
     let write_in = FuseWriteIn {
-        fh, offset: 0, size: 7, write_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh,
+        offset: 0,
+        size: 7,
+        write_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_WRITE, ino, 11);
     let mut body = fuse::as_bytes(&write_in).to_vec();
@@ -332,7 +434,12 @@ fn open_read_write_release() {
     assert_eq!(write_out.size, 7);
 
     // RELEASE
-    let release_in = FuseReleaseIn { fh, flags: 0, release_flags: 0, lock_owner: 0 };
+    let release_in = FuseReleaseIn {
+        fh,
+        flags: 0,
+        release_flags: 0,
+        lock_owner: 0,
+    };
     let h = make_header(FUSE_RELEASE, ino, 12);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&release_in)));
     assert_eq!(response_error(&resp), 0);
@@ -369,8 +476,13 @@ fn read_with_offset() {
     let fh = open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
 
     let read_in = FuseReadIn {
-        fh, offset: 5, size: 100, read_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh,
+        offset: 5,
+        size: 100,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_READ, ino, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
@@ -387,13 +499,22 @@ fn read_past_eof_returns_empty() {
     let fh = open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
 
     let read_in = FuseReadIn {
-        fh, offset: 100, size: 100, read_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh,
+        offset: 100,
+        size: 100,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_READ, ino, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
     assert_eq!(response_error(&resp), 0);
-    assert_eq!(resp.len(), OUT_HDR_SIZE, "read past EOF should return empty body");
+    assert_eq!(
+        resp.len(),
+        OUT_HDR_SIZE,
+        "read past EOF should return empty body"
+    );
 }
 
 #[test]
@@ -405,8 +526,13 @@ fn write_on_readonly_rejected() {
     proc.read_only = true;
 
     let write_in = FuseWriteIn {
-        fh: 0, offset: 0, size: 3, write_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh: 0,
+        offset: 0,
+        size: 3,
+        write_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_WRITE, ino, 1);
     let mut body = fuse::as_bytes(&write_in).to_vec();
@@ -421,7 +547,10 @@ fn create_new_file() {
     let mut proc = test_processor(&dir);
 
     let create_in = FuseCreateIn {
-        flags: libc::O_RDWR as u32, mode: 0o644, umask: 0, open_flags: 0,
+        flags: libc::O_RDWR as u32,
+        mode: 0o644,
+        umask: 0,
+        open_flags: 0,
     };
     let h = make_header(FUSE_CREATE, 1, 1);
     let mut body = fuse::as_bytes(&create_in).to_vec();
@@ -435,9 +564,7 @@ fn create_new_file() {
     // Response should contain entry + open
     let entry: FuseEntryOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
     assert!(entry.nodeid > 0);
-    let open_out: FuseOpenOut = fuse::read_struct(
-        &resp[OUT_HDR_SIZE + ENTRY_OUT_SIZE..]
-    ).unwrap();
+    let open_out: FuseOpenOut = fuse::read_struct(&resp[OUT_HDR_SIZE + ENTRY_OUT_SIZE..]).unwrap();
     assert!(open_out.fh > 0);
 }
 
@@ -448,7 +575,10 @@ fn create_readonly_rejected() {
     proc.read_only = true;
 
     let create_in = FuseCreateIn {
-        flags: libc::O_RDWR as u32, mode: 0o644, umask: 0, open_flags: 0,
+        flags: libc::O_RDWR as u32,
+        mode: 0o644,
+        umask: 0,
+        open_flags: 0,
     };
     let h = make_header(FUSE_CREATE, 1, 1);
     let mut body = fuse::as_bytes(&create_in).to_vec();
@@ -465,7 +595,10 @@ fn create_existing_file_opens_it() {
     let mut proc = test_processor(&dir);
 
     let create_in = FuseCreateIn {
-        flags: libc::O_RDWR as u32, mode: 0o644, umask: 0, open_flags: 0,
+        flags: libc::O_RDWR as u32,
+        mode: 0o644,
+        umask: 0,
+        open_flags: 0,
     };
     let h = make_header(FUSE_CREATE, 1, 1);
     let mut body = fuse::as_bytes(&create_in).to_vec();
@@ -483,19 +616,32 @@ fn flush_and_fsync() {
     let fh = open_file(&mut proc, ino, libc::O_RDWR as u32).unwrap();
 
     // FLUSH
-    let flush_in = FuseFlushIn { fh, unused: 0, padding: 0, lock_owner: 0 };
+    let flush_in = FuseFlushIn {
+        fh,
+        unused: 0,
+        padding: 0,
+        lock_owner: 0,
+    };
     let h = make_header(FUSE_FLUSH, ino, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&flush_in)));
     assert_eq!(response_error(&resp), 0);
 
     // FSYNC (data-only)
-    let fsync_in = FuseFsyncIn { fh, fsync_flags: 1, padding: 0 };
+    let fsync_in = FuseFsyncIn {
+        fh,
+        fsync_flags: 1,
+        padding: 0,
+    };
     let h = make_header(FUSE_FSYNC, ino, 2);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&fsync_in)));
     assert_eq!(response_error(&resp), 0);
 
     // FSYNC (full)
-    let fsync_in = FuseFsyncIn { fh, fsync_flags: 0, padding: 0 };
+    let fsync_in = FuseFsyncIn {
+        fh,
+        fsync_flags: 0,
+        padding: 0,
+    };
     let h = make_header(FUSE_FSYNC, ino, 3);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&fsync_in)));
     assert_eq!(response_error(&resp), 0);
@@ -505,7 +651,12 @@ fn flush_and_fsync() {
 fn flush_bad_handle() {
     let dir = temp_share("flush-bad");
     let mut proc = test_processor(&dir);
-    let flush_in = FuseFlushIn { fh: 99999, unused: 0, padding: 0, lock_owner: 0 };
+    let flush_in = FuseFlushIn {
+        fh: 99999,
+        unused: 0,
+        padding: 0,
+        lock_owner: 0,
+    };
     let h = make_header(FUSE_FLUSH, 1, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&flush_in)));
     assert_eq!(response_error(&resp), -libc::EBADF);
@@ -520,7 +671,12 @@ fn lseek_whence() {
     let fh = open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
 
     // SEEK_SET to offset 5
-    let lseek_in = FuseLseekIn { fh, offset: 5, whence: 0, padding: 0 };
+    let lseek_in = FuseLseekIn {
+        fh,
+        offset: 5,
+        whence: 0,
+        padding: 0,
+    };
     let h = make_header(FUSE_LSEEK, ino, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&lseek_in)));
     assert_eq!(response_error(&resp), 0);
@@ -528,7 +684,12 @@ fn lseek_whence() {
     assert_eq!(out.offset, 5);
 
     // SEEK_END to offset 0 (should be at position 10)
-    let lseek_in = FuseLseekIn { fh, offset: 0, whence: 2, padding: 0 };
+    let lseek_in = FuseLseekIn {
+        fh,
+        offset: 0,
+        whence: 2,
+        padding: 0,
+    };
     let h = make_header(FUSE_LSEEK, ino, 2);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&lseek_in)));
     assert_eq!(response_error(&resp), 0);
@@ -544,7 +705,12 @@ fn lseek_invalid_whence() {
     let ino = lookup(&mut proc, 1, "f.txt").unwrap();
     let fh = open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
 
-    let lseek_in = FuseLseekIn { fh, offset: 0, whence: 99, padding: 0 };
+    let lseek_in = FuseLseekIn {
+        fh,
+        offset: 0,
+        whence: 99,
+        padding: 0,
+    };
     let h = make_header(FUSE_LSEEK, ino, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&lseek_in)));
     assert_eq!(response_error(&resp), -libc::EINVAL);
@@ -555,8 +721,13 @@ fn read_bad_handle() {
     let dir = temp_share("read-bad-fh");
     let mut proc = test_processor(&dir);
     let read_in = FuseReadIn {
-        fh: 99999, offset: 0, size: 100, read_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh: 99999,
+        offset: 0,
+        size: 100,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_READ, 1, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
@@ -581,8 +752,13 @@ fn opendir_readdir_releasedir() {
 
     // READDIR
     let read_in = FuseReadIn {
-        fh, offset: 0, size: 4096, read_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh,
+        offset: 0,
+        size: 4096,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_READDIR, 1, 2);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
@@ -591,7 +767,12 @@ fn opendir_readdir_releasedir() {
     assert!(resp.len() > OUT_HDR_SIZE);
 
     // RELEASEDIR
-    let release_in = FuseReleaseIn { fh, flags: 0, release_flags: 0, lock_owner: 0 };
+    let release_in = FuseReleaseIn {
+        fh,
+        flags: 0,
+        release_flags: 0,
+        lock_owner: 0,
+    };
     let h = make_header(FUSE_RELEASEDIR, 1, 3);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&release_in)));
     assert_eq!(response_error(&resp), 0);
@@ -610,8 +791,13 @@ fn readdir_includes_dot_dotdot() {
 
     // READDIR
     let read_in = FuseReadIn {
-        fh, offset: 0, size: 4096, read_flags: 0,
-        lock_owner: 0, flags: 0, padding: 0,
+        fh,
+        offset: 0,
+        size: 4096,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
     };
     let h = make_header(FUSE_READDIR, 1, 2);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
@@ -643,7 +829,10 @@ fn mkdir_creates_directory() {
     let dir = temp_share("mkdir");
     let mut proc = test_processor(&dir);
 
-    let mkdir_in = FuseMkdirIn { mode: 0o755, umask: 0 };
+    let mkdir_in = FuseMkdirIn {
+        mode: 0o755,
+        umask: 0,
+    };
     let h = make_header(FUSE_MKDIR, 1, 1);
     let mut body = fuse::as_bytes(&mkdir_in).to_vec();
     body.extend_from_slice(b"subdir\0");
@@ -661,7 +850,10 @@ fn mkdir_readonly_rejected() {
     let mut proc = test_processor(&dir);
     proc.read_only = true;
 
-    let mkdir_in = FuseMkdirIn { mode: 0o755, umask: 0 };
+    let mkdir_in = FuseMkdirIn {
+        mode: 0o755,
+        umask: 0,
+    };
     let h = make_header(FUSE_MKDIR, 1, 1);
     let mut body = fuse::as_bytes(&mkdir_in).to_vec();
     body.extend_from_slice(b"nope\0");
@@ -802,7 +994,9 @@ fn link_creates_hardlink() {
     let orig_ino = lookup(&mut proc, 1, "original.txt").unwrap();
 
     // LINK: create "linked.txt" pointing to original.txt's inode
-    let link_in = FuseLinkIn { oldnodeid: orig_ino };
+    let link_in = FuseLinkIn {
+        oldnodeid: orig_ino,
+    };
     let h = make_header(FUSE_LINK, 1, 1);
     let mut body = fuse::as_bytes(&link_in).to_vec();
     body.extend_from_slice(b"linked.txt\0");
@@ -842,7 +1036,11 @@ fn fsyncdir_success() {
     let fh = open_out.fh;
 
     // FSYNCDIR
-    let fsync_in = FuseFsyncIn { fh, fsync_flags: 0, padding: 0 };
+    let fsync_in = FuseFsyncIn {
+        fh,
+        fsync_flags: 0,
+        padding: 0,
+    };
     let h = make_header(FUSE_FSYNCDIR, 1, 2);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&fsync_in)));
     assert_eq!(response_error(&resp), 0);
@@ -853,7 +1051,11 @@ fn fsyncdir_bad_handle() {
     let dir = temp_share("fsyncdir-bad");
     let mut proc = test_processor(&dir);
 
-    let fsync_in = FuseFsyncIn { fh: 99999, fsync_flags: 0, padding: 0 };
+    let fsync_in = FuseFsyncIn {
+        fh: 99999,
+        fsync_flags: 0,
+        padding: 0,
+    };
     let h = make_header(FUSE_FSYNCDIR, 1, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&fsync_in)));
     assert_eq!(response_error(&resp), -libc::EBADF);
@@ -868,7 +1070,10 @@ fn create_path_traversal_rejected() {
 
     // Try to create a file with "../" in the name
     let create_in = FuseCreateIn {
-        flags: libc::O_RDWR as u32, mode: 0o644, umask: 0, open_flags: 0,
+        flags: libc::O_RDWR as u32,
+        mode: 0o644,
+        umask: 0,
+        open_flags: 0,
     };
     let h = make_header(FUSE_CREATE, 1, 1);
     let mut body = fuse::as_bytes(&create_in).to_vec();
@@ -880,8 +1085,10 @@ fn create_path_traversal_rejected() {
 
     // Verify no file was created outside the share
     let parent = dir.parent().unwrap();
-    assert!(!parent.join("escape.txt").exists(),
-        "file must not escape the shared directory");
+    assert!(
+        !parent.join("escape.txt").exists(),
+        "file must not escape the shared directory"
+    );
 }
 
 #[test]

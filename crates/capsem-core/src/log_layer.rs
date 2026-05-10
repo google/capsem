@@ -38,7 +38,8 @@ impl Visit for MessageVisitor {
         if field.name() == "message" {
             write!(&mut self.message, "{value:?}").ok();
         } else {
-            self.fields.push((field.name().to_string(), format!("{value:?}")));
+            self.fields
+                .push((field.name().to_string(), format!("{value:?}")));
         }
     }
 
@@ -46,7 +47,8 @@ impl Visit for MessageVisitor {
         if field.name() == "message" {
             self.message = value.to_string();
         } else {
-            self.fields.push((field.name().to_string(), value.to_string()));
+            self.fields
+                .push((field.name().to_string(), value.to_string()));
         }
     }
 }
@@ -56,7 +58,11 @@ impl MessageVisitor {
         if self.fields.is_empty() {
             return self.message;
         }
-        let pairs: Vec<String> = self.fields.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let pairs: Vec<String> = self
+            .fields
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
         if self.message.is_empty() {
             pairs.join(", ")
         } else {
@@ -206,9 +212,7 @@ fn format_timestamp(secs: u64, millis: u32) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
 
-    format!(
-        "{y:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z"
-    )
+    format!("{y:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z")
 }
 
 impl<S: Subscriber> Layer<S> for TauriLogLayer {
@@ -345,7 +349,9 @@ mod tests {
         let (_layer, handle) = TauriLogLayer::new();
         let called = Arc::new(Mutex::new(false));
         let c = Arc::clone(&called);
-        handle.set_emitter(move |_| { *c.lock().unwrap() = true; });
+        handle.set_emitter(move |_| {
+            *c.lock().unwrap() = true;
+        });
 
         // Second set should be silently ignored (OnceLock)
         handle.set_emitter(|_| {});

@@ -65,7 +65,7 @@ When working on a specific area, consult the relevant skill:
 | Skill | When |
 |-------|------|
 | `/dev-mitm-proxy` | MITM proxy, SSE parsing, telemetry |
-| `/dev-mcp` | MCP gateway, tool routing |
+| `/dev-mcp` | Guest MCP endpoint, tool routing |
 | `/dev-testing-hypervisor` | KVM, Apple VZ, VirtioFS |
 | `/dev-testing-vm` | In-VM tests, session inspection, fixtures |
 | `/dev-testing-frontend` | vitest, visual verification |
@@ -92,10 +92,10 @@ User CLI    -> capsem (HTTP/UDS)       -> capsem-service -> capsem-process -> vs
 Desktop UI  -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
 Tray app    -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
 Guest HTTPS -> iptables -> vsock:5002  -> Host MITM proxy -> upstream
-Guest MCP   -> vsock:5003             -> Host MCP gateway -> external MCP servers
+Guest MCP   -> framed vsock:5002      -> MITM MCP endpoint -> external MCP servers
 ```
 
-Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM), 5003 (MCP), 5004 (lifecycle/capsem-sysutil), 5005 (exec output).
+Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 5004 (lifecycle/capsem-sysutil), 5005 (exec output).
 
 ## Config hierarchy
 

@@ -41,7 +41,10 @@ pub struct CorpSource {
 }
 
 /// Fetch corp config from a URL, validate it as TOML, and return the content + ETag.
-pub async fn fetch_corp_config(client: &reqwest::Client, url: &str) -> Result<(String, Option<String>)> {
+pub async fn fetch_corp_config(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<(String, Option<String>)> {
     info!(url = %url, "fetching corp config");
 
     let resp = client
@@ -52,7 +55,11 @@ pub async fn fetch_corp_config(client: &reqwest::Client, url: &str) -> Result<(S
         .context("failed to fetch corp config")?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("corp config fetch failed: HTTP {} for {}", resp.status(), url);
+        anyhow::bail!(
+            "corp config fetch failed: HTTP {} for {}",
+            resp.status(),
+            url
+        );
     }
 
     let etag = resp
@@ -61,7 +68,10 @@ pub async fn fetch_corp_config(client: &reqwest::Client, url: &str) -> Result<(S
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    let body = resp.text().await.context("failed to read corp config body")?;
+    let body = resp
+        .text()
+        .await
+        .context("failed to read corp config body")?;
     validate_corp_toml(&body)?;
 
     Ok((body, etag))
@@ -69,8 +79,7 @@ pub async fn fetch_corp_config(client: &reqwest::Client, url: &str) -> Result<(S
 
 /// Validate that a string is valid corp TOML (parseable as SettingsFile).
 pub fn validate_corp_toml(content: &str) -> Result<SettingsFile> {
-    let file: SettingsFile = toml::from_str(content)
-        .context("invalid corp TOML")?;
+    let file: SettingsFile = toml::from_str(content).context("invalid corp TOML")?;
     Ok(file)
 }
 
@@ -89,12 +98,10 @@ pub fn parse_refresh_interval(content: &str) -> u32 {
 
 /// Install corp config: write to ~/.capsem/corp.toml + corp-source.json.
 pub fn install_corp_config(capsem_dir: &Path, content: &str, source: &CorpSource) -> Result<()> {
-    std::fs::create_dir_all(capsem_dir)
-        .context("cannot create ~/.capsem")?;
+    std::fs::create_dir_all(capsem_dir).context("cannot create ~/.capsem")?;
 
     let corp_path = capsem_dir.join("corp.toml");
-    std::fs::write(&corp_path, content)
-        .context("cannot write corp.toml")?;
+    std::fs::write(&corp_path, content).context("cannot write corp.toml")?;
     info!(path = %corp_path.display(), "installed corp config");
 
     write_corp_source(capsem_dir, source)
@@ -234,8 +241,7 @@ pub fn install_inline_corp_config(capsem_dir: &Path, toml_content: &str) -> Resu
 /// Write just the corp-source.json.
 fn write_corp_source(capsem_dir: &Path, source: &CorpSource) -> Result<()> {
     let path = capsem_dir.join("corp-source.json");
-    let json = serde_json::to_string_pretty(source)
-        .context("cannot serialize corp source")?;
+    let json = serde_json::to_string_pretty(source).context("cannot serialize corp source")?;
     std::fs::write(&path, json).context("cannot write corp-source.json")
 }
 
@@ -266,7 +272,10 @@ mod tests {
     fn test_validate_invalid_toml_syntax() {
         let result = validate_corp_toml("this is not [ valid toml {{{");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid corp TOML"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid corp TOML"));
     }
 
     #[test]
@@ -290,13 +299,22 @@ mod tests {
 
     #[test]
     fn test_refresh_interval_parsing() {
-        assert_eq!(parse_refresh_interval("refresh_interval_hours = 12\n\n[settings]\n"), 12);
-        assert_eq!(parse_refresh_interval("[settings]\n"), DEFAULT_REFRESH_INTERVAL_HOURS);
+        assert_eq!(
+            parse_refresh_interval("refresh_interval_hours = 12\n\n[settings]\n"),
+            12
+        );
+        assert_eq!(
+            parse_refresh_interval("[settings]\n"),
+            DEFAULT_REFRESH_INTERVAL_HOURS
+        );
     }
 
     #[test]
     fn test_refresh_interval_zero_means_no_refresh() {
-        assert_eq!(parse_refresh_interval("refresh_interval_hours = 0\n\n[settings]\n"), 0);
+        assert_eq!(
+            parse_refresh_interval("refresh_interval_hours = 0\n\n[settings]\n"),
+            0
+        );
     }
 
     #[test]
@@ -337,18 +355,27 @@ mod tests {
     fn parse_refresh_interval_rejects_negative() {
         // Negative values must fall back to the default rather than wrap.
         let content = "refresh_interval_hours = -5\n";
-        assert_eq!(parse_refresh_interval(content), DEFAULT_REFRESH_INTERVAL_HOURS);
+        assert_eq!(
+            parse_refresh_interval(content),
+            DEFAULT_REFRESH_INTERVAL_HOURS
+        );
     }
 
     #[test]
     fn parse_refresh_interval_ignores_wrong_type() {
         let content = "refresh_interval_hours = \"twelve\"\n";
-        assert_eq!(parse_refresh_interval(content), DEFAULT_REFRESH_INTERVAL_HOURS);
+        assert_eq!(
+            parse_refresh_interval(content),
+            DEFAULT_REFRESH_INTERVAL_HOURS
+        );
     }
 
     #[test]
     fn parse_refresh_interval_on_invalid_toml_returns_default() {
-        assert_eq!(parse_refresh_interval("{{ not toml"), DEFAULT_REFRESH_INTERVAL_HOURS);
+        assert_eq!(
+            parse_refresh_interval("{{ not toml"),
+            DEFAULT_REFRESH_INTERVAL_HOURS
+        );
     }
 
     #[test]

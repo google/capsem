@@ -196,7 +196,7 @@ def verify_session(session_id: str) -> bool:
     r.check(
         mcp_count > 0,
         f"{mcp_count} mcp_calls recorded",
-        "no mcp_calls recorded (MCP gateway may not be logging)",
+        "no mcp_calls recorded (guest MCP endpoint may not be logging)",
     )
 
     if mcp_count > 0:

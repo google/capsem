@@ -85,7 +85,7 @@ component_management:
         - crates/capsem-core/src/net/policy_config/**
         - crates/capsem-core/src/host_config.rs
 
-    # MCP gateway, builtin HTTP tools, file/snapshot tools,
+    # MCP endpoint, builtin HTTP tools, file/snapshot tools,
     # MCP policy, auto-snapshots, FS monitor. Also includes the
     # aggregator and builtin MCP subprocess crates which are thin
     # binaries over capsem-core::mcp.

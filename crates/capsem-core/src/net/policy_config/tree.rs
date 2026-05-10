@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use super::types::*;
-use super::registry::{setting_definitions, DEFAULTS_JSON};
 use super::loader::load_settings_files;
+use super::registry::{setting_definitions, DEFAULTS_JSON};
 use super::resolver::resolve_settings;
+use super::types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A settings tree node: group, leaf setting, action button, or MCP server.
 ///
@@ -63,15 +63,14 @@ fn build_tree_from_object(
 
     // Check if this is an action node (has "action" key)
     if let Some(action_val) = table.get("action").and_then(|v| v.as_str()) {
-        let action: ActionKind = match serde_json::from_value(
-            serde_json::Value::String(action_val.to_string()),
-        ) {
-            Ok(a) => a,
-            Err(_) => {
-                tracing::warn!("unknown action kind '{action_val}' at {path}");
-                return vec![];
-            }
-        };
+        let action: ActionKind =
+            match serde_json::from_value(serde_json::Value::String(action_val.to_string())) {
+                Ok(a) => a,
+                Err(_) => {
+                    tracing::warn!("unknown action kind '{action_val}' at {path}");
+                    return vec![];
+                }
+            };
         let hidden = table
             .get("hidden")
             .and_then(|v| v.as_bool())
@@ -95,10 +94,7 @@ fn build_tree_from_object(
     }
 
     // Group node
-    let group_name = table
-        .get("name")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let group_name = table.get("name").and_then(|v| v.as_str()).map(String::from);
     let group_description = table
         .get("description")
         .and_then(|v| v.as_str())
@@ -191,21 +187,13 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
         .expect("defaults.json missing settings");
 
     // Build a lookup from ID to resolved setting.
-    let resolved_map: HashMap<String, ResolvedSetting> = resolved
-        .iter()
-        .map(|s| (s.id.clone(), s.clone()))
-        .collect();
+    let resolved_map: HashMap<String, ResolvedSetting> =
+        resolved.iter().map(|s| (s.id.clone(), s.clone())).collect();
 
     let mut tree = Vec::new();
     for (key, val) in settings {
         if let Some(child_table) = val.as_object() {
-            let nodes = build_tree_from_object(
-                key,
-                child_table,
-                &None,
-                false,
-                &resolved_map,
-            );
+            let nodes = build_tree_from_object(key, child_table, &None, false, &resolved_map);
             tree.extend(nodes);
         }
     }
@@ -213,8 +201,12 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
     // Append dynamic guest.env.* settings to the Environment group (under VM).
     let dynamic_envs: Vec<&ResolvedSetting> = resolved
         .iter()
-        .filter(|s| s.id.starts_with("guest.env.") && !resolved_map.contains_key(&s.id)
-            || (s.id.starts_with("guest.env.") && s.category == "VM" && setting_definitions().iter().all(|d| d.id != s.id)))
+        .filter(|s| {
+            s.id.starts_with("guest.env.") && !resolved_map.contains_key(&s.id)
+                || (s.id.starts_with("guest.env.")
+                    && s.category == "VM"
+                    && setting_definitions().iter().all(|d| d.id != s.id))
+        })
         .collect();
 
     if !dynamic_envs.is_empty() {

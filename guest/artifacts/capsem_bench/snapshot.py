@@ -1,4 +1,4 @@
-"""Snapshot operation benchmarks (end-to-end via MCP gateway)."""
+"""Snapshot operation benchmarks (end-to-end via the guest MCP endpoint)."""
 
 import json
 import os
@@ -54,7 +54,7 @@ def snapshot_cleanup_workspace():
 
 
 def snapshot_bench():
-    """Benchmark snapshot operations end-to-end via MCP gateway."""
+    """Benchmark snapshot operations end-to-end via the guest MCP endpoint."""
     table = Table(title=Text("Snapshot Operations (e2e via MCP)"))
     table.add_column("Operation", style="bold")
     table.add_column("Files", justify="right")

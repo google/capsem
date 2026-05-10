@@ -84,8 +84,16 @@ const DETECT_SETTING_MAP: &[(&str, &str)] = &[
 /// File-type settings that need SettingValue::File instead of Text.
 const DETECT_FILE_MAP: &[(&str, &str, &str)] = &[
     // (field_name, setting_id, file_path)
-    ("claude_oauth_credentials", "ai.anthropic.claude.credentials_json", "/root/.claude/.credentials.json"),
-    ("google_adc", "ai.google.gemini.google_adc_json", "/root/.config/gcloud/application_default_credentials.json"),
+    (
+        "claude_oauth_credentials",
+        "ai.anthropic.claude.credentials_json",
+        "/root/.claude/.credentials.json",
+    ),
+    (
+        "google_adc",
+        "ai.google.gemini.google_adc_json",
+        "/root/.config/gcloud/application_default_credentials.json",
+    ),
 ];
 
 /// Detect host config and write found values to user settings.
@@ -130,7 +138,10 @@ pub fn detect_and_write_to_settings() -> DetectedConfigSummary {
                 },
             };
             if is_empty {
-                changes.insert(setting_id.to_string(), SettingValue::Text(value.to_string()));
+                changes.insert(
+                    setting_id.to_string(),
+                    SettingValue::Text(value.to_string()),
+                );
                 summary.settings_written.push(setting_id.to_string());
             }
         }
@@ -299,15 +310,16 @@ fn detect_openai_key(home: &Path) -> Option<String> {
 
 /// Detect GitHub token via `gh auth token`.
 fn detect_github_token() -> Option<String> {
-    let output = Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .ok()?;
+    let output = Command::new("gh").args(["auth", "token"]).output().ok()?;
     if !output.status.success() {
         return None;
     }
     let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if token.is_empty() { None } else { Some(token) }
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
 }
 
 /// Detect Claude Code OAuth credentials from ~/.claude/.credentials.json.
@@ -351,7 +363,11 @@ fn non_empty_env(key: &str) -> Option<String> {
 fn read_key_file(path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let trimmed = content.trim().to_string();
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 /// Validate an API key by hitting a lightweight provider endpoint.
@@ -469,7 +485,11 @@ fn extract_json_string_field(json: &str, field: &str) -> Option<String> {
     let value_start = &after_ws[1..];
     let end = value_start.find('"')?;
     let value = value_start[..end].trim();
-    if value.is_empty() { None } else { Some(value.to_string()) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------

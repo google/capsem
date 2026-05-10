@@ -3,7 +3,7 @@
 //! Defines the guest physical address map and provides a safe wrapper
 //! around the mmap'd guest memory region.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -221,7 +221,10 @@ impl GuestMemory {
             )
         };
         if ptr == libc::MAP_FAILED {
-            bail!("mmap guest memory ({size} bytes): {}", std::io::Error::last_os_error());
+            bail!(
+                "mmap guest memory ({size} bytes): {}",
+                std::io::Error::last_os_error()
+            );
         }
 
         Ok(Self {
@@ -253,11 +256,7 @@ impl GuestMemory {
             );
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                self.ptr.add(offset as usize),
-                data.len(),
-            );
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr.add(offset as usize), data.len());
         }
         Ok(())
     }
@@ -346,11 +345,7 @@ impl GuestMemoryRef {
             bail!("guest memory write out of bounds");
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                self.ptr.add(offset as usize),
-                data.len(),
-            );
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr.add(offset as usize), data.len());
         }
         Ok(())
     }
@@ -398,7 +393,9 @@ mod tests {
     fn gic_does_not_overlap_virtio() {
         let gic_end = GIC_REDIST_BASE + GIC_REDIST_PER_CPU * 8; // max 8 CPUs
         assert!(
-            gic_end <= VIRTIO_MMIO_BASE || GIC_DIST_BASE >= VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * VIRTIO_MMIO_MAX_DEVICES as u64,
+            gic_end <= VIRTIO_MMIO_BASE
+                || GIC_DIST_BASE
+                    >= VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * VIRTIO_MMIO_MAX_DEVICES as u64,
             "GIC and virtio MMIO regions overlap"
         );
     }
@@ -542,7 +539,10 @@ mod tests {
         let mem = GuestMemory::new(4096).unwrap();
         let mut buf = vec![0xFFu8; 4096];
         mem.read_at(0, &mut buf).unwrap();
-        assert!(buf.iter().all(|&b| b == 0), "memory should be zero-initialized");
+        assert!(
+            buf.iter().all(|&b| b == 0),
+            "memory should be zero-initialized"
+        );
     }
 
     #[test]
@@ -733,20 +733,32 @@ mod tests {
     #[test]
     fn x86_64_virtio_mmio_above_max_ram() {
         let max_ram = 16 * 1024 * 1024 * 1024u64; // 16GB
-        assert!(VIRTIO_MMIO_BASE >= max_ram, "Virtio MMIO base {VIRTIO_MMIO_BASE:#x} overlaps with guest RAM");
+        assert!(
+            VIRTIO_MMIO_BASE >= max_ram,
+            "Virtio MMIO base {VIRTIO_MMIO_BASE:#x} overlaps with guest RAM"
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_64_irq_base_above_legacy() {
-        assert!(VIRTIO_MMIO_IRQ_BASE > 4, "must not conflict with ISA IRQs 0-4");
+        assert!(
+            VIRTIO_MMIO_IRQ_BASE > 4,
+            "must not conflict with ISA IRQs 0-4"
+        );
     }
 
     #[cfg(target_arch = "aarch64")]
     #[test]
     fn aarch64_gic_spi_range_valid() {
-        assert!(VIRTIO_MMIO_IRQ_BASE >= 32, "virtio IRQs must be in GIC SPI range (>=32)");
+        assert!(
+            VIRTIO_MMIO_IRQ_BASE >= 32,
+            "virtio IRQs must be in GIC SPI range (>=32)"
+        );
         let max_irq = VIRTIO_MMIO_IRQ_BASE + VIRTIO_MMIO_MAX_DEVICES;
-        assert!(max_irq < 1020, "virtio IRQs must stay within GIC SPI range (<1020)");
+        assert!(
+            max_irq < 1020,
+            "virtio IRQs must stay within GIC SPI range (<1020)"
+        );
     }
 }

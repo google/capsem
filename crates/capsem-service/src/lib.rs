@@ -11,3 +11,4 @@ pub mod errors;
 pub mod fs_utils;
 pub mod naming;
 pub mod registry;
+pub mod triage;

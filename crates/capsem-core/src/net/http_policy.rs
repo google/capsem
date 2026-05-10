@@ -85,12 +85,7 @@ impl HttpPolicy {
     /// If the domain is denied, returns immediately (no HTTP check).
     /// If allowed at domain level and no HTTP rules exist for this domain,
     /// allows the request (backward compat).
-    pub fn evaluate_request(
-        &self,
-        domain: &str,
-        method: &str,
-        path: &str,
-    ) -> HttpPolicyDecision {
+    pub fn evaluate_request(&self, domain: &str, method: &str, path: &str) -> HttpPolicyDecision {
         // 1. Domain-level check first.
         let domain_decision = self.evaluate_domain(domain);
         if domain_decision.action == Action::Deny {
@@ -113,8 +108,7 @@ impl HttpPolicy {
         // 3. Check HTTP rules.
         let method_upper = method.to_uppercase();
         for rule in &domain_rules {
-            if matches_method(&rule.method, &method_upper)
-                && matches_path(&rule.path_pattern, path)
+            if matches_method(&rule.method, &method_upper) && matches_path(&rule.path_pattern, path)
             {
                 return HttpPolicyDecision {
                     action: rule.action,
@@ -190,14 +184,12 @@ mod tests {
 
     #[test]
     fn path_rule_blocks_post() {
-        let rules = vec![
-            HttpRule {
-                domain: "github.com".into(),
-                method: "POST".into(),
-                path_pattern: "/repos/*".into(),
-                action: Action::Deny,
-            },
-        ];
+        let rules = vec![HttpRule {
+            domain: "github.com".into(),
+            method: "POST".into(),
+            path_pattern: "/repos/*".into(),
+            action: Action::Deny,
+        }];
         let policy = policy_with_rules(rules);
 
         // POST to /repos/foo -> denied by rule
@@ -222,21 +214,29 @@ mod tests {
         let policy = policy_with_rules(rules);
 
         assert_eq!(
-            policy.evaluate_request("github.com", "GET", "/api/v1/users").action,
+            policy
+                .evaluate_request("github.com", "GET", "/api/v1/users")
+                .action,
             Action::Deny
         );
         assert_eq!(
-            policy.evaluate_request("github.com", "GET", "/api/v1/repos/foo/bar").action,
+            policy
+                .evaluate_request("github.com", "GET", "/api/v1/repos/foo/bar")
+                .action,
             Action::Deny
         );
         // Exact prefix match (without trailing slash) should also match
         assert_eq!(
-            policy.evaluate_request("github.com", "GET", "/api/v1").action,
+            policy
+                .evaluate_request("github.com", "GET", "/api/v1")
+                .action,
             Action::Deny
         );
         // Different path -> allowed
         assert_eq!(
-            policy.evaluate_request("github.com", "GET", "/api/v2/users").action,
+            policy
+                .evaluate_request("github.com", "GET", "/api/v2/users")
+                .action,
             Action::Allow
         );
     }
@@ -253,7 +253,9 @@ mod tests {
 
         for method in &["GET", "POST", "PUT", "DELETE", "PATCH"] {
             assert_eq!(
-                policy.evaluate_request("github.com", method, "/admin").action,
+                policy
+                    .evaluate_request("github.com", method, "/admin")
+                    .action,
                 Action::Deny,
                 "{method} /admin should be denied"
             );
@@ -271,12 +273,16 @@ mod tests {
         let policy = policy_with_rules(rules);
 
         assert_eq!(
-            policy.evaluate_request("github.com", "DELETE", "/repos/owner/repo").action,
+            policy
+                .evaluate_request("github.com", "DELETE", "/repos/owner/repo")
+                .action,
             Action::Deny
         );
         // Sub-path should NOT match exact pattern
         assert_eq!(
-            policy.evaluate_request("github.com", "DELETE", "/repos/owner/repo/issues").action,
+            policy
+                .evaluate_request("github.com", "DELETE", "/repos/owner/repo/issues")
+                .action,
             Action::Allow
         );
     }

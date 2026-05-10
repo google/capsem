@@ -2,9 +2,8 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use crate::hypervisor::VmHandle;
 use crate::host_state::HostStateMachine;
-use crate::mcp::gateway::McpGatewayConfig;
+use crate::hypervisor::VmHandle;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::policy::NetworkPolicy;
 use capsem_logger::DbWriter;
@@ -33,7 +32,6 @@ pub struct SandboxInstance {
     pub vsock_terminal_fd: Option<RawFd>,
     pub vsock_control_fd: Option<RawFd>,
     pub net_state: Option<SandboxNetworkState>,
-    pub mcp_state: Option<Arc<McpGatewayConfig>>,
     pub state_machine: HostStateMachine,
     pub scratch_disk_path: Option<PathBuf>,
     /// Host-side file monitor. Must outlive the session -- dropping stops the watcher.

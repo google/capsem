@@ -1,7 +1,6 @@
 pub mod aggregator;
 pub mod builtin_tools;
 pub mod file_tools;
-pub mod gateway;
 pub mod policy;
 pub mod server_manager;
 pub mod types;
@@ -14,6 +13,27 @@ use tracing::{debug, info, warn};
 
 use crate::mcp::policy::McpUserConfig;
 use crate::mcp::types::{McpServerDef, McpToolDef, ToolAnnotations};
+
+/// Compute a CPU-proportional default for framed MCP in-flight handlers.
+///
+/// Rule: `host_parallelism * 4`. This matches the empirically selected cap
+/// from the legacy gateway and is now shared by the MITM MCP endpoint.
+pub fn default_inflight_cap() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    cores * 4
+}
+
+/// Resolve the framed MCP in-flight cap from the environment, falling back
+/// to the CPU-proportional default.
+pub fn resolve_inflight_cap() -> usize {
+    std::env::var("CAPSEM_MCP_INFLIGHT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(default_inflight_cap)
+}
 
 /// Read MCP server definitions from the user's existing AI CLI configs.
 /// Scans ~/.claude/settings.json and ~/.gemini/settings.json for mcpServers.
@@ -77,6 +97,33 @@ pub fn build_server_list_with_builtin(
     // 0. Local builtin server (stdio subprocess)
     if let Some(bin) = builtin_binary {
         if bin.exists() {
+            // Stateless builtin tools that are safe to round-robin across
+            // pool peers. Snapshot tools (`snapshots_*`) are NOT listed
+            // here — they mutate the per-process AutoSnapshotScheduler so
+            // N peers would diverge. Snapshot tools pin to peers[0] (no
+            // fan-out).
+            let pool_safe_tools: Vec<String> = ["echo", "fetch_http", "grep_http", "http_headers"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+
+            // Pool size: scales with host CPUs by default, capped at 4
+            // to match the inflight-cap rule from d88a714 (more peers
+            // than that just oversubscribe the rmcp-aggregator + builtin
+            // + capsem-process tokio runtimes against the same cores).
+            // CAPSEM_MCP_BUILTIN_POOL overrides for tuning / debugging:
+            // set to 1 to force the pre-pool behavior (single peer, no
+            // round-robin), or higher for stress testing. Override is
+            // clamped to [1, 16].
+            let default_pool = std::thread::available_parallelism()
+                .ok()
+                .map(|n| (n.get() as u32).clamp(1, 4));
+            let pool_size = std::env::var("CAPSEM_MCP_BUILTIN_POOL")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .map(|n| n.clamp(1, 16))
+                .or(default_pool);
+
             servers.push(McpServerDef {
                 name: "local".to_string(),
                 url: String::new(),
@@ -87,6 +134,8 @@ pub fn build_server_list_with_builtin(
                 bearer_token: None,
                 enabled: true,
                 source: "builtin".to_string(),
+                pool_size,
+                pool_safe_tools,
             });
             seen.insert("local".to_string());
             info!(bin = %bin.display(), "added local builtin MCP server");
@@ -95,7 +144,36 @@ pub fn build_server_list_with_builtin(
         }
     }
 
-    // 1. Auto-detected servers (claude, gemini configs)
+    // 1. Corp-injected servers. Processed first so the first-wins dedupe
+    //    enforces the documented `corp > user > defaults` policy: a same-name
+    //    user/auto-detected entry can never shadow a corp definition. See
+    //    AB-002 and `docs/architecture/settings.md` ("corp override is final").
+    for corp_server in &corp_config.servers {
+        if corp_server.name.is_empty() {
+            continue;
+        }
+        if corp_server.name.contains(crate::mcp::types::NS_SEP) {
+            warn!(name = %corp_server.name, "corp server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
+            continue;
+        }
+        if seen.insert(corp_server.name.clone()) {
+            servers.push(McpServerDef {
+                name: corp_server.name.clone(),
+                url: corp_server.url.clone(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
+                headers: corp_server.headers.clone(),
+                bearer_token: corp_server.bearer_token.clone(),
+                enabled: corp_server.enabled,
+                source: "corp".to_string(),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
+            });
+        }
+    }
+
+    // 2. Auto-detected servers (claude, gemini configs)
     for mut def in detect_host_mcp_servers() {
         if def.name.is_empty() {
             continue;
@@ -121,7 +199,7 @@ pub fn build_server_list_with_builtin(
         }
     }
 
-    // 2. User manual servers
+    // 3. User manual servers
     for manual in &user_config.servers {
         if manual.name.is_empty() {
             warn!("manual server has empty name, skipping");
@@ -146,6 +224,8 @@ pub fn build_server_list_with_builtin(
                 bearer_token: manual.bearer_token.clone(),
                 enabled: manual.enabled,
                 source: "manual".to_string(),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
             };
             // Apply enabled overrides
             if let Some(&enabled) = corp_config.server_enabled.get(&def.name) {
@@ -154,30 +234,6 @@ pub fn build_server_list_with_builtin(
                 def.enabled = enabled;
             }
             servers.push(def);
-        }
-    }
-
-    // 3. Corp-injected servers
-    for corp_server in &corp_config.servers {
-        if corp_server.name.is_empty() {
-            continue;
-        }
-        if corp_server.name.contains(crate::mcp::types::NS_SEP) {
-            warn!(name = %corp_server.name, "corp server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
-            continue;
-        }
-        if seen.insert(corp_server.name.clone()) {
-            servers.push(McpServerDef {
-                name: corp_server.name.clone(),
-                url: corp_server.url.clone(),
-                command: None,
-                args: vec![],
-                env: HashMap::new(),
-                headers: corp_server.headers.clone(),
-                bearer_token: corp_server.bearer_token.clone(),
-                enabled: corp_server.enabled,
-                source: "corp".to_string(),
-            });
         }
     }
 
@@ -238,10 +294,7 @@ pub fn compute_tool_hash(tool: &McpToolDef) -> String {
 }
 
 /// Detect changes between newly discovered tools and the cache.
-pub fn detect_pin_changes(
-    new_tools: &[McpToolDef],
-    cache: &[ToolCacheEntry],
-) -> Vec<PinChange> {
+pub fn detect_pin_changes(new_tools: &[McpToolDef], cache: &[ToolCacheEntry]) -> Vec<PinChange> {
     let mut changes = Vec::new();
     let cache_map: HashMap<&str, &ToolCacheEntry> = cache
         .iter()
@@ -296,7 +349,12 @@ pub fn detect_name_collisions(tools: &[McpToolDef]) -> Vec<(String, Vec<String>)
     by_name
         .into_iter()
         .filter(|(_, servers)| servers.len() > 1)
-        .map(|(name, servers)| (name.to_string(), servers.into_iter().map(String::from).collect()))
+        .map(|(name, servers)| {
+            (
+                name.to_string(),
+                servers.into_iter().map(String::from).collect(),
+            )
+        })
         .collect()
 }
 
@@ -309,13 +367,10 @@ fn tool_cache_path() -> Option<std::path::PathBuf> {
 pub fn save_tool_cache(entries: &[ToolCacheEntry]) -> Result<(), String> {
     let path = tool_cache_path().ok_or("HOME not set")?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
     }
-    let json = serde_json::to_string_pretty(entries)
-        .map_err(|e| format!("serialize: {e}"))?;
-    std::fs::write(&path, json)
-        .map_err(|e| format!("write: {e}"))
+    let json = serde_json::to_string_pretty(entries).map_err(|e| format!("serialize: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("write: {e}"))
 }
 
 /// Load tool cache from disk. Returns empty vec if file missing.
@@ -334,7 +389,10 @@ pub fn load_tool_cache() -> Vec<ToolCacheEntry> {
 }
 
 /// Build cache entries from current tool catalog.
-pub fn build_cache_entries(tools: &[McpToolDef], existing: &[ToolCacheEntry]) -> Vec<ToolCacheEntry> {
+pub fn build_cache_entries(
+    tools: &[McpToolDef],
+    existing: &[ToolCacheEntry],
+) -> Vec<ToolCacheEntry> {
     let now = humantime::format_rfc3339(std::time::SystemTime::now()).to_string();
     let existing_map: HashMap<&str, &ToolCacheEntry> = existing
         .iter()
@@ -353,12 +411,20 @@ pub fn build_cache_entries(tools: &[McpToolDef], existing: &[ToolCacheEntry]) ->
                 server_name: tool.server_name.clone(),
                 annotations: tool.annotations.clone(),
                 pin_hash: hash.clone(),
-                first_seen: prev.map(|p| p.first_seen.clone()).unwrap_or_else(|| now.clone()),
+                first_seen: prev
+                    .map(|p| p.first_seen.clone())
+                    .unwrap_or_else(|| now.clone()),
                 last_seen: now.clone(),
-                approved: prev.map(|p| {
-                    // Stay approved only if hash hasn't changed
-                    if p.pin_hash == hash { p.approved } else { false }
-                }).unwrap_or(false),
+                approved: prev
+                    .map(|p| {
+                        // Stay approved only if hash hasn't changed
+                        if p.pin_hash == hash {
+                            p.approved
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false),
             }
         })
         .collect()
@@ -416,6 +482,8 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
                 bearer_token,
                 enabled: true,
                 source: source.to_string(),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
             });
             continue;
         }
@@ -453,6 +521,8 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
                 bearer_token: None,
                 enabled: true,
                 source: source.to_string(),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
             });
         }
     }

@@ -16,19 +16,18 @@ use std::process;
 use std::thread;
 
 use capsem_proto::{
-    AuditRecord, BootStage, GuestToHost, HostToGuest, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
+    decode_host_msg, encode_audit_record, encode_guest_msg, validate_env_key, validate_env_value,
+    validate_file_path, validate_file_path_safe, AuditRecord, BootStage, GuestToHost, HostToGuest,
+    MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
     VSOCK_PORT_AUDIT, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
-    decode_host_msg, encode_audit_record, encode_guest_msg,
-    validate_env_key, validate_env_value, validate_file_path, validate_file_path_safe,
-    MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
 };
 use nix::libc;
-use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::pty::openpty;
-use nix::sys::signal::{SigHandler, Signal, signal};
-use nix::unistd::{ForkResult, Pid, close, dup2, execvp, fork, setsid};
+use nix::sys::signal::{signal, SigHandler, Signal};
+use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
 
-use vsock_io::{VSOCK_HOST_CID, read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd};
+use vsock_io::{read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd, VSOCK_HOST_CID};
 /// Boot log persisted so it can be inspected after boot (`cat /var/log/capsem-boot.log`).
 const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
 /// Reconnect timeout before giving up (seconds).
@@ -39,10 +38,23 @@ const RECONNECT_TIMEOUT_SECS: u64 = 30;
 // ---------------------------------------------------------------------------
 
 fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
-    let frame = encode_guest_msg(msg)
-        .map_err(io::Error::other)?;
+    let frame = encode_guest_msg(msg).map_err(io::Error::other)?;
     write_all_fd(fd, &frame)?;
     Ok(())
+}
+
+/// Returns `Some(id)` for `GuestToHost` variants the agent retains in
+/// its symmetric pending_responses map and replays on every fresh
+/// control conn. Mirrors `vsock.rs::ackable_response_id` on the host
+/// side; both ends must agree on the set or AckReply / replay drift.
+fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
+    match msg {
+        GuestToHost::ExecDone { id, .. }
+        | GuestToHost::FileOpDone { id }
+        | GuestToHost::FileContent { id, .. }
+        | GuestToHost::Error { id, .. } => Some(*id),
+        _ => None,
+    }
 }
 
 fn recv_host_msg(fd: RawFd) -> io::Result<HostToGuest> {
@@ -50,12 +62,14 @@ fn recv_host_msg(fd: RawFd) -> io::Result<HostToGuest> {
     read_exact_fd(fd, &mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_FRAME_SIZE as usize {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "control frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "control frame too large",
+        ));
     }
     let mut payload = vec![0u8; len];
     read_exact_fd(fd, &mut payload)?;
-    decode_host_msg(&payload)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    decode_host_msg(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +137,30 @@ fn blog_line(log: &mut std::fs::File, msg: &str) {
     eprintln!("[capsem-agent] {msg}");
 }
 
+/// W5: process-global boot traceparent received in BootConfig.
+/// Stash so post-boot guest agent code can grep-correlate its log lines
+/// with the host-side spans for the same operation.
+static BOOT_TRACEPARENT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn set_boot_traceparent(tp: &str) {
+    let _ = BOOT_TRACEPARENT.set(tp.to_string());
+}
+
+/// Lower 16 hex chars of the W3C trace_id (matches the `CAPSEM_TRACE_ID`
+/// convention used elsewhere). Returns "" when no traceparent has been set.
+fn current_boot_trace_id() -> String {
+    let Some(tp) = BOOT_TRACEPARENT.get() else {
+        return String::new();
+    };
+    let mut parts = tp.split('-');
+    let _v = parts.next();
+    let trace_id = parts.next().unwrap_or("");
+    if trace_id.len() < 16 {
+        return String::new();
+    }
+    trace_id[trace_id.len() - 16..].to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -132,11 +170,14 @@ fn main() {
 
     // Open boot log (persists after boot for diagnosis).
     let mut blog = open_boot_log();
-    blog_line(&mut blog, &format!(
-        "capsem-agent {} starting (pid {})",
-        env!("CARGO_PKG_VERSION"),
-        process::id(),
-    ));
+    blog_line(
+        &mut blog,
+        &format!(
+            "capsem-agent {} starting (pid {})",
+            env!("CARGO_PKG_VERSION"),
+            process::id(),
+        ),
+    );
 
     // Step 1: Connect to host vsock ports BEFORE PTY/fork.
     let terminal_fd = vsock_connect_retry(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL, "terminal");
@@ -144,9 +185,12 @@ fn main() {
     blog_line(&mut blog, "vsock connected (terminal + control)");
 
     // Step 2: Send Ready.
-    if let Err(e) = send_guest_msg(control_fd, &GuestToHost::Ready {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    }) {
+    if let Err(e) = send_guest_msg(
+        control_fd,
+        &GuestToHost::Ready {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+    ) {
         blog_line(&mut blog, &format!("FATAL: failed to send Ready: {e}"));
         eprintln!("[capsem-agent] failed to send Ready: {e}");
         process::exit(1);
@@ -159,17 +203,35 @@ fn main() {
 
     // 3a: Receive BootConfig (clock sync).
     match recv_host_msg(control_fd) {
-        Ok(HostToGuest::BootConfig { epoch_secs }) => {
+        Ok(HostToGuest::BootConfig {
+            epoch_secs,
+            traceparent,
+        }) => {
             eprintln!("[capsem-agent] received BootConfig (epoch={epoch_secs})");
-            blog_line(&mut blog, &format!("BootConfig epoch={epoch_secs}"));
+            blog_line(
+                &mut blog,
+                &format!(
+                    "BootConfig epoch={epoch_secs} traceparent_len={}",
+                    traceparent.len()
+                ),
+            );
             if epoch_secs > 0 {
                 set_system_clock(epoch_secs);
                 blog_line(&mut blog, &format!("clock set to {epoch_secs}"));
             }
+            // W5: stash the traceparent into a process-global so subsequent
+            // blog_line calls can include the lower 16-hex trace_id, lining
+            // up guest log lines with host-side spans for the same boot.
+            if !traceparent.is_empty() {
+                set_boot_traceparent(&traceparent);
+                blog_line(&mut blog, &format!("trace_id={}", current_boot_trace_id()));
+            }
         }
         Ok(other) => {
             blog_line(&mut blog, &format!("expected BootConfig, got {other:?}"));
-            eprintln!("[capsem-agent] expected BootConfig, got {other:?}, continuing with defaults");
+            eprintln!(
+                "[capsem-agent] expected BootConfig, got {other:?}, continuing with defaults"
+            );
         }
         Err(e) => {
             blog_line(&mut blog, &format!("BootConfig error: {e}"));
@@ -197,7 +259,9 @@ fn main() {
                 }
                 if boot_env.len() >= MAX_BOOT_ENV_VARS {
                     blog_line(&mut blog, &format!("SetEnv {key}: env var cap reached"));
-                    eprintln!("[capsem-agent] env var cap reached ({MAX_BOOT_ENV_VARS}), skipping {key}");
+                    eprintln!(
+                        "[capsem-agent] env var cap reached ({MAX_BOOT_ENV_VARS}), skipping {key}"
+                    );
                     continue;
                 }
 
@@ -210,7 +274,12 @@ fn main() {
                 eprintln!("[capsem-agent] SetEnv {key}");
                 boot_env.push((key, value));
             }
-            Ok(HostToGuest::FileWrite { id: _, path, data, mode }) => {
+            Ok(HostToGuest::FileWrite {
+                id: _,
+                path,
+                data,
+                mode,
+            }) => {
                 // Validate file path (defense-in-depth).
                 if let Err(e) = validate_file_path(&path) {
                     blog_line(&mut blog, &format!("FileWrite rejected: {e}"));
@@ -219,11 +288,16 @@ fn main() {
                 }
                 if file_count >= MAX_BOOT_FILES {
                     blog_line(&mut blog, &format!("FileWrite {path}: file cap reached"));
-                    eprintln!("[capsem-agent] file cap reached ({MAX_BOOT_FILES}), skipping {path}");
+                    eprintln!(
+                        "[capsem-agent] file cap reached ({MAX_BOOT_FILES}), skipping {path}"
+                    );
                     continue;
                 }
                 if total_file_bytes + data.len() > MAX_BOOT_FILE_BYTES {
-                    blog_line(&mut blog, &format!("FileWrite {path}: total bytes cap reached"));
+                    blog_line(
+                        &mut blog,
+                        &format!("FileWrite {path}: total bytes cap reached"),
+                    );
                     eprintln!("[capsem-agent] file bytes cap reached ({MAX_BOOT_FILE_BYTES}), skipping {path}");
                     continue;
                 }
@@ -231,7 +305,10 @@ fn main() {
                 if let Some(parent) = std::path::Path::new(&path).parent() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
                         blog_line(&mut blog, &format!("FileWrite {path}: mkdir failed: {e}"));
-                        eprintln!("[capsem-agent] failed to create dir {}: {e}", parent.display());
+                        eprintln!(
+                            "[capsem-agent] failed to create dir {}: {e}",
+                            parent.display()
+                        );
                         continue;
                     }
                 }
@@ -247,10 +324,10 @@ fn main() {
                 }
                 total_file_bytes += data.len();
                 file_count += 1;
-                blog_line(&mut blog, &format!(
-                    "FileWrite {path} ({} bytes, mode={mode:#o})",
-                    data.len(),
-                ));
+                blog_line(
+                    &mut blog,
+                    &format!("FileWrite {path} ({} bytes, mode={mode:#o})", data.len(),),
+                );
                 eprintln!("[capsem-agent] wrote {path} ({} bytes)", data.len());
             }
             Ok(HostToGuest::FileRead { .. }) => {
@@ -260,12 +337,19 @@ fn main() {
                 eprintln!("[capsem-agent] ignoring FileDelete during boot");
             }
             Ok(HostToGuest::BootConfigDone) => {
-                blog_line(&mut blog, &format!(
-                    "BootConfigDone: {} env vars, {} files",
+                blog_line(
+                    &mut blog,
+                    &format!(
+                        "BootConfigDone: {} env vars, {} files",
+                        boot_env.len(),
+                        file_count,
+                    ),
+                );
+                eprintln!(
+                    "[capsem-agent] boot config done ({} env vars, {} files)",
                     boot_env.len(),
-                    file_count,
-                ));
-                eprintln!("[capsem-agent] boot config done ({} env vars, {} files)", boot_env.len(), file_count);
+                    file_count
+                );
                 break;
             }
             Ok(other) => {
@@ -302,7 +386,10 @@ fn main() {
         }
         blog_line(&mut blog, "venv activated in boot_env");
     } else {
-        blog_line(&mut blog, "WARNING: venv not found after waiting, skipping activation");
+        blog_line(
+            &mut blog,
+            "WARNING: venv not found after waiting, skipping activation",
+        );
     }
 
     // Step 4c: Set hostname from CAPSEM_VM_NAME if present.
@@ -312,10 +399,13 @@ fn main() {
         if ret == 0 {
             blog_line(&mut blog, &format!("hostname set to {name}"));
         } else {
-            blog_line(&mut blog, &format!(
-                "WARNING: sethostname failed: {}",
-                std::io::Error::last_os_error()
-            ));
+            blog_line(
+                &mut blog,
+                &format!(
+                    "WARNING: sethostname failed: {}",
+                    std::io::Error::last_os_error()
+                ),
+            );
         }
     }
 
@@ -380,24 +470,68 @@ fn main() {
 
             // Ignore SIGHUP so we don't die when the child exits.
             unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }.ok();
-            
+
             drop(blog); // flush and close boot log before loop
 
             let mut is_first = true;
             let mut t_fd = terminal_fd;
             let mut c_fd = control_fd;
 
+            // Per-VM-session dedup state for Exec. Lifted to outer scope
+            // so it survives reconnects: the host's ack/replay bridge may
+            // re-send Exec on a fresh control conn after the previous one was
+            // torn, and that replay must not double-execute. Two maps:
+            //   exec_inflight: ids whose run_exec is still running -- a
+            //                  duplicate must skip (the original will
+            //                  send ExecDone when it finishes).
+            //   exec_done:     ids whose run_exec has finished, mapped
+            //                  to (exit_code) -- a duplicate must
+            //                  re-send ExecDone with the cached code so
+            //                  the host's j_rx can resolve when the
+            //                  original ExecDone was lost on a torn
+            //                  return path.
+            // File ops are intentionally NOT deduped -- write/read/delete
+            // are idempotent, and re-acking lets the host recover from a
+            // FileOpDone lost on return.
+            let exec_inflight = std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::<u64>::new(),
+            ));
+            let exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+            // Symmetric guest-side replay buffer: every ackable
+            // GuestToHost (ExecDone / FileOpDone / FileContent / Error)
+            // the writer thread sends gets inserted here keyed by `id`.
+            // On every fresh control conn after reconnect, run_bridge
+            // replays the pending entries before resuming normal writes
+            // -- protocol-level cover for Apple VZ's silent-drop
+            // pattern on the guest->host return path. The host sends
+            // `HostToGuest::AckReply { id }` on receipt; control_loop
+            // removes the entry. Lifted to outer scope so the map
+            // survives reconnects (the writer thread is per-run_bridge).
+            let pending_responses: std::sync::Arc<
+                std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>,
+            > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
             loop {
                 if !is_first {
-                    use capsem_proto::poll::{RetryOpts, retry_with_backoff};
+                    use capsem_proto::poll::{retry_with_backoff, RetryOpts};
 
                     let fds = retry_with_backoff(
-                        &RetryOpts::new("reconnect", std::time::Duration::from_secs(RECONNECT_TIMEOUT_SECS)),
+                        &RetryOpts::new(
+                            "reconnect",
+                            std::time::Duration::from_secs(RECONNECT_TIMEOUT_SECS),
+                        ),
                         || {
-                            let t = vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL).ok()?;
+                            let t = vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL)
+                                .ok()?;
                             match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_CONTROL) {
                                 Ok(c) => Some((t, c)),
-                                Err(_) => { unsafe { libc::close(t); } None }
+                                Err(_) => {
+                                    unsafe {
+                                        libc::close(t);
+                                    }
+                                    None
+                                }
                             }
                         },
                     );
@@ -416,7 +550,12 @@ fn main() {
 
                     eprintln!("[capsem-agent] reconnected successfully");
                     rebind_workspace_after_resume();
-                    let _ = send_guest_msg(c_fd, &GuestToHost::Ready { version: env!("CARGO_PKG_VERSION").to_string() });
+                    let _ = send_guest_msg(
+                        c_fd,
+                        &GuestToHost::Ready {
+                            version: env!("CARGO_PKG_VERSION").to_string(),
+                        },
+                    );
 
                     // Drain abbreviated handshake, processing clock/timezone resync.
                     loop {
@@ -426,17 +565,27 @@ fn main() {
                                 let _ = nix::sys::signal::kill(child, Signal::SIGTERM);
                                 process::exit(0);
                             }
-                            Ok(HostToGuest::BootConfig { epoch_secs }) => {
+                            Ok(HostToGuest::BootConfig {
+                                epoch_secs,
+                                traceparent,
+                            }) => {
+                                if !traceparent.is_empty() {
+                                    set_boot_traceparent(&traceparent);
+                                }
                                 if epoch_secs > 0 {
                                     set_system_clock(epoch_secs);
-                                    eprintln!("[capsem-agent] resume: clock resynced to {epoch_secs}");
+                                    eprintln!(
+                                        "[capsem-agent] resume: clock resynced to {epoch_secs}"
+                                    );
                                 }
                             }
                             Ok(HostToGuest::SetEnv { key, value }) => {
                                 std::env::set_var(&key, &value);
                                 eprintln!("[capsem-agent] resume: set {key}");
                             }
-                            Ok(HostToGuest::FileWrite { path, data, mode, .. }) => {
+                            Ok(HostToGuest::FileWrite {
+                                path, data, mode, ..
+                            }) => {
                                 if let Some(parent) = std::path::Path::new(&path).parent() {
                                     let _ = std::fs::create_dir_all(parent);
                                 }
@@ -460,7 +609,10 @@ fn main() {
                     }
 
                     // Unfreeze filesystem in case we were suspended
-                    std::process::Command::new("fsfreeze").args(["-u", "/"]).status().ok();
+                    std::process::Command::new("fsfreeze")
+                        .args(["-u", "/"])
+                        .status()
+                        .ok();
                 }
 
                 // Send BootReady
@@ -478,10 +630,22 @@ fn main() {
                 }
 
                 // Enter bridge loop
-                run_bridge(master_fd, child, t_fd, c_fd, &boot_env_for_parent);
-                
+                run_bridge(
+                    master_fd,
+                    child,
+                    t_fd,
+                    c_fd,
+                    &boot_env_for_parent,
+                    std::sync::Arc::clone(&exec_inflight),
+                    std::sync::Arc::clone(&exec_done),
+                    std::sync::Arc::clone(&pending_responses),
+                );
+
                 // Cleanup broken FDs
-                unsafe { libc::close(t_fd); libc::close(c_fd); }
+                unsafe {
+                    libc::close(t_fd);
+                    libc::close(c_fd);
+                }
             }
         }
         Err(e) => {
@@ -580,14 +744,28 @@ fn parse_boot_timing(path: &str) -> Vec<BootStage> {
         .filter(|s| {
             s.name.len() <= 64
                 && !s.name.is_empty()
-                && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && s.name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
                 && s.duration_ms <= 600_000
         })
         .take(32)
         .collect()
 }
 
-fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: RawFd, boot_env: &[(String, String)]) {
+#[allow(clippy::too_many_arguments)]
+fn run_bridge(
+    master_fd: RawFd,
+    child_pid: Pid,
+    terminal_fd: RawFd,
+    control_fd: RawFd,
+    boot_env: &[(String, String)],
+    exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
+    exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
+    pending_responses: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>,
+    >,
+) {
     // Serialize all control channel writes through a single channel + writer
     // thread. The exec background thread and control_loop both need to write
     // to control_fd; concurrent writes would corrupt protocol framing.
@@ -598,8 +776,54 @@ fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: 
     // host process), shutdown both vsock fds so bridge_loop and control_loop
     // wake from their polls and the outer reconnect logic re-establishes
     // both connections against the new host.
+    //
+    // Before the normal write loop, replay every entry still in
+    // pending_responses on the fresh control_fd. These are ackable
+    // responses (ExecDone / FileOpDone / FileContent / Error) whose
+    // host-side AckReply never arrived -- typically because the
+    // previous control conn went silent (Apple VZ post-restoreState
+    // pattern: write returned success, bytes never propagated). The
+    // host's `handle_guest_msg` is idempotent for already-handled ids
+    // (it removes the job sender on first delivery), so a replayed
+    // response that actually did land twice is harmless.
+    let pending_for_writer = std::sync::Arc::clone(&pending_responses);
     std::thread::spawn(move || {
+        let snap: Vec<GuestToHost> = pending_for_writer
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        if !snap.is_empty() {
+            eprintln!(
+                "[capsem-agent] control writer: replaying {} pending unacked responses",
+                snap.len()
+            );
+            for msg in &snap {
+                if send_guest_msg(control_fd, msg).is_err() {
+                    unsafe {
+                        libc::shutdown(control_fd, libc::SHUT_RDWR);
+                        libc::shutdown(terminal_fd, libc::SHUT_RDWR);
+                    }
+                    return;
+                }
+            }
+        }
+
         while let Ok(msg) = ctrl_write_rx.recv() {
+            // Insert ackable responses *before* writing so a
+            // write-success-but-silent-drop is recoverable via the
+            // next rekey replay. Bound the map at 4096 to match the
+            // exec_done cap above -- under transport pathology the
+            // map could otherwise grow unbounded under a pathological
+            // return-path drop.
+            if let Some(id) = ackable_response_id(&msg) {
+                let mut p = pending_for_writer.lock().unwrap();
+                if p.len() >= 4096 {
+                    p.clear();
+                }
+                p.insert(id, msg.clone());
+            }
             if send_guest_msg(control_fd, &msg).is_err() {
                 unsafe {
                     libc::shutdown(control_fd, libc::SHUT_RDWR);
@@ -615,20 +839,30 @@ fn run_bridge(master_fd: RawFd, child_pid: Pid, terminal_fd: RawFd, control_fd: 
     // the host process is gone; the first failed write here trips the
     // shutdown path above and triggers reconnect within ~3s.
     let hb_tx = ctrl_write_tx.clone();
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            if hb_tx.send(GuestToHost::Pong).is_err() {
-                break;
-            }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if hb_tx.send(GuestToHost::Pong).is_err() {
+            break;
         }
     });
 
     // Spawn control channel handler in a background thread.
     let boot_env_owned = boot_env.to_vec();
     let ctrl_tx = ctrl_write_tx;
+    let inflight_for_ctrl = exec_inflight;
+    let done_for_ctrl = exec_done;
+    let pending_for_ctrl = pending_responses;
     thread::spawn(move || {
-        control_loop(control_fd, master_fd, child_pid, &boot_env_owned, ctrl_tx);
+        control_loop(
+            control_fd,
+            master_fd,
+            child_pid,
+            &boot_env_owned,
+            ctrl_tx,
+            inflight_for_ctrl,
+            done_for_ctrl,
+            pending_for_ctrl,
+        );
     });
 
     // Spawn audit log reader thread (tails auditd output, streams to host).
@@ -654,9 +888,10 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
     std::thread::spawn(move || {
         let mut local_buf = [0u8; 8192];
         loop {
-            let mut poll_fds = [
-                PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd_clone) }, PollFlags::POLLIN),
-            ];
+            let mut poll_fds = [PollFd::new(
+                unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd_clone) },
+                PollFlags::POLLIN,
+            )];
 
             match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
                 Ok(0) => continue,
@@ -690,8 +925,14 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
         // detecting host death) wakes us up via POLLHUP. Otherwise we'd sit
         // in poll forever waiting for PTY activity that never comes.
         let mut poll_fds = [
-            PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) }, PollFlags::POLLIN),
-            PollFd::new(unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) }, PollFlags::empty()),
+            PollFd::new(
+                unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) },
+                PollFlags::POLLIN,
+            ),
+            PollFd::new(
+                unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) },
+                PollFlags::empty(),
+            ),
         ];
 
         match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
@@ -797,7 +1038,9 @@ fn audit_reader_loop() {
         }
 
         // Parse audit log line. Format: type=SYSCALL msg=audit(1713100000.001:42): ...
-        let Some(audit_id) = extract_audit_id(line) else { continue };
+        let Some(audit_id) = extract_audit_id(line) else {
+            continue;
+        };
         let record_type = extract_field(line, "type=");
 
         let builder = pending.entry(audit_id.clone()).or_default();
@@ -808,9 +1051,14 @@ fn audit_reader_loop() {
                 builder.ppid = extract_field(line, " ppid=").and_then(|v| v.parse().ok());
                 builder.uid = extract_field(line, " uid=").and_then(|v| v.parse().ok());
                 builder.exe = extract_field(line, " exe=").map(|s| s.trim_matches('"').to_string());
-                builder.comm = extract_field(line, " comm=").map(|s| s.trim_matches('"').to_string());
+                builder.comm =
+                    extract_field(line, " comm=").map(|s| s.trim_matches('"').to_string());
                 builder.tty = extract_field(line, " tty=").and_then(|s| {
-                    if s == "(none)" { None } else { Some(s) }
+                    if s == "(none)" {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 });
                 builder.timestamp_us = extract_audit_timestamp_us(line);
                 builder.has_syscall = true;
@@ -827,7 +1075,10 @@ fn audit_reader_loop() {
                     if let Some(record) = builder.build(&audit_id) {
                         let frame = match encode_audit_record(&record) {
                             Ok(f) => f,
-                            Err(_) => { pending.remove(&audit_id); continue; }
+                            Err(_) => {
+                                pending.remove(&audit_id);
+                                continue;
+                            }
                         };
                         if write_all_fd(audit_fd, &frame).is_err() {
                             eprintln!("[capsem-agent] audit: write failed, disconnecting");
@@ -871,7 +1122,10 @@ impl AuditRecordBuilder {
             uid: self.uid.unwrap_or(0),
             exe: self.exe.clone()?,
             comm: self.comm.clone(),
-            argv: self.argv.clone().unwrap_or_else(|| self.exe.clone().unwrap_or_default()),
+            argv: self
+                .argv
+                .clone()
+                .unwrap_or_else(|| self.exe.clone().unwrap_or_default()),
             cwd: self.cwd.clone(),
             tty: self.tty.clone(),
             session_id: None,
@@ -924,7 +1178,77 @@ fn extract_execve_argv(line: &str) -> Option<String> {
             break;
         }
     }
-    if args.is_empty() { None } else { Some(args.join(" ")) }
+    if args.is_empty() {
+        None
+    } else {
+        Some(args.join(" "))
+    }
+}
+
+/// Maximum vsock_connect attempts when the host returns ECONNRESET, e.g.
+/// briefly after `restoreMachineStateFromURL` while the kernel-side
+/// accept queue is still settling. 5 attempts × ECONNRESET_BACKOFF_MS
+/// keeps the transient retry short without hiding real connect failures.
+const ECONNRESET_MAX_ATTEMPTS: usize = 5;
+const ECONNRESET_BACKOFF_MS: u64 = 20;
+
+/// Connect via the supplied closure, retrying on ECONNRESET only.
+/// All other error kinds bail immediately so we don't paper over real
+/// misconfiguration (refused, address-family-unsupported, etc.).
+///
+/// Bug C: post-`restoreState` the agent's `vsock_connect` to host port
+/// 5005 (EXEC) can transiently see ECONNRESET while the kernel-side
+/// accept queue is still attaching to the freshly-registered VZ
+/// listener. A single-shot connect failed -> run_exec returned 126 ->
+/// `exec_done` cached the bad code -> every host retry/replay was
+/// poisoned. The retry isolates this transient transport state.
+fn vsock_connect_with_econnreset_retry<F>(mut connect_fn: F) -> io::Result<RawFd>
+where
+    F: FnMut() -> io::Result<RawFd>,
+{
+    let mut last_err = None;
+    for attempt in 1..=ECONNRESET_MAX_ATTEMPTS {
+        match connect_fn() {
+            Ok(fd) => return Ok(fd),
+            Err(e) if e.kind() == io::ErrorKind::ConnectionReset => {
+                last_err = Some(e);
+                if attempt < ECONNRESET_MAX_ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_millis(ECONNRESET_BACKOFF_MS));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| io::Error::from(io::ErrorKind::ConnectionReset)))
+}
+
+/// Outcome of a `run_exec` call. Distinguishes a real child exit
+/// (cache it for dedup-replay on host duplicate Exec delivery) from a
+/// transport failure that never reached the child (do NOT cache --
+/// the next host replay deserves a fresh attempt against a possibly
+/// recovered transport).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecOutcome {
+    /// Child process ran to completion with `i32` exit code.
+    Done(i32),
+    /// vsock_connect to the host EXEC port exhausted retries; ExecStarted
+    /// or any subsequent step never landed. The host still gets an
+    /// ExecDone {exit_code: 126} (so the caller sees a result), but the
+    /// agent does not poison `exec_done` with this transient.
+    TransportFailed,
+}
+
+impl ExecOutcome {
+    fn should_cache(&self) -> bool {
+        matches!(self, ExecOutcome::Done(_))
+    }
+
+    fn exit_code(&self) -> i32 {
+        match self {
+            ExecOutcome::Done(code) => *code,
+            ExecOutcome::TransportFailed => 126,
+        }
+    }
 }
 
 /// Execute a command as a direct child process, streaming output over vsock:5005.
@@ -932,28 +1256,46 @@ fn extract_execve_argv(line: &str) -> Option<String> {
 /// Runs in a background thread so control_loop remains responsive to heartbeats.
 /// Output flows as raw bytes on a dedicated exec vsock connection. The exit code
 /// is sent as ExecDone via the serialized control write channel.
-fn run_exec(ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>, id: u64, command: &str, boot_env: &[(String, String)]) {
-    // Connect to host exec port.
-    let exec_fd = match vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC) {
+fn run_exec(
+    ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>,
+    id: u64,
+    command: &str,
+    boot_env: &[(String, String)],
+) -> ExecOutcome {
+    // Connect to host exec port. Retry on ECONNRESET only -- post-restore
+    // VZ transient (Bug C). Other errors bail immediately.
+    let exec_fd = match vsock_connect_with_econnreset_retry(|| {
+        vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC)
+    }) {
         Ok(fd) => fd,
         Err(e) => {
             eprintln!("[capsem-agent] exec[{id}] vsock connect failed: {e}");
             let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
-            return;
+            return ExecOutcome::TransportFailed;
         }
     };
 
-    run_exec_on_fds(exec_fd, ctrl_tx, id, command, boot_env);
+    ExecOutcome::Done(run_exec_on_fds(exec_fd, ctrl_tx, id, command, boot_env))
 }
 
 /// Inner exec implementation that takes pre-connected fds (testable without vsock).
 /// `ctrl_tx` serializes writes to the control channel (prevents frame corruption
 /// from concurrent writers). `exec_fd` is consumed: closed on all exit paths.
-fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>, id: u64, command: &str, boot_env: &[(String, String)]) {
+fn run_exec_on_fds(
+    exec_fd: RawFd,
+    ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>,
+    id: u64,
+    command: &str,
+    boot_env: &[(String, String)],
+) -> i32 {
     // RAII guard to ensure exec_fd is closed on all paths.
     struct FdGuard(RawFd);
     impl Drop for FdGuard {
-        fn drop(&mut self) { unsafe { libc::close(self.0); } }
+        fn drop(&mut self) {
+            unsafe {
+                libc::close(self.0);
+            }
+        }
     }
     let _exec_guard = FdGuard(exec_fd);
 
@@ -961,11 +1303,15 @@ fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost
     if let Err(e) = send_guest_msg(exec_fd, &GuestToHost::ExecStarted { id }) {
         eprintln!("[capsem-agent] exec[{id}] handshake failed: {e}");
         let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
-        return;
+        return 126;
     }
 
     // Spawn child process with piped stdout and stderr.
-    let cwd = if std::path::Path::new("/root").exists() { "/root" } else { "/" };
+    let cwd = if std::path::Path::new("/root").exists() {
+        "/root"
+    } else {
+        "/"
+    };
     let mut child = match std::process::Command::new("bash")
         .arg("-c")
         .arg(command)
@@ -979,7 +1325,7 @@ fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost
         Err(e) => {
             eprintln!("[capsem-agent] exec[{id}] spawn failed: {e}");
             let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
-            return;
+            return 126;
         }
     };
 
@@ -994,7 +1340,9 @@ fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost
             loop {
                 match stderr.read(&mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => { let _ = write_all_fd(efd, &buf[..n]); }
+                    Ok(n) => {
+                        let _ = write_all_fd(efd, &buf[..n]);
+                    }
                 }
             }
         })
@@ -1016,7 +1364,9 @@ fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost
         }
     }
 
-    if let Some(t) = stderr_thread { let _ = t.join(); }
+    if let Some(t) = stderr_thread {
+        let _ = t.join();
+    }
 
     // Wait for child to exit and get exit code.
     let exit_code = match child.wait() {
@@ -1030,6 +1380,7 @@ fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &std::sync::mpsc::Sender<GuestToHost
     // Send ExecDone via serialized control write channel.
     eprintln!("[capsem-agent] exec[{id}] done: exit_code={exit_code}");
     let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code });
+    exit_code
 }
 
 /// Guest workspace root (VirtioFS mount point).
@@ -1092,15 +1443,29 @@ fn delete_nofollow(path: &str) -> io::Result<()> {
     std::fs::remove_file(path)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn control_loop(
     control_fd: RawFd,
     master_fd: RawFd,
     child_pid: Pid,
     boot_env: &[(String, String)],
     ctrl_tx: std::sync::mpsc::Sender<GuestToHost>,
+    exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
+    exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
+    pending_responses: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>,
+    >,
 ) {
     loop {
         match recv_host_msg(control_fd) {
+            Ok(HostToGuest::AckReply { id }) => {
+                // Host received the corresponding ackable response;
+                // drop it from the replay buffer so the next rekey
+                // does not re-send it. No-op if already removed (e.g.
+                // duplicate AckReply from a replayed response that
+                // actually did land twice).
+                pending_responses.lock().unwrap().remove(&id);
+            }
             Ok(HostToGuest::Resize { cols, rows }) => {
                 eprintln!("[capsem-agent] resize: {cols}x{rows}");
                 set_winsize(master_fd, cols, rows);
@@ -1124,7 +1489,9 @@ fn control_loop(
             Ok(HostToGuest::Shutdown) => {
                 eprintln!("[capsem-agent] received Shutdown from host");
                 // Flush dirty pages to disk.
-                unsafe { libc::sync(); }
+                unsafe {
+                    libc::sync();
+                }
                 // Ask bash to exit gracefully.
                 let _ = nix::sys::signal::kill(child_pid, Signal::SIGTERM);
                 // Give bash time to clean up (save history, run traps).
@@ -1134,88 +1501,215 @@ fn control_loop(
                 break;
             }
             Ok(HostToGuest::Exec { id, command }) => {
+                // Ack immediately on receipt -- before any processing or
+                // dedup -- so the host bridge can clear this id from its
+                // pending-ack map and stop re-replaying it on rekey.
+                // The host writes Exec into the pending map *before*
+                // sending; if our Ack is itself lost, the bridge
+                // re-sends Exec on the next conn, we re-ack: idempotent.
+                if ctrl_tx.send(GuestToHost::Ack { id }).is_err() {
+                    break;
+                }
+                // Three states for `id`:
+                //   - Done (in exec_done):    cached exit_code; replay
+                //                             ExecDone so the host's
+                //                             j_rx resolves even when
+                //                             the original was lost on
+                //                             return.
+                //   - In-flight (in_inflight): original is still
+                //                              running; ignore the
+                //                              retry, the original
+                //                              will send ExecDone.
+                //   - Fresh:                   record as inflight, run.
+                let cached = {
+                    let done = exec_done.lock().unwrap();
+                    done.get(&id).copied()
+                };
+                if let Some(exit_code) = cached {
+                    eprintln!("[capsem-agent] exec[{id}] duplicate (already done, exit={exit_code}); replaying ExecDone");
+                    if ctrl_tx
+                        .send(GuestToHost::ExecDone { id, exit_code })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                }
+                let inserted = exec_inflight.lock().unwrap().insert(id);
+                if !inserted {
+                    eprintln!("[capsem-agent] exec[{id}] duplicate (still inflight); ignoring");
+                    continue;
+                }
                 eprintln!("[capsem-agent] exec[{id}]: {command}");
                 let boot_env = boot_env.to_vec();
                 let tx = ctrl_tx.clone();
+                let inflight = std::sync::Arc::clone(&exec_inflight);
+                let done = std::sync::Arc::clone(&exec_done);
                 thread::spawn(move || {
-                    run_exec(&tx, id, &command, &boot_env);
+                    let outcome = run_exec(&tx, id, &command, &boot_env);
+                    // Record completion *before* dropping inflight so a
+                    // host replay that arrives between the two
+                    // unlocks cannot miss both maps. Only cache real
+                    // child exits -- transport failures (vsock connect
+                    // exhausted retries) are transient; caching 126
+                    // would poison every subsequent replay
+                    // even after the transport recovered (Bug C).
+                    if outcome.should_cache() {
+                        let mut d = done.lock().unwrap();
+                        if d.len() >= 4096 {
+                            d.clear();
+                        }
+                        d.insert(id, outcome.exit_code());
+                    }
+                    inflight.lock().unwrap().remove(&id);
                 });
             }
-            Ok(HostToGuest::FileWrite { id, path, data, mode }) => {
+            Ok(HostToGuest::FileWrite {
+                id,
+                path,
+                data,
+                mode,
+            }) => {
+                // Ack on receipt so the host bridge clears the
+                // pending-ack entry. No dedup: write_nofollow over the
+                // same path with the same bytes is idempotent, and
+                // re-acking lets the host recover from a lost FileOpDone.
+                if ctrl_tx.send(GuestToHost::Ack { id }).is_err() {
+                    break;
+                }
                 eprintln!("[capsem-agent] FileWrite {path} ({} bytes)", data.len());
                 let ws = std::path::Path::new(GUEST_WORKSPACE_ROOT);
                 let msg = if let Err(e) = validate_file_path_safe(&path, ws) {
-                    GuestToHost::Error { id, message: format!("FileWrite rejected: {e}") }
+                    GuestToHost::Error {
+                        id,
+                        message: format!("FileWrite rejected: {e}"),
+                    }
                 } else if let Err(e) = write_nofollow(&path, &data, mode) {
-                    GuestToHost::Error { id, message: format!("failed to write {path}: {e}") }
+                    GuestToHost::Error {
+                        id,
+                        message: format!("failed to write {path}: {e}"),
+                    }
                 } else {
                     GuestToHost::FileOpDone { id }
                 };
-                if ctrl_tx.send(msg).is_err() { break; }
+                if ctrl_tx.send(msg).is_err() {
+                    break;
+                }
             }
             Ok(HostToGuest::FileRead { id, path }) => {
+                // Ack on receipt so the host bridge clears the
+                // pending-ack entry. No dedup: re-reading is idempotent
+                // and lets the host recover when FileContent was lost on
+                // the return path.
+                if ctrl_tx.send(GuestToHost::Ack { id }).is_err() {
+                    break;
+                }
                 eprintln!("[capsem-agent] FileRead {path}");
                 let ws = std::path::Path::new(GUEST_WORKSPACE_ROOT);
                 let msg = if let Err(e) = validate_file_path_safe(&path, ws) {
-                    GuestToHost::Error { id, message: format!("FileRead rejected: {e}") }
+                    GuestToHost::Error {
+                        id,
+                        message: format!("FileRead rejected: {e}"),
+                    }
                 } else {
                     match read_nofollow(&path) {
                         Ok(data) => GuestToHost::FileContent { id, path, data },
-                        Err(e) => GuestToHost::Error { id, message: format!("failed to read {path}: {e}") },
+                        Err(e) => GuestToHost::Error {
+                            id,
+                            message: format!("failed to read {path}: {e}"),
+                        },
                     }
                 };
-                if ctrl_tx.send(msg).is_err() { break; }
+                if ctrl_tx.send(msg).is_err() {
+                    break;
+                }
             }
             Ok(HostToGuest::FileDelete { id, path }) => {
+                // Ack on receipt so the host bridge clears the
+                // pending-ack entry. No dedup: a second delete of an
+                // already-removed file returns ENOENT, which we coerce
+                // to FileOpDone so a retried delete (whose original
+                // FileOpDone was lost on return) ends up as a success
+                // rather than an Error.
+                if ctrl_tx.send(GuestToHost::Ack { id }).is_err() {
+                    break;
+                }
                 eprintln!("[capsem-agent] FileDelete {path}");
                 let ws = std::path::Path::new(GUEST_WORKSPACE_ROOT);
                 let msg = if let Err(e) = validate_file_path_safe(&path, ws) {
-                    GuestToHost::Error { id, message: format!("FileDelete rejected: {e}") }
-                } else if let Err(e) = delete_nofollow(&path) {
-                    GuestToHost::Error { id, message: format!("failed to delete {path}: {e}") }
+                    GuestToHost::Error {
+                        id,
+                        message: format!("FileDelete rejected: {e}"),
+                    }
                 } else {
-                    GuestToHost::FileOpDone { id }
+                    match delete_nofollow(&path) {
+                        Ok(()) => GuestToHost::FileOpDone { id },
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            GuestToHost::FileOpDone { id }
+                        }
+                        Err(e) => GuestToHost::Error {
+                            id,
+                            message: format!("failed to delete {path}: {e}"),
+                        },
+                    }
                 };
-                if ctrl_tx.send(msg).is_err() { break; }
+                if ctrl_tx.send(msg).is_err() {
+                    break;
+                }
             }
             Ok(HostToGuest::PrepareSnapshot) => {
-                // Belt-and-suspender: sync() + BLKFLSBUF + fsync on /dev/loop0.
-                // The actual quiescence guarantee for Apple VZ save_state lives
-                // in capsem-service::ServiceState::save_restore_lock, which
-                // serializes save/restore across sibling VMs. This extra
-                // guest-side flush is defense-in-depth: if a future kernel or
-                // VirtioFS combo ever lets dirty loop-device pages slip past
-                // sync(), this covers it. Measurement at -n 1 shows stripping
-                // BLKFLSBUF here leaves the pass rate at 50/50 -- the flush
-                // alone is not what fixes the bug.
-                // fsfreeze on the overlayfs root is not called: it always
-                // returns ENOTSUP on this kernel.
-                eprintln!("[capsem-agent] PrepareSnapshot: syncing and flushing /dev/loop0");
-                unsafe { libc::sync(); }
+                // Flush guest dirty pages out to the system-overlay
+                // virtio-blk device (/dev/vdb) before host save_state /
+                // host-side APFS clonefile runs. sync() drains the page
+                // cache; BLKFLSBUF + fsync flush the block device's own
+                // buffers. The host then captures a coherent file.
+                //
+                // /mnt/shared/system/rootfs.img is no longer the guest's
+                // data path -- the guest only writes through /dev/vdb
+                // -- so no FUSE_FSYNC over VirtioFS is needed here.
+                eprintln!("[capsem-agent] PrepareSnapshot: syncing and flushing /dev/vdb");
+                unsafe {
+                    libc::sync();
+                }
 
-                // Open /dev/loop0 and flush its buffers.
-                let fd = unsafe { libc::open(c"/dev/loop0".as_ptr(), libc::O_RDWR) };
+                let fd = unsafe { libc::open(c"/dev/vdb".as_ptr(), libc::O_RDWR) };
                 if fd >= 0 {
                     const BLKFLSBUF: i32 = 0x1261;
                     unsafe {
                         if libc::ioctl(fd, BLKFLSBUF.try_into().unwrap()) != 0 {
-                            eprintln!("[capsem-agent] ioctl(BLKFLSBUF) failed: {}", std::io::Error::last_os_error());
+                            eprintln!(
+                                "[capsem-agent] ioctl(BLKFLSBUF) failed: {}",
+                                std::io::Error::last_os_error()
+                            );
                         }
                         if libc::fsync(fd) != 0 {
-                            eprintln!("[capsem-agent] fsync failed: {}", std::io::Error::last_os_error());
+                            eprintln!(
+                                "[capsem-agent] fsync failed: {}",
+                                std::io::Error::last_os_error()
+                            );
                         }
                         libc::close(fd);
                     }
                 } else {
-                    eprintln!("[capsem-agent] failed to open /dev/loop0 for flush: {}", std::io::Error::last_os_error());
+                    eprintln!(
+                        "[capsem-agent] failed to open /dev/vdb for flush: {}",
+                        std::io::Error::last_os_error()
+                    );
                 }
 
-                if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() { break; }
+                if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() {
+                    break;
+                }
             }
             Ok(HostToGuest::Unfreeze) => {
                 eprintln!("[capsem-agent] Unfreeze: thawing /");
-                match std::process::Command::new("fsfreeze").args(["-u", "/"]).status() {
-                    Ok(st) if !st.success() => eprintln!("[capsem-agent] fsfreeze -u failed: {}", st),
+                match std::process::Command::new("fsfreeze")
+                    .args(["-u", "/"])
+                    .status()
+                {
+                    Ok(st) if !st.success() => {
+                        eprintln!("[capsem-agent] fsfreeze -u failed: {}", st)
+                    }
                     Err(e) => eprintln!("[capsem-agent] failed to execute fsfreeze: {e}"),
                     _ => {}
                 }
@@ -1233,8 +1727,8 @@ fn control_loop(
 
 #[cfg(test)]
 mod tests {
+    use super::vsock_io::{SockaddrVm, AF_VSOCK};
     use super::*;
-    use super::vsock_io::{AF_VSOCK, SockaddrVm};
     use std::io::Write;
     use std::os::unix::io::FromRawFd;
 
@@ -1259,7 +1753,9 @@ mod tests {
     #[test]
     fn agent_ready_roundtrip() {
         let (read_fd, write_fd) = make_pipe();
-        let msg = GuestToHost::Ready { version: "0.3.0".to_string() };
+        let msg = GuestToHost::Ready {
+            version: "0.3.0".to_string(),
+        };
         send_guest_msg(write_fd, &msg).unwrap();
         // Simulate host-side receive.
         let mut len_buf = [0u8; 4];
@@ -1272,13 +1768,19 @@ mod tests {
             GuestToHost::Ready { version } => assert_eq!(version, "0.3.0"),
             other => panic!("expected Ready, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
     fn host_resize_decodable_by_agent() {
         let (read_fd, write_fd) = make_pipe();
-        let msg = HostToGuest::Resize { cols: 200, rows: 50 };
+        let msg = HostToGuest::Resize {
+            cols: 200,
+            rows: 50,
+        };
         let frame = capsem_proto::encode_host_msg(&msg).unwrap();
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
@@ -1289,7 +1791,10 @@ mod tests {
             }
             other => panic!("expected Resize, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1297,17 +1802,24 @@ mod tests {
         let (read_fd, write_fd) = make_pipe();
         let msg = HostToGuest::BootConfig {
             epoch_secs: 1708800000,
+            traceparent: String::new(),
         };
         let frame = capsem_proto::encode_host_msg(&msg).unwrap();
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
         match decoded {
-            HostToGuest::BootConfig { epoch_secs } => {
+            HostToGuest::BootConfig {
+                epoch_secs,
+                traceparent: _,
+            } => {
                 assert_eq!(epoch_secs, 1708800000);
             }
             other => panic!("expected BootConfig, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1327,7 +1839,10 @@ mod tests {
             }
             other => panic!("expected SetEnv, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1343,7 +1858,12 @@ mod tests {
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
         match decoded {
-            HostToGuest::FileWrite { id, path, data, mode } => {
+            HostToGuest::FileWrite {
+                id,
+                path,
+                data,
+                mode,
+            } => {
                 assert_eq!(id, 1);
                 assert_eq!(path, "/root/.gemini/settings.json");
                 assert_eq!(data, b"{}");
@@ -1351,7 +1871,10 @@ mod tests {
             }
             other => panic!("expected FileWrite, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1362,7 +1885,10 @@ mod tests {
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
         assert!(matches!(decoded, HostToGuest::BootConfigDone));
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1376,13 +1902,19 @@ mod tests {
         read_exact_fd(read_fd, &mut payload).unwrap();
         let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
         assert!(matches!(decoded, GuestToHost::BootReady));
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
     fn send_recv_exec_over_pipe() {
         let (read_fd, write_fd) = make_pipe();
-        let msg = HostToGuest::Exec { id: 99, command: "echo hi".to_string() };
+        let msg = HostToGuest::Exec {
+            id: 99,
+            command: "echo hi".to_string(),
+        };
         let frame = capsem_proto::encode_host_msg(&msg).unwrap();
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
@@ -1393,13 +1925,23 @@ mod tests {
             }
             other => panic!("expected Exec, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
     fn send_recv_exec_done_over_pipe() {
         let (read_fd, write_fd) = make_pipe();
-        send_guest_msg(write_fd, &GuestToHost::ExecDone { id: 99, exit_code: 1 }).unwrap();
+        send_guest_msg(
+            write_fd,
+            &GuestToHost::ExecDone {
+                id: 99,
+                exit_code: 1,
+            },
+        )
+        .unwrap();
         let mut len_buf = [0u8; 4];
         read_exact_fd(read_fd, &mut len_buf).unwrap();
         let len = u32::from_be_bytes(len_buf) as usize;
@@ -1413,7 +1955,10 @@ mod tests {
             }
             other => panic!("expected ExecDone, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1424,7 +1969,10 @@ mod tests {
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
         assert!(matches!(decoded, HostToGuest::PrepareSnapshot));
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1435,7 +1983,10 @@ mod tests {
         write_all_fd(write_fd, &frame).unwrap();
         let decoded = recv_host_msg(read_fd).unwrap();
         assert!(matches!(decoded, HostToGuest::Unfreeze));
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1449,7 +2000,10 @@ mod tests {
         read_exact_fd(read_fd, &mut payload).unwrap();
         let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
         assert!(matches!(decoded, GuestToHost::SnapshotReady));
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1457,12 +2011,17 @@ mod tests {
         let (read_fd, write_fd) = make_pipe();
 
         // Send host messages.
-        let ping_frame = capsem_proto::encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
+        let ping_frame =
+            capsem_proto::encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
         write_all_fd(write_fd, &ping_frame).unwrap();
-        let resize_frame = capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 80, rows: 24 }).unwrap();
+        let resize_frame =
+            capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 80, rows: 24 }).unwrap();
         write_all_fd(write_fd, &resize_frame).unwrap();
 
-        assert!(matches!(recv_host_msg(read_fd).unwrap(), HostToGuest::Ping { .. }));
+        assert!(matches!(
+            recv_host_msg(read_fd).unwrap(),
+            HostToGuest::Ping { .. }
+        ));
         match recv_host_msg(read_fd).unwrap() {
             HostToGuest::Resize { cols, rows } => {
                 assert_eq!(cols, 80);
@@ -1471,7 +2030,10 @@ mod tests {
             other => panic!("expected Resize, got {other:?}"),
         }
 
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -1488,16 +2050,23 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
     fn recv_eof_returns_error() {
         let (read_fd, write_fd) = make_pipe();
-        unsafe { libc::close(write_fd); }
+        unsafe {
+            libc::close(write_fd);
+        }
         let result = recv_host_msg(read_fd);
         assert!(result.is_err());
-        unsafe { libc::close(read_fd); }
+        unsafe {
+            libc::close(read_fd);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1586,12 +2155,16 @@ mod tests {
 
         set_winsize(master_fd, 1, 1);
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-        unsafe { libc::ioctl(master_fd, libc::TIOCGWINSZ, &mut ws); }
+        unsafe {
+            libc::ioctl(master_fd, libc::TIOCGWINSZ, &mut ws);
+        }
         assert_eq!(ws.ws_col, 1);
         assert_eq!(ws.ws_row, 1);
 
         set_winsize(master_fd, 500, 200);
-        unsafe { libc::ioctl(master_fd, libc::TIOCGWINSZ, &mut ws); }
+        unsafe {
+            libc::ioctl(master_fd, libc::TIOCGWINSZ, &mut ws);
+        }
         assert_eq!(ws.ws_col, 500);
         assert_eq!(ws.ws_row, 200);
     }
@@ -1602,8 +2175,8 @@ mod tests {
 
     #[test]
     fn bridge_loop_concurrency_no_deadlock() {
-        use std::os::unix::net::UnixStream;
         use std::os::unix::io::AsRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut master_host, master_guest) = UnixStream::pair().unwrap();
         let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
@@ -1687,9 +2260,9 @@ mod tests {
 
     #[test]
     fn exec_echo_captures_output_and_exit_code() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -1714,9 +2287,9 @@ mod tests {
 
     #[test]
     fn exec_nonzero_exit_code() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -1737,17 +2310,15 @@ mod tests {
 
     #[test]
     fn exec_boot_env_passed_to_child() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
         let exec_fd = exec_guest.into_raw_fd();
 
-        let env = vec![
-            ("CAPSEM_TEST_VAR".to_string(), "test_value_42".to_string()),
-        ];
+        let env = vec![("CAPSEM_TEST_VAR".to_string(), "test_value_42".to_string())];
 
         std::thread::spawn(move || {
             run_exec_on_fds(exec_fd, &ctrl_tx, 1, "echo $CAPSEM_TEST_VAR", &env);
@@ -1764,9 +2335,9 @@ mod tests {
 
     #[test]
     fn exec_stderr_captured() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -1789,9 +2360,9 @@ mod tests {
 
     #[test]
     fn exec_sentinel_in_output_is_not_stripped() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -1799,7 +2370,9 @@ mod tests {
 
         std::thread::spawn(move || {
             run_exec_on_fds(
-                exec_fd, &ctrl_tx, 99,
+                exec_fd,
+                &ctrl_tx,
+                99,
                 r#"printf '\033_CAPSEM_EXIT:999:0\033\\'"#,
                 &[],
             );
@@ -1808,8 +2381,10 @@ mod tests {
         let _id = read_exec_started(&mut exec_host);
         let mut output = Vec::new();
         exec_host.read_to_end(&mut output).unwrap();
-        assert!(output.windows(14).any(|w| w == b"\x1b_CAPSEM_EXIT:"),
-            "sentinel sequence should pass through as plain output");
+        assert!(
+            output.windows(14).any(|w| w == b"\x1b_CAPSEM_EXIT:"),
+            "sentinel sequence should pass through as plain output"
+        );
 
         let (done_id, exit_code) = recv_exec_done(&ctrl_rx);
         assert_eq!(done_id, 99);
@@ -1818,9 +2393,9 @@ mod tests {
 
     #[test]
     fn exec_large_output_no_truncation() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -1828,7 +2403,9 @@ mod tests {
 
         std::thread::spawn(move || {
             run_exec_on_fds(
-                exec_fd, &ctrl_tx, 5,
+                exec_fd,
+                &ctrl_tx,
+                5,
                 "dd if=/dev/zero bs=1024 count=100 2>/dev/null | base64",
                 &[],
             );
@@ -1837,10 +2414,107 @@ mod tests {
         let _id = read_exec_started(&mut exec_host);
         let mut output = Vec::new();
         exec_host.read_to_end(&mut output).unwrap();
-        assert!(output.len() > 100_000, "output too small: {} bytes", output.len());
+        assert!(
+            output.len() > 100_000,
+            "output too small: {} bytes",
+            output.len()
+        );
 
         let (_, exit_code) = recv_exec_done(&ctrl_rx);
         assert_eq!(exit_code, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // ECONNRESET-retry helper for vsock_connect (Bug C)
+    //
+    // Post-`restoreMachineStateFromURL`, the host's vsock listener is
+    // registered but the kernel-side accept queue can briefly reset
+    // incoming connections. A single-shot vsock_connect from run_exec
+    // hits ECONNRESET, returns 126, and the agent's exec_done dedup
+    // cache poisons every host replay. The retry helper isolates
+    // the transient with a tight backoff; non-ECONNRESET errors bail
+    // immediately so we don't paper over real misconfiguration.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn vsock_connect_econnreset_retry_succeeds_on_first_try() {
+        let mut calls = 0;
+        let result = vsock_connect_with_econnreset_retry(|| {
+            calls += 1;
+            Ok(42 as RawFd)
+        });
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(calls, 1, "no retries needed when first call succeeds");
+    }
+
+    #[test]
+    fn vsock_connect_econnreset_retry_recovers_after_two_resets() {
+        let mut calls = 0;
+        let result = vsock_connect_with_econnreset_retry(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(io::Error::from(io::ErrorKind::ConnectionReset))
+            } else {
+                Ok(99 as RawFd)
+            }
+        });
+        assert_eq!(result.unwrap(), 99);
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn vsock_connect_econnreset_retry_bails_immediately_on_other_kinds() {
+        let mut calls = 0;
+        let result = vsock_connect_with_econnreset_retry(|| {
+            calls += 1;
+            Err(io::Error::from(io::ErrorKind::ConnectionRefused))
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionRefused);
+        assert_eq!(calls, 1, "connection-refused should not retry");
+    }
+
+    #[test]
+    fn vsock_connect_econnreset_retry_exhausts_on_persistent_reset() {
+        let mut calls = 0;
+        let result = vsock_connect_with_econnreset_retry(|| {
+            calls += 1;
+            Err(io::Error::from(io::ErrorKind::ConnectionReset))
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionReset);
+        assert_eq!(calls, ECONNRESET_MAX_ATTEMPTS, "should retry up to the cap");
+    }
+
+    // -----------------------------------------------------------------------
+    // ExecOutcome (Bug C): distinguishes a real exec exit from a transport
+    // failure that never reached the child. Only Done outcomes are cached
+    // in exec_done so a transient ECONNRESET cannot poison subsequent
+    // host retries/replays with a permanent 126.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exec_outcome_done_should_cache() {
+        assert!(ExecOutcome::Done(0).should_cache());
+        assert!(
+            ExecOutcome::Done(126).should_cache(),
+            "real exit_code=126 from a child process is still a real outcome to dedup"
+        );
+        assert!(ExecOutcome::Done(255).should_cache());
+    }
+
+    #[test]
+    fn exec_outcome_transport_failed_should_not_cache() {
+        assert!(!ExecOutcome::TransportFailed.should_cache());
+    }
+
+    #[test]
+    fn exec_outcome_exit_code_for_host() {
+        assert_eq!(ExecOutcome::Done(0).exit_code(), 0);
+        assert_eq!(ExecOutcome::Done(42).exit_code(), 42);
+        assert_eq!(
+            ExecOutcome::TransportFailed.exit_code(),
+            126,
+            "transport failure surfaces as 126 to the host so the caller still sees an ExecResult"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1889,14 +2563,18 @@ mod tests {
     fn parse_boot_timing_rejects_xss_names() {
         let dir = std::env::temp_dir();
         let path = dir.join("capsem-test-boot-timing-xss");
-        std::fs::write(&path, concat!(
-            "{\"name\":\"<script>alert(1)</script>\",\"duration_ms\":10}\n",
-            "{\"name\":\"normal\",\"duration_ms\":20}\n",
-            "{\"name\":\"a]};fetch('http://evil')\",\"duration_ms\":30}\n",
-            "{\"name\":\"\",\"duration_ms\":40}\n",
-            "{\"name\":\"has spaces\",\"duration_ms\":50}\n",
-            "{\"name\":\"path/../traversal\",\"duration_ms\":60}\n",
-        )).unwrap();
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"name\":\"<script>alert(1)</script>\",\"duration_ms\":10}\n",
+                "{\"name\":\"normal\",\"duration_ms\":20}\n",
+                "{\"name\":\"a]};fetch('http://evil')\",\"duration_ms\":30}\n",
+                "{\"name\":\"\",\"duration_ms\":40}\n",
+                "{\"name\":\"has spaces\",\"duration_ms\":50}\n",
+                "{\"name\":\"path/../traversal\",\"duration_ms\":60}\n",
+            ),
+        )
+        .unwrap();
         let result = parse_boot_timing(path.to_str().unwrap());
         assert_eq!(result.len(), 1, "only 'normal' should survive: {result:?}");
         assert_eq!(result[0].name, "normal");
@@ -1907,10 +2585,14 @@ mod tests {
     fn parse_boot_timing_rejects_huge_duration() {
         let dir = std::env::temp_dir();
         let path = dir.join("capsem-test-boot-timing-huge");
-        std::fs::write(&path, concat!(
-            "{\"name\":\"ok\",\"duration_ms\":1000}\n",
-            "{\"name\":\"huge\",\"duration_ms\":999999999}\n",
-        )).unwrap();
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"name\":\"ok\",\"duration_ms\":1000}\n",
+                "{\"name\":\"huge\",\"duration_ms\":999999999}\n",
+            ),
+        )
+        .unwrap();
         let result = parse_boot_timing(path.to_str().unwrap());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "ok");
@@ -2057,9 +2739,9 @@ mod tests {
 
     #[test]
     fn exec_stdout_and_stderr_both_appear_in_merged_stream() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -2068,7 +2750,9 @@ mod tests {
         // Generate distinct output on both stdout and stderr
         std::thread::spawn(move || {
             run_exec_on_fds(
-                exec_fd, &ctrl_tx, 50,
+                exec_fd,
+                &ctrl_tx,
+                50,
                 "echo STDOUT_MARKER; echo STDERR_MARKER >&2",
                 &[],
             );
@@ -2079,8 +2763,14 @@ mod tests {
         exec_host.read_to_end(&mut output).unwrap();
         let text = String::from_utf8_lossy(&output);
 
-        assert!(text.contains("STDOUT_MARKER"), "stdout missing from merged stream: {text}");
-        assert!(text.contains("STDERR_MARKER"), "stderr missing from merged stream: {text}");
+        assert!(
+            text.contains("STDOUT_MARKER"),
+            "stdout missing from merged stream: {text}"
+        );
+        assert!(
+            text.contains("STDERR_MARKER"),
+            "stderr missing from merged stream: {text}"
+        );
 
         let (_, exit_code) = recv_exec_done(&ctrl_rx);
         assert_eq!(exit_code, 0);
@@ -2088,9 +2778,9 @@ mod tests {
 
     #[test]
     fn exec_invalid_command_returns_nonzero() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -2110,9 +2800,9 @@ mod tests {
 
     #[test]
     fn exec_empty_command_succeeds() {
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -2136,9 +2826,9 @@ mod tests {
         // Verify the agent closes exec_fd (EOF to host) before sending ExecDone.
         // The host relies on this ordering to accumulate all output before the
         // ExecDone arrives on the control channel.
-        use std::os::unix::net::UnixStream;
-        use std::os::unix::io::IntoRawFd;
         use std::io::Read;
+        use std::os::unix::io::IntoRawFd;
+        use std::os::unix::net::UnixStream;
 
         let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
         let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
@@ -2180,10 +2870,14 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join("capsem-test-boot-timing-longname");
         let long_name = "a".repeat(65);
-        std::fs::write(&path, format!(
-            "{{\"name\":\"{long_name}\",\"duration_ms\":10}}\n\
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"name\":\"{long_name}\",\"duration_ms\":10}}\n\
              {{\"name\":\"ok\",\"duration_ms\":20}}\n"
-        )).unwrap();
+            ),
+        )
+        .unwrap();
         let result = parse_boot_timing(path.to_str().unwrap());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "ok");
@@ -2201,11 +2895,15 @@ mod tests {
         let len_bytes = 10u32.to_be_bytes();
         write_all_fd(write_fd, &len_bytes).unwrap();
         write_all_fd(write_fd, &[0u8; 5]).unwrap();
-        unsafe { libc::close(write_fd); }
+        unsafe {
+            libc::close(write_fd);
+        }
 
         let result = recv_host_msg(read_fd);
         assert!(result.is_err());
-        unsafe { libc::close(read_fd); }
+        unsafe {
+            libc::close(read_fd);
+        }
     }
 
     #[test]
@@ -2219,7 +2917,10 @@ mod tests {
         read_exact_fd(read_fd, &mut payload).unwrap();
         let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
         assert!(matches!(decoded, GuestToHost::Pong));
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -2245,7 +2946,10 @@ mod tests {
             }
             other => panic!("expected FileContent, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -2269,7 +2973,10 @@ mod tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -2286,7 +2993,10 @@ mod tests {
             GuestToHost::FileOpDone { id } => assert_eq!(id, 99),
             other => panic!("expected FileOpDone, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     // -------------------------------------------------------------------
@@ -2310,7 +3020,10 @@ mod tests {
             }
             other => panic!("expected FileRead, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     #[test]
@@ -2330,7 +3043,10 @@ mod tests {
             }
             other => panic!("expected FileDelete, got {other:?}"),
         }
-        unsafe { libc::close(read_fd); libc::close(write_fd); }
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
     }
 
     // -------------------------------------------------------------------
@@ -2338,9 +3054,19 @@ mod tests {
     // -------------------------------------------------------------------
 
     /// Feed host messages into control_loop and collect guest responses.
-    fn run_control_loop_with_messages(
+    fn run_control_loop_with_messages(messages: Vec<HostToGuest>) -> Vec<GuestToHost> {
+        run_control_loop_with_messages_and_pending(messages, None).0
+    }
+
+    /// Same as `run_control_loop_with_messages` but exposes the
+    /// pending_responses map so AckReply tests can inspect it.
+    fn run_control_loop_with_messages_and_pending(
         messages: Vec<HostToGuest>,
-    ) -> Vec<GuestToHost> {
+        seed: Option<Vec<(u64, GuestToHost)>>,
+    ) -> (
+        Vec<GuestToHost>,
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
+    ) {
         let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
         let pty = openpty(None, None).expect("openpty");
         let master_fd = pty.master.as_raw_fd();
@@ -2359,10 +3085,30 @@ mod tests {
             let frame = capsem_proto::encode_host_msg(msg).unwrap();
             write_all_fd(ctrl_write_fd, &frame).unwrap();
         }
-        unsafe { libc::close(ctrl_write_fd); }
+        unsafe {
+            libc::close(ctrl_write_fd);
+        }
+
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Some(entries) = seed {
+            let mut p = pending.lock().unwrap();
+            for (id, msg) in entries {
+                p.insert(id, msg);
+            }
+        }
+        let pending_for_loop = std::sync::Arc::clone(&pending);
 
         let handle = thread::spawn(move || {
-            control_loop(ctrl_read_fd, master_fd, child_pid, &[], ctrl_tx);
+            control_loop(
+                ctrl_read_fd,
+                master_fd,
+                child_pid,
+                &[],
+                ctrl_tx,
+                std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                pending_for_loop,
+            );
         });
 
         handle.join().unwrap();
@@ -2370,14 +3116,16 @@ mod tests {
         // Kill the sleep process immediately using std (handles waitpid internally).
         let _ = child.kill();
         let _ = child.wait();
-        unsafe { libc::close(ctrl_read_fd); }
+        unsafe {
+            libc::close(ctrl_read_fd);
+        }
 
         // Drain the channel.
         let mut responses = Vec::new();
         while let Ok(msg) = ctrl_rx.try_recv() {
             responses.push(msg);
         }
-        responses
+        (responses, pending)
     }
 
     #[test]
@@ -2413,15 +3161,28 @@ mod tests {
         let (ctrl_tx, _ctrl_rx) = std::sync::mpsc::channel();
 
         // Send resize then close.
-        let frame = capsem_proto::encode_host_msg(
-            &HostToGuest::Resize { cols: 132, rows: 43 }
-        ).unwrap();
+        let frame = capsem_proto::encode_host_msg(&HostToGuest::Resize {
+            cols: 132,
+            rows: 43,
+        })
+        .unwrap();
         write_all_fd(ctrl_write_fd, &frame).unwrap();
-        unsafe { libc::close(ctrl_write_fd); }
+        unsafe {
+            libc::close(ctrl_write_fd);
+        }
 
         let master_fd_check = master_fd;
         let handle = thread::spawn(move || {
-            control_loop(ctrl_read_fd, master_fd, child_pid, &[], ctrl_tx);
+            control_loop(
+                ctrl_read_fd,
+                master_fd,
+                child_pid,
+                &[],
+                ctrl_tx,
+                std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            );
         });
         handle.join().unwrap();
 
@@ -2434,27 +3195,33 @@ mod tests {
 
         let _ = child.kill();
         let _ = child.wait();
-        unsafe { libc::close(ctrl_read_fd); }
+        unsafe {
+            libc::close(ctrl_read_fd);
+        }
     }
 
     #[test]
     fn control_loop_file_write_path_traversal_rejected() {
         // Path traversal is rejected by validate_file_path (before workspace check),
         // so this works on macOS even though /root doesn't exist.
-        let responses = run_control_loop_with_messages(vec![
-            HostToGuest::FileWrite {
-                id: 20,
-                path: "/etc/../etc/passwd".into(),
-                data: b"evil".to_vec(),
-                mode: 0o644,
-            },
-        ]);
-        assert_eq!(responses.len(), 1);
-        match &responses[0] {
+        let responses = run_control_loop_with_messages(vec![HostToGuest::FileWrite {
+            id: 20,
+            path: "/etc/../etc/passwd".into(),
+            data: b"evil".to_vec(),
+            mode: 0o644,
+        }]);
+        // First response is the Ack (sent on receipt before processing,
+        // so the host bridge can clear the pending-ack map even when
+        // the agent later rejects the request); second is the Error.
+        assert_eq!(responses.len(), 2);
+        assert!(matches!(responses[0], GuestToHost::Ack { id: 20 }));
+        match &responses[1] {
             GuestToHost::Error { id, message } => {
                 assert_eq!(*id, 20);
-                assert!(message.contains("rejected") || message.contains("traversal"),
-                    "got: {message}");
+                assert!(
+                    message.contains("rejected") || message.contains("traversal"),
+                    "got: {message}"
+                );
             }
             other => panic!("expected Error for traversal, got {other:?}"),
         }
@@ -2464,14 +3231,13 @@ mod tests {
     fn control_loop_file_read_rejected_outside_workspace() {
         // /etc/hostname is outside /root workspace, rejected by validate_file_path_safe
         // (or by workspace root canonicalization failure on macOS).
-        let responses = run_control_loop_with_messages(vec![
-            HostToGuest::FileRead {
-                id: 10,
-                path: "/etc/hostname".into(),
-            },
-        ]);
-        assert_eq!(responses.len(), 1);
-        match &responses[0] {
+        let responses = run_control_loop_with_messages(vec![HostToGuest::FileRead {
+            id: 10,
+            path: "/etc/hostname".into(),
+        }]);
+        assert_eq!(responses.len(), 2);
+        assert!(matches!(responses[0], GuestToHost::Ack { id: 10 }));
+        match &responses[1] {
             GuestToHost::Error { id, .. } => assert_eq!(*id, 10),
             other => panic!("expected Error, got {other:?}"),
         }
@@ -2479,14 +3245,13 @@ mod tests {
 
     #[test]
     fn control_loop_file_delete_rejected_outside_workspace() {
-        let responses = run_control_loop_with_messages(vec![
-            HostToGuest::FileDelete {
-                id: 30,
-                path: "/tmp/some-file".into(),
-            },
-        ]);
-        assert_eq!(responses.len(), 1);
-        match &responses[0] {
+        let responses = run_control_loop_with_messages(vec![HostToGuest::FileDelete {
+            id: 30,
+            path: "/tmp/some-file".into(),
+        }]);
+        assert_eq!(responses.len(), 2);
+        assert!(matches!(responses[0], GuestToHost::Ack { id: 30 }));
+        match &responses[1] {
             GuestToHost::Error { id, .. } => assert_eq!(*id, 30),
             other => panic!("expected Error, got {other:?}"),
         }
@@ -2497,7 +3262,10 @@ mod tests {
         // BootConfig is unexpected during control_loop (it's a boot-phase message).
         // control_loop should log it and continue.
         let responses = run_control_loop_with_messages(vec![
-            HostToGuest::BootConfig { epoch_secs: 12345 },
+            HostToGuest::BootConfig {
+                epoch_secs: 12345,
+                traceparent: String::new(),
+            },
             HostToGuest::Ping { epoch_secs: 0 },
         ]);
         // The BootConfig is just logged, only the Ping produces a response.
@@ -2512,6 +3280,81 @@ mod tests {
         assert!(responses.is_empty());
     }
 
+    #[test]
+    fn control_loop_ack_reply_removes_pending_entry() {
+        // Seed pending_responses with two entries, send AckReply for one,
+        // verify only the matching entry was removed.
+        let seed = vec![
+            (
+                42,
+                GuestToHost::ExecDone {
+                    id: 42,
+                    exit_code: 0,
+                },
+            ),
+            (43, GuestToHost::FileOpDone { id: 43 }),
+        ];
+        let (_responses, pending) = run_control_loop_with_messages_and_pending(
+            vec![HostToGuest::AckReply { id: 42 }],
+            Some(seed),
+        );
+        let p = pending.lock().unwrap();
+        assert_eq!(p.len(), 1);
+        assert!(!p.contains_key(&42));
+        assert!(p.contains_key(&43));
+    }
+
+    #[test]
+    fn control_loop_ack_reply_for_unknown_id_is_no_op() {
+        // AckReply for an id that is not in pending_responses should be a no-op
+        // (e.g. a duplicate AckReply from a replayed response that landed twice).
+        let (_responses, pending) = run_control_loop_with_messages_and_pending(
+            vec![HostToGuest::AckReply { id: 9999 }],
+            None,
+        );
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ackable_response_id_covers_response_variants() {
+        assert_eq!(
+            ackable_response_id(&GuestToHost::ExecDone {
+                id: 1,
+                exit_code: 0
+            }),
+            Some(1)
+        );
+        assert_eq!(
+            ackable_response_id(&GuestToHost::FileOpDone { id: 2 }),
+            Some(2)
+        );
+        assert_eq!(
+            ackable_response_id(&GuestToHost::FileContent {
+                id: 3,
+                path: "/x".into(),
+                data: vec![]
+            }),
+            Some(3)
+        );
+        assert_eq!(
+            ackable_response_id(&GuestToHost::Error {
+                id: 4,
+                message: "x".into()
+            }),
+            Some(4)
+        );
+        // Non-ackable variants
+        assert_eq!(ackable_response_id(&GuestToHost::Pong), None);
+        assert_eq!(ackable_response_id(&GuestToHost::Ack { id: 5 }), None);
+        assert_eq!(ackable_response_id(&GuestToHost::SnapshotReady), None);
+        assert_eq!(
+            ackable_response_id(&GuestToHost::Ready {
+                version: "x".into()
+            }),
+            None
+        );
+    }
+
     // -------------------------------------------------------------------
     // Boot timing: exact boundary
     // -------------------------------------------------------------------
@@ -2521,9 +3364,11 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join("capsem-test-boot-timing-boundary");
         let name_64 = "a".repeat(64); // exactly at limit, should pass
-        std::fs::write(&path, format!(
-            "{{\"name\":\"{name_64}\",\"duration_ms\":10}}\n"
-        )).unwrap();
+        std::fs::write(
+            &path,
+            format!("{{\"name\":\"{name_64}\",\"duration_ms\":10}}\n"),
+        )
+        .unwrap();
         let result = parse_boot_timing(path.to_str().unwrap());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, name_64);

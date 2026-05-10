@@ -16,7 +16,9 @@ from helpers.mcp import content_text, parse_content, wait_exec_ready as wait_rea
 pytestmark = pytest.mark.mcp
 
 MAX_FORK_SECS = 2.0
-MAX_IMAGE_SIZE_MB = 12
+# Keep this well below "sparse file accidentally reported as 2GB" while
+# leaving room for package-manager metadata drift in the installed fixture.
+MAX_IMAGE_SIZE_MB = 32
 
 
 def test_winter_is_coming(mcp_session):

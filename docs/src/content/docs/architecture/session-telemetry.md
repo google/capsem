@@ -5,7 +5,7 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own SQLite database (`session.db`) that records all network requests, AI model calls, MCP tool invocations, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
+Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
 
 ## Schema overview
 
@@ -50,7 +50,31 @@ erDiagram
         text method
         text tool_name
         text decision
+        text policy_action
+        text policy_rule
         int duration_ms
+    }
+    dns_events {
+        int id PK
+        text qname
+        int qtype
+        int rcode
+        text decision
+        text matched_rule
+    }
+    exec_events {
+        int id PK
+        int exec_id
+        text command
+        int exit_code
+        int duration_ms
+    }
+    audit_events {
+        int id PK
+        int pid
+        int ppid
+        text exe
+        text argv
     }
     fs_events {
         int id PK
@@ -99,6 +123,11 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | `request_body_preview` | TEXT | First 4 KB of request body |
 | `response_body_preview` | TEXT | First 4 KB of response body |
 | `conn_type` | TEXT | Default `https`, `https-mitm` for proxied |
+| `policy_mode` | TEXT | Policy engine mode, when set |
+| `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
+| `policy_rule` | TEXT | Matching policy rule key |
+| `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
+| `trace_id` | TEXT | Cross-table correlation ID |
 
 ### model_calls
 
@@ -147,6 +176,7 @@ Tool invocations extracted from model responses. One row per `tool_use` content 
 | `arguments` | TEXT | JSON arguments |
 | `origin` | TEXT | `native`, `local`, `mcp_proxy` |
 | `mcp_call_id` | INTEGER | FK to `mcp_calls` (reserved, not yet populated) |
+| `trace_id` | TEXT | Cross-table correlation ID |
 
 ### tool_responses
 
@@ -159,10 +189,11 @@ Tool results from subsequent requests (matched by `call_id`).
 | `call_id` | TEXT | Matches `tool_calls.call_id` |
 | `content_preview` | TEXT | Truncated tool result |
 | `is_error` | INTEGER | Boolean: 1 if tool returned error |
+| `trace_id` | TEXT | Cross-table correlation ID |
 
 ### mcp_calls
 
-MCP JSON-RPC tool invocations through the guest MCP gateway (vsock:5003).
+MCP JSON-RPC tool invocations through the guest MCP relay and host MITM MCP endpoint (framed vsock:5002).
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -180,6 +211,79 @@ MCP JSON-RPC tool invocations through the guest MCP gateway (vsock:5003).
 | `process_name` | TEXT | Guest process |
 | `bytes_sent` | INTEGER | Request size |
 | `bytes_received` | INTEGER | Response size |
+| `policy_mode` | TEXT | Legacy MCP policy mode, when used |
+| `policy_action` | TEXT | policy decision (`allow`, `ask`, `deny`, `rewrite`) |
+| `policy_rule` | TEXT | Matching rule key, for example `policy.mcp.block_prod_token` |
+| `policy_reason` | TEXT | Optional audit reason |
+| `trace_id` | TEXT | Cross-table correlation ID |
+
+### dns_events
+
+DNS queries handled by the host DNS proxy.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp` | TEXT | ISO 8601 |
+| `qname` | TEXT | Queried name |
+| `qtype` | INTEGER | DNS record type |
+| `qclass` | INTEGER | DNS class |
+| `rcode` | INTEGER | DNS response code |
+| `decision` | TEXT | `allowed`, `denied`, `redirected`, or `error` |
+| `matched_rule` | TEXT | Domain or Policy DNS rule that matched |
+| `source_proto` | TEXT | DNS transport source |
+| `process_name` | TEXT | Guest process, when known |
+| `upstream_resolver_ms` | INTEGER | Upstream resolver latency |
+| `trace_id` | TEXT | Cross-table correlation ID |
+| `policy_mode` | TEXT | Policy engine mode, when set |
+| `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
+| `policy_rule` | TEXT | Matching policy rule key |
+| `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
+
+### exec_events
+
+Commands executed through Capsem service APIs and MCP tools.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp` | TEXT | ISO 8601 |
+| `exec_id` | INTEGER | Per-session exec identifier |
+| `command` | TEXT | Command string |
+| `exit_code` | INTEGER | Process exit code, when complete |
+| `duration_ms` | INTEGER | Runtime duration, when complete |
+| `stdout_preview` | TEXT | Truncated stdout |
+| `stderr_preview` | TEXT | Truncated stderr |
+| `stdout_bytes` | INTEGER | Full stdout byte count |
+| `stderr_bytes` | INTEGER | Full stderr byte count |
+| `source` | TEXT | Source path, usually `api` or MCP |
+| `mcp_call_id` | INTEGER | Related `mcp_calls.id`, when known |
+| `trace_id` | TEXT | Cross-table correlation ID |
+| `process_name` | TEXT | Guest process name, when known |
+| `pid` | INTEGER | Guest process ID, when known |
+
+### audit_events
+
+Kernel audit `execve` records streamed from the guest over vsock:5006.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp` | TEXT | ISO 8601 |
+| `pid` | INTEGER | Guest process ID |
+| `ppid` | INTEGER | Guest parent process ID |
+| `uid` | INTEGER | Guest user ID |
+| `exe` | TEXT | Executable path |
+| `comm` | TEXT | Kernel command name |
+| `argv` | TEXT | Reconstructed command arguments |
+| `cwd` | TEXT | Working directory |
+| `exit_code` | INTEGER | Exit code, when known |
+| `session_id` | INTEGER | Kernel audit session ID |
+| `tty` | TEXT | TTY, when present |
+| `audit_id` | TEXT | Kernel audit event ID |
+| `exec_event_id` | INTEGER | Related `exec_events.id`, when correlated |
+| `parent_exe` | TEXT | Parent executable, when known |
+| `trace_id` | TEXT | Cross-table correlation ID |
 
 ### fs_events
 
@@ -192,6 +296,7 @@ File system changes in the workspace (tracked by VirtioFS).
 | `action` | TEXT | `created`, `modified`, `deleted`, `restored` |
 | `path` | TEXT | File path relative to workspace |
 | `size` | INTEGER | File size in bytes |
+| `trace_id` | TEXT | Cross-table correlation ID |
 
 ### snapshot_events
 
@@ -207,6 +312,7 @@ Automatic and manual workspace snapshots.
 | `files_count` | INTEGER | Files in snapshot |
 | `start_fs_event_id` | INTEGER | First fs_event in range |
 | `stop_fs_event_id` | INTEGER | Last fs_event in range |
+| `trace_id` | TEXT | Cross-table correlation ID |
 
 ## Data flow
 
@@ -214,7 +320,10 @@ Automatic and manual workspace snapshots.
 graph LR
     subgraph "Event Sources"
         MITM["MITM Proxy<br/>(vsock:5002)"]
-        MCP["MCP Gateway<br/>(vsock:5003)"]
+        MCP["MITM MCP Endpoint<br/>(framed vsock:5002)"]
+        DNS["DNS Proxy"]
+        EXEC["Service exec path"]
+        AUDIT["Guest audit stream<br/>(vsock:5006)"]
         FS["VirtioFS<br/>(file watcher)"]
         SNAP["Snapshot scheduler"]
     end
@@ -227,6 +336,9 @@ graph LR
 
     MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| CH
     MCP -->|"WriteOp::McpCall"| CH
+    DNS -->|"WriteOp::DnsEvent"| CH
+    EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| CH
+    AUDIT -->|"WriteOp::AuditEvent"| CH
     FS -->|"WriteOp::FileEvent"| CH
     SNAP -->|"WriteOp::SnapshotEvent"| CH
     CH --> WT
@@ -239,11 +351,136 @@ graph LR
 |---------|--------|----------|
 | `WriteOp::NetEvent` | MITM proxy | `net_events` |
 | `WriteOp::ModelCall` | MITM proxy (AI traffic) | `model_calls` + `tool_calls` + `tool_responses` |
-| `WriteOp::McpCall` | MCP gateway | `mcp_calls` |
+| `WriteOp::McpCall` | MITM MCP endpoint | `mcp_calls` |
+| `WriteOp::ExecEvent` / `ExecEventComplete` | Service exec path | `exec_events` |
+| `WriteOp::AuditEvent` | Guest audit stream | `audit_events` |
 | `WriteOp::FileEvent` | VirtioFS watcher | `fs_events` |
 | `WriteOp::SnapshotEvent` | Snapshot scheduler | `snapshot_events` |
+| `WriteOp::DnsEvent` | DNS proxy | `dns_events` |
 
-### Writer architecture
+## Policy Decision Audit
+
+Use `just query-session` to prove that a policy decision happened at the
+intended boundary and that blocked or rewritten payloads did not leak.
+
+### MCP
+
+```bash
+just query-session "
+SELECT timestamp, tool_name, decision, policy_action, policy_rule, policy_reason, error_message
+FROM mcp_calls
+WHERE policy_rule IS NOT NULL
+ORDER BY id DESC
+LIMIT 20;"
+```
+
+For no-dispatch checks, pair the policy row with the expected error response:
+
+```bash
+just query-session "
+SELECT tool_name, policy_action, policy_rule, response_preview
+FROM mcp_calls
+WHERE policy_action IN ('ask', 'deny', 'rewrite')
+ORDER BY id DESC
+LIMIT 20;"
+```
+
+MCP block decisions are currently logged as `policy_action = 'deny'` for
+legacy compatibility; named rule syntax still uses `decision = "block"`.
+
+### HTTP
+
+```bash
+just query-session "
+SELECT timestamp, domain, method, path, decision, matched_rule, status_code
+     , policy_action, policy_rule, policy_reason
+FROM net_events
+WHERE matched_rule IS NOT NULL OR policy_rule IS NOT NULL
+ORDER BY id DESC
+LIMIT 20;"
+```
+
+Header-strip rules should be checked against the captured headers:
+
+```bash
+just query-session "
+SELECT domain, request_headers, response_headers
+FROM net_events
+WHERE matched_rule = 'policy.http.strip_credentials'
+ORDER BY id DESC
+LIMIT 5;"
+```
+
+The stripped header names may appear as keys depending on capture settings,
+but stripped secret values must not appear in header or body preview fields.
+
+### DNS
+
+```bash
+just query-session "
+SELECT timestamp, qname, qtype, rcode, decision, matched_rule, process_name
+     , policy_action, policy_rule, policy_reason
+FROM dns_events
+WHERE matched_rule IS NOT NULL OR policy_rule IS NOT NULL OR decision != 'allowed'
+ORDER BY id DESC
+LIMIT 20;"
+```
+
+DNS block rows prove no upstream resolution happened when
+`upstream_resolver_ms = 0`. DNS rewrite rows should carry the policy rule and
+`policy_action = 'rewrite'`; synthetic answer payloads are not stored in
+session telemetry.
+
+### Model and Tool Traffic
+
+Model policy uses the existing parsed AI rows plus policy rule metadata as
+the enforcement slice lands. Today, use these rows to prove the subject and
+no-leak side of model policy tests:
+
+```bash
+just query-session "
+SELECT id, provider, model, path, trace_id, request_body_preview, text_content
+FROM model_calls
+ORDER BY id DESC
+LIMIT 10;"
+```
+
+```bash
+just query-session "
+SELECT tc.tool_name, tc.origin, tc.arguments, tr.content_preview, tc.trace_id
+FROM tool_calls tc
+LEFT JOIN tool_responses tr
+  ON tr.call_id = tc.call_id AND tr.trace_id = tc.trace_id
+ORDER BY tc.id DESC
+LIMIT 20;"
+```
+
+Model request policy records no-leak decisions on the associated `net_events`
+row. Model response, tool-call, and tool-response enforcement use the same
+rule, decision, and reason vocabulary on `net_events`; response-side rewrites
+must show only the rewritten preview.
+
+### Policy Hooks
+
+Policy Hook Spec0 callouts write one row per decision attempt:
+
+```bash
+just query-session "
+SELECT endpoint_id, callback, decision, status, rule_id, latency_ms,
+       fallback, error, trace_id
+FROM policy_hook_events
+ORDER BY id DESC
+LIMIT 20;"
+```
+
+Rows include the endpoint id, Spec0 version/hash, decision id, callback,
+decision, rule id, reason, latency, timeout/schema/transport error text,
+fail-closed fallback decision, audit tags, `trace_id`, and `session_id`.
+Hook tests should also query the downstream boundary row (`mcp_calls`,
+`net_events`, `dns_events`, or `model_calls`) when proving no-dispatch and
+no-leak behavior.
+
+## Writer Architecture
 
 The `DbWriter` spawns a dedicated thread that owns the SQLite connection:
 

@@ -26,6 +26,23 @@ Write tests first:
 
 Without a failing test first, it's easy to write tests that pass by accident or don't actually verify the behavior you intended.
 
+## Functional slice proof matrix
+
+Every non-trivial feature slice needs evidence in all of these categories before it can be called done. A green unit suite or a benchmark is not a substitute for functional or end-to-end proof.
+
+| Category | What it proves | Minimum expectation |
+|----------|----------------|---------------------|
+| Unit/contract | Pure logic, parser state machines, schema migration, helper APIs | Red/green tests for normal and edge behavior at the smallest useful boundary |
+| Functional | The feature works through its production-facing API, not just private helpers | Exercise the real module boundary with realistic inputs and assert outputs plus side effects |
+| Adversarial | The feature preserves security, privacy, and policy invariants when attacked | Malformed, oversized, denied, missing, racing, timeout, permission, and leak-prevention cases |
+| E2E/VM | The user-visible path works in a real Capsem session | Boot/run a VM or use the black-box CLI/MCP/service path, then inspect externally visible behavior |
+| Telemetry | Audit data is present, accurate, and queryable | Query `session.db` or logger readers for required rows, fields, decisions, errors, and attribution |
+| Performance | Hot paths stayed inside the accepted budget | Benchmarks or timing assertions with recorded numbers and regression criteria |
+
+If a category is genuinely impossible or deliberately deferred, record it as missing with a reason, owner, and follow-up task. Silent deferral is the bug. "Covered by later E2E" is not enough unless the tracker names the later test and the current milestone is explicitly scoped as internal-only.
+
+For policy, MITM, MCP, telemetry, networking, filesystem, process lifecycle, or sandbox-boundary work, the functional slice matrix is mandatory. The tests should prove not only that the happy path succeeds, but also that enforcement happens at the intended boundary: a blocked MCP tool does not dispatch, a blocked return does not leak, a denied URL does not reach the network, a malformed frame does not poison the stream, and telemetry records the truth.
+
 ## Parallel tests as dogfooding (n=4 is non-negotiable)
 
 `just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:

@@ -1,7 +1,7 @@
-"""MCP gateway integration tests.
+"""Guest MCP integration tests.
 
-Verifies that the capsem-mcp-server binary exists and that the host MCP
-gateway responds to JSON-RPC messages over vsock:5003.
+Verifies that the capsem-mcp-server binary exists and that the host
+MITM MCP endpoint responds to JSON-RPC messages over framed vsock:5002.
 """
 
 import json
@@ -17,16 +17,39 @@ from conftest import run
 # ---------------------------------------------------------------------------
 
 def _mcp_call(messages, timeout=15):
-    """Send NDJSON messages to capsem-mcp-server, collect responses.
+    """Send JSON-RPC messages to capsem-mcp-server, collect responses.
 
-    capsem-mcp-server connects to vsock:5003 on the host and relays
-    NDJSON lines bidirectionally. We send messages on stdin and read
-    responses from stdout.
+    capsem-mcp-server connects to the host MITM MCP endpoint on
+    vsock:5002 and relays stdio JSON-RPC over framed MCP records. We
+    send messages on stdin and read responses from stdout.
     """
     input_lines = "\n".join(json.dumps(m) for m in messages) + "\n"
     proc = subprocess.run(
         ["/run/capsem-mcp-server"],
         input=input_lines,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    assert proc.returncode == 0, (
+        f"capsem-mcp-server exited {proc.returncode}: {proc.stderr}"
+    )
+    responses = []
+    for line in proc.stdout.strip().splitlines():
+        line = line.strip()
+        if line:
+            responses.append(json.loads(line))
+    assert len(responses) > 0, (
+        f"capsem-mcp-server returned no responses (stderr: {proc.stderr})"
+    )
+    return responses
+
+
+def _mcp_raw(input_text, timeout=15):
+    """Send raw stdin to capsem-mcp-server and collect JSON responses."""
+    proc = subprocess.run(
+        ["/run/capsem-mcp-server"],
+        input=input_text,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -73,7 +96,7 @@ def test_mcp_initialize():
     resp = responses[0]
     assert resp.get("id") == 1
     assert "result" in resp
-    assert resp["result"]["serverInfo"]["name"] == "capsem-mcp-gateway"
+    assert resp["result"]["serverInfo"]["name"] == "capsem-mcp-mitm-endpoint"
 
 
 def test_mcp_tools_list():
@@ -100,6 +123,84 @@ def test_mcp_tools_list():
     assert "local__fetch_http" in names
     assert "local__grep_http" in names
     assert "local__http_headers" in names
+
+
+def test_mcp_invalid_json_recovers():
+    """Malformed JSON gets a parse error and the same bridge still works."""
+    init = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "after-bad-json",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "capsem-doctor", "version": "1.0"},
+        },
+    })
+    responses = _mcp_raw("{not json\n" + init + "\n")
+    parse_errors = [
+        r for r in responses
+        if "id" not in r and r.get("error", {}).get("code") == -32700
+    ]
+    assert len(parse_errors) == 1
+    init_resp = [r for r in responses if r.get("id") == "after-bad-json"]
+    assert len(init_resp) == 1
+    assert init_resp[0]["result"]["serverInfo"]["name"] == "capsem-mcp-mitm-endpoint"
+
+
+def test_mcp_notification_interleaving_has_no_responses():
+    """Notifications interleaved between requests must stay fire-and-forget."""
+    responses = _mcp_call([
+        {
+            "jsonrpc": "2.0",
+            "id": "notify-init",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "capsem-doctor", "version": "1.0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": {"progressToken": "doctor", "progress": 1, "total": 2},
+        },
+        {"jsonrpc": "2.0", "id": "notify-tools", "method": "tools/list"},
+    ])
+    assert {r.get("id") for r in responses} == {"notify-init", "notify-tools"}
+
+
+def test_mcp_oversized_request_returns_local_error_and_recovers():
+    """Oversized guest requests fail locally and do not poison the relay."""
+    responses = _mcp_call([
+        {
+            "jsonrpc": "2.0",
+            "id": "doctor-too-big",
+            "method": "tools/call",
+            "params": {
+                "name": "local__echo",
+                "arguments": {"text": "x" * 1100000},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "doctor-after-too-big",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "capsem-doctor", "version": "1.0"},
+            },
+        },
+    ], timeout=20)
+    by_id = {r["id"]: r for r in responses if "id" in r}
+    assert by_id["doctor-too-big"]["error"]["code"] == -32001
+    assert "frame encode failed" in by_id["doctor-too-big"]["error"]["message"]
+    assert by_id["doctor-after-too-big"]["result"]["serverInfo"]["name"] == (
+        "capsem-mcp-mitm-endpoint"
+    )
 
 
 def test_mcp_fetch_http_allowed_domain():
@@ -146,7 +247,7 @@ def test_mcp_fetch_http_blocked_domain():
     )
 
 
-# Every tool served by the in-VM MCP gateway is namespaced with its source
+# Every tool served through the guest MCP endpoint is namespaced with its source
 # server's key. The built-in tools all live behind the ``local`` server
 # (see ``config/defaults.json``'s ``mcp.local`` entry and
 # ``namespace_name`` in ``capsem-core/src/mcp/types.rs``), so their wire
@@ -164,7 +265,7 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
     """Helper: initialize + call a tool in one shot, return the result dict.
 
     ``tool_name`` is the bare tool identifier (e.g. ``fetch_http``); the
-    gateway's namespaced form (``local__fetch_http``) is applied here so
+    endpoint's namespaced form (``local__fetch_http``) is applied here so
     callers stay readable.
     """
     wire_name = ns(tool_name)

@@ -1,23 +1,23 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering};
-use anyhow::{Context, Result, anyhow};
-use clap::Parser;
-use tracing::{info, warn, error};
+use anyhow::{anyhow, Context, Result};
 use axum::{
-    routing::{get, post, delete},
     extract::{Path, Query, State},
     response::IntoResponse,
+    routing::{delete, get, post},
     Json, Router,
 };
-use tokio::net::UnixListener;
-use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
-use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use capsem_core::poll::{poll_until, PollOpts};
-use tower_http::trace::TraceLayer;
+use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use clap::Parser;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use tokio::net::UnixListener;
+use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
+use tower_http::trace::TraceLayer;
+use tracing::{error, info, warn};
 
 mod startup;
 
@@ -25,23 +25,53 @@ use capsem_service::api;
 use capsem_service::api::*;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
 use capsem_service::registry::{PersistentRegistry, PersistentVmEntry};
+use capsem_service::triage;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(long)] foreground: bool,
-    #[arg(long)] uds_path: Option<PathBuf>,
-    #[arg(long)] process_binary: Option<PathBuf>,
-    #[arg(long)] gateway_binary: Option<PathBuf>,
-    #[arg(long)] gateway_port: Option<u16>,
-    #[arg(long)] tray_binary: Option<PathBuf>,
-    #[arg(long)] assets_dir: Option<PathBuf>,
+    #[arg(long)]
+    foreground: bool,
+    #[arg(long)]
+    uds_path: Option<PathBuf>,
+    #[arg(long)]
+    process_binary: Option<PathBuf>,
+    #[arg(long)]
+    gateway_binary: Option<PathBuf>,
+    #[arg(long)]
+    gateway_port: Option<u16>,
+    #[arg(long)]
+    tray_binary: Option<PathBuf>,
+    #[arg(long)]
+    assets_dir: Option<PathBuf>,
     /// When set, exit the moment this PID goes away. Used by the pytest
     /// fixture to bound service lifetime to the test runner so an aborted
     /// pytest (Ctrl-C, xdist worker crash) can't leak a service + its
     /// companions. Real users never pass this.
-    #[arg(long)] parent_pid: Option<u32>,
+    #[arg(long)]
+    parent_pid: Option<u32>,
 }
+
+const PROCESS_ENV_ALLOWLIST: &[&str] = &[
+    "HOME",
+    "PATH",
+    "USER",
+    "TMPDIR",
+    "CAPSEM_HOME",
+    "CAPSEM_USER_CONFIG",
+    "CAPSEM_CORP_CONFIG",
+    // Tunable: bounded MITM MCP endpoint in-flight handler cap.
+    "CAPSEM_MCP_INFLIGHT",
+    // Tunable: pool size for the local builtin MCP server (rmcp stdio funnel).
+    "CAPSEM_MCP_BUILTIN_POOL",
+    // Read by capsem-process when constructing the framed MCP endpoint.
+    "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
+    "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
+    "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
+    // E2E-only: lets capsem-process dial a local fixture while preserving
+    // the guest-visible upstream host for MITM policy/provider detection.
+    "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+];
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -65,7 +95,7 @@ struct ServiceState {
     /// managed by this service. Apple's Virtualization.framework does not
     /// tolerate concurrent save/restore on sibling VMs: when two VZ instances
     /// each call saveMachineStateToURL (or one calls save_state while another
-    /// is mid-restore), one of them can come back with ext4-on-loop0 I/O
+    /// is mid-restore), one of them can come back with ext4 overlay I/O
     /// errors after resume. Held for the full suspend IPC + child-exit wait,
     /// and for the resume spawn + wait_for_vm_ready window. See
     /// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
@@ -116,11 +146,38 @@ pub struct ProvisionOptions<'a> {
 }
 
 /// Maximum number of `-failed-*` session dirs preserved across crashes /
-/// wait_for_vm_ready timeouts / dead-process cleanup. The preserved dirs
-/// hold the only host-side post-mortem signal we have (process.log,
-/// mcp-aggregator.stderr.log, serial.log, session.db), so too few is
-/// useless and too many accumulates disk for rare events.
-const MAX_FAILED_SESSIONS: usize = 5;
+/// wait_for_vm_ready timeouts / dead-process cleanup -- and now also for
+/// every clean DELETE, so post-mortem of Python-side test assertions that
+/// fire after /exec but before the test's `finally: delete()` works (the
+/// previous unlink-on-delete left only service.log, which doesn't show
+/// what the per-VM process or guest were doing). The preserved dirs hold
+/// the only host-side post-mortem signal we have (process.log,
+/// mcp-aggregator.stderr.log, serial.log, session.db). 32 is enough to
+/// span a 10-iteration stress suite that creates 1-3 VMs per iteration
+/// without losing earlier failures to the cull.
+const MAX_FAILED_SESSIONS: usize = 32;
+
+/// Result of [`ServiceState::preserve_failed_session_dir_outcome`].
+///
+/// AB-008: pulled out so callers can distinguish "already preserved by an
+/// earlier pass" (idempotent no-op) from real failures that should warn.
+#[derive(Debug)]
+pub(crate) enum PreserveOutcome {
+    /// Renamed to a `-failed-*` sibling.
+    Preserved(PathBuf),
+    /// The session dir was already gone (handled by a prior call, or never
+    /// there). Idempotent no-op.
+    AlreadyAbsent,
+    /// Rename failed for a real reason; the fallback `remove_dir_all`
+    /// reclaimed disk.
+    FailedAndRemoved { rename_error: std::io::Error },
+    /// Rename failed AND remove failed (other than `NotFound`); the dir is
+    /// orphaned on disk.
+    FailedAndOrphaned {
+        rename_error: std::io::Error,
+        remove_error: std::io::Error,
+    },
+}
 
 impl ServiceState {
     /// Build the Unix socket path for a VM instance.
@@ -188,7 +245,10 @@ impl ServiceState {
         if info.persistent {
             info!(id, "persistent VM process died, preserving session dir");
         } else {
-            info!(id, "ephemeral VM process died, preserving session dir for post-mortem");
+            info!(
+                id,
+                "ephemeral VM process died, preserving session dir for post-mortem"
+            );
             self.preserve_failed_session_dir(&info.session_dir, id);
         }
         let _ = std::fs::remove_file(&info.uds_path);
@@ -220,14 +280,8 @@ impl ServiceState {
     /// `remove_dir_all` so disk isn't leaked when the filesystem is
     /// already unhappy.
     fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) {
-        let failed_id = format!(
-            "{}-failed-{}",
-            id,
-            capsem_core::session::generate_session_id(),
-        );
-        let failed_dir = self.run_dir.join("sessions").join(&failed_id);
-        match std::fs::rename(session_dir, &failed_dir) {
-            Ok(()) => {
+        match self.preserve_failed_session_dir_outcome(session_dir, id) {
+            PreserveOutcome::Preserved(failed_dir) => {
                 info!(
                     id,
                     path = %failed_dir.display(),
@@ -240,23 +294,66 @@ impl ServiceState {
                     );
                 }
             }
-            Err(e) => {
+            // AB-008: idempotent. An earlier preservation pass already
+            // renamed or removed this dir, or the source was never there.
+            // No log -- the previous code emitted two scary WARN lines
+            // ("logs lost" + "orphaned on disk") that misrepresented an
+            // already-handled case as a fresh failure. Multiple cleanup
+            // paths (scrub_dead_process, the spawn-completion handler,
+            // handle_run cleanup) can race for the same session dir.
+            PreserveOutcome::AlreadyAbsent => {}
+            PreserveOutcome::FailedAndRemoved { rename_error } => {
                 warn!(
                     id,
                     from = %session_dir.display(),
-                    to = %failed_dir.display(),
-                    error = %e,
-                    "failed to preserve session dir for post-mortem -- logs lost; removing to reclaim disk"
+                    error = %rename_error,
+                    "failed to preserve session dir for post-mortem -- logs lost; removed to reclaim disk"
                 );
-                if let Err(e) = std::fs::remove_dir_all(session_dir) {
-                    warn!(
-                        id,
-                        path = %session_dir.display(),
-                        error = %e,
-                        "also failed to remove session dir -- orphaned on disk"
-                    );
-                }
             }
+            PreserveOutcome::FailedAndOrphaned { rename_error, remove_error } => {
+                warn!(
+                    id,
+                    from = %session_dir.display(),
+                    rename_error = %rename_error,
+                    error = %remove_error,
+                    "failed to preserve and failed to remove session dir -- orphaned on disk"
+                );
+            }
+        }
+    }
+
+    /// Pure FS-effect classifier for [`Self::preserve_failed_session_dir`].
+    ///
+    /// Returns the outcome so tests can assert on it without capturing
+    /// tracing output. Maps `ErrorKind::NotFound` from both the rename and
+    /// the fallback `remove_dir_all` to [`PreserveOutcome::AlreadyAbsent`]
+    /// so duplicate calls are idempotent. AB-008.
+    pub(crate) fn preserve_failed_session_dir_outcome(
+        &self,
+        session_dir: &std::path::Path,
+        id: &str,
+    ) -> PreserveOutcome {
+        let failed_id = format!(
+            "{}-failed-{}",
+            id,
+            capsem_core::session::generate_session_id(),
+        );
+        let failed_dir = self.run_dir.join("sessions").join(&failed_id);
+        match std::fs::rename(session_dir, &failed_dir) {
+            Ok(()) => PreserveOutcome::Preserved(failed_dir),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                PreserveOutcome::AlreadyAbsent
+            }
+            Err(rename_error) => match std::fs::remove_dir_all(session_dir) {
+                Ok(()) => PreserveOutcome::FailedAndRemoved { rename_error },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    PreserveOutcome::AlreadyAbsent
+                }
+                Err(remove_error) => PreserveOutcome::FailedAndOrphaned {
+                    rename_error,
+                    remove_error,
+                },
+            },
         }
     }
 
@@ -273,7 +370,9 @@ impl ServiceState {
             if !path.is_dir() {
                 continue;
             }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
             if !name.contains("-failed-") {
                 continue;
             }
@@ -298,11 +397,17 @@ impl ServiceState {
         Ok(())
     }
 
-    fn provision_sandbox(
-        self: &Arc<Self>,
-        options: ProvisionOptions,
-    ) -> Result<()> {
-        let ProvisionOptions { id, ram_mb, cpus, version_override, persistent, env, from, description } = options;
+    fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
+        let ProvisionOptions {
+            id,
+            ram_mb,
+            cpus,
+            version_override,
+            persistent,
+            env,
+            from,
+            description,
+        } = options;
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
@@ -319,7 +424,11 @@ impl ServiceState {
             validate_vm_name(id)?;
             let registry = self.persistent_registry.lock().unwrap();
             if registry.contains(id) {
-                return Err(anyhow!("persistent VM \"{}\" already exists. Use `capsem resume {}` to reconnect.", id, id));
+                return Err(anyhow!(
+                    "persistent VM \"{}\" already exists. Use `capsem resume {}` to reconnect.",
+                    id,
+                    id
+                ));
             }
         }
 
@@ -342,14 +451,18 @@ impl ServiceState {
                 return Err(anyhow!("sandbox already exists: {}", id));
             }
             if instances.len() >= max_concurrent_vms {
-                return Err(anyhow!("maximum number of concurrent VMs reached ({})", max_concurrent_vms));
+                return Err(anyhow!(
+                    "maximum number of concurrent VMs reached ({})",
+                    max_concurrent_vms
+                ));
             }
         }
 
         // Validate source sandbox if --from provided
         let source_entry = if let Some(ref from_name) = from {
             let registry = self.persistent_registry.lock().unwrap();
-            let entry = registry.get(from_name)
+            let entry = registry
+                .get(from_name)
                 .ok_or_else(|| anyhow!("source sandbox '{}' not found", from_name))?
                 .clone();
             Some(entry)
@@ -394,7 +507,11 @@ impl ServiceState {
                 .map(|d| d.map(|e| e.unwrap().file_name()).collect::<Vec<_>>())
                 .unwrap_or_default();
             error!(rootfs = %resolved.rootfs.display(), ?entries, "rootfs NOT FOUND");
-            return Err(anyhow!("rootfs not found at {}. Dir entries: {:?}", resolved.rootfs.display(), entries));
+            return Err(anyhow!(
+                "rootfs not found at {}. Dir entries: {:?}",
+                resolved.rootfs.display(),
+                entries
+            ));
         }
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
@@ -403,8 +520,8 @@ impl ServiceState {
 
         let mut child_cmd = tokio::process::Command::new(&self.process_binary);
         if !self.process_binary.exists() {
-             info!("process_binary does not exist at absolute path, trying target/debug/capsem-process");
-             child_cmd = tokio::process::Command::new("target/debug/capsem-process");
+            info!("process_binary does not exist at absolute path, trying target/debug/capsem-process");
+            child_cmd = tokio::process::Command::new("target/debug/capsem-process");
         }
 
         let process_log_path = session_dir.join("process.log");
@@ -432,23 +549,41 @@ impl ServiceState {
         // policy through an isolated test config without touching the
         // real ~/.capsem/user.toml).
         child_cmd.env_clear();
-        for key in &["HOME", "PATH", "USER", "TMPDIR", "CAPSEM_USER_CONFIG", "CAPSEM_CORP_CONFIG"] {
+        for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
                 child_cmd.env(key, val);
             }
         }
+        // W4: propagate trace context to the child process.
+        // CAPSEM_VM_ID, CAPSEM_TRACE_ID, TRACEPARENT, TRACESTATE.
+        for (k, v) in capsem_core::telemetry::child_trace_env(id) {
+            child_cmd.env(k, v);
+        }
 
         let mut child = child_cmd
-            .env("RUST_LOG", "capsem=info")
-            .arg("--id").arg(id)
-            .arg("--assets-dir").arg(&self.assets_dir)
-            .arg("--rootfs").arg(&resolved.rootfs)
-            .arg("--kernel").arg(&resolved.kernel)
-            .arg("--initrd").arg(&resolved.initrd)
-            .arg("--session-dir").arg(&session_dir)
-            .arg("--cpus").arg(cpus.to_string())
-            .arg("--ram-mb").arg(ram_mb.to_string())
-            .arg("--uds-path").arg(&uds_path)
+            .env(
+                "RUST_LOG",
+                std::env::var("RUST_LOG")
+                    .unwrap_or_else(|_| capsem_core::telemetry::with_subsys_targets("capsem=info")),
+            )
+            .arg("--id")
+            .arg(id)
+            .arg("--assets-dir")
+            .arg(&self.assets_dir)
+            .arg("--rootfs")
+            .arg(&resolved.rootfs)
+            .arg("--kernel")
+            .arg(&resolved.kernel)
+            .arg("--initrd")
+            .arg(&resolved.initrd)
+            .arg("--session-dir")
+            .arg(&session_dir)
+            .arg("--cpus")
+            .arg(cpus.to_string())
+            .arg("--ram-mb")
+            .arg(ram_mb.to_string())
+            .arg("--uds-path")
+            .arg(&uds_path)
             .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
             .stderr(std::process::Stdio::from(process_log_file))
             .spawn()
@@ -462,18 +597,30 @@ impl ServiceState {
         let uds_clone = uds_path.clone();
         let session_dir_clone = session_dir.clone();
         tokio::spawn(async move {
-            let _ = child.wait().await;
-            info!(id_clone, "capsem-process exited, cleaning up");
-            
+            let exit_status = child.wait().await.ok();
+            info!(id_clone, ?exit_status, "capsem-process exited, cleaning up");
+
             // An ephemeral VM's removal from the instances map below is
             // the trigger for preserve_failed_session_dir; if `removed`
-            // is Some, the child exited without going through an
-            // explicit shutdown handler (crash / SIGTERM / OOM). For
-            // persistent VMs we also flip the registry's `defunct`
-            // flag + snapshot the process.log tail so `capsem list` /
-            // `status` show the failure instead of a silent "Stopped".
+            // is Some, the child exited without an explicit
+            // capsem-service-side shutdown removing it first.
+            //
+            // BUT: a guest-initiated shutdown via `capsem-sysutil
+            // shutdown` (vsock:5004 -> ProcessToService::Shutdown
+            // Requested) also leaves the instance in the map -- the
+            // service has no listener for ShutdownRequested, the
+            // process just sends Shutdown to itself and exits cleanly
+            // with code 0. Treating that as "unexpected" flips the
+            // persistent registry to `defunct` so `capsem list` shows
+            // the VM as Defunct instead of Stopped, and the next
+            // `capsem resume` is misleadingly blocked.
+            //
+            // Distinguish: a clean exit (code 0) from the process is a
+            // graceful shutdown regardless of who initiated it. Any
+            // non-zero exit code or signal-kill is a crash.
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
-            let unexpected_exit = removed.is_some();
+            let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
+            let unexpected_exit = removed.is_some() && !clean_exit;
 
             // Persistent-VM registry bookkeeping. Checkpoint takes
             // precedence: a graceful suspend writes checkpoint.vzsave
@@ -514,12 +661,33 @@ impl ServiceState {
             // session.db survive for post-mortem. `find_failed_session_dir`
             // + handle_logs surface them to `capsem logs`.
             if let Some(info) = removed {
-                tracing::warn!(id_clone, "child exited unexpectedly (no explicit shutdown), preserving session dir");
-                if !info.persistent {
-                    state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
+                if unexpected_exit {
+                    tracing::warn!(
+                        id_clone,
+                        ?exit_status,
+                        "child exited unexpectedly, preserving session dir"
+                    );
+                    if !info.persistent {
+                        state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
+                    }
+                } else {
+                    tracing::info!(id_clone, "child exited cleanly (guest-initiated shutdown)");
+                    if !info.persistent {
+                        if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
+                            tracing::warn!(
+                                id_clone,
+                                path = %info.session_dir.display(),
+                                error = %e,
+                                "failed to remove clean ephemeral session dir"
+                            );
+                        }
+                    }
                 }
             } else {
-                tracing::debug!(id_clone, "child exited after explicit shutdown");
+                tracing::debug!(
+                    id_clone,
+                    "child exited after explicit service-side shutdown"
+                );
             }
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
@@ -532,7 +700,13 @@ impl ServiceState {
                 ram_mb,
                 cpus,
                 base_version: version.clone(),
-                created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+                created_at: format!(
+                    "{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                ),
                 session_dir: session_dir.clone(),
                 forked_from: from.clone(),
                 description: description.clone(),
@@ -545,26 +719,34 @@ impl ServiceState {
         }
 
         let mut instances = self.instances.lock().unwrap();
-        instances.insert(id.to_string(), InstanceInfo {
-            id: id.to_string(),
-            pid,
-            uds_path,
-            session_dir: session_dir.clone(),
-            ram_mb,
-            cpus,
-            start_time: std::time::Instant::now(),
-            base_version: version.clone(),
-            persistent,
-            env,
-            forked_from: from.clone(),
-        });
+        instances.insert(
+            id.to_string(),
+            InstanceInfo {
+                id: id.to_string(),
+                pid,
+                uds_path,
+                session_dir: session_dir.clone(),
+                ram_mb,
+                cpus,
+                start_time: std::time::Instant::now(),
+                base_version: version.clone(),
+                persistent,
+                env,
+                forked_from: from.clone(),
+            },
+        );
 
         Ok(())
     }
 
     /// Resume a stopped persistent VM by re-spawning capsem-process against its
     /// existing session directory.
-    fn resume_sandbox(self: &Arc<Self>, name: &str, ram_mb_override: Option<u64>, cpus_override: Option<u32>) -> Result<String> {
+    fn resume_sandbox(
+        self: &Arc<Self>,
+        name: &str,
+        ram_mb_override: Option<u64>,
+        cpus_override: Option<u32>,
+    ) -> Result<String> {
         self.cleanup_stale_instances();
 
         // Check if already running
@@ -577,7 +759,10 @@ impl ServiceState {
 
         let entry = {
             let registry = self.persistent_registry.lock().unwrap();
-            registry.get(name).cloned().ok_or_else(|| anyhow!("no persistent VM named \"{}\"", name))?
+            registry
+                .get(name)
+                .cloned()
+                .ok_or_else(|| anyhow!("no persistent VM named \"{}\"", name))?
         };
 
         if !entry.session_dir.exists() {
@@ -618,7 +803,9 @@ impl ServiceState {
 
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", name));
-        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
+        child_cmd
+            .arg("--env")
+            .arg(format!("CAPSEM_VM_NAME={}", name));
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {
@@ -647,23 +834,40 @@ impl ServiceState {
         // policy through an isolated test config without touching the
         // real ~/.capsem/user.toml).
         child_cmd.env_clear();
-        for key in &["HOME", "PATH", "USER", "TMPDIR", "CAPSEM_USER_CONFIG", "CAPSEM_CORP_CONFIG"] {
+        for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
                 child_cmd.env(key, val);
             }
         }
+        // W4: propagate trace context (resume path).
+        for (k, v) in capsem_core::telemetry::child_trace_env(name) {
+            child_cmd.env(k, v);
+        }
 
         let mut child = child_cmd
-            .env("RUST_LOG", "capsem=info")
-            .arg("--id").arg(name)
-            .arg("--assets-dir").arg(&self.assets_dir)
-            .arg("--rootfs").arg(&resolved.rootfs)
-            .arg("--kernel").arg(&resolved.kernel)
-            .arg("--initrd").arg(&resolved.initrd)
-            .arg("--session-dir").arg(&entry.session_dir)
-            .arg("--cpus").arg(cpus.to_string())
-            .arg("--ram-mb").arg(ram_mb.to_string())
-            .arg("--uds-path").arg(&uds_path)
+            .env(
+                "RUST_LOG",
+                std::env::var("RUST_LOG")
+                    .unwrap_or_else(|_| capsem_core::telemetry::with_subsys_targets("capsem=info")),
+            )
+            .arg("--id")
+            .arg(name)
+            .arg("--assets-dir")
+            .arg(&self.assets_dir)
+            .arg("--rootfs")
+            .arg(&resolved.rootfs)
+            .arg("--kernel")
+            .arg(&resolved.kernel)
+            .arg("--initrd")
+            .arg(&resolved.initrd)
+            .arg("--session-dir")
+            .arg(&entry.session_dir)
+            .arg("--cpus")
+            .arg(cpus.to_string())
+            .arg("--ram-mb")
+            .arg(ram_mb.to_string())
+            .arg("--uds-path")
+            .arg(&uds_path)
             .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
             .stderr(std::process::Stdio::from(process_log_file))
             .spawn()
@@ -676,43 +880,100 @@ impl ServiceState {
         let state_clone = Arc::clone(self);
         let uds_clone = uds_path.clone();
         tokio::spawn(async move {
-            let _ = child.wait().await;
-            info!(name_clone, "capsem-process exited, cleaning up");
+            let exit_status = child.wait().await;
+            info!(name_clone, exit_status = ?exit_status, "capsem-process (resume) exited, cleaning up");
             // Persistent VMs: remove from instances but keep session dir.
-            tracing::warn!(name_clone, "resume_sandbox child exit handler removing instance");
+            tracing::warn!(name_clone, exit_status = ?exit_status, "resume_sandbox child exit handler removing instance");
             state_clone.instances.lock().unwrap().remove(&name_clone);
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
 
         let mut instances = self.instances.lock().unwrap();
-        instances.insert(name.to_string(), InstanceInfo {
-            id: name.to_string(),
-            pid,
-            uds_path,
-            session_dir: entry.session_dir.clone(),
-            ram_mb,
-            cpus,
-            start_time: std::time::Instant::now(),
-            base_version: version,
-            persistent: true,
-            env: None,
-            forked_from: entry.forked_from.clone(),
-        });
-
-        // Clear suspended state now that the VM is running again
-        {
-            let mut registry = self.persistent_registry.lock().unwrap();
-            if let Some(reg_entry) = registry.get_mut(name) {
-                reg_entry.suspended = false;
-                reg_entry.checkpoint_path = None;
-                if let Err(e) = registry.save() {
-                    error!(name, "failed to save persistent registry: {e}");
-                }
-            }
-        }
+        instances.insert(
+            name.to_string(),
+            InstanceInfo {
+                id: name.to_string(),
+                pid,
+                uds_path,
+                session_dir: entry.session_dir.clone(),
+                ram_mb,
+                cpus,
+                start_time: std::time::Instant::now(),
+                base_version: version,
+                persistent: true,
+                env: None,
+                forked_from: entry.forked_from.clone(),
+            },
+        );
 
         Ok(name.to_string())
+    }
+
+    fn has_existing_resume_checkpoint(&self, name: &str) -> bool {
+        let registry = self.persistent_registry.lock().unwrap();
+        registry.get(name).is_some_and(|entry| {
+            entry.suspended
+                && entry
+                    .checkpoint_path
+                    .as_ref()
+                    .is_some_and(|cp| entry.session_dir.join(cp).exists())
+        })
+    }
+
+    fn archive_failed_restore_checkpoint(&self, name: &str) -> Option<PathBuf> {
+        let (session_dir, checkpoint_name) = {
+            let registry = self.persistent_registry.lock().unwrap();
+            let entry = registry.get(name)?;
+            let checkpoint_name = entry.checkpoint_path.clone()?;
+            (entry.session_dir.clone(), checkpoint_name)
+        };
+
+        let checkpoint_path = session_dir.join(&checkpoint_name);
+        if !checkpoint_path.exists() {
+            return None;
+        }
+
+        let epoch_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let archived_path =
+            session_dir.join(format!("{checkpoint_name}.failed-restore-{epoch_ms}"));
+
+        match std::fs::rename(&checkpoint_path, &archived_path) {
+            Ok(()) => {
+                warn!(
+                    name,
+                    checkpoint = %checkpoint_path.display(),
+                    archived = %archived_path.display(),
+                    "archived failed restore checkpoint before cold fallback"
+                );
+                Some(archived_path)
+            }
+            Err(e) => {
+                error!(
+                    name,
+                    checkpoint = %checkpoint_path.display(),
+                    archived = %archived_path.display(),
+                    "failed to archive restore checkpoint: {e}"
+                );
+                None
+            }
+        }
+    }
+
+    fn clear_resume_checkpoint(&self, id: &str) {
+        let mut registry = self.persistent_registry.lock().unwrap();
+        if let Some(entry) = registry.get_mut(id) {
+            entry.suspended = false;
+            entry.checkpoint_path = None;
+            entry.defunct = false;
+            entry.last_error = None;
+            if let Err(e) = registry.save() {
+                error!(id, "failed to save persistent registry after resume: {e}");
+            }
+        }
     }
 
     /// Resolve asset file paths for a VM.
@@ -720,7 +981,11 @@ impl ServiceState {
     /// In v2 mode (manifest present): resolves hash-based filenames from manifest.
     /// In dev mode (no manifest): finds assets by logical name in arch subdirs.
     fn resolve_asset_paths(&self) -> Result<capsem_core::asset_manager::ResolvedAssets> {
-        let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+        let arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x86_64"
+        };
 
         // Resolve from v2 manifest (works for both dev and installed --
         // dev creates hash-named symlinks, installed has hash-named files)
@@ -741,6 +1006,33 @@ impl ServiceState {
             asset_version: "dev".to_string(),
         })
     }
+}
+
+/// Identify the launchd-cleanup-saturation transient that masquerades
+/// as an "entitlement missing" error from VZ.
+///
+/// Apple's `Virtualization.framework` runs a per-VM XPC helper
+/// (`com.apple.Virtualization.VirtualMachine.<UUID>`). When capsem-process
+/// dies, launchd schedules that XPC's cleanup with a 9s delay. Under
+/// rapid VM churn (~3s/cycle) the PETRIFIED-pending queue grows; once
+/// `syspolicyd` saturates (we observe `Unable to get certificates
+/// array: (null)` in the unified log just before the failure window),
+/// the next `VZVirtualMachineConfiguration.validateWithError()`
+/// returns NSError code 2 with the misleading
+/// `localizedDescription = "...The process doesn't have the
+/// 'com.apple.security.virtualization' entitlement."` string -- even
+/// though the binary IS entitled. The error message is wrong; the
+/// actual cause is launchd cleanup saturation that drains within a
+/// second or two.
+///
+/// Pattern-match on the full VZ-specific phrase (not just the bare
+/// word "entitlement") so a real codesign regression -- which we'd
+/// also want to surface -- is not silently retried away. The error
+/// string is stable across VZ releases since it comes from VZ's
+/// localized string table, not our code.
+fn is_launchd_cleanup_transient(process_log_tail: &str) -> bool {
+    process_log_tail.contains("com.apple.security.virtualization")
+        && process_log_tail.contains("entitlement")
 }
 
 /// Read the last `n` lines of `<session_dir>/process.log`. Returns a
@@ -773,7 +1065,9 @@ fn find_failed_session_dir(run_dir: &std::path::Path, id: &str) -> Option<PathBu
     let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         if !name.starts_with(&prefix) {
             continue;
         }
@@ -791,7 +1085,7 @@ fn find_failed_session_dir(run_dir: &std::path::Path, id: &str) -> Option<PathBu
 
 use axum::http::StatusCode;
 use capsem_service::errors::AppError;
-use capsem_service::fs_utils::{sanitize_file_path, identify_file_sync};
+use capsem_service::fs_utils::{identify_file_sync, sanitize_file_path};
 
 // ---------------------------------------------------------------------------
 // Files API -- workspace path resolver (state-bound; pure helpers live in fs_utils.rs)
@@ -813,10 +1107,14 @@ fn resolve_workspace_path(
             drop(instances);
             // Check persistent registry for stopped VMs
             let reg = state.persistent_registry.lock().unwrap();
-            reg.data.vms.get(id)
+            reg.data
+                .vms
+                .get(id)
                 .or_else(|| reg.data.vms.values().find(|e| e.name == id))
                 .map(|e| e.session_dir.clone())
-                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+                .ok_or_else(|| {
+                    AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))
+                })?
         }
     };
     let workspace_root = capsem_core::guest_share_dir(&session_dir).join("workspace");
@@ -830,23 +1128,47 @@ fn resolve_workspace_path(
         // For upload: parent must exist and be inside workspace
         if let Some(parent) = target.parent() {
             if parent.exists() {
-                let canon_parent = parent.canonicalize()
-                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
-                let ws_canon = workspace_root.canonicalize()
-                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize workspace: {e}")))?;
+                let canon_parent = parent.canonicalize().map_err(|e| {
+                    AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("canonicalize: {e}"),
+                    )
+                })?;
+                let ws_canon = workspace_root.canonicalize().map_err(|e| {
+                    AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("canonicalize workspace: {e}"),
+                    )
+                })?;
                 if !canon_parent.starts_with(&ws_canon) {
-                    return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
+                    return Err(AppError(
+                        StatusCode::FORBIDDEN,
+                        "path outside workspace".into(),
+                    ));
                 }
                 return Ok((workspace_root, target));
             }
         }
         return Ok((workspace_root, target));
-    }.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
+    }
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("canonicalize: {e}"),
+        )
+    })?;
 
-    let ws_canon = workspace_root.canonicalize()
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize workspace: {e}")))?;
+    let ws_canon = workspace_root.canonicalize().map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("canonicalize workspace: {e}"),
+        )
+    })?;
     if !canonical.starts_with(&ws_canon) {
-        return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
+        return Err(AppError(
+            StatusCode::FORBIDDEN,
+            "path outside workspace".into(),
+        ));
     }
     Ok((workspace_root, canonical))
 }
@@ -863,7 +1185,9 @@ struct FileListQuery {
     depth: u32,
 }
 
-fn default_file_depth() -> u32 { 1 }
+fn default_file_depth() -> u32 {
+    1
+}
 
 #[derive(Deserialize)]
 struct FileContentQuery {
@@ -888,7 +1212,9 @@ fn list_dir_recursive(
     items.sort_by(|a, b| {
         let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
         let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        b_is_dir.cmp(&a_is_dir).then_with(|| a.file_name().cmp(&b.file_name()))
+        b_is_dir
+            .cmp(&a_is_dir)
+            .then_with(|| a.file_name().cmp(&b.file_name()))
     });
 
     for item in items {
@@ -906,7 +1232,8 @@ fn list_dir_recursive(
             Ok(m) => m,
             Err(_) => continue,
         };
-        let mtime = meta.modified()
+        let mtime = meta
+            .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
@@ -974,10 +1301,14 @@ async fn handle_list_files(
             } else {
                 drop(instances);
                 let reg = state.persistent_registry.lock().unwrap();
-                reg.data.vms.get(&id)
+                reg.data
+                    .vms
+                    .get(&id)
                     .or_else(|| reg.data.vms.values().find(|e| e.name == id))
                     .map(|e| e.session_dir.clone())
-                    .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+                    .ok_or_else(|| {
+                        AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))
+                    })?
             }
         };
         let ws = capsem_core::guest_share_dir(&session_dir).join("workspace");
@@ -991,7 +1322,8 @@ async fn handle_list_files(
     }
 
     // Compute relative prefix for the listing
-    let rel_prefix = target.strip_prefix(&workspace_root)
+    let rel_prefix = target
+        .strip_prefix(&workspace_root)
         .unwrap_or(std::path::Path::new(""))
         .to_string_lossy()
         .into_owned();
@@ -1006,10 +1338,14 @@ async fn handle_list_files(
         let target = target.clone();
         tokio::task::spawn_blocking(move || {
             list_dir_recursive(&target, &rel_prefix, 1, depth, &state_clone.magika)
-        }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?
+        })
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?
     };
 
-    Ok(Json(FileListResponse { entries: magika_ref }))
+    Ok(Json(FileListResponse {
+        entries: magika_ref,
+    }))
 }
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
@@ -1029,9 +1365,14 @@ async fn handle_download_file(
     let meta = std::fs::metadata(&resolved)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("metadata: {e}")))?;
     if meta.len() > MAX_FILE_SIZE {
-        return Err(AppError(StatusCode::PAYLOAD_TOO_LARGE, format!(
-            "file too large: {} bytes (max {})", meta.len(), MAX_FILE_SIZE
-        )));
+        return Err(AppError(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "file too large: {} bytes (max {})",
+                meta.len(),
+                MAX_FILE_SIZE
+            ),
+        ));
     }
 
     // Read file and detect type in spawn_blocking
@@ -1041,26 +1382,34 @@ async fn handle_download_file(
         let data = std::fs::read(&resolved_clone)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
         let (_, mime_str, _, _) = identify_file_sync(&state_clone.magika, &resolved_clone);
-        let name = resolved_clone.file_name()
+        let name = resolved_clone
+            .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "download".into());
         // Sanitize the filename for Content-Disposition
-        let safe_name: String = name.chars()
+        let safe_name: String = name
+            .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
             .collect();
         Ok::<_, AppError>((data, mime_str, safe_name))
-    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+    })
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
     use axum::response::IntoResponse;
     Ok((
         StatusCode::OK,
         [
             (axum::http::header::CONTENT_TYPE, mime),
-            (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\"")),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
             (axum::http::header::CONTENT_LENGTH, data.len().to_string()),
         ],
         data,
-    ).into_response())
+    )
+        .into_response())
 }
 
 async fn handle_upload_file(
@@ -1095,9 +1444,14 @@ async fn handle_upload_file(
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
         Ok::<_, AppError>(())
-    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+    })
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
-    Ok(Json(UploadResponse { success: true, size }))
+    Ok(Json(UploadResponse {
+        success: true,
+        size,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,7 +1470,10 @@ async fn handle_fork(
     {
         let registry = state.persistent_registry.lock().unwrap();
         if registry.contains(name) {
-            return Err(AppError(StatusCode::CONFLICT, format!("sandbox '{}' already exists", name)));
+            return Err(AppError(
+                StatusCode::CONFLICT,
+                format!("sandbox '{}' already exists", name),
+            ));
         }
     }
 
@@ -1124,25 +1481,48 @@ async fn handle_fork(
     let (session_dir, ram_mb, cpus, base_version, uds_path) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
-            (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), Some(i.uds_path.clone()))
+            (
+                i.session_dir.clone(),
+                i.ram_mb,
+                i.cpus,
+                i.base_version.clone(),
+                Some(i.uds_path.clone()),
+            )
         } else {
             drop(instances);
             let registry = state.persistent_registry.lock().unwrap();
             if let Some(p) = registry.get(&id) {
-                (p.session_dir.clone(), p.ram_mb, p.cpus, p.base_version.clone(), None)
+                (
+                    p.session_dir.clone(),
+                    p.ram_mb,
+                    p.cpus,
+                    p.base_version.clone(),
+                    None,
+                )
             } else {
-                return Err(AppError(StatusCode::NOT_FOUND, format!("source sandbox not found: {}", id)));
+                return Err(AppError(
+                    StatusCode::NOT_FOUND,
+                    format!("source sandbox not found: {}", id),
+                ));
             }
         }
     };
 
-    // Freeze + thaw the guest root filesystem so the ext4 loopback overlay
-    // (rootfs.img) is fully flushed through VirtioFS to the host file.
+    // Freeze + thaw the guest root filesystem so the ext4 system overlay
+    // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
     if let Some(ref uds) = uds_path {
         let freeze_id = state.next_job_id();
-        if let Err(e) = send_ipc_command(uds, ServiceToProcess::Exec {
-            id: freeze_id, command: "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true".to_string(),
-        }, 10).await {
+        if let Err(e) = send_ipc_command(
+            uds,
+            ServiceToProcess::Exec {
+                id: freeze_id,
+                command: "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
+                    .to_string(),
+            },
+            Some(10),
+        )
+        .await
+        {
             tracing::warn!("pre-fork fsfreeze failed (non-fatal): {e}");
         }
     }
@@ -1160,33 +1540,105 @@ async fn handle_fork(
         capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &clone_dst)
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("clone task: {e}")))?
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fork sandbox: {e}")))?;
+    .map_err(|e| {
+        capsem_service::app_error_logged!(
+            error,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "fork: clone-task panic: {e}"
+        )
+    })?
+    .map_err(|e| {
+        capsem_service::app_error_logged!(
+            error,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "fork: clone failed: {e}"
+        )
+    })?;
 
     // Register as persistent VM
     {
         let mut registry = state.persistent_registry.lock().unwrap();
-        registry.register(PersistentVmEntry {
-            name: name.clone(),
-            ram_mb,
-            cpus,
-            base_version,
-            created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
-            session_dir: new_session_dir,
-            forked_from: Some(id.clone()),
-            description: payload.description.clone(),
-            suspended: false,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: None,
-            env: None,
-        }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        registry
+            .register(PersistentVmEntry {
+                name: name.clone(),
+                ram_mb,
+                cpus,
+                base_version,
+                created_at: format!(
+                    "{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                ),
+                session_dir: new_session_dir,
+                forked_from: Some(id.clone()),
+                description: payload.description.clone(),
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            })
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(ForkResponse {
         name: name.clone(),
         size_bytes,
     }))
+}
+
+/// Outcome of a single provision attempt inside `handle_provision`.
+/// `LaunchdTransient` is the recoverable case: VZ rejected the fresh
+/// VM with the misleading entitlement string while launchd's
+/// PETRIFIED-cleanup queue was draining. The poll_until loop retries
+/// on this; everything else (incl. `Other`) bubbles up unchanged.
+enum ProvisionAttemptOutcome {
+    Ready { uds_path: PathBuf },
+    StillBootingTimedOut { uds_path: PathBuf }, // 5s envelope hit; treat as success per pre-existing contract
+    LaunchdTransient,
+    BootCrash { tail: String },
+    ProvisionError(anyhow::Error),
+}
+
+/// Decision the retry loop takes after observing one provision attempt.
+/// Pure function of the outcome -- no side effects -- so the
+/// retry-routing can be unit-tested without spawning a real VM.
+#[derive(Debug)]
+enum AttemptDecision {
+    Succeed(PathBuf),
+    BailWithError(AppError),
+    RetryAfterCleanup,
+}
+
+/// Map a single attempt's outcome to the retry loop's next move.
+/// The `LaunchdTransient` variant is the only one that triggers retry;
+/// `BootCrash` and `ProvisionError` bail with structured errors that
+/// match the pre-refactor handle_provision response shape.
+fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> AttemptDecision {
+    match outcome {
+        ProvisionAttemptOutcome::Ready { uds_path }
+        | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => {
+            AttemptDecision::Succeed(uds_path)
+        }
+        ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
+        ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "sandbox {id} failed to boot. process.log tail:\n\n{tail}\n\n\
+                 (full logs: `capsem logs {id}`)"
+            ),
+        )),
+        ProvisionAttemptOutcome::ProvisionError(e) => {
+            let status = if e.to_string().contains("already exists") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            AttemptDecision::BailWithError(AppError(status, format!("provision failed: {e}")))
+        }
+    }
 }
 
 async fn handle_provision(
@@ -1205,100 +1657,195 @@ async fn handle_provision(
     let ram_mb = payload
         .ram_mb
         .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
-    let cpus = payload.cpus.unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+    let cpus = payload
+        .cpus
+        .unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
 
-    // provision_sandbox is synchronous and performs heavy I/O (APFS clonefile,
-    // rootfs.img fsync, walkdir-based disk_usage_bytes, child process spawn).
-    // Offload to the blocking pool so the axum worker thread stays free.
-    // tokio::process::Command::spawn inside still works -- spawn_blocking
-    // preserves the runtime handle via thread-locals.
-    let state_clone = Arc::clone(&state);
-    let id_clone = id.clone();
+    // Retry budget for the launchd-cleanup transient. Failed attempts
+    // fast-fail in ~500ms (capsem-process spawn -> validateWithError
+    // crash -> child-exit handler -> instances-map removal observable
+    // here), so 8s covers ~5-8 attempts including backoff. Successful
+    // attempts return on the first poll iteration regardless of timeout.
+    // Backoff lets launchd tick at least one PETRIFIED-cleanup entry
+    // (9s wall-clock per entry) between retries; under a real cascade
+    // the second attempt usually lands once one entry has drained.
+    let opts = capsem_core::poll::PollOpts {
+        label: "provision-launchd-drain",
+        timeout: std::time::Duration::from_secs(8),
+        initial_delay: std::time::Duration::from_millis(200),
+        max_delay: std::time::Duration::from_millis(500),
+    };
+
+    let id_for_loop = id.clone();
+    let attempt_num = std::sync::atomic::AtomicU32::new(0);
+    let result = capsem_core::poll::poll_until(opts, || {
+        let state = Arc::clone(&state);
+        let id = id_for_loop.clone();
+        let payload_env = payload.env.clone();
+        let payload_from = payload.from.clone();
+        let payload_persistent = payload.persistent;
+        let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        async move {
+            // Before retry attempts (>1), clear any state the prior
+            // failed attempt left behind so provision_sandbox does not
+            // reject with "already exists". The child-exit handler has
+            // already done its own cleanup (instances.remove +
+            // preserve_failed_session_dir) by the time we observe
+            // crash-before-ready; we only need to undo registration of
+            // the persistent entry.
+            if attempt > 1 {
+                let mut registry = state.persistent_registry.lock().unwrap();
+                let _ = registry.unregister(&id);
+                drop(registry);
+                state.instances.lock().unwrap().remove(&id);
+                warn!(
+                    id,
+                    attempt, "retrying provision after launchd-cleanup transient"
+                );
+            }
+
+            let outcome = provision_attempt(
+                &state,
+                &id,
+                ram_mb,
+                cpus,
+                payload_persistent,
+                payload_env,
+                payload_from,
+            )
+            .await;
+            // Log structured context BEFORE losing the outcome to classify_*.
+            // BootCrash/ProvisionError still produce a user-facing error
+            // body via classify_attempt_decision; these logs are for
+            // operators reading service.log.
+            if matches!(&outcome, ProvisionAttemptOutcome::BootCrash { .. }) {
+                error!(id, "capsem-process exited before reaching ready");
+            } else if let ProvisionAttemptOutcome::ProvisionError(ref e) = outcome {
+                error!(id, "provision failed: {e}");
+            }
+            match classify_attempt_decision(outcome, &id) {
+                AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
+                AttemptDecision::RetryAfterCleanup => None, // poll_until retries
+                AttemptDecision::BailWithError(err) => Some(Err(err)),
+            }
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(uds_path)) => Ok(Json(ProvisionResponse {
+            id,
+            uds_path: Some(uds_path),
+        })),
+        Ok(Err(app_err)) => Err(app_err),
+        Err(timed_out) => {
+            // Exhausted retries on launchd transient. Surface the most
+            // recent failed-attempt tail so the user sees what VZ said,
+            // even though the actual cause is launchd-side saturation.
+            let tail = match find_failed_session_dir(&state.run_dir, &id) {
+                Some(dir) => read_process_log_tail(&dir, 20),
+                None => "(no preserved log found)".to_string(),
+            };
+            error!(
+                id,
+                attempts = timed_out.attempts,
+                "provision: launchd-cleanup retries exhausted"
+            );
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "sandbox {id} could not be provisioned after {} attempts ({}). \
+                     This typically clears within 10s; please retry. process.log tail:\n\n{tail}\n\n\
+                     (full logs: `capsem logs {id}`)",
+                    timed_out.attempts, timed_out
+                ),
+            ))
+        }
+    }
+}
+
+/// Run one provision attempt: spawn capsem-process, then poll up to 5s
+/// for either the `.ready` sentinel or a crash-before-ready signal.
+/// Pure bookkeeping; no retry logic here -- caller drives the retry
+/// loop on `ProvisionAttemptOutcome::LaunchdTransient`.
+#[allow(clippy::too_many_arguments)]
+async fn provision_attempt(
+    state: &Arc<ServiceState>,
+    id: &str,
+    ram_mb: u64,
+    cpus: u32,
+    persistent: bool,
+    env: Option<std::collections::HashMap<String, String>>,
+    from: Option<String>,
+) -> ProvisionAttemptOutcome {
+    let state_clone = Arc::clone(state);
+    let id_owned = id.to_string();
     let version = state.current_version.clone();
-    let provision_result = tokio::task::spawn_blocking(move || {
+    let provision_result = match tokio::task::spawn_blocking(move || {
         state_clone.provision_sandbox(ProvisionOptions {
-            id: &id_clone,
+            id: &id_owned,
             ram_mb,
             cpus,
             version_override: Some(version),
-            persistent: payload.persistent,
-            env: payload.env,
-            from: payload.from,
+            persistent,
+            env,
+            from,
             description: None,
         })
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
-
-    match provision_result {
-        Ok(_) => {
-            // Wait briefly for either the `.ready` sentinel or the
-            // child-exit handler to remove the VM from the instances
-            // map (indicating a boot crash). Without this poll, `capsem
-            // create` prints the VM id and exits 0 while the guest is
-            // already dead -- the user then runs `capsem list`, sees
-            // "Stopped", and has no idea why. Polling here and
-            // returning the tail of process.log makes failures loud,
-            // directly in the CLI output.
-            //
-            // 5s is enough to catch synchronous boot failures (missing
-            // asset, signed-manifest mismatch, Apple VZ entitlement
-            // missing -- all < 1s) without penalizing slow-but-valid
-            // boots. Timing out returns success; the user can then
-            // follow up with `capsem logs` / status.
-            let uds_path = state.instance_socket_path(&id);
-            let ready_path = uds_path.with_extension("ready");
-            let deadline =
-                tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-            let crash_detected = loop {
-                if ready_path.exists() {
-                    break false;
-                }
-                let still_alive =
-                    state.instances.lock().unwrap().contains_key(&id);
-                if !still_alive {
-                    break true;
-                }
-                if tokio::time::Instant::now() >= deadline {
-                    break false; // still booting -- give the user the id
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            };
-            if crash_detected {
-                // Prefer the persistent entry's cached last_error (already
-                // computed by the child-exit handler) to avoid re-reading
-                // the log; fall back to find_failed_session_dir for
-                // ephemeral VMs whose dir was renamed to `-failed-*`.
-                let cached = {
-                    let registry = state.persistent_registry.lock().unwrap();
-                    registry.get(&id).and_then(|e| e.last_error.clone())
-                };
-                let tail = cached.unwrap_or_else(|| {
-                    match find_failed_session_dir(&state.run_dir, &id) {
-                        Some(dir) => read_process_log_tail(&dir, 20),
-                        None => "(no preserved log found)".to_string(),
-                    }
-                });
-                error!(id, "capsem-process exited before reaching ready");
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "sandbox {id} failed to boot. process.log tail:\n\n{tail}\n\n\
-                         (full logs: `capsem logs {id}`)"
-                    ),
-                ));
-            }
-            Ok(Json(ProvisionResponse { id, uds_path: Some(uds_path) }))
-        }
+    {
+        Ok(r) => r,
         Err(e) => {
-            error!(id, "provision failed: {e}");
-            let status = if e.to_string().contains("already exists") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            Err(AppError(status, format!("provision failed: {e}")))
+            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!("provision task: {e}"))
         }
+    };
+
+    if let Err(e) = provision_result {
+        return ProvisionAttemptOutcome::ProvisionError(e);
+    }
+
+    // Wait briefly for either the `.ready` sentinel or the child-exit
+    // handler to remove the VM from the instances map (crash). Without
+    // this poll, `capsem create` prints the id and exits 0 while the
+    // guest is already dead. 5s is enough to catch synchronous boot
+    // failures (missing asset, signed-manifest mismatch, Apple VZ
+    // entitlement transient -- all < 1s) without penalizing slow-but-
+    // valid boots; on hit we let the caller still hand the id back.
+    let uds_path = state.instance_socket_path(id);
+    let ready_path = uds_path.with_extension("ready");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if ready_path.exists() {
+            return ProvisionAttemptOutcome::Ready { uds_path };
+        }
+        let still_alive = state.instances.lock().unwrap().contains_key(id);
+        if !still_alive {
+            // Crash before ready. Prefer the persistent entry's
+            // cached last_error (already computed by the child-exit
+            // handler) to avoid re-reading the log; fall back to
+            // find_failed_session_dir for ephemeral VMs whose dir was
+            // renamed to `-failed-*`.
+            let cached = {
+                let registry = state.persistent_registry.lock().unwrap();
+                registry.get(id).and_then(|e| e.last_error.clone())
+            };
+            let tail =
+                cached.unwrap_or_else(|| match find_failed_session_dir(&state.run_dir, id) {
+                    Some(dir) => read_process_log_tail(&dir, 20),
+                    None => "(no preserved log found)".to_string(),
+                });
+            return if is_launchd_cleanup_transient(&tail) {
+                warn!(id, "provision: detected launchd-cleanup transient (misleading 'entitlement' error)");
+                ProvisionAttemptOutcome::LaunchdTransient
+            } else {
+                ProvisionAttemptOutcome::BootCrash { tail }
+            };
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return ProvisionAttemptOutcome::StillBootingTimedOut { uds_path };
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
 
@@ -1326,9 +1873,7 @@ fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
     }
 }
 
-async fn handle_list(
-    State(state): State<Arc<ServiceState>>,
-) -> Json<ListResponse> {
+async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListResponse> {
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
     // Running instances (with live telemetry)
@@ -1336,7 +1881,11 @@ async fn handle_list(
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
             let mut info = SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
-            info.name = if i.persistent { Some(i.id.clone()) } else { None };
+            info.name = if i.persistent {
+                Some(i.id.clone())
+            } else {
+                None
+            };
             info.ram_mb = Some(i.ram_mb);
             info.cpus = Some(i.cpus);
             info.version = Some(i.base_version.clone());
@@ -1382,9 +1931,15 @@ async fn handle_list(
     let asset_health = match state.resolve_asset_paths() {
         Ok(resolved) => {
             let mut missing = Vec::new();
-            if !resolved.kernel.exists() { missing.push("vmlinuz".to_string()); }
-            if !resolved.initrd.exists() { missing.push("initrd.img".to_string()); }
-            if !resolved.rootfs.exists() { missing.push("rootfs.squashfs".to_string()); }
+            if !resolved.kernel.exists() {
+                missing.push("vmlinuz".to_string());
+            }
+            if !resolved.initrd.exists() {
+                missing.push("initrd.img".to_string());
+            }
+            if !resolved.rootfs.exists() {
+                missing.push("rootfs.squashfs".to_string());
+            }
             Some(AssetHealth {
                 ready: missing.is_empty(),
                 version: Some(resolved.asset_version),
@@ -1394,7 +1949,10 @@ async fn handle_list(
         Err(_) => None,
     };
 
-    Json(ListResponse { sandboxes, asset_health })
+    Json(ListResponse {
+        sandboxes,
+        asset_health,
+    })
 }
 
 async fn handle_info(
@@ -1407,8 +1965,13 @@ async fn handle_info(
             let instances = state.instances.lock().unwrap();
             match instances.get(&id) {
                 Some(i) => {
-                    let mut info = SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
-                    info.name = if i.persistent { Some(i.id.clone()) } else { None };
+                    let mut info =
+                        SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
+                    info.name = if i.persistent {
+                        Some(i.id.clone())
+                    } else {
+                        None
+                    };
                     info.ram_mb = Some(i.ram_mb);
                     info.cpus = Some(i.cpus);
                     info.version = Some(i.base_version.clone());
@@ -1446,12 +2009,16 @@ async fn handle_info(
             if entry.defunct {
                 info.last_error = entry.last_error.clone();
             }
-            info.size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
+            info.size_bytes =
+                capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
             return Ok(Json(info));
         }
     }
 
-    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError(
+        StatusCode::NOT_FOUND,
+        format!("sandbox not found: {id}"),
+    ))
 }
 
 /// GET /stats -- return full main.db aggregation in one response.
@@ -1459,19 +2026,37 @@ async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<StatsResponse>, AppError> {
     let db_path = state.main_db_path();
-    let index = capsem_core::session::SessionIndex::open(&db_path)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open main.db: {e}")))?;
+    let index = capsem_core::session::SessionIndex::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open main.db: {e}"),
+        )
+    })?;
 
-    let global = index.global_stats()
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("global_stats: {e}")))?;
-    let sessions = index.recent(100)
+    let global = index.global_stats().map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("global_stats: {e}"),
+        )
+    })?;
+    let sessions = index
+        .recent(100)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("recent: {e}")))?;
-    let top_providers = index.top_providers(20)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("top_providers: {e}")))?;
-    let top_tools = index.top_tools(20)
+    let top_providers = index.top_providers(20).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("top_providers: {e}"),
+        )
+    })?;
+    let top_tools = index
+        .top_tools(20)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("top_tools: {e}")))?;
-    let top_mcp_tools = index.top_mcp_tools(20)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("top_mcp_tools: {e}")))?;
+    let top_mcp_tools = index.top_mcp_tools(20).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("top_mcp_tools: {e}"),
+        )
+    })?;
 
     Ok(Json(StatsResponse {
         global,
@@ -1503,10 +2088,12 @@ async fn handle_logs(
                     // which is exactly when logs matter most.
                     match find_failed_session_dir(&state.run_dir, &id) {
                         Some(dir) => dir,
-                        None => return Err(AppError(
-                            StatusCode::NOT_FOUND,
-                            format!("sandbox not found: {id}"),
-                        )),
+                        None => {
+                            return Err(AppError(
+                                StatusCode::NOT_FOUND,
+                                format!("sandbox not found: {id}"),
+                            ))
+                        }
                     }
                 }
             }
@@ -1520,7 +2107,14 @@ async fn handle_logs(
         let serial = std::fs::read_to_string(&serial_log_path).ok();
         let process = std::fs::read_to_string(&process_log_path).ok();
         (serial, process)
-    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
+    })
+    .await
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("log read failed: {e}"),
+        )
+    })?;
 
     Ok(Json(LogsResponse {
         logs: serial_logs.as_deref().unwrap_or("").to_string(),
@@ -1529,9 +2123,285 @@ async fn handle_logs(
     }))
 }
 
-async fn handle_service_logs(
+/// `GET /panics?since=30m&limit=20` -- structured panic + backtrace
+/// extractor across all host log files. Returns JSON array. Used by the
+/// `capsem_panics` MCP tool.
+async fn handle_panics(
     State(state): State<Arc<ServiceState>>,
+    axum::extract::Query(params): axum::extract::Query<TriageQuery>,
+) -> Result<axum::Json<serde_json::Value>, AppError> {
+    let since_unix = params
+        .since
+        .as_deref()
+        .and_then(triage::parse_since)
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let limit = params.limit.unwrap_or(20).min(200);
+
+    let run_dir = state.run_dir.clone();
+    let home = capsem_core::paths::capsem_home();
+
+    let mut all_panics: Vec<triage::PanicEvent> = Vec::new();
+    for binary in ["service", "mcp", "gateway", "tray"] {
+        if let Some(path) = triage::host_log_path(&run_dir, binary) {
+            all_panics.extend(triage::scan_panics_in_file(
+                &path,
+                &format!("capsem-{binary}"),
+                since_unix,
+            ));
+        }
+    }
+    if let Some(path) = triage::latest_app_log(&home) {
+        all_panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
+    }
+
+    all_panics.truncate(limit);
+    Ok(axum::Json(serde_json::json!({ "panics": all_panics })))
+}
+
+/// `GET /triage?id=<vm>&since=30m&limit=20` -- ranked summary of recent
+/// panics, errors, and slow ops across host logs (and, when `id` is
+/// provided, session.db error rows). Used by the `capsem_triage` MCP
+/// tool.
+async fn handle_triage(
+    State(state): State<Arc<ServiceState>>,
+    axum::extract::Query(params): axum::extract::Query<TriageQuery>,
+) -> Result<axum::Json<serde_json::Value>, AppError> {
+    let since_str = params.since.clone().unwrap_or_else(|| "30m".to_string());
+    let since_unix = triage::parse_since(&since_str)
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let limit = params.limit.unwrap_or(20).min(200);
+
+    let run_dir = state.run_dir.clone();
+    let home = capsem_core::paths::capsem_home();
+
+    let mut panics: Vec<triage::PanicEvent> = Vec::new();
+    let mut errors: Vec<triage::ErrorEvent> = Vec::new();
+    let mut slow_ops: Vec<triage::SlowOpEvent> = Vec::new();
+
+    for binary in ["service", "mcp", "gateway", "tray"] {
+        if let Some(path) = triage::host_log_path(&run_dir, binary) {
+            let bin_label = format!("capsem-{binary}");
+            panics.extend(triage::scan_panics_in_file(&path, &bin_label, since_unix));
+            errors.extend(triage::scan_errors_in_file(
+                &path, &bin_label, since_unix, limit,
+            ));
+            slow_ops.extend(triage::scan_slow_ops_in_file(
+                &path, &bin_label, since_unix, 500,
+            ));
+        }
+    }
+    if let Some(path) = triage::latest_app_log(&home) {
+        panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
+        errors.extend(triage::scan_errors_in_file(
+            &path,
+            "capsem-app",
+            since_unix,
+            limit,
+        ));
+    }
+
+    panics.truncate(limit);
+    errors.truncate(limit);
+    slow_ops.truncate(limit);
+
+    // F6: when `id` is set, query session.db for session-scoped error
+    // signals. Best-effort -- a missing or vacuumed DB just leaves the
+    // session block empty, the host-side triage still returns.
+    let session_block = if let Some(ref vm_id) = params.id {
+        let db_path = {
+            let instances = state.instances.lock().unwrap();
+            instances
+                .get(vm_id)
+                .map(|i| i.session_dir.join("session.db"))
+        };
+        if let Some(path) = db_path {
+            session_db_triage(&path, limit).unwrap_or_else(|e| {
+                tracing::warn!(target: "service", vm = %vm_id, error = %e, "session-db triage skipped");
+                serde_json::json!({})
+            })
+        } else {
+            serde_json::json!({ "missing": true, "reason": "session not found" })
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    // Build a deterministic ranked-list of the highest-blast-radius items
+    // first: panics > unhandled-enum warns > slow_op events > everything else.
+    let mut rank: Vec<String> = Vec::new();
+    for p in panics.iter().take(5) {
+        rank.push(format!(
+            "panic {} in {} at {} -- {}",
+            p.ts.as_str().chars().take(19).collect::<String>(),
+            p.binary,
+            p.location.clone().unwrap_or_else(|| "?".into()),
+            p.message.chars().take(120).collect::<String>(),
+        ));
+    }
+    for e in errors
+        .iter()
+        .filter(|e| e.target.as_deref() == Some("ipc"))
+        .take(3)
+    {
+        rank.push(format!(
+            "ipc-warn {} in {} -- {}",
+            e.ts.as_str().chars().take(19).collect::<String>(),
+            e.binary,
+            e.message.chars().take(120).collect::<String>(),
+        ));
+    }
+    for s in slow_ops.iter().take(3) {
+        rank.push(format!(
+            "slow_op {} {} {}ms in {}",
+            s.ts.as_str().chars().take(19).collect::<String>(),
+            s.op,
+            s.duration_ms,
+            s.binary,
+        ));
+    }
+
+    let out = serde_json::json!({
+        "since": since_str,
+        "session_id": params.id,
+        "host": {
+            "panics": panics,
+            "errors": errors,
+            "slow_ops": slow_ops,
+        },
+        "session": session_block,
+        "rank": rank,
+    });
+    Ok(axum::Json(out))
+}
+
+/// F6: scoped session.db queries for triage. Returns the JSON object
+/// embedded under `session` in the /triage response.
+fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<serde_json::Value> {
+    let reader = capsem_logger::DbReader::open(db_path)?;
+    let denied_net_sql = format!(
+        "SELECT timestamp, domain, decision, status_code, duration_ms \
+         FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
+         ORDER BY timestamp DESC LIMIT {limit}"
+    );
+    let mcp_errors_sql = format!(
+        "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
+                policy_rule, policy_reason, error_message, duration_ms \
+         FROM mcp_calls WHERE decision IN ('denied','error') OR error_message IS NOT NULL \
+         ORDER BY timestamp DESC LIMIT {limit}"
+    );
+    let exec_failures_sql = format!(
+        "SELECT timestamp, exec_id, command, exit_code, duration_ms \
+         FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0 \
+         ORDER BY timestamp DESC LIMIT {limit}"
+    );
+
+    let denied_net = reader
+        .query_raw(&denied_net_sql)
+        .unwrap_or_else(|_| "[]".into());
+    let mcp_errors = reader
+        .query_raw(&mcp_errors_sql)
+        .unwrap_or_else(|_| "[]".into());
+    let exec_failures = reader
+        .query_raw(&exec_failures_sql)
+        .unwrap_or_else(|_| "[]".into());
+
+    let denied_net_v: serde_json::Value = serde_json::from_str(&denied_net).unwrap_or_default();
+    let mcp_errors_v: serde_json::Value = serde_json::from_str(&mcp_errors).unwrap_or_default();
+    let exec_failures_v: serde_json::Value =
+        serde_json::from_str(&exec_failures).unwrap_or_default();
+
+    Ok(serde_json::json!({
+        "denied_net": denied_net_v,
+        "mcp_errors": mcp_errors_v,
+        "exec_failures": exec_failures_v,
+    }))
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct TriageQuery {
+    /// Lookback window. Default "30m". Accepts "5m", "1h", "24h", or
+    /// RFC3339 ("2026-05-02T17:30:00Z").
+    since: Option<String>,
+    /// Max items per category. Default 20, capped at 200.
+    limit: Option<usize>,
+    /// Optional session id (reserved for the future session.db query).
+    id: Option<String>,
+}
+
+/// `GET /host-logs/{name}?grep=&tail=&max_bytes=` -- read a host-side log
+/// file by symbolic name. Hard-coded allowlist (no path traversal). Used
+/// by the `capsem_host_logs` MCP tool (T3) but the endpoint already lands
+/// in this commit so a future T3 sub-sprint can wire the MCP tool without
+/// touching the service.
+async fn handle_host_logs(
+    State(state): State<Arc<ServiceState>>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<HostLogsQuery>,
 ) -> Result<String, AppError> {
+    let path = if name == "app" {
+        triage::latest_app_log(&capsem_core::paths::capsem_home())
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no app log found".into()))?
+    } else {
+        triage::host_log_path(&state.run_dir, &name)
+            .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, format!("unknown log name: {name}")))?
+    };
+    let max_bytes = params.max_bytes.unwrap_or(100 * 1024).min(5 * 1024 * 1024);
+    let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        let len = file.metadata().map_err(|e| e.to_string())?.len();
+        if len > max_bytes {
+            file.seek(SeekFrom::End(-(max_bytes as i64)))
+                .map_err(|e| e.to_string())?;
+        }
+        let mut buf = String::new();
+        file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
+        if len > max_bytes {
+            if let Some(pos) = buf.find('\n') {
+                buf = buf[pos + 1..].to_string();
+            }
+        }
+        Ok(buf)
+    })
+    .await
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("log read failed: {e}"),
+        )
+    })?
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Apply grep + tail post-filters here so the wire surface to the
+    // capsem_host_logs MCP tool can avoid two round-trips.
+    let mut text = text;
+    if let Some(pat) = &params.grep {
+        text = text
+            .lines()
+            .filter(|l| l.contains(pat))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    if let Some(n) = params.tail {
+        let lines: Vec<&str> = text.lines().collect();
+        let start = lines.len().saturating_sub(n);
+        text = lines[start..].join("\n");
+    }
+    Ok(text)
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct HostLogsQuery {
+    grep: Option<String>,
+    tail: Option<usize>,
+    max_bytes: Option<u64>,
+}
+
+async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<String, AppError> {
     let log_path = state.run_dir.join("service.log");
 
     let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
@@ -1541,7 +2411,8 @@ async fn handle_service_logs(
         // Read last 100KB
         let max = 100 * 1024u64;
         if len > max {
-            file.seek(SeekFrom::End(-(max as i64))).map_err(|e| e.to_string())?;
+            file.seek(SeekFrom::End(-(max as i64)))
+                .map_err(|e| e.to_string())?;
         }
         let mut buf = String::new();
         file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
@@ -1552,48 +2423,99 @@ async fn handle_service_logs(
             }
         }
         Ok(buf)
-    }).await.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?
-      .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    })
+    .await
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("log read failed: {e}"),
+        )
+    })?
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(text)
 }
 
-async fn send_ipc_command(uds_path: &std::path::Path, cmd: ServiceToProcess, timeout_secs: u64) -> Result<ProcessToService, String> {
-    let stream = tokio::net::UnixStream::connect(uds_path).await
+#[tracing::instrument(skip_all, fields(cmd = ?std::mem::discriminant(&cmd), timeout_secs = ?timeout_secs))]
+async fn send_ipc_command(
+    uds_path: &std::path::Path,
+    cmd: ServiceToProcess,
+    timeout_secs: Option<u64>,
+) -> Result<ProcessToService, String> {
+    let stream = tokio::net::UnixStream::connect(uds_path)
+        .await
         .map_err(|e| format!("failed to connect to sandbox: {e}"))?;
-    let std_stream = stream.into_std()
+    let mut std_stream = stream
+        .into_std()
         .map_err(|e| format!("failed to convert stream: {e}"))?;
-    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(std_stream)
-        .map_err(|e| format!("failed to create IPC channel: {e}"))?;
+    capsem_core::ipc_handshake::negotiate_initiator(
+        &mut std_stream,
+        "capsem-service",
+        capsem_core::telemetry::current_parent_traceparent(),
+    )
+    .map_err(|e| format!("IPC handshake failed: {e}"))?;
+    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
+        channel_from_std(std_stream).map_err(|e| format!("failed to create IPC channel: {e}"))?;
 
-    tx.send(cmd.clone()).await
+    tx.send(cmd.clone())
+        .await
         .map_err(|e| format!("failed to send IPC command: {e}"))?;
 
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    let deadline =
+        timeout_secs.map(|secs| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
     loop {
-        match tokio::time::timeout_at(deadline, rx.recv()).await {
-            Ok(Ok(ProcessToService::Pong)) => {
+        let msg = match deadline {
+            Some(deadline) => match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Ok(msg)) => msg,
+                Ok(Err(e)) => {
+                    error!(?e, "IPC receive error");
+                    return Err(format!("IPC connection closed: {e}"));
+                }
+                Err(_) => {
+                    let secs = timeout_secs.unwrap_or_default();
+                    return Err(format!("IPC command timed out after {secs}s"));
+                }
+            },
+            None => match rx.recv().await {
+                Ok(msg) => msg,
+                Err(e) => {
+                    error!(?e, "IPC receive error");
+                    return Err(format!("IPC connection closed: {e}"));
+                }
+            },
+        };
+
+        match msg {
+            ProcessToService::Pong => {
                 if matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig) {
                     return Ok(ProcessToService::Pong);
                 }
                 continue;
             }
-            Ok(Ok(ProcessToService::TerminalOutput { .. })) => continue,
-            Ok(Ok(ProcessToService::StateChanged { .. })) => continue,
-            Ok(Ok(res)) => return Ok(res),
-            Ok(Err(e)) => {
-                error!(?e, "IPC receive error");
-                return Err(format!("IPC connection closed: {e}"));
-            }
-            Err(_) => return Err(format!("IPC command timed out after {timeout_secs}s")),
+            ProcessToService::TerminalOutput { .. } => continue,
+            ProcessToService::StateChanged { .. } => continue,
+            res => return Ok(res),
         }
     }
 }
 
 /// Wait until a VM signals readiness via a `.ready` sentinel file.
 /// The capsem-process creates this file once the guest handshake completes.
-/// Falls back to IPC Ping if the sentinel never appears (defensive).
-async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Result<(), String> {
+///
+/// If `state` and `id` are provided, also checks on every poll iteration that
+/// the VM is still in the instance registry. The resume_sandbox / spawn child-
+/// exit handlers remove the instance when capsem-process dies; observing that
+/// removal lets us fail fast (within ~50ms) instead of polling the dead
+/// sentinel for the full timeout. Without this, a capsem-process that crashes
+/// or exits during boot/restore would hang the API for `timeout_secs` (was
+/// reproducibly 30s under heavy suspend/resume churn).
+#[tracing::instrument(skip_all, fields(timeout_secs))]
+async fn wait_for_vm_ready(
+    uds_path: &std::path::Path,
+    timeout_secs: u64,
+    state: Option<&Arc<ServiceState>>,
+    id: Option<&str>,
+) -> Result<(), String> {
     let ready_path = uds_path.with_extension("ready");
     // Override the PollOpts::new defaults (50ms / 500ms): VM ready-time is
     // sub-second in the common case and the sentinel check is a single stat,
@@ -1606,15 +2528,33 @@ async fn wait_for_vm_ready(uds_path: &std::path::Path, timeout_secs: u64) -> Res
         max_delay: std::time::Duration::from_millis(50),
         ..capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
     };
-    capsem_core::poll::poll_until(
-        opts,
-        || {
-            let ready = ready_path.clone();
-            async move {
-                if ready.exists() { Some(()) } else { None }
+    let died: Arc<std::sync::atomic::AtomicBool> =
+        Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let res = capsem_core::poll::poll_until(opts, || {
+        let ready = ready_path.clone();
+        let state = state.cloned();
+        let id = id.map(|s| s.to_string());
+        let died = Arc::clone(&died);
+        async move {
+            if ready.exists() {
+                return Some(());
             }
-        },
-    ).await.map_err(|e| format!("{e}"))
+            if let (Some(st), Some(name)) = (state.as_ref(), id.as_ref()) {
+                if !st.instances.lock().unwrap().contains_key(name) {
+                    died.store(true, std::sync::atomic::Ordering::Release);
+                    // Returning Some short-circuits the poll loop; the
+                    // outer caller distinguishes via `died`.
+                    return Some(());
+                }
+            }
+            None
+        }
+    })
+    .await;
+    if died.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("capsem-process exited before signalling ready".into());
+    }
+    res.map_err(|e| format!("{e}"))
 }
 
 async fn handle_exec(
@@ -1624,26 +2564,45 @@ async fn handle_exec(
 ) -> Result<Json<ExecResponse>, AppError> {
     let uds_path = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         i.uds_path.clone()
     };
 
-    wait_for_vm_ready(&uds_path, 30).await
+    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
+        .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let id_val = state.next_job_id();
-    let res = send_ipc_command(&uds_path, ServiceToProcess::Exec { id: id_val, command: payload.command }, payload.timeout_secs).await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let res = send_ipc_command(
+        &uds_path,
+        ServiceToProcess::Exec {
+            id: id_val,
+            command: payload.command,
+        },
+        payload.timeout_secs,
+    )
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     match res {
-        ProcessToService::ExecResult { stdout, stderr, exit_code, .. } => {
-            Ok(Json(ExecResponse {
-                stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-                stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-                exit_code,
-            }))
-        }
-        _ => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response for exec".to_string())),
+        ProcessToService::ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            ..
+        } => Ok(Json(ExecResponse {
+            stdout: String::from_utf8(stdout)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stderr: String::from_utf8(stderr)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            exit_code,
+        })),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response for exec".to_string(),
+        )),
     }
 }
 
@@ -1654,24 +2613,45 @@ async fn handle_write_file(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let uds_path = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         i.uds_path.clone()
     };
 
-    wait_for_vm_ready(&uds_path, 30).await
+    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
+        .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let id_val = state.next_job_id();
     let data = payload.content.into_bytes();
-    let res = send_ipc_command(&uds_path, ServiceToProcess::WriteFile { id: id_val, path: payload.path, data }, 30).await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    
+    let res = send_ipc_command(
+        &uds_path,
+        ServiceToProcess::WriteFile {
+            id: id_val,
+            path: payload.path,
+            data,
+        },
+        Some(30),
+    )
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
     match res {
         ProcessToService::WriteFileResult { success, error, .. } => {
-            if success { Ok(Json(json!({ "success": true }))) }
-            else { Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error.unwrap_or_else(|| "unknown write error".into()))) }
+            if success {
+                Ok(Json(json!({ "success": true })))
+            } else {
+                Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error.unwrap_or_else(|| "unknown write error".into()),
+                ))
+            }
         }
-        _ => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response for write_file".to_string())),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response for write_file".to_string(),
+        )),
     }
 }
 
@@ -1683,26 +2663,46 @@ async fn handle_read_file(
     let path = &payload.path;
     let uds_path = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         i.uds_path.clone()
     };
 
-    wait_for_vm_ready(&uds_path, 30).await
+    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
+        .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let id_val = state.next_job_id();
-    let res = send_ipc_command(&uds_path, ServiceToProcess::ReadFile { id: id_val, path: path.clone() }, 30).await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    
+    let res = send_ipc_command(
+        &uds_path,
+        ServiceToProcess::ReadFile {
+            id: id_val,
+            path: path.clone(),
+        },
+        Some(30),
+    )
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
     match res {
         ProcessToService::ReadFileResult { data, error, .. } => {
             if let Some(d) = data {
-                Ok(Json(ReadFileResponse { content: String::from_utf8(d).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()) }))
+                Ok(Json(ReadFileResponse {
+                    content: String::from_utf8(d)
+                        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+                }))
             } else {
-                Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error.unwrap_or_else(|| "unknown read error".into())))
+                Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error.unwrap_or_else(|| "unknown read error".into()),
+                ))
             }
         }
-        _ => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response for read_file".to_string())),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response for read_file".to_string(),
+        )),
     }
 }
 
@@ -1712,27 +2712,36 @@ async fn handle_reload_config(
     // Collect paths to broadcast to.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
-        instances.iter().map(|(id, info)| (id.clone(), info.uds_path.clone())).collect::<Vec<_>>()
+        instances
+            .iter()
+            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
+            .collect::<Vec<_>>()
     };
-    
+
     let results = futures::future::join_all(uds_paths.iter().map(|(id, uds_path)| {
         let id = id.clone();
         async move {
-            match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, 5).await {
+            match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, Some(5)).await {
                 Ok(ProcessToService::Pong) => None,
                 Ok(_) => Some(format!("{id}: unexpected response")),
                 Err(e) => Some(format!("{id}: {e}")),
             }
         }
-    })).await;
+    }))
+    .await;
     let failures: Vec<String> = results.into_iter().flatten().collect();
 
     if failures.is_empty() {
-        Ok(Json(serde_json::json!({ "success": true, "reloaded": uds_paths.len() })))
+        Ok(Json(
+            serde_json::json!({ "success": true, "reloaded": uds_paths.len() }),
+        ))
     } else {
         Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to reload config in some instances: {}", failures.join(", ")),
+            format!(
+                "failed to reload config in some instances: {}",
+                failures.join(", ")
+            ),
         ))
     }
 }
@@ -1751,16 +2760,7 @@ async fn handle_get_settings() -> Json<serde_json::Value> {
 async fn handle_save_settings(
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Convert JSON values to SettingValue via serde round-trip.
-    let mut changes = HashMap::new();
-    for (key, val) in raw {
-        let sv: capsem_core::net::policy_config::SettingValue =
-            serde_json::from_value(val.clone()).map_err(|e| {
-                AppError(StatusCode::BAD_REQUEST, format!("invalid value for {key}: {e}"))
-            })?;
-        changes.insert(key, sv);
-    }
-    capsem_core::net::policy_config::batch_update_settings(&changes)
+    capsem_core::net::policy_config::batch_update_settings_json(&raw)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
     let resp = capsem_core::net::policy_config::load_settings_response();
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
@@ -1773,9 +2773,7 @@ async fn handle_get_presets() -> Json<serde_json::Value> {
 }
 
 /// POST /settings/presets/{id} -- apply a security preset, return refreshed tree.
-async fn handle_apply_preset(
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
     capsem_core::net::policy_config::apply_preset(&id)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
     let resp = capsem_core::net::policy_config::load_settings_response();
@@ -1829,13 +2827,14 @@ async fn handle_get_setup_state() -> Json<serde_json::Value> {
 /// GET /setup/detect -- detect host config, write to settings, return summary.
 async fn handle_detect_host_config() -> Json<serde_json::Value> {
     // Detection involves blocking I/O (file reads, subprocess calls for gh token).
-    let summary = tokio::task::spawn_blocking(|| {
-        capsem_core::host_config::detect_and_write_to_settings()
-    })
-    .await
-    .unwrap_or_else(|_| capsem_core::host_config::DetectedConfigSummary::from(
-        &capsem_core::host_config::HostConfig::default()
-    ));
+    let summary =
+        tokio::task::spawn_blocking(capsem_core::host_config::detect_and_write_to_settings)
+            .await
+            .unwrap_or_else(|_| {
+                capsem_core::host_config::DetectedConfigSummary::from(
+                    &capsem_core::host_config::HostConfig::default(),
+                )
+            });
     Json(serde_json::to_value(summary).unwrap_or_default())
 }
 
@@ -1858,14 +2857,22 @@ async fn handle_setup_retry() -> Result<Json<serde_json::Value>, AppError> {
         .args(["setup", "--non-interactive", "--accept-detected"])
         .output()
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to spawn capsem setup: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to spawn capsem setup: {e}"),
+            )
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let code = output.status.code().unwrap_or(-1);
         warn!(exit_code = code, stderr = %stderr, "capsem setup retry failed");
         return Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("setup exited {code}: {}", stderr.lines().last().unwrap_or("(no output)")),
+            format!(
+                "setup exited {code}: {}",
+                stderr.lines().last().unwrap_or("(no output)")
+            ),
         ));
     }
     Ok(Json(json!({ "success": true })))
@@ -1885,9 +2892,7 @@ async fn handle_complete_onboarding() -> Result<Json<serde_json::Value>, AppErro
 }
 
 /// GET /setup/assets -- query asset download status.
-async fn handle_asset_status(
-    State(state): State<Arc<ServiceState>>,
-) -> Json<serde_json::Value> {
+async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<serde_json::Value> {
     match state.resolve_asset_paths() {
         Ok(resolved) => {
             let assets = vec![
@@ -1903,14 +2908,12 @@ async fn handle_asset_status(
                 "assets": assets,
             }))
         }
-        Err(e) => {
-            Json(json!({
-                "ready": false,
-                "downloading": false,
-                "error": e.to_string(),
-                "assets": [],
-            }))
-        }
+        Err(e) => Json(json!({
+            "ready": false,
+            "downloading": false,
+            "error": e.to_string(),
+            "assets": [],
+        })),
     }
 }
 
@@ -1920,8 +2923,10 @@ async fn handle_corp_config(
 ) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
 
-    let capsem_dir = capsem_core::paths::capsem_home_opt()
-        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "HOME not set".into(),
+    ))?;
 
     if let Some(source) = &payload.source {
         // Use the existing provision function which handles fetch + install
@@ -1934,7 +2939,10 @@ async fn handle_corp_config(
         corp_provision::install_inline_corp_config(&capsem_dir, toml_content)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     } else {
-        return Err(AppError(StatusCode::BAD_REQUEST, "provide either 'source' (URL) or 'toml' (inline content)".into()));
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "provide either 'source' (URL) or 'toml' (inline content)".into(),
+        ));
     }
 
     Ok(Json(json!({ "success": true })))
@@ -1946,8 +2954,8 @@ async fn handle_corp_config(
 
 /// GET /mcp/servers -- list configured MCP servers with status.
 async fn handle_mcp_servers() -> Json<serde_json::Value> {
-    use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
     use capsem_core::mcp::policy::McpUserConfig;
+    use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
 
     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
     let user_mcp = user_sf.mcp.unwrap_or_default();
@@ -1958,24 +2966,30 @@ async fn handle_mcp_servers() -> Json<serde_json::Value> {
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let servers = build_server_list_with_builtin(
-        &user_mcp, &corp_mcp, builtin_bin.as_deref(), std::collections::HashMap::new(),
+        &user_mcp,
+        &corp_mcp,
+        builtin_bin.as_deref(),
+        std::collections::HashMap::new(),
     );
     let cache = load_tool_cache();
 
-    let resp: Vec<api::McpServerInfoResponse> = servers.iter().map(|s| {
-        let tool_count = cache.iter().filter(|t| t.server_name == s.name).count();
-        api::McpServerInfoResponse {
-            name: s.name.clone(),
-            url: s.url.clone(),
-            has_bearer_token: s.bearer_token.is_some(),
-            custom_header_count: s.headers.len(),
-            source: s.source.clone(),
-            enabled: s.enabled,
-            running: false, // Config-level only; runtime status requires IPC.
-            tool_count,
-            is_stdio: s.is_stdio(),
-        }
-    }).collect();
+    let resp: Vec<api::McpServerInfoResponse> = servers
+        .iter()
+        .map(|s| {
+            let tool_count = cache.iter().filter(|t| t.server_name == s.name).count();
+            api::McpServerInfoResponse {
+                name: s.name.clone(),
+                url: s.url.clone(),
+                has_bearer_token: s.bearer_token.is_some(),
+                custom_header_count: s.headers.len(),
+                source: s.source.clone(),
+                enabled: s.enabled,
+                running: false, // Config-level only; runtime status requires IPC.
+                tool_count,
+                is_stdio: s.is_stdio(),
+            }
+        })
+        .collect();
     Json(serde_json::to_value(resp).unwrap_or_default())
 }
 
@@ -1984,18 +2998,21 @@ async fn handle_mcp_tools() -> Json<serde_json::Value> {
     use capsem_core::mcp::load_tool_cache;
 
     let cache = load_tool_cache();
-    let resp: Vec<api::McpToolInfoResponse> = cache.iter().map(|entry| {
-        api::McpToolInfoResponse {
-            namespaced_name: entry.namespaced_name.clone(),
-            original_name: entry.original_name.clone(),
-            description: entry.description.clone(),
-            server_name: entry.server_name.clone(),
-            annotations: entry.annotations.as_ref().map(|a| a.to_mcp_json()),
-            pin_hash: Some(entry.pin_hash.clone()),
-            approved: entry.approved,
-            pin_changed: false, // Would need live catalog comparison.
-        }
-    }).collect();
+    let resp: Vec<api::McpToolInfoResponse> = cache
+        .iter()
+        .map(|entry| {
+            api::McpToolInfoResponse {
+                namespaced_name: entry.namespaced_name.clone(),
+                original_name: entry.original_name.clone(),
+                description: entry.description.clone(),
+                server_name: entry.server_name.clone(),
+                annotations: entry.annotations.as_ref().map(|a| a.to_mcp_json()),
+                pin_hash: Some(entry.pin_hash.clone()),
+                approved: entry.approved,
+                pin_changed: false, // Would need live catalog comparison.
+            }
+        })
+        .collect();
     Json(serde_json::to_value(resp).unwrap_or_default())
 }
 
@@ -2009,18 +3026,26 @@ async fn handle_mcp_policy() -> Json<serde_json::Value> {
 
     let resp = api::McpPolicyInfoResponse {
         global_policy: user_mcp.global_policy.clone(),
-        default_tool_permission: user_mcp.default_tool_permission
+        default_tool_permission: user_mcp
+            .default_tool_permission
             .map(|d| format!("{d:?}").to_lowercase())
             .unwrap_or_else(|| "allow".into()),
         blocked_servers: {
             let policy = user_mcp.to_policy(&corp_mcp);
             policy.blocked_servers
         },
-        tool_permissions: user_mcp.tool_permissions.iter()
+        tool_permissions: user_mcp
+            .tool_permissions
+            .iter()
             .map(|(k, v)| (k.clone(), format!("{v:?}").to_lowercase()))
             .collect(),
     };
     Json(serde_json::to_value(resp).unwrap_or_default())
+}
+
+/// GET /policy-hook/spec -- export the Policy Hook Spec0 OpenAPI contract.
+async fn handle_policy_hook_spec() -> Json<serde_json::Value> {
+    Json(capsem_core::net::policy_hook_spec::policy_hook_openapi_document())
 }
 
 /// POST /mcp/tools/refresh -- reload MCP servers from config.
@@ -2030,19 +3055,23 @@ async fn handle_mcp_refresh(
     // Send McpRefreshTools to all running instances.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
-        instances.values().map(|info| info.uds_path.clone()).collect::<Vec<_>>()
+        instances
+            .values()
+            .map(|info| info.uds_path.clone())
+            .collect::<Vec<_>>()
     };
     for uds_path in &uds_paths {
         let id = state.next_job_id();
-        let _ = send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, 30).await;
+        let _ =
+            send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
     }
-    Ok(Json(serde_json::json!({"success": true, "instances": uds_paths.len()})))
+    Ok(Json(
+        serde_json::json!({"success": true, "instances": uds_paths.len()}),
+    ))
 }
 
 /// POST /mcp/tools/:name/approve -- approve a tool (mark approved in cache).
-async fn handle_mcp_approve(
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_mcp_approve(Path(name): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::mcp::{load_tool_cache, save_tool_cache};
 
     let mut cache = load_tool_cache();
@@ -2050,11 +3079,13 @@ async fn handle_mcp_approve(
     match found {
         Some(entry) => {
             entry.approved = true;
-            save_tool_cache(&cache)
-                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            save_tool_cache(&cache).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
             Ok(Json(serde_json::json!({"approved": true})))
         }
-        None => Err(AppError(StatusCode::NOT_FOUND, format!("tool not found: {name}"))),
+        None => Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("tool not found: {name}"),
+        )),
     }
 }
 
@@ -2069,8 +3100,12 @@ async fn handle_mcp_call(
         let instances = state.instances.lock().unwrap();
         instances.values().next().map(|i| i.uds_path.clone())
     };
-    let uds_path = uds_path
-        .ok_or_else(|| AppError(StatusCode::SERVICE_UNAVAILABLE, "no running sessions".into()))?;
+    let uds_path = uds_path.ok_or_else(|| {
+        AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no running sessions".into(),
+        )
+    })?;
 
     let arguments_json = serde_json::to_string(&arguments)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
@@ -2079,25 +3114,33 @@ async fn handle_mcp_call(
         namespaced_name: name.clone(),
         arguments_json,
     };
-    let resp = send_ipc_command(&uds_path, msg, 60).await
+    let resp = send_ipc_command(&uds_path, msg, Some(60))
+        .await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
 
     match resp {
-        ProcessToService::McpCallToolResult { result_json, error, .. } => {
+        ProcessToService::McpCallToolResult {
+            result_json, error, ..
+        } => {
             if let Some(err) = error {
                 Err(AppError(StatusCode::BAD_GATEWAY, err))
             } else {
                 let result = match result_json {
-                    Some(s) => serde_json::from_str(&s).map_err(|e| AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("bad result_json from process: {e}"),
-                    ))?,
+                    Some(s) => serde_json::from_str(&s).map_err(|e| {
+                        AppError(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("bad result_json from process: {e}"),
+                        )
+                    })?,
                     None => serde_json::Value::Null,
                 };
                 Ok(Json(result))
             }
         }
-        _ => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response".into())),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response".into(),
+        )),
     }
 }
 
@@ -2109,10 +3152,18 @@ async fn handle_inspect(
     // _main sentinel routes to the global session index (main.db).
     if id == "_main" {
         let db_path = state.main_db_path();
-        let index = capsem_core::session::SessionIndex::open(&db_path)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open main.db: {e}")))?;
-        let json_str = index.query_raw(&payload.sql, &[])
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+        let index = capsem_core::session::SessionIndex::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open main.db: {e}"),
+            )
+        })?;
+        let json_str = index.query_raw(&payload.sql, &[]).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed: {e}"),
+            )
+        })?;
         return Ok((
             axum::http::StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -2122,21 +3173,206 @@ async fn handle_inspect(
 
     let db_path = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         i.session_dir.join("session.db")
     };
 
-    let reader = capsem_logger::DbReader::open(&db_path)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
 
-    let json_str = reader.query_raw(&payload.sql)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+    let json_str = reader.query_raw(&payload.sql).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("query failed: {e}"),
+        )
+    })?;
 
     Ok((
         axum::http::StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/json")],
         json_str,
     ))
+}
+
+/// `GET /timeline/{id}?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
+/// -- unified time-ordered event stream for one session, joining
+/// `exec_events`, `mcp_calls`, `net_events`, `fs_events`, and
+/// `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
+///
+/// W6 added `trace_id` to every layer; this handler filters with
+/// `WHERE trace_id = ? OR trace_id IS NULL` so rows that pre-date W4's
+/// trace propagation still surface for the user.
+async fn handle_timeline(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<TimelineQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let db_path = {
+        let instances = state.instances.lock().unwrap();
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        i.session_dir.join("session.db")
+    };
+
+    let limit = params.limit.unwrap_or(200).min(2000);
+    let since_filter = params
+        .since
+        .as_deref()
+        .and_then(triage::parse_since)
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+
+    // Layers the caller wants. Default to all five. C1: filter against
+    // a hard allowlist BEFORE building SQL so even a future careless
+    // copy-paste of this format!() can't leak attacker-supplied
+    // tokens into the query string.
+    const ALLOWED_LAYERS: &[&str] = &["exec", "mcp", "net", "fs", "model"];
+    let layers: Vec<&str> = params
+        .layers
+        .as_deref()
+        .map(|s| {
+            s.split(',')
+                .filter(|x| !x.is_empty())
+                .filter(|x| ALLOWED_LAYERS.contains(x))
+                .collect()
+        })
+        .unwrap_or_else(|| ALLOWED_LAYERS.to_vec());
+
+    let mut parts: Vec<String> = Vec::new();
+    if layers.contains(&"exec") {
+        parts.push(
+            "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
+             exit_code AS status, duration_ms, trace_id FROM exec_events"
+                .to_string(),
+        );
+    }
+    if layers.contains(&"mcp") {
+        // F7: include the originating model_call's tool_calls.call_id when
+        // an mcp_call serviced a model tool_use, so the timeline shows
+        // "model X tool_use Y -> mcp_call Z" inline. Best-effort LEFT JOIN
+        // -- mcp_calls without a tool_calls peer just show NULL.
+        parts.push(
+            "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.id AS ref, \
+             m.server_name || '/' || COALESCE(m.tool_name, m.method) || \
+                COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
+             NULL AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
+             FROM mcp_calls m \
+             LEFT JOIN tool_calls tc ON tc.mcp_call_id = m.id"
+                .to_string(),
+        );
+    }
+    if layers.contains(&"net") {
+        parts.push(
+            "SELECT timestamp, 'net' AS layer, id AS ref, \
+             COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
+             status_code AS status, duration_ms, trace_id FROM net_events"
+                .to_string(),
+        );
+    }
+    if layers.contains(&"fs") {
+        parts.push(
+            "SELECT timestamp, 'fs' AS layer, id AS ref, action || ' ' || path AS summary, \
+             NULL AS status, NULL AS duration_ms, trace_id FROM fs_events"
+                .to_string(),
+        );
+    }
+    if layers.contains(&"model") {
+        parts.push(
+            "SELECT timestamp, 'model' AS layer, id AS ref, \
+             provider || '/' || COALESCE(model, '?') AS summary, \
+             status_code AS status, duration_ms, trace_id FROM model_calls"
+                .to_string(),
+        );
+    }
+
+    if parts.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "no layers selected".into(),
+        ));
+    }
+
+    let mut sql = parts.join(" UNION ALL ");
+    let mut filters: Vec<String> = Vec::new();
+    if let Some(t) = &params.trace_id {
+        // Match the row's trace_id OR pre-W4 NULL rows. Quote/escape via
+        // SQLite's standard string-literal doubling.
+        let safe = t.replace('\'', "''");
+        filters.push(format!("(trace_id = '{safe}' OR trace_id IS NULL)"));
+    }
+    if let Some(s) = since_filter {
+        // RFC3339 string comparison works because timestamps share format.
+        let cutoff = secs_to_rfc3339(s);
+        filters.push(format!("timestamp >= '{cutoff}'"));
+    }
+    if !filters.is_empty() {
+        sql = format!("SELECT * FROM ({sql}) WHERE {}", filters.join(" AND "));
+    }
+    sql.push_str(&format!(" ORDER BY timestamp ASC LIMIT {limit}"));
+
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
+    let json_str = reader.query_raw(&sql).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("timeline query failed: {e}"),
+        )
+    })?;
+
+    Ok((
+        axum::http::StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        json_str,
+    ))
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct TimelineQuery {
+    /// Filter to one trace_id. Rows with NULL trace_id are also returned
+    /// (they pre-date W4's trace propagation).
+    trace_id: Option<String>,
+    /// Lookback window. "30m", "1h", "24h", "7d", "300s", or RFC3339.
+    since: Option<String>,
+    /// Max rows. Default 200, capped at 2000.
+    limit: Option<usize>,
+    /// Comma-separated subset of layers to include. Default all:
+    /// "exec,mcp,net,fs,model".
+    layers: Option<String>,
+}
+
+fn secs_to_rfc3339(secs: u64) -> String {
+    // Pure-stdlib RFC3339 (UTC, second precision). Mirrors the helper in
+    // the support_bundle crate; we pay the duplication tax to keep
+    // capsem-service free of `chrono`.
+    let secs = secs as i64;
+    let days = secs.div_euclid(86400);
+    let secs_in_day = secs.rem_euclid(86400);
+    let hh = (secs_in_day / 3600) as u32;
+    let mm = ((secs_in_day % 3600) / 60) as u32;
+    let ss = (secs_in_day % 60) as u32;
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
 // ---------------------------------------------------------------------------
@@ -2154,7 +3390,10 @@ fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<PathBuf, AppErr
     if let Some(entry) = registry.get(id) {
         return Ok(entry.session_dir.clone());
     }
-    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError(
+        StatusCode::NOT_FOUND,
+        format!("sandbox not found: {id}"),
+    ))
 }
 
 /// GET /history/{id} -- unified command history (exec + audit events).
@@ -2166,18 +3405,33 @@ async fn handle_history(
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
 
-    let reader = capsem_logger::DbReader::open(&db_path)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
 
-    let (commands, total) = reader.history(
-        params.limit,
-        params.offset,
-        params.search.as_deref(),
-        &params.layer,
-    ).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+    let (commands, total) = reader
+        .history(
+            params.limit,
+            params.offset,
+            params.search.as_deref(),
+            &params.layer,
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed: {e}"),
+            )
+        })?;
 
     let has_more = (params.offset + commands.len()) < total as usize;
-    Ok(Json(api::HistoryResponse { commands, total, has_more }))
+    Ok(Json(api::HistoryResponse {
+        commands,
+        total,
+        has_more,
+    }))
 }
 
 /// GET /history/{id}/processes -- process-centric view of audit events.
@@ -2188,11 +3442,19 @@ async fn handle_history_processes(
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
 
-    let reader = capsem_logger::DbReader::open(&db_path)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
 
-    let processes = reader.history_processes(100)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+    let processes = reader.history_processes(100).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("query failed: {e}"),
+        )
+    })?;
 
     Ok(Json(api::HistoryProcessesResponse { processes }))
 }
@@ -2205,11 +3467,19 @@ async fn handle_history_counts(
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
 
-    let reader = capsem_logger::DbReader::open(&db_path)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to open DB: {e}")))?;
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
 
-    let counts = reader.history_counts()
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("query failed: {e}")))?;
+    let counts = reader.history_counts().map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("query failed: {e}"),
+        )
+    })?;
 
     Ok(Json(api::HistoryCountsResponse {
         exec_count: counts.exec_count,
@@ -2234,8 +3504,12 @@ async fn handle_history_transcript(
         }));
     }
 
-    let output = std::fs::read(&pty_log_path)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to read pty.log: {e}")))?;
+    let output = std::fs::read(&pty_log_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to read pty.log: {e}"),
+        )
+    })?;
 
     let encoded = base64::engine::general_purpose::STANDARD.encode(&output);
     Ok(Json(api::TranscriptResponse {
@@ -2258,10 +3532,12 @@ async fn acquire_vz_host_lock() -> Result<startup::VzHostLock, AppError> {
         startup::VzHostLock::acquire(std::time::Duration::from_secs(60))
     })
     .await
-    .map_err(|e| AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("vz host lock task panicked: {e}"),
-    ))?;
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("vz host lock task panicked: {e}"),
+        )
+    })?;
     match result {
         Ok(Some(guard)) => Ok(guard),
         Ok(None) => Err(AppError(
@@ -2281,15 +3557,28 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
         return;
     }
     let pid_i32 = pid as i32;
-    let exited = || async move {
-        (unsafe { nix::libc::kill(pid_i32, 0) } != 0).then_some(())
-    };
-    if poll_until(PollOpts::new("vm-process-exit", timeout), exited).await.is_ok() {
+    let exited = || async move { (unsafe { nix::libc::kill(pid_i32, 0) } != 0).then_some(()) };
+    if poll_until(PollOpts::new("vm-process-exit", timeout), exited)
+        .await
+        .is_ok()
+    {
         return;
     }
-    tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
-    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_i32), nix::sys::signal::Signal::SIGKILL);
-    if poll_until(PollOpts::new("vm-process-sigkill", std::time::Duration::from_secs(2)), exited).await.is_err() {
+    tracing::warn!(
+        pid,
+        "VM process did not exit within timeout, sending SIGKILL"
+    );
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid_i32),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+    if poll_until(
+        PollOpts::new("vm-process-sigkill", std::time::Duration::from_secs(2)),
+        exited,
+    )
+    .await
+    .is_err()
+    {
         tracing::error!(pid, "VM process survived SIGKILL");
     }
 }
@@ -2316,7 +3605,11 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
 /// Either way, UDS socket / `.ready` files are removed inline and the
 /// instance is removed from the registry before return. The leak detector
 /// and suspend/resume both rely on "process is gone when this returns".
-async fn shutdown_vm_process(state: &ServiceState, id: &str, graceful: bool) -> Option<(PathBuf, bool, u32)> {
+async fn shutdown_vm_process(
+    state: &ServiceState,
+    id: &str,
+    graceful: bool,
+) -> Option<(PathBuf, bool, u32)> {
     // Serialize VM teardown across the service. Concurrent deletes under
     // load starve each other: VZ guest teardown + DbWriter WAL checkpoint +
     // socket cleanup all compete, and a single shutdown can exceed the 1s
@@ -2329,27 +3622,51 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str, graceful: bool) -> 
     let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(id)?;
-        (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent)
+        (
+            i.uds_path.clone(),
+            i.session_dir.clone(),
+            i.pid,
+            i.persistent,
+        )
     };
 
     if graceful {
         // Send shutdown command via IPC (or SIGTERM as fallback).
         let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
         if let Ok(stream) = stream_res {
-            if let Ok(std_stream) = stream.into_std() {
-                if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
-                    let _ = tx.send(ServiceToProcess::Shutdown).await;
+            if let Ok(mut std_stream) = stream.into_std() {
+                if capsem_core::ipc_handshake::negotiate_initiator(
+                    &mut std_stream,
+                    "capsem-service",
+                    capsem_core::telemetry::current_parent_traceparent(),
+                )
+                .is_ok()
+                {
+                    if let Ok((tx, _)) =
+                        channel_from_std::<ServiceToProcess, ProcessToService>(std_stream)
+                    {
+                        capsem_core::try_send!(
+                            "ipc_graceful_shutdown",
+                            tx.send(ServiceToProcess::Shutdown).await
+                        );
+                    }
                 }
             }
         } else if pid > 0 {
-            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGTERM,
+            );
         }
     } else if pid > 0 {
         // Fast path: SIGTERM capsem-process directly. CFRunLoopStop fires
         // before the guest's SHUTDOWN_GRACE_SECS sleep or the 2.5s in-process
         // self-timer would, so delete/purge don't pay for bash's graceful
         // exit when the VM is about to be destroyed anyway.
-        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        );
     }
 
     // Remove from active instances immediately so the service considers this
@@ -2373,6 +3690,7 @@ async fn shutdown_vm_process(state: &ServiceState, id: &str, graceful: bool) -> 
     Some((session_dir, persistent, pid))
 }
 
+#[tracing::instrument(skip_all, fields(vm_id = %id))]
 async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -2388,26 +3706,60 @@ async fn handle_suspend(
 
     let (uds_path, pid) = {
         let mut instances = state.instances.lock().unwrap();
-        let i = instances.get_mut(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances
+            .get_mut(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         if !i.persistent {
-            return Err(AppError(StatusCode::BAD_REQUEST, "ephemeral VMs cannot be suspended (persist first)".into()));
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                "ephemeral VMs cannot be suspended (persist first)".into(),
+            ));
         }
         (i.uds_path.clone(), i.pid)
     };
 
     let stream = tokio::net::UnixStream::connect(&uds_path)
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to connect to VM IPC: {e}")))?;
-    let std_stream = stream
-        .into_std()
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to convert stream: {e}")))?;
-    let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to create IPC channel: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to connect to VM IPC: {e}"),
+            )
+        })?;
+    let mut std_stream = stream.into_std().map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to convert stream: {e}"),
+        )
+    })?;
+    capsem_core::ipc_handshake::negotiate_initiator(
+        &mut std_stream,
+        "capsem-service",
+        capsem_core::telemetry::current_parent_traceparent(),
+    )
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("IPC handshake failed: {e}"),
+        )
+    })?;
+    let (tx, rx) =
+        channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to create IPC channel: {e}"),
+            )
+        })?;
 
     let checkpoint_path = "checkpoint.vzsave".to_string();
     tx.send(ServiceToProcess::Suspend { checkpoint_path })
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to send suspend command: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to send suspend command: {e}"),
+            )
+        })?;
 
     // Wait for process exit (channel closed). The process sends StateChanged {"Suspended"}
     // right before exiting. We must wait for full exit to avoid a race condition where
@@ -2422,7 +3774,8 @@ async fn handle_suspend(
                 }
             }
         }
-    }).await;
+    })
+    .await;
 
     if !suspended {
         // The guest never acknowledged suspend. Leaving the process alive
@@ -2430,7 +3783,10 @@ async fn handle_suspend(
         // orphan temp dirs accumulated over one test run). SIGKILL the
         // child, reclaim the instance slot, and surface the error.
         if pid > 0 {
-            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGKILL,
+            );
         }
         tracing::warn!(id, "handle_suspend (timeout) removing instance");
         state.instances.lock().unwrap().remove(&id);
@@ -2449,7 +3805,10 @@ async fn handle_suspend(
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGKILL,
+            );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             break;
         }
@@ -2487,11 +3846,16 @@ async fn handle_stop(
     if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, true).await {
         if !persistent {
             let dir = session_dir;
-            tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
+            tokio::task::spawn_blocking(move || {
+                let _ = std::fs::remove_dir_all(&dir);
+            });
         }
         Ok(Json(json!({ "success": true, "persistent": persistent })))
     } else {
-        Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+        Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("sandbox not found: {id}"),
+        ))
     }
 }
 
@@ -2501,17 +3865,21 @@ async fn handle_delete(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Delete fast-paths through SIGTERM + 1s poll: session dir is about
     // to be removed, guest sync() and bash history don't matter.
-    let session_dir = if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await {
-        session_dir
-    } else {
-        // Not running -- check persistent registry for stopped VM
-        let registry = state.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get(&id) {
-            entry.session_dir.clone()
+    let session_dir =
+        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await {
+            session_dir
         } else {
-            return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")));
-        }
-    };
+            // Not running -- check persistent registry for stopped VM
+            let registry = state.persistent_registry.lock().unwrap();
+            if let Some(entry) = registry.get(&id) {
+                entry.session_dir.clone()
+            } else {
+                return Err(AppError(
+                    StatusCode::NOT_FOUND,
+                    format!("sandbox not found: {id}"),
+                ));
+            }
+        };
 
     // Unregister from persistent registry if applicable
     {
@@ -2521,8 +3889,21 @@ async fn handle_delete(
         }
     }
 
-    // Always destroy session dir on delete
-    tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&session_dir); });
+    // Preserve the session dir under sessions/<id>-failed-<rand>/ instead
+    // of unlinking it outright. preserve_failed_session_dir renames + culls
+    // down to MAX_FAILED_SESSIONS so disk stays bounded, but each delete
+    // still leaves a fresh process.log / serial.log / session.db window for
+    // post-mortem (e.g. when a Python-side test assertion fails after
+    // /exec but before the test's `finally: delete()` -- the existing
+    // failure-path preservation only fires on host-side error routes,
+    // never on a clean DELETE, so without this the only artifact left is
+    // service.log, which doesn't show what the per-VM process or guest
+    // were doing). The cull keeps the most recent N around.
+    let state_clone = Arc::clone(&state);
+    let id_clone = id.clone();
+    tokio::task::spawn_blocking(move || {
+        state_clone.preserve_failed_session_dir(&session_dir, &id_clone);
+    });
 
     Ok(Json(json!({ "success": true })))
 }
@@ -2538,18 +3919,75 @@ async fn handle_resume(
     let _vz_guard = state.save_restore_lock.lock().await;
     let _vz_host_guard = acquire_vz_host_lock().await?;
 
+    let attempted_checkpoint = state.has_existing_resume_checkpoint(&name);
+
     match state.resume_sandbox(&name, None, None) {
         Ok(id) => {
             let uds_path = state.instance_socket_path(&id);
-            if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
+            if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
                 error!(name, "resume ready-wait failed: {e}");
-                return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("resume failed: {e}")));
+                if attempted_checkpoint {
+                    warn!(
+                        name,
+                        "warm restore failed; archiving checkpoint and retrying as a cold persistent boot"
+                    );
+                    state.archive_failed_restore_checkpoint(&id);
+
+                    match state.resume_sandbox(&name, None, None) {
+                        Ok(cold_id) => {
+                            let cold_uds_path = state.instance_socket_path(&cold_id);
+                            if let Err(cold_e) =
+                                wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id))
+                                    .await
+                            {
+                                error!(
+                                    name,
+                                    "cold resume fallback failed after warm restore failure: {cold_e}"
+                                );
+                                return Err(AppError(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    format!(
+                                        "resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"
+                                    ),
+                                ));
+                            }
+                            state.clear_resume_checkpoint(&cold_id);
+                            return Ok(Json(ProvisionResponse {
+                                id: cold_id,
+                                uds_path: Some(cold_uds_path),
+                            }));
+                        }
+                        Err(cold_e) => {
+                            error!(
+                                name,
+                                "cold resume fallback spawn failed after warm restore failure: {cold_e}"
+                            );
+                            return Err(AppError(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!(
+                                    "resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("resume failed: {e}"),
+                ));
             }
-            Ok(Json(ProvisionResponse { id, uds_path: Some(uds_path) }))
+            state.clear_resume_checkpoint(&id);
+            Ok(Json(ProvisionResponse {
+                id,
+                uds_path: Some(uds_path),
+            }))
         }
         Err(e) => {
             error!(name, "resume failed: {e}");
-            Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("resume failed: {e}")))
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("resume failed: {e}"),
+            ))
         }
     }
 }
@@ -2566,63 +4004,93 @@ async fn handle_persist(
     {
         let registry = state.persistent_registry.lock().unwrap();
         if registry.contains(name) {
-            return Err(AppError(StatusCode::CONFLICT, format!("persistent VM \"{}\" already exists", name)));
+            return Err(AppError(
+                StatusCode::CONFLICT,
+                format!("persistent VM \"{}\" already exists", name),
+            ));
         }
     }
 
     // Find the running ephemeral instance
     let (old_session_dir, ram_mb, cpus, base_version, forked_from, env) = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(&id).ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         if i.persistent {
-            return Err(AppError(StatusCode::BAD_REQUEST, format!("VM \"{}\" is already persistent", id)));
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("VM \"{}\" is already persistent", id),
+            ));
         }
-        (i.session_dir.clone(), i.ram_mb, i.cpus, i.base_version.clone(), i.forked_from.clone(), i.env.clone())
+        (
+            i.session_dir.clone(),
+            i.ram_mb,
+            i.cpus,
+            i.base_version.clone(),
+            i.forked_from.clone(),
+            i.env.clone(),
+        )
     };
 
     // Move session dir to persistent location
     let new_session_dir = state.run_dir.join("persistent").join(name);
     let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
-    std::fs::rename(&old_session_dir, &new_session_dir)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to move session dir: {e}")))?;
+    std::fs::rename(&old_session_dir, &new_session_dir).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to move session dir: {e}"),
+        )
+    })?;
 
     // Register in persistent registry
     {
         let mut registry = state.persistent_registry.lock().unwrap();
-        registry.register(PersistentVmEntry {
-            name: name.clone(),
-            ram_mb,
-            cpus,
-            base_version: base_version.clone(),
-            created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
-            session_dir: new_session_dir.clone(),
-            forked_from: forked_from.clone(),
-            description: None,
-            suspended: false,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: None,
-            env: env.clone(),
-        }).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        registry
+            .register(PersistentVmEntry {
+                name: name.clone(),
+                ram_mb,
+                cpus,
+                base_version: base_version.clone(),
+                created_at: format!(
+                    "{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                ),
+                session_dir: new_session_dir.clone(),
+                forked_from: forked_from.clone(),
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: env.clone(),
+            })
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     // Update instance info in-place
     {
         let mut instances = state.instances.lock().unwrap();
         if let Some(info) = instances.remove(&id) {
-            instances.insert(name.clone(), InstanceInfo {
-                id: name.clone(),
-                pid: info.pid,
-                uds_path: info.uds_path,
-                session_dir: new_session_dir,
-                ram_mb: info.ram_mb,
-                cpus: info.cpus,
-                start_time: info.start_time,
-                base_version: info.base_version,
-                persistent: true,
-                env: info.env,
-                forked_from,
-            });
+            instances.insert(
+                name.clone(),
+                InstanceInfo {
+                    id: name.clone(),
+                    pid: info.pid,
+                    uds_path: info.uds_path,
+                    session_dir: new_session_dir,
+                    ram_mb: info.ram_mb,
+                    cpus: info.cpus,
+                    start_time: info.start_time,
+                    base_version: info.base_version,
+                    persistent: true,
+                    env: info.env,
+                    forked_from,
+                },
+            );
         }
     }
 
@@ -2639,7 +4107,8 @@ async fn handle_purge(
     // Collect VMs to purge
     let to_purge: Vec<(String, bool)> = {
         let instances = state.instances.lock().unwrap();
-        instances.values()
+        instances
+            .values()
             .filter(|i| !i.persistent || payload.all)
             .map(|i| (i.id.clone(), i.persistent))
             .collect()
@@ -2659,7 +4128,8 @@ async fn handle_purge(
                 None
             }
         }
-    })).await;
+    }))
+    .await;
 
     for item in results.into_iter().flatten() {
         let (id, session_dir, persistent) = item;
@@ -2668,8 +4138,14 @@ async fn handle_purge(
             let _ = registry.unregister(&id);
         }
         let dir = session_dir;
-        tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
-        if persistent { persistent_purged += 1; } else { ephemeral_purged += 1; }
+        tokio::task::spawn_blocking(move || {
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+        if persistent {
+            persistent_purged += 1;
+        } else {
+            ephemeral_purged += 1;
+        }
     }
 
     // If --all, also purge stopped persistent VMs
@@ -2677,7 +4153,8 @@ async fn handle_purge(
         let stopped_names: Vec<String> = {
             let registry = state.persistent_registry.lock().unwrap();
             let instances = state.instances.lock().unwrap();
-            registry.list()
+            registry
+                .list()
                 .filter(|e| !instances.contains_key(&e.name))
                 .map(|e| e.name.clone())
                 .collect()
@@ -2688,7 +4165,9 @@ async fn handle_purge(
                 registry.get(name).map(|e| e.session_dir.clone())
             };
             if let Some(dir) = session_dir {
-                tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&dir); });
+                tokio::task::spawn_blocking(move || {
+                    let _ = std::fs::remove_dir_all(&dir);
+                });
             }
             let mut registry = state.persistent_registry.lock().unwrap();
             let _ = registry.unregister(name);
@@ -2697,7 +4176,11 @@ async fn handle_purge(
     }
 
     let purged = ephemeral_purged + persistent_purged;
-    Ok(Json(PurgeResponse { purged, persistent_purged, ephemeral_purged }))
+    Ok(Json(PurgeResponse {
+        purged,
+        persistent_purged,
+        ephemeral_purged,
+    }))
 }
 
 /// One-shot exec: provision a temp VM, run a command, return output, destroy VM.
@@ -2716,7 +4199,9 @@ async fn handle_run(
     let ram_mb = payload
         .ram_mb
         .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
-    let cpus = payload.cpus.unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+    let cpus = payload
+        .cpus
+        .unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
 
     let ram_bytes = ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
@@ -2743,12 +4228,23 @@ async fn handle_run(
         })
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
-    provision_result
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("provision task: {e}"),
+        )
+    })?;
+    provision_result.map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("provision failed: {e}"),
+        )
+    })?;
 
     // 2. Register session in main.db
-    let sessions_db_dir = state.run_dir.parent()
+    let sessions_db_dir = state
+        .run_dir
+        .parent()
         .unwrap_or(state.run_dir.as_path())
         .join("sessions");
     let _ = std::fs::create_dir_all(&sessions_db_dir);
@@ -2789,7 +4285,7 @@ async fn handle_run(
 
     // 3. Wait for VM socket to appear
     let uds_path = state.instance_socket_path(&id);
-    if let Err(e) = wait_for_vm_ready(&uds_path, 30).await {
+    if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
         // Wait for the child to actually exit before renaming. Rename on
         // an open-for-write dir is safe (fds survive) but any path-based
         // reopens the child might do during shutdown (log rotation, db
@@ -2812,9 +4308,13 @@ async fn handle_run(
     let job_id = state.next_job_id();
     let exec_result = send_ipc_command(
         &uds_path,
-        ServiceToProcess::Exec { id: job_id, command: payload.command },
+        ServiceToProcess::Exec {
+            id: job_id,
+            command: payload.command,
+        },
         payload.timeout_secs,
-    ).await;
+    )
+    .await;
 
     // 5. Tear down VM process and build response. shutdown_vm_process
     // blocks until the process is actually gone -- the leak detector
@@ -2823,15 +4323,26 @@ async fn handle_run(
     let _ = shutdown_vm_process(&state, &id, true).await;
 
     let response = match exec_result {
-        Ok(ProcessToService::ExecResult { stdout, stderr, exit_code, .. }) => {
-            Ok(Json(ExecResponse {
-                stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-                stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-                exit_code,
-            }))
-        }
-        Ok(_) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, "unexpected IPC response".into())),
-        Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
+        Ok(ProcessToService::ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            ..
+        }) => Ok(Json(ExecResponse {
+            stdout: String::from_utf8(stdout)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stderr: String::from_utf8(stderr)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            exit_code,
+        })),
+        Ok(_) => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response".into(),
+        )),
+        Err(e) => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("exec failed: {e}"),
+        )),
     };
 
     // 6. Roll up session counters before returning, so callers see consistent
@@ -2843,14 +4354,15 @@ async fn handle_run(
             if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
                 if let Ok(counts) = reader.net_event_counts() {
                     let _ = idx.update_request_counts(
-                        &id, counts.total as u64, counts.allowed as u64, counts.denied as u64,
+                        &id,
+                        counts.total as u64,
+                        counts.allowed as u64,
+                        counts.denied as u64,
                     );
                 }
                 let file_events = reader.file_event_count().unwrap_or(0);
                 let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
-                let _ = idx.update_session_summary(
-                    &id, 0, 0, 0.0, 0, mcp_calls, file_events,
-                );
+                let _ = idx.update_session_summary(&id, 0, 0, 0.0, 0, mcp_calls, file_events);
             }
         }
         let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
@@ -2858,8 +4370,6 @@ async fn handle_run(
 
     response
 }
-
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -2871,19 +4381,13 @@ async fn main() -> Result<()> {
         run_dir = resolved;
     }
 
-    let log_path = run_dir.join("service.log");
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
-
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt::layer().json().with_writer(Arc::new(log_file)))
-        .init();
+    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+        service: "capsem-service",
+        sink: capsem_core::telemetry::LogSink::File {
+            path: run_dir.join("service.log"),
+        },
+        default_filter: "info",
+    })?;
 
     info!("capsem-service starting up");
     info!(args = ?args, run_dir = %run_dir.display(), "environment initialized");
@@ -2908,7 +4412,9 @@ async fn main() -> Result<()> {
     let _ = std::fs::create_dir_all(&sessions_dir);
     let _ = std::fs::create_dir_all(&persistent_dir);
 
-    let service_sock = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
+    let service_sock = args
+        .uds_path
+        .unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Self-idempotent startup. Four parallel `capsem-service --uds-path X`
     // invocations must converge on exactly one running service.
@@ -2999,14 +4505,23 @@ async fn main() -> Result<()> {
     // where we explicitly drop it, right after bind succeeds.
     let startup_lock_guard = startup_lock;
 
-    let process_binary = args.process_binary.unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
-    let assets_base_dir = args.assets_dir.unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
+    let process_binary = args
+        .process_binary
+        .unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
+    let assets_base_dir = args
+        .assets_dir
+        .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
 
     // Load v2 manifest if available. In dev mode (no manifest or v1), use None.
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     let manifest_path = if assets_base_dir.join("manifest.json").exists() {
         Some(assets_base_dir.join("manifest.json"))
-    } else if assets_base_dir.parent().unwrap().join("manifest.json").exists() {
+    } else if assets_base_dir
+        .parent()
+        .unwrap()
+        .join("manifest.json")
+        .exists()
+    {
         Some(assets_base_dir.parent().unwrap().join("manifest.json"))
     } else {
         None
@@ -3039,7 +4554,10 @@ async fn main() -> Result<()> {
 
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path);
-    info!(persistent_vms = persistent_registry.data.vms.len(), "loaded persistent VM registry");
+    info!(
+        persistent_vms = persistent_registry.data.vms.len(),
+        "loaded persistent VM registry"
+    );
 
     let magika_session = magika::Session::builder()
         .with_inter_threads(1)
@@ -3070,7 +4588,10 @@ async fn main() -> Result<()> {
     reap_orphan_capsem_processes(&run_dir);
 
     // Check for running instances to reattach
-    info!("scanning for existing sandboxes in {}", instances_dir.display());
+    info!(
+        "scanning for existing sandboxes in {}",
+        instances_dir.display()
+    );
     if let Ok(entries) = std::fs::read_dir(&instances_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -3096,9 +4617,10 @@ async fn main() -> Result<()> {
     }
 
     let app = Router::new()
-        .route("/version", get(|| async {
-            Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
-        }))
+        .route(
+            "/version",
+            get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
+        )
         .route("/provision", post(handle_provision))
         .route("/list", get(handle_list))
         .route("/info/{id}", get(handle_info))
@@ -3116,9 +4638,16 @@ async fn main() -> Result<()> {
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))
         .route("/service-logs", get(handle_service_logs))
+        .route("/triage", get(handle_triage))
+        .route("/panics", get(handle_panics))
+        .route("/host-logs/{name}", get(handle_host_logs))
+        .route("/timeline/{id}", get(handle_timeline))
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))
-        .route("/settings", get(handle_get_settings).post(handle_save_settings))
+        .route(
+            "/settings",
+            get(handle_get_settings).post(handle_save_settings),
+        )
         .route("/settings/presets", get(handle_get_presets))
         .route("/settings/presets/{id}", post(handle_apply_preset))
         .route("/settings/lint", post(handle_lint_config))
@@ -3132,6 +4661,7 @@ async fn main() -> Result<()> {
         .route("/mcp/servers", get(handle_mcp_servers))
         .route("/mcp/tools", get(handle_mcp_tools))
         .route("/mcp/policy", get(handle_mcp_policy))
+        .route("/policy-hook/spec", get(handle_policy_hook_spec))
         .route("/mcp/tools/refresh", post(handle_mcp_refresh))
         .route("/mcp/tools/{name}/approve", post(handle_mcp_approve))
         .route("/mcp/tools/{name}/call", post(handle_mcp_call))
@@ -3140,7 +4670,10 @@ async fn main() -> Result<()> {
         .route("/history/{id}/counts", get(handle_history_counts))
         .route("/history/{id}/transcript", get(handle_history_transcript))
         .route("/files/{id}", get(handle_list_files))
-        .route("/files/{id}/content", get(handle_download_file).post(handle_upload_file))
+        .route(
+            "/files/{id}/content",
+            get(handle_download_file).post(handle_upload_file),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
@@ -3170,7 +4703,7 @@ async fn main() -> Result<()> {
     let gateway_binary = args.gateway_binary;
     let gateway_port = args.gateway_port;
     let tray_binary = args.tray_binary;
-    
+
     let spawn_task = tokio::spawn(async move {
         let spawned = spawn_companions(
             &service_sock_for_spawn,
@@ -3180,7 +4713,11 @@ async fn main() -> Result<()> {
             tray_binary,
         )
         .await;
-        companions_for_spawn.lock().unwrap().children.extend(spawned);
+        companions_for_spawn
+            .lock()
+            .unwrap()
+            .children
+            .extend(spawned);
     });
     companions.lock().unwrap().spawn_task = Some(spawn_task);
 
@@ -3195,7 +4732,7 @@ async fn main() -> Result<()> {
             // downstream `_ensure-service` (which itself sleeps 500ms before
             // spawning the next service) would race with companion exit and
             // the new gateway would fail to bind :19222.
-            
+
             // Scoped so the MutexGuard is definitely dropped before the
             // awaits below; relying on `drop(manager)` alone was fragile
             // enough that the compiler's Send analysis tripped once the
@@ -3249,7 +4786,9 @@ fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path) -> Vec<i3
         if !line.contains(&marker) {
             continue;
         }
-        let Some((pid_str, _)) = line.split_once(char::is_whitespace) else { continue };
+        let Some((pid_str, _)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
         if let Ok(pid) = pid_str.parse::<i32>() {
             pids.push(pid);
         }
@@ -3290,7 +4829,8 @@ fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
-        let survivors: Vec<i32> = orphan_pids.iter()
+        let survivors: Vec<i32> = orphan_pids
+            .iter()
             .copied()
             .filter(|&pid| unsafe { nix::libc::kill(pid, 0) } == 0)
             .collect();
@@ -3298,7 +4838,11 @@ fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
             return;
         }
         if std::time::Instant::now() >= deadline {
-            tracing::warn!(count = survivors.len(), ?survivors, "orphan capsem-process did not exit, SIGKILLing");
+            tracing::warn!(
+                count = survivors.len(),
+                ?survivors,
+                "orphan capsem-process did not exit, SIGKILLing"
+            );
             for pid in survivors {
                 let _ = nix::sys::signal::kill(
                     nix::unistd::Pid::from_raw(pid),
@@ -3320,8 +4864,16 @@ fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
 fn kill_all_vm_processes(state: &ServiceState) {
     let pids_and_sockets: Vec<(u32, PathBuf, PathBuf, bool)> = {
         let instances = state.instances.lock().unwrap();
-        instances.values()
-            .map(|i| (i.pid, i.uds_path.clone(), i.session_dir.clone(), i.persistent))
+        instances
+            .values()
+            .map(|i| {
+                (
+                    i.pid,
+                    i.uds_path.clone(),
+                    i.session_dir.clone(),
+                    i.persistent,
+                )
+            })
             .collect()
     };
     // Nothing to reap -- skip the grace sleep. `_ensure-service` only waits
@@ -3337,7 +4889,10 @@ fn kill_all_vm_processes(state: &ServiceState) {
             // SIGTERM first so capsem-process gets a chance to run its own cleanup
             // (save state, unmount virtiofs). Graceful_shutdown is already holding
             // the axum server open briefly so a short wait is acceptable.
-            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGTERM);
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGTERM,
+            );
             signaled_any_vm = true;
         }
         let _ = std::fs::remove_file(uds_path);
@@ -3349,30 +4904,37 @@ fn kill_all_vm_processes(state: &ServiceState) {
     if !signaled_any_vm {
         return;
     }
-    
+
     // Bounded wait: poll for up to 2 seconds
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(2);
     let poll_interval = std::time::Duration::from_millis(100);
-    
+
     loop {
-        let survivors: Vec<u32> = pids_and_sockets.iter()
+        let survivors: Vec<u32> = pids_and_sockets
+            .iter()
             .map(|(pid, _, _, _)| *pid)
             .filter(|&pid| pid > 0 && unsafe { nix::libc::kill(pid as i32, 0) } == 0)
             .collect();
-            
+
         if survivors.is_empty() {
             break;
         }
-        
+
         if start.elapsed() >= timeout {
-            tracing::warn!(count = survivors.len(), "some VMs survived SIGTERM, escalating to SIGKILL");
+            tracing::warn!(
+                count = survivors.len(),
+                "some VMs survived SIGTERM, escalating to SIGKILL"
+            );
             for pid in survivors {
-                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::Signal::SIGKILL);
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
             }
             break;
         }
-        
+
         std::thread::sleep(poll_interval);
     }
 }
@@ -3381,9 +4943,8 @@ async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to register SIGTERM handler");
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
         tokio::select! {
             _ = ctrl_c => {}
             _ = sigterm.recv() => {}
@@ -3410,7 +4971,11 @@ fn find_sibling_binary(name: &str) -> PathBuf {
 /// Open a log file for a companion process, returning Stdio handles for stdout and stderr.
 /// Falls back to null if the file cannot be opened.
 fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdio, std::process::Stdio) {
-    match std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
         Ok(f) => {
             let stdout = f
                 .try_clone()
@@ -3465,7 +5030,9 @@ async fn spawn_companions(
     // Parent-watch: the gateway exits the moment we die, even if we die
     // ungracefully (SIGKILL/OOM). capsem-guard enforces this on the gateway
     // side; we just have to hand it our PID.
-    gw_cmd.arg("--parent-pid").arg(std::process::id().to_string());
+    gw_cmd
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string());
     if let Some(port) = gateway_port {
         gw_cmd.arg("--port").arg(port.to_string());
     }
@@ -3486,15 +5053,23 @@ async fn spawn_companions(
                 let tp = token_path.clone();
                 let pp = port_path.clone();
                 let _ = capsem_core::poll::poll_until(
-                    capsem_core::poll::PollOpts::new("gateway-ready", std::time::Duration::from_secs(5)),
+                    capsem_core::poll::PollOpts::new(
+                        "gateway-ready",
+                        std::time::Duration::from_secs(5),
+                    ),
                     || {
                         let tp = tp.clone();
                         let pp = pp.clone();
                         async move {
-                            if tp.exists() && pp.exists() { Some(()) } else { None }
+                            if tp.exists() && pp.exists() {
+                                Some(())
+                            } else {
+                                None
+                            }
                         }
                     },
-                ).await;
+                )
+                .await;
             }
 
             // 2. Spawn capsem-tray (menu bar) -- only on macOS, only after gateway ready
@@ -3504,7 +5079,8 @@ async fn spawn_companions(
                 let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
                 info!(binary = %tray_bin.display(), "spawning capsem-tray");
                 match tokio::process::Command::new(&tray_bin)
-                    .arg("--parent-pid").arg(std::process::id().to_string())
+                    .arg("--parent-pid")
+                    .arg(std::process::id().to_string())
                     .stdout(tray_out)
                     .stderr(tray_err)
                     .kill_on_drop(true)
@@ -3527,7 +5103,6 @@ async fn spawn_companions(
 
     children
 }
-
 
 #[cfg(test)]
 mod tests;

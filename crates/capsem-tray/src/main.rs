@@ -44,12 +44,15 @@ enum PollResult {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "capsem_tray=info".into()),
-        )
-        .init();
+    let run_dir = capsem_core::paths::capsem_run_dir();
+    let _ = std::fs::create_dir_all(&run_dir);
+    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+        service: "capsem-tray",
+        sink: capsem_core::telemetry::LogSink::File {
+            path: run_dir.join("tray.log"),
+        },
+        default_filter: "capsem_tray=info",
+    })?;
 
     let args = Args::parse();
 
@@ -133,7 +136,11 @@ fn main() -> Result<()> {
         built = option_env!("CAPSEM_BUILD_TS").unwrap_or("dev"),
         "capsem-tray started"
     );
-    eprintln!("[capsem-tray] version={} built={}", env!("CARGO_PKG_VERSION"), option_env!("CAPSEM_BUILD_TS").unwrap_or("dev"));
+    eprintln!(
+        "[capsem-tray] version={} built={}",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("CAPSEM_BUILD_TS").unwrap_or("dev")
+    );
     info!("tray icon created");
 
     // Spawn tokio runtime on background thread
@@ -518,8 +525,7 @@ mod tests {
     #[test]
     fn direct_binary_with_action_requires_vm_id() {
         let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
-        let (program, args) =
-            build_launch_invocation(Some(&binary), Some("vm-42"), Some("save"));
+        let (program, args) = build_launch_invocation(Some(&binary), Some("vm-42"), Some("save"));
         assert_eq!(program, binary.as_os_str());
         assert_eq!(
             args,
@@ -546,7 +552,13 @@ mod tests {
         assert_eq!(program, os("open"));
         assert_eq!(
             args,
-            vec![os("-a"), os("Capsem"), os("--args"), os("--connect"), os("vm-9")]
+            vec![
+                os("-a"),
+                os("Capsem"),
+                os("--args"),
+                os("--connect"),
+                os("vm-9")
+            ]
         );
     }
 
@@ -568,4 +580,3 @@ mod tests {
         );
     }
 }
-

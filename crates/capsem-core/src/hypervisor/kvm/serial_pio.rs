@@ -26,7 +26,7 @@ const LSR: u16 = 5; // Line Status Register
 const LCR_DLAB: u8 = 0x80; // Divisor Latch Access Bit
 
 /// LSR status bits.
-const LSR_DR: u8 = 0x01;   // Data Ready (input available)
+const LSR_DR: u8 = 0x01; // Data Ready (input available)
 const LSR_THRE: u8 = 0x20; // Transmitter Holding Register Empty
 const LSR_TEMT: u8 = 0x40; // Transmitter Empty
 
@@ -124,7 +124,9 @@ mod tests {
         assert_ne!(buf[0] & LSR_THRE, 0, "THRE should be set");
         assert_ne!(buf[0] & LSR_TEMT, 0, "TEMT should be set");
         // Clean up
-        unsafe { libc::close(rx); }
+        unsafe {
+            libc::close(rx);
+        }
         // tx is owned by Serial16550
     }
 
@@ -140,7 +142,9 @@ mod tests {
         let n = unsafe { libc::read(rx, buf.as_mut_ptr() as *mut libc::c_void, 2) };
         assert_eq!(n, 2);
         assert_eq!(&buf, b"AB");
-        unsafe { libc::close(rx); }
+        unsafe {
+            libc::close(rx);
+        }
     }
 
     #[test]
@@ -165,8 +169,10 @@ mod tests {
         let n = unsafe { libc::read(rx, buf.as_mut_ptr() as *mut libc::c_void, 1) };
         assert_eq!(n, 1);
         assert_eq!(&buf, b"X");
-        
-        unsafe { libc::close(rx); }
+
+        unsafe {
+            libc::close(rx);
+        }
     }
 
     #[test]
@@ -176,7 +182,9 @@ mod tests {
         let mut buf = [0xFFu8; 1];
         uart.read(RBR, &mut buf);
         assert_eq!(buf[0], 0);
-        unsafe { libc::close(rx); }
+        unsafe {
+            libc::close(rx);
+        }
     }
 
     #[test]
@@ -186,7 +194,9 @@ mod tests {
         let mut buf = [0xFFu8; 1];
         uart.read(2, &mut buf); // FCR / IIR
         assert_eq!(buf[0], 0);
-        unsafe { libc::close(rx); }
+        unsafe {
+            libc::close(rx);
+        }
     }
 
     #[test]
@@ -196,6 +206,8 @@ mod tests {
         let mut buf = [0u8; 1];
         uart.read(LSR, &mut buf);
         assert_eq!(buf[0] & LSR_DR, 0, "DR should NOT be set when no input");
-        unsafe { libc::close(rx); }
+        unsafe {
+            libc::close(rx);
+        }
     }
 }

@@ -1,6 +1,28 @@
 use super::*;
 use std::sync::atomic::AtomicU64;
 
+static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[test]
+fn process_env_allowlist_forwards_mcp_timeout_knobs() {
+    assert!(
+        PROCESS_ENV_ALLOWLIST.contains(&"CAPSEM_HOME"),
+        "CAPSEM_HOME must reach capsem-process so tests and custom installs use the same config root as capsem-service"
+    );
+
+    for key in [
+        "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
+        "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
+        "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
+        "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+    ] {
+        assert!(
+            PROCESS_ENV_ALLOWLIST.contains(&key),
+            "{key} must reach capsem-process because McpTimeouts::from_env() is read there"
+        );
+    }
+}
+
 #[test]
 fn find_orphan_capsem_pids_matches_capsem_process_under_run_dir() {
     let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-abc");
@@ -20,7 +42,11 @@ fn find_orphan_capsem_pids_skips_processes_for_other_run_dirs() {
   1742 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-mine/sessions/bar
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
-    assert_eq!(pids, vec![1742], "must not match neighbouring test run dirs");
+    assert_eq!(
+        pids,
+        vec![1742],
+        "must not match neighbouring test run dirs"
+    );
 }
 
 #[test]
@@ -32,7 +58,11 @@ fn find_orphan_capsem_pids_skips_non_capsem_process_binaries() {
   1502 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
-    assert_eq!(pids, vec![1502], "match must require 'capsem-process' in the line");
+    assert_eq!(
+        pids,
+        vec![1502],
+        "match must require 'capsem-process' in the line"
+    );
 }
 
 #[test]
@@ -281,7 +311,10 @@ fn preserve_renames_session_dir_and_keeps_logs() {
 
     state.preserve_failed_session_dir(&session_dir, "vm-abc");
 
-    assert!(!session_dir.exists(), "original dir should have been renamed");
+    assert!(
+        !session_dir.exists(),
+        "original dir should have been renamed"
+    );
     let entries: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
         .unwrap()
         .flatten()
@@ -298,6 +331,104 @@ fn preserve_renames_session_dir_and_keeps_logs() {
     assert_eq!(std::fs::read(&preserved).unwrap(), b"boot failed: ...");
     let preserved_serial = failed.path().join("serial.log");
     assert_eq!(std::fs::read(&preserved_serial).unwrap(), b"kernel panic");
+}
+
+// AB-008: idempotency on the failure-preservation path.
+//
+// Multiple cleanup paths can race for the same session dir
+// (`scrub_dead_process`, the spawn-completion handler, `handle_run` cleanup).
+// The previous implementation emitted two scary WARN lines on the second
+// call ("logs lost" + "orphaned on disk") even when the first call had
+// preserved the dir successfully. The outcome enum lets us assert the
+// idempotent shape without capturing tracing output.
+
+#[test]
+fn preserve_outcome_preserved_when_dir_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let session_dir = state.run_dir.join("sessions").join("vm-x");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("process.log"), b"x").unwrap();
+
+    let outcome = state.preserve_failed_session_dir_outcome(&session_dir, "vm-x");
+    let preserved_path = match outcome {
+        PreserveOutcome::Preserved(p) => p,
+        other => panic!("expected Preserved, got {other:?}"),
+    };
+    assert!(preserved_path.exists(), "rename target must exist");
+    assert!(!session_dir.exists(), "original must be gone after rename");
+    assert!(
+        preserved_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("vm-x-failed-")),
+        "preserved name must follow `<id>-failed-*` shape: {}",
+        preserved_path.display()
+    );
+}
+
+#[test]
+fn preserve_outcome_already_absent_when_dir_does_not_exist() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let session_dir = state.run_dir.join("sessions").join("vm-gone");
+    // Note: we never create session_dir.
+
+    let outcome = state.preserve_failed_session_dir_outcome(&session_dir, "vm-gone");
+    assert!(
+        matches!(outcome, PreserveOutcome::AlreadyAbsent),
+        "expected AlreadyAbsent, got {outcome:?}"
+    );
+    let entries: Vec<String> = std::fs::read_dir(state.run_dir.join("sessions"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        !entries.iter().any(|n| n.contains("-failed-")),
+        "must not create a -failed- dir for an absent source: {entries:?}"
+    );
+}
+
+#[test]
+fn preserve_is_idempotent_when_called_twice() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let session_dir = state.run_dir.join("sessions").join("vm-twice");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("process.log"), b"first").unwrap();
+
+    let first = state.preserve_failed_session_dir_outcome(&session_dir, "vm-twice");
+    assert!(
+        matches!(first, PreserveOutcome::Preserved(_)),
+        "first call must preserve, got {first:?}"
+    );
+
+    let failed_count_after_first: usize = std::fs::read_dir(state.run_dir.join("sessions"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains("-failed-"))
+        .count();
+    assert_eq!(failed_count_after_first, 1);
+
+    // Second call on the same -- now-absent -- session_dir must be a quiet
+    // idempotent no-op, NOT a duplicate -failed- creation, NOT an
+    // orphaned-on-disk warning.
+    let second = state.preserve_failed_session_dir_outcome(&session_dir, "vm-twice");
+    assert!(
+        matches!(second, PreserveOutcome::AlreadyAbsent),
+        "second call must be idempotent, got {second:?}"
+    );
+
+    let failed_count_after_second: usize = std::fs::read_dir(state.run_dir.join("sessions"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains("-failed-"))
+        .count();
+    assert_eq!(
+        failed_count_after_second, 1,
+        "second call must not create a new -failed- sibling"
+    );
 }
 
 #[test]
@@ -384,7 +515,10 @@ fn cull_ignores_non_failed_dirs() {
 
     state.cull_failed_sessions().unwrap();
 
-    assert!(sessions.join("vm-alive").exists(), "active VM dir must not be culled");
+    assert!(
+        sessions.join("vm-alive").exists(),
+        "active VM dir must not be culled"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -478,7 +612,11 @@ fn asset_version_path_construction() {
 
 #[test]
 fn arch_detection_aarch64() {
-    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
     assert!(arch == "arm64" || arch == "x86_64");
 }
 
@@ -493,8 +631,16 @@ fn long_vm_name_falls_back_to_tmp_socket() {
     // but instance_socket_path should fall back to /tmp/capsem/.
     let long_name = "a".repeat(100);
     let path = state.instance_socket_path(&long_name);
-    assert!(path.starts_with("/tmp/capsem/"), "expected /tmp/capsem/ fallback, got: {}", path.display());
-    assert!(path.as_os_str().len() < 104, "fallback path still too long: {}", path.as_os_str().len());
+    assert!(
+        path.starts_with("/tmp/capsem/"),
+        "expected /tmp/capsem/ fallback, got: {}",
+        path.display()
+    );
+    assert!(
+        path.as_os_str().len() < 104,
+        "fallback path still too long: {}",
+        path.as_os_str().len()
+    );
 }
 
 #[test]
@@ -526,7 +672,10 @@ fn provision_accepts_name_just_under_uds_limit() {
     // Will fail later (missing rootfs), but NOT for path length
     if let Err(e) = &result {
         let msg = e.to_string();
-        assert!(!msg.contains("socket path"), "short name should not hit path limit: {msg}");
+        assert!(
+            !msg.contains("socket path"),
+            "short name should not hit path limit: {msg}"
+        );
     }
 }
 
@@ -546,7 +695,10 @@ fn provision_short_name_passes_path_check() {
     // Fails for missing assets, not path length
     if let Err(e) = &result {
         let msg = e.to_string();
-        assert!(!msg.contains("socket path"), "normal name should not hit path limit: {msg}");
+        assert!(
+            !msg.contains("socket path"),
+            "normal name should not hit path limit: {msg}"
+        );
     }
 }
 
@@ -560,21 +712,24 @@ fn provision_persistent_rejects_duplicate_name() {
     // Pre-register a persistent VM directly in the registry data
     {
         let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert("taken".into(), PersistentVmEntry {
-            name: "taken".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.0.0".into(),
-            created_at: "0".into(),
-            session_dir: PathBuf::from("/tmp/taken"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: None,
-        env: None,
-        });
+        reg.data.vms.insert(
+            "taken".into(),
+            PersistentVmEntry {
+                name: "taken".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: PathBuf::from("/tmp/taken"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
     }
     let result = state.provision_sandbox(ProvisionOptions {
         id: "taken",
@@ -588,7 +743,10 @@ fn provision_persistent_rejects_duplicate_name() {
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("already exists"), "expected duplicate error, got: {err}");
+    assert!(
+        err.contains("already exists"),
+        "expected duplicate error, got: {err}"
+    );
     assert!(err.contains("resume"), "should suggest resume, got: {err}");
 }
 
@@ -607,8 +765,10 @@ fn provision_persistent_validates_name() {
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("must start with") || err.contains("must contain only"),
-        "expected name validation error, got: {err}");
+    assert!(
+        err.contains("must start with") || err.contains("must contain only"),
+        "expected name validation error, got: {err}"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -661,8 +821,13 @@ async fn handle_fork_creates_persistent_sandbox() {
     let result = handle_fork(
         State(state.clone()),
         Path("fork-src".into()),
-        Json(ForkRequest { name: "my-fork".into(), description: Some("test".into()) }),
-    ).await.unwrap();
+        Json(ForkRequest {
+            name: "my-fork".into(),
+            description: Some("test".into()),
+        }),
+    )
+    .await
+    .unwrap();
     assert_eq!(result.0.name, "my-fork");
     assert!(result.0.size_bytes > 0);
     // Verify fork created a persistent sandbox entry in the registry
@@ -680,8 +845,13 @@ async fn handle_fork_not_found() {
     let err = handle_fork(
         State(state),
         Path("ghost".into()),
-        Json(ForkRequest { name: "img".into(), description: None }),
-    ).await.unwrap_err();
+        Json(ForkRequest {
+            name: "img".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err.0, StatusCode::NOT_FOUND);
 }
 
@@ -713,14 +883,24 @@ async fn handle_fork_duplicate_returns_conflict() {
     let _ = handle_fork(
         State(state.clone()),
         Path("dup-src".into()),
-        Json(ForkRequest { name: "same-name".into(), description: None }),
-    ).await.unwrap();
+        Json(ForkRequest {
+            name: "same-name".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap();
     // Second fork with same name returns CONFLICT
     let err = handle_fork(
         State(state),
         Path("dup-src".into()),
-        Json(ForkRequest { name: "same-name".into(), description: None }),
-    ).await.unwrap_err();
+        Json(ForkRequest {
+            name: "same-name".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err.0, StatusCode::CONFLICT);
 }
 
@@ -733,28 +913,36 @@ async fn handle_fork_from_persistent_registry() {
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert("pers-vm".into(), PersistentVmEntry {
-            name: "pers-vm".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.0.0".into(),
-            created_at: "2026-01-01T00:00:00Z".into(),
-            session_dir: session_dir.clone(),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: None,
-        env: None,
-        });
+        reg.data.vms.insert(
+            "pers-vm".into(),
+            PersistentVmEntry {
+                name: "pers-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "2026-01-01T00:00:00Z".into(),
+                session_dir: session_dir.clone(),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
     }
     // state is already Arc<ServiceState> from make_test_state*
     let result = handle_fork(
         State(state),
         Path("pers-vm".into()),
-        Json(ForkRequest { name: "from-pers".into(), description: None }),
-    ).await.unwrap();
+        Json(ForkRequest {
+            name: "from-pers".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap();
     assert_eq!(result.0.name, "from-pers");
 }
 
@@ -773,7 +961,10 @@ fn provision_rejects_nonexistent_source_sandbox() {
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("not found"), "expected sandbox not found, got: {err}");
+    assert!(
+        err.contains("not found"),
+        "expected sandbox not found, got: {err}"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -787,50 +978,62 @@ async fn handle_list_shows_suspended_status() {
     // Register a suspended persistent VM
     {
         let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert("susp-vm".into(), PersistentVmEntry {
-            name: "susp-vm".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.0.0".into(),
-            created_at: "0".into(),
-            session_dir: state.run_dir.join("persistent/susp-vm"),
-            forked_from: None,
-            description: None,
-            suspended: true,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: Some("checkpoint.vzsave".into()),
-        env: None,
-        });
+        reg.data.vms.insert(
+            "susp-vm".into(),
+            PersistentVmEntry {
+                name: "susp-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/susp-vm"),
+                forked_from: None,
+                description: None,
+                suspended: true,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: Some("checkpoint.vzsave".into()),
+                env: None,
+            },
+        );
     }
 
     // Register a stopped (not suspended) persistent VM
     {
         let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert("stop-vm".into(), PersistentVmEntry {
-            name: "stop-vm".into(),
-            ram_mb: 1024,
-            cpus: 1,
-            base_version: "0.0.0".into(),
-            created_at: "0".into(),
-            session_dir: state.run_dir.join("persistent/stop-vm"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: None,
-        env: None,
-        });
+        reg.data.vms.insert(
+            "stop-vm".into(),
+            PersistentVmEntry {
+                name: "stop-vm".into(),
+                ram_mb: 1024,
+                cpus: 1,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/stop-vm"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
     }
 
     let Json(list) = handle_list(State(state)).await;
 
     let susp = list.sandboxes.iter().find(|s| s.id == "susp-vm").unwrap();
-    assert_eq!(susp.status, "Suspended", "suspended VM should show Suspended status");
+    assert_eq!(
+        susp.status, "Suspended",
+        "suspended VM should show Suspended status"
+    );
 
     let stop = list.sandboxes.iter().find(|s| s.id == "stop-vm").unwrap();
-    assert_eq!(stop.status, "Stopped", "non-suspended VM should show Stopped status");
+    assert_eq!(
+        stop.status, "Stopped",
+        "non-suspended VM should show Stopped status"
+    );
 }
 
 #[tokio::test]
@@ -839,21 +1042,24 @@ async fn handle_info_shows_suspended_status() {
 
     {
         let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert("info-susp".into(), PersistentVmEntry {
-            name: "info-susp".into(),
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.0.0".into(),
-            created_at: "0".into(),
-            session_dir: state.run_dir.join("persistent/info-susp"),
-            forked_from: None,
-            description: None,
-            suspended: true,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: Some("checkpoint.vzsave".into()),
-        env: None,
-        });
+        reg.data.vms.insert(
+            "info-susp".into(),
+            PersistentVmEntry {
+                name: "info-susp".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/info-susp"),
+                forked_from: None,
+                description: None,
+                suspended: true,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: Some("checkpoint.vzsave".into()),
+                env: None,
+            },
+        );
     }
 
     let result = handle_info(State(state), Path("info-susp".into())).await;
@@ -868,19 +1074,22 @@ async fn handle_suspend_rejects_ephemeral_vm() {
     // Insert an ephemeral VM in instances
     {
         let mut instances = state.instances.lock().unwrap();
-        instances.insert("eph-vm".into(), InstanceInfo {
-            id: "eph-vm".into(),
-            pid: 0,
-            uds_path: state.run_dir.join("instances/eph-vm.sock"),
-            session_dir: state.run_dir.join("sessions/eph-vm"),
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
-            persistent: false,
-            env: None,
-            forked_from: None,
-        });
+        instances.insert(
+            "eph-vm".into(),
+            InstanceInfo {
+                id: "eph-vm".into(),
+                pid: 0,
+                uds_path: state.run_dir.join("instances/eph-vm.sock"),
+                session_dir: state.run_dir.join("sessions/eph-vm"),
+                ram_mb: 2048,
+                cpus: 2,
+                start_time: std::time::Instant::now(),
+                base_version: "0.0.0".into(),
+                persistent: false,
+                env: None,
+                forked_from: None,
+            },
+        );
     }
 
     let result = handle_suspend(State(state), Path("eph-vm".into())).await;
@@ -897,6 +1106,53 @@ async fn handle_suspend_returns_not_found_for_missing_vm() {
     assert_eq!(err.0, StatusCode::NOT_FOUND);
 }
 
+#[test]
+fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("persistent/resume-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let checkpoint = session_dir.join("checkpoint.vzsave");
+    std::fs::write(&checkpoint, b"bad checkpoint").unwrap();
+
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "resume-vm".into(),
+            PersistentVmEntry {
+                name: "resume-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: session_dir.clone(),
+                forked_from: None,
+                description: None,
+                suspended: true,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: Some("checkpoint.vzsave".into()),
+                env: None,
+            },
+        );
+    }
+
+    let archived = state
+        .archive_failed_restore_checkpoint("resume-vm")
+        .expect("checkpoint should be archived");
+
+    assert!(!checkpoint.exists(), "original checkpoint must be moved");
+    assert!(
+        archived.exists(),
+        "archived checkpoint should exist: {}",
+        archived.display()
+    );
+    assert!(archived
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("checkpoint.vzsave.failed-restore-"));
+}
+
 // -----------------------------------------------------------------------
 // main_db_path
 // -----------------------------------------------------------------------
@@ -906,7 +1162,11 @@ fn main_db_path_resolves_to_sessions_dir() {
     let state = make_test_state();
     // run_dir = /tmp/capsem-test-svc => parent = /tmp => main.db = /tmp/sessions/main.db
     let path = state.main_db_path();
-    assert!(path.ends_with("sessions/main.db"), "got: {}", path.display());
+    assert!(
+        path.ends_with("sessions/main.db"),
+        "got: {}",
+        path.display()
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -1061,15 +1321,74 @@ async fn handle_stats_returns_global_data() {
 // Settings handler tests
 // -----------------------------------------------------------------------
 
+struct SettingsEnvGuard {
+    previous_user: Option<std::ffi::OsString>,
+    previous_corp: Option<std::ffi::OsString>,
+}
+
+impl Drop for SettingsEnvGuard {
+    fn drop(&mut self) {
+        if let Some(previous_user) = self.previous_user.take() {
+            std::env::set_var("CAPSEM_USER_CONFIG", previous_user);
+        } else {
+            std::env::remove_var("CAPSEM_USER_CONFIG");
+        }
+
+        if let Some(previous_corp) = self.previous_corp.take() {
+            std::env::set_var("CAPSEM_CORP_CONFIG", previous_corp);
+        } else {
+            std::env::remove_var("CAPSEM_CORP_CONFIG");
+        }
+    }
+}
+
+fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
+    let user_path = dir.path().join("user.toml");
+    let corp_path = dir.path().join("corp.toml");
+    capsem_core::net::policy_config::write_settings_file(
+        &user_path,
+        &capsem_core::net::policy_config::SettingsFile::default(),
+    )
+    .unwrap();
+    capsem_core::net::policy_config::write_settings_file(
+        &corp_path,
+        &capsem_core::net::policy_config::SettingsFile::default(),
+    )
+    .unwrap();
+
+    let guard = SettingsEnvGuard {
+        previous_user: std::env::var_os("CAPSEM_USER_CONFIG"),
+        previous_corp: std::env::var_os("CAPSEM_CORP_CONFIG"),
+    };
+    std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
+    std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
+    (guard, user_path, corp_path)
+}
+
 #[tokio::test]
 async fn handle_get_settings_returns_tree() {
     let Json(val) = handle_get_settings().await;
     assert!(val.get("tree").is_some(), "response must have 'tree'");
     assert!(val.get("issues").is_some(), "response must have 'issues'");
     assert!(val.get("presets").is_some(), "response must have 'presets'");
+    assert!(val.get("policy").is_some(), "response must have 'policy'");
     assert!(val["tree"].is_array());
     assert!(val["issues"].is_array());
     assert!(val["presets"].is_array());
+}
+
+#[tokio::test]
+async fn handle_policy_hook_spec_exports_spec0_contract() {
+    let Json(val) = handle_policy_hook_spec().await;
+    assert_eq!(val["openapi"], "3.1.0");
+    assert_eq!(
+        val["info"]["version"],
+        capsem_core::net::policy_hook_spec::POLICY_HOOK_SPEC_VERSION
+    );
+    assert!(val["paths"].get("/v1/policy/decision").is_some());
+    assert!(val["components"]["schemas"]
+        .get("HookDecisionRequest")
+        .is_some());
 }
 
 #[tokio::test]
@@ -1098,7 +1417,169 @@ async fn handle_save_settings_rejects_unknown_key() {
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
 }
 
-fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<ServiceState>, tempfile::TempDir) {
+#[tokio::test]
+async fn handle_save_settings_accepts_policy_rule_object() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        "policy.http.block_openai_github".into(),
+        serde_json::json!({
+            "on": "http.request",
+            "if": "request.host == 'github.com' && request.path.matches('^/openai(/|$)')",
+            "decision": "block",
+            "priority": 10,
+            "reason": "Do not let this session fetch OpenAI-owned GitHub code"
+        }),
+    );
+
+    let result = handle_save_settings(Json(changes)).await;
+
+    let Json(val) = result.expect("policy rule save should succeed");
+    assert_eq!(
+        val["policy"]["http"]["block_openai_github"]["priority"],
+        serde_json::json!(10)
+    );
+    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    assert!(loaded.policy.http.contains_key("block_openai_github"));
+}
+
+#[tokio::test]
+async fn handle_save_settings_accepts_mcp_policy_rule_object() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        "policy.mcp.block_prod_token".into(),
+        serde_json::json!({
+            "on": "mcp.request",
+            "if": "method == 'tools/call' && tool.name == 'local__echo' && has(arguments.prod_token)",
+            "decision": "block",
+            "priority": 10,
+            "reason": "Do not send production tokens to MCP tools"
+        }),
+    );
+
+    let result = handle_save_settings(Json(changes)).await;
+
+    let Json(val) = result.expect("MCP policy rule save should succeed");
+    assert_eq!(
+        val["policy"]["mcp"]["block_prod_token"]["decision"],
+        serde_json::json!("block")
+    );
+    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    assert!(loaded.policy.mcp.contains_key("block_prod_token"));
+}
+
+#[tokio::test]
+async fn handle_save_settings_accepts_model_policy_rule_object() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        "policy.model.block_secret_prompt".into(),
+        serde_json::json!({
+            "on": "model.request",
+            "if": "provider == 'openai' && model == 'gpt-4o-mini' && request.body.contains('prod-secret')",
+            "decision": "block",
+            "priority": 10,
+            "reason": "Keep secret-bearing prompts local"
+        }),
+    );
+
+    let result = handle_save_settings(Json(changes)).await;
+
+    let Json(val) = result.expect("model policy rule save should succeed");
+    assert_eq!(
+        val["policy"]["model"]["block_secret_prompt"]["decision"],
+        serde_json::json!("block")
+    );
+    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    assert!(loaded.policy.model.contains_key("block_secret_prompt"));
+}
+
+#[tokio::test]
+async fn handle_save_settings_rejects_policy_rule_callback_mismatch() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        "policy.model.bad_callback".into(),
+        serde_json::json!({
+            "on": "http.request",
+            "if": "request.host == 'api.openai.com'",
+            "decision": "block",
+            "priority": 10
+        }),
+    );
+
+    let err = handle_save_settings(Json(changes))
+        .await
+        .expect_err("wrong callback type should be rejected");
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(
+        err.1.contains("uses callback for a different policy type"),
+        "error should explain callback mismatch, got: {}",
+        err.1
+    );
+    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    assert!(
+        loaded.policy.model.is_empty(),
+        "rejected model policy update must not mutate user config"
+    );
+}
+
+#[tokio::test]
+async fn handle_save_settings_rejects_invalid_policy_condition() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        "policy.http.bad_condition".into(),
+        serde_json::json!({
+            "on": "http.request",
+            "if": "request.path.match('^/openai')",
+            "decision": "block",
+            "priority": 10
+        }),
+    );
+
+    let err = handle_save_settings(Json(changes))
+        .await
+        .expect_err("invalid CEL condition should be rejected by settings handler");
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(
+        err.1.contains("unsupported CEL condition term"),
+        "error should explain CEL validation failure, got: {}",
+        err.1
+    );
+    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    assert!(
+        loaded.policy.http.is_empty(),
+        "rejected policy update must not mutate user config"
+    );
+}
+
+fn make_test_state_with_tempdir_at(
+    dir: tempfile::TempDir,
+) -> (Arc<ServiceState>, tempfile::TempDir) {
     let run_dir = dir.path().join("run");
     let registry_path = run_dir.join("persistent_registry.json");
     let state = Arc::new(ServiceState {
@@ -1340,7 +1821,10 @@ fn upload_creates_file_with_content() {
     let (_, target) = resolve_workspace_path(&state, "up-vm", "new.txt").unwrap();
     std::fs::write(&target, b"uploaded").unwrap();
 
-    assert_eq!(std::fs::read_to_string(ws.join("new.txt")).unwrap(), "uploaded");
+    assert_eq!(
+        std::fs::read_to_string(ws.join("new.txt")).unwrap(),
+        "uploaded"
+    );
 }
 
 #[test]
@@ -1355,7 +1839,10 @@ fn upload_creates_parent_directories() {
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
     std::fs::write(&target, b"deep content").unwrap();
 
-    assert_eq!(std::fs::read_to_string(ws.join("deep/nested/file.txt")).unwrap(), "deep content");
+    assert_eq!(
+        std::fs::read_to_string(ws.join("deep/nested/file.txt")).unwrap(),
+        "deep content"
+    );
 }
 
 #[test]
@@ -1377,6 +1864,145 @@ fn download_nonexistent_file_resolve_ok_but_not_exists() {
     assert!(!resolved.exists());
 }
 
+// is_launchd_cleanup_transient identifies the misleading "missing
+// entitlement" NSError that VZ emits when launchd's PETRIFIED-cleanup
+// queue is saturated under rapid VM churn. The error string is
+// stable across VZ releases (Apple's localizedDescription); pattern-
+// match conservatively so a real codesign regression doesn't get
+// silently retried.
+#[test]
+fn launchd_transient_matches_actual_vz_entitlement_error() {
+    let tail = "Error: failed to boot VM\n\nCaused by:\n    \
+        VM config validation failed: NSError { code: 2, \
+        localizedDescription: \"Invalid virtual machine configuration. \
+        The process doesn't have the \u{201c}com.apple.security.\
+        virtualization\u{201d} entitlement.\", domain: \"VZErrorDomain\", \
+        userInfo: {} }";
+    assert!(is_launchd_cleanup_transient(tail));
+}
+
+#[test]
+fn launchd_transient_matches_straight_quote_variant() {
+    // Same content with ASCII quotes around the entitlement key.
+    let tail = "VM config validation failed: NSError { code: 2, \
+        localizedDescription: \"...The process doesn't have the \
+        \\\"com.apple.security.virtualization\\\" entitlement.\" }";
+    assert!(is_launchd_cleanup_transient(tail));
+}
+
+#[test]
+fn launchd_transient_rejects_other_failures() {
+    let unrelated = "Error: failed to build VmConfig\n\nCaused by:\n    \
+        hash mismatch for ...img: expected abc, got def";
+    assert!(!is_launchd_cleanup_transient(unrelated));
+
+    let no_log = "(no preserved log found)";
+    assert!(!is_launchd_cleanup_transient(no_log));
+
+    let empty = "";
+    assert!(!is_launchd_cleanup_transient(empty));
+}
+
+#[test]
+fn launchd_transient_rejects_partial_match() {
+    // The word "entitlement" alone in some unrelated error must not match;
+    // the matcher requires the full VZ-specific phrase.
+    let mention_only = "warn: this command may need an entitlement";
+    assert!(!is_launchd_cleanup_transient(mention_only));
+}
+
+// classify_attempt_decision is the pure routing function the
+// poll_until-based retry loop in handle_provision delegates to.
+// Testing it directly lets us prove the retry path engages on the
+// LaunchdTransient outcome (the actual fix for Bug A) without
+// spawning a real VM. If a future refactor breaks the routing
+// (e.g., maps LaunchdTransient to BailWithError), these fail.
+
+#[test]
+fn classify_ready_outcome_succeeds() {
+    let uds = PathBuf::from("/tmp/x.sock");
+    match classify_attempt_decision(
+        ProvisionAttemptOutcome::Ready {
+            uds_path: uds.clone(),
+        },
+        "vm-1",
+    ) {
+        AttemptDecision::Succeed(p) => assert_eq!(p, uds),
+        other => panic!("expected Succeed, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_still_booting_timeout_succeeds_with_uds() {
+    let uds = PathBuf::from("/tmp/y.sock");
+    match classify_attempt_decision(
+        ProvisionAttemptOutcome::StillBootingTimedOut {
+            uds_path: uds.clone(),
+        },
+        "vm-2",
+    ) {
+        AttemptDecision::Succeed(p) => assert_eq!(p, uds),
+        other => panic!("expected Succeed for still-booting envelope, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_launchd_transient_routes_to_retry() {
+    // The core of the Bug A fix: LaunchdTransient must trigger a retry,
+    // not bail with the misleading entitlement error.
+    match classify_attempt_decision(ProvisionAttemptOutcome::LaunchdTransient, "vm-3") {
+        AttemptDecision::RetryAfterCleanup => {}
+        other => panic!("expected RetryAfterCleanup for LaunchdTransient, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_boot_crash_bails_with_500_and_tail() {
+    let tail = "Error: failed to boot VM\n\nCaused by:\n    bogus".to_string();
+    match classify_attempt_decision(
+        ProvisionAttemptOutcome::BootCrash { tail: tail.clone() },
+        "vm-4",
+    ) {
+        AttemptDecision::BailWithError(AppError(status, msg)) => {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(msg.contains("vm-4"), "msg should embed the id: {msg}");
+            assert!(msg.contains(&tail), "msg should embed the log tail: {msg}");
+            assert!(
+                msg.contains("capsem logs vm-4"),
+                "msg should hint at follow-up cmd"
+            );
+        }
+        other => panic!("expected BailWithError(500), got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_provision_error_already_exists_returns_409() {
+    let err = anyhow::anyhow!("persistent VM \"vm-5\" already exists. Use `capsem resume vm-5`.");
+    match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-5") {
+        AttemptDecision::BailWithError(AppError(status, _)) => {
+            assert_eq!(status, StatusCode::CONFLICT,
+                "duplicate-name errors must return 409 so clients can distinguish from server failures");
+        }
+        other => panic!("expected BailWithError(409) for already-exists, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_provision_error_other_returns_500() {
+    let err = anyhow::anyhow!("rootfs not found at /missing/path");
+    match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-6") {
+        AttemptDecision::BailWithError(AppError(status, msg)) => {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(
+                msg.contains("rootfs not found"),
+                "underlying error preserved: {msg}"
+            );
+        }
+        other => panic!("expected BailWithError(500), got {other:?}"),
+    }
+}
+
 // wait_for_vm_ready polls a cheap local sentinel file. Typical VM boot
 // ready-time is sub-second, so the backoff must not overshoot readiness
 // by hundreds of ms -- that shows up directly in provision->exec latency.
@@ -1395,7 +2021,9 @@ async fn wait_for_vm_ready_detects_ready_within_tight_overshoot() {
     });
 
     let start = std::time::Instant::now();
-    wait_for_vm_ready(&uds_path, 30).await.expect("ready should be detected");
+    wait_for_vm_ready(&uds_path, 30, None, None)
+        .await
+        .expect("ready should be detected");
     let elapsed_ms = start.elapsed().as_millis();
     creator.await.unwrap();
 

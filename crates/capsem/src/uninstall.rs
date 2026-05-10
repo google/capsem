@@ -6,11 +6,13 @@ use crate::platform;
 
 /// Run full uninstall: stop service, remove unit, remove binaries and data.
 pub async fn run_uninstall(yes: bool) -> Result<()> {
-    let capsem_dir = capsem_core::paths::capsem_home_opt()
-        .context("HOME not set")?;
+    let capsem_dir = capsem_core::paths::capsem_home_opt().context("HOME not set")?;
 
     if !capsem_dir.exists() {
-        println!("Nothing to uninstall ({} does not exist).", capsem_dir.display());
+        println!(
+            "Nothing to uninstall ({} does not exist).",
+            capsem_dir.display()
+        );
         return Ok(());
     }
 
@@ -18,7 +20,10 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         println!("This will remove:");
         println!("  - Capsem service (LaunchAgent / systemd unit)");
         println!("  - All binaries in {}/bin/", capsem_dir.display());
-        println!("  - All data in {}/ (assets, config, state)", capsem_dir.display());
+        println!(
+            "  - All data in {}/ (assets, config, state)",
+            capsem_dir.display()
+        );
 
         let confirm = inquire::Confirm::new("Proceed with uninstall?")
             .with_default(false)
@@ -33,7 +38,10 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
     // Stop and uninstall service
     println!("Stopping service...");
     if let Err(e) = crate::service_install::uninstall_service().await {
-        eprintln!("Warning: service uninstall failed: {}. Continuing anyway.", e);
+        eprintln!(
+            "Warning: service uninstall failed: {}. Continuing anyway.",
+            e
+        );
     }
 
     // Kill any running processes (SIGKILL to prevent respawn by KeepAlive).
@@ -46,7 +54,12 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
     let install_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    for name in ["capsem-service", "capsem-process", "capsem-gateway", "capsem-tray"] {
+    for name in [
+        "capsem-service",
+        "capsem-process",
+        "capsem-gateway",
+        "capsem-tray",
+    ] {
         let pattern = match install_dir.as_ref() {
             Some(dir) => format!("{}/{name}", dir.display()),
             None => name.to_string(),
@@ -62,8 +75,12 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
 
     // Remove binaries from the detected install location
     const CAPSEM_BINARIES: &[&str] = &[
-        "capsem", "capsem-service", "capsem-process", "capsem-mcp",
-        "capsem-gateway", "capsem-tray",
+        "capsem",
+        "capsem-service",
+        "capsem-process",
+        "capsem-mcp",
+        "capsem-gateway",
+        "capsem-tray",
     ];
     if let Some(bin_dir) = platform::install_bin_dir() {
         if bin_dir.exists() {
@@ -116,7 +133,9 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
 /// overlayfs workdirs (which end up mode 000 while mounted).
 fn restore_perms(root: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
-    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if let Ok(meta) = std::fs::symlink_metadata(&path) {

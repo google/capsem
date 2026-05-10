@@ -18,8 +18,8 @@ use std::process;
 use std::thread;
 use std::time::Duration;
 
-use capsem_proto::{GuestToHost, SHUTDOWN_GRACE_SECS, VSOCK_PORT_LIFECYCLE, encode_guest_msg};
-use vsock_io::{VSOCK_HOST_CID, write_all_fd};
+use capsem_proto::{encode_guest_msg, GuestToHost, SHUTDOWN_GRACE_SECS, VSOCK_PORT_LIFECYCLE};
+use vsock_io::{write_all_fd, VSOCK_HOST_CID};
 
 fn countdown(label: &str) {
     let countdown_secs = SHUTDOWN_GRACE_SECS as u32 + 1;
@@ -35,10 +35,17 @@ fn send_lifecycle_msg(msg: &GuestToHost) -> io::Result<()> {
     let fd = vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_LIFECYCLE)?;
     let frame = match encode_guest_msg(msg) {
         Ok(f) => f,
-        Err(e) => { unsafe { nix::libc::close(fd); } return Err(io::Error::other(e)); }
+        Err(e) => {
+            unsafe {
+                nix::libc::close(fd);
+            }
+            return Err(io::Error::other(e));
+        }
     };
     let res = write_all_fd(fd, &frame);
-    unsafe { nix::libc::close(fd); }
+    unsafe {
+        nix::libc::close(fd);
+    }
     res
 }
 
@@ -83,7 +90,10 @@ fn main() {
     let cmd = command_name(&args[0]);
 
     // Handle --help for any command
-    if args.iter().any(|a| a == "--help" || (a == "-h" && cmd != "shutdown")) {
+    if args
+        .iter()
+        .any(|a| a == "--help" || (a == "-h" && cmd != "shutdown"))
+    {
         print_help(cmd);
         process::exit(0);
     }

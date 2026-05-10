@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import psutil
@@ -21,7 +22,9 @@ from conftest import (
     _ancestry,
     _CAUGHT_THREAD_EXCEPTIONS,
     _is_pytest_descendant,
+    _leak_log_path,
     _missing_required_artifacts,
+    _sanitize_leak_log_namespace,
     _thread_exception_hook,
     get_capsem_processes,
 )
@@ -149,6 +152,20 @@ def test_ancestry_returns_empty_for_missing_pid():
     # Use a very large PID that is vanishingly unlikely to be in use.
     assert _ancestry(2**31 - 1) == set()
     assert not _is_pytest_descendant(2**31 - 1)
+
+
+def test_leak_log_path_defaults_to_legacy_name():
+    assert _leak_log_path("leak-attribution.jsonl", {}) == (
+        Path(__file__).parent / "leak-attribution.jsonl"
+    )
+
+
+def test_leak_log_path_uses_sanitized_parallel_run_namespace():
+    assert _leak_log_path(
+        "leak-attribution.jsonl",
+        {"CAPSEM_TEST_RUN_ID": "smoke service/cli"},
+    ) == Path(__file__).parent / "leak-attribution-smoke-service-cli.jsonl"
+    assert _sanitize_leak_log_namespace("../../bad name") == "bad-name"
 
 
 # ---------------------------------------------------------------------------

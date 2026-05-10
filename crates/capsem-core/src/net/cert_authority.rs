@@ -73,7 +73,8 @@ impl CertAuthority {
         let leaf_key = KeyPair::generate()?;
 
         let mut params = CertificateParams::new(vec![domain.to_string()])?;
-        params.distinguished_name
+        params
+            .distinguished_name
             .push(rcgen::DnType::CommonName, domain);
         params.subject_alt_names = vec![SanType::DnsName(domain.try_into()?)];
         params.not_before = time::Date::from_calendar_date(2026, time::Month::January, 1)
@@ -92,11 +93,8 @@ impl CertAuthority {
         let chain = vec![leaf_der, self.ca_cert_der.clone()];
 
         // Build the rustls signing key from the leaf's private key.
-        let leaf_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            leaf_key.serialize_der(),
-        ));
-        let signing_key =
-            rustls::crypto::aws_lc_rs::sign::any_supported_type(&leaf_key_der)?;
+        let leaf_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf_key.serialize_der()));
+        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&leaf_key_der)?;
 
         Ok(CertifiedKey::new(chain, signing_key))
     }

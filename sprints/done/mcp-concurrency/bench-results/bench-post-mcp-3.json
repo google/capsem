@@ -1,0 +1,60 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1778169818.1660073,
+  "hostname": "conc-bench",
+  "mcp_load": {
+    "version": "1.0",
+    "tool": "local__echo",
+    "payload_bytes": 4,
+    "concurrency_levels": [
+      {
+        "concurrency": 1,
+        "duration_s": 10.0,
+        "total_requests": 20862,
+        "errors": 0,
+        "rps": 2086.2,
+        "p50_ms": 0.43208299996422284,
+        "p95_ms": 0.7000788499709643,
+        "p99_ms": 1.1530496399848285,
+        "p999_ms": 2.2597858380373173,
+        "rss_peak_mb": 77.2421875
+      },
+      {
+        "concurrency": 10,
+        "duration_s": 10.0,
+        "total_requests": 75135,
+        "errors": 0,
+        "rps": 7513.5,
+        "p50_ms": 1.1202079999748094,
+        "p95_ms": 2.4069374000248454,
+        "p99_ms": 3.670093939978189,
+        "p999_ms": 8.852292500020313,
+        "rss_peak_mb": 81.3671875
+      },
+      {
+        "concurrency": 50,
+        "duration_s": 10.0,
+        "total_requests": 73107,
+        "errors": 0,
+        "rps": 7310.7,
+        "p50_ms": 5.3243750000433465,
+        "p95_ms": 12.7210500999638,
+        "p99_ms": 22.187480539975066,
+        "p999_ms": 48.14655934599378,
+        "rss_peak_mb": 83.55078125
+      },
+      {
+        "concurrency": 200,
+        "duration_s": 10.0,
+        "total_requests": 72824,
+        "errors": 0,
+        "rps": 7282.4,
+        "p50_ms": 24.457271000017045,
+        "p95_ms": 43.662531300012134,
+        "p99_ms": 59.84606373001841,
+        "p999_ms": 70.95244476398557,
+        "rss_peak_mb": 85.8203125
+      }
+    ]
+  }
+}

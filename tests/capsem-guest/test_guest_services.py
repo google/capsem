@@ -23,10 +23,10 @@ class TestGuestServices:
         stdout = resp.get("stdout", "").strip()
         assert len(stdout) > 0, "capsem-net-proxy not found running"
 
-    def test_dnsmasq_running(self, guest_env):
-        """dnsmasq DNS resolver is running in guest."""
+    def test_dns_proxy_running(self, guest_env):
+        """capsem-dns-proxy DNS resolver is running in guest."""
         client, name = guest_env
-        resp = client.post(f"/exec/{name}", {"command": "pgrep dnsmasq"})
+        resp = client.post(f"/exec/{name}", {"command": "pgrep -f capsem-dns-proxy"})
         assert resp is not None
         stdout = resp.get("stdout", "").strip()
-        assert len(stdout) > 0, "dnsmasq not found running"
+        assert len(stdout) > 0, "capsem-dns-proxy not found running"

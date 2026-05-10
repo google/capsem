@@ -46,7 +46,8 @@ impl McpUserConfig {
         }
 
         // Default tool permission: corp > user > Allow
-        let default_perm = corp.default_tool_permission
+        let default_perm = corp
+            .default_tool_permission
             .or(self.default_tool_permission)
             .unwrap_or(ToolDecision::Allow);
 
@@ -74,6 +75,7 @@ impl McpUserConfig {
             allowed_servers: Vec::new(),
             tool_decisions,
             default_tool_decision: default_perm,
+            audit_rules: Vec::new(),
         }
     }
 }
@@ -111,6 +113,49 @@ pub enum ToolDecision {
     Block,
 }
 
+/// Audit-only MCP decision action used by the MITM MCP decision provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpDecisionRuleAction {
+    Allow,
+    Deny,
+}
+
+/// A request/response matcher for audit-only MCP decisions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum McpDecisionRuleMatch {
+    ToolName {
+        name: String,
+    },
+    ResourceUri {
+        uri: String,
+    },
+    ArgumentName {
+        method: Option<String>,
+        name: String,
+    },
+    ArgumentValue {
+        method: Option<String>,
+        name: String,
+        equals: serde_json::Value,
+    },
+    ReturnValue {
+        method: Option<String>,
+        path: String,
+        equals: serde_json::Value,
+    },
+}
+
+/// A local MCP audit rule. T2 keeps these in the runtime policy so the
+/// framed endpoint and tests can exercise the future remote-corp provider
+/// shape without adding config syntax yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpDecisionRule {
+    pub id: String,
+    pub action: McpDecisionRuleAction,
+    pub matches: McpDecisionRuleMatch,
+    pub reason: Option<String>,
+}
+
 impl ToolDecision {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -139,7 +184,7 @@ impl ToolDecision {
     }
 }
 
-/// MCP gateway policy: server-level and per-tool allow/warn/block.
+/// MCP policy: server-level and per-tool allow/warn/block.
 #[derive(Debug, Clone)]
 pub struct McpPolicy {
     /// Servers that are always blocked.
@@ -150,6 +195,8 @@ pub struct McpPolicy {
     pub tool_decisions: HashMap<String, ToolDecision>,
     /// Default decision for tools not in the map.
     pub default_tool_decision: ToolDecision,
+    /// Audit-only request/response rules for the MITM MCP decision provider.
+    pub audit_rules: Vec<McpDecisionRule>,
 }
 
 impl McpPolicy {
@@ -159,6 +206,7 @@ impl McpPolicy {
             allowed_servers: Vec::new(),
             tool_decisions: HashMap::new(),
             default_tool_decision: ToolDecision::Allow,
+            audit_rules: Vec::new(),
         }
     }
 
@@ -171,9 +219,7 @@ impl McpPolicy {
         }
 
         // Server-level: if allow list is non-empty, server must be in it
-        if !self.allowed_servers.is_empty()
-            && !self.allowed_servers.iter().any(|s| s == server)
-        {
+        if !self.allowed_servers.is_empty() && !self.allowed_servers.iter().any(|s| s == server) {
             return ToolDecision::Block;
         }
 
@@ -365,7 +411,10 @@ mod tests {
         };
         let corp = McpUserConfig::default();
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("any", Some("any__tool")), ToolDecision::Block);
+        assert_eq!(
+            policy.evaluate("any", Some("any__tool")),
+            ToolDecision::Block
+        );
     }
 
     #[test]
@@ -379,7 +428,10 @@ mod tests {
             ..Default::default()
         };
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("github", Some("github__search")), ToolDecision::Block);
+        assert_eq!(
+            policy.evaluate("github", Some("github__search")),
+            ToolDecision::Block
+        );
     }
 
     #[test]
@@ -394,8 +446,14 @@ mod tests {
         };
         let corp = McpUserConfig::default();
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("evil", Some("evil__do_stuff")), ToolDecision::Block);
-        assert_eq!(policy.evaluate("github", Some("github__search")), ToolDecision::Allow);
+        assert_eq!(
+            policy.evaluate("evil", Some("evil__do_stuff")),
+            ToolDecision::Block
+        );
+        assert_eq!(
+            policy.evaluate("github", Some("github__search")),
+            ToolDecision::Allow
+        );
     }
 
     #[test]
@@ -410,8 +468,14 @@ mod tests {
         };
         let corp = McpUserConfig::default();
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("github", Some("github__delete_repo")), ToolDecision::Block);
-        assert_eq!(policy.evaluate("github", Some("github__search")), ToolDecision::Allow);
+        assert_eq!(
+            policy.evaluate("github", Some("github__delete_repo")),
+            ToolDecision::Block
+        );
+        assert_eq!(
+            policy.evaluate("github", Some("github__search")),
+            ToolDecision::Allow
+        );
     }
 
     #[test]
@@ -433,7 +497,10 @@ mod tests {
             ..Default::default()
         };
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("github", Some("github__search")), ToolDecision::Block);
+        assert_eq!(
+            policy.evaluate("github", Some("github__search")),
+            ToolDecision::Block
+        );
     }
 
     #[test]
@@ -463,7 +530,10 @@ mod tests {
         let user = McpUserConfig::default();
         let corp = McpUserConfig::default();
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("any", Some("any__tool")), ToolDecision::Allow);
+        assert_eq!(
+            policy.evaluate("any", Some("any__tool")),
+            ToolDecision::Allow
+        );
     }
 
     #[test]
@@ -487,7 +557,10 @@ mod tests {
             ..Default::default()
         };
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("evil", Some("evil__tool")), ToolDecision::Block);
+        assert_eq!(
+            policy.evaluate("evil", Some("evil__tool")),
+            ToolDecision::Block
+        );
     }
 
     #[test]
@@ -524,6 +597,9 @@ mod tests {
             ..Default::default()
         };
         let policy = user.to_policy(&corp);
-        assert_eq!(policy.evaluate("any", Some("any__unknown_tool")), ToolDecision::Warn);
+        assert_eq!(
+            policy.evaluate("any", Some("any__unknown_tool")),
+            ToolDecision::Warn
+        );
     }
 }

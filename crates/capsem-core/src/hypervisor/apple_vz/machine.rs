@@ -1,28 +1,24 @@
 use anyhow::{Context, Result};
 use block2::RcBlock;
-use objc2::AllocAnyThread;
 use objc2::rc::Retained;
+use objc2::AllocAnyThread;
 use objc2_foundation::{NSArray, NSData, NSObjectProtocol, NSString, NSURL};
 use objc2_virtualization::{
-    VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
-    VZDirectorySharingDeviceConfiguration,
+    VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
+    VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
     VZEntropyDeviceConfiguration, VZGenericMachineIdentifier, VZGenericPlatformConfiguration,
-    VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare,
-    VZSocketDevice, VZSocketDeviceConfiguration,
-    VZStorageDeviceConfiguration,
-    VZVirtioBlockDeviceConfiguration,
-    VZVirtioEntropyDeviceConfiguration,
-    VZVirtioFileSystemDeviceConfiguration,
-    VZVirtioSocketDeviceConfiguration,
-    VZVirtualMachine as ObjcVZVirtualMachine,
+    VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare, VZSocketDevice,
+    VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
+    VZVirtioEntropyDeviceConfiguration, VZVirtioFileSystemDeviceConfiguration,
+    VZVirtioSocketDeviceConfiguration, VZVirtualMachine as ObjcVZVirtualMachine,
     VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use tracing::{debug_span, info};
 
 use super::boot::create_boot_loader;
 use super::serial::{self, AppleVzSerialConsole};
-use crate::vm::VmState;
 use crate::vm::config::VmConfig;
+use crate::vm::VmState;
 
 /// Returns true if the current thread is the main thread.
 /// VZVirtualMachine operations must be called from the main dispatch queue.
@@ -121,9 +117,7 @@ fn load_or_create_machine_identifier(
                 &nsdata,
             )
         }
-        .ok_or_else(|| {
-            anyhow::anyhow!("invalid machine identifier data at {}", path.display())
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("invalid machine identifier data at {}", path.display()))?;
         return Ok(id);
     }
 
@@ -151,9 +145,7 @@ impl AppleVzMachine {
     /// Must be called from the main thread (or dispatched to it).
     ///
     /// Returns the machine, and the serial console that owns both read and input fds.
-    pub fn create(
-        config: &VmConfig,
-    ) -> Result<(Self, AppleVzSerialConsole)> {
+    pub fn create(config: &VmConfig) -> Result<(Self, AppleVzSerialConsole)> {
         let boot_loader = {
             let _span = debug_span!("create_boot_loader").entered();
             create_boot_loader(config)?
@@ -262,10 +254,7 @@ impl AppleVzMachine {
 
         info!("virtual machine created");
 
-        Ok((
-            Self { inner: vm },
-            serial_console,
-        ))
+        Ok((Self { inner: vm }, serial_console))
     }
 
     /// Access the underlying VZVirtualMachine for embedding in a VZVirtualMachineView.
@@ -281,7 +270,11 @@ impl AppleVzMachine {
     /// Start the VM. Must be called on the main thread.
     ///
     /// Also spawns the serial reader thread.
-    pub fn start(&self, serial: &AppleVzSerialConsole, checkpoint_path: Option<&std::path::Path>) -> Result<()> {
+    pub fn start(
+        &self,
+        serial: &AppleVzSerialConsole,
+        checkpoint_path: Option<&std::path::Path>,
+    ) -> Result<()> {
         let _span = debug_span!("vm_start").entered();
 
         anyhow::ensure!(
@@ -306,8 +299,11 @@ impl AppleVzMachine {
         unsafe {
             if let Some(cp) = checkpoint_path {
                 let path_str = cp.to_string_lossy().to_string();
-                let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&path_str));
-                self.inner.restoreMachineStateFromURL_completionHandler(&url, &completion);
+                let url = objc2_foundation::NSURL::fileURLWithPath(
+                    &objc2_foundation::NSString::from_str(&path_str),
+                );
+                self.inner
+                    .restoreMachineStateFromURL_completionHandler(&url, &completion);
             } else {
                 self.inner.startWithCompletionHandler(&completion);
             }
@@ -354,6 +350,7 @@ impl AppleVzMachine {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn pause(&self) -> Result<()> {
         anyhow::ensure!(
             is_main_thread(),
@@ -376,6 +373,7 @@ impl AppleVzMachine {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn resume(&self) -> Result<()> {
         anyhow::ensure!(
             is_main_thread(),
@@ -405,7 +403,9 @@ impl AppleVzMachine {
             "VZVirtualMachine.saveMachineStateToURL() must be called on the main thread"
         );
         let path_str = path.to_string_lossy().to_string();
-        let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&path_str));
+        let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(
+            &path_str,
+        ));
 
         let (tx, rx) = std::sync::mpsc::channel();
         let completion = RcBlock::new(move |error: *mut objc2_foundation::NSError| {
@@ -418,7 +418,8 @@ impl AppleVzMachine {
         });
 
         unsafe {
-            self.inner.saveMachineStateToURL_completionHandler(&url, &completion);
+            self.inner
+                .saveMachineStateToURL_completionHandler(&url, &completion);
         }
 
         spin_runloop_until(&rx).context("VM save_state")?;
@@ -450,6 +451,7 @@ impl AppleVzMachine {
 }
 
 /// Create a VZ block device attachment from a disk image path.
+#[tracing::instrument(skip_all, fields(path = %path.display(), read_only))]
 fn attach_disk(
     path: &std::path::Path,
     read_only: bool,
@@ -485,6 +487,7 @@ fn attach_disk(
 }
 
 /// Create a VirtioFS directory sharing device from a host directory.
+#[tracing::instrument(skip_all, fields(tag = %tag, host_path = %host_path.display(), read_only))]
 fn attach_virtiofs_share(
     tag: &str,
     host_path: &std::path::Path,
@@ -497,16 +500,11 @@ fn attach_virtiofs_share(
         let ns_path = NSString::from_str(path_str);
         let url = NSURL::fileURLWithPath(&ns_path);
 
-        let shared_dir = VZSharedDirectory::initWithURL_readOnly(
-            VZSharedDirectory::alloc(),
-            &url,
-            read_only,
-        );
+        let shared_dir =
+            VZSharedDirectory::initWithURL_readOnly(VZSharedDirectory::alloc(), &url, read_only);
 
-        let single_share = VZSingleDirectoryShare::initWithDirectory(
-            VZSingleDirectoryShare::alloc(),
-            &shared_dir,
-        );
+        let single_share =
+            VZSingleDirectoryShare::initWithDirectory(VZSingleDirectoryShare::alloc(), &shared_dir);
 
         let ns_tag = NSString::from_str(tag);
         let fs_config = VZVirtioFileSystemDeviceConfiguration::initWithTag(

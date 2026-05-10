@@ -32,8 +32,14 @@ where
 {
     let payload = rmp_serde::to_vec_named(msg).context("msgpack serialize")?;
     let len = payload.len() as u32;
-    writer.write_all(&len.to_be_bytes()).await.context("write frame length")?;
-    writer.write_all(&payload).await.context("write frame payload")?;
+    writer
+        .write_all(&len.to_be_bytes())
+        .await
+        .context("write frame length")?;
+    writer
+        .write_all(&payload)
+        .await
+        .context("write frame payload")?;
     writer.flush().await.context("flush frame")?;
     Ok(())
 }
@@ -55,7 +61,10 @@ where
         anyhow::bail!("frame too large: {len} bytes (max {MAX_FRAME_SIZE})");
     }
     let mut buf = vec![0u8; len as usize];
-    reader.read_exact(&mut buf).await.context("read frame payload")?;
+    reader
+        .read_exact(&mut buf)
+        .await
+        .context("read frame payload")?;
     let msg: T = rmp_serde::from_slice(&buf).context("msgpack deserialize")?;
     Ok(Some(msg))
 }
@@ -184,7 +193,7 @@ pub struct AggregatorServerStatus {
     pub prompt_count: usize,
 }
 
-// ── Client (used by capsem-process gateway) ────────────────────────
+// ── Client (used by capsem-process and MITM MCP endpoint) ───────────
 
 /// Internal message sent through the client's mpsc channel.
 type ClientMessage = (AggregatorRequest, oneshot::Sender<AggregatorResponse>);
@@ -193,7 +202,7 @@ static NEXT_REQ_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Client handle for communicating with the aggregator subprocess.
 ///
-/// Multiple gateway sessions share one `AggregatorClient` via `Arc`. Each call
+/// Multiple callers share one `AggregatorClient` via `Arc`. Each call
 /// sends a request through an mpsc channel to a background driver task, which
 /// serializes requests to the subprocess stdin and routes responses back.
 #[derive(Clone)]
@@ -406,6 +415,8 @@ mod tests {
                     bearer_token: None,
                     enabled: true,
                     source: "manual".into(),
+                    pool_size: None,
+                    pool_safe_tools: Vec::new(),
                 }],
             },
         };
@@ -473,6 +484,42 @@ mod tests {
             assert!(ok);
         } else {
             panic!("expected Ok");
+        }
+    }
+
+    #[test]
+    fn aggregator_subprocess_remains_session_db_free() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("capsem-core should live under crates/");
+        let files = [
+            repo_root.join("crates/capsem-mcp-aggregator/Cargo.toml"),
+            repo_root.join("crates/capsem-mcp-aggregator/src/main.rs"),
+        ];
+        let forbidden = [
+            "capsem-logger",
+            "capsem_logger",
+            "rusqlite",
+            "DbWriter",
+            "DbReader",
+            "WriteOp",
+            "McpCall",
+            "session.db",
+        ];
+
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap_or_else(|err| {
+                panic!("failed to read {}: {err}", file.display());
+            });
+            for needle in forbidden {
+                assert!(
+                    !text.contains(needle),
+                    "{} must not reference {needle}; MCP auditing belongs in the MITM endpoint/process, not the low-privilege aggregator subprocess",
+                    file.display()
+                );
+            }
         }
     }
 

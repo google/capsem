@@ -128,7 +128,7 @@ CREATE TABLE tool_responses (
 );
 ```
 
-### mcp_calls -- MCP gateway requests
+### mcp_calls -- Guest MCP endpoint requests
 
 ```sql
 CREATE TABLE mcp_calls (
@@ -195,7 +195,7 @@ Rollup happens when a session ends.
 
 ### Empty mcp_calls
 - No AI agent invoked MCP tools during the session
-- MCP gateway not started (check for `[mcp-gateway] listening` in logs)
+- Guest MCP endpoint not started (check for MITM MCP endpoint startup in process logs)
 
 ### Cost is zero
 - Model not found in pricing table (`config/genai-prices.json`)
@@ -204,7 +204,7 @@ Rollup happens when a session ends.
 ## When to inspect sessions
 
 **Always** run `just inspect-session` after changes to:
-- MCP gateway (tool routing, spawn_blocking, response format)
+- Guest MCP endpoint (tool routing, policy, response format)
 - MITM proxy (SSE parsing, body preview, Content-Encoding)
 - File monitor (VirtioFS events, debouncer)
 - Snapshot system (create, revert, compact, list)

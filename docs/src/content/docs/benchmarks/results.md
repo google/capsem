@@ -1,11 +1,11 @@
 ---
 title: Performance Results
-description: Current benchmark results for Capsem VM boot time, disk I/O, CLI startup, network, and snapshot operations.
+description: Reference benchmark results for Capsem VM boot time, disk I/O, CLI startup, network, and snapshot operations.
 sidebar:
   order: 1
 ---
 
-Benchmark results from Capsem v0.14.6 running on Apple M4 Max (macOS 15.4). All measurements taken inside the guest VM using `capsem-bench` and boot timing instrumentation.
+Reference results from the latest local benchmark artifacts recorded on 2026-05-03. Guest measurements come from `capsem-bench` 0.3.0; lifecycle and fork measurements are host-side benchmark runs. Numbers vary with host load, network path, and cache state.
 
 ## Boot time
 
@@ -17,7 +17,8 @@ Total time from VM start to shell ready: **~580ms**.
 | virtiofs | <1ms | Mount VirtioFS shared directory |
 | overlayfs | 80ms | Create ext4 loopback overlay (format + mount) |
 | workspace | <1ms | Bind-mount /root from VirtioFS |
-| network | 210ms | Configure dummy0, dnsmasq, iptables rules |
+| network | 210ms | Configure dummy0 and iptables DNS/HTTPS redirect rules |
+| dns_proxy | tracked separately | Start UDP/TCP DNS bridge to host vsock:5007 |
 | net_proxy | 100ms | Start TCP-to-vsock HTTPS proxy |
 | deploy | 10ms | Copy tools from initrd to rootfs |
 | venv | 170ms | Create Python virtualenv (via uv) |
@@ -32,10 +33,10 @@ Scratch disk performance on the VirtioFS-backed workspace (`/root`). Test size: 
 
 | Test | Throughput | IOPS | Duration |
 |------|-----------|------|----------|
-| Sequential write (1MB blocks) | 1,180 MB/s | - | 217ms |
-| Sequential read (1MB blocks) | 3,425 MB/s | - | 75ms |
-| Random 4K write (fdatasync) | 33 MB/s | 8,325 | 1,201ms |
-| Random 4K read | 188 MB/s | 48,070 | 208ms |
+| Sequential write (1MB blocks) | 1,854 MB/s | - | 138ms |
+| Sequential read (1MB blocks) | 3,754 MB/s | - | 68ms |
+| Random 4K write (fdatasync) | 33 MB/s | 8,353 | 1,197ms |
+| Random 4K read | 279 MB/s | 71,440 | 140ms |
 
 Sequential I/O benefits from VirtioFS pass-through to APFS. Random write IOPS are limited by per-write `fdatasync` -- this reflects the worst case for database-style workloads.
 
@@ -45,8 +46,8 @@ Read-only squashfs rootfs where binaries and libraries live.
 
 | Test | Detail | Throughput | IOPS | Duration |
 |------|--------|-----------|------|----------|
-| Sequential read (1MB) | codex binary (146MB) | 727 MB/s | - | 201ms |
-| Random 4K read | 4,215 files sampled | 18 MB/s | 4,704 | 1,063ms |
+| Sequential read (1MB) | codex binary (193MB) | 693 MB/s | - | 266ms |
+| Random 4K read | 2,588 files sampled | 38 MB/s | 9,783 | 511ms |
 
 Squashfs decompression adds overhead compared to the scratch disk. Random reads across many small files show the cost of decompression + inode lookup on a compressed filesystem.
 
@@ -56,13 +57,13 @@ Wall-clock time to run `<cli> --version` with page cache dropped (3 runs, best/m
 
 | CLI | Min | Mean | Max |
 |-----|-----|------|-----|
-| python3 | 8ms | 9ms | 11ms |
-| node | 136ms | 138ms | 139ms |
-| claude | 291ms | 310ms | 346ms |
-| gemini | 1,385ms | 1,386ms | 1,389ms |
-| codex | 284ms | 288ms | 291ms |
+| python3 | 7ms | 9ms | 11ms |
+| node | 126ms | 128ms | 132ms |
+| claude | 335ms | 337ms | 340ms |
+| gemini | 594ms | 599ms | 605ms |
+| codex | 293ms | 293ms | 293ms |
 
-Python starts near-instantly. Node-based CLIs (claude, codex) take ~300ms. Gemini's startup includes a Java-like warm-up phase at ~1.4s.
+Python starts near-instantly. Node-based CLIs and native agent CLIs generally start in the low hundreds of milliseconds.
 
 ## HTTP throughput
 
@@ -71,65 +72,65 @@ Python starts near-instantly. Node-based CLIs (claude, codex) take ~300ms. Gemin
 | Metric | Value |
 |--------|-------|
 | Requests | 50/50 |
-| Requests/sec | 58.3 |
+| Requests/sec | 19.6 |
 | Transfer | 3.8MB |
-| Total duration | 858ms |
+| Total duration | 2,557ms |
 
 | Latency percentile | Value |
 |--------------------|-------|
-| min | 56ms |
-| p50 | 67ms |
-| p95 | 250ms |
-| p99 | 253ms |
-| max | 254ms |
+| min | 107ms |
+| p50 | 162ms |
+| p95 | 659ms |
+| p99 | 713ms |
+| max | 732ms |
 
-Latency includes the full path: guest -> net-proxy -> vsock -> host MITM proxy -> TLS termination -> internet -> re-encryption -> response. The p50 of 67ms reflects mostly internet RTT; the p95 tail is TLS session setup on new connections.
+Latency includes the full path: guest -> net-proxy -> vsock -> host MITM proxy -> TLS termination -> internet -> re-encryption -> response. The tail mostly reflects upstream internet latency and TLS/session setup.
 
 ## Proxy throughput
 
-100MB file download through the MITM proxy.
+Reference file download through the MITM proxy.
 
 | Metric | Value |
 |--------|-------|
-| Downloaded | 100MB |
-| Duration | 2.9s |
-| Throughput | 34.3 MB/s |
+| Downloaded | 9.98MB |
+| Duration | 4.56s |
+| Throughput | 2.09 MB/s |
 
 This is the sustained bandwidth ceiling for the proxy pipeline (TLS termination + body inspection + re-encryption). Actual throughput varies with internet connection speed.
 
 ## Snapshot operations
 
-End-to-end latency for snapshot operations via the MCP gateway at 3 workspace sizes. Each operation is a full round-trip: guest CLI -> vsock -> host gateway -> APFS filesystem -> response.
+End-to-end latency for snapshot operations via the guest MCP endpoint at 3 workspace sizes. Each operation is a full round-trip: guest CLI -> framed vsock -> host endpoint -> APFS filesystem -> response.
 
 ### 10 files
 
 | Operation | Latency |
 |-----------|---------|
-| create | 879ms |
-| list | 363ms |
-| changes | 376ms |
-| revert | 373ms |
-| delete | 367ms |
+| create | 1,217ms |
+| list | 514ms |
+| changes | 463ms |
+| revert | 457ms |
+| delete | 444ms |
 
 ### 100 files
 
 | Operation | Latency |
 |-----------|---------|
-| create | 390ms |
-| list | 367ms |
-| changes | 377ms |
-| revert | 377ms |
-| delete | 400ms |
+| create | 507ms |
+| list | 463ms |
+| changes | 439ms |
+| revert | 417ms |
+| delete | 370ms |
 
 ### 500 files
 
 | Operation | Latency |
 |-----------|---------|
-| create | 394ms |
-| list | 443ms |
-| changes | 366ms |
-| revert | 421ms |
-| delete | 411ms |
+| create | 377ms |
+| list | 372ms |
+| changes | 402ms |
+| revert | 420ms |
+| delete | 430ms |
 
 The 10-file `create` is slower than 100/500 because it includes the first MCP handshake (JSON-RPC initialize). Subsequent operations reuse the connection. List and changes scale modestly with file count. The host gateway-side latency is typically 3-20ms -- the rest is vsock + MCP protocol overhead.
 
@@ -139,13 +140,13 @@ Host-side latency for individual VM operations. Measured over 3 provision/exec/d
 
 | Operation | Min | Mean | Max | Description |
 |-----------|-----|------|-----|-------------|
-| provision | 25ms | 31ms | 41ms | HTTP POST to service, spawn capsem-process |
-| exec_ready | 377ms | 2,347ms | 6,286ms | First exec succeeds (boot + vsock handshake) |
-| exec | 21ms | 26ms | 30ms | Simple `echo ok` on running VM |
-| delete | 17ms | 20ms | 21ms | Async VM teardown (signal + return immediately) |
-| **total** | **442ms** | **2,424ms** | **6,379ms** | |
+| provision | 895ms | 931ms | 951ms | Create and boot a temporary VM |
+| exec_ready | 11.5ms | 12.1ms | 12.9ms | First ready check after provisioning |
+| exec | 10.7ms | 10.9ms | 11.3ms | Simple `echo ok` on running VM |
+| delete | 60.1ms | 60.6ms | 61.5ms | VM teardown request |
+| **total** | **980ms** | **1,015ms** | **1,033ms** | |
 
-Provision, exec, and delete are fast. Delete was reduced from ~5,000ms to ~20ms by making shutdown async (signal the process, return immediately, clean up in background with telemetry rollup after process exit). exec_ready run 1 includes cold kernel/rootfs cache (~6s); runs 2-3 benefit from host page cache (~380ms). **Cold boot is the remaining optimization target.**
+Provision includes the boot path, so it carries the bulk of lifecycle latency. Exec and ready checks are low-latency once the VM is running.
 
 Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs`
 
@@ -155,10 +156,10 @@ Host-side latency for fork (image creation) and boot-from-image. Measured over 3
 
 | Metric | Min | Mean | Max | Gate | Description |
 |--------|-----|------|-----|------|-------------|
-| fork | 86ms | 97ms | 114ms | 500ms | APFS clonefile of rootfs overlay + workspace |
-| image_size | 7.9MB | 7.9MB | 7.9MB | 12MB | Actual disk (blocks), not logical sparse size |
-| boot_provision | 22ms | 24ms | 25ms | 1,200ms | Clone image into new session + spawn process |
-| boot_ready | 376ms | 379ms | 381ms | 1,200ms | First exec succeeds on image-booted VM |
+| fork | 83ms | 88ms | 93ms | 500ms | APFS clonefile of rootfs overlay + workspace |
+| image_size | 7.5MB | 7.5MB | 7.5MB | 12MB | Actual disk (blocks), not logical sparse size |
+| boot_provision | 744ms | 747ms | 752ms | 1,200ms | Clone image into new session + boot |
+| boot_ready | 11ms | 11ms | 12ms | 1,200ms | First ready check after provisioning |
 
 Fork is fast because APFS `clonefile()` is copy-on-write -- no actual data copying. Image size reports actual allocated blocks, not the logical 2GB sparse file size. Both rootfs overlay changes (installed packages) and workspace files (`/root/`) survive fork.
 
@@ -170,8 +171,8 @@ Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_b
 
 | Component | Version |
 |-----------|---------|
-| Host | macOS 15.4, Apple M4 Max |
-| Capsem | v0.14.6 |
+| Host | Apple Silicon macOS local benchmark host |
+| Capsem | 1.0 benchmark artifact |
 | Guest kernel | Linux 6.x (custom allnoconfig) |
 | Storage | VirtioFS mode (APFS backing) |
 | Python | 3.x (rootfs) |

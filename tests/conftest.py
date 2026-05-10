@@ -6,8 +6,9 @@ Leak detection strategy (xdist-safe):
   own baseline; pre-existing orphans are never flagged).
 - Per-test check_leaks records "first-seen" attribution for any new
   capsem-* PID the worker observes. Writes one JSONL entry per PID to
-  tests/leak-attribution.jsonl so attribution survives across worker
-  processes.
+  a per-pytest-invocation attribution log so attribution survives across
+  xdist worker processes without colliding with independent pytest runs
+  started in parallel by `just smoke`.
 - pytest_sessionfinish:
     Worker processes (PYTEST_XDIST_WORKER set): do NOT fail, do NOT gate.
     Workers see each other's still-running fixture processes on the host
@@ -40,9 +41,44 @@ FAILED_NODEIDS: list[str] = []
 # sessions/<vm>/process.log / sessions/<vm>/serial.log / session.db all
 # survive the normal shutil.rmtree teardown.
 ARTIFACTS_ROOT = Path(__file__).parent.parent / "test-artifacts"
-LEAK_REPORT_LOG = Path(__file__).parent.parent / "tests" / "leak-report.log"
-# Shared cross-process attribution log. Workers append; controller reads.
-LEAK_ATTRIBUTION_LOG = Path(__file__).parent.parent / "tests" / "leak-attribution.jsonl"
+_TESTS_ROOT = Path(__file__).parent.parent / "tests"
+
+
+def _sanitize_leak_log_namespace(namespace: str) -> str:
+    """Return a filesystem-safe leak-log namespace.
+
+    The namespace comes from CAPSEM_TEST_RUN_ID, which `just smoke` sets
+    differently for each parallel pytest invocation. Keep it deliberately
+    boring: leak logs are test artifacts, not a user-facing naming surface.
+    """
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in namespace)
+    cleaned = cleaned.strip("-_")
+    return cleaned or "unnamed"
+
+
+def _leak_log_path(filename: str, env: dict[str, str] | None = None) -> Path:
+    """Build the leak log path for this pytest invocation.
+
+    A single pytest invocation with xdist needs one shared file so workers
+    can append and the controller can read. Multiple pytest invocations run
+    concurrently by `just smoke` must not share that file, or one finished
+    pytest process can falsely report another still-running pytest process's
+    service fixture as a leak.
+    """
+    source = os.environ if env is None else env
+    namespace = source.get("CAPSEM_TEST_RUN_ID", "").strip()
+    path = _TESTS_ROOT / filename
+    if not namespace:
+        return path
+    return path.with_name(
+        f"{path.stem}-{_sanitize_leak_log_namespace(namespace)}{path.suffix}"
+    )
+
+
+LEAK_REPORT_LOG = _leak_log_path("leak-report.log")
+# Shared cross-process attribution log within a single pytest invocation.
+# Workers append; controller reads.
+LEAK_ATTRIBUTION_LOG = _leak_log_path("leak-attribution.jsonl")
 
 # PID -> (nodeid, {name, cmdline}). Records the first test this process saw
 # each new capsem-* PID alive in. Used to attribute real leaks back to a

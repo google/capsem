@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
-use crate::events::{AuditEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent, SnapshotEvent};
+use crate::events::{
+    AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent,
+    PolicyHookEvent, SnapshotEvent,
+};
 use crate::schema;
 
 /// Maximum bytes stored for any preview/content field (256 KB).
@@ -38,6 +41,8 @@ pub enum WriteOp {
     ExecEvent(ExecEvent),
     ExecEventComplete(ExecEventComplete),
     AuditEvent(AuditEvent),
+    DnsEvent(DnsEvent),
+    PolicyHookEvent(PolicyHookEvent),
 }
 
 /// A dedicated writer thread that owns the SQLite connection.
@@ -220,6 +225,8 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::ExecEvent(e) => insert_exec_event(&tx, e)?,
             WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c)?,
             WriteOp::AuditEvent(a) => insert_audit_event(&tx, a)?,
+            WriteOp::DnsEvent(d) => insert_dns_event(&tx, d)?,
+            WriteOp::PolicyHookEvent(h) => insert_policy_hook_event(&tx, h)?,
         }
     }
     tx.commit()
@@ -237,9 +244,11 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
             method, path, query, status_code,
             bytes_sent, bytes_received, duration_ms, matched_rule,
             request_headers, response_headers,
-            request_body_preview, response_body_preview, conn_type
+            request_body_preview, response_body_preview, conn_type,
+            policy_mode, policy_action, policy_rule, policy_reason,
+            trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         params![
             timestamp,
             event.domain,
@@ -260,6 +269,11 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
             req_body,
             resp_body,
             event.conn_type,
+            event.policy_mode,
+            event.policy_action,
+            event.policy_rule,
+            event.policy_reason,
+            event.trace_id,
         ],
     )?;
     Ok(())
@@ -314,9 +328,12 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
     let model_call_id = conn.last_insert_rowid();
 
     for tc in &call.tool_calls {
+        // W6: tool_calls.trace_id falls back to the parent model_call's
+        // trace_id (they belong to the same agent turn).
+        let tc_trace = tc.trace_id.clone().or_else(|| call.trace_id.clone());
         conn.execute(
-            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments, origin)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments, origin, trace_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 model_call_id,
                 tc.call_index as i64,
@@ -324,19 +341,22 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
                 tc.tool_name,
                 tc.arguments,
                 tc.origin,
+                tc_trace,
             ],
         )?;
     }
 
     for tr in &call.tool_responses {
+        let tr_trace = tr.trace_id.clone().or_else(|| call.trace_id.clone());
         conn.execute(
-            "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error, trace_id)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 model_call_id,
                 tr.call_id,
                 tr.content_preview,
                 tr.is_error as i64,
+                tr_trace,
             ],
         )?;
     }
@@ -347,13 +367,14 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
 fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<()> {
     let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
     conn.execute(
-        "INSERT INTO fs_events (timestamp, action, path, size)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO fs_events (timestamp, action, path, size, trace_id)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             timestamp,
             event.action.as_str(),
             event.path,
             event.size.map(|s| s as i64),
+            event.trace_id,
         ],
     )?;
     Ok(())
@@ -368,9 +389,11 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
             timestamp, server_name, method, tool_name, request_id,
             request_preview, response_preview, decision,
             duration_ms, error_message, process_name,
-            bytes_sent, bytes_received
+            bytes_sent, bytes_received,
+            policy_mode, policy_action, policy_rule, policy_reason,
+            trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             timestamp,
             call.server_name,
@@ -385,6 +408,11 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
             call.process_name,
             call.bytes_sent as i64,
             call.bytes_received as i64,
+            call.policy_mode,
+            call.policy_action,
+            call.policy_rule,
+            call.policy_reason,
+            call.trace_id,
         ],
     )?;
     Ok(())
@@ -395,9 +423,9 @@ fn insert_snapshot_event(conn: &Connection, event: &SnapshotEvent) -> rusqlite::
     conn.execute(
         "INSERT INTO snapshot_events (
             timestamp, slot, origin, name, files_count,
-            start_fs_event_id, stop_fs_event_id
+            start_fs_event_id, stop_fs_event_id, trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             timestamp,
             event.slot as i64,
@@ -406,6 +434,7 @@ fn insert_snapshot_event(conn: &Connection, event: &SnapshotEvent) -> rusqlite::
             event.files_count as i64,
             event.start_fs_event_id,
             event.stop_fs_event_id,
+            event.trace_id,
         ],
     )?;
     Ok(())
@@ -458,14 +487,82 @@ fn update_exec_event(conn: &Connection, complete: &ExecEventComplete) -> rusqlit
     Ok(())
 }
 
+fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    conn.execute(
+        "INSERT INTO dns_events (
+            timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
+            source_proto, process_name, upstream_resolver_ms, trace_id,
+            policy_mode, policy_action, policy_rule, policy_reason
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            timestamp,
+            event.qname,
+            event.qtype as i64,
+            event.qclass as i64,
+            event.rcode as i64,
+            event.decision,
+            event.matched_rule,
+            event.source_proto,
+            event.process_name,
+            event.upstream_resolver_ms as i64,
+            event.trace_id,
+            event.policy_mode,
+            event.policy_action,
+            event.policy_rule,
+            event.policy_reason,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_policy_hook_event(conn: &Connection, event: &PolicyHookEvent) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    let reason = cap_field(&event.reason);
+    let error = cap_field(&event.error);
+    let audit_tags = if event.audit_tags.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&event.audit_tags).unwrap_or_default())
+    };
+    conn.execute(
+        "INSERT INTO policy_hook_events (
+            timestamp, endpoint_id, spec_version, spec_hash, decision_id,
+            callback, decision, rule_id, reason, latency_ms, status, error,
+            fallback, audit_tags, trace_id, session_id
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![
+            timestamp,
+            event.endpoint_id,
+            event.spec_version,
+            event.spec_hash,
+            event.decision_id,
+            event.callback,
+            event.decision,
+            event.rule_id,
+            reason,
+            event.latency_ms as i64,
+            event.status,
+            error,
+            event.fallback,
+            audit_tags,
+            event.trace_id,
+            event.session_id,
+        ],
+    )?;
+    Ok(())
+}
+
 fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result<()> {
     let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
     conn.execute(
         "INSERT INTO audit_events (
             timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-            session_id, tty, audit_id, exec_event_id, parent_exe
+            session_id, tty, audit_id, exec_event_id, parent_exe, trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             timestamp,
             event.pid as i64,
@@ -480,660 +577,11 @@ fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result
             event.audit_id,
             event.exec_event_id,
             event.parent_exe,
+            event.trace_id,
         ],
     )?;
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cap_field_none_returns_none() {
-        assert!(cap_field(&None).is_none());
-    }
-
-    #[test]
-    fn cap_field_short_string_unchanged() {
-        let s = Some("hello world".to_string());
-        assert_eq!(cap_field(&s).as_deref(), Some("hello world"));
-    }
-
-    #[test]
-    fn cap_field_exact_limit_unchanged() {
-        let s = Some("x".repeat(MAX_FIELD_BYTES));
-        let result = cap_field(&s).unwrap();
-        assert_eq!(result.len(), MAX_FIELD_BYTES);
-    }
-
-    #[test]
-    fn cap_field_over_limit_truncated() {
-        let s = Some("a".repeat(MAX_FIELD_BYTES + 100));
-        let result = cap_field(&s).unwrap();
-        assert_eq!(result.len(), MAX_FIELD_BYTES);
-    }
-
-    #[test]
-    fn cap_field_utf8_boundary_safe() {
-        // Multi-byte UTF-8: each char is 4 bytes
-        let emoji = "\u{1F600}"; // 4-byte emoji
-        assert_eq!(emoji.len(), 4);
-        // Fill up to just past the limit with 4-byte chars
-        let count = MAX_FIELD_BYTES / 4 + 1; // slightly over
-        let s = Some(emoji.repeat(count));
-        let result = cap_field(&s).unwrap();
-        assert!(result.len() <= MAX_FIELD_BYTES);
-        // Truncated at a char boundary -- must be valid UTF-8
-        assert!(result.is_char_boundary(result.len()));
-        // Length should be a multiple of 4 (each emoji is 4 bytes)
-        assert_eq!(result.len() % 4, 0);
-    }
-
-    #[test]
-    fn cap_field_two_byte_utf8_boundary() {
-        // 2-byte char: e.g. 'a' with accent
-        let ch = "\u{00E9}"; // e-acute, 2 bytes
-        assert_eq!(ch.len(), 2);
-        let count = MAX_FIELD_BYTES / 2 + 1;
-        let s = Some(ch.repeat(count));
-        let result = cap_field(&s).unwrap();
-        assert!(result.len() <= MAX_FIELD_BYTES);
-        assert_eq!(result.len() % 2, 0);
-    }
-
-    #[test]
-    fn cap_field_three_byte_utf8_boundary() {
-        // 3-byte char: CJK character
-        let ch = "\u{4E16}"; // Chinese char, 3 bytes
-        assert_eq!(ch.len(), 3);
-        let count = MAX_FIELD_BYTES / 3 + 1;
-        let s = Some(ch.repeat(count));
-        let result = cap_field(&s).unwrap();
-        assert!(result.len() <= MAX_FIELD_BYTES);
-        assert_eq!(result.len() % 3, 0);
-    }
-
-    #[test]
-    fn cap_field_empty_string_unchanged() {
-        let s = Some(String::new());
-        assert_eq!(cap_field(&s).as_deref(), Some(""));
-    }
-
-    #[test]
-    fn cap_field_mixed_ascii_and_multibyte() {
-        // Fill most of the buffer with ASCII, end with a 4-byte char that straddles the limit
-        let mut s = "x".repeat(MAX_FIELD_BYTES - 1);
-        s.push('\u{1F600}'); // 4 bytes, total = MAX_FIELD_BYTES + 3
-        let result = cap_field(&Some(s)).unwrap();
-        assert!(result.len() <= MAX_FIELD_BYTES);
-        // Should have truncated to MAX_FIELD_BYTES - 1 (dropping the emoji)
-        assert_eq!(result.len(), MAX_FIELD_BYTES - 1);
-        assert!(result.chars().all(|c| c == 'x'));
-    }
-
-    #[test]
-    fn db_writer_checkpoints_wal_on_drop() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-
-        // Write some events, then drop the writer.
-        {
-            let writer = DbWriter::open(&db_path, 64).unwrap();
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                writer
-                    .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        timestamp: std::time::SystemTime::now(),
-                        action: crate::events::FileAction::Created,
-                        path: "/tmp/test".to_string(),
-                        size: Some(42),
-                    }))
-                    .await;
-            });
-            // DbWriter::drop runs here -- should checkpoint WAL.
-        }
-
-        // After drop, WAL should be truncated (empty or zero-length).
-        let wal_path = dir.path().join("test.db-wal");
-        if wal_path.exists() {
-            let wal_size = std::fs::metadata(&wal_path).unwrap().len();
-            assert_eq!(wal_size, 0, "WAL should be empty after checkpoint");
-        }
-
-        // Verify data is in the main DB file (not just WAL).
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn snapshot_event_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("snap.db");
-
-        {
-            let writer = DbWriter::open(&db_path, 64).unwrap();
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                writer
-                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                        timestamp: std::time::SystemTime::UNIX_EPOCH
-                            + std::time::Duration::from_secs(1_700_000_000),
-                        slot: 3,
-                        origin: "auto".to_string(),
-                        name: None,
-                        files_count: 42,
-                        start_fs_event_id: 10,
-                        stop_fs_event_id: 25,
-                    }))
-                    .await;
-                writer
-                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                        timestamp: std::time::SystemTime::UNIX_EPOCH
-                            + std::time::Duration::from_secs(1_700_000_100),
-                        slot: 10,
-                        origin: "manual".to_string(),
-                        name: Some("checkpoint_1".to_string()),
-                        files_count: 55,
-                        start_fs_event_id: 25,
-                        stop_fs_event_id: 40,
-                    }))
-                    .await;
-            });
-        }
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM snapshot_events", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 2);
-
-        let (slot, origin, name, files, start_id, stop_id): (i64, String, Option<String>, i64, i64, i64) = conn
-            .query_row(
-                "SELECT slot, origin, name, files_count, start_fs_event_id, stop_fs_event_id
-                 FROM snapshot_events ORDER BY id ASC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
-            )
-            .unwrap();
-        assert_eq!(slot, 3);
-        assert_eq!(origin, "auto");
-        assert!(name.is_none());
-        assert_eq!(files, 42);
-        assert_eq!(start_id, 10);
-        assert_eq!(stop_id, 25);
-
-        let (slot2, origin2, name2): (i64, String, Option<String>) = conn
-            .query_row(
-                "SELECT slot, origin, name FROM snapshot_events ORDER BY id DESC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(slot2, 10);
-        assert_eq!(origin2, "manual");
-        assert_eq!(name2.as_deref(), Some("checkpoint_1"));
-    }
-
-    #[test]
-    fn snapshot_fs_events_cross_reference() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("cross.db");
-
-        {
-            let writer = DbWriter::open(&db_path, 64).unwrap();
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                // Write some fs_events first.
-                for i in 0..5 {
-                    writer
-                        .write(WriteOp::FileEvent(crate::events::FileEvent {
-                            timestamp: std::time::SystemTime::now(),
-                            action: crate::events::FileAction::Created,
-                            path: format!("file_{i}.txt"),
-                            size: Some(100),
-                        }))
-                        .await;
-                }
-                for i in 5..8 {
-                    writer
-                        .write(WriteOp::FileEvent(crate::events::FileEvent {
-                            timestamp: std::time::SystemTime::now(),
-                            action: crate::events::FileAction::Modified,
-                            path: format!("file_{i}.txt"),
-                            size: Some(200),
-                        }))
-                        .await;
-                }
-                writer
-                    .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        timestamp: std::time::SystemTime::now(),
-                        action: crate::events::FileAction::Deleted,
-                        path: "old.txt".to_string(),
-                        size: None,
-                    }))
-                    .await;
-
-                // Snapshot 1: covers fs_events 1..5 (5 created)
-                writer
-                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                        timestamp: std::time::SystemTime::now(),
-                        slot: 0,
-                        origin: "auto".to_string(),
-                        name: None,
-                        files_count: 5,
-                        start_fs_event_id: 0,
-                        stop_fs_event_id: 5,
-                    }))
-                    .await;
-
-                // Snapshot 2: covers fs_events 6..9 (3 modified + 1 deleted)
-                writer
-                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                        timestamp: std::time::SystemTime::now(),
-                        slot: 1,
-                        origin: "auto".to_string(),
-                        name: None,
-                        files_count: 8,
-                        start_fs_event_id: 5,
-                        stop_fs_event_id: 9,
-                    }))
-                    .await;
-            });
-        }
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-
-        // Verify snapshot 1 sees 5 created files.
-        let (created, modified, deleted): (i64, i64, i64) = conn
-            .query_row(
-                "SELECT
-                    SUM(CASE WHEN action='created' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN action='modified' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN action='deleted' THEN 1 ELSE 0 END)
-                 FROM fs_events WHERE id > 0 AND id <= 5",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(created, 5);
-        assert_eq!(modified, 0);
-        assert_eq!(deleted, 0);
-
-        // Verify snapshot 2 sees 3 modified + 1 deleted.
-        let (created2, modified2, deleted2): (i64, i64, i64) = conn
-            .query_row(
-                "SELECT
-                    SUM(CASE WHEN action='created' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN action='modified' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN action='deleted' THEN 1 ELSE 0 END)
-                 FROM fs_events WHERE id > 5 AND id <= 9",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(created2, 0);
-        assert_eq!(modified2, 3);
-        assert_eq!(deleted2, 1);
-    }
-
-    #[test]
-    fn snapshot_ring_buffer_dedup_query() {
-        // Tests the SQL pattern used by the frontend: MAX(id) GROUP BY slot
-        // ensures only the latest event per slot is returned when the ring
-        // buffer overwrites a slot.
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("ring.db");
-
-        {
-            let writer = DbWriter::open(&db_path, 64).unwrap();
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                // Slot 0, first pass.
-                writer
-                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                        timestamp: std::time::SystemTime::UNIX_EPOCH
-                            + std::time::Duration::from_secs(1000),
-                        slot: 0,
-                        origin: "auto".to_string(),
-                        name: None,
-                        files_count: 5,
-                        start_fs_event_id: 0,
-                        stop_fs_event_id: 3,
-                    }))
-                    .await;
-                // Slot 1.
-                writer
-                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                        timestamp: std::time::SystemTime::UNIX_EPOCH
-                            + std::time::Duration::from_secs(2000),
-                        slot: 1,
-                        origin: "auto".to_string(),
-                        name: None,
-                        files_count: 8,
-                        start_fs_event_id: 3,
-                        stop_fs_event_id: 7,
-                    }))
-                    .await;
-                // Slot 0 again (ring buffer wrapped).
-                writer
-                    .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                        timestamp: std::time::SystemTime::UNIX_EPOCH
-                            + std::time::Duration::from_secs(3000),
-                        slot: 0,
-                        origin: "auto".to_string(),
-                        name: None,
-                        files_count: 12,
-                        start_fs_event_id: 7,
-                        stop_fs_event_id: 15,
-                    }))
-                    .await;
-            });
-        }
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-
-        // Total rows = 3 (all insertions).
-        let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM snapshot_events", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(total, 3);
-
-        // Dedup query: latest per slot. Should return 2 rows (slot 0 latest + slot 1).
-        let dedup: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM snapshot_events
-                 WHERE id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(dedup, 2);
-
-        // Slot 0 should show files_count=12 (the newer entry), not 5.
-        let files: i64 = conn
-            .query_row(
-                "SELECT files_count FROM snapshot_events
-                 WHERE id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)
-                 AND slot = 0",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(files, 12);
-    }
-
-    #[test]
-    fn shutdown_blocking_through_arc_flushes_wal() {
-        // Verifies the explicit-cleanup contract: callers holding
-        // Arc<DbWriter> can drain the writer thread synchronously through
-        // &self, without waiting for the last Arc clone to drop. This is
-        // the path taken by capsem-process's SIGTERM handler.
-        use std::sync::Arc;
-
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("shutdown.db");
-        let writer = Arc::new(DbWriter::open(&db_path, 64).unwrap());
-
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        rt.block_on(async {
-            writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/x".into(),
-                    size: Some(1),
-                }))
-                .await;
-        });
-
-        // Additional Arc clone stays alive across shutdown; the explicit
-        // shutdown must not require the clone to drop first.
-        let _keep = Arc::clone(&writer);
-        writer.shutdown_blocking();
-
-        let wal_path = dir.path().join("shutdown.db-wal");
-        if wal_path.exists() {
-            assert_eq!(
-                std::fs::metadata(&wal_path).unwrap().len(),
-                0,
-                "WAL must be checkpointed after shutdown_blocking"
-            );
-        }
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 1, "durable write must survive shutdown_blocking");
-    }
-
-    #[test]
-    fn shutdown_blocking_is_idempotent() {
-        let dir = tempfile::tempdir().unwrap();
-        let writer = DbWriter::open(&dir.path().join("idemp.db"), 16).unwrap();
-        writer.shutdown_blocking();
-        // Second call must not panic or double-join.
-        writer.shutdown_blocking();
-    }
-
-    #[test]
-    fn write_after_shutdown_is_noop() {
-        let dir = tempfile::tempdir().unwrap();
-        let writer = DbWriter::open(&dir.path().join("no.db"), 16).unwrap();
-        writer.shutdown_blocking();
-        assert!(!writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/after".into(),
-            size: None,
-        })));
-    }
-
-    #[test]
-    fn slow_checkpoint_hook_delays_shutdown() {
-        // Sets CAPSEM_TEST_SLOW_CHECKPOINT_MS on the spawned writer thread
-        // (env var is inherited by the thread). Asserts shutdown_blocking
-        // waits for the delayed checkpoint rather than returning early --
-        // which is precisely what an implicit runtime-drop path would fail
-        // to guarantee under a tight SIGKILL budget.
-        let dir = tempfile::tempdir().unwrap();
-        // SAFETY: std::env::set_var is unsafe on 2024 edition -- single
-        // writer in this test, no concurrent readers.
-        unsafe { std::env::set_var("CAPSEM_TEST_SLOW_CHECKPOINT_MS", "200") };
-        let writer = DbWriter::open(&dir.path().join("slow.db"), 16).unwrap();
-        let start = std::time::Instant::now();
-        writer.shutdown_blocking();
-        let elapsed = start.elapsed();
-        unsafe { std::env::remove_var("CAPSEM_TEST_SLOW_CHECKPOINT_MS") };
-        assert!(
-            elapsed >= std::time::Duration::from_millis(150),
-            "shutdown_blocking must wait for slow checkpoint (elapsed={elapsed:?})"
-        );
-        let wal_path = dir.path().join("slow.db-wal");
-        if wal_path.exists() {
-            assert_eq!(std::fs::metadata(&wal_path).unwrap().len(), 0);
-        }
-    }
-
-    #[test]
-    fn try_write_on_open_writer_succeeds() {
-        let dir = tempfile::tempdir().unwrap();
-        let writer = DbWriter::open(&dir.path().join("t.db"), 64).unwrap();
-        let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/x".into(),
-            size: None,
-        }));
-        assert!(accepted);
-    }
-
-    #[test]
-    fn reader_for_in_memory_writer_fails() {
-        let writer = DbWriter::open_in_memory(16).unwrap();
-        match writer.reader() {
-            Err(rusqlite::Error::InvalidPath(_)) => {}
-            Err(other) => panic!("expected InvalidPath, got {other:?}"),
-            Ok(_) => panic!("expected reader() to fail for :memory:"),
-        }
-    }
-
-    #[test]
-    fn path_accessor_returns_configured_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("mydb.db");
-        let writer = DbWriter::open(&p, 16).unwrap();
-        assert_eq!(writer.path(), p);
-    }
-
-    #[test]
-    fn exec_event_insert_then_update_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("exec.db");
-
-        {
-            let writer = DbWriter::open(&db_path, 64).unwrap();
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                writer.write(WriteOp::ExecEvent(crate::events::ExecEvent {
-                    timestamp: std::time::SystemTime::now(),
-                    exec_id: 42,
-                    command: "ls -la".into(),
-                    source: "mcp".into(),
-                    mcp_call_id: Some(7),
-                    trace_id: Some("t1".into()),
-                    process_name: Some("capsem".into()),
-                })).await;
-
-                writer.write(WriteOp::ExecEventComplete(crate::events::ExecEventComplete {
-                    exec_id: 42,
-                    exit_code: 0,
-                    duration_ms: 120,
-                    stdout_preview: Some("out".into()),
-                    stderr_preview: None,
-                    stdout_bytes: 128,
-                    stderr_bytes: 0,
-                    pid: Some(1234),
-                })).await;
-            });
-        }
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid) = conn.query_row(
-            "SELECT command, source, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
-             FROM exec_events WHERE exec_id = 42",
-            [],
-            |r| {
-                let command: String = r.get(0)?;
-                let source: String = r.get(1)?;
-                let exit: i64 = r.get(2)?;
-                let duration: i64 = r.get(3)?;
-                let stdout_preview: Option<String> = r.get(4)?;
-                let stderr_preview: Option<String> = r.get(5)?;
-                let stdout_bytes: i64 = r.get(6)?;
-                let pid: Option<i64> = r.get(7)?;
-                Ok((command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid))
-            },
-        ).unwrap();
-        assert_eq!(command, "ls -la");
-        assert_eq!(source, "mcp");
-        assert_eq!(exit, 0);
-        assert_eq!(duration, 120);
-        assert_eq!(stdout_preview.as_deref(), Some("out"));
-        assert!(stderr_preview.is_none());
-        assert_eq!(stdout_bytes, 128);
-        assert_eq!(pid, Some(1234));
-    }
-
-    #[test]
-    fn mcp_call_insert_populates_row() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("mcp.db");
-
-        {
-            let writer = DbWriter::open(&db_path, 64).unwrap();
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                writer.write(WriteOp::McpCall(crate::events::McpCall {
-                    timestamp: std::time::SystemTime::now(),
-                    server_name: "github".into(),
-                    method: "tools/call".into(),
-                    tool_name: Some("list_issues".into()),
-                    request_id: Some("r1".into()),
-                    request_preview: Some("{}".into()),
-                    response_preview: None,
-                    decision: "allowed".into(),
-                    duration_ms: 50,
-                    error_message: None,
-                    process_name: Some("agent".into()),
-                    bytes_sent: 64,
-                    bytes_received: 128,
-                })).await;
-            });
-        }
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let (server, method, tool, decision, sent, recv): (
-            String, String, Option<String>, String, i64, i64,
-        ) = conn.query_row(
-            "SELECT server_name, method, tool_name, decision, bytes_sent, bytes_received FROM mcp_calls",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
-        ).unwrap();
-        assert_eq!(server, "github");
-        assert_eq!(method, "tools/call");
-        assert_eq!(tool.as_deref(), Some("list_issues"));
-        assert_eq!(decision, "allowed");
-        assert_eq!(sent, 64);
-        assert_eq!(recv, 128);
-    }
-
-    #[test]
-    fn audit_event_insert_populates_row() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("audit.db");
-
-        {
-            let writer = DbWriter::open(&db_path, 64).unwrap();
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                writer.write(WriteOp::AuditEvent(crate::events::AuditEvent {
-                    timestamp: std::time::SystemTime::now(),
-                    pid: 100,
-                    ppid: 1,
-                    uid: 501,
-                    exe: "/usr/bin/ls".into(),
-                    comm: Some("ls".into()),
-                    argv: "ls -la".into(),
-                    cwd: Some("/tmp".into()),
-                    tty: None,
-                    session_id: Some(42),
-                    audit_id: Some("a1".into()),
-                    exec_event_id: Some(7),
-                    parent_exe: Some("/bin/bash".into()),
-                })).await;
-            });
-        }
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let (pid, ppid, uid, exe, argv, cwd, parent_exe): (
-            i64, i64, i64, String, String, Option<String>, Option<String>,
-        ) = conn.query_row(
-            "SELECT pid, ppid, uid, exe, argv, cwd, parent_exe FROM audit_events",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
-        ).unwrap();
-        assert_eq!(pid, 100);
-        assert_eq!(ppid, 1);
-        assert_eq!(uid, 501);
-        assert_eq!(exe, "/usr/bin/ls");
-        assert_eq!(argv, "ls -la");
-        assert_eq!(cwd.as_deref(), Some("/tmp"));
-        assert_eq!(parent_exe.as_deref(), Some("/bin/bash"));
-    }
-}
-
+mod tests;

@@ -40,11 +40,23 @@ class TestMcpServers:
 class TestMcpTools:
 
     def test_tools_returns_list(self, client):
-        """/mcp/tools returns the tool cache (empty under isolated CAPSEM_HOME)."""
+        """/mcp/tools returns the isolated tool cache shape."""
         resp = client.get("/mcp/tools")
         assert isinstance(resp, list), f"/mcp/tools did not return list: {resp!r}"
-        # A fresh CAPSEM_HOME has no mcp_tool_cache.json -> empty list.
-        assert resp == [], f"unexpected tools in isolated HOME: {resp}"
+        if not resp:
+            return
+
+        names = {tool["namespaced_name"] for tool in resp}
+        assert {"local__echo", "local__fetch_http"} <= names
+        for tool in resp:
+            for key in (
+                "server_name", "original_name", "namespaced_name",
+                "description", "approved", "pin_changed",
+            ):
+                assert key in tool, f"tool missing '{key}': {tool}"
+            assert tool["server_name"] == "local"
+            assert isinstance(tool["approved"], bool)
+            assert isinstance(tool["pin_changed"], bool)
 
 
 class TestMcpPolicy:

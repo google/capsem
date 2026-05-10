@@ -29,6 +29,7 @@ FALLBACK_KERNEL_VERSION = "6.6.127"
 GUEST_BINARIES = [
     "capsem-pty-agent",
     "capsem-net-proxy",
+    "capsem-dns-proxy",
     "capsem-mcp-server",
     "capsem-sysutil",
 ]
@@ -244,8 +245,17 @@ def sync_container_clock() -> None:
         pass  # Best effort -- apt-get options are the fallback
 
 
-def resolve_kernel_version(branch: str = "6.6") -> str:
-    """Fetch latest stable kernel version for an LTS branch from kernel.org."""
+def resolve_kernel_version(branch: str = "auto") -> str:
+    """Fetch the latest kernel version from kernel.org.
+
+    `branch` controls selection:
+      - "auto" (default): newest non-EOL longterm (LTS) branch, latest patch.
+        Always-fresh; no human bumps required.
+      - "X.Y" (e.g. "6.6"): pin to that LTS branch, latest patch.
+        Use for reproducibility / security freeze.
+
+    Falls back to `FALLBACK_KERNEL_VERSION` on any network/parse error.
+    """
     try:
         req = urllib.request.Request(
             "https://www.kernel.org/releases.json",
@@ -258,23 +268,45 @@ def resolve_kernel_version(branch: str = "6.6") -> str:
         print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
         return FALLBACK_KERNEL_VERSION
 
-    prefix = branch + "."
-    candidates = []
+    # Collect (major, minor, patch) for every non-EOL longterm release with
+    # a strict X.Y.Z version string.
+    lts: list[tuple[int, int, int]] = []
     for release in data.get("releases", []):
         version = release.get("version", "")
-        moniker = release.get("moniker", "")
-        iseol = release.get("iseol", False)
-        if moniker == "longterm" and version.startswith(prefix) and not iseol:
-            if re.fullmatch(r"\d+\.\d+\.\d+", version):
-                candidates.append(version)
+        if release.get("moniker") != "longterm" or release.get("iseol"):
+            continue
+        if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+            continue
+        a, b, c = (int(x) for x in version.split("."))
+        lts.append((a, b, c))
 
-    if not candidates:
-        print(f"  Warning: no {branch}.x LTS versions found")
+    if not lts:
+        print("  Warning: no longterm releases found in kernel.org feed")
         print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
         return FALLBACK_KERNEL_VERSION
 
-    candidates.sort(key=lambda v: int(v.split(".")[-1]))
-    return candidates[-1]
+    if branch == "auto":
+        # Highest LTS branch (by major, minor), then highest patch on it.
+        lts.sort()
+        a, b, _ = lts[-1]
+        patches = sorted(c for (x, y, c) in lts if (x, y) == (a, b))
+        version = f"{a}.{b}.{patches[-1]}"
+        print(f"  Auto-selected newest LTS: {version}")
+        return version
+
+    # Explicit pin: keep only the requested major.minor branch.
+    try:
+        want_a, want_b = (int(x) for x in branch.split("."))
+    except ValueError:
+        print(f"  Warning: invalid kernel_branch {branch!r} (want 'auto' or 'X.Y')")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+    patches = sorted(c for (a, b, c) in lts if (a, b) == (want_a, want_b))
+    if not patches:
+        print(f"  Warning: no non-EOL {branch}.x LTS releases on kernel.org")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+    return f"{want_a}.{want_b}.{patches[-1]}"
 
 
 def get_project_version(repo_root: Path) -> str:

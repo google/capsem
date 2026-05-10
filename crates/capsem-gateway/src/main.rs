@@ -1,4 +1,5 @@
 mod auth;
+mod cors;
 mod proxy;
 mod status;
 mod terminal;
@@ -22,7 +23,10 @@ use crate::auth::{AuthFailureTracker, AuthState};
 use crate::status::StatusCache;
 
 #[derive(Parser, Debug)]
-#[command(name = "capsem-gateway", about = "TCP-to-UDS gateway for capsem-service")]
+#[command(
+    name = "capsem-gateway",
+    about = "TCP-to-UDS gateway for capsem-service"
+)]
 struct Args {
     /// TCP port to listen on (0 = OS-assigned)
     #[arg(long, default_value_t = 19222)]
@@ -63,16 +67,19 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                // tower_http + hyper at debug so request-level and connection-level
-                // failures (parse errors, early RST, malformed headers) land in the
-                // gateway log; without these, auth-path flakes surface as curl "000"
-                // with nothing on the gateway side to explain it.
-                .unwrap_or_else(|_| "capsem_gateway=info,tower_http=debug,hyper=info".into()),
-        )
-        .init();
+    let run_dir = capsem_core::paths::capsem_run_dir();
+    let _ = std::fs::create_dir_all(&run_dir);
+    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+        service: "capsem-gateway",
+        sink: capsem_core::telemetry::LogSink::File {
+            path: run_dir.join("gateway.log"),
+        },
+        // tower_http + hyper at debug so request-level and connection-level
+        // failures (parse errors, early RST, malformed headers) land in the
+        // gateway log; without these, auth-path flakes surface as curl "000"
+        // with nothing on the gateway side to explain it.
+        default_filter: "capsem_gateway=info,tower_http=debug,hyper=info",
+    })?;
 
     // Surface any gateway panic in the log instead of letting it vanish into
     // the void -- under test load a panicked task would otherwise just drop
@@ -123,7 +130,9 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
-    let uds_path = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
+    let uds_path = args
+        .uds_path
+        .unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Check if service socket exists (warning only -- service may start later)
     if !uds_path.exists() {
@@ -169,13 +178,7 @@ async fn main() -> Result<()> {
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::predicate(|origin, _| {
-                    origin.to_str().is_ok_and(|s| {
-                        s.starts_with("http://localhost")
-                            || s.starts_with("http://127.0.0.1")
-                            || s.starts_with("https://localhost")
-                            || s.starts_with("https://127.0.0.1")
-                            || s.starts_with("tauri://")
-                    })
+                    cors::is_allowed_origin(origin)
                 }))
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
@@ -197,13 +200,13 @@ async fn main() -> Result<()> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            info!("shutting down");
-            shutdown_auth.cleanup();
-        })
-        .await
-        .context("server error")?;
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        info!("shutting down");
+        shutdown_auth.cleanup();
+    })
+    .await
+    .context("server error")?;
 
     // Belt-and-suspenders cleanup (signal handler may not run on all exit paths)
     auth_state.cleanup();
@@ -279,9 +282,8 @@ async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to register SIGTERM handler");
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
         tokio::select! {
             _ = ctrl_c => {}
             _ = sigterm.recv() => {}
@@ -329,7 +331,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ok"], true);
         assert!(json["version"].is_string());
@@ -348,7 +352,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["version"].as_str().unwrap(), env!("CARGO_PKG_VERSION"));
     }
@@ -412,8 +418,10 @@ mod tests {
             .uri("/token")
             .body(Body::empty())
             .unwrap();
-        req.extensions_mut()
-            .insert(ConnectInfo(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 12345))));
+        req.extensions_mut().insert(ConnectInfo(SocketAddr::from((
+            [0, 0, 0, 0, 0, 0, 0, 1],
+            12345,
+        ))));
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), http::StatusCode::OK);
     }
@@ -433,13 +441,7 @@ mod tests {
             .layer(
                 tower_http::cors::CorsLayer::new()
                     .allow_origin(AllowOrigin::predicate(|origin, _| {
-                        origin.to_str().is_ok_and(|s| {
-                            s.starts_with("http://localhost")
-                                || s.starts_with("http://127.0.0.1")
-                                || s.starts_with("https://localhost")
-                                || s.starts_with("https://127.0.0.1")
-                                || s.starts_with("tauri://")
-                        })
+                        crate::cors::is_allowed_origin(origin)
                     }))
                     .allow_methods(tower_http::cors::Any)
                     .allow_headers(tower_http::cors::Any),
@@ -521,12 +523,11 @@ mod tests {
     #[tokio::test]
     async fn cors_rejects_localhost_like_origin() {
         let app = cors_app();
-        // "http://localhostevil.com" starts with "http://localhost" so the
-        // prefix-based predicate will match it. This is acceptable for a
-        // service bound to 127.0.0.1 -- the key protection is blocking
-        // truly external origins (different host). Verify the response
-        // succeeds (the origin IS matched by the predicate).
-        let _resp = app
+        // AB-001: a prefix-based predicate would approve this attacker host.
+        // The CORS layer must NOT echo back `Access-Control-Allow-Origin`
+        // for it; otherwise a page on `http://localhostevil.com` could read
+        // the gateway token via a cross-origin XHR to 127.0.0.1.
+        let resp = app
             .oneshot(
                 http::Request::builder()
                     .uri("/")
@@ -536,6 +537,29 @@ mod tests {
             )
             .await
             .unwrap();
+        assert!(
+            resp.headers().get("access-control-allow-origin").is_none(),
+            "localhost-prefix attacker origin must not be approved by CORS"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_rejects_127_0_0_1_dot_suffix_origin() {
+        let app = cors_app();
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .uri("/")
+                    .header("origin", "http://127.0.0.1.evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            resp.headers().get("access-control-allow-origin").is_none(),
+            "127.0.0.1 dotted-suffix attacker origin must not be approved by CORS"
+        );
     }
 
     // --- Args / CLI parsing ---
@@ -587,9 +611,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["service_socket"].as_str().unwrap(), "/tmp/unique-socket-path.sock");
+        assert_eq!(
+            json["service_socket"].as_str().unwrap(),
+            "/tmp/unique-socket-path.sock"
+        );
     }
 
     // --- Token endpoint: loopback matrix ---

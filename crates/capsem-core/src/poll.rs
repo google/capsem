@@ -22,7 +22,10 @@ pub type PollOpts = capsem_proto::poll::RetryOpts;
 ///     },
 /// ).await;
 /// ```
-pub async fn poll_until<T, F, Fut>(opts: PollOpts, mut f: F) -> Result<T, capsem_proto::poll::TimedOut>
+pub async fn poll_until<T, F, Fut>(
+    opts: PollOpts,
+    mut f: F,
+) -> Result<T, capsem_proto::poll::TimedOut>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Option<T>>,
@@ -37,7 +40,8 @@ where
             debug!(
                 label = opts.label,
                 attempts,
-                elapsed_ms = (tokio::time::Instant::now() - (deadline - opts.timeout)).as_millis() as u64,
+                elapsed_ms =
+                    (tokio::time::Instant::now() - (deadline - opts.timeout)).as_millis() as u64,
                 "poll succeeded"
             );
             return Ok(val);

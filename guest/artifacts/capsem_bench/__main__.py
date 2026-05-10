@@ -7,7 +7,7 @@ import time
 
 from .helpers import console
 
-VALID_MODES = ("disk", "rootfs", "startup", "http", "throughput", "snapshot", "all")
+VALID_MODES = ("disk", "rootfs", "startup", "http", "throughput", "snapshot", "mitm-load", "mcp-load", "dns-load", "all")
 
 
 def main():
@@ -24,6 +24,9 @@ def main():
         console.print("  http [URL] [N] [C]  HTTP benchmarks (ab-style)")
         console.print("  throughput          100 MB download through MITM proxy")
         console.print("  snapshot            Snapshot ops (create/list/revert/delete via MCP)")
+        console.print("  mitm-load           MITM proxy load test at 1/10/50/200 concurrency")
+        console.print("  mcp-load            MCP path load test (echo tool) at 1/10/50/200 concurrency")
+        console.print("  dns-load            DNS proxy load test at 1/10/50/200 concurrency")
         console.print("  all                 Run all benchmarks (default)")
         console.print()
         console.print("Environment:")
@@ -68,6 +71,24 @@ def main():
     if mode in ("snapshot", "all"):
         from .snapshot import snapshot_bench
         output["snapshot"] = snapshot_bench()
+
+    # mitm-load runs only when explicitly requested -- it's a long-running
+    # proxy stress test (default 10s per concurrency level x 4 levels = ~40s
+    # of pure proxy load) and would dominate `capsem-bench all`.
+    if mode == "mitm-load":
+        from .mitm_load import mitm_load_bench
+        output["mitm_load"] = mitm_load_bench()
+
+    if mode == "mcp-load":
+        from .mcp_load import mcp_load_bench
+        output["mcp_load"] = mcp_load_bench()
+
+    # dns-load runs only when explicitly requested -- same rationale
+    # as mitm-load: ~40s of pure proxy stress per invocation, would
+    # dominate `capsem-bench all`.
+    if mode == "dns-load":
+        from .dns_load import dns_load_bench
+        output["dns_load"] = dns_load_bench()
 
     # JSON to file (machine-readable)
     json_path = "/tmp/capsem-benchmark.json"

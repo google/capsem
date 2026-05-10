@@ -1,13 +1,44 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::Result;
-use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
+use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
-use tracing::{info, error, warn, debug};
+use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
+use tracing::{debug, error, info, warn};
 
-use crate::job_store::{JobStore, JobResult};
+use crate::job_store::{JobResult, JobStore};
+use crate::mcp_runtime::McpRuntime;
 use crate::terminal::TerminalRelay;
+
+/// Per-attempt timeout the host watchdog waits before re-sending a quick
+/// request/response HostToGuest payload.
+///
+/// With the control bridge's pending-ack map (see
+/// `JobStore::pending_acks` and `vsock.rs::setup_vsock`), silent
+/// host-to-guest drops are no longer the watchdog's job: the bridge
+/// holds every ackable message and replays it on every fresh conn
+/// until `GuestToHost::Ack` lands. The watchdog only exists to cover
+/// the asymmetric return-path case where the agent processed and
+/// sent the response (FileOpDone / FileContent) but those
+/// bytes were silently dropped. Retrying quick file operations triggers the
+/// agent's dedup-and-replay path, which re-emits the cached response.
+///
+/// 1s is chosen so a retry only fires after a request has clearly
+/// missed its expected response window: the longest healthy guest
+/// round-trip we observed was ~150ms (bash spawn + mkdir + echo +
+/// cat), and 1s gives ~6× headroom over that without sitting idle
+/// for 3s of dead time.
+const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
+/// Maximum number of quick-operation watchdog retries. 16 × 1s = 16s. The bridge
+/// replay layer takes care of forward-path losses regardless of this
+/// number; the watchdog's job is just to cover return-path losses.
+const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
+
+async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
+    j_rx.await
+        .map_err(|_| "Exec result channel closed".to_string())
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_ipc_connection(
@@ -17,11 +48,32 @@ pub(crate) async fn handle_ipc_connection(
     term_relay: Arc<TerminalRelay>,
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
-    mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
+    mcp_runtime: Arc<McpRuntime>,
     vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
-    let std_stream = stream.into_std()?;
-    let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) = channel_from_std(std_stream)?;
+    let mut std_stream = stream.into_std()?;
+    // First frame on every IPC connection is a Hello -- detect cross-version
+    // mixes (capsem-service built before X, capsem-process built after) in
+    // ~1s with a structured log line instead of a 30s silent timeout.
+    match capsem_core::ipc_handshake::negotiate_responder(
+        &mut std_stream,
+        "capsem-process",
+        capsem_core::telemetry::current_parent_traceparent(),
+    ) {
+        Ok(peer) => {
+            info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");
+        }
+        Err(e) => {
+            error!(
+                target: "ipc",
+                error = %e,
+                "IPC handshake failed; refusing connection"
+            );
+            return Ok(());
+        }
+    }
+    let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+        channel_from_std(std_stream)?;
 
     // Serialize all IPC writes through a single channel to prevent concurrent
     // sendmsg() interleaving that corrupts the data stream. tokio_unix_ipc's
@@ -30,7 +82,9 @@ pub(crate) async fn handle_ipc_connection(
     let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(256);
     tokio::spawn(async move {
         while let Some(msg) = ipc_rx_out.recv().await {
-            if tx.send(msg).await.is_err() { break; }
+            if tx.send(msg).await.is_err() {
+                break;
+            }
         }
     });
 
@@ -44,240 +98,606 @@ pub(crate) async fn handle_ipc_connection(
         let mut rx_bcast = ipc_tx.subscribe();
         tokio::spawn(async move {
             while let Ok(msg) = rx_bcast.recv().await {
-                if matches!(msg, ProcessToService::TerminalOutput { .. }) { continue; }
-                if out_tx.send(msg).await.is_err() { break; }
+                if matches!(msg, ProcessToService::TerminalOutput { .. }) {
+                    continue;
+                }
+                if out_tx.send(msg).await.is_err() {
+                    break;
+                }
             }
         });
     }
 
-    while let Ok(msg) = rx.recv().await {
+    // Live stream task spawned by StartTerminalStream. Held here so
+    // StopTerminalStream and connection teardown can abort it instead of
+    // letting it outlive the IPC connection.
+    let mut stream_task: Option<tokio::task::JoinHandle<()>> = None;
+
+    loop {
+        let msg = match rx.recv().await {
+            Ok(m) => m,
+            Err(e) => {
+                // Surface the decode error -- silent connection close on a
+                // protocol mismatch wedged suspend for a full afternoon
+                // while we hunted it as a "guest doesn't respond" bug.
+                tracing::warn!(error = %e, "IPC: rx.recv() failed; closing connection");
+                break;
+            }
+        };
         match msg {
             ServiceToProcess::StartTerminalStream => {
-                    info!("Starting terminal stream for connection");
-                    let out_tx = ipc_tx_out.clone();
-                    // Atomic snapshot + subscribe so the client sees buffered
-                    // banner bytes and then a gap-free live stream.
-                    let (replay, mut term_rx) = term_relay.subscribe();
-                    tokio::spawn(async move {
-                        if !replay.is_empty()
-                            && out_tx.send(ProcessToService::TerminalOutput { data: replay }).await.is_err()
+                info!("Starting terminal stream for connection");
+                // Track the stream task so StopTerminalStream / connection
+                // teardown can cancel it. Cancelling on stop prevents
+                // late TerminalOutput frames from racing the client's
+                // raw-mode-restore and leaking into the user's parent
+                // shell.
+                let prev: Option<tokio::task::JoinHandle<()>> = stream_task.take();
+                if let Some(p) = prev {
+                    p.abort();
+                }
+                let out_tx = ipc_tx_out.clone();
+                // Atomic snapshot + subscribe so the client sees buffered
+                // banner bytes and then a gap-free live stream.
+                let (replay, mut term_rx) = term_relay.subscribe();
+                let h = tokio::spawn(async move {
+                    // Smoking-gun trace. If a buffer at the head of the
+                    // PTY stream looks like an IPC frame, log it loudly
+                    // -- something inside the guest is writing protocol
+                    // bytes to its PTY and we want to know which session,
+                    // which buffer prefix, and how often.
+                    let warn_if_ipc_shaped = |buf: &[u8]| {
+                        if capsem_proto::looks_like_ipc_frame(buf) {
+                            let preview: Vec<String> =
+                                buf.iter().take(16).map(|b| format!("{:02x}", b)).collect();
+                            warn!(
+                                    bytes = preview.join(" "),
+                                    len = buf.len(),
+                                    "PTY stream starts with IPC-frame-shaped bytes -- guest may be leaking control data into the terminal channel"
+                                );
+                        }
+                    };
+                    if !replay.is_empty() {
+                        warn_if_ipc_shaped(&replay);
+                        if out_tx
+                            .send(ProcessToService::TerminalOutput { data: replay })
+                            .await
+                            .is_err()
                         {
                             return;
                         }
-                        while let Ok(data) = term_rx.recv().await {
-                            if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() { break; }
-                        }
-                    });
-                }
-                ServiceToProcess::Ping => {
-                    if vm_ready.load(Ordering::Acquire) {
-                        let _ = ipc_tx_out.send(ProcessToService::Pong).await;
-                    } else {
-                        debug!("Ping received but VM not ready, closing connection");
-                        return Ok(());
                     }
+                    while let Ok(data) = term_rx.recv().await {
+                        warn_if_ipc_shaped(&data);
+                        if out_tx
+                            .send(ProcessToService::TerminalOutput { data })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+                stream_task = Some(h);
+            }
+            ServiceToProcess::StopTerminalStream => {
+                info!("Stopping terminal stream for connection");
+                if let Some(h) = stream_task.take() {
+                    h.abort();
                 }
-                ServiceToProcess::TerminalInput { data } => { let _ = ctrl_tx.send(ServiceToProcess::TerminalInput { data }).await; }
-                ServiceToProcess::TerminalResize { cols, rows } => { let _ = ctrl_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await; }
-                ServiceToProcess::Exec { id, command } => {
-                    let job_store = job_store.clone();
-                    let ctrl_tx = ctrl_tx.clone();
-                    let ipc_tx_out = ipc_tx_out.clone();
-                    tokio::spawn(async move {
-                        info!(id, command, "Received Exec command via IPC");
-                        let (j_tx, j_rx) = oneshot::channel();
-                        job_store.jobs.lock().unwrap().insert(id, j_tx);
+            }
+            ServiceToProcess::Ping => {
+                if vm_ready.load(Ordering::Acquire) {
+                    capsem_core::try_send!(
+                        "ipc_pong",
+                        ipc_tx_out.send(ProcessToService::Pong).await
+                    );
+                } else {
+                    debug!("Ping received but VM not ready, closing connection");
+                    return Ok(());
+                }
+            }
+            ServiceToProcess::TerminalInput { data } => {
+                capsem_core::try_send!(
+                    "ctrl_terminal_input",
+                    ctrl_tx.send(ServiceToProcess::TerminalInput { data }).await
+                );
+            }
+            ServiceToProcess::TerminalResize { cols, rows } => {
+                capsem_core::try_send!(
+                    "ctrl_terminal_resize",
+                    ctrl_tx
+                        .send(ServiceToProcess::TerminalResize { cols, rows })
+                        .await
+                );
+            }
+            ServiceToProcess::Exec { id, command } => {
+                let job_store = job_store.clone();
+                let ctrl_tx = ctrl_tx.clone();
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    info!(id, command, "Received Exec command via IPC");
+                    let (j_tx, j_rx) = oneshot::channel();
+                    job_store.jobs.lock().unwrap().insert(id, j_tx);
 
-                        // Set as active exec to start capturing output
-                        *job_store.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
+                    // Reset active_exec for this id. The EXEC-port
+                    // handler keys its capture by active_exec.id, so
+                    // this slot must be in place *before* we send.
+                    *job_store.active_exec.lock().unwrap() =
+                        Some(crate::job_store::ActiveExec::new(id));
 
-                        let _ = ctrl_tx.send(ServiceToProcess::Exec { id, command }).await;
-                        match j_rx.await {
-                            Ok(JobResult::Exec { stdout, stderr, exit_code }) => {
-                                info!(id, exit_code, "Sending ExecResult back via IPC");
-                                let _ = ipc_tx_out.send(ProcessToService::ExecResult { id, stdout, stderr, exit_code }).await;
-                            }
-                            Ok(JobResult::Error { message }) => {
-                                error!(id, message, "Sending Exec error back via IPC");
-                                let _ = ipc_tx_out.send(ProcessToService::ExecResult { id, stdout: vec![], stderr: message.into_bytes(), exit_code: -1 }).await;
-                            }
-                            _ => {
-                                error!(id, "Job result channel closed for Exec");
+                    capsem_core::try_send!(
+                        "ctrl_exec",
+                        ctrl_tx
+                            .send(ServiceToProcess::Exec {
+                                id,
+                                command: command.clone()
+                            })
+                            .await
+                    );
+
+                    // Exec duration is user work, not transport liveness.
+                    // The control bridge's Ack/AckReply replay layers own
+                    // delivery in both directions; this task waits until
+                    // the guest command exits, while the service caller may
+                    // apply an explicit timeout when requested.
+                    let result = await_exec_result(j_rx).await;
+                    match result {
+                        Ok(JobResult::Exec {
+                            stdout,
+                            stderr,
+                            exit_code,
+                        }) => {
+                            info!(id, exit_code, "Sending ExecResult back via IPC");
+                            capsem_core::try_send!(
+                                "ipc_exec_result",
+                                ipc_tx_out
+                                    .send(ProcessToService::ExecResult {
+                                        id,
+                                        stdout,
+                                        stderr,
+                                        exit_code
+                                    })
+                                    .await
+                            );
+                        }
+                        Ok(JobResult::Error { message }) => {
+                            error!(id, message, "Sending Exec error back via IPC");
+                            capsem_core::try_send!(
+                                "ipc_exec_result_err",
+                                ipc_tx_out
+                                    .send(ProcessToService::ExecResult {
+                                        id,
+                                        stdout: vec![],
+                                        stderr: message.into_bytes(),
+                                        exit_code: -1
+                                    })
+                                    .await
+                            );
+                        }
+                        Ok(other) => {
+                            error!(id, result = ?other, "unexpected job result for Exec");
+                        }
+                        Err(msg) => {
+                            error!(id, msg, "Exec result channel closed");
+                            let _ = job_store.jobs.lock().unwrap().remove(&id);
+                            // No caller is still waiting on this IPC job;
+                            // remove the pending-ack entry so the bridge
+                            // stops replaying it.
+                            job_store.pending_acks.lock().unwrap().remove(&id);
+                            capsem_core::try_send!(
+                                "ipc_exec_result_closed",
+                                ipc_tx_out
+                                    .send(ProcessToService::ExecResult {
+                                        id,
+                                        stdout: vec![],
+                                        stderr: msg.into_bytes(),
+                                        exit_code: -1,
+                                    })
+                                    .await
+                            );
+                        }
+                    }
+                });
+            }
+            ServiceToProcess::WriteFile { id, path, data } => {
+                let job_store = job_store.clone();
+                let ctrl_tx = ctrl_tx.clone();
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    info!(
+                        id,
+                        path,
+                        len = data.len(),
+                        "Received WriteFile command via IPC"
+                    );
+                    let (j_tx, mut j_rx) = oneshot::channel();
+                    job_store.jobs.lock().unwrap().insert(id, j_tx);
+                    capsem_core::try_send!(
+                        "ctrl_write_file",
+                        ctrl_tx
+                            .send(ServiceToProcess::WriteFile {
+                                id,
+                                path: path.clone(),
+                                data: data.clone()
+                            })
+                            .await
+                    );
+                    // Watchdog mirrors the quick FileRead retry: if no
+                    // FileOpDone arrives within the short response window,
+                    // re-send the FileWrite. The agent dedups by id, so a
+                    // retry that races a late-arriving original cannot
+                    // double-write.
+                    let mut retries: u16 = 0;
+                    let result = loop {
+                        match tokio::time::timeout(GUEST_PAYLOAD_TIMEOUT, &mut j_rx).await {
+                            Ok(res) => break Ok(res),
+                            Err(_) => {
+                                if retries >= GUEST_PAYLOAD_MAX_RETRIES {
+                                    break Err("FileWrite watchdog exhausted retries");
+                                }
+                                retries += 1;
+                                warn!(
+                                    id,
+                                    attempt = retries,
+                                    "no FileOp ack in 1s; resending HostToGuest::FileWrite"
+                                );
+                                capsem_core::try_send!(
+                                    "ctrl_write_file_retry",
+                                    ctrl_tx
+                                        .send(ServiceToProcess::WriteFile {
+                                            id,
+                                            path: path.clone(),
+                                            data: data.clone()
+                                        })
+                                        .await
+                                );
                             }
                         }
-                    });
-                }
-                ServiceToProcess::WriteFile { id, path, data } => {
-                    let job_store = job_store.clone();
-                    let ctrl_tx = ctrl_tx.clone();
-                    let ipc_tx_out = ipc_tx_out.clone();
-                    tokio::spawn(async move {
-                        info!(id, path, len = data.len(), "Received WriteFile command via IPC");
-                        let (j_tx, j_rx) = oneshot::channel();
-                        job_store.jobs.lock().unwrap().insert(id, j_tx);
-                        let _ = ctrl_tx.send(ServiceToProcess::WriteFile { id, path, data }).await;
-                        match j_rx.await {
-                            Ok(JobResult::WriteFile { success, error }) => {
-                                info!(id, success, "Sending WriteFileResult back via IPC");
-                                let _ = ipc_tx_out.send(ProcessToService::WriteFileResult { id, success, error }).await;
-                            }
-                            Ok(JobResult::Error { message }) => {
-                                error!(id, message, "Sending WriteFile error back via IPC");
-                                let _ = ipc_tx_out.send(ProcessToService::WriteFileResult { id, success: false, error: Some(message) }).await;
-                            }
-                            _ => {
-                                error!(id, "Job result channel closed for WriteFile");
+                    };
+                    match result {
+                        Ok(Ok(JobResult::WriteFile { success, error })) => {
+                            info!(id, success, "Sending WriteFileResult back via IPC");
+                            capsem_core::try_send!(
+                                "ipc_write_file_result",
+                                ipc_tx_out
+                                    .send(ProcessToService::WriteFileResult { id, success, error })
+                                    .await
+                            );
+                        }
+                        Ok(Ok(JobResult::Error { message })) => {
+                            error!(id, message, "Sending WriteFile error back via IPC");
+                            capsem_core::try_send!(
+                                "ipc_write_file_result_err",
+                                ipc_tx_out
+                                    .send(ProcessToService::WriteFileResult {
+                                        id,
+                                        success: false,
+                                        error: Some(message)
+                                    })
+                                    .await
+                            );
+                        }
+                        Ok(_) => {
+                            error!(id, "Job result channel closed for WriteFile");
+                        }
+                        Err(msg) => {
+                            error!(id, msg, "WriteFile watchdog exhausted");
+                            // Surface a structured failure to the
+                            // service so it can fail the request quickly
+                            // instead of waiting for the IPC envelope.
+                            let _ = job_store.jobs.lock().unwrap().remove(&id);
+                            // Watchdog gave up -- remove the pending-ack
+                            // entry so the bridge stops replaying a
+                            // message no caller is still waiting for.
+                            job_store.pending_acks.lock().unwrap().remove(&id);
+                            capsem_core::try_send!(
+                                "ipc_write_file_result_watchdog",
+                                ipc_tx_out
+                                    .send(ProcessToService::WriteFileResult {
+                                        id,
+                                        success: false,
+                                        error: Some(msg.into()),
+                                    })
+                                    .await
+                            );
+                        }
+                    }
+                });
+            }
+            ServiceToProcess::ReadFile { id, path } => {
+                let job_store = job_store.clone();
+                let ctrl_tx = ctrl_tx.clone();
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    info!(id, path, "Received ReadFile command via IPC");
+                    let (j_tx, mut j_rx) = oneshot::channel();
+                    job_store.jobs.lock().unwrap().insert(id, j_tx);
+                    capsem_core::try_send!(
+                        "ctrl_read_file",
+                        ctrl_tx
+                            .send(ServiceToProcess::ReadFile {
+                                id,
+                                path: path.clone()
+                            })
+                            .await
+                    );
+                    let mut retries: u16 = 0;
+                    let result = loop {
+                        match tokio::time::timeout(GUEST_PAYLOAD_TIMEOUT, &mut j_rx).await {
+                            Ok(res) => break Ok(res),
+                            Err(_) => {
+                                if retries >= GUEST_PAYLOAD_MAX_RETRIES {
+                                    break Err("FileRead watchdog exhausted retries");
+                                }
+                                retries += 1;
+                                warn!(
+                                    id,
+                                    attempt = retries,
+                                    "no FileContent in 1s; resending HostToGuest::FileRead"
+                                );
+                                capsem_core::try_send!(
+                                    "ctrl_read_file_retry",
+                                    ctrl_tx
+                                        .send(ServiceToProcess::ReadFile {
+                                            id,
+                                            path: path.clone()
+                                        })
+                                        .await
+                                );
                             }
                         }
-                    });
-                }
-                ServiceToProcess::ReadFile { id, path } => {
-                    let job_store = job_store.clone();
-                    let ctrl_tx = ctrl_tx.clone();
-                    let ipc_tx_out = ipc_tx_out.clone();
-                    tokio::spawn(async move {
-                        info!(id, path, "Received ReadFile command via IPC");
-                        let (j_tx, j_rx) = oneshot::channel();
-                        job_store.jobs.lock().unwrap().insert(id, j_tx);
-                        let _ = ctrl_tx.send(ServiceToProcess::ReadFile { id, path }).await;
-                        match j_rx.await {
-                            Ok(JobResult::ReadFile { data, error }) => {
-                                info!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
-                                let _ = ipc_tx_out.send(ProcessToService::ReadFileResult { id, data, error }).await;
-                            }
-                            Ok(JobResult::Error { message }) => {
-                                error!(id, message, "Sending ReadFile error back via IPC");
-                                let _ = ipc_tx_out.send(ProcessToService::ReadFileResult { id, data: None, error: Some(message) }).await;
-                            }
-                            _ => {
-                                error!(id, "Job result channel closed for ReadFile");
-                            }
+                    };
+                    match result {
+                        Ok(Ok(JobResult::ReadFile { data, error })) => {
+                            info!(
+                                id,
+                                success = data.is_some(),
+                                "Sending ReadFileResult back via IPC"
+                            );
+                            capsem_core::try_send!(
+                                "ipc_read_file_result",
+                                ipc_tx_out
+                                    .send(ProcessToService::ReadFileResult { id, data, error })
+                                    .await
+                            );
                         }
-                    });
-                }
-                ServiceToProcess::ReloadConfig => {
-                    info!("Reloading policies from disk");
+                        Ok(Ok(JobResult::Error { message })) => {
+                            error!(id, message, "Sending ReadFile error back via IPC");
+                            capsem_core::try_send!(
+                                "ipc_read_file_result_err",
+                                ipc_tx_out
+                                    .send(ProcessToService::ReadFileResult {
+                                        id,
+                                        data: None,
+                                        error: Some(message)
+                                    })
+                                    .await
+                            );
+                        }
+                        Ok(_) => {
+                            error!(id, "Job result channel closed for ReadFile");
+                        }
+                        Err(msg) => {
+                            error!(id, msg, "ReadFile watchdog exhausted");
+                            let _ = job_store.jobs.lock().unwrap().remove(&id);
+                            // Watchdog gave up -- remove the pending-ack
+                            // entry so the bridge stops replaying a
+                            // message no caller is still waiting for.
+                            job_store.pending_acks.lock().unwrap().remove(&id);
+                            capsem_core::try_send!(
+                                "ipc_read_file_result_watchdog",
+                                ipc_tx_out
+                                    .send(ProcessToService::ReadFileResult {
+                                        id,
+                                        data: None,
+                                        error: Some(msg.into()),
+                                    })
+                                    .await
+                            );
+                        }
+                    }
+                });
+            }
+            ServiceToProcess::ReloadConfig => {
+                info!("Reloading policies from disk");
+                let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+                let merged =
+                    capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
+
+                let new_domain = Arc::new(merged.domain);
+                let new_network = Arc::new(merged.network);
+                let new_mcp = Arc::new(merged.mcp);
+                let new_policy_v2 = Arc::new(merged.policy);
+
+                *net_state.policy.write().unwrap() = new_network;
+                *mcp_runtime.domain_policy.write().unwrap() = Arc::clone(&new_domain);
+                *mcp_runtime.policy.write().await = new_mcp;
+                *mcp_runtime.policy_v2.write().await = new_policy_v2;
+
+                capsem_core::try_send!(
+                    "ipc_pong_reload",
+                    ipc_tx_out.send(ProcessToService::Pong).await
+                );
+            }
+            ServiceToProcess::Shutdown => {
+                capsem_core::try_send!(
+                    "ctrl_shutdown",
+                    ctrl_tx.send(ServiceToProcess::Shutdown).await
+                );
+                info!("Received Shutdown command, exiting IPC loop gracefully");
+                break;
+            }
+            ServiceToProcess::Suspend { checkpoint_path } => {
+                info!("Received Suspend command, forwarding to ctrl channel");
+                capsem_core::try_send!(
+                    "ctrl_suspend",
+                    ctrl_tx
+                        .send(ServiceToProcess::Suspend { checkpoint_path })
+                        .await
+                );
+            }
+            ServiceToProcess::McpListServers { id } => {
+                let mcp = Arc::clone(&mcp_runtime);
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    match mcp.aggregator.list_servers().await {
+                        Ok(agg_servers) => {
+                            let servers = agg_servers
+                                .into_iter()
+                                .map(|s| capsem_proto::ipc::McpServerStatus {
+                                    name: s.name,
+                                    url: s.url,
+                                    enabled: s.enabled,
+                                    source: s.source,
+                                    is_stdio: s.is_stdio,
+                                    connected: s.connected,
+                                    tool_count: s.tool_count,
+                                })
+                                .collect();
+                            capsem_core::try_send!(
+                                "ipc_mcp_servers",
+                                ipc_tx_out
+                                    .send(ProcessToService::McpServersResult { id, servers })
+                                    .await
+                            );
+                        }
+                        Err(e) => {
+                            capsem_core::try_send!(
+                                "ipc_mcp_servers_err",
+                                ipc_tx_out
+                                    .send(ProcessToService::McpServersResult {
+                                        id,
+                                        servers: vec![]
+                                    })
+                                    .await
+                            );
+                            warn!(error = %e, "failed to list MCP servers");
+                        }
+                    }
+                });
+            }
+            ServiceToProcess::McpListTools { id } => {
+                let mcp = Arc::clone(&mcp_runtime);
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    match mcp.aggregator.list_tools().await {
+                        Ok(tools) => {
+                            let tools = tools
+                                .into_iter()
+                                .map(|t| capsem_proto::ipc::McpToolStatus {
+                                    namespaced_name: t.namespaced_name,
+                                    original_name: t.original_name,
+                                    description: t.description,
+                                    server_name: t.server_name,
+                                    annotations: t.annotations.as_ref().map(|a| a.to_mcp_json()),
+                                })
+                                .collect();
+                            capsem_core::try_send!(
+                                "ipc_mcp_tools",
+                                ipc_tx_out
+                                    .send(ProcessToService::McpToolsResult { id, tools })
+                                    .await
+                            );
+                        }
+                        Err(e) => {
+                            capsem_core::try_send!(
+                                "ipc_mcp_tools_err",
+                                ipc_tx_out
+                                    .send(ProcessToService::McpToolsResult { id, tools: vec![] })
+                                    .await
+                            );
+                            warn!(error = %e, "failed to list MCP tools");
+                        }
+                    }
+                });
+            }
+            ServiceToProcess::McpRefreshTools { id } => {
+                let mcp = Arc::clone(&mcp_runtime);
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    // Reload config from disk and refresh aggregator.
                     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-
-                    let new_domain = Arc::new(capsem_core::net::policy_config::settings_to_domain_policy(&capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf)));
-                    let new_network = Arc::new(capsem_core::net::policy_config::build_network_policy(&capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf)));
-
-                    let user_mcp = user_sf.mcp.clone().unwrap_or_default();
-                    let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
-                    let new_mcp = Arc::new(user_mcp.to_policy(&corp_mcp));
-
-                    *net_state.policy.write().unwrap() = new_network;
-                    *mcp_config.domain_policy.write().unwrap() = Arc::clone(&new_domain);
-                    *mcp_config.policy.write().await = new_mcp;
-
-                    let _ = ipc_tx_out.send(ProcessToService::Pong).await;
-                }
-                ServiceToProcess::Shutdown => {
-                    let _ = ctrl_tx.send(ServiceToProcess::Shutdown).await;
-                    info!("Received Shutdown command, exiting IPC loop gracefully");
-                    break;
-                }
-                ServiceToProcess::Suspend { checkpoint_path } => {
-                    info!("Received Suspend command, forwarding to ctrl channel");
-                    let _ = ctrl_tx.send(ServiceToProcess::Suspend { checkpoint_path }).await;
-                }
-                ServiceToProcess::McpListServers { id } => {
-                    let mcp = Arc::clone(&mcp_config);
-                    let ipc_tx_out = ipc_tx_out.clone();
-                    tokio::spawn(async move {
-                        match mcp.aggregator.list_servers().await {
-                            Ok(agg_servers) => {
-                                let servers = agg_servers.into_iter().map(|s| {
-                                    capsem_proto::ipc::McpServerStatus {
-                                        name: s.name,
-                                        url: s.url,
-                                        enabled: s.enabled,
-                                        source: s.source,
-                                        is_stdio: s.is_stdio,
-                                        connected: s.connected,
-                                        tool_count: s.tool_count,
-                                    }
-                                }).collect();
-                                let _ = ipc_tx_out.send(ProcessToService::McpServersResult { id, servers }).await;
-                            }
-                            Err(e) => {
-                                let _ = ipc_tx_out.send(ProcessToService::McpServersResult { id, servers: vec![] }).await;
-                                warn!(error = %e, "failed to list MCP servers");
-                            }
+                    let servers = capsem_core::mcp::build_server_list(
+                        &user_sf.mcp.clone().unwrap_or_default(),
+                        &corp_sf.mcp.clone().unwrap_or_default(),
+                    );
+                    match mcp.aggregator.refresh(servers).await {
+                        Ok(()) => {
+                            capsem_core::try_send!(
+                                "ipc_mcp_refresh",
+                                ipc_tx_out
+                                    .send(ProcessToService::McpRefreshResult {
+                                        id,
+                                        success: true,
+                                        error: None
+                                    })
+                                    .await
+                            );
                         }
-                    });
-                }
-                ServiceToProcess::McpListTools { id } => {
-                    let mcp = Arc::clone(&mcp_config);
-                    let ipc_tx_out = ipc_tx_out.clone();
-                    tokio::spawn(async move {
-                        match mcp.aggregator.list_tools().await {
-                            Ok(tools) => {
-                                let tools = tools.into_iter().map(|t| {
-                                    capsem_proto::ipc::McpToolStatus {
-                                        namespaced_name: t.namespaced_name,
-                                        original_name: t.original_name,
-                                        description: t.description,
-                                        server_name: t.server_name,
-                                        annotations: t.annotations.as_ref().map(|a| a.to_mcp_json()),
-                                    }
-                                }).collect();
-                                let _ = ipc_tx_out.send(ProcessToService::McpToolsResult { id, tools }).await;
-                            }
-                            Err(e) => {
-                                let _ = ipc_tx_out.send(ProcessToService::McpToolsResult { id, tools: vec![] }).await;
-                                warn!(error = %e, "failed to list MCP tools");
-                            }
+                        Err(e) => {
+                            capsem_core::try_send!(
+                                "ipc_mcp_refresh_err",
+                                ipc_tx_out
+                                    .send(ProcessToService::McpRefreshResult {
+                                        id,
+                                        success: false,
+                                        error: Some(e.to_string())
+                                    })
+                                    .await
+                            );
                         }
-                    });
-                }
-                ServiceToProcess::McpRefreshTools { id } => {
-                    let mcp = Arc::clone(&mcp_config);
-                    let ipc_tx_out = ipc_tx_out.clone();
-                    tokio::spawn(async move {
-                        // Reload config from disk and refresh aggregator.
-                        let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-                        let servers = capsem_core::mcp::build_server_list(
-                            &user_sf.mcp.clone().unwrap_or_default(),
-                            &corp_sf.mcp.clone().unwrap_or_default(),
-                        );
-                        match mcp.aggregator.refresh(servers).await {
-                            Ok(()) => {
-                                let _ = ipc_tx_out.send(ProcessToService::McpRefreshResult { id, success: true, error: None }).await;
-                            }
-                            Err(e) => {
-                                let _ = ipc_tx_out.send(ProcessToService::McpRefreshResult { id, success: false, error: Some(e.to_string()) }).await;
-                            }
-                        }
-                    });
-                }
-                ServiceToProcess::McpCallTool { id, namespaced_name, arguments_json } => {
-                    let mcp = Arc::clone(&mcp_config);
-                    let ipc_tx_out = ipc_tx_out.clone();
-                    tokio::spawn(async move {
-                        // arguments travels as a JSON string because bincode
-                        // (tokio-unix-ipc's wire format) cannot round-trip
-                        // serde_json::Value through its non-self-describing
-                        // deserialize_any. See crates/capsem-proto/src/ipc.rs.
-                        let arguments: serde_json::Value = serde_json::from_str(&arguments_json)
-                            .unwrap_or(serde_json::Value::Null);
-                        let outcome = mcp.aggregator.call_tool(&namespaced_name, arguments).await;
-                        let result_json = match &outcome {
-                            Ok(result) => serde_json::to_string(result).ok(),
-                            Err(_) => None,
-                        };
-                        let error = outcome.as_ref().err().map(|e| e.to_string());
-                        let _ = ipc_tx_out.send(ProcessToService::McpCallToolResult { id, result_json, error }).await;
-                    });
-                }
-                ServiceToProcess::PrepareSnapshot
-                | ServiceToProcess::Unfreeze
-                | ServiceToProcess::Resume => {
-                    // These are sent directly by process internals (quiescence helper),
-                    // not expected over IPC from service.
-                    warn!("unexpected lifecycle IPC command received");
-                }
+                    }
+                });
+            }
+            ServiceToProcess::McpCallTool {
+                id,
+                namespaced_name,
+                arguments_json,
+            } => {
+                let mcp = Arc::clone(&mcp_runtime);
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    // arguments travels as a JSON string because bincode
+                    // (tokio-unix-ipc's wire format) cannot round-trip
+                    // serde_json::Value through its non-self-describing
+                    // deserialize_any. See crates/capsem-proto/src/ipc.rs.
+                    let arguments: serde_json::Value =
+                        serde_json::from_str(&arguments_json).unwrap_or(serde_json::Value::Null);
+                    let outcome = mcp.aggregator.call_tool(&namespaced_name, arguments).await;
+                    let result_json = match &outcome {
+                        Ok(result) => serde_json::to_string(result).ok(),
+                        Err(_) => None,
+                    };
+                    let error = outcome.as_ref().err().map(|e| e.to_string());
+                    capsem_core::try_send!(
+                        "ipc_mcp_call_tool",
+                        ipc_tx_out
+                            .send(ProcessToService::McpCallToolResult {
+                                id,
+                                result_json,
+                                error
+                            })
+                            .await
+                    );
+                });
+            }
+            ServiceToProcess::PrepareSnapshot
+            | ServiceToProcess::Unfreeze
+            | ServiceToProcess::Resume => {
+                // These are sent directly by process internals (quiescence helper),
+                // not expected over IPC from service.
+                warn!("unexpected lifecycle IPC command received");
+            }
         }
+    }
+    // Connection ended: cancel any in-flight stream task. Without this the
+    // task lives on the runtime, holds its `out_tx`, and may attempt one
+    // more send after the client has already closed the IPC socket --
+    // benign for the underlying mpsc but a leak (the receiver's drop
+    // chain finishes one tick later than necessary).
+    if let Some(h) = stream_task.take() {
+        h.abort();
     }
     Ok(())
 }
@@ -288,6 +708,7 @@ pub(crate) async fn handle_ipc_connection(
 fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
     match msg {
         ServiceToProcess::StartTerminalStream => IpcAction::StreamSetup,
+        ServiceToProcess::StopTerminalStream => IpcAction::StreamSetup,
         ServiceToProcess::Ping => IpcAction::HealthCheck,
         ServiceToProcess::TerminalInput { .. } => IpcAction::Forward,
         ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
@@ -320,107 +741,4 @@ enum IpcAction {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn classify_ping() {
-        assert_eq!(classify_ipc_message(&ServiceToProcess::Ping), IpcAction::HealthCheck);
-    }
-
-    #[test]
-    fn classify_terminal_input() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::TerminalInput { data: vec![0x41] }),
-            IpcAction::Forward
-        );
-    }
-
-    #[test]
-    fn classify_terminal_resize() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::TerminalResize { cols: 80, rows: 24 }),
-            IpcAction::Forward
-        );
-    }
-
-    #[test]
-    fn classify_exec() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::Exec { id: 1, command: "ls".into() }),
-            IpcAction::Job
-        );
-    }
-
-    #[test]
-    fn classify_write_file() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::WriteFile { id: 1, path: "/tmp/f".into(), data: vec![] }),
-            IpcAction::Job
-        );
-    }
-
-    #[test]
-    fn classify_read_file() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::ReadFile { id: 1, path: "/tmp/f".into() }),
-            IpcAction::Job
-        );
-    }
-
-    #[test]
-    fn classify_reload_config() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::ReloadConfig),
-            IpcAction::Reload
-        );
-    }
-
-    #[test]
-    fn classify_shutdown() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::Shutdown),
-            IpcAction::Lifecycle
-        );
-    }
-
-    #[test]
-    fn classify_suspend() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::Suspend { checkpoint_path: "cp.vzsave".into() }),
-            IpcAction::Lifecycle
-        );
-    }
-
-    #[test]
-    fn classify_start_terminal_stream() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::StartTerminalStream),
-            IpcAction::StreamSetup
-        );
-    }
-
-    #[test]
-    fn classify_prepare_snapshot_unexpected() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::PrepareSnapshot),
-            IpcAction::Unexpected
-        );
-    }
-
-    #[test]
-    fn classify_unfreeze_unexpected() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::Unfreeze),
-            IpcAction::Unexpected
-        );
-    }
-
-    #[test]
-    fn classify_resume_unexpected() {
-        assert_eq!(
-            classify_ipc_message(&ServiceToProcess::Resume),
-            IpcAction::Unexpected
-        );
-    }
-}
+mod tests;

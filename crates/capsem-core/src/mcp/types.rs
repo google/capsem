@@ -34,6 +34,23 @@ pub struct McpServerDef {
     pub enabled: bool,
     /// Where this definition came from: "claude", "gemini", "manual", "builtin".
     pub source: String,
+    /// Number of independent stdio subprocess peers to spawn for this
+    /// server. `None` or `Some(0|1)` ⇒ single peer (default behavior, no
+    /// pool). HTTP servers ignore this field — HTTP/2 already multiplexes,
+    /// so pooling buys nothing at the transport level.
+    ///
+    /// Used to remove rmcp's per-Peer stdio driver as a singleton funnel:
+    /// each `RunningService<RoleClient, ()>` owns one mpsc → one driver
+    /// task → one stdin pipe. N peers = N independent funnels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_size: Option<u32>,
+    /// Original tool names (post-namespace strip) that are safe to
+    /// round-robin across pool peers. Tools NOT in this list pin to
+    /// `peers[0]` so per-process state (e.g. the builtin's
+    /// `Arc<Mutex<AutoSnapshotScheduler>>`) stays consistent. Empty
+    /// list ⇒ all tools pin to peers[0] (no fan-out).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pool_safe_tools: Vec<String>,
 }
 
 impl McpServerDef {
@@ -114,6 +131,11 @@ pub struct McpToolDef {
     /// MCP tool annotations (untrusted hints from the server).
     #[serde(default)]
     pub annotations: Option<ToolAnnotations>,
+    /// Optional host-side execution timeout hint from the aggregator catalog.
+    /// This is not exposed on the MCP wire; the MITM endpoint clamps it to
+    /// its configured tool-call ceiling before use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
 
 /// A resource discovered from a server's resources/list response.
@@ -151,6 +173,20 @@ pub struct JsonRpcRequest {
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
+    /// W5: optional W3C trace context propagated in band so a
+    /// per-tool-call trace can be carried even when the underlying
+    /// stdio transport doesn't support headers.
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<JsonRpcMeta>,
+}
+
+/// W3C trace context envelope on JSON-RPC `_meta`. All fields optional.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct JsonRpcMeta {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub traceparent: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tracestate: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +198,9 @@ pub struct JsonRpcResponse {
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
+    /// W5: echo back so the caller can cross-check the endpoint's trace.
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<JsonRpcMeta>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +219,7 @@ impl JsonRpcResponse {
             id,
             result: Some(result),
             error: None,
+            meta: None,
         }
     }
 
@@ -194,6 +234,7 @@ impl JsonRpcResponse {
                 message: message.into(),
                 data: None,
             }),
+            meta: None,
         }
     }
 }
@@ -236,7 +277,10 @@ mod tests {
 
     #[test]
     fn namespace_name_basic() {
-        assert_eq!(namespace_name("github", "search_repos"), "github__search_repos");
+        assert_eq!(
+            namespace_name("github", "search_repos"),
+            "github__search_repos"
+        );
     }
 
     #[test]
@@ -285,8 +329,7 @@ mod tests {
 
     #[test]
     fn parse_resource_uri_basic() {
-        let (server, original) =
-            parse_resource_uri("capsem://github/repo://owner/repo").unwrap();
+        let (server, original) = parse_resource_uri("capsem://github/repo://owner/repo").unwrap();
         assert_eq!(server, "github");
         assert_eq!(original, "repo://owner/repo");
     }
@@ -320,6 +363,7 @@ mod tests {
             id: Some(serde_json::json!(1)),
             method: "tools/list".into(),
             params: None,
+            meta: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("tools/list"));
@@ -329,7 +373,8 @@ mod tests {
 
     #[test]
     fn json_rpc_response_ok() {
-        let resp = JsonRpcResponse::ok(Some(serde_json::json!(1)), serde_json::json!({"tools": []}));
+        let resp =
+            JsonRpcResponse::ok(Some(serde_json::json!(1)), serde_json::json!({"tools": []}));
         assert!(resp.error.is_none());
         assert!(resp.result.is_some());
     }
@@ -350,6 +395,7 @@ mod tests {
             id: None,
             method: "notifications/initialized".into(),
             params: None,
+            meta: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(!json.contains("\"id\""));
@@ -479,6 +525,7 @@ mod tests {
                 read_only_hint: true,
                 ..Default::default()
             }),
+            timeout_secs: None,
         };
         assert!(def.annotations.unwrap().read_only_hint);
     }
@@ -492,6 +539,7 @@ mod tests {
             input_schema: serde_json::json!({}),
             server_name: "test".into(),
             annotations: None,
+            timeout_secs: None,
         };
         assert!(def.annotations.is_none());
     }

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 /// A device that handles MMIO reads and writes.
 pub(super) trait MmioDevice: Send + Sync {
@@ -35,12 +35,7 @@ impl MmioBus {
 
     /// Register a device at the given base address and size.
     /// Returns an error if the region overlaps with an existing device.
-    pub fn register(
-        &self,
-        base: u64,
-        size: u64,
-        device: Arc<dyn MmioDevice>,
-    ) -> Result<()> {
+    pub fn register(&self, base: u64, size: u64, device: Arc<dyn MmioDevice>) -> Result<()> {
         let mut devices = self.devices.write().unwrap();
         let new_end = base + size;
 

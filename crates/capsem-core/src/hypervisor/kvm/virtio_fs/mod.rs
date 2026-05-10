@@ -9,9 +9,9 @@
 //! - `ops_file`: OPEN, READ, WRITE, CREATE, RELEASE, FLUSH, FSYNC, LSEEK
 //! - `ops_dir`:  OPENDIR, READDIR, MKDIR, RMDIR, UNLINK, RENAME, MKNOD, SYMLINK, LINK
 
-mod ops_meta;
-mod ops_file;
 mod ops_dir;
+mod ops_file;
+mod ops_meta;
 
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
@@ -83,8 +83,14 @@ impl FuseProcessor {
             FUSE_FLUSH => self.do_flush(&header, body),
             FUSE_FSYNC => self.do_fsync(&header, body),
             FUSE_FSYNCDIR => self.do_fsyncdir(&header, body),
-            FUSE_FORGET => { self.do_forget(&header, body); Vec::new() }
-            FUSE_BATCH_FORGET => { self.do_batch_forget(body); Vec::new() }
+            FUSE_FORGET => {
+                self.do_forget(&header, body);
+                Vec::new()
+            }
+            FUSE_BATCH_FORGET => {
+                self.do_batch_forget(body);
+                Vec::new()
+            }
             FUSE_MKNOD => self.do_mknod(&header, body),
             FUSE_SYMLINK => self.do_symlink(&header, body),
             FUSE_READLINK => self.do_readlink(&header),
@@ -120,13 +126,17 @@ fn gather_readable(mem: &GuestMemoryRef, chain: &DescriptorChain) -> Option<Vec<
 }
 
 fn write_response(mem: &GuestMemoryRef, chain: &DescriptorChain, data: &[u8]) -> u32 {
-    if data.is_empty() { return 0; }
+    if data.is_empty() {
+        return 0;
+    }
     let mut offset = 0usize;
     for desc in &chain.descriptors {
         if desc.is_write_only() && offset < data.len() {
             if let Some(ptr) = mem.gpa_to_host(desc.addr) {
                 let n = (data.len() - offset).min(desc.len as usize);
-                unsafe { std::ptr::copy_nonoverlapping(data[offset..].as_ptr(), ptr, n); }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data[offset..].as_ptr(), ptr, n);
+                }
                 offset += n;
             }
         }
@@ -248,9 +258,15 @@ impl Drop for VirtioFsDevice {
 // ---------------------------------------------------------------------------
 
 impl VirtioDevice for VirtioFsDevice {
-    fn device_type(&self) -> u32 { VIRTIO_ID_FS }
-    fn features(&self) -> u64 { VIRTIO_F_VERSION_1 }
-    fn queue_max_sizes(&self) -> &[u16] { &[QUEUE_SIZE, QUEUE_SIZE] }
+    fn device_type(&self) -> u32 {
+        VIRTIO_ID_FS
+    }
+    fn features(&self) -> u64 {
+        VIRTIO_F_VERSION_1
+    }
+    fn queue_max_sizes(&self) -> &[u16] {
+        &[QUEUE_SIZE, QUEUE_SIZE]
+    }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {
         for (i, byte) in data.iter_mut().enumerate() {
@@ -270,13 +286,21 @@ impl VirtioDevice for VirtioFsDevice {
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
         let hiprio_queue = match queues.get(0).filter(|q| q.size > 0) {
             Some(q) => VirtQueue::new(
-                mem.clone(), q.desc_addr, q.driver_addr, q.device_addr, q.size,
+                mem.clone(),
+                q.desc_addr,
+                q.driver_addr,
+                q.device_addr,
+                q.size,
             ),
             None => return,
         };
         let request_queue = match queues.get(1).filter(|q| q.size > 0) {
             Some(q) => VirtQueue::new(
-                mem.clone(), q.desc_addr, q.driver_addr, q.device_addr, q.size,
+                mem.clone(),
+                q.desc_addr,
+                q.driver_addr,
+                q.device_addr,
+                q.size,
             ),
             None => return,
         };

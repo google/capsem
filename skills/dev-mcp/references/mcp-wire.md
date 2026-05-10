@@ -1,18 +1,18 @@
 # MCP Wire Format
 
-Source: `crates/capsem-core/src/mcp/types.rs` (471 lines), `gateway.rs` (600+ lines)
+Source: `crates/capsem-core/src/mcp/types.rs`, `crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs`, and `crates/capsem-core/src/net/mitm_proxy/mcp_endpoint.rs`.
 
 ## Transport
 
-NDJSON over vsock (AF_VSOCK stream socket, port 5003). One JSON-RPC 2.0 message per line, max 1MB.
+Framed MCP over vsock (AF_VSOCK stream socket, port 5002). Each frame is length-prefixed and contains one JSON-RPC 2.0 payload plus stream id, flags, and process attribution. Payloads are bounded.
 
 ## Connection setup
 
-1. Guest connects to `vsock://2:5003` (CID=2 is host)
+1. Guest connects to `vsock://2:5002` (CID=2 is host)
 2. Sends metadata: `\0CAPSEM_META:{process_name}\n` (NUL-prefixed)
-3. Bidirectional JSON-RPC from here
+3. Sends/receives bounded MCP frames from here
 
-Vsock I/O: 30s send/recv timeouts, EINTR retried, EAGAIN fatal.
+Vsock I/O: EINTR retried, EAGAIN fatal. Arbitrary user work is controlled by MCP method timeouts, not by a hidden command watchdog.
 
 ## JSON-RPC 2.0
 
@@ -57,7 +57,7 @@ pub struct JsonRpcError {
 
 ```rust
 pub struct McpToolDef {
-    pub namespaced_name: String,     // "github__search" (gateway-facing)
+    pub namespaced_name: String,     // "github__search" (endpoint-facing)
     pub original_name: String,       // "search" (sent to actual server)
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
@@ -120,7 +120,7 @@ pub struct ToolAnnotations {
 
 1. Parse `params.name` -> extract namespace (`github`) and original name (`search_repos`)
 2. Policy check: `policy.evaluate("github", "search_repos")`
-3. Route: builtin -> `builtin_tools::call_builtin_tool()`, external -> `peer.call_tool()` via rmcp
+3. Route: local builtin or external server through `AggregatorClient`
 4. Response or error
 
 ## tools/call response (success)
@@ -185,6 +185,32 @@ CREATE TABLE mcp_calls (
 ```
 
 Decision logic: policy block -> "denied", error -> "error", success -> "allowed".
+
+## W5: optional `_meta` envelope on JSON-RPC
+
+JsonRpcRequest and JsonRpcResponse can carry an optional `_meta` object
+with W3C Trace Context fields:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": { ... },
+  "_meta": {
+    "traceparent": "00-<32hex>-<16hex>-01",
+    "tracestate": ""
+  }
+}
+```
+
+All `_meta` fields are optional with serde defaults. Third-party MCP
+clients and pre-W5 capsem peers round-trip cleanly. The endpoint echoes
+the same envelope back so callers can cross-check.
+
+The vsock control bridge's `BootConfig` message (host->guest, first
+frame after Ready) gained a parallel `traceparent: String` field with
+the same optional semantics. Empty string means "no parent context".
 
 ## rmcp integration
 

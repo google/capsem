@@ -25,13 +25,14 @@ Additionally, **capsem-app** is a thin Tauri webview shell (desktop GUI). It con
 
 ## Guest binaries
 
-Four binaries run inside each Linux VM, cross-compiled for `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. All are deployed chmod 555 (read-only).
+Five binaries run inside each Linux VM, cross-compiled for `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. All are deployed chmod 555 (read-only).
 
 | Binary | Role | Vsock port |
 |--------|------|------------|
-| **capsem-pty-agent** | PTY bridge, control channel, exec, file I/O | 5000 (control), 5001 (terminal), 5005 (exec) |
+| **capsem-pty-agent** | PTY bridge, control channel, exec, file I/O, kernel audit stream | 5000 (control), 5001 (terminal), 5005 (exec), 5006 (audit) |
 | **capsem-net-proxy** | Redirects HTTPS to host MITM proxy | 5002 |
-| **capsem-mcp-server** | In-guest MCP gateway, routes tool calls | 5003 |
+| **capsem-dns-proxy** | Redirects DNS queries to the host DNS policy/resolver path | 5007 |
+| **capsem-mcp-server** | Guest MCP stdio-to-framed-vsock relay | 5002 |
 | **capsem-sysutil** | Lifecycle multi-call (shutdown/halt/poweroff/reboot/suspend) | 5004 |
 
 ## Communication diagram
@@ -68,13 +69,15 @@ graph TD
     subgraph "Linux VM (guest)"
         AGENT["capsem-pty-agent"]
         NETPROXY["capsem-net-proxy"]
+        DNSPROXY["capsem-dns-proxy"]
         MCPGW["capsem-mcp-server"]
         SYSUTIL["capsem-sysutil"]
     end
 
-    PROC -->|"vsock:5000-5005"| AGENT
+    PROC -->|"vsock:5000,5001,5005,5006"| AGENT
     PROC -->|"vsock:5002"| NETPROXY
-    PROC -->|"vsock:5003"| MCPGW
+    PROC -->|"vsock:5007"| DNSPROXY
+    PROC -->|"vsock:5002"| MCPGW
     PROC -->|"vsock:5004"| SYSUTIL
 ```
 
@@ -88,7 +91,7 @@ Each layer uses a different protocol optimized for its role:
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | CLI/MCP -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | Service -> process | MessagePack over UDS | `~/.capsem/run/instances/{id}.sock` |
-| Process -> guest | Binary frames over vsock | Ports 5000-5005 |
+| Process -> guest | Binary frames over vsock | Ports 5000, 5001, 5002, 5004, 5005, 5006, 5007 |
 
 ### Vsock port assignments
 
@@ -96,10 +99,11 @@ Each layer uses a different protocol optimized for its role:
 |------|---------|--------|
 | 5000 | Control messages (resize, heartbeat, exec, file I/O) | capsem-pty-agent |
 | 5001 | Terminal data (PTY I/O) | capsem-pty-agent |
-| 5002 | MITM proxy (HTTPS connections) | capsem-net-proxy |
-| 5003 | MCP gateway (tool routing, NDJSON) | capsem-mcp-server |
+| 5002 | MITM proxy and framed guest MCP endpoint | capsem-net-proxy, capsem-mcp-server |
 | 5004 | Lifecycle commands (shutdown/suspend) | capsem-sysutil |
 | 5005 | Exec output (direct child stdout) | capsem-pty-agent |
+| 5006 | Kernel audit stream | capsem-pty-agent |
+| 5007 | DNS proxy queries | capsem-dns-proxy |
 
 ## Service lifecycle
 
@@ -211,6 +215,6 @@ Auto-runs non-interactively on first CLI use if `~/.capsem/setup-state.json` is 
 | `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, WebSocket terminal relay |
 | `capsem-app` | bin | Thin Tauri webview. Points at gateway, bundles frontend/dist as fallback |
 | `capsem-tray` | bin | System tray. Polls gateway, shows VM status |
-| `capsem-agent` | bin(4) | Guest binaries (pty-agent, net-proxy, mcp-server, sysutil) |
+| `capsem-agent` | bin(5) | Guest binaries (pty-agent, net-proxy, dns-proxy, mcp-server, sysutil) |
 | `capsem-logger` | lib | Session DB schema, queries, async writer |
 | `capsem-proto` | lib | Shared protocol types (host-guest, service-process IPC) |

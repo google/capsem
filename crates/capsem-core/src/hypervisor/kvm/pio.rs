@@ -30,19 +30,16 @@ impl PioBus {
     }
 
     /// Register a device on the PIO bus.
-    pub fn register(
-        &self,
-        base: u16,
-        size: u16,
-        device: Arc<dyn PioDevice>,
-    ) -> anyhow::Result<()> {
+    pub fn register(&self, base: u16, size: u16, device: Arc<dyn PioDevice>) -> anyhow::Result<()> {
         let mut devices = self.devices.write().unwrap();
         // Check for overlap
         for entry in devices.iter() {
             if base < entry.base + entry.size && base + size > entry.base {
                 anyhow::bail!(
                     "PIO region 0x{base:x}..0x{:x} overlaps existing 0x{:x}..0x{:x}",
-                    base + size, entry.base, entry.base + entry.size
+                    base + size,
+                    entry.base,
+                    entry.base + entry.size
                 );
             }
         }

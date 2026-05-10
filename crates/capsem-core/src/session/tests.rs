@@ -1,5 +1,5 @@
-use super::*;
 use super::index::SCHEMA_VERSION;
+use super::*;
 use rusqlite::{params, Connection};
 
 // -- ID generation --
@@ -122,9 +122,13 @@ fn create_duplicate_returns_error() {
 #[test]
 fn recent_newest_first() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    for (i, ts) in ["2026-02-25T10:00:00Z", "2026-02-25T12:00:00Z", "2026-02-25T11:00:00Z"]
-        .iter()
-        .enumerate()
+    for (i, ts) in [
+        "2026-02-25T10:00:00Z",
+        "2026-02-25T12:00:00Z",
+        "2026-02-25T11:00:00Z",
+    ]
+    .iter()
+    .enumerate()
     {
         let mut rec = sample_record(&format!("20260225-{i:06}-0000"), "stopped");
         rec.created_at = ts.to_string();
@@ -158,8 +162,12 @@ fn update_status_works() {
     let idx = SessionIndex::open_in_memory().unwrap();
     idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
         .unwrap();
-    idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z"))
-        .unwrap();
+    idx.update_status(
+        "20260225-143052-a7f3",
+        "stopped",
+        Some("2026-02-25T15:00:00Z"),
+    )
+    .unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].status, "stopped");
     assert_eq!(
@@ -264,7 +272,10 @@ fn terminate_older_than_days() {
     // Row still exists, just status changed.
     assert_eq!(idx.count().unwrap(), 2);
     let records = idx.recent(10).unwrap();
-    let old_rec = records.iter().find(|r| r.id == "20200101-120000-0000").unwrap();
+    let old_rec = records
+        .iter()
+        .find(|r| r.id == "20200101-120000-0000")
+        .unwrap();
     assert_eq!(old_rec.status, "terminated");
 }
 
@@ -329,7 +340,9 @@ fn terminate_excess_ignores_running() {
     assert_eq!(terminated, 1);
     // running session untouched.
     let r = idx.recent(10).unwrap();
-    assert!(r.iter().any(|rec| rec.id == "20260225-100000-0000" && rec.status == "running"));
+    assert!(r
+        .iter()
+        .any(|rec| rec.id == "20260225-100000-0000" && rec.status == "running"));
 }
 
 #[test]
@@ -402,9 +415,14 @@ fn disk_usage_bytes_real_sessions_timing() {
     let usage = disk_usage_bytes(&sessions_dir);
     let elapsed = start.elapsed();
 
-    eprintln!("disk_usage_bytes: {usage} bytes ({:.1} MB) in {elapsed:?}", usage as f64 / 1_048_576.0);
-    assert!(elapsed < std::time::Duration::from_secs(5),
-        "disk_usage_bytes took {elapsed:?} -- way too slow for {count} dirs");
+    eprintln!(
+        "disk_usage_bytes: {usage} bytes ({:.1} MB) in {elapsed:?}",
+        usage as f64 / 1_048_576.0
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "disk_usage_bytes took {elapsed:?} -- way too slow for {count} dirs"
+    );
 }
 
 /// Symlink loop must not cause infinite recursion or hang.
@@ -427,12 +445,17 @@ fn disk_usage_bytes_symlink_loop_terminates() {
     let elapsed = start.elapsed();
 
     // Must complete in under 1 second (was infinite before fix).
-    assert!(elapsed < std::time::Duration::from_secs(1),
-        "disk_usage_bytes hung on symlink loop: {elapsed:?}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "disk_usage_bytes hung on symlink loop: {elapsed:?}"
+    );
     // Should count the real file once (1024 bytes -> 1 FS block = 4096 on disk).
     assert!(usage >= 4096, "usage={usage} -- should count the real file");
     // Should NOT double-count via the symlink (2 blocks = 8192).
-    assert!(usage < 8192, "usage={usage} -- double-counted through symlink loop");
+    assert!(
+        usage < 8192,
+        "usage={usage} -- double-counted through symlink loop"
+    );
 }
 
 /// Absolute symlinks pointing outside the session dir must not be followed.
@@ -452,11 +475,16 @@ fn disk_usage_bytes_absolute_symlink_not_followed() {
     let elapsed = start.elapsed();
 
     // Must complete instantly -- not walking /usr.
-    assert!(elapsed < std::time::Duration::from_secs(1),
-        "disk_usage_bytes followed symlink to /usr: {elapsed:?}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "disk_usage_bytes followed symlink to /usr: {elapsed:?}"
+    );
     // Should count real.txt (512 bytes) + the symlink itself (a few bytes).
     // Must NOT include the size of /usr (gigabytes).
-    assert!(usage < 10_000, "usage={usage} -- followed absolute symlink outside sandbox");
+    assert!(
+        usage < 10_000,
+        "usage={usage} -- followed absolute symlink outside sandbox"
+    );
     assert!(usage >= 512, "usage={usage} -- should count the real file");
 }
 
@@ -480,8 +508,10 @@ fn disk_usage_bytes_file_symlink_counts_link_not_target() {
         let usage = disk_usage_bytes(dir.path());
         // Symlink itself is just a few bytes (the path string).
         // Must NOT be the size of the python3 binary.
-        assert!(usage < target_size,
-            "usage={usage} target_size={target_size} -- followed symlink to python3 binary");
+        assert!(
+            usage < target_size,
+            "usage={usage} target_size={target_size} -- followed symlink to python3 binary"
+        );
     }
 }
 
@@ -501,8 +531,10 @@ fn disk_usage_bytes_sparse_file_reports_blocks() {
     let usage = disk_usage_bytes(dir.path());
     // Logical size is 2GB but actual disk usage should be near zero.
     // Allow up to 64KB for filesystem metadata overhead.
-    assert!(usage < 65_536,
-        "usage={usage} -- sparse 2GB file should report near-zero actual blocks, not logical size");
+    assert!(
+        usage < 65_536,
+        "usage={usage} -- sparse 2GB file should report near-zero actual blocks, not logical size"
+    );
 }
 
 // -- epoch_to_iso --
@@ -524,7 +556,10 @@ fn epoch_to_iso_known_date() {
 #[test]
 fn schema_version_is_set() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    let version: u32 = idx.conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    let version: u32 = idx
+        .conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
     assert_eq!(version, SCHEMA_VERSION);
 }
 
@@ -533,14 +568,20 @@ fn schema_upgrade_from_v0() {
     // Simulate a v0 DB (no user_version set = 0).
     let conn = Connection::open_in_memory().unwrap();
     // Create old-style sessions table without new columns.
-    conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY, mode TEXT NOT NULL)").unwrap();
-    conn.execute("INSERT INTO sessions (id, mode) VALUES ('old', 'gui')", []).unwrap();
+    conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY, mode TEXT NOT NULL)")
+        .unwrap();
+    conn.execute("INSERT INTO sessions (id, mode) VALUES ('old', 'gui')", [])
+        .unwrap();
     // Now ensure_schema should drop and recreate (v0 < v2 path).
     SessionIndex::ensure_schema(&conn).unwrap();
-    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
     assert_eq!(version, SCHEMA_VERSION);
     // Old data is gone (clean slate).
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0)).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(count, 0);
 }
 
@@ -549,9 +590,12 @@ fn schema_upgrade_from_v1() {
     // v1 < v2, so same drop+recreate behavior.
     let conn = Connection::open_in_memory().unwrap();
     conn.pragma_update(None, "user_version", 1u32).unwrap();
-    conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY)").unwrap();
+    conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+        .unwrap();
     SessionIndex::ensure_schema(&conn).unwrap();
-    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
     assert_eq!(version, SCHEMA_VERSION);
 }
 
@@ -561,7 +605,8 @@ fn schema_same_version_preserves_data() {
     let path = dir.path().join("main.db");
     {
         let idx = SessionIndex::open(&path).unwrap();
-        idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+        idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+            .unwrap();
     }
     // Reopen -- same version, data preserved.
     let idx = SessionIndex::open(&path).unwrap();
@@ -573,7 +618,8 @@ fn schema_same_version_preserves_data() {
 #[test]
 fn new_columns_default_to_zero() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].total_input_tokens, 0);
     assert_eq!(records[0].total_output_tokens, 0);
@@ -588,8 +634,10 @@ fn new_columns_default_to_zero() {
 #[test]
 fn update_session_summary_works() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
-    idx.update_session_summary("20260225-143052-a7f3", 1000, 500, 0.15, 42, 5, 100).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
+    idx.update_session_summary("20260225-143052-a7f3", 1000, 500, 0.15, 42, 5, 100)
+        .unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].total_input_tokens, 1000);
     assert_eq!(records[0].total_output_tokens, 500);
@@ -656,13 +704,29 @@ fn global_stats_multi_session() {
 #[test]
 fn replace_ai_usage_and_top_providers() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
+        .unwrap();
 
     let usage = vec![
-        ProviderSummary { provider: "anthropic".into(), call_count: 10, input_tokens: 5000, output_tokens: 2000, estimated_cost: 0.10, total_duration_ms: 3000 },
-        ProviderSummary { provider: "google".into(), call_count: 5, input_tokens: 2000, output_tokens: 1000, estimated_cost: 0.05, total_duration_ms: 1500 },
+        ProviderSummary {
+            provider: "anthropic".into(),
+            call_count: 10,
+            input_tokens: 5000,
+            output_tokens: 2000,
+            estimated_cost: 0.10,
+            total_duration_ms: 3000,
+        },
+        ProviderSummary {
+            provider: "google".into(),
+            call_count: 5,
+            input_tokens: 2000,
+            output_tokens: 1000,
+            estimated_cost: 0.05,
+            total_duration_ms: 1500,
+        },
     ];
-    idx.replace_ai_usage("20260225-143052-a7f3", &usage).unwrap();
+    idx.replace_ai_usage("20260225-143052-a7f3", &usage)
+        .unwrap();
 
     let providers = idx.top_providers(10).unwrap();
     assert_eq!(providers.len(), 2);
@@ -674,16 +738,27 @@ fn replace_ai_usage_and_top_providers() {
 #[test]
 fn replace_ai_usage_replaces_old_data() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
+        .unwrap();
 
-    let old = vec![
-        ProviderSummary { provider: "anthropic".into(), call_count: 10, input_tokens: 5000, output_tokens: 2000, estimated_cost: 0.10, total_duration_ms: 3000 },
-    ];
+    let old = vec![ProviderSummary {
+        provider: "anthropic".into(),
+        call_count: 10,
+        input_tokens: 5000,
+        output_tokens: 2000,
+        estimated_cost: 0.10,
+        total_duration_ms: 3000,
+    }];
     idx.replace_ai_usage("20260225-143052-a7f3", &old).unwrap();
 
-    let new = vec![
-        ProviderSummary { provider: "openai".into(), call_count: 20, input_tokens: 8000, output_tokens: 4000, estimated_cost: 0.30, total_duration_ms: 5000 },
-    ];
+    let new = vec![ProviderSummary {
+        provider: "openai".into(),
+        call_count: 20,
+        input_tokens: 8000,
+        output_tokens: 4000,
+        estimated_cost: 0.30,
+        total_duration_ms: 5000,
+    }];
     idx.replace_ai_usage("20260225-143052-a7f3", &new).unwrap();
 
     let providers = idx.top_providers(10).unwrap();
@@ -697,13 +772,25 @@ fn replace_ai_usage_replaces_old_data() {
 #[test]
 fn replace_tool_usage_and_top_tools() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
+        .unwrap();
 
     let usage = vec![
-        ToolSummary { tool_name: "read_file".into(), call_count: 50, total_bytes: 100_000, total_duration_ms: 2000 },
-        ToolSummary { tool_name: "write_file".into(), call_count: 30, total_bytes: 50_000, total_duration_ms: 1500 },
+        ToolSummary {
+            tool_name: "read_file".into(),
+            call_count: 50,
+            total_bytes: 100_000,
+            total_duration_ms: 2000,
+        },
+        ToolSummary {
+            tool_name: "write_file".into(),
+            call_count: 30,
+            total_bytes: 50_000,
+            total_duration_ms: 1500,
+        },
     ];
-    idx.replace_tool_usage("20260225-143052-a7f3", &usage).unwrap();
+    idx.replace_tool_usage("20260225-143052-a7f3", &usage)
+        .unwrap();
 
     let tools = idx.top_tools(10).unwrap();
     assert_eq!(tools.len(), 2);
@@ -716,13 +803,27 @@ fn replace_tool_usage_and_top_tools() {
 #[test]
 fn replace_mcp_usage_and_top_mcp_tools() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
+        .unwrap();
 
     let usage = vec![
-        McpToolSummary { tool_name: "github__search".into(), server_name: "github".into(), call_count: 15, total_bytes: 30_000, total_duration_ms: 4500 },
-        McpToolSummary { tool_name: "fs__read".into(), server_name: "filesystem".into(), call_count: 8, total_bytes: 10_000, total_duration_ms: 800 },
+        McpToolSummary {
+            tool_name: "github__search".into(),
+            server_name: "github".into(),
+            call_count: 15,
+            total_bytes: 30_000,
+            total_duration_ms: 4500,
+        },
+        McpToolSummary {
+            tool_name: "fs__read".into(),
+            server_name: "filesystem".into(),
+            call_count: 8,
+            total_bytes: 10_000,
+            total_duration_ms: 800,
+        },
     ];
-    idx.replace_mcp_usage("20260225-143052-a7f3", &usage).unwrap();
+    idx.replace_mcp_usage("20260225-143052-a7f3", &usage)
+        .unwrap();
 
     let tools = idx.top_mcp_tools(10).unwrap();
     assert_eq!(tools.len(), 2);
@@ -736,17 +837,36 @@ fn replace_mcp_usage_and_top_mcp_tools() {
 #[test]
 fn top_providers_aggregates_across_sessions() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
+        .unwrap();
     let mut r2 = sample_record("20260225-143053-b8e4", "stopped");
     r2.created_at = "2026-02-25T14:30:53Z".to_string();
     idx.create_session(&r2).unwrap();
 
-    idx.replace_ai_usage("20260225-143052-a7f3", &[
-        ProviderSummary { provider: "anthropic".into(), call_count: 10, input_tokens: 5000, output_tokens: 2000, estimated_cost: 0.10, total_duration_ms: 3000 },
-    ]).unwrap();
-    idx.replace_ai_usage("20260225-143053-b8e4", &[
-        ProviderSummary { provider: "anthropic".into(), call_count: 5, input_tokens: 2000, output_tokens: 1000, estimated_cost: 0.05, total_duration_ms: 1000 },
-    ]).unwrap();
+    idx.replace_ai_usage(
+        "20260225-143052-a7f3",
+        &[ProviderSummary {
+            provider: "anthropic".into(),
+            call_count: 10,
+            input_tokens: 5000,
+            output_tokens: 2000,
+            estimated_cost: 0.10,
+            total_duration_ms: 3000,
+        }],
+    )
+    .unwrap();
+    idx.replace_ai_usage(
+        "20260225-143053-b8e4",
+        &[ProviderSummary {
+            provider: "anthropic".into(),
+            call_count: 5,
+            input_tokens: 2000,
+            output_tokens: 1000,
+            estimated_cost: 0.05,
+            total_duration_ms: 1000,
+        }],
+    )
+    .unwrap();
 
     let providers = idx.top_providers(10).unwrap();
     assert_eq!(providers.len(), 1); // grouped by provider
@@ -761,7 +881,8 @@ fn schema_upgrade_from_v4_preserves_data() {
     let conn = Connection::open_in_memory().unwrap();
     // Create a v4 schema manually.
     conn.pragma_update(None, "user_version", 4u32).unwrap();
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         CREATE TABLE sessions (
             id TEXT PRIMARY KEY, mode TEXT NOT NULL, command TEXT,
             status TEXT NOT NULL DEFAULT 'running', created_at TEXT NOT NULL,
@@ -782,7 +903,9 @@ fn schema_upgrade_from_v4_preserves_data() {
             rootfs_hash TEXT,
             rootfs_version TEXT
         );
-    ").unwrap();
+    ",
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO sessions (id, mode, status, created_at) VALUES ('test-v4', 'gui', 'stopped', '2026-01-01T00:00:00Z')",
         [],
@@ -792,18 +915,28 @@ fn schema_upgrade_from_v4_preserves_data() {
     SessionIndex::ensure_schema(&conn).unwrap();
 
     // Check version bumped.
-    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
     assert_eq!(version, SCHEMA_VERSION);
 
     // New columns exist with NULL/default defaults.
-    let forked_from: Option<String> = conn.query_row(
-        "SELECT forked_from FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)
-    ).unwrap();
+    let forked_from: Option<String> = conn
+        .query_row(
+            "SELECT forked_from FROM sessions WHERE id = 'test-v4'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert!(forked_from.is_none());
 
-    let persistent: bool = conn.query_row(
-        "SELECT persistent FROM sessions WHERE id = 'test-v4'", [], |row| row.get(0)
-    ).unwrap();
+    let persistent: bool = conn
+        .query_row(
+            "SELECT persistent FROM sessions WHERE id = 'test-v4'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert!(!persistent);
 }
 
@@ -841,22 +974,34 @@ fn schema_upgrade_from_v2_preserves_data() {
     SessionIndex::ensure_schema(&conn).unwrap();
 
     // Check version bumped.
-    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
     assert_eq!(version, SCHEMA_VERSION);
 
     // Old data preserved.
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0)).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(count, 1);
 
     // New columns exist with NULL defaults.
-    let compressed: Option<i64> = conn.query_row(
-        "SELECT compressed_size_bytes FROM sessions WHERE id = 'test-id'", [], |row| row.get(0)
-    ).unwrap();
+    let compressed: Option<i64> = conn
+        .query_row(
+            "SELECT compressed_size_bytes FROM sessions WHERE id = 'test-id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert!(compressed.is_none());
 
-    let vacuumed: Option<String> = conn.query_row(
-        "SELECT vacuumed_at FROM sessions WHERE id = 'test-id'", [], |row| row.get(0)
-    ).unwrap();
+    let vacuumed: Option<String> = conn
+        .query_row(
+            "SELECT vacuumed_at FROM sessions WHERE id = 'test-id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert!(vacuumed.is_none());
 }
 
@@ -865,19 +1010,25 @@ fn schema_upgrade_from_v2_preserves_data() {
 #[test]
 fn mark_vacuumed_sets_fields() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
-    idx.mark_vacuumed("20260225-143052-a7f3", 12345, "2026-02-25T15:00:00Z").unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
+        .unwrap();
+    idx.mark_vacuumed("20260225-143052-a7f3", 12345, "2026-02-25T15:00:00Z")
+        .unwrap();
 
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].status, "vacuumed");
     assert_eq!(records[0].compressed_size_bytes, Some(12345));
-    assert_eq!(records[0].vacuumed_at.as_deref(), Some("2026-02-25T15:00:00Z"));
+    assert_eq!(
+        records[0].vacuumed_at.as_deref(),
+        Some("2026-02-25T15:00:00Z")
+    );
 }
 
 #[test]
 fn mark_terminated_sets_status() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "vacuumed")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "vacuumed"))
+        .unwrap();
     idx.mark_terminated("20260225-143052-a7f3").unwrap();
 
     let records = idx.recent(1).unwrap();
@@ -918,7 +1069,8 @@ fn unvacuumed_sessions_returns_correct_set() {
 #[test]
 fn sessions_by_status_filters_correctly() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
+        .unwrap();
     let mut r2 = sample_record("20260225-143053-b8e4", "running");
     r2.created_at = "2026-02-25T14:30:53Z".to_string();
     idx.create_session(&r2).unwrap();
@@ -961,14 +1113,21 @@ fn purge_terminated_older_than_days() {
 #[test]
 fn full_lifecycle_running_to_terminated() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
 
     // running -> stopped
-    idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z")).unwrap();
+    idx.update_status(
+        "20260225-143052-a7f3",
+        "stopped",
+        Some("2026-02-25T15:00:00Z"),
+    )
+    .unwrap();
     assert_eq!(idx.recent(1).unwrap()[0].status, "stopped");
 
     // stopped -> vacuumed
-    idx.mark_vacuumed("20260225-143052-a7f3", 5000, "2026-02-25T15:01:00Z").unwrap();
+    idx.mark_vacuumed("20260225-143052-a7f3", 5000, "2026-02-25T15:01:00Z")
+        .unwrap();
     let rec = &idx.recent(1).unwrap()[0];
     assert_eq!(rec.status, "vacuumed");
     assert_eq!(rec.compressed_size_bytes, Some(5000));
@@ -991,7 +1150,8 @@ fn checkpoint_succeeds_on_in_memory_db() {
 #[test]
 fn new_columns_null_by_default() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
     let records = idx.recent(1).unwrap();
     assert!(records[0].compressed_size_bytes.is_none());
     assert!(records[0].vacuumed_at.is_none());
@@ -1010,9 +1170,14 @@ fn vacuum_and_compress_creates_gz_and_removes_db() {
     {
         let conn = Connection::open(&db_path).unwrap();
         conn.pragma_update(None, "journal_mode", "WAL").unwrap();
-        conn.execute_batch("CREATE TABLE test (id INTEGER, data TEXT)").unwrap();
+        conn.execute_batch("CREATE TABLE test (id INTEGER, data TEXT)")
+            .unwrap();
         for i in 0..100 {
-            conn.execute("INSERT INTO test (id, data) VALUES (?1, ?2)", params![i, format!("row-{i}")]).unwrap();
+            conn.execute(
+                "INSERT INTO test (id, data) VALUES (?1, ?2)",
+                params![i, format!("row-{i}")],
+            )
+            .unwrap();
         }
     }
     // Create fake WAL/SHM files.
@@ -1037,7 +1202,9 @@ fn vacuum_and_compress_creates_gz_and_removes_db() {
     let temp_db = session_dir.join("verify.db");
     std::fs::write(&temp_db, &decompressed).unwrap();
     let conn = Connection::open(&temp_db).unwrap();
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM test", [], |row| row.get(0)).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM test", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(count, 100);
 }
 
@@ -1059,7 +1226,8 @@ fn vacuum_and_compress_double_call_returns_error() {
     let db_path = session_dir.join("session.db");
     {
         let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch("CREATE TABLE test (id INTEGER)").unwrap();
+        conn.execute_batch("CREATE TABLE test (id INTEGER)")
+            .unwrap();
     }
 
     // First call succeeds.
@@ -1098,11 +1266,17 @@ fn stopped_sessions_includes_vacuumed() {
 #[test]
 fn query_raw_returns_columnar_json() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
 
-    let json_str = idx.query_raw("SELECT id, mode, status FROM sessions", &[]).unwrap();
+    let json_str = idx
+        .query_raw("SELECT id, mode, status FROM sessions", &[])
+        .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-    assert_eq!(parsed["columns"], serde_json::json!(["id", "mode", "status"]));
+    assert_eq!(
+        parsed["columns"],
+        serde_json::json!(["id", "mode", "status"])
+    );
     assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
     assert_eq!(parsed["rows"][0][0], "20260225-143052-a7f3");
 }
@@ -1110,13 +1284,16 @@ fn query_raw_returns_columnar_json() {
 #[test]
 fn query_raw_with_bind_params() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
     let mut r2 = sample_record("20260225-143053-b8e4", "stopped");
     r2.created_at = "2026-02-25T14:30:53Z".to_string();
     idx.create_session(&r2).unwrap();
 
     let params = vec![serde_json::json!("stopped")];
-    let json_str = idx.query_raw("SELECT id FROM sessions WHERE status = ?", &params).unwrap();
+    let json_str = idx
+        .query_raw("SELECT id FROM sessions WHERE status = ?", &params)
+        .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
     assert_eq!(parsed["rows"][0][0], "20260225-143053-b8e4");
@@ -1141,7 +1318,9 @@ fn query_raw_with_limit_param() {
     }
 
     let params = vec![serde_json::json!(2)];
-    let json_str = idx.query_raw("SELECT id FROM sessions LIMIT ?", &params).unwrap();
+    let json_str = idx
+        .query_raw("SELECT id FROM sessions LIMIT ?", &params)
+        .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     assert_eq!(parsed["rows"].as_array().unwrap().len(), 2);
 }
@@ -1151,19 +1330,24 @@ fn query_raw_with_limit_param() {
 #[test]
 fn query_raw_rejects_insert() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
 
     let result = idx.query_raw(
         "INSERT INTO sessions (id, mode, status, created_at) VALUES ('evil', 'gui', 'running', '2026-01-01T00:00:00Z')",
         &[],
     );
-    assert!(result.is_err(), "INSERT must be rejected by PRAGMA query_only");
+    assert!(
+        result.is_err(),
+        "INSERT must be rejected by PRAGMA query_only"
+    );
 }
 
 #[test]
 fn query_raw_rejects_semicolon_injection() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
 
     // Multi-statement: first is SELECT (passes validate_select_only),
     // second is DROP TABLE (must be caught by PRAGMA query_only).
@@ -1178,7 +1362,8 @@ fn query_raw_rejects_semicolon_injection() {
 #[test]
 fn query_raw_select_works() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
 
     let result = idx.query_raw("SELECT COUNT(*) FROM sessions", &[]);
     assert!(result.is_ok(), "SELECT must succeed: {:?}", result);
@@ -1189,15 +1374,20 @@ fn query_raw_select_works() {
 #[test]
 fn query_raw_other_methods_still_write() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
 
     // Call query_raw (sets PRAGMA query_only ON then OFF).
     let _ = idx.query_raw("SELECT 1", &[]);
 
     // Internal write methods must still work after query_raw restored
     // the connection to read-write mode.
-    idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z"))
-        .unwrap();
+    idx.update_status(
+        "20260225-143052-a7f3",
+        "stopped",
+        Some("2026-02-25T15:00:00Z"),
+    )
+    .unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].status, "stopped");
 }
@@ -1205,7 +1395,8 @@ fn query_raw_other_methods_still_write() {
 #[test]
 fn query_raw_restores_write_on_error() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running")).unwrap();
+    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+        .unwrap();
 
     // Trigger an error inside query_raw (bad SQL).
     let _ = idx.query_raw("INSERT INTO sessions VALUES ('x')", &[]);

@@ -9,9 +9,12 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
-SESSIONS_DIR = Path.home() / ".capsem" / "sessions"
-MAIN_DB = SESSIONS_DIR / "main.db"
+CAPSEM_HOME = Path(os.environ.get("CAPSEM_HOME", Path.home() / ".capsem"))
+RUN_DIR = Path(os.environ.get("CAPSEM_RUN_DIR", CAPSEM_HOME / "run"))
+SESSIONS_DIR = RUN_DIR / "sessions"
+MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 
 # Tables expected in session.db with their key columns for preview
 SESSION_TABLES = {
@@ -35,6 +38,10 @@ SESSION_TABLES = {
     ],
     "fs_events": [
         "id", "timestamp", "action", "path", "size",
+    ],
+    "policy_hook_events": [
+        "id", "timestamp", "endpoint_id", "callback", "decision", "status",
+        "latency_ms",
     ],
 }
 
@@ -90,7 +97,7 @@ def list_recent_sessions(n: int = 5) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def resolve_session(session_id: str | None) -> Path:
+def resolve_session(session_id: Optional[str]) -> Path:
     """Resolve a session ID (or latest) to its session.db path.
 
     If the DB has been compressed (session.db.gz), decompress to a temp file.
@@ -263,7 +270,7 @@ def check_session(db_path: Path, preview_rows: int = 5):
                         " AND mc.timestamp >= tc.call_id"  # timestamps always exist
                     ).fetchone()[0]
                     print(
-                        f"  {CYAN}MCP gateway calls: {mcp_total}"
+                        f"  {CYAN}Guest MCP calls: {mcp_total}"
                         f" (approx {matched} correlated with tool_calls){RESET}"
                     )
             print()

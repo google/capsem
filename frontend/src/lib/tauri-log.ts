@@ -57,3 +57,59 @@ function fmt(v: unknown): string {
   }
   return String(v);
 }
+
+// T5: developer console handle exposed when `?debug=1` is in the URL.
+// `window.__capsemDebug.versions()` reports build timestamp + version.
+// `window.__capsemDebug.lastWsEvents` is a small ring of the last 5
+// websocket events captured by the api.ts onmessage handler.
+// `window.__capsemDebug.dumpLogs()` returns the path to the latest
+// frontend log (jsonl) the Tauri shell wrote -- copy/paste from
+// devtools and `cat` it from the host shell.
+//
+// This is intentionally a console-only handle, not a UI panel. The
+// visual HUD is punted to the frontend-rebuild sprint.
+export interface CapsemDebug {
+  versions: () => { build_ts: string; version: string };
+  dumpLogs: () => Promise<string>;
+  lastWsEvents: unknown[];
+}
+
+const WS_RING_MAX = 5;
+const wsRing: unknown[] = [];
+
+export function recordWsEvent(ev: unknown): void {
+  wsRing.push(ev);
+  while (wsRing.length > WS_RING_MAX) wsRing.shift();
+}
+
+export function maybeInstallDebugHandle(): void {
+  if (typeof window === 'undefined') return;
+  const url = typeof window.location !== 'undefined' ? window.location : null;
+  if (!url) return;
+  const params = new URLSearchParams(url.search);
+  if (params.get('debug') !== '1') return;
+
+  // Read build-time constants out of globalThis so a missing Vite-define
+  // doesn't throw a ReferenceError. The build pipeline can wire these
+  // via vite-define / esbuild --define / equivalent.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  const buildTs: string = g.__BUILD_TS__ ?? 'dev';
+  const appVersion: string = g.__APP_VERSION__ ?? 'dev';
+
+  const handle: CapsemDebug = {
+    versions: () => ({ build_ts: buildTs, version: appVersion }),
+    dumpLogs: async () => {
+      try {
+        return await invoke<string>('dump_frontend_logs');
+      } catch (e) {
+        return `error: ${String(e)}`;
+      }
+    },
+    lastWsEvents: wsRing,
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).__capsemDebug = handle;
+  // eslint-disable-next-line no-console
+  console.info('[capsem-debug] window.__capsemDebug installed (?debug=1)');
+}

@@ -1,8 +1,8 @@
+use capsem_proto::ipc::ServiceToProcess;
+use futures::{sink::SinkExt, stream::StreamExt};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
-use capsem_proto::ipc::ServiceToProcess;
-use futures::{sink::SinkExt, stream::StreamExt};
 
 /// Maximum bytes kept in the replay ring buffer. 64 KiB covers typical
 /// login banners, MOTD, and a few screenfuls of output -- enough for a
@@ -47,7 +47,10 @@ impl TerminalRelay {
         while inner.buffer.len() > REPLAY_BUFFER_SIZE {
             inner.buffer.pop_front();
         }
-        let _ = inner.broadcast.send(data);
+        // Broadcast with no subscribers is the documented design of
+        // TerminalOutputQueue: the replay buffer above is what new
+        // subscribers consume on subscribe; live broadcast is best-effort.
+        let _ = inner.broadcast.send(data); // channel-closed-ok: replay-buffer-is-source-of-truth
     }
 
     /// Subscribe a new client: returns the current replay snapshot plus a
@@ -75,12 +78,19 @@ pub(crate) async fn handle_terminal_socket(
         // startup banner even if the shell printed it before the WS
         // connected. Skip if there's nothing buffered.
         if !replay.is_empty()
-            && client_write.send(axum::extract::ws::Message::Binary(replay.into())).await.is_err()
+            && client_write
+                .send(axum::extract::ws::Message::Binary(replay.into()))
+                .await
+                .is_err()
         {
             return;
         }
         while let Ok(data) = term_rx.recv().await {
-            if client_write.send(axum::extract::ws::Message::Binary(data.into())).await.is_err() {
+            if client_write
+                .send(axum::extract::ws::Message::Binary(data.into()))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -91,14 +101,24 @@ pub(crate) async fn handle_terminal_socket(
         while let Some(Ok(msg)) = client_read.next().await {
             match msg {
                 axum::extract::ws::Message::Binary(b) => {
-                    let _ = ctrl_tx_c.send(ServiceToProcess::TerminalInput { data: b.to_vec() }).await;
+                    capsem_core::try_send!(
+                        "ws_terminal_input",
+                        ctrl_tx_c
+                            .send(ServiceToProcess::TerminalInput { data: b.to_vec() })
+                            .await
+                    );
                 }
                 axum::extract::ws::Message::Text(t) => {
                     if let Some((cols, rows)) = parse_resize_message(t.as_str()) {
-                        let _ = ctrl_tx_c.send(ServiceToProcess::TerminalResize {
-                            cols: cols as u16,
-                            rows: rows as u16
-                        }).await;
+                        capsem_core::try_send!(
+                            "ws_terminal_resize",
+                            ctrl_tx_c
+                                .send(ServiceToProcess::TerminalResize {
+                                    cols: cols as u16,
+                                    rows: rows as u16
+                                })
+                                .await
+                        );
                     }
                 }
                 _ => {}
@@ -160,7 +180,8 @@ mod tests {
 
     #[test]
     fn parse_resize_extra_fields_ignored() {
-        let (cols, rows) = parse_resize_message(r#"{"cols": 80, "rows": 24, "extra": true}"#).unwrap();
+        let (cols, rows) =
+            parse_resize_message(r#"{"cols": 80, "rows": 24, "extra": true}"#).unwrap();
         assert_eq!(cols, 80);
         assert_eq!(rows, 24);
     }

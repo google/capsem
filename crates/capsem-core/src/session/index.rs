@@ -105,20 +105,18 @@ impl SessionIndex {
             // Additive migration v6->v7: add exec_count and audit_event_count columns.
             conn.execute_batch(
                 "ALTER TABLE sessions ADD COLUMN exec_count INTEGER NOT NULL DEFAULT 0;
-                 ALTER TABLE sessions ADD COLUMN audit_event_count INTEGER NOT NULL DEFAULT 0;"
+                 ALTER TABLE sessions ADD COLUMN audit_event_count INTEGER NOT NULL DEFAULT 0;",
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version == 5 {
             // Additive migration v5->v6: rename source_image to forked_from.
-            conn.execute_batch(
-                "ALTER TABLE sessions RENAME COLUMN source_image TO forked_from;"
-            )?;
+            conn.execute_batch("ALTER TABLE sessions RENAME COLUMN source_image TO forked_from;")?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version == 4 {
             // Additive migration v4->v6: add forked_from and persistent columns.
             conn.execute_batch(
                 "ALTER TABLE sessions ADD COLUMN forked_from TEXT;
-                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
+                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;",
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version == 3 {
@@ -128,7 +126,7 @@ impl SessionIndex {
                  ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
                  ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
                  ALTER TABLE sessions ADD COLUMN forked_from TEXT;
-                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
+                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;",
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version == 2 {
@@ -140,7 +138,7 @@ impl SessionIndex {
                  ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
                  ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
                  ALTER TABLE sessions ADD COLUMN forked_from TEXT;
-                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;"
+                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;",
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if version < 2 {
@@ -149,7 +147,7 @@ impl SessionIndex {
                 "DROP TABLE IF EXISTS sessions;
                  DROP TABLE IF EXISTS ai_usage;
                  DROP TABLE IF EXISTS tool_usage;
-                 DROP TABLE IF EXISTS mcp_usage;"
+                 DROP TABLE IF EXISTS mcp_usage;",
             )?;
             conn.execute_batch(SESSION_SCHEMA)?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -243,8 +241,7 @@ impl SessionIndex {
     }
 
     /// Shared column list for SELECT queries on sessions.
-    const SESSION_COLUMNS: &str =
-        "id, mode, command, status, created_at, stopped_at,
+    const SESSION_COLUMNS: &str = "id, mode, command, status, created_at, stopped_at,
          scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
          total_input_tokens, total_output_tokens, total_estimated_cost,
          total_tool_calls, total_mcp_calls, total_file_events,
@@ -274,7 +271,9 @@ impl SessionIndex {
             total_file_events: row.get::<_, i64>(16)? as u64,
             compressed_size_bytes: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
             vacuumed_at: row.get(18)?,
-            storage_mode: row.get::<_, Option<String>>(19)?.unwrap_or_else(|| "block".to_string()),
+            storage_mode: row
+                .get::<_, Option<String>>(19)?
+                .unwrap_or_else(|| "block".to_string()),
             rootfs_hash: row.get(20)?,
             rootfs_version: row.get(21)?,
             forked_from: row.get(22)?,
@@ -517,11 +516,10 @@ impl SessionIndex {
 
     /// Total count of sessions.
     pub fn count(&self) -> rusqlite::Result<usize> {
-        self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions",
-            [],
-            |row| row.get::<_, i64>(0).map(|n| n as usize),
-        )
+        self.conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| {
+                row.get::<_, i64>(0).map(|n| n as usize)
+            })
     }
 
     // -- Cross-session aggregation reads ------------------------------------
@@ -666,28 +664,34 @@ impl SessionIndex {
         let col_count = columns.len();
 
         // Convert serde_json::Value to rusqlite dynamic params.
-        let rusqlite_params: Vec<Box<dyn rusqlite::types::ToSql>> = params.iter().map(|v| {
-            let boxed: Box<dyn rusqlite::types::ToSql> = match v {
-                Value::Null => Box::new(rusqlite::types::Null),
-                Value::Bool(b) => Box::new(*b as i64),
-                Value::Number(n) => {
-                    if let Some(i) = n.as_i64() {
-                        Box::new(i)
-                    } else if let Some(f) = n.as_f64() {
-                        Box::new(f)
-                    } else {
-                        Box::new(rusqlite::types::Null)
+        let rusqlite_params: Vec<Box<dyn rusqlite::types::ToSql>> = params
+            .iter()
+            .map(|v| {
+                let boxed: Box<dyn rusqlite::types::ToSql> = match v {
+                    Value::Null => Box::new(rusqlite::types::Null),
+                    Value::Bool(b) => Box::new(*b as i64),
+                    Value::Number(n) => {
+                        if let Some(i) = n.as_i64() {
+                            Box::new(i)
+                        } else if let Some(f) = n.as_f64() {
+                            Box::new(f)
+                        } else {
+                            Box::new(rusqlite::types::Null)
+                        }
                     }
-                }
-                Value::String(s) => Box::new(s.clone()),
-                _ => Box::new(rusqlite::types::Null),
-            };
-            boxed
-        }).collect();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = rusqlite_params.iter().map(|b| b.as_ref()).collect();
+                    Value::String(s) => Box::new(s.clone()),
+                    _ => Box::new(rusqlite::types::Null),
+                };
+                boxed
+            })
+            .collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            rusqlite_params.iter().map(|b| b.as_ref()).collect();
 
         let mut rows: Vec<Vec<Value>> = Vec::new();
-        let mut raw_rows = stmt.query(param_refs.as_slice()).map_err(|e| e.to_string())?;
+        let mut raw_rows = stmt
+            .query(param_refs.as_slice())
+            .map_err(|e| e.to_string())?;
 
         while let Some(row) = raw_rows.next().map_err(|e| e.to_string())? {
             if rows.len() >= MAX_ROWS {
@@ -854,7 +858,14 @@ mod tests {
     use super::*;
     use crate::session::types::SessionRecord;
 
-    fn make_session(id: &str, created_at: &str, status: &str, tokens: u64, tool_calls: u64, requests: u64) -> SessionRecord {
+    fn make_session(
+        id: &str,
+        created_at: &str,
+        status: &str,
+        tokens: u64,
+        tool_calls: u64,
+        requests: u64,
+    ) -> SessionRecord {
         SessionRecord {
             id: id.to_string(),
             mode: "virtiofs".to_string(),
@@ -896,21 +907,38 @@ mod tests {
         let idx = SessionIndex::open_in_memory().unwrap();
 
         // Old ephemeral session (60 days ago) -- should be terminated
-        let ephemeral = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
+        let ephemeral = make_session(
+            "20260126-120000-0001",
+            "2026-01-26T12:00:00Z",
+            "stopped",
+            0,
+            0,
+            0,
+        );
         idx.create_session(&ephemeral).unwrap();
 
         // Old persistent session (60 days ago) -- should NOT be terminated
-        let persistent = make_persistent_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped");
+        let persistent =
+            make_persistent_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped");
         idx.create_session(&persistent).unwrap();
 
         let n = idx.terminate_older_than_days(30).unwrap();
         assert_eq!(n, 1, "only ephemeral session should be terminated");
 
         let sessions = idx.recent(100).unwrap();
-        let eph = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
+        let eph = sessions
+            .iter()
+            .find(|s| s.id == "20260126-120000-0001")
+            .unwrap();
         assert_eq!(eph.status, "terminated");
-        let pers = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
-        assert_eq!(pers.status, "stopped", "persistent session should remain stopped");
+        let pers = sessions
+            .iter()
+            .find(|s| s.id == "20260126-120000-0002")
+            .unwrap();
+        assert_eq!(
+            pers.status, "stopped",
+            "persistent session should remain stopped"
+        );
     }
 
     #[test]
@@ -918,7 +946,8 @@ mod tests {
         let idx = SessionIndex::open_in_memory().unwrap();
 
         // Old persistent crashed session
-        let pers_crashed = make_persistent_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "crashed");
+        let pers_crashed =
+            make_persistent_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "crashed");
         idx.create_session(&pers_crashed).unwrap();
 
         let n = idx.terminate_older_than_days(30).unwrap();
@@ -928,7 +957,14 @@ mod tests {
     #[test]
     fn session_with_forked_from_roundtrips() {
         let idx = SessionIndex::open_in_memory().unwrap();
-        let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
+        let mut s = make_session(
+            "20260326-100000-0001",
+            "2026-03-26T10:00:00Z",
+            "running",
+            0,
+            0,
+            0,
+        );
         s.forked_from = Some("my-image".into());
         s.persistent = true;
         idx.create_session(&s).unwrap();
@@ -943,17 +979,27 @@ mod tests {
     fn v6_schema_has_forked_from_and_persistent() {
         // Verify the schema includes the new columns by inserting and querying
         let idx = SessionIndex::open_in_memory().unwrap();
-        let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
+        let mut s = make_session(
+            "20260326-100000-0001",
+            "2026-03-26T10:00:00Z",
+            "running",
+            0,
+            0,
+            0,
+        );
         s.forked_from = Some("test-img".into());
         s.persistent = true;
         idx.create_session(&s).unwrap();
 
         // Raw query to verify columns exist
-        let (src_img, pers): (Option<String>, bool) = idx.conn.query_row(
-            "SELECT forked_from, persistent FROM sessions WHERE id = ?1",
-            params!["20260326-100000-0001"],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        let (src_img, pers): (Option<String>, bool) = idx
+            .conn
+            .query_row(
+                "SELECT forked_from, persistent FROM sessions WHERE id = ?1",
+                params!["20260326-100000-0001"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(src_img.as_deref(), Some("test-img"));
         assert!(pers);
     }
@@ -963,11 +1009,25 @@ mod tests {
         let idx = SessionIndex::open_in_memory().unwrap();
 
         // Old empty session (60 days ago).
-        let empty = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
+        let empty = make_session(
+            "20260126-120000-0001",
+            "2026-01-26T12:00:00Z",
+            "stopped",
+            0,
+            0,
+            0,
+        );
         idx.create_session(&empty).unwrap();
 
         // Old content session (60 days ago).
-        let content = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped", 1000, 5, 10);
+        let content = make_session(
+            "20260126-120000-0002",
+            "2026-01-26T12:00:00Z",
+            "stopped",
+            1000,
+            5,
+            10,
+        );
         idx.create_session(&content).unwrap();
 
         // Terminate sessions older than 30 days, protect 1 content session.
@@ -976,10 +1036,16 @@ mod tests {
 
         // Verify: empty is terminated, content is still stopped.
         let sessions = idx.recent(100).unwrap();
-        let empty_rec = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
+        let empty_rec = sessions
+            .iter()
+            .find(|s| s.id == "20260126-120000-0001")
+            .unwrap();
         assert_eq!(empty_rec.status, "terminated");
 
-        let content_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
+        let content_rec = sessions
+            .iter()
+            .find(|s| s.id == "20260126-120000-0002")
+            .unwrap();
         assert_eq!(content_rec.status, "stopped");
     }
 
@@ -992,7 +1058,10 @@ mod tests {
             let rec = make_session(
                 &format!("20260126-12000{i}-000{i}"),
                 &format!("2026-01-26T12:00:0{i}Z"),
-                "stopped", 500, 2, 5,
+                "stopped",
+                500,
+                2,
+                5,
             );
             idx.create_session(&rec).unwrap();
         }
@@ -1002,7 +1071,10 @@ mod tests {
         assert_eq!(n, 1, "only oldest content session should be terminated");
 
         let sessions = idx.recent(100).unwrap();
-        let terminated: Vec<_> = sessions.iter().filter(|s| s.status == "terminated").collect();
+        let terminated: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.status == "terminated")
+            .collect();
         assert_eq!(terminated.len(), 1);
         assert_eq!(terminated[0].id, "20260126-120001-0001"); // oldest
     }
@@ -1016,7 +1088,10 @@ mod tests {
             let rec = make_session(
                 &format!("20260326-12000{i}-000{i}"),
                 &format!("2026-03-26T12:00:0{i}Z"),
-                "stopped", 0, 0, 0,
+                "stopped",
+                0,
+                0,
+                0,
             );
             idx.create_session(&rec).unwrap();
         }
@@ -1024,7 +1099,10 @@ mod tests {
             let rec = make_session(
                 &format!("20260326-12000{i}-000{i}"),
                 &format!("2026-03-26T12:00:0{i}Z"),
-                "stopped", 1000, 10, 20,
+                "stopped",
+                1000,
+                10,
+                20,
             );
             idx.create_session(&rec).unwrap();
         }
@@ -1034,7 +1112,10 @@ mod tests {
         assert_eq!(n, 2, "should terminate 2 empty sessions");
 
         let sessions = idx.recent(100).unwrap();
-        let active: Vec<_> = sessions.iter().filter(|s| s.status != "terminated").collect();
+        let active: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.status != "terminated")
+            .collect();
         assert_eq!(active.len(), 3, "should have 3 remaining");
 
         // Both content sessions should survive.
@@ -1049,7 +1130,14 @@ mod tests {
     fn content_aware_excess_no_action_when_under_cap() {
         let idx = SessionIndex::open_in_memory().unwrap();
 
-        let rec = make_session("20260326-120000-0001", "2026-03-26T12:00:00Z", "stopped", 100, 1, 5);
+        let rec = make_session(
+            "20260326-120000-0001",
+            "2026-03-26T12:00:00Z",
+            "stopped",
+            100,
+            1,
+            5,
+        );
         idx.create_session(&rec).unwrap();
 
         let n = idx.terminate_excess_sessions_content_aware(10, 5).unwrap();
@@ -1061,19 +1149,39 @@ mod tests {
         // Sessions with tool_calls > 0 but tokens = 0 should be treated as content.
         let idx = SessionIndex::open_in_memory().unwrap();
 
-        let empty = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
+        let empty = make_session(
+            "20260126-120000-0001",
+            "2026-01-26T12:00:00Z",
+            "stopped",
+            0,
+            0,
+            0,
+        );
         idx.create_session(&empty).unwrap();
 
         // Has tool calls but no tokens -- still content.
-        let tool_only = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped", 0, 5, 0);
+        let tool_only = make_session(
+            "20260126-120000-0002",
+            "2026-01-26T12:00:00Z",
+            "stopped",
+            0,
+            5,
+            0,
+        );
         idx.create_session(&tool_only).unwrap();
 
         let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
         assert_eq!(n, 1, "only the truly empty session should be terminated");
 
         let sessions = idx.recent(100).unwrap();
-        let tool_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
-        assert_eq!(tool_rec.status, "stopped", "tool-calls-only session is content");
+        let tool_rec = sessions
+            .iter()
+            .find(|s| s.id == "20260126-120000-0002")
+            .unwrap();
+        assert_eq!(
+            tool_rec.status, "stopped",
+            "tool-calls-only session is content"
+        );
     }
 
     #[test]
@@ -1081,7 +1189,14 @@ mod tests {
         let idx = SessionIndex::open_in_memory().unwrap();
 
         // Running session -- must never be terminated regardless of age.
-        let running = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "running", 0, 0, 0);
+        let running = make_session(
+            "20260126-120000-0001",
+            "2026-01-26T12:00:00Z",
+            "running",
+            0,
+            0,
+            0,
+        );
         idx.create_session(&running).unwrap();
 
         let n = idx.terminate_older_than_days_content_aware(30, 0).unwrap();
@@ -1100,17 +1215,26 @@ mod tests {
             let rec = make_session(
                 &format!("20260326-12000{i}-000{i}"),
                 &format!("2026-03-26T12:00:0{i}Z"),
-                "stopped", 500, 2, 5,
+                "stopped",
+                500,
+                2,
+                5,
             );
             idx.create_session(&rec).unwrap();
         }
 
         // Cap is 3 but min_content_keep is 4: should only terminate 1 (the oldest).
         let n = idx.terminate_excess_sessions_content_aware(3, 4).unwrap();
-        assert_eq!(n, 1, "should terminate oldest to approach cap, but protect 4");
+        assert_eq!(
+            n, 1,
+            "should terminate oldest to approach cap, but protect 4"
+        );
 
         let sessions = idx.recent(100).unwrap();
-        let active: Vec<_> = sessions.iter().filter(|s| s.status != "terminated").collect();
+        let active: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.status != "terminated")
+            .collect();
         assert_eq!(active.len(), 4, "min_content_keep overrides max_sessions");
     }
 
@@ -1119,22 +1243,45 @@ mod tests {
         let idx = SessionIndex::open_in_memory().unwrap();
 
         // Crashed empty session -- should be terminated.
-        let crashed = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "crashed", 0, 0, 0);
+        let crashed = make_session(
+            "20260126-120000-0001",
+            "2026-01-26T12:00:00Z",
+            "crashed",
+            0,
+            0,
+            0,
+        );
         idx.create_session(&crashed).unwrap();
 
         // Vacuumed content session -- should be protected.
-        let vacuumed = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "vacuumed", 100, 0, 5);
+        let vacuumed = make_session(
+            "20260126-120000-0002",
+            "2026-01-26T12:00:00Z",
+            "vacuumed",
+            100,
+            0,
+            5,
+        );
         idx.create_session(&vacuumed).unwrap();
 
         let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
         assert_eq!(n, 1, "only crashed empty session terminated");
 
         let sessions = idx.recent(100).unwrap();
-        let crashed_rec = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
+        let crashed_rec = sessions
+            .iter()
+            .find(|s| s.id == "20260126-120000-0001")
+            .unwrap();
         assert_eq!(crashed_rec.status, "terminated");
 
-        let vacuumed_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
-        assert_eq!(vacuumed_rec.status, "vacuumed", "vacuumed content session preserved");
+        let vacuumed_rec = sessions
+            .iter()
+            .find(|s| s.id == "20260126-120000-0002")
+            .unwrap();
+        assert_eq!(
+            vacuumed_rec.status, "vacuumed",
+            "vacuumed content session preserved"
+        );
     }
 
     #[test]
@@ -1146,28 +1293,36 @@ mod tests {
         idx.create_session(&s2).unwrap();
 
         // Same tool_name "search" from different servers in different sessions
-        idx.replace_mcp_usage("s1", &[
-            McpToolSummary {
+        idx.replace_mcp_usage(
+            "s1",
+            &[McpToolSummary {
                 tool_name: "search".into(),
                 server_name: "github".into(),
                 call_count: 3,
                 total_bytes: 100,
                 total_duration_ms: 50,
-            },
-        ]).unwrap();
-        idx.replace_mcp_usage("s2", &[
-            McpToolSummary {
+            }],
+        )
+        .unwrap();
+        idx.replace_mcp_usage(
+            "s2",
+            &[McpToolSummary {
                 tool_name: "search".into(),
                 server_name: "jira".into(),
                 call_count: 2,
                 total_bytes: 80,
                 total_duration_ms: 40,
-            },
-        ]).unwrap();
+            }],
+        )
+        .unwrap();
 
         let results = idx.top_mcp_tools(10).unwrap();
         // Should return 2 entries (one per server), not merge them into 1
-        assert_eq!(results.len(), 2, "same tool_name from different servers should be separate rows");
+        assert_eq!(
+            results.len(),
+            2,
+            "same tool_name from different servers should be separate rows"
+        );
         let servers: Vec<&str> = results.iter().map(|r| r.server_name.as_str()).collect();
         assert!(servers.contains(&"github"), "github server missing");
         assert!(servers.contains(&"jira"), "jira server missing");

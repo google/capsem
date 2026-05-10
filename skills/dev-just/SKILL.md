@@ -126,7 +126,7 @@ just shell         # Boot a temp VM and drop into a shell
 Or use bootstrap which does all of this:
 
 ```bash
-sh scripts/bootstrap.sh   # Installs deps + runs doctor fix
+sh bootstrap.sh   # Installs deps + runs doctor fix
 ```
 
 ## Daily dev

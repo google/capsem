@@ -5,7 +5,7 @@ sidebar:
   order: 15
 ---
 
-The MITM proxy is Capsem's network inspection layer. It terminates TLS from the guest, inspects every HTTP request against domain and method-level policy, forwards allowed requests to the real upstream, and logs full telemetry to the session database.
+The MITM proxy is Capsem's HTTPS inspection layer. It terminates TLS from the guest, checks each request against domain, HTTP, and model-policy rules, forwards allowed requests to the real upstream, and logs telemetry to the session database.
 
 ## Connection pipeline
 
@@ -18,7 +18,7 @@ graph TD
     C --> D["Read HTTP request<br/>method, path, headers, body"]
     D --> E{"Domain policy"}
     E -->|Denied| F["403 Forbidden<br/>+ log telemetry"]
-    E -->|Allowed| G{"HTTP policy<br/>method + path rules"}
+    E -->|Allowed| G{"Named HTTP policy<br/>method, path, query, headers"}
     G -->|Denied| F
     G -->|Allowed| H["Upstream TLS connection<br/>(cached per-connection)"]
     H --> I["Forward request"]
@@ -50,11 +50,12 @@ graph LR
 | Field | Type | Purpose |
 |-------|------|---------|
 | `ca` | `Arc<CertAuthority>` | Static Capsem CA for leaf cert minting |
-| `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable domain + HTTP policy; settings changes take effect on next request |
+| `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable domain policy; settings changes take effect on next request |
 | `db` | `Arc<DbWriter>` | Async telemetry writer to session.db |
 | `upstream_tls` | `Arc<rustls::ClientConfig>` | Shared TLS config with webpki root CAs |
 | `pricing` | `PricingTable` | Embedded model pricing for cost estimation |
 | `trace_state` | `Mutex<TraceState>` | Links multi-turn tool-use conversations by trace_id |
+| named policy rules | `Arc<RwLock<Arc<PolicyConfig>>>` | Hot-swappable HTTP, model, MCP, DNS, and hook policy rules |
 
 ## Certificate authority
 
@@ -114,17 +115,43 @@ See [Network Isolation](/security/network-isolation/) for the full domain policy
 
 The policy is hot-swappable via `RwLock`. Each HTTP request snapshots the `Arc<NetworkPolicy>`, so disabling a provider blocks the next request even on an existing keep-alive connection.
 
-## HTTP policy engine
+## HTTP Policy
 
-For domains that pass the domain check, optional HTTP rules provide method + path level control:
+For domains that pass the domain check, named policy rules provide request
+and response control. Rules live under `policy.http.<rule_name>` and run on
+`http.request` or `http.response` callbacks.
 
-| Stage | Check | Action on match |
-|-------|-------|-----------------|
-| 1 | Domain policy | Deny -> return 403 immediately |
-| 2 | HTTP rules for domain | First matching rule's action applies |
-| 3 | No matching rule | Allow (backward compat for allowed domains) |
+| Subject field | Example use |
+|---|---|
+| `request.host` | Block a specific host or suffix. |
+| `request.method` | Block write methods such as `POST` or `DELETE`. |
+| `request.path` | Match repository, API, or organization paths with regex. |
+| `request.query` | Detect sensitive query strings. |
+| `request.headers.*` | Match or strip request headers. |
+| `response.headers.*` | Strip response headers before the guest sees them. |
+| `response.status` | Match upstream status on response policy. |
 
-Rules match on method (`GET`, `POST`, `*`) and path (exact or prefix wildcard like `/api/v1/*`).
+Example:
+
+```toml
+[policy.http.block_openai_github]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openai(/|$)")'
+decision = "block"
+priority = 10
+```
+
+Header stripping is a `rewrite` rule and runs before the stripped headers are
+forwarded or captured in telemetry:
+
+```toml
+[policy.http.strip_auth]
+on = "http.request"
+if = 'request.host == "api.example.com"'
+decision = "rewrite"
+priority = 20
+strip_request_headers = ["authorization", "x-api-key"]
+```
 
 ## AI traffic handling
 
@@ -237,7 +264,8 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 | `capsem-core/src/net/mitm_proxy.rs` | Connection handling, HTTP forwarding, telemetry emission |
 | `capsem-core/src/net/cert_authority.rs` | CA loading, leaf cert minting, cache |
 | `capsem-core/src/net/domain_policy.rs` | Domain allow/block evaluation |
-| `capsem-core/src/net/http_policy.rs` | Method + path rule evaluation |
+| `capsem-core/src/net/policy_config/` | Named policy rule parsing, validation, and condition evaluation |
+| `capsem-core/src/net/mitm_proxy/` | HTTP/model policy enforcement hooks and proxy pipeline |
 | `capsem-core/src/net/ai_traffic/` | SSE parsing, provider parsers, events, pricing |
 | `capsem-core/src/net/ai_traffic/mod.rs` | TraceState for multi-turn linking |
 | `config/capsem-ca.key`, `config/capsem-ca.crt` | Static ECDSA P-256 CA keypair |

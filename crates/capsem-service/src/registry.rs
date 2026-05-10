@@ -19,7 +19,11 @@ pub struct PersistentVmEntry {
     pub base_version: String,
     pub created_at: String,
     pub session_dir: PathBuf,
-    #[serde(skip_serializing_if = "Option::is_none", default, alias = "source_image")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "source_image"
+    )]
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,

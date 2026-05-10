@@ -16,8 +16,10 @@ flowchart LR
   CT["corp.toml\n(/etc/capsem/corp.toml)"] --> R
   R --> RS["Resolved Settings"]
   RS --> TB[Tree Builder]
+  RS --> P2["Policy Rules"]
   RS --> PB[Policy Builder]
-  TB --> SR["Settings Response\n{tree, issues, presets}"]
+  TB --> SR["Settings Response\n{tree, issues, presets, policy}"]
+  P2 --> SR
   PB --> NP["Network Policy\n(MITM proxy rules)"]
   PB --> GC["Guest Config\n(env vars + files)"]
 ```
@@ -200,6 +202,7 @@ Returns the full `SettingsResponse` in one call:
 | `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
 | `issues` | `ConfigIssue[]` | Validation warnings (missing API keys, invalid JSON, etc.) |
 | `presets` | `SecurityPreset[]` | Available security presets with their setting values |
+| `policy` | `PolicyConfig` | Merged named policy rules grouped by `mcp`, `http`, `dns`, `model`, and `hook` |
 
 ### save_settings
 
@@ -212,6 +215,25 @@ Accepts a batch of changes as `{ setting_id: value, ... }`. Behavior:
 5. **Return fresh `SettingsResponse`** reflecting the new state
 
 Bool toggles use `save_settings` immediately (instant policy reload). Text, number, file, and list changes accumulate locally and are sent as a batch when the user clicks Save.
+
+Named policy rules are saved with keys such as
+`policy.http.block_openai_github` and values matching the TOML rule shape.
+Sending `null` deletes the user rule:
+
+```json
+{
+  "policy.http.block_openai_github": {
+    "on": "http.request",
+    "if": "request.host == \"github.com\"",
+    "decision": "block",
+    "priority": 10
+  },
+  "policy.mcp.old_rule": null
+}
+```
+
+The same atomic validation applies: one invalid policy rule rejects the entire
+save batch before `user.toml` is changed.
 
 ## Frontend Architecture
 
@@ -313,6 +335,21 @@ command = "/opt/acme/mcp-server"
 args = ["--config", "/etc/acme.json"]
 ```
 
+## Policy Rules
+
+Policy rules live in the top-level `policy` table, separate from regular
+`settings` and MCP server definitions. This page only covers how those objects
+flow through settings.
+
+Resolution uses the same enterprise priority as regular settings:
+`corp.toml` overrides a user rule with the same key, and distinct user and
+corp rules are merged. The settings UI displays the merged rule set, stages
+edits as `policy.<type>.<name>` save keys, and can generate named HTTP rules
+from existing domain and service toggles.
+
+See [Policy](/security/policy/) for rule syntax, callbacks, subject fields,
+decisions, rewrites, examples, and telemetry expectations.
+
 ## Corp Lockdown
 
 Enterprise administrators distribute `corp.toml` via MDM. It controls:
@@ -328,12 +365,14 @@ Enterprise administrators distribute `corp.toml` via MDM. It controls:
 
 Enforcement is **exclusively in the backend**. The frontend disables controls for visual feedback but never validates corp locks itself. The `save_settings` command rejects any batch containing a corp-locked change.
 
-## Future: HTTPS API
+## Gateway API
 
-The current IPC uses Tauri's `invoke()` mechanism (local function calls between the Rust backend and the webview frontend). In a future release, these will become HTTPS API endpoints:
+The desktop frontend talks to `capsem-gateway`, which proxies HTTP requests to
+`capsem-service` over UDS:
 
-- `GET /api/settings` -- returns `SettingsResponse`
-- `POST /api/settings` -- accepts batch changes, returns `SettingsResponse`
-- `POST /api/settings/preset` -- applies a security preset
-
-The `SettingsModel` class and the batch semantics are designed to work identically over HTTP. The `api.ts` wrapper will switch from `tauriInvoke()` to `fetch()` with no changes to the model, store, or rendering layers.
+| Endpoint | Purpose |
+|---|---|
+| `GET /settings` | Returns `SettingsResponse` with tree, issues, presets, and policy. |
+| `POST /settings` | Accepts a batch of setting and policy changes. |
+| `POST /settings/presets/{id}` | Applies a security preset. |
+| `POST /reload-config` | Hot-reloads runtime policy after saves. |

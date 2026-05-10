@@ -1,6 +1,10 @@
+use super::builder::{
+    inject_api_key_approval, inject_capsem_mcp_server, inject_capsem_mcp_server_toml,
+};
 use super::*;
-use super::builder::{inject_capsem_mcp_server, inject_capsem_mcp_server_toml, inject_api_key_approval};
 use std::collections::HashMap;
+
+static TEST_CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn empty_file() -> SettingsFile {
     SettingsFile::default()
@@ -13,12 +17,18 @@ fn now_str() -> String {
 fn file_with(entries: Vec<(&str, SettingValue)>) -> SettingsFile {
     let mut settings = HashMap::new();
     for (id, value) in entries {
-        settings.insert(id.to_string(), SettingEntry {
-            value,
-            modified: now_str(),
-        });
+        settings.insert(
+            id.to_string(),
+            SettingEntry {
+                value,
+                modified: now_str(),
+            },
+        );
     }
-    SettingsFile { settings, mcp: None }
+    SettingsFile {
+        settings,
+        ..Default::default()
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -30,7 +40,10 @@ fn corp_override_bool() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "ai.anthropic.allow").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "ai.anthropic.allow")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert_eq!(s.source, PolicySource::Corp);
 }
@@ -40,27 +53,48 @@ fn corp_override_bool_web_defaults() {
     let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
     let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "security.web.allow_read").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "security.web.allow_read")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert_eq!(s.source, PolicySource::Corp);
 }
 
 #[test]
 fn corp_override_number() {
-    let user = file_with(vec![("vm.resources.max_body_capture", SettingValue::Number(8192))]);
-    let corp = file_with(vec![("vm.resources.max_body_capture", SettingValue::Number(1024))]);
+    let user = file_with(vec![(
+        "vm.resources.max_body_capture",
+        SettingValue::Number(8192),
+    )]);
+    let corp = file_with(vec![(
+        "vm.resources.max_body_capture",
+        SettingValue::Number(1024),
+    )]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "vm.resources.max_body_capture").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.max_body_capture")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Number(1024));
     assert_eq!(s.source, PolicySource::Corp);
 }
 
 #[test]
 fn corp_override_api_key() {
-    let user = file_with(vec![("ai.anthropic.api_key", SettingValue::Text("user-key".into()))]);
-    let corp = file_with(vec![("ai.anthropic.api_key", SettingValue::Text("corp-key".into()))]);
+    let user = file_with(vec![(
+        "ai.anthropic.api_key",
+        SettingValue::Text("user-key".into()),
+    )]);
+    let corp = file_with(vec![(
+        "ai.anthropic.api_key",
+        SettingValue::Text("corp-key".into()),
+    )]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "ai.anthropic.api_key").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "ai.anthropic.api_key")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Text("corp-key".into()));
     assert_eq!(s.source, PolicySource::Corp);
 }
@@ -68,9 +102,15 @@ fn corp_override_api_key() {
 #[test]
 fn corp_override_guest_env() {
     let user = file_with(vec![("guest.env.EDITOR", SettingValue::Text("vim".into()))]);
-    let corp = file_with(vec![("guest.env.EDITOR", SettingValue::Text("nano".into()))]);
+    let corp = file_with(vec![(
+        "guest.env.EDITOR",
+        SettingValue::Text("nano".into()),
+    )]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "guest.env.EDITOR").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "guest.env.EDITOR")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Text("nano".into()));
     assert_eq!(s.source, PolicySource::Corp);
 }
@@ -88,16 +128,25 @@ fn corp_override_mixed_categories() {
     ]);
     let resolved = resolve_settings(&user, &corp);
 
-    let ai = resolved.iter().find(|s| s.id == "ai.anthropic.allow").unwrap();
+    let ai = resolved
+        .iter()
+        .find(|s| s.id == "ai.anthropic.allow")
+        .unwrap();
     assert_eq!(ai.effective_value, SettingValue::Bool(false));
     assert_eq!(ai.source, PolicySource::Corp);
 
-    let log = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
+    let log = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.log_bodies")
+        .unwrap();
     assert_eq!(log.effective_value, SettingValue::Bool(false));
     assert_eq!(log.source, PolicySource::Corp);
 
     // appearance.dark_mode not in corp -> user value
-    let dark = resolved.iter().find(|s| s.id == "appearance.dark_mode").unwrap();
+    let dark = resolved
+        .iter()
+        .find(|s| s.id == "appearance.dark_mode")
+        .unwrap();
     assert_eq!(dark.effective_value, SettingValue::Bool(false));
     assert_eq!(dark.source, PolicySource::User);
 }
@@ -107,17 +156,35 @@ fn corp_overrides_all_registry_and_repository_toggles() {
     let corp = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
         (SETTING_GITLAB_ALLOW, SettingValue::Bool(false)),
-        ("security.services.registry.npm.allow", SettingValue::Bool(false)),
-        ("security.services.registry.pypi.allow", SettingValue::Bool(false)),
-        ("security.services.registry.crates.allow", SettingValue::Bool(false)),
-        ("security.services.registry.debian.allow", SettingValue::Bool(false)),
+        (
+            "security.services.registry.npm.allow",
+            SettingValue::Bool(false),
+        ),
+        (
+            "security.services.registry.pypi.allow",
+            SettingValue::Bool(false),
+        ),
+        (
+            "security.services.registry.crates.allow",
+            SettingValue::Bool(false),
+        ),
+        (
+            "security.services.registry.debian.allow",
+            SettingValue::Bool(false),
+        ),
     ]);
     let resolved = resolve_settings(&empty_file(), &corp);
     for s in &resolved {
-        let is_registry_toggle = s.id.starts_with("security.services.registry.") && s.id.ends_with(".allow");
+        let is_registry_toggle =
+            s.id.starts_with("security.services.registry.") && s.id.ends_with(".allow");
         let is_repo_toggle = s.id == SETTING_GITHUB_ALLOW || s.id == SETTING_GITLAB_ALLOW;
         if is_registry_toggle || is_repo_toggle {
-            assert_eq!(s.effective_value, SettingValue::Bool(false), "failed for {}", s.id);
+            assert_eq!(
+                s.effective_value,
+                SettingValue::Bool(false),
+                "failed for {}",
+                s.id
+            );
             assert_eq!(s.source, PolicySource::Corp);
         }
     }
@@ -133,7 +200,10 @@ fn user_cannot_enable_blocked_provider() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "ai.anthropic.allow").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "ai.anthropic.allow")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert!(s.corp_locked);
 }
@@ -143,17 +213,29 @@ fn user_cannot_change_corp_web_defaults() {
     let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
     let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "security.web.allow_read").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "security.web.allow_read")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert!(s.corp_locked);
 }
 
 #[test]
 fn user_cannot_override_corp_api_key() {
-    let user = file_with(vec![("ai.openai.api_key", SettingValue::Text("user-key".into()))]);
-    let corp = file_with(vec![("ai.openai.api_key", SettingValue::Text("corp-key".into()))]);
+    let user = file_with(vec![(
+        "ai.openai.api_key",
+        SettingValue::Text("user-key".into()),
+    )]);
+    let corp = file_with(vec![(
+        "ai.openai.api_key",
+        SettingValue::Text("corp-key".into()),
+    )]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "ai.openai.api_key").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "ai.openai.api_key")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Text("corp-key".into()));
     assert!(s.corp_locked);
 }
@@ -205,7 +287,10 @@ fn write_user_settings_preserves_other_settings() {
     write_settings_file(&path, &file).unwrap();
 
     // Update one setting
-    file.settings.get_mut("vm.resources.log_bodies").unwrap().value = SettingValue::Bool(true);
+    file.settings
+        .get_mut("vm.resources.log_bodies")
+        .unwrap()
+        .value = SettingValue::Bool(true);
     write_settings_file(&path, &file).unwrap();
 
     let loaded = load_settings_file(&path).unwrap();
@@ -214,7 +299,11 @@ fn write_user_settings_preserves_other_settings() {
         SettingValue::Bool(true),
     );
     assert_eq!(
-        loaded.settings.get("vm.resources.log_bodies").unwrap().value,
+        loaded
+            .settings
+            .get("vm.resources.log_bodies")
+            .unwrap()
+            .value,
         SettingValue::Bool(true),
     );
 }
@@ -247,7 +336,11 @@ fn default_ai_providers_all_enabled() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     for id in &["ai.anthropic.allow", "ai.openai.allow", "ai.google.allow"] {
         let s = resolved.iter().find(|s| s.id == *id).unwrap();
-        assert_eq!(s.effective_value, SettingValue::Bool(true), "expected {id} to be true");
+        assert_eq!(
+            s.effective_value,
+            SettingValue::Bool(true),
+            "expected {id} to be true"
+        );
     }
 }
 
@@ -261,7 +354,11 @@ fn default_registries_allowed() {
         "security.services.registry.crates.allow",
     ] {
         let s = resolved.iter().find(|s| s.id == *id).unwrap();
-        assert_eq!(s.effective_value, SettingValue::Bool(true), "expected {id} to be true");
+        assert_eq!(
+            s.effective_value,
+            SettingValue::Bool(true),
+            "expected {id} to be true"
+        );
     }
 }
 
@@ -269,25 +366,46 @@ fn default_registries_allowed() {
 fn default_web_session_appearance() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
 
-    let ar = resolved.iter().find(|s| s.id == "security.web.allow_read").unwrap();
+    let ar = resolved
+        .iter()
+        .find(|s| s.id == "security.web.allow_read")
+        .unwrap();
     assert_eq!(ar.effective_value, SettingValue::Bool(false));
 
-    let aw = resolved.iter().find(|s| s.id == "security.web.allow_write").unwrap();
+    let aw = resolved
+        .iter()
+        .find(|s| s.id == "security.web.allow_write")
+        .unwrap();
     assert_eq!(aw.effective_value, SettingValue::Bool(false));
 
-    let lb = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
+    let lb = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.log_bodies")
+        .unwrap();
     assert_eq!(lb.effective_value, SettingValue::Bool(false));
 
-    let mbc = resolved.iter().find(|s| s.id == "vm.resources.max_body_capture").unwrap();
+    let mbc = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.max_body_capture")
+        .unwrap();
     assert_eq!(mbc.effective_value, SettingValue::Number(4096));
 
-    let rd = resolved.iter().find(|s| s.id == "vm.resources.retention_days").unwrap();
+    let rd = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.retention_days")
+        .unwrap();
     assert_eq!(rd.effective_value, SettingValue::Number(30));
 
-    let dm = resolved.iter().find(|s| s.id == "appearance.dark_mode").unwrap();
+    let dm = resolved
+        .iter()
+        .find(|s| s.id == "appearance.dark_mode")
+        .unwrap();
     assert_eq!(dm.effective_value, SettingValue::Bool(true));
 
-    let fs = resolved.iter().find(|s| s.id == "appearance.font_size").unwrap();
+    let fs = resolved
+        .iter()
+        .find(|s| s.id == "appearance.font_size")
+        .unwrap();
     assert_eq!(fs.effective_value, SettingValue::Number(14));
 }
 
@@ -308,7 +426,11 @@ fn definitions_have_unique_ids() {
 #[test]
 fn definitions_have_nonempty_descriptions() {
     for def in setting_definitions() {
-        assert!(!def.description.is_empty(), "empty description for {}", def.id);
+        assert!(
+            !def.description.is_empty(),
+            "empty description for {}",
+            def.id
+        );
         assert!(!def.name.is_empty(), "empty name for {}", def.id);
     }
 }
@@ -343,9 +465,15 @@ fn ai_providers_have_domains_settings() {
 #[test]
 fn web_defaults_are_bool_settings() {
     let defs = setting_definitions();
-    let ar = defs.iter().find(|d| d.id == "security.web.allow_read").unwrap();
+    let ar = defs
+        .iter()
+        .find(|d| d.id == "security.web.allow_read")
+        .unwrap();
     assert_eq!(ar.setting_type, SettingType::Bool);
-    let aw = defs.iter().find(|d| d.id == "security.web.allow_write").unwrap();
+    let aw = defs
+        .iter()
+        .find(|d| d.id == "security.web.allow_write")
+        .unwrap();
     assert_eq!(aw.setting_type, SettingType::Bool);
 }
 
@@ -356,7 +484,10 @@ fn web_defaults_are_bool_settings() {
 #[test]
 fn source_default() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.log_bodies")
+        .unwrap();
     assert_eq!(s.source, PolicySource::Default);
     assert!(s.modified.is_none());
 }
@@ -365,7 +496,10 @@ fn source_default() {
 fn source_user() {
     let user = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.log_bodies")
+        .unwrap();
     assert_eq!(s.source, PolicySource::User);
     assert!(s.modified.is_some());
 }
@@ -374,7 +508,10 @@ fn source_user() {
 fn source_corp() {
     let corp = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&empty_file(), &corp);
-    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.log_bodies")
+        .unwrap();
     assert_eq!(s.source, PolicySource::Corp);
     assert!(s.modified.is_some());
 }
@@ -384,7 +521,10 @@ fn source_corp_beats_user() {
     let user = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
     let corp = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.log_bodies")
+        .unwrap();
     assert_eq!(s.source, PolicySource::Corp);
     assert_eq!(s.effective_value, SettingValue::Bool(false));
 }
@@ -413,7 +553,10 @@ fn is_setting_corp_locked_test() {
 fn enabled_by_parent_on_child_enabled() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let child = resolved.iter().find(|s| s.id == "ai.anthropic.api_key").unwrap();
+    let child = resolved
+        .iter()
+        .find(|s| s.id == "ai.anthropic.api_key")
+        .unwrap();
     assert!(child.enabled);
     assert_eq!(child.enabled_by, Some("ai.anthropic.allow".to_string()));
 }
@@ -423,14 +566,20 @@ fn enabled_by_parent_off_child_disabled() {
     // User explicitly disables anthropic
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let child = resolved.iter().find(|s| s.id == "ai.anthropic.api_key").unwrap();
+    let child = resolved
+        .iter()
+        .find(|s| s.id == "ai.anthropic.api_key")
+        .unwrap();
     assert!(!child.enabled);
 }
 
 #[test]
 fn enabled_by_none_always_enabled() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "vm.resources.log_bodies")
+        .unwrap();
     assert!(s.enabled);
     assert!(s.enabled_by.is_none());
 }
@@ -441,13 +590,19 @@ fn enabled_by_chain_not_supported() {
     // When the toggle is off, api_key is disabled.
     let mut user = file_with(vec![("ai.openai.allow", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let key = resolved.iter().find(|s| s.id == "ai.openai.api_key").unwrap();
+    let key = resolved
+        .iter()
+        .find(|s| s.id == "ai.openai.api_key")
+        .unwrap();
     assert!(!key.enabled);
 
     // Turn on the toggle -> key is enabled
     user = file_with(vec![("ai.openai.allow", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let key = resolved.iter().find(|s| s.id == "ai.openai.api_key").unwrap();
+    let key = resolved
+        .iter()
+        .find(|s| s.id == "ai.openai.api_key")
+        .unwrap();
     assert!(key.enabled);
 }
 
@@ -539,16 +694,22 @@ fn settings_file_toml_roundtrip() {
         ("ai.anthropic.allow", SettingValue::Bool(true)),
         ("vm.resources.max_body_capture", SettingValue::Number(8192)),
         ("guest.env.EDITOR", SettingValue::Text("vim".into())),
-        ("ai.google.gemini.settings_json", SettingValue::File {
-            path: "/root/.gemini/settings.json".into(),
-            content: r#"{"key":"value"}"#.into(),
-        }),
+        (
+            "ai.google.gemini.settings_json",
+            SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: r#"{"key":"value"}"#.into(),
+            },
+        ),
     ]);
     let toml_str = toml::to_string_pretty(&file).unwrap();
     let parsed: SettingsFile = toml::from_str(&toml_str).unwrap();
     assert_eq!(file.settings.len(), parsed.settings.len());
     for (key, entry) in &file.settings {
-        assert_eq!(&entry.value, &parsed.settings[key].value, "mismatch for {key}");
+        assert_eq!(
+            &entry.value, &parsed.settings[key].value,
+            "mismatch for {key}"
+        );
     }
 }
 
@@ -569,7 +730,12 @@ fn settings_file_disk_roundtrip() {
 fn empty_files_use_defaults() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     for s in &resolved {
-        assert_eq!(s.source, PolicySource::Default, "non-default source for {}", s.id);
+        assert_eq!(
+            s.source,
+            PolicySource::Default,
+            "non-default source for {}",
+            s.id
+        );
     }
 }
 
@@ -621,10 +787,22 @@ fn parse_toml_mixed_value_types() {
 "appearance.font_size" = { value = 16, modified = "2026-01-01T00:00:00Z" }
 "#;
     let file: SettingsFile = toml::from_str(toml_str).expect("should parse mixed types");
-    assert_eq!(file.settings["vm.resources.log_bodies"].value, SettingValue::Bool(true));
-    assert_eq!(file.settings["vm.resources.max_body_capture"].value, SettingValue::Number(8192));
-    assert_eq!(file.settings["security.web.allow_read"].value, SettingValue::Bool(false));
-    assert_eq!(file.settings["appearance.font_size"].value, SettingValue::Number(16));
+    assert_eq!(
+        file.settings["vm.resources.log_bodies"].value,
+        SettingValue::Bool(true)
+    );
+    assert_eq!(
+        file.settings["vm.resources.max_body_capture"].value,
+        SettingValue::Number(8192)
+    );
+    assert_eq!(
+        file.settings["security.web.allow_read"].value,
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        file.settings["appearance.font_size"].value,
+        SettingValue::Number(16)
+    );
 }
 
 #[test]
@@ -672,7 +850,11 @@ fn parse_toml_extra_fields_ignored() {
     let result: Result<SettingsFile, _> = toml::from_str(toml_str);
     // By default serde does NOT deny unknown fields, so this should succeed.
     // If it fails, SettingEntry is using deny_unknown_fields.
-    assert!(result.is_ok(), "extra fields should be ignored: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "extra fields should be ignored: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -683,7 +865,10 @@ fn parse_toml_wrong_value_type_fails() {
 "ai.anthropic.allow" = { value = { nested = { deep = true } }, modified = "2026-01-01T00:00:00Z" }
 "#;
     let result: Result<SettingsFile, _> = toml::from_str(toml_str);
-    assert!(result.is_err(), "nested table value should fail deserialization");
+    assert!(
+        result.is_err(),
+        "nested table value should fail deserialization"
+    );
 }
 
 #[test]
@@ -717,7 +902,10 @@ ai.anthropic.allow = { value = true, modified = "2026-01-01T00:00:00Z" }
     let result: Result<SettingsFile, _> = toml::from_str(toml_str);
     // This should fail because the nested table structure does not match
     // HashMap<String, SettingEntry>.
-    assert!(result.is_err(), "unquoted dotted keys should fail (creates nested tables)");
+    assert!(
+        result.is_err(),
+        "unquoted dotted keys should fail (creates nested tables)"
+    );
 }
 
 #[test]
@@ -742,7 +930,8 @@ fn parse_toml_api_key_with_special_chars() {
 [settings]
 "ai.anthropic.api_key" = { value = "sk-ant-api03-ABCD_1234-efgh-5678", modified = "2026-01-01T00:00:00Z" }
 "#;
-    let file: SettingsFile = toml::from_str(toml_str).expect("should parse API key with special chars");
+    let file: SettingsFile =
+        toml::from_str(toml_str).expect("should parse API key with special chars");
     assert_eq!(
         file.settings["ai.anthropic.api_key"].value,
         SettingValue::Text("sk-ant-api03-ABCD_1234-efgh-5678".into()),
@@ -760,8 +949,15 @@ fn parse_toml_resolves_with_api_key_type() {
 "#;
     let user: SettingsFile = toml::from_str(toml_str).unwrap();
     let resolved = resolve_settings(&user, &empty_file());
-    let s = resolved.iter().find(|s| s.id == "ai.anthropic.api_key").unwrap();
-    assert_eq!(s.setting_type, SettingType::ApiKey, "api_key settings must have ApiKey type");
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "ai.anthropic.api_key")
+        .unwrap();
+    assert_eq!(
+        s.setting_type,
+        SettingType::ApiKey,
+        "api_key settings must have ApiKey type"
+    );
     assert_eq!(s.effective_value, SettingValue::Text("sk-test".into()));
 }
 
@@ -774,11 +970,15 @@ fn parse_toml_serialized_format_roundtrips() {
         ("vm.resources.max_body_capture", SettingValue::Number(4096)),
     ]);
     let serialized = toml::to_string_pretty(&file).unwrap();
-    let parsed: SettingsFile = toml::from_str(&serialized)
-        .unwrap_or_else(|e| panic!("failed to re-parse serialized TOML:\n{serialized}\nerror: {e}"));
+    let parsed: SettingsFile = toml::from_str(&serialized).unwrap_or_else(|e| {
+        panic!("failed to re-parse serialized TOML:\n{serialized}\nerror: {e}")
+    });
     assert_eq!(file.settings.len(), parsed.settings.len());
     for (key, entry) in &file.settings {
-        assert_eq!(&entry.value, &parsed.settings[key].value, "mismatch for {key}");
+        assert_eq!(
+            &entry.value, &parsed.settings[key].value,
+            "mismatch for {key}"
+        );
     }
 }
 
@@ -792,7 +992,8 @@ fn json_metadata_fields_present_when_empty() {
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
 
     // Find a setting with empty metadata (e.g., api_key settings)
-    let api_key = parsed.iter()
+    let api_key = parsed
+        .iter()
         .find(|v| v["id"] == "ai.anthropic.api_key")
         .unwrap();
     let meta = &api_key["metadata"];
@@ -827,15 +1028,20 @@ fn resolved_settings_json_serialization() {
     let arr = parsed.as_array().unwrap();
 
     // Find the api_key setting
-    let api_key = arr.iter()
+    let api_key = arr
+        .iter()
         .find(|v| v["id"] == "ai.anthropic.api_key")
         .expect("should have ai.anthropic.api_key in JSON");
-    assert_eq!(api_key["setting_type"], "apikey", "setting_type must be 'apikey' in JSON");
+    assert_eq!(
+        api_key["setting_type"], "apikey",
+        "setting_type must be 'apikey' in JSON"
+    );
     assert_eq!(api_key["effective_value"], "sk-test");
     assert_eq!(api_key["enabled"], true);
 
     // Find a bool setting
-    let allow = arr.iter()
+    let allow = arr
+        .iter()
         .find(|v| v["id"] == "ai.anthropic.allow")
         .expect("should have ai.anthropic.allow in JSON");
     assert_eq!(allow["setting_type"], "bool");
@@ -903,7 +1109,10 @@ fn vm_settings_default_ram() {
 
 #[test]
 fn vm_settings_from_user() {
-    let user = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(32))]);
+    let user = file_with(vec![(
+        "vm.resources.scratch_disk_size_gb",
+        SettingValue::Number(32),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let vs = settings_to_vm_settings(&resolved);
     assert_eq!(vs.scratch_disk_size_gb, Some(32));
@@ -919,8 +1128,14 @@ fn vm_settings_ram_from_user() {
 
 #[test]
 fn vm_settings_corp_overrides_user() {
-    let user = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(32))]);
-    let corp = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(4))]);
+    let user = file_with(vec![(
+        "vm.resources.scratch_disk_size_gb",
+        SettingValue::Number(32),
+    )]);
+    let corp = file_with(vec![(
+        "vm.resources.scratch_disk_size_gb",
+        SettingValue::Number(4),
+    )]);
     let resolved = resolve_settings(&user, &corp);
     let vs = settings_to_vm_settings(&resolved);
     assert_eq!(vs.scratch_disk_size_gb, Some(4));
@@ -960,7 +1175,10 @@ fn vm_settings_cpu_corp_overrides_user() {
 fn domains_setting_drives_allow_list() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
-        ("ai.anthropic.domains", SettingValue::Text("*.anthropic.com".into())),
+        (
+            "ai.anthropic.domains",
+            SettingValue::Text("*.anthropic.com".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
@@ -982,7 +1200,12 @@ fn domains_setting_drives_block_list() {
 fn domains_setting_parsed_correctly() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
-        ("ai.anthropic.domains", SettingValue::Text("api.anthropic.com , console.anthropic.com , *.anthropic.com".into())),
+        (
+            "ai.anthropic.domains",
+            SettingValue::Text(
+                "api.anthropic.com , console.anthropic.com , *.anthropic.com".into(),
+            ),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
@@ -1004,7 +1227,11 @@ fn domains_setting_empty_skipped() {
     let dp = settings_to_domain_policy(&resolved);
     // Empty domains text means nothing added to allow list
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "empty domains should not allow anything");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "empty domains should not allow anything"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -1016,14 +1243,19 @@ fn corp_blocked_domains_always_in_block_list() {
     // Corp locks ai.anthropic.allow = false
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     // User tries to empty the domains
-    let user = file_with(vec![
-        ("ai.anthropic.domains", SettingValue::Text("".into())),
-    ]);
+    let user = file_with(vec![(
+        "ai.anthropic.domains",
+        SettingValue::Text("".into()),
+    )]);
     let resolved = resolve_settings(&user, &corp);
     let dp = settings_to_domain_policy(&resolved);
     // Default domains (*.anthropic.com) should still be blocked
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "corp-blocked domains must stay blocked");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "corp-blocked domains must stay blocked"
+    );
 }
 
 #[test]
@@ -1033,13 +1265,20 @@ fn corp_blocked_domain_not_allowed_via_other_service() {
     // User adds api.anthropic.com to google domains and enables google
     let user = file_with(vec![
         ("ai.google.allow", SettingValue::Bool(true)),
-        ("ai.google.domains", SettingValue::Text("*.googleapis.com,api.anthropic.com".into())),
+        (
+            "ai.google.domains",
+            SettingValue::Text("*.googleapis.com,api.anthropic.com".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &corp);
     let dp = settings_to_domain_policy(&resolved);
     // api.anthropic.com should be blocked even though it's in google domains
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "corp-blocked domain must not be allowed via other service");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "corp-blocked domain must not be allowed via other service"
+    );
     // google domains should still work
     let (action, _) = dp.evaluate("generativelanguage.googleapis.com");
     assert_eq!(action, Action::Allow);
@@ -1048,9 +1287,7 @@ fn corp_blocked_domain_not_allowed_via_other_service() {
 #[test]
 fn user_disabled_service_domains_in_block_list() {
     // User (not corp) disables a service
-    let user = file_with(vec![
-        ("ai.openai.allow", SettingValue::Bool(false)),
-    ]);
+    let user = file_with(vec![("ai.openai.allow", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("api.openai.com");
@@ -1072,19 +1309,25 @@ fn stress_disabled_provider_always_blocked_regardless_of_default() {
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "disabled provider must be blocked even with defaults=allow");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "disabled provider must be blocked even with defaults=allow"
+    );
 }
 
 #[test]
 fn stress_enabled_provider_always_allowed_regardless_of_default() {
     // Provider on + default_action=deny => domains must still be allowed.
-    let user = file_with(vec![
-        ("ai.anthropic.allow", SettingValue::Bool(true)),
-    ]);
+    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Allow, "enabled provider must be allowed even with default=deny");
+    assert_eq!(
+        action,
+        Action::Allow,
+        "enabled provider must be allowed even with default=deny"
+    );
 }
 
 #[test]
@@ -1110,7 +1353,11 @@ fn stress_corp_block_beats_user_allow_with_default_allow() {
     let resolved = resolve_settings(&user, &corp);
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "corp block must beat user allow + default allow");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "corp block must beat user allow + default allow"
+    );
 }
 
 #[test]
@@ -1121,13 +1368,20 @@ fn stress_corp_block_via_other_provider_wildcard() {
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let user = file_with(vec![
         ("ai.openai.allow", SettingValue::Bool(true)),
-        ("ai.openai.domains", SettingValue::Text("*.openai.com, *.anthropic.com".into())),
+        (
+            "ai.openai.domains",
+            SettingValue::Text("*.openai.com, *.anthropic.com".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &corp);
     let dp = settings_to_domain_policy(&resolved);
     // anthropic subdomain must be blocked despite being in openai domains
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "corp-blocked wildcard must not be allowed via other provider");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "corp-blocked wildcard must not be allowed via other provider"
+    );
     // openai subdomain should be allowed (not corp-blocked)
     let (action, _) = dp.evaluate("api.openai.com");
     assert_eq!(action, Action::Allow);
@@ -1138,14 +1392,19 @@ fn stress_corp_block_cannot_be_circumvented_by_emptying_domains() {
     // Corp blocks anthropic. User empties the domains field to try
     // removing the domains from the block list.
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
-    let user = file_with(vec![
-        ("ai.anthropic.domains", SettingValue::Text("".into())),
-    ]);
+    let user = file_with(vec![(
+        "ai.anthropic.domains",
+        SettingValue::Text("".into()),
+    )]);
     let resolved = resolve_settings(&user, &corp);
     let dp = settings_to_domain_policy(&resolved);
     // Default domains should still be blocked (union of default + effective)
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "corp block must survive user emptying domains");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "corp block must survive user emptying domains"
+    );
 }
 
 #[test]
@@ -1153,9 +1412,10 @@ fn stress_corp_block_cannot_be_circumvented_by_changing_domains() {
     // Corp blocks anthropic. User changes domains to something else.
     // Both old defaults AND new effective domains must be blocked.
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
-    let user = file_with(vec![
-        ("ai.anthropic.domains", SettingValue::Text("custom.anthropic.com".into())),
-    ]);
+    let user = file_with(vec![(
+        "ai.anthropic.domains",
+        SettingValue::Text("custom.anthropic.com".into()),
+    )]);
     let resolved = resolve_settings(&user, &corp);
     let dp = settings_to_domain_policy(&resolved);
     // Default wildcard still blocked
@@ -1163,7 +1423,11 @@ fn stress_corp_block_cannot_be_circumvented_by_changing_domains() {
     assert_eq!(action, Action::Deny, "default domains must remain blocked");
     // User's custom domain also blocked (corp said no anthropic)
     let (action, _) = dp.evaluate("custom.anthropic.com");
-    assert_eq!(action, Action::Deny, "user-added domains must also be blocked when corp says no");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "user-added domains must also be blocked when corp says no"
+    );
 }
 
 #[test]
@@ -1178,7 +1442,11 @@ fn stress_user_disable_blocks_even_with_default_allow() {
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("api.openai.com");
-    assert_eq!(action, Action::Deny, "user-disabled provider must be blocked even with defaults=allow");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "user-disabled provider must be blocked even with defaults=allow"
+    );
 }
 
 #[test]
@@ -1203,21 +1471,37 @@ fn stress_all_providers_disabled_all_blocked() {
         ("ai.openai.allow", SettingValue::Bool(false)),
         ("ai.google.allow", SettingValue::Bool(false)),
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
-        ("security.services.registry.pypi.allow", SettingValue::Bool(false)),
-        ("security.services.registry.npm.allow", SettingValue::Bool(false)),
-        ("security.services.registry.crates.allow", SettingValue::Bool(false)),
+        (
+            "security.services.registry.pypi.allow",
+            SettingValue::Bool(false),
+        ),
+        (
+            "security.services.registry.npm.allow",
+            SettingValue::Bool(false),
+        ),
+        (
+            "security.services.registry.crates.allow",
+            SettingValue::Bool(false),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     // Every known domain should be denied
     for domain in &[
-        "api.anthropic.com", "api.openai.com",
+        "api.anthropic.com",
+        "api.openai.com",
         "generativelanguage.googleapis.com",
-        "github.com", "api.github.com",
-        "pypi.org", "registry.npmjs.org",
+        "github.com",
+        "api.github.com",
+        "pypi.org",
+        "registry.npmjs.org",
     ] {
         let (action, _) = dp.evaluate(domain);
-        assert_eq!(action, Action::Deny, "{domain} must be blocked when all services disabled");
+        assert_eq!(
+            action,
+            Action::Deny,
+            "{domain} must be blocked when all services disabled"
+        );
     }
 }
 
@@ -1233,13 +1517,19 @@ fn stress_all_providers_enabled_all_allowed() {
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     for domain in &[
-        "api.anthropic.com", "api.openai.com",
+        "api.anthropic.com",
+        "api.openai.com",
         "generativelanguage.googleapis.com",
-        "github.com", "api.github.com",
+        "github.com",
+        "api.github.com",
         "pypi.org",
     ] {
         let (action, _) = dp.evaluate(domain);
-        assert_eq!(action, Action::Allow, "{domain} must be allowed when all services enabled");
+        assert_eq!(
+            action,
+            Action::Allow,
+            "{domain} must be allowed when all services enabled"
+        );
     }
 }
 
@@ -1249,18 +1539,24 @@ fn stress_unknown_domain_follows_default_deny() {
     let dp = settings_to_domain_policy(&resolved);
     // default_action defaults to "deny"
     let (action, _) = dp.evaluate("totally-unknown.example.org");
-    assert_eq!(action, Action::Deny, "unknown domain must follow default deny");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "unknown domain must follow default deny"
+    );
 }
 
 #[test]
 fn stress_unknown_domain_follows_default_allow() {
-    let user = file_with(vec![
-        ("security.web.allow_read", SettingValue::Bool(true)),
-    ]);
+    let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("totally-unknown.example.org");
-    assert_eq!(action, Action::Allow, "unknown domain must follow default allow");
+    assert_eq!(
+        action,
+        Action::Allow,
+        "unknown domain must follow default allow"
+    );
 }
 
 #[test]
@@ -1282,11 +1578,16 @@ fn stress_corp_block_all_providers_user_enables_all() {
     let resolved = resolve_settings(&user, &corp);
     let dp = settings_to_domain_policy(&resolved);
     for domain in &[
-        "api.anthropic.com", "api.openai.com",
+        "api.anthropic.com",
+        "api.openai.com",
         "generativelanguage.googleapis.com",
     ] {
         let (action, _) = dp.evaluate(domain);
-        assert_eq!(action, Action::Deny, "{domain} must be blocked when corp blocks all providers");
+        assert_eq!(
+            action,
+            Action::Deny,
+            "{domain} must be blocked when corp blocks all providers"
+        );
     }
 }
 
@@ -1305,7 +1606,11 @@ fn stress_mixed_corp_and_user_decisions() {
     let dp = settings_to_domain_policy(&resolved);
 
     let (action, _) = dp.evaluate("api.anthropic.com");
-    assert_eq!(action, Action::Deny, "corp-blocked anthropic must be denied");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "corp-blocked anthropic must be denied"
+    );
 
     let (action, _) = dp.evaluate("api.openai.com");
     assert_eq!(action, Action::Allow, "user-enabled openai must be allowed");
@@ -1322,7 +1627,10 @@ fn stress_mixed_corp_and_user_decisions() {
 fn api_key_injected_when_toggle_on() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
-        ("ai.anthropic.api_key", SettingValue::Text("sk-test-123".into())),
+        (
+            "ai.anthropic.api_key",
+            SettingValue::Text("sk-test-123".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -1336,7 +1644,10 @@ fn api_key_injected_even_when_toggle_off() {
     // runtime without rebooting the VM.
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(false)),
-        ("ai.anthropic.api_key", SettingValue::Text("sk-test-123".into())),
+        (
+            "ai.anthropic.api_key",
+            SettingValue::Text("sk-test-123".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -1352,7 +1663,10 @@ fn api_key_not_injected_when_empty() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
+    let has_key = gc
+        .env
+        .as_ref()
+        .is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
     assert!(!has_key, "empty API key should not be injected");
 }
 
@@ -1375,7 +1689,10 @@ fn google_api_key_sets_gemini_env_var() {
 fn openai_api_key_injected_when_toggle_off() {
     let user = file_with(vec![
         ("ai.openai.allow", SettingValue::Bool(false)),
-        ("ai.openai.api_key", SettingValue::Text("sk-oai-test".into())),
+        (
+            "ai.openai.api_key",
+            SettingValue::Text("sk-oai-test".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -1517,8 +1834,14 @@ fn empty_keys_skipped_regardless_of_toggle() {
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     // Only dynamic env vars from defaults might exist, but no API keys.
-    let has_ant = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
-    let has_oai = gc.env.as_ref().is_some_and(|e| e.contains_key("OPENAI_API_KEY"));
+    let has_ant = gc
+        .env
+        .as_ref()
+        .is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
+    let has_oai = gc
+        .env
+        .as_ref()
+        .is_some_and(|e| e.contains_key("OPENAI_API_KEY"));
     assert!(!has_ant, "empty anthropic key should not be injected");
     assert!(!has_oai, "empty openai key should not be injected");
 }
@@ -1558,16 +1881,20 @@ fn gemini_boot_files_injected_even_when_google_disabled() {
 #[test]
 fn gemini_settings_json_user_override() {
     let custom = r#"{"homeDirectoryWarningDismissed":true,"mcpServers":{"myserver":{}}}"#;
-    let user = file_with(vec![
-        ("ai.google.gemini.settings_json", SettingValue::File {
+    let user = file_with(vec![(
+        "ai.google.gemini.settings_json",
+        SettingValue::File {
             path: "/root/.gemini/settings.json".into(),
             content: custom.into(),
-        }),
-    ]);
+        },
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
-    let gemini_settings = files.iter().find(|f| f.path == "/root/.gemini/settings.json").unwrap();
+    let gemini_settings = files
+        .iter()
+        .find(|f| f.path == "/root/.gemini/settings.json")
+        .unwrap();
     assert!(gemini_settings.content.contains("mcpServers"));
 }
 
@@ -1589,31 +1916,73 @@ fn gemini_boot_files_user_override_with_toggle_off() {
     let custom = r#"{"mcpServers":{"custom":{}}}"#;
     let user = file_with(vec![
         ("ai.google.allow", SettingValue::Bool(false)),
-        ("ai.google.gemini.settings_json", SettingValue::File {
-            path: "/root/.gemini/settings.json".into(),
-            content: custom.into(),
-        }),
+        (
+            "ai.google.gemini.settings_json",
+            SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: custom.into(),
+            },
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
-    let gemini_settings = files.iter().find(|f| f.path == "/root/.gemini/settings.json").unwrap();
-    assert!(gemini_settings.content.contains("mcpServers"), "custom content should be present");
+    let gemini_settings = files
+        .iter()
+        .find(|f| f.path == "/root/.gemini/settings.json")
+        .unwrap();
+    assert!(
+        gemini_settings.content.contains("mcpServers"),
+        "custom content should be present"
+    );
 }
 
 #[test]
 fn gemini_boot_files_empty_value_skipped() {
     // If a file setting is explicitly set to empty content, it should not be injected.
     let user = file_with(vec![
-        ("ai.google.gemini.settings_json", SettingValue::File { path: "/root/.gemini/settings.json".into(), content: "".into() }),
-        ("ai.google.gemini.projects_json", SettingValue::File { path: "/root/.gemini/projects.json".into(), content: "".into() }),
-        ("ai.google.gemini.trusted_folders_json", SettingValue::File { path: "/root/.gemini/trustedFolders.json".into(), content: "".into() }),
-        ("ai.google.gemini.installation_id", SettingValue::File { path: "/root/.gemini/installation_id".into(), content: "".into() }),
-        ("ai.anthropic.claude.settings_json", SettingValue::File { path: "/root/.claude/settings.json".into(), content: "".into() }),
+        (
+            "ai.google.gemini.settings_json",
+            SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: "".into(),
+            },
+        ),
+        (
+            "ai.google.gemini.projects_json",
+            SettingValue::File {
+                path: "/root/.gemini/projects.json".into(),
+                content: "".into(),
+            },
+        ),
+        (
+            "ai.google.gemini.trusted_folders_json",
+            SettingValue::File {
+                path: "/root/.gemini/trustedFolders.json".into(),
+                content: "".into(),
+            },
+        ),
+        (
+            "ai.google.gemini.installation_id",
+            SettingValue::File {
+                path: "/root/.gemini/installation_id".into(),
+                content: "".into(),
+            },
+        ),
+        (
+            "ai.anthropic.claude.settings_json",
+            SettingValue::File {
+                path: "/root/.claude/settings.json".into(),
+                content: "".into(),
+            },
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let file_paths: Vec<&str> = gc.files.as_ref().map_or(vec![], |f| f.iter().map(|x| x.path.as_str()).collect());
+    let file_paths: Vec<&str> = gc
+        .files
+        .as_ref()
+        .map_or(vec![], |f| f.iter().map(|x| x.path.as_str()).collect());
     assert!(!file_paths.contains(&"/root/.gemini/settings.json"));
     assert!(!file_paths.contains(&"/root/.claude/settings.json"));
 }
@@ -1624,7 +1993,11 @@ fn gemini_boot_files_have_correct_mode() {
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
     for f in &files {
-        assert_eq!(f.mode, 0o600, "boot file {} should have mode 0600 (owner-only)", f.path);
+        assert_eq!(
+            f.mode, 0o600,
+            "boot file {} should have mode 0600 (owner-only)",
+            f.path
+        );
     }
 }
 
@@ -1660,7 +2033,10 @@ fn bashrc_boot_file_injected() {
     let files = gc.files.unwrap();
     let bashrc = files.iter().find(|f| f.path == "/root/.bashrc");
     assert!(bashrc.is_some(), "bashrc boot file should be injected");
-    assert!(bashrc.unwrap().content.contains("PS1="), "bashrc should contain PS1 prompt");
+    assert!(
+        bashrc.unwrap().content.contains("PS1="),
+        "bashrc should contain PS1 prompt"
+    );
 }
 
 #[test]
@@ -1670,23 +2046,30 @@ fn tmux_conf_boot_file_injected() {
     let files = gc.files.unwrap();
     let tmux = files.iter().find(|f| f.path == "/root/.tmux.conf");
     assert!(tmux.is_some(), "tmux.conf boot file should be injected");
-    assert!(tmux.unwrap().content.contains("default-terminal"), "tmux.conf should contain terminal setting");
+    assert!(
+        tmux.unwrap().content.contains("default-terminal"),
+        "tmux.conf should contain terminal setting"
+    );
 }
 
 #[test]
 fn bashrc_user_override() {
     let custom = "PS1='custom> '\nalias foo='bar'\n";
-    let user = file_with(vec![
-        ("vm.environment.shell.bashrc", SettingValue::File {
+    let user = file_with(vec![(
+        "vm.environment.shell.bashrc",
+        SettingValue::File {
             path: "/root/.bashrc".into(),
             content: custom.into(),
-        }),
-    ]);
+        },
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
     let bashrc = files.iter().find(|f| f.path == "/root/.bashrc").unwrap();
-    assert!(bashrc.content.contains("custom>"), "user override should replace default bashrc content");
+    assert!(
+        bashrc.content.contains("custom>"),
+        "user override should replace default bashrc content"
+    );
 }
 
 #[test]
@@ -1707,11 +2090,20 @@ fn shell_boot_files_have_correct_mode() {
 #[test]
 fn filetype_metadata_propagated() {
     let defs = setting_definitions();
-    let bashrc = defs.iter().find(|d| d.id == "vm.environment.shell.bashrc").unwrap();
+    let bashrc = defs
+        .iter()
+        .find(|d| d.id == "vm.environment.shell.bashrc")
+        .unwrap();
     assert_eq!(bashrc.metadata.filetype.as_deref(), Some("bash"));
-    let tmux = defs.iter().find(|d| d.id == "vm.environment.shell.tmux_conf").unwrap();
+    let tmux = defs
+        .iter()
+        .find(|d| d.id == "vm.environment.shell.tmux_conf")
+        .unwrap();
     assert_eq!(tmux.metadata.filetype.as_deref(), Some("conf"));
-    let claude = defs.iter().find(|d| d.id == "ai.anthropic.claude.settings_json").unwrap();
+    let claude = defs
+        .iter()
+        .find(|d| d.id == "ai.anthropic.claude.settings_json")
+        .unwrap();
     assert_eq!(claude.metadata.filetype.as_deref(), Some("json"));
 }
 
@@ -1749,7 +2141,10 @@ fn gemini_json_settings_use_file_type() {
 fn gemini_installation_id_is_file_type() {
     // installation_id is now a File type (path + content).
     let defs = setting_definitions();
-    let def = defs.iter().find(|d| d.id == "ai.google.gemini.installation_id").unwrap();
+    let def = defs
+        .iter()
+        .find(|d| d.id == "ai.google.gemini.installation_id")
+        .unwrap();
     assert_eq!(def.setting_type, SettingType::File);
     let (path, content) = def.default_value.as_file().expect("should be File value");
     assert_eq!(path, "/root/.gemini/installation_id");
@@ -1762,10 +2157,15 @@ fn file_settings_have_path_in_default_value() {
     let defs = setting_definitions();
     for def in &defs {
         if def.setting_type == SettingType::File {
-            let (path, _) = def.default_value.as_file().unwrap_or_else(|| {
-                panic!("File setting {} must have File default value", def.id)
-            });
-            assert!(path.starts_with('/'), "path must be absolute: {path} (setting {})", def.id);
+            let (path, _) = def
+                .default_value
+                .as_file()
+                .unwrap_or_else(|| panic!("File setting {} must have File default value", def.id));
+            assert!(
+                path.starts_with('/'),
+                "path must be absolute: {path} (setting {})",
+                def.id
+            );
         }
     }
 }
@@ -1842,10 +2242,7 @@ fn validate_non_json_file_accepts_anything() {
 #[test]
 fn validate_non_file_settings_pass_through() {
     // Bool, Number, etc. settings always pass validation.
-    let result = validate_setting_value(
-        "ai.anthropic.allow",
-        &SettingValue::Bool(true),
-    );
+    let result = validate_setting_value("ai.anthropic.allow", &SettingValue::Bool(true));
     assert!(result.is_ok());
 }
 
@@ -1853,7 +2250,10 @@ fn validate_non_file_settings_pass_through() {
 fn file_type_resolved_setting_has_file_value() {
     // The resolved setting for a File type should have a File value with path.
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let s = resolved.iter().find(|s| s.id == "ai.google.gemini.settings_json").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "ai.google.gemini.settings_json")
+        .unwrap();
     assert_eq!(s.setting_type, SettingType::File);
     let (path, _content) = s.effective_value.as_file().expect("should be a File value");
     assert_eq!(path, "/root/.gemini/settings.json");
@@ -1874,7 +2274,9 @@ fn api_key_settings_have_env_vars_metadata() {
         ("ai.google.api_key", "GEMINI_API_KEY"),
     ];
     for (id, expected_var) in &cases {
-        let def = defs.iter().find(|d| d.id == *id)
+        let def = defs
+            .iter()
+            .find(|d| d.id == *id)
             .unwrap_or_else(|| panic!("missing setting {id}"));
         assert!(
             def.metadata.env_vars.contains(&expected_var.to_string()),
@@ -1891,7 +2293,9 @@ fn builtin_env_settings_exist() {
     let defs = setting_definitions();
     let required = ["TERM", "HOME", "PATH", "LANG"];
     for var in &required {
-        let found = defs.iter().any(|d| d.metadata.env_vars.contains(&var.to_string()));
+        let found = defs
+            .iter()
+            .any(|d| d.metadata.env_vars.contains(&var.to_string()));
         assert!(found, "no setting definition injects env var {var}");
     }
 }
@@ -1903,7 +2307,9 @@ fn ca_bundle_setting_injects_three_env_vars() {
     let defs = setting_definitions();
     let ca_vars = ["REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
     for var in &ca_vars {
-        let found = defs.iter().any(|d| d.metadata.env_vars.contains(&var.to_string()));
+        let found = defs
+            .iter()
+            .any(|d| d.metadata.env_vars.contains(&var.to_string()));
         assert!(found, "no setting definition injects env var {var}");
     }
 }
@@ -1912,9 +2318,10 @@ fn ca_bundle_setting_injects_three_env_vars() {
 fn guest_config_env_from_metadata_env_vars() {
     // settings_to_guest_config should inject env vars based on
     // metadata.env_vars, not hardcoded API_KEY_MAP.
-    let user = file_with(vec![
-        ("ai.anthropic.api_key", SettingValue::Text("sk-test".into())),
-    ]);
+    let user = file_with(vec![(
+        "ai.anthropic.api_key",
+        SettingValue::Text("sk-test".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap();
@@ -1949,7 +2356,10 @@ fn ca_bundle_injected_as_three_env_vars() {
 fn corp_can_override_builtin_env() {
     // Corp should be able to lock down built-in env settings.
     let defs = setting_definitions();
-    let term_def = defs.iter().find(|d| d.metadata.env_vars.contains(&"TERM".to_string())).unwrap();
+    let term_def = defs
+        .iter()
+        .find(|d| d.metadata.env_vars.contains(&"TERM".to_string()))
+        .unwrap();
     let corp = file_with(vec![(&term_def.id, SettingValue::Text("dumb".into()))]);
     let resolved = resolve_settings(&empty_file(), &corp);
     let gc = settings_to_guest_config(&resolved);
@@ -1960,8 +2370,14 @@ fn corp_can_override_builtin_env() {
 #[test]
 fn user_can_override_builtin_env() {
     let defs = setting_definitions();
-    let path_def = defs.iter().find(|d| d.metadata.env_vars.contains(&"PATH".to_string())).unwrap();
-    let user = file_with(vec![(&path_def.id, SettingValue::Text("/custom/bin".into()))]);
+    let path_def = defs
+        .iter()
+        .find(|d| d.metadata.env_vars.contains(&"PATH".to_string()))
+        .unwrap();
+    let user = file_with(vec![(
+        &path_def.id,
+        SettingValue::Text("/custom/bin".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap();
@@ -1971,12 +2387,16 @@ fn user_can_override_builtin_env() {
 #[test]
 fn empty_env_var_setting_not_injected() {
     // A setting with env_vars metadata but empty value should not be injected.
-    let user = file_with(vec![
-        ("ai.anthropic.api_key", SettingValue::Text("".into())),
-    ]);
+    let user = file_with(vec![(
+        "ai.anthropic.api_key",
+        SettingValue::Text("".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
+    let has_key = gc
+        .env
+        .as_ref()
+        .is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
     assert!(!has_key, "empty API key should not be injected");
 }
 
@@ -1984,9 +2404,7 @@ fn empty_env_var_setting_not_injected() {
 fn dynamic_guest_env_still_works() {
     // Dynamic guest.env.* settings should still be injected alongside
     // metadata-driven env vars.
-    let user = file_with(vec![
-        ("guest.env.EDITOR", SettingValue::Text("vim".into())),
-    ]);
+    let user = file_with(vec![("guest.env.EDITOR", SettingValue::Text("vim".into()))]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap();
@@ -2006,7 +2424,10 @@ fn each_boot_message_fits_in_frame() {
 
     // Each env var as a SetEnv message
     for (key, value) in gc.env.unwrap_or_default() {
-        let msg = capsem_proto::HostToGuest::SetEnv { key: key.clone(), value: value.clone() };
+        let msg = capsem_proto::HostToGuest::SetEnv {
+            key: key.clone(),
+            value: value.clone(),
+        };
         let frame = encode_host_msg(&msg).unwrap();
         assert!(
             frame.len() - 4 <= MAX_FRAME_SIZE as usize,
@@ -2041,9 +2462,13 @@ fn all_env_vars_metadata_refers_to_text_settings() {
     for def in &defs {
         if !def.metadata.env_vars.is_empty() {
             assert!(
-                matches!(def.setting_type, SettingType::Text | SettingType::ApiKey | SettingType::Url | SettingType::Email),
+                matches!(
+                    def.setting_type,
+                    SettingType::Text | SettingType::ApiKey | SettingType::Url | SettingType::Email
+                ),
                 "setting {} has env_vars but type {:?} (should be text-like)",
-                def.id, def.setting_type,
+                def.id,
+                def.setting_type,
             );
         }
     }
@@ -2056,31 +2481,37 @@ fn all_env_vars_metadata_refers_to_text_settings() {
 #[test]
 fn settings_rejects_blocked_env_var() {
     // guest.env.LD_PRELOAD in user.toml should be silently dropped.
-    let user = file_with(vec![
-        ("guest.env.LD_PRELOAD", SettingValue::Text("/evil/lib.so".into())),
-    ]);
+    let user = file_with(vec![(
+        "guest.env.LD_PRELOAD",
+        SettingValue::Text("/evil/lib.so".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("LD_PRELOAD"));
+    let has_key = gc
+        .env
+        .as_ref()
+        .is_some_and(|e| e.contains_key("LD_PRELOAD"));
     assert!(!has_key, "LD_PRELOAD should be dropped by validation");
 }
 
 #[test]
 fn settings_rejects_ld_library_path() {
-    let user = file_with(vec![
-        ("guest.env.LD_LIBRARY_PATH", SettingValue::Text("/evil".into())),
-    ]);
+    let user = file_with(vec![(
+        "guest.env.LD_LIBRARY_PATH",
+        SettingValue::Text("/evil".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("LD_LIBRARY_PATH"));
+    let has_key = gc
+        .env
+        .as_ref()
+        .is_some_and(|e| e.contains_key("LD_LIBRARY_PATH"));
     assert!(!has_key, "LD_LIBRARY_PATH should be dropped by validation");
 }
 
 #[test]
 fn settings_accepts_normal_dynamic_env() {
-    let user = file_with(vec![
-        ("guest.env.EDITOR", SettingValue::Text("vim".into())),
-    ]);
+    let user = file_with(vec![("guest.env.EDITOR", SettingValue::Text("vim".into()))]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap();
@@ -2094,7 +2525,10 @@ fn settings_accepts_normal_dynamic_env() {
 #[test]
 fn web_search_google_allowed_by_default() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let s = resolved.iter().find(|s| s.id == "security.services.search.google.allow").unwrap();
+    let s = resolved
+        .iter()
+        .find(|s| s.id == "security.services.search.google.allow")
+        .unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(true));
     assert_eq!(s.category, "Google");
 }
@@ -2102,9 +2536,16 @@ fn web_search_google_allowed_by_default() {
 #[test]
 fn web_search_bing_duckduckgo_blocked_by_default() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    for id in &["security.services.search.bing.allow", "security.services.search.duckduckgo.allow"] {
+    for id in &[
+        "security.services.search.bing.allow",
+        "security.services.search.duckduckgo.allow",
+    ] {
         let s = resolved.iter().find(|s| s.id == *id).unwrap();
-        assert_eq!(s.effective_value, SettingValue::Bool(false), "expected {id} to be false");
+        assert_eq!(
+            s.effective_value,
+            SettingValue::Bool(false),
+            "expected {id} to be false"
+        );
     }
 }
 
@@ -2113,7 +2554,11 @@ fn web_search_google_domains_in_policy() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("www.google.com");
-    assert_eq!(action, Action::Allow, "google.com should be allowed by default");
+    assert_eq!(
+        action,
+        Action::Allow,
+        "google.com should be allowed by default"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -2126,7 +2571,11 @@ fn custom_allow_allows_domains() {
     let dp = settings_to_domain_policy(&resolved);
     // elie.net is in the default custom_allow
     let (action, _) = dp.evaluate("elie.net");
-    assert_eq!(action, Action::Allow, "elie.net should be allowed via custom_allow");
+    assert_eq!(
+        action,
+        Action::Allow,
+        "elie.net should be allowed via custom_allow"
+    );
 }
 
 #[test]
@@ -2139,9 +2588,10 @@ fn custom_allow_wildcard_allows_subdomains() {
 
 #[test]
 fn custom_block_blocks_domains() {
-    let user = file_with(vec![
-        ("security.web.custom_block", SettingValue::Text("evil.com".into())),
-    ]);
+    let user = file_with(vec![(
+        "security.web.custom_block",
+        SettingValue::Text("evil.com".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("evil.com");
@@ -2151,20 +2601,31 @@ fn custom_block_blocks_domains() {
 #[test]
 fn custom_block_beats_custom_allow_on_overlap() {
     let user = file_with(vec![
-        ("security.web.custom_allow", SettingValue::Text("overlap.com".into())),
-        ("security.web.custom_block", SettingValue::Text("overlap.com".into())),
+        (
+            "security.web.custom_allow",
+            SettingValue::Text("overlap.com".into()),
+        ),
+        (
+            "security.web.custom_block",
+            SettingValue::Text("overlap.com".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("overlap.com");
-    assert_eq!(action, Action::Deny, "block must beat allow for overlapping domains");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "block must beat allow for overlapping domains"
+    );
 }
 
 #[test]
 fn custom_allow_empty_entries_tolerated() {
-    let user = file_with(vec![
-        ("security.web.custom_allow", SettingValue::Text(",, , foo.com , ,".into())),
-    ]);
+    let user = file_with(vec![(
+        "security.web.custom_allow",
+        SettingValue::Text(",, , foo.com , ,".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("foo.com");
@@ -2173,26 +2634,36 @@ fn custom_allow_empty_entries_tolerated() {
 
 #[test]
 fn custom_block_empty_is_noop() {
-    let user = file_with(vec![
-        ("security.web.custom_block", SettingValue::Text("".into())),
-    ]);
+    let user = file_with(vec![(
+        "security.web.custom_block",
+        SettingValue::Text("".into()),
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let dp = settings_to_domain_policy(&resolved);
     // Default custom_allow domains (elie.net) still allowed
     let (action, _) = dp.evaluate("elie.net");
-    assert_eq!(action, Action::Allow, "empty custom_block should not block anything");
+    assert_eq!(
+        action,
+        Action::Allow,
+        "empty custom_block should not block anything"
+    );
 }
 
 #[test]
 fn custom_allow_corp_override() {
     // Corp sets custom_allow to empty -> user's default elie.net is gone
-    let corp = file_with(vec![
-        ("security.web.custom_allow", SettingValue::Text("".into())),
-    ]);
+    let corp = file_with(vec![(
+        "security.web.custom_allow",
+        SettingValue::Text("".into()),
+    )]);
     let resolved = resolve_settings(&empty_file(), &corp);
     let dp = settings_to_domain_policy(&resolved);
     let (action, _) = dp.evaluate("elie.net");
-    assert_eq!(action, Action::Deny, "corp should be able to override custom_allow");
+    assert_eq!(
+        action,
+        Action::Deny,
+        "corp should be able to override custom_allow"
+    );
 }
 
 #[test]
@@ -2257,11 +2728,13 @@ fn claude_default_settings_has_capsem_mcp_server() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
-    let claude = files.iter().find(|f| f.path == "/root/.claude/settings.json").unwrap();
+    let claude = files
+        .iter()
+        .find(|f| f.path == "/root/.claude/settings.json")
+        .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
     assert_eq!(
-        parsed["mcpServers"]["local"]["command"],
-        "/run/capsem-mcp-server",
+        parsed["mcpServers"]["local"]["command"], "/run/capsem-mcp-server",
         "capsem MCP server should be injected into Claude settings.json"
     );
     // Original permissions should still be there
@@ -2273,11 +2746,13 @@ fn gemini_default_settings_has_capsem_mcp_server() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
-    let gemini = files.iter().find(|f| f.path == "/root/.gemini/settings.json").unwrap();
+    let gemini = files
+        .iter()
+        .find(|f| f.path == "/root/.gemini/settings.json")
+        .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
     assert_eq!(
-        parsed["mcpServers"]["local"]["command"],
-        "/run/capsem-mcp-server",
+        parsed["mcpServers"]["local"]["command"], "/run/capsem-mcp-server",
         "capsem MCP server should be injected into Gemini settings.json"
     );
 }
@@ -2285,16 +2760,20 @@ fn gemini_default_settings_has_capsem_mcp_server() {
 #[test]
 fn user_mcp_servers_preserved_alongside_capsem() {
     let custom = r#"{"mcpServers":{"myserver":{"command":"my-tool"}}}"#;
-    let user = file_with(vec![
-        ("ai.google.gemini.settings_json", SettingValue::File {
+    let user = file_with(vec![(
+        "ai.google.gemini.settings_json",
+        SettingValue::File {
             path: "/root/.gemini/settings.json".into(),
             content: custom.into(),
-        }),
-    ]);
+        },
+    )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
-    let gemini = files.iter().find(|f| f.path == "/root/.gemini/settings.json").unwrap();
+    let gemini = files
+        .iter()
+        .find(|f| f.path == "/root/.gemini/settings.json")
+        .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
     assert_eq!(parsed["mcpServers"]["myserver"]["command"], "my-tool");
     assert_eq!(
@@ -2309,8 +2788,14 @@ fn capsem_mcp_not_in_non_settings_json_files() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap();
-    let projects = files.iter().find(|f| f.path == "/root/.gemini/projects.json").unwrap();
-    assert!(!projects.content.contains("mcpServers"), "projects.json should not have mcpServers injected");
+    let projects = files
+        .iter()
+        .find(|f| f.path == "/root/.gemini/projects.json")
+        .unwrap();
+    assert!(
+        !projects.content.contains("mcpServers"),
+        "projects.json should not have mcpServers injected"
+    );
 }
 
 #[test]
@@ -2324,8 +2809,7 @@ fn claude_state_json_has_capsem_mcp_server() {
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
     assert_eq!(
-        parsed["mcpServers"]["local"]["command"],
-        "/run/capsem-mcp-server",
+        parsed["mcpServers"]["local"]["command"], "/run/capsem-mcp-server",
         "capsem MCP server should be injected into .claude.json"
     );
 }
@@ -2391,7 +2875,10 @@ fn inject_capsem_mcp_server_toml_invalid_passthrough() {
 fn toml_registry_parses() {
     // The embedded defaults.toml must parse without panicking.
     let defs = setting_definitions();
-    assert!(!defs.is_empty(), "defaults.toml must produce at least one setting");
+    assert!(
+        !defs.is_empty(),
+        "defaults.toml must produce at least one setting"
+    );
 }
 
 #[test]
@@ -2440,7 +2927,10 @@ fn toml_registry_enabled_by_inherited() {
         allow.enabled_by.is_none(),
         "the toggle itself should not have enabled_by",
     );
-    let api_key = defs.iter().find(|d| d.id == "ai.anthropic.api_key").unwrap();
+    let api_key = defs
+        .iter()
+        .find(|d| d.id == "ai.anthropic.api_key")
+        .unwrap();
     assert_eq!(
         api_key.enabled_by.as_deref(),
         Some("ai.anthropic.allow"),
@@ -2456,14 +2946,27 @@ fn toml_registry_meta_fields() {
 
     // Registry toggles should have domains in metadata
     let github = defs.iter().find(|d| d.id == SETTING_GITHUB_ALLOW).unwrap();
-    assert!(!github.metadata.domains.is_empty(), "github toggle should have domain metadata");
+    assert!(
+        !github.metadata.domains.is_empty(),
+        "github toggle should have domain metadata"
+    );
 
     // security.web.allow_read should be a bool
-    let ar = defs.iter().find(|d| d.id == "security.web.allow_read").unwrap();
-    assert_eq!(ar.setting_type, SettingType::Bool, "allow_read should be bool");
+    let ar = defs
+        .iter()
+        .find(|d| d.id == "security.web.allow_read")
+        .unwrap();
+    assert_eq!(
+        ar.setting_type,
+        SettingType::Bool,
+        "allow_read should be bool"
+    );
 
     // API key settings should have env_vars
-    let key = defs.iter().find(|d| d.id == "ai.anthropic.api_key").unwrap();
+    let key = defs
+        .iter()
+        .find(|d| d.id == "ai.anthropic.api_key")
+        .unwrap();
     assert!(
         !key.metadata.env_vars.is_empty(),
         "api_key settings should have env_vars metadata",
@@ -2474,7 +2977,13 @@ fn toml_registry_meta_fields() {
 // Config lint tests
 // -----------------------------------------------------------------------
 
-fn make_resolved(id: &str, stype: SettingType, value: SettingValue, meta: SettingMetadata, enabled_by: Option<&str>) -> ResolvedSetting {
+fn make_resolved(
+    id: &str,
+    stype: SettingType,
+    value: SettingValue,
+    meta: SettingMetadata,
+    enabled_by: Option<&str>,
+) -> ResolvedSetting {
     ResolvedSetting {
         id: id.to_string(),
         category: "Test".to_string(),
@@ -2497,47 +3006,90 @@ fn make_resolved(id: &str, stype: SettingType, value: SettingValue, meta: Settin
 // -- JSON validation (File values) --
 
 fn file_val(path: &str, content: &str) -> SettingValue {
-    SettingValue::File { path: path.into(), content: content.into() }
+    SettingValue::File {
+        path: path.into(),
+        content: content.into(),
+    }
 }
 
 #[test]
 fn config_lint_valid_json_passes() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", r#"{"key":"val"}"#), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", r#"{"key":"val"}"#),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
 
 #[test]
 fn config_lint_malformed_json_gives_clear_error() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", "{bad json}"), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", "{bad json}"),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
-    assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("invalid JSON")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "error" && i.message.contains("invalid JSON")));
 }
 
 #[test]
 fn config_lint_json_not_object_warns() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", "42"), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", "42"),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
-    assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("not an object")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "warning" && i.message.contains("not an object")));
 }
 
 #[test]
 fn config_lint_empty_json_file_ok() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", ""), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", ""),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
 
 #[test]
 fn config_lint_json_with_trailing_comma_gives_error() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", r#"{"a":1,}"#), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", r#"{"a":1,}"#),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.iter().any(|i| i.severity == "error"));
 }
 
 #[test]
 fn config_lint_json_with_unicode_passes() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", r#"{"name":"cafe\u0301"}"#), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", r#"{"name":"cafe\u0301"}"#),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
@@ -2545,7 +3097,13 @@ fn config_lint_json_with_unicode_passes() {
 #[test]
 fn config_lint_json_deeply_nested_passes() {
     let json = r#"{"a":{"b":{"c":{"d":{"e":"deep"}}}}}"#;
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", json), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", json),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
@@ -2554,46 +3112,96 @@ fn config_lint_json_deeply_nested_passes() {
 fn config_lint_json_huge_payload_passes() {
     let big_val = "x".repeat(1_000_000);
     let json = format!(r#"{{"data":"{}"}}"#, big_val);
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/test.json", &json), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/test.json", &json),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
 
 #[test]
 fn config_lint_file_path_must_be_absolute() {
-    let s = make_resolved("test.file", SettingType::File, file_val("relative/path.json", "{}"), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("relative/path.json", "{}"),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
-    assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("absolute")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "error" && i.message.contains("absolute")));
 }
 
 #[test]
 fn config_lint_file_path_no_traversal() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/root/../etc/passwd", "{}"), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/root/../etc/passwd", "{}"),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
-    assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("..")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "error" && i.message.contains("..")));
 }
 
 #[test]
 fn config_lint_file_unusual_path_warns() {
-    let s = make_resolved("test.file", SettingType::File, file_val("/tmp/test.json", "{}"), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "test.file",
+        SettingType::File,
+        file_val("/tmp/test.json", "{}"),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
-    assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("unusual")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "warning" && i.message.contains("unusual")));
 }
 
 // -- Number validation --
 
 #[test]
 fn config_lint_number_in_range_ok() {
-    let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
-    let s = make_resolved("vm.cpu", SettingType::Number, SettingValue::Number(4), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(128),
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "vm.cpu",
+        SettingType::Number,
+        SettingValue::Number(4),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
 
 #[test]
 fn config_lint_number_below_min_error() {
-    let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
-    let s = make_resolved("vm.cpu", SettingType::Number, SettingValue::Number(0), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(128),
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "vm.cpu",
+        SettingType::Number,
+        SettingValue::Number(0),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, "error");
@@ -2602,8 +3210,18 @@ fn config_lint_number_below_min_error() {
 
 #[test]
 fn config_lint_number_above_max_error() {
-    let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
-    let s = make_resolved("vm.disk", SettingType::Number, SettingValue::Number(256), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(128),
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "vm.disk",
+        SettingType::Number,
+        SettingValue::Number(256),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, "error");
@@ -2612,9 +3230,25 @@ fn config_lint_number_above_max_error() {
 
 #[test]
 fn config_lint_number_at_boundary_ok() {
-    let meta = SettingMetadata { min: Some(1), max: Some(128), ..Default::default() };
-    let s1 = make_resolved("vm.min", SettingType::Number, SettingValue::Number(1), meta.clone(), None);
-    let s2 = make_resolved("vm.max", SettingType::Number, SettingValue::Number(128), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(128),
+        ..Default::default()
+    };
+    let s1 = make_resolved(
+        "vm.min",
+        SettingType::Number,
+        SettingValue::Number(1),
+        meta.clone(),
+        None,
+    );
+    let s2 = make_resolved(
+        "vm.max",
+        SettingType::Number,
+        SettingValue::Number(128),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s1, s2]);
     assert!(issues.is_empty());
 }
@@ -2623,16 +3257,34 @@ fn config_lint_number_at_boundary_ok() {
 
 #[test]
 fn config_lint_valid_choice_ok() {
-    let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
-    let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("deny".into()), meta, None);
+    let meta = SettingMetadata {
+        choices: vec!["allow".into(), "deny".into()],
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "net.action",
+        SettingType::Text,
+        SettingValue::Text("deny".into()),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
 
 #[test]
 fn config_lint_invalid_choice_error() {
-    let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
-    let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("block".into()), meta, None);
+    let meta = SettingMetadata {
+        choices: vec!["allow".into(), "deny".into()],
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "net.action",
+        SettingType::Text,
+        SettingValue::Text("block".into()),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, "error");
@@ -2641,8 +3293,17 @@ fn config_lint_invalid_choice_error() {
 
 #[test]
 fn config_lint_empty_choice_when_choices_defined_error() {
-    let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
-    let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("".into()), meta, None);
+    let meta = SettingMetadata {
+        choices: vec!["allow".into(), "deny".into()],
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "net.action",
+        SettingType::Text,
+        SettingValue::Text("".into()),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, "error");
@@ -2650,8 +3311,17 @@ fn config_lint_empty_choice_when_choices_defined_error() {
 
 #[test]
 fn config_lint_case_sensitive_choice() {
-    let meta = SettingMetadata { choices: vec!["allow".into(), "deny".into()], ..Default::default() };
-    let s = make_resolved("net.action", SettingType::Text, SettingValue::Text("Allow".into()), meta, None);
+    let meta = SettingMetadata {
+        choices: vec!["allow".into(), "deny".into()],
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "net.action",
+        SettingType::Text,
+        SettingValue::Text("Allow".into()),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1, "'Allow' != 'allow' -- case sensitive");
 }
@@ -2660,37 +3330,88 @@ fn config_lint_case_sensitive_choice() {
 
 #[test]
 fn config_lint_apikey_with_whitespace_warns() {
-    let s = make_resolved("ai.key", SettingType::ApiKey, SettingValue::Text("sk-ant key".into()), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "ai.key",
+        SettingType::ApiKey,
+        SettingValue::Text("sk-ant key".into()),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
-    assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("whitespace")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "warning" && i.message.contains("whitespace")));
 }
 
 #[test]
 fn config_lint_apikey_with_newline_warns() {
-    let s = make_resolved("ai.key", SettingType::ApiKey, SettingValue::Text("sk-ant\n".into()), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "ai.key",
+        SettingType::ApiKey,
+        SettingValue::Text("sk-ant\n".into()),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
-    assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("whitespace")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "warning" && i.message.contains("whitespace")));
 }
 
 #[test]
 fn config_lint_apikey_empty_when_enabled_warns() {
-    let toggle = make_resolved("ai.provider.allow", SettingType::Bool, SettingValue::Bool(true), SettingMetadata::default(), None);
-    let key = make_resolved("ai.provider.key", SettingType::ApiKey, SettingValue::Text("".into()), SettingMetadata::default(), Some("ai.provider.allow"));
+    let toggle = make_resolved(
+        "ai.provider.allow",
+        SettingType::Bool,
+        SettingValue::Bool(true),
+        SettingMetadata::default(),
+        None,
+    );
+    let key = make_resolved(
+        "ai.provider.key",
+        SettingType::ApiKey,
+        SettingValue::Text("".into()),
+        SettingMetadata::default(),
+        Some("ai.provider.allow"),
+    );
     let issues = config_lint(&[toggle, key]);
-    assert!(issues.iter().any(|i| i.severity == "warning" && i.message.contains("not set")));
+    assert!(issues
+        .iter()
+        .any(|i| i.severity == "warning" && i.message.contains("not set")));
 }
 
 #[test]
 fn config_lint_apikey_empty_when_disabled_ok() {
-    let toggle = make_resolved("ai.provider.allow", SettingType::Bool, SettingValue::Bool(false), SettingMetadata::default(), None);
-    let key = make_resolved("ai.provider.key", SettingType::ApiKey, SettingValue::Text("".into()), SettingMetadata::default(), Some("ai.provider.allow"));
+    let toggle = make_resolved(
+        "ai.provider.allow",
+        SettingType::Bool,
+        SettingValue::Bool(false),
+        SettingMetadata::default(),
+        None,
+    );
+    let key = make_resolved(
+        "ai.provider.key",
+        SettingType::ApiKey,
+        SettingValue::Text("".into()),
+        SettingMetadata::default(),
+        Some("ai.provider.allow"),
+    );
     let issues = config_lint(&[toggle, key]);
-    assert!(issues.is_empty(), "disabled provider with empty key is fine");
+    assert!(
+        issues.is_empty(),
+        "disabled provider with empty key is fine"
+    );
 }
 
 #[test]
 fn config_lint_apikey_normal_value_ok() {
-    let s = make_resolved("ai.key", SettingType::ApiKey, SettingValue::Text("sk-ant-api03-valid".into()), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "ai.key",
+        SettingType::ApiKey,
+        SettingValue::Text("sk-ant-api03-valid".into()),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
@@ -2699,7 +3420,13 @@ fn config_lint_apikey_normal_value_ok() {
 
 #[test]
 fn config_lint_text_with_nul_byte_error() {
-    let s = make_resolved("t.val", SettingType::Text, SettingValue::Text("hello\0world".into()), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "t.val",
+        SettingType::Text,
+        SettingValue::Text("hello\0world".into()),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, "error");
@@ -2708,14 +3435,26 @@ fn config_lint_text_with_nul_byte_error() {
 
 #[test]
 fn config_lint_text_normal_ok() {
-    let s = make_resolved("t.val", SettingType::Text, SettingValue::Text("hello".into()), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "t.val",
+        SettingType::Text,
+        SettingValue::Text("hello".into()),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
 
 #[test]
 fn config_lint_text_unicode_ok() {
-    let s = make_resolved("t.val", SettingType::Text, SettingValue::Text("cafe\u{0301}".into()), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "t.val",
+        SettingType::Text,
+        SettingValue::Text("cafe\u{0301}".into()),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
@@ -2723,7 +3462,13 @@ fn config_lint_text_unicode_ok() {
 #[test]
 fn config_lint_text_very_long_ok() {
     let long_val = "x".repeat(10_000);
-    let s = make_resolved("t.val", SettingType::Text, SettingValue::Text(long_val), SettingMetadata::default(), None);
+    let s = make_resolved(
+        "t.val",
+        SettingType::Text,
+        SettingValue::Text(long_val),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
@@ -2732,8 +3477,18 @@ fn config_lint_text_very_long_ok() {
 
 #[test]
 fn config_lint_all_issues_serialize_deserialize() {
-    let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
-    let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(10),
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "v.n",
+        SettingType::Number,
+        SettingValue::Number(99),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     let json = serde_json::to_string(&issues).unwrap();
     let roundtrip: Vec<ConfigIssue> = serde_json::from_str(&json).unwrap();
@@ -2742,8 +3497,18 @@ fn config_lint_all_issues_serialize_deserialize() {
 
 #[test]
 fn config_lint_issue_messages_are_nonempty() {
-    let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
-    let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(10),
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "v.n",
+        SettingType::Number,
+        SettingValue::Number(99),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     for issue in &issues {
         assert!(!issue.message.is_empty());
@@ -2753,8 +3518,18 @@ fn config_lint_issue_messages_are_nonempty() {
 
 #[test]
 fn config_lint_issue_ids_are_valid_setting_ids() {
-    let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
-    let s = make_resolved("vm.resources.cpu_count", SettingType::Number, SettingValue::Number(99), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(10),
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "vm.resources.cpu_count",
+        SettingType::Number,
+        SettingValue::Number(99),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     for issue in &issues {
         assert_eq!(issue.id, "vm.resources.cpu_count");
@@ -2768,14 +3543,33 @@ fn config_lint_default_config_has_no_errors() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let issues = config_lint(&resolved);
     let errors: Vec<_> = issues.iter().filter(|i| i.severity == "error").collect();
-    assert!(errors.is_empty(), "default config should have no errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "default config should have no errors: {errors:?}"
+    );
 }
 
 #[test]
 fn config_lint_returns_multiple_issues() {
-    let meta_num = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
-    let s1 = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta_num, None);
-    let s2 = make_resolved("v.f", SettingType::File, file_val("/root/test.json", "{bad}"), SettingMetadata::default(), None);
+    let meta_num = SettingMetadata {
+        min: Some(1),
+        max: Some(10),
+        ..Default::default()
+    };
+    let s1 = make_resolved(
+        "v.n",
+        SettingType::Number,
+        SettingValue::Number(99),
+        meta_num,
+        None,
+    );
+    let s2 = make_resolved(
+        "v.f",
+        SettingType::File,
+        file_val("/root/test.json", "{bad}"),
+        SettingMetadata::default(),
+        None,
+    );
     let issues = config_lint(&[s1, s2]);
     assert!(issues.len() >= 2, "expected multiple issues: {issues:?}");
 }
@@ -2788,31 +3582,71 @@ fn config_lint_empty_key_has_docs_url() {
         docs_url: Some("https://example.com/keys".into()),
         ..Default::default()
     };
-    let toggle = make_resolved("ai.provider.allow", SettingType::Bool, SettingValue::Bool(true), SettingMetadata::default(), None);
-    let key = make_resolved("ai.provider.key", SettingType::ApiKey, SettingValue::Text("".into()), meta, Some("ai.provider.allow"));
+    let toggle = make_resolved(
+        "ai.provider.allow",
+        SettingType::Bool,
+        SettingValue::Bool(true),
+        SettingMetadata::default(),
+        None,
+    );
+    let key = make_resolved(
+        "ai.provider.key",
+        SettingType::ApiKey,
+        SettingValue::Text("".into()),
+        meta,
+        Some("ai.provider.allow"),
+    );
     let issues = config_lint(&[toggle, key]);
-    let empty_key_issue = issues.iter().find(|i| i.message.contains("not set")).unwrap();
-    assert_eq!(empty_key_issue.docs_url.as_deref(), Some("https://example.com/keys"));
+    let empty_key_issue = issues
+        .iter()
+        .find(|i| i.message.contains("not set"))
+        .unwrap();
+    assert_eq!(
+        empty_key_issue.docs_url.as_deref(),
+        Some("https://example.com/keys")
+    );
 }
 
 #[test]
 fn config_lint_non_key_issue_no_docs_url() {
-    let meta = SettingMetadata { min: Some(1), max: Some(10), ..Default::default() };
-    let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
+    let meta = SettingMetadata {
+        min: Some(1),
+        max: Some(10),
+        ..Default::default()
+    };
+    let s = make_resolved(
+        "v.n",
+        SettingType::Number,
+        SettingValue::Number(99),
+        meta,
+        None,
+    );
     let issues = config_lint(&[s]);
     assert!(!issues.is_empty());
     for issue in &issues {
-        assert!(issue.docs_url.is_none(), "non-key issues should not have docs_url");
+        assert!(
+            issue.docs_url.is_none(),
+            "non-key issues should not have docs_url"
+        );
     }
 }
 
 #[test]
 fn docs_url_parsed_from_toml() {
     let defs = setting_definitions();
-    let anthropic_key = defs.iter().find(|d| d.id == "ai.anthropic.api_key").unwrap();
-    assert_eq!(anthropic_key.metadata.docs_url.as_deref(), Some("https://console.anthropic.com/settings/keys"));
+    let anthropic_key = defs
+        .iter()
+        .find(|d| d.id == "ai.anthropic.api_key")
+        .unwrap();
+    assert_eq!(
+        anthropic_key.metadata.docs_url.as_deref(),
+        Some("https://console.anthropic.com/settings/keys")
+    );
     let github_token = defs.iter().find(|d| d.id == SETTING_GITHUB_TOKEN).unwrap();
-    assert_eq!(github_token.metadata.docs_url.as_deref(), Some("https://github.com/settings/tokens"));
+    assert_eq!(
+        github_token.metadata.docs_url.as_deref(),
+        Some("https://github.com/settings/tokens")
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -2887,7 +3721,18 @@ fn settings_tree_groups_have_expected_names() {
     }
 
     let names = collect_group_names(&tree);
-    for expected in &["AI Providers", "Security", "Web", "Services", "Search Engines", "Package Registries", "Appearance", "VM", "Environment", "Resources"] {
+    for expected in &[
+        "AI Providers",
+        "Security",
+        "Web",
+        "Services",
+        "Search Engines",
+        "Package Registries",
+        "Appearance",
+        "VM",
+        "Environment",
+        "Resources",
+    ] {
         assert!(
             names.contains(&expected.to_string()),
             "tree missing group: {expected}",
@@ -2948,7 +3793,10 @@ fn settings_tree_enabled_by_on_groups() {
 
     fn find_group(nodes: &[SettingsNode], key: &str) -> Option<SettingsNode> {
         for node in nodes {
-            if let SettingsNode::Group { key: k, children, .. } = node {
+            if let SettingsNode::Group {
+                key: k, children, ..
+            } = node
+            {
                 if k == key {
                     return Some(node.clone());
                 }
@@ -3031,8 +3879,14 @@ fn action_nodes_not_in_setting_definitions() {
 #[test]
 fn dark_mode_has_side_effect() {
     let defs = setting_definitions();
-    let dark_mode = defs.iter().find(|d| d.id == "appearance.dark_mode").unwrap();
-    assert_eq!(dark_mode.metadata.side_effect, Some(SideEffect::ToggleTheme));
+    let dark_mode = defs
+        .iter()
+        .find(|d| d.id == "appearance.dark_mode")
+        .unwrap();
+    assert_eq!(
+        dark_mode.metadata.side_effect,
+        Some(SideEffect::ToggleTheme)
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -3061,15 +3915,15 @@ fn mcp_servers_in_tree() {
     let tree = build_settings_tree_with_mcp(&resolved, &servers);
 
     // Find the MCP Servers group
-    let mcp_group = tree.iter().find(|n| {
-        matches!(n, SettingsNode::Group { name, .. } if name == "MCP Servers")
-    });
+    let mcp_group = tree
+        .iter()
+        .find(|n| matches!(n, SettingsNode::Group { name, .. } if name == "MCP Servers"));
     assert!(mcp_group.is_some(), "tree should have MCP Servers group");
 
     if let Some(SettingsNode::Group { children, .. }) = mcp_group {
-        let has_local = children.iter().any(|c| {
-            matches!(c, SettingsNode::McpServer(s) if s.key == "local")
-        });
+        let has_local = children
+            .iter()
+            .any(|c| matches!(c, SettingsNode::McpServer(s) if s.key == "local"));
         assert!(has_local, "MCP Servers group should contain local");
     }
 }
@@ -3115,8 +3969,9 @@ fn with_temp_configs<F: FnOnce(&std::path::Path, &std::path::Path)>(
     // Serialize across the whole test binary so parallel tests don't
     // stomp each other's CAPSEM_*_CONFIG (caused flaky batch_update_*
     // failures before this lock).
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _guard = TEST_CONFIG_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
 
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
@@ -3200,10 +4055,7 @@ fn batch_update_rejects_mixed_batch_atomically() {
 fn batch_update_rejects_unknown_setting_id() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
-        changes.insert(
-            "nonexistent.setting".to_string(),
-            SettingValue::Bool(true),
-        );
+        changes.insert("nonexistent.setting".to_string(), SettingValue::Bool(true));
         let result = loader::batch_update_settings(&changes);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown setting"));
@@ -3239,7 +4091,10 @@ fn load_settings_response_returns_all_fields() {
         let response = loader::load_settings_response();
         assert!(!response.tree.is_empty(), "tree should not be empty");
         // Presets should include medium and high
-        assert!(response.presets.len() >= 2, "should have at least 2 presets");
+        assert!(
+            response.presets.len() >= 2,
+            "should have at least 2 presets"
+        );
     });
 }
 
@@ -3251,7 +4106,10 @@ fn load_settings_response_returns_all_fields() {
 fn git_credentials_generated_with_github_token() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
-        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+        (
+            SETTING_GITHUB_TOKEN,
+            SettingValue::Text("ghp_test123".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3277,9 +4135,15 @@ fn git_credentials_generated_with_github_token() {
 fn git_credentials_generated_with_multiple_providers() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
-        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+        (
+            SETTING_GITHUB_TOKEN,
+            SettingValue::Text("ghp_test123".into()),
+        ),
         (SETTING_GITLAB_ALLOW, SettingValue::Bool(true)),
-        (SETTING_GITLAB_TOKEN, SettingValue::Text("glpat-test456".into())),
+        (
+            SETTING_GITLAB_TOKEN,
+            SettingValue::Text("glpat-test456".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3300,7 +4164,10 @@ fn git_credentials_generated_with_multiple_providers() {
 fn git_credentials_not_generated_when_allow_false() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
-        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+        (
+            SETTING_GITHUB_TOKEN,
+            SettingValue::Text("ghp_test123".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3422,7 +4289,10 @@ fn git_credentials_gitconfig_not_generated_without_tokens() {
         .files
         .as_ref()
         .is_some_and(|f| f.iter().any(|f| f.path == "/root/.gitconfig"));
-    assert!(!has_creds, ".git-credentials should not exist without tokens");
+    assert!(
+        !has_creds,
+        ".git-credentials should not exist without tokens"
+    );
     assert!(!has_gitconfig, ".gitconfig should not exist without tokens");
 }
 
@@ -3433,8 +4303,14 @@ fn git_credentials_gitconfig_not_generated_without_tokens() {
 #[test]
 fn git_identity_env_vars_injected() {
     let user = file_with(vec![
-        ("repository.git.identity.author_name", SettingValue::Text("Test User".into())),
-        ("repository.git.identity.author_email", SettingValue::Text("test@example.com".into())),
+        (
+            "repository.git.identity.author_name",
+            SettingValue::Text("Test User".into()),
+        ),
+        (
+            "repository.git.identity.author_email",
+            SettingValue::Text("test@example.com".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3450,10 +4326,22 @@ fn git_identity_env_vars_absent_when_empty() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
-    assert!(!env.contains_key("GIT_AUTHOR_NAME"), "GIT_AUTHOR_NAME should not be set when empty");
-    assert!(!env.contains_key("GIT_COMMITTER_NAME"), "GIT_COMMITTER_NAME should not be set when empty");
-    assert!(!env.contains_key("GIT_AUTHOR_EMAIL"), "GIT_AUTHOR_EMAIL should not be set when empty");
-    assert!(!env.contains_key("GIT_COMMITTER_EMAIL"), "GIT_COMMITTER_EMAIL should not be set when empty");
+    assert!(
+        !env.contains_key("GIT_AUTHOR_NAME"),
+        "GIT_AUTHOR_NAME should not be set when empty"
+    );
+    assert!(
+        !env.contains_key("GIT_COMMITTER_NAME"),
+        "GIT_COMMITTER_NAME should not be set when empty"
+    );
+    assert!(
+        !env.contains_key("GIT_AUTHOR_EMAIL"),
+        "GIT_AUTHOR_EMAIL should not be set when empty"
+    );
+    assert!(
+        !env.contains_key("GIT_COMMITTER_EMAIL"),
+        "GIT_COMMITTER_EMAIL should not be set when empty"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -3474,16 +4362,25 @@ fn repository_settings_exist_in_definitions() {
         SETTING_GITLAB_TOKEN,
     ];
     for id in &ids {
-        assert!(defs.iter().any(|d| d.id == *id), "missing setting definition: {id}");
+        assert!(
+            defs.iter().any(|d| d.id == *id),
+            "missing setting definition: {id}"
+        );
     }
 }
 
 #[test]
 fn default_github_allowed_gitlab_not() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gh = resolved.iter().find(|s| s.id == SETTING_GITHUB_ALLOW).unwrap();
+    let gh = resolved
+        .iter()
+        .find(|s| s.id == SETTING_GITHUB_ALLOW)
+        .unwrap();
     assert_eq!(gh.effective_value, SettingValue::Bool(true));
-    let gl = resolved.iter().find(|s| s.id == SETTING_GITLAB_ALLOW).unwrap();
+    let gl = resolved
+        .iter()
+        .find(|s| s.id == SETTING_GITLAB_ALLOW)
+        .unwrap();
     assert_eq!(gl.effective_value, SettingValue::Bool(false));
 }
 
@@ -3492,13 +4389,21 @@ fn setting_id_constants_exist_in_registry() {
     let defs = setting_definitions();
     let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
     for constant in [
-        SETTING_ANTHROPIC_ALLOW, SETTING_ANTHROPIC_API_KEY,
-        SETTING_OPENAI_ALLOW, SETTING_OPENAI_API_KEY,
-        SETTING_GOOGLE_ALLOW, SETTING_GOOGLE_API_KEY,
-        SETTING_GITHUB_ALLOW, SETTING_GITHUB_TOKEN,
-        SETTING_GITLAB_ALLOW, SETTING_GITLAB_TOKEN,
+        SETTING_ANTHROPIC_ALLOW,
+        SETTING_ANTHROPIC_API_KEY,
+        SETTING_OPENAI_ALLOW,
+        SETTING_OPENAI_API_KEY,
+        SETTING_GOOGLE_ALLOW,
+        SETTING_GOOGLE_API_KEY,
+        SETTING_GITHUB_ALLOW,
+        SETTING_GITHUB_TOKEN,
+        SETTING_GITLAB_ALLOW,
+        SETTING_GITLAB_TOKEN,
     ] {
-        assert!(ids.contains(&constant), "constant '{constant}' not found in setting_definitions()");
+        assert!(
+            ids.contains(&constant),
+            "constant '{constant}' not found in setting_definitions()"
+        );
     }
 }
 
@@ -3510,7 +4415,10 @@ fn setting_id_constants_exist_in_registry() {
 fn gh_token_injected_when_github_enabled() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
-        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
+        (
+            SETTING_GITHUB_TOKEN,
+            SettingValue::Text("ghp_test123".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3523,7 +4431,10 @@ fn gh_token_injected_when_github_enabled() {
 fn gitlab_token_injected_when_gitlab_enabled() {
     let user = file_with(vec![
         (SETTING_GITLAB_ALLOW, SettingValue::Bool(true)),
-        (SETTING_GITLAB_TOKEN, SettingValue::Text("glpat-test456".into())),
+        (
+            SETTING_GITLAB_TOKEN,
+            SettingValue::Text("glpat-test456".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3533,14 +4444,18 @@ fn gitlab_token_injected_when_gitlab_enabled() {
 
 #[test]
 fn gh_token_not_injected_when_token_empty() {
-    let user = file_with(vec![
-        (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
-    ]);
+    let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
-    assert!(!env.contains_key("GH_TOKEN"), "GH_TOKEN should not be set when token is empty");
-    assert!(!env.contains_key("GITHUB_TOKEN"), "GITHUB_TOKEN should not be set when token is empty");
+    assert!(
+        !env.contains_key("GH_TOKEN"),
+        "GH_TOKEN should not be set when token is empty"
+    );
+    assert!(
+        !env.contains_key("GITHUB_TOKEN"),
+        "GITHUB_TOKEN should not be set when token is empty"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -3554,7 +4469,10 @@ fn token_settings_have_prefix_metadata() {
     assert_eq!(gh.metadata.prefix.as_deref(), Some("ghp_"));
     let gl = defs.iter().find(|d| d.id == SETTING_GITLAB_TOKEN).unwrap();
     assert_eq!(gl.metadata.prefix.as_deref(), Some("glpat-"));
-    let anthropic = defs.iter().find(|d| d.id == SETTING_ANTHROPIC_API_KEY).unwrap();
+    let anthropic = defs
+        .iter()
+        .find(|d| d.id == SETTING_ANTHROPIC_API_KEY)
+        .unwrap();
     assert_eq!(anthropic.metadata.prefix.as_deref(), Some("sk-ant-"));
 }
 
@@ -3577,22 +4495,52 @@ fn preset_definitions_load_correctly() {
 fn preset_medium_has_correct_settings() {
     let presets = security_presets();
     let medium = presets.iter().find(|p| p.id == "medium").unwrap();
-    assert_eq!(medium.settings["security.web.allow_read"], SettingValue::Bool(true));
-    assert_eq!(medium.settings["security.web.allow_write"], SettingValue::Bool(false));
-    assert_eq!(medium.settings["security.services.search.google.allow"], SettingValue::Bool(true));
-    assert_eq!(medium.settings["security.services.search.bing.allow"], SettingValue::Bool(true));
-    assert_eq!(medium.settings["security.services.search.duckduckgo.allow"], SettingValue::Bool(true));
+    assert_eq!(
+        medium.settings["security.web.allow_read"],
+        SettingValue::Bool(true)
+    );
+    assert_eq!(
+        medium.settings["security.web.allow_write"],
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        medium.settings["security.services.search.google.allow"],
+        SettingValue::Bool(true)
+    );
+    assert_eq!(
+        medium.settings["security.services.search.bing.allow"],
+        SettingValue::Bool(true)
+    );
+    assert_eq!(
+        medium.settings["security.services.search.duckduckgo.allow"],
+        SettingValue::Bool(true)
+    );
 }
 
 #[test]
 fn preset_high_has_correct_settings() {
     let presets = security_presets();
     let high = presets.iter().find(|p| p.id == "high").unwrap();
-    assert_eq!(high.settings["security.web.allow_read"], SettingValue::Bool(false));
-    assert_eq!(high.settings["security.web.allow_write"], SettingValue::Bool(false));
-    assert_eq!(high.settings["security.services.search.google.allow"], SettingValue::Bool(true));
-    assert_eq!(high.settings["security.services.search.bing.allow"], SettingValue::Bool(false));
-    assert_eq!(high.settings["security.services.search.duckduckgo.allow"], SettingValue::Bool(false));
+    assert_eq!(
+        high.settings["security.web.allow_read"],
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        high.settings["security.web.allow_write"],
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        high.settings["security.services.search.google.allow"],
+        SettingValue::Bool(true)
+    );
+    assert_eq!(
+        high.settings["security.services.search.bing.allow"],
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        high.settings["security.services.search.duckduckgo.allow"],
+        SettingValue::Bool(false)
+    );
 }
 
 #[test]
@@ -3601,7 +4549,12 @@ fn preset_settings_are_valid_registry_ids() {
     let def_ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
     for preset in security_presets() {
         for key in preset.settings.keys() {
-            assert!(def_ids.contains(&key.as_str()), "preset '{}' has unknown setting: {}", preset.id, key);
+            assert!(
+                def_ids.contains(&key.as_str()),
+                "preset '{}' has unknown setting: {}",
+                preset.id,
+                key
+            );
         }
     }
 }
@@ -3617,8 +4570,14 @@ fn apply_preset_medium_writes_user_toml() {
     assert!(skipped.is_empty());
 
     let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(true));
-    assert_eq!(loaded.settings["security.web.allow_write"].value, SettingValue::Bool(false));
+    assert_eq!(
+        loaded.settings["security.web.allow_read"].value,
+        SettingValue::Bool(true)
+    );
+    assert_eq!(
+        loaded.settings["security.web.allow_write"].value,
+        SettingValue::Bool(false)
+    );
 }
 
 #[test]
@@ -3632,8 +4591,14 @@ fn apply_preset_high_writes_user_toml() {
     assert!(skipped.is_empty());
 
     let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(false));
-    assert_eq!(loaded.settings["security.services.search.bing.allow"].value, SettingValue::Bool(false));
+    assert_eq!(
+        loaded.settings["security.web.allow_read"].value,
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        loaded.settings["security.services.search.bing.allow"].value,
+        SettingValue::Bool(false)
+    );
 }
 
 #[test]
@@ -3658,17 +4623,26 @@ fn apply_preset_does_not_clobber_unrelated_settings() {
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
     let mut initial = SettingsFile::default();
-    initial.settings.insert("ai.google.api_key".to_string(), SettingEntry {
-        value: SettingValue::Text("AIzaTest".into()),
-        modified: now_str(),
-    });
+    initial.settings.insert(
+        "ai.google.api_key".to_string(),
+        SettingEntry {
+            value: SettingValue::Text("AIzaTest".into()),
+            modified: now_str(),
+        },
+    );
     write_settings_file(&user_path, &initial).unwrap();
 
     apply_preset_to("medium", &user_path, &corp_path).unwrap();
 
     let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(loaded.settings["ai.google.api_key"].value, SettingValue::Text("AIzaTest".into()));
-    assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(true));
+    assert_eq!(
+        loaded.settings["ai.google.api_key"].value,
+        SettingValue::Text("AIzaTest".into())
+    );
+    assert_eq!(
+        loaded.settings["security.web.allow_read"].value,
+        SettingValue::Bool(true)
+    );
 }
 
 #[test]
@@ -3734,7 +4708,10 @@ fn apply_preset_overwrites_previous_user_values() {
 
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(loaded.settings["security.web.allow_read"].value, SettingValue::Bool(false));
+    assert_eq!(
+        loaded.settings["security.web.allow_read"].value,
+        SettingValue::Bool(false)
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -3758,27 +4735,48 @@ fn migrate_old_setting_ids() {
     assert!(!file.settings.contains_key("web.search.google.allow"));
 
     // New keys present with same values
-    assert_eq!(file.settings["security.web.allow_read"].value, SettingValue::Bool(true));
-    assert_eq!(file.settings["security.web.custom_allow"].value, SettingValue::Text("example.com".into()));
-    assert_eq!(file.settings["security.services.registry.npm.allow"].value, SettingValue::Bool(false));
-    assert_eq!(file.settings["security.services.search.google.allow"].value, SettingValue::Bool(true));
+    assert_eq!(
+        file.settings["security.web.allow_read"].value,
+        SettingValue::Bool(true)
+    );
+    assert_eq!(
+        file.settings["security.web.custom_allow"].value,
+        SettingValue::Text("example.com".into())
+    );
+    assert_eq!(
+        file.settings["security.services.registry.npm.allow"].value,
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        file.settings["security.services.search.google.allow"].value,
+        SettingValue::Bool(true)
+    );
 }
 
 #[test]
 fn migrate_does_not_clobber_existing_new_keys() {
     let mut file = SettingsFile::default();
-    file.settings.insert("web.defaults.allow_read".to_string(), SettingEntry {
-        value: SettingValue::Bool(true),
-        modified: now_str(),
-    });
-    file.settings.insert("security.web.allow_read".to_string(), SettingEntry {
-        value: SettingValue::Bool(false),
-        modified: now_str(),
-    });
+    file.settings.insert(
+        "web.defaults.allow_read".to_string(),
+        SettingEntry {
+            value: SettingValue::Bool(true),
+            modified: now_str(),
+        },
+    );
+    file.settings.insert(
+        "security.web.allow_read".to_string(),
+        SettingEntry {
+            value: SettingValue::Bool(false),
+            modified: now_str(),
+        },
+    );
     migrate_setting_ids(&mut file);
 
     // New key keeps its value, old key is dropped
-    assert_eq!(file.settings["security.web.allow_read"].value, SettingValue::Bool(false));
+    assert_eq!(
+        file.settings["security.web.allow_read"].value,
+        SettingValue::Bool(false)
+    );
     assert!(!file.settings.contains_key("web.defaults.allow_read"));
 }
 
@@ -3802,10 +4800,56 @@ fn merged_defaults_only() {
     assert!(!m.network.default_allow_read);
     assert!(!m.network.default_allow_write);
     // MCP default is allow
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
     // Domain policy denies unknown domains by default
     let (action, _) = m.domain.evaluate("unknown.example.com");
     assert_eq!(action, Action::Deny);
+}
+
+#[test]
+fn merged_policies_carries_policy_v2_rules_with_corp_override() {
+    let user: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.block_prod_token]
+on = "mcp.request"
+if = 'method == "tools/call" && has(arguments.prod_token)'
+decision = "block"
+priority = 20
+reason = "user rule"
+"#,
+    )
+    .unwrap();
+    let corp: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.block_prod_token]
+on = "mcp.request"
+if = 'method == "tools/call" && has(arguments.prod_token)'
+decision = "block"
+priority = 5
+reason = "corp rule"
+"#,
+    )
+    .unwrap();
+
+    let merged = MergedPolicies::from_files(&user, &corp);
+    let subject = serde_json::json!({
+        "method": "tools/call",
+        "arguments": {
+            "prod_token": "secret"
+        }
+    });
+    let hit = merged
+        .policy
+        .find_matching_rule(PolicyCallback::McpRequest, &subject)
+        .unwrap()
+        .expect("merged Policy V2 rule should match");
+
+    assert_eq!(hit.name, "block_prod_token");
+    assert_eq!(hit.rule.priority, 5);
+    assert_eq!(hit.rule.reason.as_deref(), Some("corp rule"));
 }
 
 #[test]
@@ -3815,37 +4859,51 @@ fn merged_user_enables_provider() {
     // Network should have rules for anthropic domains
     assert!(!m.network.rules.is_empty());
     // Domain policy should have anthropic domains in allow
-    let has_anthropic = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("api.anthropic.com")
-    });
+    let has_anthropic = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
     assert!(has_anthropic, "expected anthropic domains in allow rules");
 }
 
 #[test]
 fn merged_user_enables_search() {
-    let user = file_with(vec![
-        ("security.services.search.google.allow", SettingValue::Bool(true)),
-    ]);
+    let user = file_with(vec![(
+        "security.services.search.google.allow",
+        SettingValue::Bool(true),
+    )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
-    let has_google_search = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("www.google.com")
-    });
-    assert!(has_google_search, "expected google search domains in allow rules");
+    let has_google_search = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("www.google.com"));
+    assert!(
+        has_google_search,
+        "expected google search domains in allow rules"
+    );
 }
 
 #[test]
 fn merged_mcp_default_is_allow() {
     let m = MergedPolicies::from_files(&empty_file(), &empty_file());
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
 }
 
 #[test]
 fn merged_user_sets_mcp_warn() {
     use crate::mcp::policy::{McpUserConfig, ToolDecision};
-    let user = file_with_mcp(vec![], McpUserConfig {
-        default_tool_permission: Some(ToolDecision::Warn),
-        ..Default::default()
-    });
+    let user = file_with_mcp(
+        vec![],
+        McpUserConfig {
+            default_tool_permission: Some(ToolDecision::Warn),
+            ..Default::default()
+        },
+    );
     let m = MergedPolicies::from_files(&user, &empty_file());
     assert_eq!(m.mcp.default_tool_decision, ToolDecision::Warn);
 }
@@ -3888,13 +4946,19 @@ fn apply_and_merge(preset_id: &str) -> MergedPolicies {
 #[test]
 fn preset_high_merged_mcp_warn() {
     let m = apply_and_merge("high");
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Warn);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Warn
+    );
 }
 
 #[test]
 fn preset_medium_merged_mcp_allow() {
     let m = apply_and_merge("medium");
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
 }
 
 #[test]
@@ -3967,9 +5031,11 @@ fn corp_forces_provider_on() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    let has_anthropic_allowed = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("api.anthropic.com")
-    });
+    let has_anthropic_allowed = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
     assert!(has_anthropic_allowed);
 }
 
@@ -3979,40 +5045,61 @@ fn corp_forces_provider_off() {
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let m = MergedPolicies::from_files(&user, &corp);
     // The toggle is off due to corp override, so anthropic should be blocked
-    let anthropic_allowed = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("api.anthropic.com")
-    });
+    let anthropic_allowed = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
     assert!(!anthropic_allowed);
 }
 
 #[test]
 fn corp_sets_api_key() {
-    let user = file_with(vec![("ai.openai.api_key", SettingValue::Text("user-key".into()))]);
-    let corp = file_with(vec![("ai.openai.api_key", SettingValue::Text("corp-key".into()))]);
+    let user = file_with(vec![(
+        "ai.openai.api_key",
+        SettingValue::Text("user-key".into()),
+    )]);
+    let corp = file_with(vec![(
+        "ai.openai.api_key",
+        SettingValue::Text("corp-key".into()),
+    )]);
     let m = MergedPolicies::from_files(&user, &corp);
     let env = m.guest.env.unwrap();
-    assert_eq!(env.get("OPENAI_API_KEY").map(|s| s.as_str()), Some("corp-key"));
+    assert_eq!(
+        env.get("OPENAI_API_KEY").map(|s| s.as_str()),
+        Some("corp-key")
+    );
 }
 
 #[test]
 fn corp_sets_custom_allow_list() {
     let user = empty_file();
-    let corp = file_with(vec![("security.web.custom_allow", SettingValue::Text("internal.corp.com".into()))]);
+    let corp = file_with(vec![(
+        "security.web.custom_allow",
+        SettingValue::Text("internal.corp.com".into()),
+    )]);
     let m = MergedPolicies::from_files(&user, &corp);
-    let has_corp_domain = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("internal.corp.com")
-    });
+    let has_corp_domain = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("internal.corp.com"));
     assert!(has_corp_domain);
 }
 
 #[test]
 fn corp_sets_custom_block_list() {
     let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
-    let corp = file_with(vec![("security.web.custom_block", SettingValue::Text("evil.com".into()))]);
+    let corp = file_with(vec![(
+        "security.web.custom_block",
+        SettingValue::Text("evil.com".into()),
+    )]);
     let m = MergedPolicies::from_files(&user, &corp);
-    let evil_blocked = m.network.rules.iter().any(|r| {
-        !r.allow_read && r.matcher.matches("evil.com")
-    });
+    let evil_blocked = m
+        .network
+        .rules
+        .iter()
+        .any(|r| !r.allow_read && r.matcher.matches("evil.com"));
     assert!(evil_blocked);
 }
 
@@ -4029,6 +5116,7 @@ fn corp_mcp_overrides_preset() {
             default_tool_permission: Some(ToolDecision::Block),
             ..Default::default()
         }),
+        ..Default::default()
     };
     write_settings_file(&corp_path, &corp).unwrap();
 
@@ -4054,18 +5142,25 @@ fn corp_mcp_survives_both_presets() {
             default_tool_permission: Some(ToolDecision::Block),
             ..Default::default()
         }),
+        ..Default::default()
     };
     write_settings_file(&corp_path, &corp).unwrap();
 
     apply_preset_to("medium", &user_path, &corp_path).unwrap();
     let u = load_settings_file(&user_path).unwrap();
     let c = load_settings_file(&corp_path).unwrap();
-    assert_eq!(MergedPolicies::from_files(&u, &c).mcp.default_tool_decision, ToolDecision::Block);
+    assert_eq!(
+        MergedPolicies::from_files(&u, &c).mcp.default_tool_decision,
+        ToolDecision::Block
+    );
 
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let u = load_settings_file(&user_path).unwrap();
     let c = load_settings_file(&corp_path).unwrap();
-    assert_eq!(MergedPolicies::from_files(&u, &c).mcp.default_tool_decision, ToolDecision::Block);
+    assert_eq!(
+        MergedPolicies::from_files(&u, &c).mcp.default_tool_decision,
+        ToolDecision::Block
+    );
 }
 
 #[test]
@@ -4097,7 +5192,10 @@ fn corp_locks_multiple_all_skipped() {
     let corp = file_with(vec![
         ("security.web.allow_read", SettingValue::Bool(true)),
         ("security.web.allow_write", SettingValue::Bool(true)),
-        ("security.services.search.google.allow", SettingValue::Bool(false)),
+        (
+            "security.services.search.google.allow",
+            SettingValue::Bool(false),
+        ),
     ]);
     write_settings_file(&corp_path, &corp).unwrap();
 
@@ -4121,6 +5219,7 @@ fn corp_mcp_not_written_to_user_toml() {
             default_tool_permission: Some(ToolDecision::Block),
             ..Default::default()
         }),
+        ..Default::default()
     };
     write_settings_file(&corp_path, &corp).unwrap();
 
@@ -4128,7 +5227,10 @@ fn corp_mcp_not_written_to_user_toml() {
     let user = load_settings_file(&user_path).unwrap();
     // User TOML should NOT have MCP permission set (corp blocked it)
     let user_perm = user.mcp.as_ref().and_then(|m| m.default_tool_permission);
-    assert!(user_perm.is_none(), "user.toml should not have default_tool_permission when corp locks it");
+    assert!(
+        user_perm.is_none(),
+        "user.toml should not have default_tool_permission when corp locks it"
+    );
 }
 
 #[test]
@@ -4154,6 +5256,7 @@ fn preset_preserves_user_mcp_servers() {
             },
             ..Default::default()
         }),
+        ..Default::default()
     };
     write_settings_file(&user_path, &user).unwrap();
     write_settings_file(&corp_path, &SettingsFile::default()).unwrap();
@@ -4163,7 +5266,10 @@ fn preset_preserves_user_mcp_servers() {
     let mcp = user.mcp.unwrap();
     assert_eq!(mcp.servers.len(), 1);
     assert_eq!(mcp.servers[0].name, "myserver");
-    assert_eq!(mcp.tool_permissions.get("myserver__danger"), Some(&ToolDecision::Block));
+    assert_eq!(
+        mcp.tool_permissions.get("myserver__danger"),
+        Some(&ToolDecision::Block)
+    );
     assert_eq!(mcp.default_tool_permission, Some(ToolDecision::Warn));
 }
 
@@ -4178,7 +5284,10 @@ fn merged_from_missing_user_toml() {
     let user = load_settings_file(&nonexistent).unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should produce valid defaults without panicking
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
 }
 
 #[test]
@@ -4198,7 +5307,10 @@ fn merged_from_both_missing() {
     let c = load_settings_file(&dir.path().join("c.toml")).unwrap_or_default();
     let m = MergedPolicies::from_files(&u, &c);
     assert!(!m.network.default_allow_read);
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
 }
 
 #[test]
@@ -4211,7 +5323,10 @@ fn merged_from_invalid_user_toml() {
     // Fallback to default still works
     let user = result.unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
 }
 
 #[test]
@@ -4235,21 +5350,28 @@ fn merged_ignores_unknown_setting_ids() {
     ]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should not crash, anthropic should still work
-    let has_anthropic = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("api.anthropic.com")
-    });
+    let has_anthropic = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
     assert!(has_anthropic);
 }
 
 #[test]
 fn merged_wrong_type_for_bool_setting() {
     // SettingValue::Text for a Bool-type setting -- resolve will use default
-    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Text("yes".into()))]);
+    let user = file_with(vec![(
+        "ai.anthropic.allow",
+        SettingValue::Text("yes".into()),
+    )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // The bool check should fail gracefully (as_bool returns None -> default false)
-    let anthropic_allowed = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("api.anthropic.com")
-    });
+    let anthropic_allowed = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
     // With wrong type, the effective value is the user's Text("yes"), but
     // as_bool() returns None so toggle evaluates to false
     assert!(!anthropic_allowed);
@@ -4257,7 +5379,10 @@ fn merged_wrong_type_for_bool_setting() {
 
 #[test]
 fn merged_wrong_type_for_number_setting() {
-    let user = file_with(vec![("vm.resources.cpu_count", SettingValue::Text("four".into()))]);
+    let user = file_with(vec![(
+        "vm.resources.cpu_count",
+        SettingValue::Text("four".into()),
+    )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // as_number() returns None -> falls back to default (4)
     assert_eq!(m.vm.cpu_count, Some(4));
@@ -4265,7 +5390,10 @@ fn merged_wrong_type_for_number_setting() {
 
 #[test]
 fn merged_empty_domain_list() {
-    let user = file_with(vec![("security.web.custom_allow", SettingValue::Text("".into()))]);
+    let user = file_with(vec![(
+        "security.web.custom_allow",
+        SettingValue::Text("".into()),
+    )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should not crash, empty string -> no domains added
     assert!(!m.network.default_allow_read);
@@ -4276,7 +5404,10 @@ fn merged_empty_mcp_section() {
     use crate::mcp::policy::McpUserConfig;
     let user = file_with_mcp(vec![], McpUserConfig::default());
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
 }
 
 #[test]
@@ -4284,12 +5415,792 @@ fn merged_mcp_invalid_permission_string() {
     // ToolDecision serde will reject "yolo" during TOML parsing.
     // If we construct it manually via the struct, the default path handles it.
     // Test that from_files handles a default McpUserConfig gracefully.
-    let user = file_with_mcp(vec![], crate::mcp::policy::McpUserConfig {
-        default_tool_permission: None, // "yolo" can't be constructed as ToolDecision
-        ..Default::default()
-    });
+    let user = file_with_mcp(
+        vec![],
+        crate::mcp::policy::McpUserConfig {
+            default_tool_permission: None, // "yolo" can't be constructed as ToolDecision
+            ..Default::default()
+        },
+    );
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
+}
+
+// -----------------------------------------------------------------------
+// Policy V2: named rule config and settings-save path
+// -----------------------------------------------------------------------
+
+#[test]
+fn policy_v2_parses_named_rules_with_priority_and_rewrite_captures() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.http.block_openai_github]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openai(/|$)")'
+decision = "block"
+priority = 10
+reason = "Do not let this session fetch OpenAI-owned GitHub code"
+
+[policy.http.rewrite_openai_github_to_openclaw]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openai/(?P<repo>[^/?#]+)")'
+decision = "rewrite"
+priority = 20
+rewrite_target = 'request.url =~ "^https://github\.com/openai/(?P<repo>[^/?#]+)(?P<rest>.*)$"'
+rewrite_value = "https://github.com/openclaw/${repo}${rest}"
+reason = "Route the strawman repository namespace through the allowed mirror"
+"#,
+    )
+    .expect("policy-v2 named rules should parse");
+
+    let block = file
+        .policy
+        .http
+        .get("block_openai_github")
+        .expect("block rule");
+    assert_eq!(block.on, PolicyCallback::HttpRequest);
+    assert_eq!(
+        block.condition,
+        r#"request.host == "github.com" && request.path.matches("^/openai(/|$)")"#
+    );
+    assert_eq!(block.decision, PolicyDecisionKind::Block);
+    assert_eq!(block.priority, 10);
+    assert_eq!(
+        block.reason.as_deref(),
+        Some("Do not let this session fetch OpenAI-owned GitHub code")
+    );
+
+    let rewrite = file
+        .policy
+        .http
+        .get("rewrite_openai_github_to_openclaw")
+        .expect("rewrite rule");
+    assert_eq!(rewrite.on, PolicyCallback::HttpRequest);
+    assert_eq!(rewrite.decision, PolicyDecisionKind::Rewrite);
+    assert_eq!(rewrite.priority, 20);
+    assert_eq!(
+        rewrite.rewrite_target.as_deref(),
+        Some(r#"request.url =~ "^https://github\.com/openai/(?P<repo>[^/?#]+)(?P<rest>.*)$""#)
+    );
+    assert_eq!(
+        rewrite.rewrite_value.as_deref(),
+        Some("https://github.com/openclaw/${repo}${rest}")
+    );
+
+    let ordered = file.policy.rules_for_callback(PolicyCallback::HttpRequest);
+    assert_eq!(
+        ordered
+            .iter()
+            .map(|(name, rule)| (*name, rule.priority))
+            .collect::<Vec<_>>(),
+        vec![
+            ("block_openai_github", 10),
+            ("rewrite_openai_github_to_openclaw", 20)
+        ]
+    );
+}
+
+#[test]
+fn policy_v2_rejects_warn_and_bad_rewrite_captures() {
+    let warn = toml::from_str::<SettingsFile>(
+        r#"
+[policy.mcp.warn_is_not_a_decision]
+on = "mcp.request"
+if = 'method == "tools/call"'
+decision = "warn"
+priority = 10
+"#,
+    );
+    assert!(warn.is_err(), "warn must not survive in policy-v2 config");
+
+    let missing_capture = toml::from_str::<SettingsFile>(
+        r#"
+[policy.http.bad_rewrite_capture]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ "^https://github\.com/openai/(?P<repo>[^/?#]+)$"'
+rewrite_value = "https://github.com/openclaw/${missing}"
+"#,
+    );
+    assert!(
+        missing_capture.is_err(),
+        "rewrite_value must only reference captures from rewrite_target"
+    );
+}
+
+#[test]
+fn policy_v2_rejects_bogus_rewrite_shapes() {
+    let cases = [
+        (
+            "missing_target",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_value = "https://github.com/openclaw/repo"
+"#,
+        ),
+        (
+            "missing_value",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ "^https://github\.com/openai/(?P<repo>[^/?#]+)$"'
+"#,
+        ),
+        (
+            "empty_value",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ "^https://github\.com/openai/(?P<repo>[^/?#]+)$"'
+rewrite_value = "   "
+"#,
+        ),
+        (
+            "invalid_regex",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ "^(unterminated"'
+rewrite_value = "https://github.com/openclaw/repo"
+"#,
+        ),
+        (
+            "unquoted_regex",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ ^https://github\.com/openai'
+rewrite_value = "https://github.com/openclaw/repo"
+"#,
+        ),
+        (
+            "unterminated_regex_quote",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ "^https://github\.com/openai'
+rewrite_value = "https://github.com/openclaw/repo"
+"#,
+        ),
+        (
+            "trailing_regex_garbage",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ "^https://github\.com/openai" || true'
+rewrite_value = "https://github.com/openclaw/repo"
+"#,
+        ),
+        (
+            "rewrite_fields_on_block",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "block"
+priority = 10
+rewrite_target = 'request.url =~ "^https://github\.com/openai"'
+rewrite_value = "https://github.com/openclaw/repo"
+"#,
+        ),
+        (
+            "unknown_field",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.url =~ "^https://github\.com/openai"'
+rewrite_value = "https://github.com/openclaw/repo"
+surprise = true
+"#,
+        ),
+    ];
+
+    for (name, toml_text) in cases {
+        assert!(
+            toml::from_str::<SettingsFile>(toml_text).is_err(),
+            "case {name} should reject bogus rewrite config"
+        );
+    }
+}
+
+#[test]
+fn policy_v2_validates_and_normalizes_header_strip_rewrites() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.http.strip_credentials]
+on = "http.request"
+if = 'request.host == "example.com"'
+decision = "rewrite"
+priority = 10
+strip_request_headers = ["Authorization", " authorization ", "Cookie"]
+strip_response_headers = ["Set-Cookie"]
+"#,
+    )
+    .expect("header-strip rewrite should parse");
+
+    let rule = file.policy.http.get("strip_credentials").unwrap();
+    assert_eq!(rule.strip_request_headers, ["authorization", "cookie"]);
+    assert_eq!(rule.strip_response_headers, ["set-cookie"]);
+
+    let invalid_header_name = toml::from_str::<SettingsFile>(
+        r#"
+[policy.http.bad_header]
+on = "http.request"
+if = 'request.host == "example.com"'
+decision = "rewrite"
+priority = 10
+strip_request_headers = ["", "bad header"]
+"#,
+    );
+    assert!(
+        invalid_header_name.is_err(),
+        "header-strip rewrites must reject empty or invalid HTTP header names"
+    );
+}
+
+#[test]
+fn policy_v2_rejects_bad_policy_table_shapes() {
+    let cases = [
+        (
+            "callback_type_mismatch",
+            r#"
+[policy.http.mcp_callback_in_http_table]
+on = "mcp.request"
+if = 'method == "tools/call"'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "unknown_policy_type",
+            r#"
+[policy.ftp.block_openai]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "invalid_rule_name",
+            r#"
+[policy.http."bad rule name"]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "block"
+priority = 10
+"#,
+        ),
+    ];
+
+    for (name, toml_text) in cases {
+        assert!(
+            toml::from_str::<SettingsFile>(toml_text).is_err(),
+            "case {name} should reject invalid policy table shape"
+        );
+    }
+}
+
+#[test]
+fn policy_v2_accepts_documented_cel_condition_shapes() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.block_prod_token]
+on = "mcp.request"
+if = 'method == "tools/call" && tool.name == "deploy" && has(arguments.prod_token)'
+decision = "block"
+priority = 10
+
+[policy.http.block_openai_github]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openai(/|$)")'
+decision = "block"
+priority = 10
+
+[policy.dns.block_openai]
+on = "dns.query"
+if = 'qname == "api.openai.com" && qtype == "A"'
+decision = "block"
+priority = 10
+
+[policy.model.block_secret_prompt]
+on = "model.request"
+if = 'provider == "openai" && model == "gpt-4o" && system_prompt.contains("PROD_SECRET")'
+decision = "block"
+priority = 10
+
+[policy.model.redact_secret_tool_output]
+on = "model.tool_response"
+if = 'tool.name == "read_file" && content.contains("AWS_SECRET_ACCESS_KEY")'
+decision = "rewrite"
+priority = 20
+rewrite_target = 'content =~ "(?P<prefix>AWS_SECRET_ACCESS_KEY=)[^\\s]+"'
+rewrite_value = "${prefix}[redacted by capsem policy]"
+"#,
+    )
+    .expect("documented Policy V2 CEL condition examples should parse");
+
+    assert!(file.policy.mcp.contains_key("block_prod_token"));
+    assert!(file.policy.http.contains_key("block_openai_github"));
+    assert!(file.policy.dns.contains_key("block_openai"));
+    assert!(file.policy.model.contains_key("block_secret_prompt"));
+    assert!(file.policy.model.contains_key("redact_secret_tool_output"));
+}
+
+#[test]
+fn policy_v2_rejects_invalid_cel_conditions() {
+    let cases = [
+        (
+            "dangling_conjunction",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com" &&'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "unclosed_string",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == "github.com'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "unknown_subject_for_callback",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'qname == "api.openai.com"'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "unknown_method",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.path.match("^/openai")'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "invalid_matches_regex",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.path.matches("^(unterminated")'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "bad_has_argument",
+            r#"
+[policy.mcp.bad]
+on = "mcp.request"
+if = 'has("arguments.prod_token")'
+decision = "block"
+priority = 10
+"#,
+        ),
+        (
+            "unsupported_literal_type",
+            r#"
+[policy.http.bad]
+on = "http.request"
+if = 'request.host == 1'
+decision = "block"
+priority = 10
+"#,
+        ),
+    ];
+
+    for (name, toml_text) in cases {
+        assert!(
+            toml::from_str::<SettingsFile>(toml_text).is_err(),
+            "case {name} should reject invalid CEL condition"
+        );
+    }
+}
+
+#[test]
+fn policy_v2_evaluates_http_rules_by_priority_and_condition() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.http.allow_github]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "allow"
+priority = 20
+
+[policy.http.block_openai_github]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openai(/|$)")'
+decision = "block"
+priority = 10
+"#,
+    )
+    .unwrap();
+
+    let blocked = serde_json::json!({
+        "request": {
+            "host": "github.com",
+            "path": "/openai/codex"
+        }
+    });
+    let hit = file
+        .policy
+        .find_matching_rule(PolicyCallback::HttpRequest, &blocked)
+        .unwrap()
+        .expect("openai path should match block rule before broad allow");
+    assert_eq!(hit.name, "block_openai_github");
+    assert_eq!(hit.rule.decision, PolicyDecisionKind::Block);
+
+    let allowed = serde_json::json!({
+        "request": {
+            "host": "github.com",
+            "path": "/rust-lang/rust"
+        }
+    });
+    let hit = file
+        .policy
+        .find_matching_rule(PolicyCallback::HttpRequest, &allowed)
+        .unwrap()
+        .expect("other github path should match broad allow");
+    assert_eq!(hit.name, "allow_github");
+    assert_eq!(hit.rule.decision, PolicyDecisionKind::Allow);
+}
+
+#[test]
+fn policy_v2_evaluates_mcp_argument_presence_and_value_rules() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.block_prod_token]
+on = "mcp.request"
+if = 'method == "tools/call" && tool.name == "deploy" && has(arguments.prod_token)'
+decision = "block"
+priority = 10
+
+[policy.mcp.ask_prod_issue]
+on = "mcp.request"
+if = 'method == "tools/call" && arguments.issue == "prod"'
+decision = "ask"
+priority = 20
+"#,
+    )
+    .unwrap();
+
+    let token_subject = serde_json::json!({
+        "method": "tools/call",
+        "tool": { "name": "deploy" },
+        "arguments": {
+            "prod_token": "secret",
+            "issue": "prod"
+        }
+    });
+    let hit = file
+        .policy
+        .find_matching_rule(PolicyCallback::McpRequest, &token_subject)
+        .unwrap()
+        .expect("prod token should match the higher-priority block rule");
+    assert_eq!(hit.name, "block_prod_token");
+    assert_eq!(hit.rule.decision, PolicyDecisionKind::Block);
+
+    let issue_subject = serde_json::json!({
+        "method": "tools/call",
+        "tool": { "name": "deploy" },
+        "arguments": {
+            "issue": "prod"
+        }
+    });
+    let hit = file
+        .policy
+        .find_matching_rule(PolicyCallback::McpRequest, &issue_subject)
+        .unwrap()
+        .expect("prod issue should match the ask rule when token is absent");
+    assert_eq!(hit.name, "ask_prod_issue");
+    assert_eq!(hit.rule.decision, PolicyDecisionKind::Ask);
+}
+
+#[test]
+fn policy_v2_evaluator_supports_string_helpers_and_negative_comparisons() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.model.redact_secret_response]
+on = "model.response"
+if = 'provider != "local" && model.startsWith("gpt-") && content.contains("AWS_SECRET") && stop_reason.endsWith("stop")'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'content =~ "AWS_SECRET[^\\s]+"'
+rewrite_value = "[redacted]"
+"#,
+    )
+    .unwrap();
+
+    let secret = serde_json::json!({
+        "provider": "openai",
+        "model": "gpt-4o",
+        "content": "token AWS_SECRET_ACCESS_KEY=abc",
+        "stop_reason": "end_turn_stop"
+    });
+    assert_eq!(
+        file.policy
+            .find_matching_rule(PolicyCallback::ModelResponse, &secret)
+            .unwrap()
+            .expect("secret model response should match")
+            .name,
+        "redact_secret_response"
+    );
+
+    let local = serde_json::json!({
+        "provider": "local",
+        "model": "gpt-4o",
+        "content": "token AWS_SECRET_ACCESS_KEY=abc",
+        "stop_reason": "end_turn_stop"
+    });
+    assert!(
+        file.policy
+            .find_matching_rule(PolicyCallback::ModelResponse, &local)
+            .unwrap()
+            .is_none(),
+        "negative comparison should keep local provider out of this rule"
+    );
+
+    let missing_provider = serde_json::json!({
+        "model": "gpt-4o",
+        "content": "token AWS_SECRET_ACCESS_KEY=abc",
+        "stop_reason": "end_turn_stop"
+    });
+    assert!(
+        file.policy
+            .find_matching_rule(PolicyCallback::ModelResponse, &missing_provider)
+            .unwrap()
+            .is_none(),
+        "missing fields must not satisfy negative comparisons"
+    );
+}
+
+#[test]
+fn batch_update_settings_json_saves_policy_rule_for_ui() {
+    with_temp_configs(vec![], vec![], |user_path, _| {
+        let mut changes = HashMap::new();
+        changes.insert(
+            "policy.http.block_openai_github".to_string(),
+            serde_json::json!({
+                "on": "http.request",
+                "if": "request.host == 'github.com' && request.path.matches('^/openai(/|$)')",
+                "decision": "block",
+                "priority": 10,
+                "reason": "Do not let this session fetch OpenAI-owned GitHub code"
+            }),
+        );
+
+        let applied = loader::batch_update_settings_json(&changes)
+            .expect("UI-style policy save should succeed");
+        assert_eq!(applied, vec!["policy.http.block_openai_github"]);
+
+        let loaded = loader::load_settings_file(user_path).unwrap();
+        let rule = loaded.policy.http.get("block_openai_github").unwrap();
+        assert_eq!(rule.on, PolicyCallback::HttpRequest);
+        assert_eq!(rule.decision, PolicyDecisionKind::Block);
+        assert_eq!(rule.priority, 10);
+    });
+}
+
+#[test]
+fn batch_update_settings_json_deletes_policy_rule_with_null() {
+    with_temp_configs(vec![], vec![], |user_path, _| {
+        let mut changes = HashMap::new();
+        changes.insert(
+            "policy.http.block_openai_github".to_string(),
+            serde_json::json!({
+                "on": "http.request",
+                "if": "request.host == 'github.com'",
+                "decision": "block",
+                "priority": 10
+            }),
+        );
+        loader::batch_update_settings_json(&changes).unwrap();
+        assert!(loader::load_settings_file(user_path)
+            .unwrap()
+            .policy
+            .http
+            .contains_key("block_openai_github"));
+
+        let mut changes = HashMap::new();
+        changes.insert(
+            "policy.http.block_openai_github".to_string(),
+            serde_json::Value::Null,
+        );
+        let applied = loader::batch_update_settings_json(&changes).unwrap();
+        assert_eq!(applied, vec!["policy.http.block_openai_github"]);
+
+        let loaded = loader::load_settings_file(user_path).unwrap();
+        assert!(!loaded.policy.http.contains_key("block_openai_github"));
+    });
+}
+
+#[test]
+fn batch_update_settings_json_rejects_invalid_policy_inputs_atomically() {
+    let cases = [
+        (
+            "policy.http.bad.name",
+            serde_json::json!({
+                "on": "http.request",
+                "if": "request.host == 'github.com'",
+                "decision": "block",
+                "priority": 10
+            }),
+        ),
+        (
+            "policy.ftp.bad",
+            serde_json::json!({
+                "on": "http.request",
+                "if": "request.host == 'github.com'",
+                "decision": "block",
+                "priority": 10
+            }),
+        ),
+        (
+            "policy.http.bad",
+            serde_json::json!({
+                "on": "mcp.request",
+                "if": "method == 'tools/call'",
+                "decision": "block",
+                "priority": 10
+            }),
+        ),
+        (
+            "policy.http.bad",
+            serde_json::json!({
+                "on": "http.request",
+                "if": "request.host == 'example.com'",
+                "decision": "rewrite",
+                "priority": 10,
+                "strip_request_headers": ["bad header"]
+            }),
+        ),
+        (
+            "policy.http.bad",
+            serde_json::json!({
+                "on": "http.request",
+                "if": "request.path.match('^/openai')",
+                "decision": "block",
+                "priority": 10
+            }),
+        ),
+    ];
+
+    for (key, value) in cases {
+        with_temp_configs(vec![], vec![], |user_path, _| {
+            let mut changes = HashMap::new();
+            changes.insert(
+                SETTING_ANTHROPIC_API_KEY.to_string(),
+                serde_json::json!("sk-ant-test"),
+            );
+            changes.insert(key.to_string(), value);
+
+            let result = loader::batch_update_settings_json(&changes);
+            assert!(result.is_err(), "{key} should be rejected");
+            let loaded = loader::load_settings_file(user_path).unwrap();
+            assert!(
+                !loaded.settings.contains_key(SETTING_ANTHROPIC_API_KEY),
+                "regular setting writes must be atomic with invalid policy input"
+            );
+            assert!(loaded.policy.is_empty());
+        });
+    }
+}
+
+#[test]
+fn batch_update_settings_json_rejects_corp_locked_policy_rule_atomically() {
+    let _guard = TEST_CONFIG_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+
+    let dir = tempfile::tempdir().unwrap();
+    let user_path = dir.path().join("user.toml");
+    let corp_path = dir.path().join("corp.toml");
+    loader::write_settings_file(&user_path, &SettingsFile::default()).unwrap();
+    let corp: SettingsFile = toml::from_str(
+        r#"
+[policy.http.block_openai_github]
+on = "http.request"
+if = 'request.host == "github.com"'
+decision = "block"
+priority = 1
+"#,
+    )
+    .unwrap();
+    loader::write_settings_file(&corp_path, &corp).unwrap();
+
+    std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
+    std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        SETTING_ANTHROPIC_API_KEY.to_string(),
+        serde_json::json!("sk-ant-test"),
+    );
+    changes.insert(
+        "policy.http.block_openai_github".to_string(),
+        serde_json::json!({
+            "on": "http.request",
+            "if": "request.host == 'github.com'",
+            "decision": "allow",
+            "priority": 99
+        }),
+    );
+
+    let result = loader::batch_update_settings_json(&changes);
+    std::env::remove_var("CAPSEM_USER_CONFIG");
+    std::env::remove_var("CAPSEM_CORP_CONFIG");
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("corp-locked"));
+    let loaded = loader::load_settings_file(&user_path).unwrap();
+    assert!(
+        !loaded.settings.contains_key(SETTING_ANTHROPIC_API_KEY),
+        "regular setting writes must be atomic with policy-rule failures"
+    );
+    assert!(loaded.policy.http.is_empty());
 }
 
 #[test]
@@ -4302,6 +6213,7 @@ fn merged_partial_settings_file() {
             default_tool_permission: Some(ToolDecision::Block),
             ..Default::default()
         }),
+        ..Default::default()
     };
     let m = MergedPolicies::from_files(&user, &empty_file());
     assert_eq!(m.mcp.default_tool_decision, ToolDecision::Block);
@@ -4316,10 +6228,15 @@ fn merged_partial_settings_only() {
     assert!(user.mcp.is_none());
     let m = MergedPolicies::from_files(&user, &empty_file());
     // MCP defaults
-    assert_eq!(m.mcp.default_tool_decision, crate::mcp::policy::ToolDecision::Allow);
+    assert_eq!(
+        m.mcp.default_tool_decision,
+        crate::mcp::policy::ToolDecision::Allow
+    );
     // Settings applied
-    let has_anthropic = m.network.rules.iter().any(|r| {
-        r.allow_read && r.matcher.matches("api.anthropic.com")
-    });
+    let has_anthropic = m
+        .network
+        .rules
+        .iter()
+        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
     assert!(has_anthropic);
 }
