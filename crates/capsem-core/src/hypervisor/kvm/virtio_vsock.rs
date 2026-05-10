@@ -5,20 +5,19 @@
 //! connections from the guest.
 
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::memory::{self, GuestMemoryRef};
 use super::sys::{
-    self, VHOST_SET_MEM_TABLE, VHOST_SET_OWNER, VHOST_SET_VRING_ADDR, VHOST_SET_VRING_BASE,
-    VHOST_SET_VRING_CALL, VHOST_SET_VRING_KICK, VHOST_SET_VRING_NUM,
-    VHOST_VSOCK_SET_GUEST_CID, VhostMemoryRegion, VhostVringAddr, VhostVringFile,
-    VhostVringState,
+    self, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState, VHOST_SET_MEM_TABLE,
+    VHOST_SET_OWNER, VHOST_SET_VRING_ADDR, VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL,
+    VHOST_SET_VRING_KICK, VHOST_SET_VRING_NUM, VHOST_VSOCK_SET_GUEST_CID,
 };
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
 use crate::hypervisor::VsockConnection;
@@ -114,8 +113,7 @@ impl VhostVsockDevice {
             .as_raw_fd();
 
         // 1. Set owner
-        vhost_ioctl(vhost_fd, VHOST_SET_OWNER, 0)
-            .context("VHOST_SET_OWNER")?;
+        vhost_ioctl(vhost_fd, VHOST_SET_OWNER, 0).context("VHOST_SET_OWNER")?;
 
         // 2. Set memory table (one contiguous region: guest RAM)
         let hva = mem
@@ -172,9 +170,9 @@ impl VhostVsockDevice {
             let desc_hva = mem
                 .gpa_to_host(queue.desc_addr)
                 .context("desc_addr GPA out of range")? as u64;
-            let avail_hva = mem
-                .gpa_to_host(queue.driver_addr)
-                .context("driver_addr (avail) GPA out of range")? as u64;
+            let avail_hva =
+                mem.gpa_to_host(queue.driver_addr)
+                    .context("driver_addr (avail) GPA out of range")? as u64;
             let used_hva = mem
                 .gpa_to_host(queue.device_addr)
                 .context("device_addr (used) GPA out of range")? as u64;
@@ -387,10 +385,7 @@ fn vsock_listener_loop(
     // Create AF_VSOCK socket
     let sock_fd = unsafe { libc::socket(AF_VSOCK, libc::SOCK_STREAM, 0) };
     if sock_fd < 0 {
-        bail!(
-            "socket(AF_VSOCK): {}",
-            std::io::Error::last_os_error()
-        );
+        bail!("socket(AF_VSOCK): {}", std::io::Error::last_os_error());
     }
     let sock = unsafe { OwnedFd::from_raw_fd(sock_fd) };
 

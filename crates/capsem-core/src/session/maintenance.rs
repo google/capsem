@@ -16,7 +16,10 @@ use rusqlite::Connection;
 pub fn vacuum_and_compress_session_db(session_dir: &Path) -> anyhow::Result<u64> {
     let db_path = session_dir.join("session.db");
     if !db_path.exists() {
-        return Err(anyhow::anyhow!("session.db not found in {}", session_dir.display()));
+        return Err(anyhow::anyhow!(
+            "session.db not found in {}",
+            session_dir.display()
+        ));
     }
 
     // Open, checkpoint, vacuum, close.
@@ -156,7 +159,8 @@ mod tests {
         let db_path = tmp.path().join("session.db");
         // Create a minimal SQLite DB
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch("CREATE TABLE test (id INTEGER PRIMARY KEY)").unwrap();
+        conn.execute_batch("CREATE TABLE test (id INTEGER PRIMARY KEY)")
+            .unwrap();
         conn.execute_batch("INSERT INTO test VALUES (1)").unwrap();
         drop(conn);
 

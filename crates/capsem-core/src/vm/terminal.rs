@@ -1,5 +1,8 @@
 use std::collections::VecDeque;
-use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 
 /// Maximum bytes to coalesce in a single batch (1MB).
 const DEFAULT_MAX_COALESCE_BYTES: usize = 1024 * 1024;
@@ -10,8 +13,8 @@ const TERMINAL_QUEUE_CAPACITY: usize = 1024;
 
 /// Lock-free-ish queue for terminal output data.
 ///
-/// The vsock reader pushes raw byte chunks via `push()`. The consumer (CLI or 
-/// frontend) polls via `poll()`. When the VM stops, `close()` unblocks any 
+/// The vsock reader pushes raw byte chunks via `push()`. The consumer (CLI or
+/// frontend) polls via `poll()`. When the VM stops, `close()` unblocks any
 /// pending poll. On new VM boot, `reset()` reopens the queue for fresh data.
 pub struct TerminalOutputQueue {
     data: Mutex<VecDeque<Vec<u8>>>,
@@ -55,7 +58,7 @@ impl TerminalOutputQueue {
                 let mut queue = self.data.lock().unwrap();
                 if let Some(mut coalesced) = queue.pop_front() {
                     let mut count = 1;
-                    
+
                     // Keep draining the queue into our coalesced buffer until we hit 1MB
                     while coalesced.len() < DEFAULT_MAX_COALESCE_BYTES {
                         if let Some(next) = queue.front() {
@@ -76,7 +79,7 @@ impl TerminalOutputQueue {
                             coalesced.len()
                         );
                     }
-                    
+
                     return Some(coalesced);
                 }
                 // Queue is empty. If closed, we're done.
@@ -151,7 +154,11 @@ mod tests {
         q.push(big.clone());
         q.push(tail.clone());
         let first = q.poll().await.unwrap();
-        assert_eq!(first.len(), big.len(), "should not have coalesced the second chunk");
+        assert_eq!(
+            first.len(),
+            big.len(),
+            "should not have coalesced the second chunk"
+        );
         let second = q.poll().await.unwrap();
         assert_eq!(second, tail);
     }
@@ -213,7 +220,11 @@ mod tests {
         // Drain everything.
         let mut seen_latest = false;
         let mut total_chunks = 0usize;
-        while let Some(chunk) = tokio::time::timeout(Duration::from_millis(10), q.poll()).await.ok().flatten() {
+        while let Some(chunk) = tokio::time::timeout(Duration::from_millis(10), q.poll())
+            .await
+            .ok()
+            .flatten()
+        {
             total_chunks += 1;
             if chunk.ends_with(b"latest") || chunk == b"latest" {
                 seen_latest = true;
@@ -222,6 +233,9 @@ mod tests {
                 break;
             }
         }
-        assert!(seen_latest, "new chunk should still be present after backpressure drop");
+        assert!(
+            seen_latest,
+            "new chunk should still be present after backpressure drop"
+        );
     }
 }

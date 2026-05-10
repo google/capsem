@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 
 use crate::paths;
 
@@ -149,8 +149,8 @@ fn reject_test_isolation_env() -> Result<()> {
 /// Install the capsem service as a LaunchAgent (macOS) or systemd user unit (Linux).
 pub async fn install_service() -> Result<()> {
     reject_test_isolation_env()?;
-    let capsem_paths = paths::discover_paths()
-        .context("cannot discover paths for service installation")?;
+    let capsem_paths =
+        paths::discover_paths().context("cannot discover paths for service installation")?;
     let home = std::env::var("HOME").context("HOME not set")?;
 
     if !capsem_paths.service_bin.exists() {
@@ -325,16 +325,13 @@ pub fn plist_path() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join("Library/LaunchAgents/com.capsem.service.plist"))
 }
 
-
 #[cfg(target_os = "macos")]
 async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> Result<()> {
     let plist_dir = PathBuf::from(home).join("Library/LaunchAgents");
-    std::fs::create_dir_all(&plist_dir)
-        .context("cannot create LaunchAgents directory")?;
+    std::fs::create_dir_all(&plist_dir).context("cannot create LaunchAgents directory")?;
 
     let log_dir = PathBuf::from(home).join("Library/Logs/capsem");
-    std::fs::create_dir_all(&log_dir)
-        .context("cannot create log directory")?;
+    std::fs::create_dir_all(&log_dir).context("cannot create log directory")?;
 
     let uid = nix::unistd::getuid();
     let domain = format!("gui/{}", uid);
@@ -344,7 +341,8 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     for label in ["com.capsem.service", "com.capsem.tray"] {
         let _ = tokio::process::Command::new("launchctl")
             .args(["bootout", &format!("{domain}/{label}")])
-            .output().await;
+            .output()
+            .await;
     }
     // 2. Remove old plist files so launchd doesn't auto-start them
     //    during the bootstrap of other services.
@@ -365,11 +363,18 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
             .map(|d| format!("{}/{name}", d.display()))
             .unwrap_or_else(|| name.to_string())
     };
-    let names = ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"];
+    let names = [
+        "capsem-service",
+        "capsem-tray",
+        "capsem-gateway",
+        "capsem-process",
+    ];
     for name in names {
         let pattern = scoped_name(name);
         let _ = tokio::process::Command::new("pkill")
-            .args(["-9", "-f", &pattern]).output().await;
+            .args(["-9", "-f", &pattern])
+            .output()
+            .await;
     }
     // 4. Wait until all are dead (prevents stale socket EADDRINUSE on bootstrap)
     for _ in 0..30 {
@@ -377,13 +382,17 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
         for name in names {
             let pattern = scoped_name(name);
             let out = tokio::process::Command::new("pgrep")
-                .args(["-f", &pattern]).output().await;
+                .args(["-f", &pattern])
+                .output()
+                .await;
             if out.map(|o| !o.stdout.is_empty()).unwrap_or(false) {
                 any_alive = true;
                 break;
             }
         }
-        if !any_alive { break; }
+        if !any_alive {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     // 5. Remove stale socket so the new service can bind cleanly
@@ -400,8 +409,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
         home,
     );
     let plist_file = plist_dir.join("com.capsem.service.plist");
-    std::fs::write(&plist_file, &plist_content)
-        .context("cannot write service plist")?;
+    std::fs::write(&plist_file, &plist_content).context("cannot write service plist")?;
     bootstrap_launchagent(&domain, &plist_file).await?;
 
     Ok(())
@@ -453,7 +461,8 @@ async fn uninstall_launchagent() -> Result<()> {
     if tray_plist.exists() {
         let _ = tokio::process::Command::new("launchctl")
             .args(["bootout", &format!("gui/{}/com.capsem.tray", uid)])
-            .output().await;
+            .output()
+            .await;
         std::fs::remove_file(&tray_plist).ok();
     }
 
@@ -471,8 +480,7 @@ pub fn systemd_unit_path() -> Option<PathBuf> {
 #[cfg(target_os = "linux")]
 async fn install_systemd_unit(capsem_paths: &paths::CapsemPaths, home: &str) -> Result<()> {
     let unit_dir = PathBuf::from(home).join(".config/systemd/user");
-    std::fs::create_dir_all(&unit_dir)
-        .context("cannot create systemd user unit directory")?;
+    std::fs::create_dir_all(&unit_dir).context("cannot create systemd user unit directory")?;
 
     let unit_content = generate_systemd_unit(
         &capsem_paths.service_bin,
@@ -483,8 +491,7 @@ async fn install_systemd_unit(capsem_paths: &paths::CapsemPaths, home: &str) -> 
     );
 
     let unit_file = unit_dir.join("capsem.service");
-    std::fs::write(&unit_file, &unit_content)
-        .context("cannot write systemd unit")?;
+    std::fs::write(&unit_file, &unit_content).context("cannot write systemd unit")?;
 
     // daemon-reload + enable --now
     let status = tokio::process::Command::new("systemctl")
@@ -683,7 +690,10 @@ mod tests {
             "/Users/AT&T Corp",
         );
         // Must contain escaped ampersands, not raw &
-        assert!(plist.contains("AT&amp;T"), "plist must XML-escape ampersands");
+        assert!(
+            plist.contains("AT&amp;T"),
+            "plist must XML-escape ampersands"
+        );
         assert!(!plist.contains("AT&T "), "plist must not have unescaped &");
         // Must still be valid-ish XML (balanced tags)
         assert!(plist.contains("</plist>"));
@@ -694,7 +704,10 @@ mod tests {
     #[test]
     fn test_systemd_escape_path_no_spaces() {
         let p = Path::new("/home/user/.capsem/bin/capsem-service");
-        assert_eq!(systemd_escape_path(p), "/home/user/.capsem/bin/capsem-service");
+        assert_eq!(
+            systemd_escape_path(p),
+            "/home/user/.capsem/bin/capsem-service"
+        );
     }
 
     #[test]
@@ -716,8 +729,16 @@ mod tests {
         );
         let exec_line = unit.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
         // Spaces must be escaped as \x20 in ExecStart
-        assert!(!exec_line.contains("John Doe"), "unescaped space in ExecStart: {}", exec_line);
-        assert!(exec_line.contains("John\\x20Doe"), "missing \\x20 escape: {}", exec_line);
+        assert!(
+            !exec_line.contains("John Doe"),
+            "unescaped space in ExecStart: {}",
+            exec_line
+        );
+        assert!(
+            exec_line.contains("John\\x20Doe"),
+            "missing \\x20 escape: {}",
+            exec_line
+        );
     }
 
     // -- test-isolation guard -------------------------------------------------
@@ -768,8 +789,14 @@ mod tests {
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
         let err = reject_test_isolation_env().unwrap_err().to_string();
-        assert!(err.contains("CAPSEM_HOME"), "missing CAPSEM_HOME in error: {err}");
-        assert!(err.contains("unset"), "error should tell user to unset: {err}");
+        assert!(
+            err.contains("CAPSEM_HOME"),
+            "missing CAPSEM_HOME in error: {err}"
+        );
+        assert!(
+            err.contains("unset"),
+            "error should tell user to unset: {err}"
+        );
     }
 
     #[test]

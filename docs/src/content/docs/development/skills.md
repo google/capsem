@@ -71,7 +71,7 @@ Prefix-based grouping:
 - `dev-sprint` -- sprint planning and workflow
 - `dev-rust-patterns` -- async/tokio, cross-compile, error handling
 - `dev-mitm-proxy` -- MITM proxy pipeline, SSE parsing, provider wire formats
-- `dev-mcp` -- MCP gateway, JSON-RPC, tool routing
+- `dev-mcp` -- Guest MCP endpoint, JSON-RPC, tool routing
 - `dev-skills` -- how skills work (for building Capsem's own skills system)
 
 ### Build

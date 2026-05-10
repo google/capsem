@@ -35,8 +35,12 @@
   }
 
   // --- Per-tool permission ---
+  function normalizeToolPermission(value: string): string {
+    return value === 'warn' ? 'ask' : value;
+  }
+
   function toolPermission(toolName: string): string {
-    return mcpStore.policy.tool_permissions[toolName] ?? defaultPermission;
+    return normalizeToolPermission(mcpStore.policy.tool_permissions[toolName] ?? defaultPermission);
   }
 
   async function handleToolPermission(toolName: string, e: Event) {
@@ -200,7 +204,7 @@
       <div class="flex items-center justify-between p-4">
         <div>
           <p class="text-sm font-medium text-foreground">Default tool permission</p>
-          <p class="text-xs text-muted-foreground-1 mt-0.5">Action when an AI agent calls a tool not in any policy</p>
+          <p class="text-xs text-muted-foreground-1 mt-0.5">Legacy fallback when no named policy rule matches</p>
         </div>
         <select
           class="py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary w-32"

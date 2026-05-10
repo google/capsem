@@ -24,7 +24,7 @@
       </div>
     </Card>
 
-    <Card title="Native MCP gateway" subtitle="Policy-checked tool access over vsock. Built-in tools plus custom MCP servers via fastmcp.">
+    <Card title="Native MCP endpoint" subtitle="Policy-checked tool access over vsock. Built-in tools plus custom MCP servers via fastmcp.">
       <div class="space-y-3">
         {#each MCP_TOOLS as tool}
           <div class="flex items-center justify-between rounded-xl border border-border px-4 py-3">

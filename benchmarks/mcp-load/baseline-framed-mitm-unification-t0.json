@@ -1,0 +1,60 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1778188730.3505123,
+  "hostname": "upbeat-cedar-tmp",
+  "mcp_load": {
+    "version": "1.0",
+    "tool": "local__echo",
+    "payload_bytes": 4,
+    "concurrency_levels": [
+      {
+        "concurrency": 1,
+        "duration_s": 10.0,
+        "total_requests": 22475,
+        "errors": 0,
+        "rps": 2247.5,
+        "p50_ms": 0.4253750000060563,
+        "p95_ms": 0.5572044999965441,
+        "p99_ms": 0.6928019200049107,
+        "p999_ms": 1.223622407996261,
+        "rss_peak_mb": 77.24609375
+      },
+      {
+        "concurrency": 10,
+        "duration_s": 10.0,
+        "total_requests": 91665,
+        "errors": 0,
+        "rps": 9166.5,
+        "p50_ms": 1.060457999997766,
+        "p95_ms": 1.4844580000072938,
+        "p99_ms": 1.7404731199991375,
+        "p999_ms": 2.643504663996616,
+        "rss_peak_mb": 82.12109375
+      },
+      {
+        "concurrency": 50,
+        "duration_s": 10.0,
+        "total_requests": 91871,
+        "errors": 0,
+        "rps": 9187.1,
+        "p50_ms": 5.228791999996929,
+        "p95_ms": 7.275353999993683,
+        "p99_ms": 8.97874620000323,
+        "p999_ms": 11.998110169995472,
+        "rss_peak_mb": 85.65625
+      },
+      {
+        "concurrency": 200,
+        "duration_s": 10.0,
+        "total_requests": 83393,
+        "errors": 0,
+        "rps": 8339.3,
+        "p50_ms": 22.552167000000622,
+        "p95_ms": 32.812766799995075,
+        "p99_ms": 40.19491335999932,
+        "p999_ms": 44.45409153600293,
+        "rss_peak_mb": 88.53125
+      }
+    ]
+  }
+}

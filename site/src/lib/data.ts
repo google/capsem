@@ -100,8 +100,7 @@ export const GUEST_COMPONENTS = [
 
 export const VSOCK_CHANNELS = [
   { port: ":5001", label: "terminal" },
-  { port: ":5002", label: "HTTPS" },
-  { port: ":5003", label: "MCP" },
+  { port: ":5002", label: "HTTPS + MCP" },
 ] as const;
 
 export const FAQS = [

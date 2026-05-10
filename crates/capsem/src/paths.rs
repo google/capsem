@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use anyhow::{Context, Result};
+use std::path::PathBuf;
 
 use crate::service_install;
 
@@ -27,7 +27,8 @@ pub struct CapsemPaths {
 /// Assets: `<capsem_home>/assets/` via [`capsem_core::paths::capsem_assets_dir`].
 pub fn discover_paths() -> Result<CapsemPaths> {
     let exe_path = std::env::current_exe().context("cannot determine executable path")?;
-    let bin_dir = exe_path.parent()
+    let bin_dir = exe_path
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("executable path has no parent: {}", exe_path.display()))?;
 
     Ok(CapsemPaths {
@@ -52,7 +53,10 @@ fn assets_dir_from_home(home: &str) -> PathBuf {
 pub async fn try_start_via_service_manager() -> Result<bool> {
     #[cfg(target_os = "linux")]
     {
-        if service_install::systemd_unit_path().map(|p| p.exists()).unwrap_or(false) {
+        if service_install::systemd_unit_path()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+        {
             let status = tokio::process::Command::new("systemctl")
                 .args(["--user", "start", "capsem"])
                 .status()
@@ -65,7 +69,10 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
 
     #[cfg(target_os = "macos")]
     {
-        if service_install::plist_path().map(|p| p.exists()).unwrap_or(false) {
+        if service_install::plist_path()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+        {
             let uid = nix::unistd::getuid();
             let status = tokio::process::Command::new("launchctl")
                 .args(["kickstart", &format!("gui/{}/com.capsem.service", uid)])
@@ -216,7 +223,10 @@ mod tests {
         let home = "/home/test";
         let assets_dir = assets_dir_from_home(home);
         let manifest = assets_dir.join("manifest.json");
-        assert_eq!(manifest, PathBuf::from("/home/test/.capsem/assets/manifest.json"));
+        assert_eq!(
+            manifest,
+            PathBuf::from("/home/test/.capsem/assets/manifest.json")
+        );
     }
 
     #[test]
@@ -226,7 +236,9 @@ mod tests {
         let home = "/home/test";
         let assets_dir = assets_dir_from_home(home);
         let version = env!("CARGO_PKG_VERSION");
-        let rootfs = assets_dir.join(format!("v{version}")).join("rootfs.squashfs");
+        let rootfs = assets_dir
+            .join(format!("v{version}"))
+            .join("rootfs.squashfs");
         assert!(rootfs.to_str().unwrap().contains(&format!("v{version}")));
         assert!(rootfs.to_str().unwrap().ends_with("rootfs.squashfs"));
     }

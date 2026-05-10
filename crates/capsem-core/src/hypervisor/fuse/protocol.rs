@@ -160,105 +160,200 @@ pub struct FuseInitOut {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseOpenIn { pub flags: u32, pub open_flags: u32 }
+pub struct FuseOpenIn {
+    pub flags: u32,
+    pub open_flags: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseOpenOut { pub fh: u64, pub open_flags: u32, pub padding: u32 }
+pub struct FuseOpenOut {
+    pub fh: u64,
+    pub open_flags: u32,
+    pub padding: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FuseReadIn {
-    pub fh: u64, pub offset: u64, pub size: u32, pub read_flags: u32,
-    pub lock_owner: u64, pub flags: u32, pub padding: u32,
+    pub fh: u64,
+    pub offset: u64,
+    pub size: u32,
+    pub read_flags: u32,
+    pub lock_owner: u64,
+    pub flags: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FuseWriteIn {
-    pub fh: u64, pub offset: u64, pub size: u32, pub write_flags: u32,
-    pub lock_owner: u64, pub flags: u32, pub padding: u32,
+    pub fh: u64,
+    pub offset: u64,
+    pub size: u32,
+    pub write_flags: u32,
+    pub lock_owner: u64,
+    pub flags: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseWriteOut { pub size: u32, pub padding: u32 }
+pub struct FuseWriteOut {
+    pub size: u32,
+    pub padding: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseCreateIn { pub flags: u32, pub mode: u32, pub umask: u32, pub open_flags: u32 }
+pub struct FuseCreateIn {
+    pub flags: u32,
+    pub mode: u32,
+    pub umask: u32,
+    pub open_flags: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseMkdirIn { pub mode: u32, pub umask: u32 }
+pub struct FuseMkdirIn {
+    pub mode: u32,
+    pub umask: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseMknodIn { pub mode: u32, pub rdev: u32, pub umask: u32, pub padding: u32 }
+pub struct FuseMknodIn {
+    pub mode: u32,
+    pub rdev: u32,
+    pub umask: u32,
+    pub padding: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FuseSetAttrIn {
-    pub valid: u32, pub padding: u32, pub fh: u64, pub size: u64,
-    pub lock_owner: u64, pub atime: u64, pub mtime: u64, pub ctime: u64,
-    pub atimensec: u32, pub mtimensec: u32, pub ctimensec: u32, pub mode: u32,
-    pub unused4: u32, pub uid: u32, pub gid: u32, pub unused5: u32,
+    pub valid: u32,
+    pub padding: u32,
+    pub fh: u64,
+    pub size: u64,
+    pub lock_owner: u64,
+    pub atime: u64,
+    pub mtime: u64,
+    pub ctime: u64,
+    pub atimensec: u32,
+    pub mtimensec: u32,
+    pub ctimensec: u32,
+    pub mode: u32,
+    pub unused4: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub unused5: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseRenameIn { pub newdir: u64 }
+pub struct FuseRenameIn {
+    pub newdir: u64,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseRename2In { pub newdir: u64, pub flags: u32, pub padding: u32 }
+pub struct FuseRename2In {
+    pub newdir: u64,
+    pub flags: u32,
+    pub padding: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseLinkIn { pub oldnodeid: u64 }
+pub struct FuseLinkIn {
+    pub oldnodeid: u64,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseForgetIn { pub nlookup: u64 }
+pub struct FuseForgetIn {
+    pub nlookup: u64,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseBatchForgetIn { pub count: u32, pub dummy: u32 }
+pub struct FuseBatchForgetIn {
+    pub count: u32,
+    pub dummy: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseForgetOne { pub nodeid: u64, pub nlookup: u64 }
+pub struct FuseForgetOne {
+    pub nodeid: u64,
+    pub nlookup: u64,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseReleaseIn { pub fh: u64, pub flags: u32, pub release_flags: u32, pub lock_owner: u64 }
+pub struct FuseReleaseIn {
+    pub fh: u64,
+    pub flags: u32,
+    pub release_flags: u32,
+    pub lock_owner: u64,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseFsyncIn { pub fh: u64, pub fsync_flags: u32, pub padding: u32 }
+pub struct FuseFsyncIn {
+    pub fh: u64,
+    pub fsync_flags: u32,
+    pub padding: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseFlushIn { pub fh: u64, pub unused: u32, pub padding: u32, pub lock_owner: u64 }
+pub struct FuseFlushIn {
+    pub fh: u64,
+    pub unused: u32,
+    pub padding: u32,
+    pub lock_owner: u64,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FuseKStatfs {
-    pub blocks: u64, pub bfree: u64, pub bavail: u64, pub files: u64, pub ffree: u64,
-    pub bsize: u32, pub namelen: u32, pub frsize: u32, pub padding: u32, pub spare: [u32; 6],
+    pub blocks: u64,
+    pub bfree: u64,
+    pub bavail: u64,
+    pub files: u64,
+    pub ffree: u64,
+    pub bsize: u32,
+    pub namelen: u32,
+    pub frsize: u32,
+    pub padding: u32,
+    pub spare: [u32; 6],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseLseekIn { pub fh: u64, pub offset: u64, pub whence: u32, pub padding: u32 }
+pub struct FuseLseekIn {
+    pub fh: u64,
+    pub offset: u64,
+    pub whence: u32,
+    pub padding: u32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseLseekOut { pub offset: u64 }
+pub struct FuseLseekOut {
+    pub offset: u64,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FuseDirent { pub ino: u64, pub off: u64, pub namelen: u32, pub type_: u32 }
+pub struct FuseDirent {
+    pub ino: u64,
+    pub off: u64,
+    pub namelen: u32,
+    pub type_: u32,
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -268,33 +363,120 @@ pub struct FuseDirent { pub ino: u64, pub off: u64, pub namelen: u32, pub type_:
 mod tests {
     use super::*;
 
-    #[test] fn fuse_in_header_size() { assert_eq!(std::mem::size_of::<FuseInHeader>(), 40); }
-    #[test] fn fuse_out_header_size() { assert_eq!(std::mem::size_of::<FuseOutHeader>(), 16); }
-    #[test] fn fuse_attr_size() { assert_eq!(std::mem::size_of::<FuseAttr>(), 88); }
-    #[test] fn fuse_entry_out_size() { assert_eq!(std::mem::size_of::<FuseEntryOut>(), 128); }
-    #[test] fn fuse_attr_out_size() { assert_eq!(std::mem::size_of::<FuseAttrOut>(), 104); }
-    #[test] fn fuse_init_in_size() { assert_eq!(std::mem::size_of::<FuseInitIn>(), 16); }
-    #[test] fn fuse_init_out_size() { assert_eq!(std::mem::size_of::<FuseInitOut>(), 64); }
-    #[test] fn fuse_open_in_size() { assert_eq!(std::mem::size_of::<FuseOpenIn>(), 8); }
-    #[test] fn fuse_open_out_size() { assert_eq!(std::mem::size_of::<FuseOpenOut>(), 16); }
-    #[test] fn fuse_read_in_size() { assert_eq!(std::mem::size_of::<FuseReadIn>(), 40); }
-    #[test] fn fuse_write_in_size() { assert_eq!(std::mem::size_of::<FuseWriteIn>(), 40); }
-    #[test] fn fuse_write_out_size() { assert_eq!(std::mem::size_of::<FuseWriteOut>(), 8); }
-    #[test] fn fuse_create_in_size() { assert_eq!(std::mem::size_of::<FuseCreateIn>(), 16); }
-    #[test] fn fuse_mkdir_in_size() { assert_eq!(std::mem::size_of::<FuseMkdirIn>(), 8); }
-    #[test] fn fuse_mknod_in_size() { assert_eq!(std::mem::size_of::<FuseMknodIn>(), 16); }
-    #[test] fn fuse_setattr_in_size() { assert_eq!(std::mem::size_of::<FuseSetAttrIn>(), 88); }
-    #[test] fn fuse_rename_in_size() { assert_eq!(std::mem::size_of::<FuseRenameIn>(), 8); }
-    #[test] fn fuse_rename2_in_size() { assert_eq!(std::mem::size_of::<FuseRename2In>(), 16); }
-    #[test] fn fuse_link_in_size() { assert_eq!(std::mem::size_of::<FuseLinkIn>(), 8); }
-    #[test] fn fuse_forget_in_size() { assert_eq!(std::mem::size_of::<FuseForgetIn>(), 8); }
-    #[test] fn fuse_batch_forget_in_size() { assert_eq!(std::mem::size_of::<FuseBatchForgetIn>(), 8); }
-    #[test] fn fuse_forget_one_size() { assert_eq!(std::mem::size_of::<FuseForgetOne>(), 16); }
-    #[test] fn fuse_release_in_size() { assert_eq!(std::mem::size_of::<FuseReleaseIn>(), 24); }
-    #[test] fn fuse_fsync_in_size() { assert_eq!(std::mem::size_of::<FuseFsyncIn>(), 16); }
-    #[test] fn fuse_flush_in_size() { assert_eq!(std::mem::size_of::<FuseFlushIn>(), 24); }
-    #[test] fn fuse_kstatfs_size() { assert_eq!(std::mem::size_of::<FuseKStatfs>(), 80); }
-    #[test] fn fuse_lseek_in_size() { assert_eq!(std::mem::size_of::<FuseLseekIn>(), 24); }
-    #[test] fn fuse_lseek_out_size() { assert_eq!(std::mem::size_of::<FuseLseekOut>(), 8); }
-    #[test] fn fuse_dirent_size() { assert_eq!(std::mem::size_of::<FuseDirent>(), 24); }
+    #[test]
+    fn fuse_in_header_size() {
+        assert_eq!(std::mem::size_of::<FuseInHeader>(), 40);
+    }
+    #[test]
+    fn fuse_out_header_size() {
+        assert_eq!(std::mem::size_of::<FuseOutHeader>(), 16);
+    }
+    #[test]
+    fn fuse_attr_size() {
+        assert_eq!(std::mem::size_of::<FuseAttr>(), 88);
+    }
+    #[test]
+    fn fuse_entry_out_size() {
+        assert_eq!(std::mem::size_of::<FuseEntryOut>(), 128);
+    }
+    #[test]
+    fn fuse_attr_out_size() {
+        assert_eq!(std::mem::size_of::<FuseAttrOut>(), 104);
+    }
+    #[test]
+    fn fuse_init_in_size() {
+        assert_eq!(std::mem::size_of::<FuseInitIn>(), 16);
+    }
+    #[test]
+    fn fuse_init_out_size() {
+        assert_eq!(std::mem::size_of::<FuseInitOut>(), 64);
+    }
+    #[test]
+    fn fuse_open_in_size() {
+        assert_eq!(std::mem::size_of::<FuseOpenIn>(), 8);
+    }
+    #[test]
+    fn fuse_open_out_size() {
+        assert_eq!(std::mem::size_of::<FuseOpenOut>(), 16);
+    }
+    #[test]
+    fn fuse_read_in_size() {
+        assert_eq!(std::mem::size_of::<FuseReadIn>(), 40);
+    }
+    #[test]
+    fn fuse_write_in_size() {
+        assert_eq!(std::mem::size_of::<FuseWriteIn>(), 40);
+    }
+    #[test]
+    fn fuse_write_out_size() {
+        assert_eq!(std::mem::size_of::<FuseWriteOut>(), 8);
+    }
+    #[test]
+    fn fuse_create_in_size() {
+        assert_eq!(std::mem::size_of::<FuseCreateIn>(), 16);
+    }
+    #[test]
+    fn fuse_mkdir_in_size() {
+        assert_eq!(std::mem::size_of::<FuseMkdirIn>(), 8);
+    }
+    #[test]
+    fn fuse_mknod_in_size() {
+        assert_eq!(std::mem::size_of::<FuseMknodIn>(), 16);
+    }
+    #[test]
+    fn fuse_setattr_in_size() {
+        assert_eq!(std::mem::size_of::<FuseSetAttrIn>(), 88);
+    }
+    #[test]
+    fn fuse_rename_in_size() {
+        assert_eq!(std::mem::size_of::<FuseRenameIn>(), 8);
+    }
+    #[test]
+    fn fuse_rename2_in_size() {
+        assert_eq!(std::mem::size_of::<FuseRename2In>(), 16);
+    }
+    #[test]
+    fn fuse_link_in_size() {
+        assert_eq!(std::mem::size_of::<FuseLinkIn>(), 8);
+    }
+    #[test]
+    fn fuse_forget_in_size() {
+        assert_eq!(std::mem::size_of::<FuseForgetIn>(), 8);
+    }
+    #[test]
+    fn fuse_batch_forget_in_size() {
+        assert_eq!(std::mem::size_of::<FuseBatchForgetIn>(), 8);
+    }
+    #[test]
+    fn fuse_forget_one_size() {
+        assert_eq!(std::mem::size_of::<FuseForgetOne>(), 16);
+    }
+    #[test]
+    fn fuse_release_in_size() {
+        assert_eq!(std::mem::size_of::<FuseReleaseIn>(), 24);
+    }
+    #[test]
+    fn fuse_fsync_in_size() {
+        assert_eq!(std::mem::size_of::<FuseFsyncIn>(), 16);
+    }
+    #[test]
+    fn fuse_flush_in_size() {
+        assert_eq!(std::mem::size_of::<FuseFlushIn>(), 24);
+    }
+    #[test]
+    fn fuse_kstatfs_size() {
+        assert_eq!(std::mem::size_of::<FuseKStatfs>(), 80);
+    }
+    #[test]
+    fn fuse_lseek_in_size() {
+        assert_eq!(std::mem::size_of::<FuseLseekIn>(), 24);
+    }
+    #[test]
+    fn fuse_lseek_out_size() {
+        assert_eq!(std::mem::size_of::<FuseLseekOut>(), 8);
+    }
+    #[test]
+    fn fuse_dirent_size() {
+        assert_eq!(std::mem::size_of::<FuseDirent>(), 24);
+    }
 }

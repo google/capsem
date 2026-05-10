@@ -84,6 +84,7 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: true,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "grep_http".into(),
@@ -136,6 +137,7 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: true,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "http_headers".into(),
@@ -178,6 +180,7 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: true,
             }),
+            timeout_secs: None,
         },
     ]
 }
@@ -194,7 +197,9 @@ pub async fn call_builtin_tool(
     match local_name {
         "fetch_http" => handle_fetch_http(arguments, client, domain_policy, request_id, db).await,
         "grep_http" => handle_grep_http(arguments, client, domain_policy, request_id, db).await,
-        "http_headers" => handle_http_headers(arguments, client, domain_policy, request_id, db).await,
+        "http_headers" => {
+            handle_http_headers(arguments, client, domain_policy, request_id, db).await
+        }
         _ => JsonRpcResponse::err(
             request_id,
             -32602,
@@ -236,6 +241,11 @@ async fn emit_net_event(
         request_body_preview: None,
         response_body_preview: None,
         conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: crate::telemetry::ambient_capsem_trace_id(),
     }))
     .await;
 }
@@ -259,8 +269,21 @@ async fn handle_fetch_http(
     let domain = match check_domain_policy(url, policy) {
         Ok(d) => d,
         Err(e) => {
-            let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
-            emit_net_event(db, &extract_domain(url), "GET", &path, Decision::Denied, None, 0, 0, 0).await;
+            let path = reqwest::Url::parse(url)
+                .map(|u| u.path().to_string())
+                .unwrap_or_default();
+            emit_net_event(
+                db,
+                &extract_domain(url),
+                "GET",
+                &path,
+                Decision::Denied,
+                None,
+                0,
+                0,
+                0,
+            )
+            .await;
             return tool_error(id, &e);
         }
     };
@@ -304,8 +327,21 @@ async fn handle_fetch_http(
     };
     let duration_ms = start.elapsed().as_millis() as u64;
     let bytes_received = body.len() as u64;
-    let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
-    emit_net_event(db, &domain, "GET", &path, Decision::Allowed, Some(status_code), 0, bytes_received, duration_ms).await;
+    let path = reqwest::Url::parse(url)
+        .map(|u| u.path().to_string())
+        .unwrap_or_default();
+    emit_net_event(
+        db,
+        &domain,
+        "GET",
+        &path,
+        Decision::Allowed,
+        Some(status_code),
+        0,
+        bytes_received,
+        duration_ms,
+    )
+    .await;
 
     let text = match format {
         "raw" => body,
@@ -355,8 +391,21 @@ async fn handle_grep_http(
     };
 
     if let Err(e) = check_domain_policy(url, policy) {
-        let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
-        emit_net_event(db, &extract_domain(url), "GET", &path, Decision::Denied, None, 0, 0, 0).await;
+        let path = reqwest::Url::parse(url)
+            .map(|u| u.path().to_string())
+            .unwrap_or_default();
+        emit_net_event(
+            db,
+            &extract_domain(url),
+            "GET",
+            &path,
+            Decision::Denied,
+            None,
+            0,
+            0,
+            0,
+        )
+        .await;
         return tool_error(id, &e);
     }
 
@@ -416,8 +465,21 @@ async fn handle_grep_http(
     };
     let duration_ms = start.elapsed().as_millis() as u64;
     let bytes_received = body.len() as u64;
-    let url_path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
-    emit_net_event(db, &extract_domain(url), "GET", &url_path, Decision::Allowed, Some(status_code), 0, bytes_received, duration_ms).await;
+    let url_path = reqwest::Url::parse(url)
+        .map(|u| u.path().to_string())
+        .unwrap_or_default();
+    emit_net_event(
+        db,
+        &extract_domain(url),
+        "GET",
+        &url_path,
+        Decision::Allowed,
+        Some(status_code),
+        0,
+        bytes_received,
+        duration_ms,
+    )
+    .await;
 
     let text = if raw {
         body
@@ -447,9 +509,7 @@ async fn handle_grep_http(
         }
     }
 
-    let mut output = format!(
-        "URL: {url}\nPattern: {pattern_str}\nMatches found: {match_count}\n"
-    );
+    let mut output = format!("URL: {url}\nPattern: {pattern_str}\nMatches found: {match_count}\n");
     if match_count > max_matches {
         output.push_str(&format!(
             "(showing first {max_matches} of {match_count} matches)\n"
@@ -490,8 +550,21 @@ async fn handle_http_headers(
     };
 
     if let Err(e) = check_domain_policy(url, policy) {
-        let path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
-        emit_net_event(db, &extract_domain(url), "HEAD", &path, Decision::Denied, None, 0, 0, 0).await;
+        let path = reqwest::Url::parse(url)
+            .map(|u| u.path().to_string())
+            .unwrap_or_default();
+        emit_net_event(
+            db,
+            &extract_domain(url),
+            "HEAD",
+            &path,
+            Decision::Denied,
+            None,
+            0,
+            0,
+            0,
+        )
+        .await;
         return tool_error(id, &e);
     }
 
@@ -529,8 +602,21 @@ async fn handle_http_headers(
             value.to_str().unwrap_or("<binary>")
         ));
     }
-    let url_path = reqwest::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
-    emit_net_event(db, &extract_domain(url), method, &url_path, Decision::Allowed, Some(status_code), 0, output.len() as u64, duration_ms).await;
+    let url_path = reqwest::Url::parse(url)
+        .map(|u| u.path().to_string())
+        .unwrap_or_default();
+    emit_net_event(
+        db,
+        &extract_domain(url),
+        method,
+        &url_path,
+        Decision::Allowed,
+        Some(status_code),
+        0,
+        output.len() as u64,
+        duration_ms,
+    )
+    .await;
 
     let (chunk, _total, _has_more) = paginate(&output, start_index, max_length);
     tool_ok(id, &chunk)
@@ -653,9 +739,36 @@ pub fn extract_markdown_from_html(html: &str) -> String {
 
 const SKIP_TAGS: &[&str] = &["script", "style", "noscript", "svg", "template"];
 const BLOCK_TAGS: &[&str] = &[
-    "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "br", "hr", "section",
-    "article", "header", "footer", "nav", "main", "blockquote", "pre", "table", "ul", "ol", "dl",
-    "dt", "dd", "figcaption", "figure", "details", "summary",
+    "p",
+    "div",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+    "tr",
+    "br",
+    "hr",
+    "section",
+    "article",
+    "header",
+    "footer",
+    "nav",
+    "main",
+    "blockquote",
+    "pre",
+    "table",
+    "ul",
+    "ol",
+    "dl",
+    "dt",
+    "dd",
+    "figcaption",
+    "figure",
+    "details",
+    "summary",
 ];
 
 fn extract_text_recursive_scraper(
@@ -697,11 +810,7 @@ fn extract_text_recursive_scraper(
     }
 }
 
-fn extract_md_recursive(
-    doc: &scraper::Html,
-    node_id: ego_tree::NodeId,
-    output: &mut String,
-) {
+fn extract_md_recursive(doc: &scraper::Html, node_id: ego_tree::NodeId, output: &mut String) {
     let node_ref = match doc.tree.get(node_id) {
         Some(n) => n,
         None => return,
@@ -718,12 +827,36 @@ fn extract_md_recursive(
             }
 
             match tag {
-                "h1" => { output.push_str("\n# "); md_children(doc, node_ref, output); output.push('\n'); }
-                "h2" => { output.push_str("\n## "); md_children(doc, node_ref, output); output.push('\n'); }
-                "h3" => { output.push_str("\n### "); md_children(doc, node_ref, output); output.push('\n'); }
-                "h4" => { output.push_str("\n#### "); md_children(doc, node_ref, output); output.push('\n'); }
-                "h5" => { output.push_str("\n##### "); md_children(doc, node_ref, output); output.push('\n'); }
-                "h6" => { output.push_str("\n###### "); md_children(doc, node_ref, output); output.push('\n'); }
+                "h1" => {
+                    output.push_str("\n# ");
+                    md_children(doc, node_ref, output);
+                    output.push('\n');
+                }
+                "h2" => {
+                    output.push_str("\n## ");
+                    md_children(doc, node_ref, output);
+                    output.push('\n');
+                }
+                "h3" => {
+                    output.push_str("\n### ");
+                    md_children(doc, node_ref, output);
+                    output.push('\n');
+                }
+                "h4" => {
+                    output.push_str("\n#### ");
+                    md_children(doc, node_ref, output);
+                    output.push('\n');
+                }
+                "h5" => {
+                    output.push_str("\n##### ");
+                    md_children(doc, node_ref, output);
+                    output.push('\n');
+                }
+                "h6" => {
+                    output.push_str("\n###### ");
+                    md_children(doc, node_ref, output);
+                    output.push('\n');
+                }
                 "a" => {
                     let href = el.attr("href").unwrap_or("");
                     output.push('[');
@@ -779,8 +912,12 @@ fn extract_md_recursive(
                     }
                     md_children(doc, node_ref, output);
                 }
-                "br" => { output.push('\n'); }
-                "hr" => { output.push_str("\n---\n"); }
+                "br" => {
+                    output.push('\n');
+                }
+                "hr" => {
+                    output.push_str("\n---\n");
+                }
                 "img" => {
                     let alt = el.attr("alt").unwrap_or("");
                     if !alt.is_empty() {
@@ -789,9 +926,13 @@ fn extract_md_recursive(
                 }
                 _ => {
                     let is_block = BLOCK_TAGS.contains(&tag);
-                    if is_block { output.push('\n'); }
+                    if is_block {
+                        output.push('\n');
+                    }
                     md_children(doc, node_ref, output);
-                    if is_block { output.push('\n'); }
+                    if is_block {
+                        output.push('\n');
+                    }
                 }
             }
         }
@@ -804,7 +945,11 @@ fn extract_md_recursive(
     }
 }
 
-fn md_children(doc: &scraper::Html, node_ref: ego_tree::NodeRef<scraper::Node>, output: &mut String) {
+fn md_children(
+    doc: &scraper::Html,
+    node_ref: ego_tree::NodeRef<scraper::Node>,
+    output: &mut String,
+) {
     for child in node_ref.children() {
         extract_md_recursive(doc, child.id(), output);
     }
@@ -916,10 +1061,16 @@ mod tests {
     #[test]
     fn fetch_http_annotations_correct() {
         let defs = builtin_tool_defs();
-        let fetch = defs.iter().find(|d| d.namespaced_name == "fetch_http").unwrap();
+        let fetch = defs
+            .iter()
+            .find(|d| d.namespaced_name == "fetch_http")
+            .unwrap();
         let ann = fetch.annotations.as_ref().unwrap();
         assert!(ann.read_only_hint, "fetch_http should be read-only");
-        assert!(!ann.destructive_hint, "fetch_http should not be destructive");
+        assert!(
+            !ann.destructive_hint,
+            "fetch_http should not be destructive"
+        );
         assert!(ann.idempotent_hint, "fetch_http should be idempotent");
         assert!(ann.open_world_hint, "fetch_http should be open-world");
     }
@@ -927,7 +1078,10 @@ mod tests {
     #[test]
     fn grep_http_annotations_correct() {
         let defs = builtin_tool_defs();
-        let grep = defs.iter().find(|d| d.namespaced_name == "grep_http").unwrap();
+        let grep = defs
+            .iter()
+            .find(|d| d.namespaced_name == "grep_http")
+            .unwrap();
         let ann = grep.annotations.as_ref().unwrap();
         assert!(ann.read_only_hint, "grep_http should be read-only");
         assert!(!ann.destructive_hint, "grep_http should not be destructive");
@@ -938,10 +1092,16 @@ mod tests {
     #[test]
     fn http_headers_annotations_correct() {
         let defs = builtin_tool_defs();
-        let headers = defs.iter().find(|d| d.namespaced_name == "http_headers").unwrap();
+        let headers = defs
+            .iter()
+            .find(|d| d.namespaced_name == "http_headers")
+            .unwrap();
         let ann = headers.annotations.as_ref().unwrap();
         assert!(ann.read_only_hint, "http_headers should be read-only");
-        assert!(!ann.destructive_hint, "http_headers should not be destructive");
+        assert!(
+            !ann.destructive_hint,
+            "http_headers should not be destructive"
+        );
         assert!(ann.idempotent_hint, "http_headers should be idempotent");
         assert!(ann.open_world_hint, "http_headers should be open-world");
     }
@@ -1072,9 +1232,7 @@ mod tests {
         )
         .await;
         assert!(resp.error.is_some());
-        assert!(
-            resp.error.unwrap().message.contains("unknown builtin tool")
-        );
+        assert!(resp.error.unwrap().message.contains("unknown builtin tool"));
     }
 
     #[tokio::test]
@@ -1306,15 +1464,20 @@ mod tests {
     fn extract_text_noscript_skipped() {
         let text = extract_text_from_html("<noscript>hidden</noscript>visible");
         assert!(text.contains("visible"), "visible text preserved: {text:?}");
-        assert!(!text.contains("hidden"), "noscript content skipped: {text:?}");
+        assert!(
+            !text.contains("hidden"),
+            "noscript content skipped: {text:?}"
+        );
     }
 
     #[test]
     fn extract_text_template_skipped() {
-        let text =
-            extract_text_from_html("<template><p>hidden</p></template>visible");
+        let text = extract_text_from_html("<template><p>hidden</p></template>visible");
         assert!(text.contains("visible"), "visible text preserved: {text:?}");
-        assert!(!text.contains("hidden"), "template content skipped: {text:?}");
+        assert!(
+            !text.contains("hidden"),
+            "template content skipped: {text:?}"
+        );
     }
 
     #[test]
@@ -1327,8 +1490,7 @@ mod tests {
 
     #[test]
     fn extract_text_nested_scripts_in_divs() {
-        let text =
-            extract_text_from_html("<div><script>evil()</script>Good</div>");
+        let text = extract_text_from_html("<div><script>evil()</script>Good</div>");
         assert!(text.contains("Good"), "visible text kept: {text:?}");
         assert!(!text.contains("evil"), "script content dropped: {text:?}");
     }
@@ -1385,7 +1547,10 @@ mod tests {
         .await;
         assert!(is_tool_error(&resp));
         let text = extract_tool_text(&resp);
-        assert!(text.contains("only http"), "error should mention http: {text}");
+        assert!(
+            text.contains("only http"),
+            "error should mention http: {text}"
+        );
     }
 
     #[tokio::test]
@@ -1403,7 +1568,10 @@ mod tests {
         .await;
         assert!(is_tool_error(&resp));
         let text = extract_tool_text(&resp);
-        assert!(text.contains("only http"), "error should mention http: {text}");
+        assert!(
+            text.contains("only http"),
+            "error should mention http: {text}"
+        );
     }
 
     #[tokio::test]
@@ -1476,7 +1644,10 @@ mod tests {
         )
         .await;
         // Should succeed (negative start_index is silently treated as 0)
-        assert!(!is_tool_error(&resp), "should succeed with default start_index=0");
+        assert!(
+            !is_tool_error(&resp),
+            "should succeed with default start_index=0"
+        );
         let text = extract_tool_text(&resp);
         assert!(text.contains("URL: https://elie.net"), "got: {text}");
     }
@@ -1576,7 +1747,11 @@ mod tests {
         )
         .await;
         // Should complete without hanging (pass or no matches, either is fine)
-        assert!(!is_tool_error(&resp), "should not error: {:?}", extract_tool_text(&resp));
+        assert!(
+            !is_tool_error(&resp),
+            "should not error: {:?}",
+            extract_tool_text(&resp)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1769,9 +1944,7 @@ mod tests {
 
     /// Helper to extract the text content from a tool response.
     fn extract_tool_text(resp: &JsonRpcResponse) -> &str {
-        resp.result
-            .as_ref()
-            .unwrap()["content"][0]["text"]
+        resp.result.as_ref().unwrap()["content"][0]["text"]
             .as_str()
             .unwrap()
     }
@@ -1875,7 +2048,9 @@ mod tests {
         assert!(!is_tool_error(&resp), "http_headers should succeed");
         let text = extract_tool_text(&resp);
         assert!(
-            text.contains("Status: 200") || text.contains("Status: 301") || text.contains("Status: 302"),
+            text.contains("Status: 200")
+                || text.contains("Status: 301")
+                || text.contains("Status: 302"),
             "must return a valid HTTP status: {text}"
         );
         assert!(
@@ -1943,11 +2118,22 @@ mod tests {
     fn extract_elie_about_has_real_content() {
         let html = load_fixture("elie_about.html");
         let text = extract_text_from_html(&html);
-        assert!(text.contains("Bursztein"), "must contain 'Bursztein': {}", &text[..200.min(text.len())]);
+        assert!(
+            text.contains("Bursztein"),
+            "must contain 'Bursztein': {}",
+            &text[..200.min(text.len())]
+        );
         assert!(text.contains("Google"), "must contain 'Google'");
-        assert!(text.to_lowercase().contains("security"), "must contain 'security'");
+        assert!(
+            text.to_lowercase().contains("security"),
+            "must contain 'security'"
+        );
         assert!(text.contains("Stanford"), "must contain 'Stanford'");
-        assert!(text.len() > 3000, "extracted text too short: {} chars", text.len());
+        assert!(
+            text.len() > 3000,
+            "extracted text too short: {} chars",
+            text.len()
+        );
         assert!(!text.contains("<script"), "must not contain script tags");
         assert!(!text.contains("<style"), "must not contain style tags");
         assert!(!text.contains("function()"), "must not contain JS code");
@@ -1957,7 +2143,11 @@ mod tests {
     fn extract_wiki_turing_has_real_content() {
         let html = load_fixture("wiki_turing_excerpt.html");
         let text = extract_text_from_html(&html);
-        assert!(text.contains("Turing"), "must contain 'Turing': {}", &text[..200.min(text.len())]);
+        assert!(
+            text.contains("Turing"),
+            "must contain 'Turing': {}",
+            &text[..200.min(text.len())]
+        );
         assert!(!text.contains("<script"), "no script leakage");
         assert!(!text.contains("<style"), "no style leakage");
     }
@@ -1966,7 +2156,11 @@ mod tests {
     fn extract_wiki_rust_has_real_content() {
         let html = load_fixture("wiki_rust_excerpt.html");
         let text = extract_text_from_html(&html);
-        assert!(text.contains("Rust"), "must contain 'Rust': {}", &text[..200.min(text.len())]);
+        assert!(
+            text.contains("Rust"),
+            "must contain 'Rust': {}",
+            &text[..200.min(text.len())]
+        );
         assert!(!text.contains("<script"), "no script leakage");
     }
 
@@ -1991,12 +2185,15 @@ mod tests {
     fn paginate_multibyte_emoji_boundary() {
         // Emoji are 4-byte UTF-8
         let text = "Hello \u{1F600} World"; // "Hello [grinning face] World"
-        // emoji starts at byte 6 ("Hello " = 6 bytes)
-        // Set max to land mid-emoji (byte 7 or 8)
+                                            // emoji starts at byte 6 ("Hello " = 6 bytes)
+                                            // Set max to land mid-emoji (byte 7 or 8)
         let (chunk, _total, has_more) = paginate(text, 0, 7);
         assert!(has_more, "should have more content");
         // chunk must end at a valid char boundary
-        assert!(chunk.is_char_boundary(chunk.len()), "chunk must end at char boundary");
+        assert!(
+            chunk.is_char_boundary(chunk.len()),
+            "chunk must end at char boundary"
+        );
         // Should include "Hello " but not the emoji (can't fit 4 bytes after byte 6)
         assert_eq!(chunk, "Hello ", "should stop before emoji: {chunk:?}");
     }
@@ -2006,25 +2203,33 @@ mod tests {
         // Cyrillic chars are 2-byte UTF-8
         let text = "\u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442}"; // "Privet" in Cyrillic
         assert_eq!(text.len(), 12); // 6 chars * 2 bytes each
-        // Start at byte 1 (mid-char) -- should align to byte 0
+                                    // Start at byte 1 (mid-char) -- should align to byte 0
         let (chunk, _total, _) = paginate(text, 1, 100);
         assert!(!chunk.is_empty(), "should produce content");
         // Start at byte 3 (mid-char) -- should align to byte 2
         let (chunk, _, _) = paginate(text, 3, 4);
-        assert!(chunk.is_char_boundary(0), "chunk start must be char boundary");
-        assert!(chunk.is_char_boundary(chunk.len()), "chunk end must be char boundary");
+        assert!(
+            chunk.is_char_boundary(0),
+            "chunk start must be char boundary"
+        );
+        assert!(
+            chunk.is_char_boundary(chunk.len()),
+            "chunk end must be char boundary"
+        );
     }
 
     #[test]
     fn paginate_start_index_mid_char() {
         // 3-byte UTF-8 char: euro sign
         let text = "A\u{20AC}B"; // "A[euro]B" = 1 + 3 + 1 = 5 bytes
-        // start_index=2 is mid-euro-sign
+                                 // start_index=2 is mid-euro-sign
         let (chunk, _, _) = paginate(text, 2, 100);
         // Should align to byte 1 (start of euro) or byte 4 (after euro)
         // floor_char_boundary(2) on "A\u{20AC}B" -> byte 1 (start of euro sign)
-        assert!(chunk.contains('\u{20AC}') || chunk.contains('B'),
-            "mid-char start should align to valid boundary: {chunk:?}");
+        assert!(
+            chunk.contains('\u{20AC}') || chunk.contains('B'),
+            "mid-char start should align to valid boundary: {chunk:?}"
+        );
     }
 
     #[test]
@@ -2043,7 +2248,10 @@ mod tests {
             }
             offset += chunk.len();
         }
-        assert_eq!(collected, text, "round-trip pagination must reconstruct original text");
+        assert_eq!(
+            collected, text,
+            "round-trip pagination must reconstruct original text"
+        );
     }
 
     #[test]
@@ -2061,7 +2269,10 @@ mod tests {
             }
             offset += chunk.len();
         }
-        assert_eq!(collected, text, "round-trip must match: {collected:?} vs {text:?}");
+        assert_eq!(
+            collected, text,
+            "round-trip must match: {collected:?} vs {text:?}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2110,15 +2321,27 @@ mod tests {
         let html = load_fixture("elie_about.html");
         let content_mode = extract_text_from_html(&html);
         let raw_mode = &html; // raw returns the HTML as-is
-        // Raw is longer (has all HTML tags)
-        assert!(raw_mode.len() > content_mode.len(),
-            "raw ({}) should be longer than content ({})", raw_mode.len(), content_mode.len());
+                              // Raw is longer (has all HTML tags)
+        assert!(
+            raw_mode.len() > content_mode.len(),
+            "raw ({}) should be longer than content ({})",
+            raw_mode.len(),
+            content_mode.len()
+        );
         // Content mode has no HTML tags
-        assert!(!content_mode.contains("<script"), "content mode must strip scripts");
-        assert!(!content_mode.contains("<div"), "content mode must strip div tags");
+        assert!(
+            !content_mode.contains("<script"),
+            "content mode must strip scripts"
+        );
+        assert!(
+            !content_mode.contains("<div"),
+            "content mode must strip div tags"
+        );
         // Raw mode has HTML tags
-        assert!(raw_mode.contains("<script") || raw_mode.contains("<div"),
-            "raw mode should preserve HTML tags");
+        assert!(
+            raw_mode.contains("<script") || raw_mode.contains("<div"),
+            "raw mode should preserve HTML tags"
+        );
     }
 
     #[test]
@@ -2134,7 +2357,9 @@ mod tests {
         loop {
             let (c, _, more) = paginate(&html, offset, 10000);
             collected.push_str(&c);
-            if !more { break; }
+            if !more {
+                break;
+            }
             offset += c.len();
         }
         assert_eq!(collected, html, "raw HTML pagination round-trip must match");
@@ -2152,7 +2377,10 @@ mod tests {
         assert!(md.contains("Bursztein"), "must contain 'Bursztein'");
         assert!(md.contains("Google"), "must contain 'Google'");
         // Must have markdown headings
-        assert!(md.contains("# ") || md.contains("## "), "must have markdown headings");
+        assert!(
+            md.contains("# ") || md.contains("## "),
+            "must have markdown headings"
+        );
         // Must have markdown links
         assert!(md.contains("]("), "must have markdown links [text](url)");
         // Must NOT contain script/style content
@@ -2165,7 +2393,10 @@ mod tests {
         let html = "<h1>Title</h1><h2>Subtitle</h2><p>Body text</p>";
         let md = extract_markdown_from_html(html);
         assert!(md.contains("# Title"), "h1 -> '# Title', got: {md:?}");
-        assert!(md.contains("## Subtitle"), "h2 -> '## Subtitle', got: {md:?}");
+        assert!(
+            md.contains("## Subtitle"),
+            "h2 -> '## Subtitle', got: {md:?}"
+        );
         assert!(md.contains("Body text"), "body preserved");
     }
 
@@ -2173,7 +2404,10 @@ mod tests {
     fn markdown_preserves_links() {
         let html = r#"<a href="https://example.com">Example</a>"#;
         let md = extract_markdown_from_html(html);
-        assert!(md.contains("[Example](https://example.com)"), "link preserved: {md:?}");
+        assert!(
+            md.contains("[Example](https://example.com)"),
+            "link preserved: {md:?}"
+        );
     }
 
     #[test]
@@ -2224,7 +2458,8 @@ mod tests {
 
     #[test]
     fn markdown_vs_content_mode() {
-        let html = r#"<h1>Title</h1><p>Text with <a href="/link">link</a> and <strong>bold</strong>.</p>"#;
+        let html =
+            r#"<h1>Title</h1><p>Text with <a href="/link">link</a> and <strong>bold</strong>.</p>"#;
         let md = extract_markdown_from_html(html);
         let text = extract_text_from_html(html);
         // Markdown has structure markers
@@ -2270,14 +2505,24 @@ mod tests {
         .await;
         assert!(!is_tool_error(&resp), "fetch should succeed");
         let text = extract_tool_text(&resp);
-        assert!(text.contains("Bursztein"), "must contain 'Bursztein': {}", &text[..300.min(text.len())]);
+        assert!(
+            text.contains("Bursztein"),
+            "must contain 'Bursztein': {}",
+            &text[..300.min(text.len())]
+        );
         assert!(text.contains("Google"), "must contain 'Google'");
         // Default is markdown -- should have structure markers
-        assert!(text.contains("](") || text.contains("# "), "default mode should return markdown with links or headings");
+        assert!(
+            text.contains("](") || text.contains("# "),
+            "default mode should return markdown with links or headings"
+        );
         // Verify substantial content (not just 93 bytes)
         let content_line = text.lines().find(|l| l.starts_with("Content length:"));
         if let Some(cl) = content_line {
-            let len: usize = cl.trim_start_matches("Content length: ").parse().unwrap_or(0);
+            let len: usize = cl
+                .trim_start_matches("Content length: ")
+                .parse()
+                .unwrap_or(0);
             assert!(len > 3000, "content length must be substantial, got {len}");
         }
     }
@@ -2299,8 +2544,14 @@ mod tests {
         let text = extract_tool_text(&resp);
         assert!(text.contains("Bursztein"), "must contain 'Bursztein'");
         // Content mode: no markdown markers
-        assert!(!text.contains("]("), "content mode must not have markdown links");
-        assert!(!text.contains("**"), "content mode must not have bold markers");
+        assert!(
+            !text.contains("]("),
+            "content mode must not have markdown links"
+        );
+        assert!(
+            !text.contains("**"),
+            "content mode must not have bold markers"
+        );
     }
 
     #[tokio::test]
@@ -2318,7 +2569,10 @@ mod tests {
         .await;
         assert!(!is_tool_error(&resp), "fetch raw should succeed");
         let text = extract_tool_text(&resp);
-        assert!(text.contains("<div") || text.contains("<p"), "raw mode must preserve HTML tags");
+        assert!(
+            text.contains("<div") || text.contains("<p"),
+            "raw mode must preserve HTML tags"
+        );
         assert!(text.contains("Bursztein"), "must contain 'Bursztein'");
     }
 
@@ -2337,8 +2591,14 @@ mod tests {
         .await;
         assert!(!is_tool_error(&resp), "grep should succeed");
         let text = extract_tool_text(&resp);
-        assert!(!text.contains("Matches found: 0"), "must find matches: {text}");
-        assert!(text.contains("Match 1"), "must have at least one match block");
+        assert!(
+            !text.contains("Matches found: 0"),
+            "must find matches: {text}"
+        );
+        assert!(
+            text.contains("Match 1"),
+            "must have at least one match block"
+        );
     }
 
     #[tokio::test]
@@ -2356,7 +2616,10 @@ mod tests {
         .await;
         assert!(!is_tool_error(&resp), "fetch should succeed");
         let text = extract_tool_text(&resp);
-        assert!(text.contains("start_index="), "must have pagination hint for large page");
+        assert!(
+            text.contains("start_index="),
+            "must have pagination hint for large page"
+        );
     }
 
     #[tokio::test]
@@ -2375,7 +2638,10 @@ mod tests {
         assert!(!is_tool_error(&resp), "http_headers should succeed");
         let text = extract_tool_text(&resp);
         assert!(text.contains("Status: 200"), "must return 200: {text}");
-        assert!(text.to_lowercase().contains("content-type"), "must include content-type");
+        assert!(
+            text.to_lowercase().contains("content-type"),
+            "must include content-type"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2421,7 +2687,10 @@ mod tests {
         .await;
         assert!(!is_tool_error(&resp), "grep should succeed");
         let text = extract_tool_text(&resp);
-        assert!(!text.contains("Matches found: 0"), "must find Mozilla matches");
+        assert!(
+            !text.contains("Matches found: 0"),
+            "must find Mozilla matches"
+        );
     }
 
     #[tokio::test]
@@ -2440,7 +2709,10 @@ mod tests {
             &test_db(),
         )
         .await;
-        assert!(!is_tool_error(&resp), "fetch should succeed (no panic from multi-byte)");
+        assert!(
+            !is_tool_error(&resp),
+            "fetch should succeed (no panic from multi-byte)"
+        );
         let text = extract_tool_text(&resp);
         assert!(text.contains("Unicode"), "must contain 'Unicode'");
     }

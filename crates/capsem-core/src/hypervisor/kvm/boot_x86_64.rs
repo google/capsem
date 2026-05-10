@@ -6,12 +6,11 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use super::memory::{
-    self, GuestMemory, BOOT_PARAMS_ADDR, CMDLINE_ADDR, CMDLINE_MAX_SIZE,
-    GDT_ADDR, KERNEL_LOAD_ADDR, PD_ADDR, PDPT_ADDR, PML4_ADDR,
-    RAM_BASE,
+    self, GuestMemory, BOOT_PARAMS_ADDR, CMDLINE_ADDR, CMDLINE_MAX_SIZE, GDT_ADDR,
+    KERNEL_LOAD_ADDR, PDPT_ADDR, PD_ADDR, PML4_ADDR, RAM_BASE,
 };
 use super::sys;
 
@@ -56,8 +55,10 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
 
     // Check magic
     let magic = u32::from_le_bytes([
-        kernel_data[0x202], kernel_data[0x203],
-        kernel_data[0x204], kernel_data[0x205],
+        kernel_data[0x202],
+        kernel_data[0x203],
+        kernel_data[0x204],
+        kernel_data[0x205],
     ]);
     if magic != HDRS_MAGIC {
         bail!("not a bzImage: bad magic 0x{magic:08x}, expected 0x{HDRS_MAGIC:08x}");
@@ -257,7 +258,7 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
 
     let mut pd = vec![0u8; (gb_count * 4096) as usize];
     let total_pages = (ram_size + 0x1F_FFFF) / 0x20_0000;
-    
+
     for i in 0..total_pages {
         let entry: u64 = (i << 21) | 0x83; // present + writable + huge page (PS bit)
         let offset = (i as usize) * 8;
@@ -328,8 +329,8 @@ pub(super) fn setup_boot_regs(
 
     // Control registers for 64-bit paging
     sregs.cr0 = 0x8000_0001; // PG (paging) + PE (protected mode)
-    sregs.cr3 = PML4_ADDR;   // page table base
-    sregs.cr4 = 0x20;        // PAE (physical address extension)
+    sregs.cr3 = PML4_ADDR; // page table base
+    sregs.cr4 = 0x20; // PAE (physical address extension)
 
     // EFER: LME (long mode enable) + LMA (long mode active)
     sregs.efer = 0x500;
@@ -360,11 +361,7 @@ pub(super) fn setup_cpuid(vm: &sys::VmFd, vcpu: &sys::VcpuFd) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Build kernel command line with virtio MMIO device descriptors appended.
-pub(super) fn build_cmdline(
-    base_cmdline: &str,
-    virtio_device_count: u32,
-    has_pit: bool,
-) -> String {
+pub(super) fn build_cmdline(base_cmdline: &str, virtio_device_count: u32, has_pit: bool) -> String {
     let mut cmdline = base_cmdline.to_string();
     if !has_pit {
         cmdline.push_str(" no_timer_check");
@@ -374,7 +371,9 @@ pub(super) fn build_cmdline(
         let irq = memory::virtio_mmio_irq(slot);
         cmdline.push_str(&format!(
             " virtio_mmio.device=0x{:x}@0x{:x}:{}",
-            memory::VIRTIO_MMIO_SIZE, addr, irq
+            memory::VIRTIO_MMIO_SIZE,
+            addr,
+            irq
         ));
     }
     cmdline
@@ -419,16 +418,16 @@ mod tests {
     #[test]
     fn write_page_tables_exact_gb_boundaries() {
         let mem = GuestMemory::new(1024 * 1024).unwrap(); // 1MB for structs
-        
+
         // Test exactly 1GB
         write_page_tables(&mem, 1024 * 1024 * 1024).unwrap();
         let mut buf = [0u8; 8];
         mem.read_at(PDPT_ADDR - RAM_BASE, &mut buf).unwrap();
         assert_ne!(u64::from_le_bytes(buf), 0, "PDPT[0] should exist for 1GB");
-        
+
         // PDPT[1] should technically be mapped because we round up our gb_count,
         // or if we do exact division it might be empty. Let's just ensure it doesn't panic.
-        
+
         // Test exactly 2GB
         write_page_tables(&mem, 2 * 1024 * 1024 * 1024).unwrap();
         mem.read_at(PDPT_ADDR - RAM_BASE + 8, &mut buf).unwrap();
@@ -449,23 +448,29 @@ mod tests {
 
         // Check cmd_line_ptr in boot_params
         let mut ptr_buf = [0u8; 4];
-        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x228, &mut ptr_buf).unwrap();
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x228, &mut ptr_buf)
+            .unwrap();
         assert_eq!(u32::from_le_bytes(ptr_buf), CMDLINE_ADDR as u32);
     }
 
     #[test]
     fn boot_params_sets_initrd() {
         let mem = GuestMemory::new(4096 * 256).unwrap();
-        let initrd = InitrdLoadInfo { addr: 0x80_0000, size: 1024 * 1024 };
+        let initrd = InitrdLoadInfo {
+            addr: 0x80_0000,
+            size: 1024 * 1024,
+        };
         let e820 = memory::build_e820_map(256 * 4096);
         write_boot_params(&mem, "test", Some(&initrd), &e820, &[]).unwrap();
 
         // Check ramdisk_image
         let mut buf = [0u8; 4];
-        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x218, &mut buf).unwrap();
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x218, &mut buf)
+            .unwrap();
         assert_eq!(u32::from_le_bytes(buf), 0x80_0000);
         // Check ramdisk_size
-        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x21C, &mut buf).unwrap();
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x21C, &mut buf)
+            .unwrap();
         assert_eq!(u32::from_le_bytes(buf), 1024 * 1024);
     }
 
@@ -475,15 +480,17 @@ mod tests {
         let mut fake_header = vec![0u8; 0x2b9 - 0x1f1];
         fake_header[0] = 0xAA;
         fake_header[fake_header.len() - 1] = 0xBB;
-        
+
         let e820 = memory::build_e820_map(256 * 4096);
         write_boot_params(&mem, "test", None, &e820, &fake_header).unwrap();
 
         let mut buf = [0u8; 1];
-        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x1f1, &mut buf).unwrap();
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x1f1, &mut buf)
+            .unwrap();
         assert_eq!(buf[0], 0xAA, "First byte of setup_header not preserved");
 
-        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x2b8, &mut buf).unwrap();
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x2b8, &mut buf)
+            .unwrap();
         assert_eq!(buf[0], 0xBB, "Last byte of setup_header not preserved");
     }
 
@@ -494,25 +501,30 @@ mod tests {
         write_boot_params(&mem, "test", None, &e820, &[]).unwrap();
 
         let mut buf = [0u8; 1];
-        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x210, &mut buf).unwrap();
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x210, &mut buf)
+            .unwrap();
         assert_eq!(buf[0], 0xFF, "type_of_loader must be 0xFF");
 
-        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x211, &mut buf).unwrap();
-        assert_eq!(buf[0], 0x81, "loadflags must be 0x81 (LOADED_HIGH | CAN_USE_HEAP)");
+        mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x211, &mut buf)
+            .unwrap();
+        assert_eq!(
+            buf[0], 0x81,
+            "loadflags must be 0x81 (LOADED_HIGH | CAN_USE_HEAP)"
+        );
     }
 
     fn create_fake_bzimage() -> Vec<u8> {
         let mut kernel = vec![0u8; 4096]; // Minimal size
-        
+
         // Set setup_sects = 4
         kernel[SETUP_HEADER_OFFSET] = 4;
-        
+
         // Set magic "HdrS"
         kernel[0x202..0x206].copy_from_slice(&HDRS_MAGIC.to_le_bytes());
-        
+
         // Set boot protocol version (0x0206)
         kernel[0x206..0x208].copy_from_slice(&0x0206u16.to_le_bytes());
-        
+
         kernel
     }
 
@@ -520,7 +532,7 @@ mod tests {
     fn load_kernel_rejects_bad_magic() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vmlinuz");
-        
+
         let mut kernel = create_fake_bzimage();
         kernel[0x202..0x206].copy_from_slice(&0xDEADBEEFu32.to_le_bytes()); // Break magic
         std::fs::write(&path, &kernel).unwrap();
@@ -535,7 +547,7 @@ mod tests {
     fn load_kernel_rejects_old_protocol() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vmlinuz");
-        
+
         let mut kernel = create_fake_bzimage();
         kernel[0x206..0x208].copy_from_slice(&0x0205u16.to_le_bytes()); // Protocol 2.05 (too old)
         std::fs::write(&path, &kernel).unwrap();
@@ -550,7 +562,7 @@ mod tests {
     fn load_kernel_returns_correct_entry_offset() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vmlinuz");
-        
+
         let kernel = create_fake_bzimage();
         std::fs::write(&path, &kernel).unwrap();
 
@@ -597,7 +609,11 @@ mod tests {
         let mut buf = [0u8; 8];
         mem.read_at(PDPT_ADDR - RAM_BASE + 8, &mut buf).unwrap(); // index 1 (1GB-2GB)
         let pdpt_entry = u64::from_le_bytes(buf);
-        assert_ne!(pdpt_entry & 0x1, 0, "PDPT entry 1 is missing, page tables only cover 1GB");
+        assert_ne!(
+            pdpt_entry & 0x1,
+            0,
+            "PDPT entry 1 is missing, page tables only cover 1GB"
+        );
     }
 
     #[test]
@@ -610,6 +626,9 @@ mod tests {
         std::fs::write(&path, &kernel).unwrap();
         let mem = GuestMemory::new(64 * 1024 * 1024).unwrap();
         let err = load_kernel(&mem, &path).unwrap_err();
-        assert!(err.to_string().contains("not a bzImage"), "should reject ARM64 kernel: {err}");
+        assert!(
+            err.to_string().contains("not a bzImage"),
+            "should reject ARM64 kernel: {err}"
+        );
     }
 }

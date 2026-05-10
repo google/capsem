@@ -91,51 +91,50 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
     echo "[capsem-init] VirtioFS share mounted"
     boot_mark "virtiofs"
 
-    # Mount the ext4 loopback image for overlayfs upper.
-    # Host creates the sparse file; guest formats on first boot.
-    SYSTEM_IMG=/mnt/shared/system/rootfs.img
-    if [ ! -f "$SYSTEM_IMG" ]; then
-        echo "[capsem-init] FATAL: system image not found at $SYSTEM_IMG"
-        ls -la /mnt/shared/system/ 2>&1
+    # The system-overlay rootfs.img is attached as a virtio-blk device
+    # (/dev/vdb) by capsem-process. Native virtio-blk speaks block-device
+    # semantics and survives save_state/restore_state without EIO under
+    # writeback pressure -- the loop-on-VirtioFS path that used to back
+    # this overlay did not. The same file is also visible at
+    # /mnt/shared/system/rootfs.img for host-side introspection while the
+    # VM is stopped, but the guest never opens it through the share.
+    if [ ! -b /dev/vdb ]; then
+        echo "[capsem-init] FATAL: /dev/vdb (system overlay) not attached"
         exit 1
     fi
-
+    SYSTEM_DEV=/dev/vdb
     mkdir -p /mnt/system
 
-    # Set up loop device for the ext4 system image.
-    # Host creates a sparse file (0 bytes actual). Guest formats on first boot.
-    LOOP_DEV=$(losetup -f 2>/dev/null)
-    if [ -z "$LOOP_DEV" ]; then
-        mknod /dev/loop0 b 7 0 2>/dev/null || true
-        LOOP_DEV=/dev/loop0
-    fi
-    losetup "$LOOP_DEV" "$SYSTEM_IMG" || {
-        echo "[capsem-init] FATAL: losetup failed for $SYSTEM_IMG"
-        exit 1
-    }
-    echo "[capsem-init] loop device: $LOOP_DEV"
-
     # Format if unformatted (first boot). Uses mke2fs from the squashfs rootfs
-    # since busybox doesn't include it. Bind-mount /dev so chroot can see loop devices.
-    # Check ext4 magic number (0xEF53) at offset 0x438 to detect formatted images.
-    # Busybox blkid -p is unreliable for loop devices over VirtioFS.
-    if ! dd if="$LOOP_DEV" bs=1 skip=1080 count=2 2>/dev/null | od -A n -t x1 | grep -q '53 ef'; then
-        echo "[capsem-init] formatting system image..."
+    # since busybox doesn't include it. Check ext4 magic (0xEF53) at offset
+    # 0x438 to detect formatted images.
+    #
+    # Journal: ENABLED (default has_journal). Apple VZ may hold writes in
+    # cache across save_state/restore_state, leaving cached metadata in the
+    # resumed kernel out of sync with the on-disk file. The journal lets
+    # EXT4 replay in-flight metadata changes on the next mount instead of
+    # emitting "failed to convert unwritten extents" + I/O errors on dirent
+    # blocks. Costs ~5-10% IOPS.
+    if ! dd if="$SYSTEM_DEV" bs=1 skip=1080 count=2 2>/dev/null | od -A n -t x1 | grep -q '53 ef'; then
+        echo "[capsem-init] formatting system image (ext4 with journal)..."
         mount --bind /dev /mnt/a/dev
-        chroot /mnt/a /usr/sbin/mke2fs -F -t ext4 -m 0 -O ^has_journal \
-            -E lazy_itable_init=1 -L system -q "$LOOP_DEV" 2>&1
+        chroot /mnt/a /usr/sbin/mke2fs -F -t ext4 -m 0 \
+            -E lazy_itable_init=1 -L system -q "$SYSTEM_DEV" 2>&1
         umount /mnt/a/dev
         echo "[capsem-init] system image formatted"
     fi
 
-    mount -t ext4 -o noatime,nodiratime "$LOOP_DEV" /mnt/system || {
+    # data=ordered (default for ext4 with journal): metadata writes go through
+    # the journal; data writes are forced to disk before the metadata commit.
+    # Combined with the host fsync(rootfs.img) in capsem-process Suspend, this
+    # gives both halves of the divergence-prevention contract.
+    mount -t ext4 -o noatime,nodiratime,data=ordered "$SYSTEM_DEV" /mnt/system || {
         echo "[capsem-init] FATAL: cannot mount system image -- aborting"
         exit 1
     }
     mkdir -p /mnt/system/upper /mnt/system/work
-    mkdir -p /mnt/system/upper /mnt/system/work
 
-    # Stack overlayfs: squashfs (lower) + ext4 loopback (upper).
+    # Stack overlayfs: squashfs (lower) + ext4 virtio-blk (upper).
     mount -t overlay overlay \
       -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,redirect_dir=on,metacopy=on \
       /newroot || \
@@ -145,7 +144,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
         exit 1
     }
-    echo "[capsem-init] overlayfs mounted (ext4 loopback upper)"
+    echo "[capsem-init] overlayfs mounted (virtio-blk upper /dev/vdb)"
     boot_mark "overlayfs"
 else
     # === Block mode (legacy) ===
@@ -240,9 +239,15 @@ echo "force-unsafe-io" > /newroot/etc/dpkg/dpkg.cfg.d/force-unsafe-io
 
 # === Network: air-gapped IP stack ===
 # The guest has no real NIC. We create a dummy interface with a local IP,
-# run a fake DNS that resolves everything to that IP, and use iptables to
-# redirect port 443 to our vsock-backed proxy. The host SNI proxy then
-# inspects TLS ClientHello for the domain and bridges to the real server.
+# point libc resolver at 127.0.0.1, and use iptables to redirect:
+#   - port 53 (DNS) -> capsem-dns-proxy on 127.0.0.1:1053 -- the host
+#     hickory-backed handler returns real DNS answers (or NXDOMAIN for
+#     blocked domains; T3).
+#   - port 443 (HTTPS) -> capsem-net-proxy 10443 -- TLS terminated by
+#     host MITM proxy.
+#   - port 80 + plain-HTTP allowlist (11434 for Ollama) ->
+#     capsem-net-proxy 10080 -- T2.2 first-byte sniff classifies on
+#     wire bytes.
 echo "[capsem-init] setting up network..."
 chroot /newroot ip link set lo up 2>/dev/null || true
 chroot /newroot ip link add dummy0 type dummy
@@ -250,24 +255,28 @@ chroot /newroot ip addr add 10.0.0.1/24 dev dummy0
 chroot /newroot ip link set dummy0 up
 chroot /newroot ip route add default dev dummy0
 
-# Fake DNS: all domains resolve to 10.0.0.1.
-# Bind-mount resolv.conf from /run to ensure dnsmasq config takes effect.
+# T3.4: point libc at 127.0.0.1 (the iptables nat rule below redirects
+# UDP/TCP :53 to the capsem-dns-proxy listener on :1053). dnsmasq is
+# gone -- the host hickory handler returns the real wire bytes.
 echo "nameserver 127.0.0.1" > /newroot/run/resolv.conf
 mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
-chroot /newroot dnsmasq --no-daemon --no-resolv --no-hosts \
-    --address=/#/10.0.0.1 --listen-address=127.0.0.1 --port=53 &
-# Poll for dnsmasq readiness instead of fixed sleep.
-_i=0
-while ! chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":53 "' && [ "$_i" -lt 40 ]; do
-    _i=$((_i + 1))
-done
 
 # iptables REDIRECT: use iptables-legacy since kernel has NF_TABLES=n.
+# Port 53 (DNS, UDP+TCP) goes to capsem-dns-proxy on :1053 -- T3.4.
+# Port 443 (HTTPS) goes to the agent's TLS-target listener (10443).
+# Port 80 + the configurable plain-HTTP allowlist (currently 11434
+# for Ollama-shape local LLM servers) go to the plain-HTTP listener
+# (10080) -- T2.2. Both listeners forward to the same vsock port;
+# the host's first-byte sniff (T2.1) classifies on wire bytes.
 IPTABLES=iptables
 if [ -x /newroot/usr/sbin/iptables-legacy ]; then
     IPTABLES=iptables-legacy
 fi
+chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p udp --dport 53    -j REDIRECT --to-port 1053
+chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053
 chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443
+chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080
+chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080
 echo "[capsem-init] network ready"
 boot_mark "network"
 
@@ -283,16 +292,50 @@ elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
 fi
 if [ -n "$NET_PROXY_PATH" ]; then
     chroot /newroot "$NET_PROXY_PATH" &
-    # Poll for net-proxy readiness instead of fixed sleep.
+    # Poll for net-proxy readiness on BOTH the HTTPS (10443) and
+    # plain-HTTP (10080) listen ports. T2.2 added the second.
     _i=0
-    while ! chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10443 "' && [ "$_i" -lt 20 ]; do
+    while [ "$_i" -lt 20 ]; do
+        if chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10443 "' \
+            && chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10080 "'; then
+            break
+        fi
         _i=$((_i + 1))
     done
     echo "[capsem-init] net-proxy started"
 else
-    echo "[capsem-init] WARNING: capsem-net-proxy not found, no HTTPS proxy"
+    echo "[capsem-init] WARNING: capsem-net-proxy not found, no proxy"
 fi
 boot_mark "net_proxy"
+
+# T3.4: launch capsem-dns-proxy (DNS UDP+TCP -> vsock bridge to the
+# host hickory handler). Bound on 127.0.0.1:1053; the iptables nat
+# rule above redirects port 53 -> 1053. Replaces dnsmasq.
+DNS_PROXY_PATH=""
+if [ -x /capsem-dns-proxy ]; then
+    cp /capsem-dns-proxy /newroot/run/capsem-dns-proxy
+    chmod 555 /newroot/run/capsem-dns-proxy
+    DNS_PROXY_PATH=/run/capsem-dns-proxy
+elif [ -x /newroot/usr/local/bin/capsem-dns-proxy ]; then
+    DNS_PROXY_PATH=/usr/local/bin/capsem-dns-proxy
+fi
+if [ -n "$DNS_PROXY_PATH" ]; then
+    chroot /newroot "$DNS_PROXY_PATH" &
+    # Poll for dns-proxy readiness on UDP + TCP :1053. ss(8) shows
+    # UDP listeners with `-lu` and TCP with `-ltn`; check both.
+    _i=0
+    while [ "$_i" -lt 40 ]; do
+        if chroot /newroot sh -c 'ss -lun 2>/dev/null | grep -q ":1053 "' \
+            && chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":1053 "'; then
+            break
+        fi
+        _i=$((_i + 1))
+    done
+    echo "[capsem-init] dns-proxy started"
+else
+    echo "[capsem-init] WARNING: capsem-dns-proxy not found, DNS will fail"
+fi
+boot_mark "dns_proxy"
 
 # Deploy MCP server binary (stdio-to-vsock relay for AI agents).
 # Prefer initrd-bundled copy, fall back to rootfs.

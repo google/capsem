@@ -1,0 +1,106 @@
+use super::*;
+
+#[test]
+fn route_anthropic_messages() {
+    let (kind, _) = route_provider("/v1/messages").unwrap();
+    assert_eq!(kind, ProviderKind::Anthropic);
+}
+
+#[test]
+fn route_anthropic_messages_with_query() {
+    let (kind, _) = route_provider("/v1/messages?beta=true").unwrap();
+    assert_eq!(kind, ProviderKind::Anthropic);
+}
+
+#[test]
+fn route_openai_responses() {
+    let (kind, _) = route_provider("/v1/responses").unwrap();
+    assert_eq!(kind, ProviderKind::OpenAi);
+}
+
+#[test]
+fn route_openai_chat_completions() {
+    let (kind, _) = route_provider("/v1/chat/completions").unwrap();
+    assert_eq!(kind, ProviderKind::OpenAi);
+}
+
+#[test]
+fn route_google_gemini() {
+    let (kind, _) = route_provider("/v1beta/models/gemini-2.5-pro:streamGenerateContent").unwrap();
+    assert_eq!(kind, ProviderKind::Google);
+}
+
+#[test]
+fn route_google_gemini_generate() {
+    let (kind, _) = route_provider("/v1beta/models/gemini-2.5-pro:generateContent").unwrap();
+    assert_eq!(kind, ProviderKind::Google);
+}
+
+#[test]
+fn route_unknown_returns_none() {
+    assert!(route_provider("/v2/something").is_none());
+    assert!(route_provider("/health").is_none());
+    assert!(route_provider("/").is_none());
+}
+
+#[test]
+fn provider_kind_as_str() {
+    assert_eq!(ProviderKind::Anthropic.as_str(), "anthropic");
+    assert_eq!(ProviderKind::OpenAi.as_str(), "openai");
+    assert_eq!(ProviderKind::Google.as_str(), "google");
+}
+
+// -- extract_model_from_path --
+
+#[test]
+fn extract_model_gemini_stream() {
+    assert_eq!(
+        extract_model_from_path("/v1beta/models/gemini-2.5-flash:streamGenerateContent"),
+        Some("gemini-2.5-flash".to_string())
+    );
+}
+
+#[test]
+fn extract_model_gemini_generate() {
+    assert_eq!(
+        extract_model_from_path("/v1beta/models/gemini-2.5-pro:generateContent"),
+        Some("gemini-2.5-pro".to_string())
+    );
+}
+
+#[test]
+fn extract_model_no_models_segment() {
+    assert_eq!(extract_model_from_path("/v1/messages"), None);
+}
+
+#[test]
+fn extract_model_empty_model() {
+    assert_eq!(
+        extract_model_from_path("/v1beta/models/:generateContent"),
+        None
+    );
+}
+
+// -- tool_origin --
+
+#[test]
+fn tool_origin_native_tools() {
+    assert_eq!(tool_origin("write_file"), "native");
+    assert_eq!(tool_origin("bash"), "native");
+    assert_eq!(tool_origin("run_shell_command"), "native");
+    assert_eq!(tool_origin("read_file"), "native");
+}
+
+#[test]
+fn tool_origin_local_builtin_tools() {
+    assert_eq!(tool_origin("fetch_http"), "local");
+    assert_eq!(tool_origin("grep_http"), "local");
+    assert_eq!(tool_origin("http_headers"), "local");
+}
+
+#[test]
+fn tool_origin_mcp_proxy_tools() {
+    assert_eq!(tool_origin("github__list_issues"), "mcp_proxy");
+    assert_eq!(tool_origin("jira__create_ticket"), "mcp_proxy");
+    assert_eq!(tool_origin("custom_server__my_tool"), "mcp_proxy");
+}

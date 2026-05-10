@@ -35,10 +35,16 @@ pub fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
     }
     let trimmed = collapsed.trim_start_matches('/');
     if trimmed.is_empty() {
-        return Err(AppError(StatusCode::BAD_REQUEST, "empty path after sanitization".into()));
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "empty path after sanitization".into(),
+        ));
     }
     if trimmed.contains("..") {
-        return Err(AppError(StatusCode::BAD_REQUEST, "path traversal rejected".into()));
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "path traversal rejected".into(),
+        ));
     }
     Ok(trimmed.to_string())
 }
@@ -65,7 +71,12 @@ pub fn identify_file_sync(
     let mut session = magika.lock().unwrap();
     match session.identify_file_sync(path) {
         Ok(ft) => extract_magika_info(&ft),
-        Err(_) => ("unknown".into(), "application/octet-stream".into(), "unknown".into(), false),
+        Err(_) => (
+            "unknown".into(),
+            "application/octet-stream".into(),
+            "unknown".into(),
+            false,
+        ),
     }
 }
 
@@ -184,7 +195,10 @@ mod tests {
         assert!(!label.is_empty());
         assert!(!mime.is_empty());
         assert!(!group.is_empty());
-        assert!(is_text, "ASCII text should be recognized as text, got label={label}");
+        assert!(
+            is_text,
+            "ASCII text should be recognized as text, got label={label}"
+        );
     }
 
     #[test]
@@ -207,6 +221,9 @@ mod tests {
         drop(f);
         let session = test_magika();
         let (label, _mime, _group, is_text) = identify_file_sync(&session, &txt);
-        assert!(is_text, "ASCII text not recognized as text, got label={label}");
+        assert!(
+            is_text,
+            "ASCII text not recognized as text, got label={label}"
+        );
     }
 }

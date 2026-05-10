@@ -6,15 +6,10 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use tracing::{debug_span, info, info_span, warn};
 
-use crate::vm::config::VmConfig;
-use crate::hypervisor::{VmHandle, VsockConnection, Hypervisor};
 use crate::host_state::{HostState, HostStateMachine};
+use crate::hypervisor::{Hypervisor, VmHandle, VsockConnection};
+use crate::vm::config::VmConfig;
 
-use crate::{
-    GuestToHost, HostToGuest, VirtioFsShare, decode_guest_msg, encode_host_msg,
-    MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE,
-    VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
-};
 #[cfg(target_os = "macos")]
 use crate::hypervisor::apple_vz::AppleVzHypervisor;
 #[cfg(target_os = "linux")]
@@ -22,7 +17,13 @@ use crate::hypervisor::kvm::KvmHypervisor;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::mitm_proxy;
 use crate::net::policy_config;
+use crate::{
+    decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
+    VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY,
+    VSOCK_PORT_TERMINAL,
+};
 use capsem_logger::DbWriter;
+use capsem_proto::{VSOCK_PORT_AUDIT, VSOCK_PORT_DNS_PROXY};
 
 use super::registry::SandboxNetworkState;
 
@@ -42,8 +43,7 @@ pub fn create_net_state_with_policy(
     db: Arc<DbWriter>,
     policy: crate::net::policy::NetworkPolicy,
 ) -> Result<SandboxNetworkState> {
-    let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM)
-        .context("failed to load MITM CA")?;
+    let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM).context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
     info!(
         vm_id,
@@ -65,7 +65,12 @@ pub struct BootOptions<'a> {
     pub initrd_override: Option<&'a Path>,
     pub rootfs_override: Option<&'a Path>,
     pub cmdline: &'a str,
-    pub scratch_disk_path: Option<&'a Path>,
+    /// Path to a sparse host file attached as the second virtio-blk device
+    /// (`/dev/vdb` in the guest). In VirtioFS mode this is the system-overlay
+    /// disk that the guest formats ext4 on first boot and uses as the
+    /// overlayfs upper. Bypasses the loop-on-VirtioFS sandwich whose closed-
+    /// source virtiofsd EIOs under writeback pressure on resume.
+    pub system_overlay_disk: Option<&'a Path>,
     pub virtiofs_shares: &'a [VirtioFsShare],
     pub cpu_count: u32,
     pub ram_bytes: u64,
@@ -77,20 +82,25 @@ pub struct BootOptions<'a> {
 /// Build config, boot the VM via the hypervisor trait, and return the handle +
 /// vsock receiver + state machine.
 ///
-/// If `scratch_disk_path` is provided, the scratch disk is attached as a second
-/// block device (read-write) for the guest `/root` workspace.
+/// If `system_overlay_disk` is provided, the file is attached as the second
+/// virtio-blk device. In VirtioFS mode the guest mounts it at `/mnt/system`
+/// as the overlayfs upper.
 /// If `virtiofs_shares` is non-empty, VirtioFS directory sharing devices are
 /// attached and `capsem.storage=virtiofs` is appended to the kernel cmdline.
 pub fn boot_vm(
     options: BootOptions,
-) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>, HostStateMachine)> {
+) -> Result<(
+    Box<dyn VmHandle>,
+    mpsc::UnboundedReceiver<VsockConnection>,
+    HostStateMachine,
+)> {
     let BootOptions {
         assets,
         kernel_override,
         initrd_override,
         rootfs_override,
         cmdline,
-        scratch_disk_path,
+        system_overlay_disk,
         virtiofs_shares,
         cpu_count,
         ram_bytes,
@@ -101,7 +111,10 @@ pub fn boot_vm(
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
 
-    info!("[boot-audit] boot_vm: cpu={cpu_count} ram_bytes={ram_bytes} virtiofs_shares={}", virtiofs_shares.len());
+    info!(
+        "[boot-audit] boot_vm: cpu={cpu_count} ram_bytes={ram_bytes} virtiofs_shares={}",
+        virtiofs_shares.len()
+    );
 
     // In VirtioFS mode, append storage flag to kernel cmdline.
     let effective_cmdline = if virtiofs_shares.is_empty() {
@@ -117,7 +130,11 @@ pub fn boot_vm(
         let kernel_path = kernel_override
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| assets.join("vmlinuz"));
-        info!("[boot-audit] kernel: {} (exists={})", kernel_path.display(), kernel_path.exists());
+        info!(
+            "[boot-audit] kernel: {} (exists={})",
+            kernel_path.display(),
+            kernel_path.exists()
+        );
 
         let mut builder = VmConfig::builder()
             .cpu_count(cpu_count)
@@ -145,7 +162,10 @@ pub fn boot_vm(
         // Debug builds allow unsigned manifests so dev loops with locally
         // built assets keep working.
         let require_sig = !cfg!(debug_assertions);
-        let manifest = match crate::asset_manager::load_verified_manifest_for_assets(assets, require_sig) {
+        let manifest = match crate::asset_manager::load_verified_manifest_for_assets(
+            assets,
+            require_sig,
+        ) {
             Ok(m) => m,
             Err(e) => {
                 if require_sig {
@@ -164,8 +184,10 @@ pub fn boot_vm(
                 &h.initrd[..16],
                 &h.rootfs[..16],
             ),
-            None => info!("[boot-audit] asset hash verification disabled (no manifest match for arch={})",
-                crate::asset_manager::host_manifest_arch()),
+            None => info!(
+                "[boot-audit] asset hash verification disabled (no manifest match for arch={})",
+                crate::asset_manager::host_manifest_arch()
+            ),
         }
 
         if let Some(ref h) = expected_hashes {
@@ -176,26 +198,33 @@ pub fn boot_vm(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| assets.join("initrd.img"));
         if initrd_path.exists() {
-            info!("[boot-audit] initrd: {} (exists=true)", initrd_path.display());
+            info!(
+                "[boot-audit] initrd: {} (exists=true)",
+                initrd_path.display()
+            );
             builder = builder.initrd_path(initrd_path);
             if let Some(ref h) = expected_hashes {
                 builder = builder.expected_initrd_hash(&h.initrd);
             }
         } else {
-            info!("[boot-audit] initrd: {} (exists=false)", initrd_path.display());
+            info!(
+                "[boot-audit] initrd: {} (exists=false)",
+                initrd_path.display()
+            );
         }
 
         // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
         // otherwise check bundled assets dir for both squashfs and legacy img.
         let rootfs_path = rootfs_override
             .map(|p| p.to_path_buf())
-            .or_else(|| {
-                Some(assets.join("rootfs.squashfs"))
-                    .filter(|p| p.exists())
-            });
+            .or_else(|| Some(assets.join("rootfs.squashfs")).filter(|p| p.exists()));
 
         if let Some(ref rootfs) = rootfs_path {
-            info!("[boot-audit] rootfs: {} (exists={})", rootfs.display(), rootfs.exists());
+            info!(
+                "[boot-audit] rootfs: {} (exists={})",
+                rootfs.display(),
+                rootfs.exists()
+            );
             builder = builder.disk_path(rootfs);
             if let Some(ref h) = expected_hashes {
                 builder = builder.expected_disk_hash(&h.rootfs);
@@ -204,18 +233,18 @@ pub fn boot_vm(
             info!("[boot-audit] rootfs: none");
         }
 
-        if let Some(scratch) = scratch_disk_path {
-            info!("[boot-audit] scratch disk: {}", scratch.display());
-            builder = builder.scratch_disk_path(scratch);
+        if let Some(overlay) = system_overlay_disk {
+            info!("[boot-audit] system overlay disk: {}", overlay.display());
+            builder = builder.scratch_disk_path(overlay);
         }
 
         for share in virtiofs_shares {
-            info!("[boot-audit] VirtioFS share: tag={} path={}", share.tag, share.host_path.display());
-            builder = builder.virtio_fs_share(
-                &share.tag,
-                &share.host_path,
-                share.read_only,
+            info!(
+                "[boot-audit] VirtioFS share: tag={} path={}",
+                share.tag,
+                share.host_path.display()
             );
+            builder = builder.virtio_fs_share(&share.tag, &share.host_path, share.read_only);
         }
 
         info!("[boot-audit] calling VmConfig::build()");
@@ -227,9 +256,15 @@ pub fn boot_vm(
         VSOCK_PORT_CONTROL,
         VSOCK_PORT_TERMINAL,
         VSOCK_PORT_SNI_PROXY,
-        VSOCK_PORT_MCP_GATEWAY,
         VSOCK_PORT_LIFECYCLE,
         VSOCK_PORT_EXEC,
+        VSOCK_PORT_AUDIT,
+        // T3.2 -- DNS proxy. capsem-dns-proxy in the guest opens a
+        // fresh vsock conn to (HOST_CID, 5007) per query. Without
+        // this entry the host has no listener; the kernel rejects
+        // the connect, which surfaces as "Connection reset by peer
+        // (os error 104)" in the agent's forward_query_blocking.
+        VSOCK_PORT_DNS_PROXY,
     ];
 
     info!("[boot-audit] calling hypervisor boot");
@@ -239,8 +274,7 @@ pub fn boot_vm(
         let result = AppleVzHypervisor.boot(&config, &vsock_ports);
         #[cfg(target_os = "linux")]
         let result = KvmHypervisor.boot(&config, &vsock_ports);
-        result
-            .context("failed to boot VM")?
+        result.context("failed to boot VM")?
     };
     info!("[boot-audit] hypervisor boot returned OK");
 
@@ -287,8 +321,8 @@ pub fn send_boot_config(
     preloaded_guest_config: Option<policy_config::GuestConfig>,
 ) -> Result<()> {
     use crate::capsem_proto::{
-        validate_env_key, validate_env_value, validate_file_path,
-        MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
+        validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS,
+        MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
     };
 
     let epoch_secs = std::time::SystemTime::now()
@@ -297,14 +331,24 @@ pub fn send_boot_config(
         .as_secs();
 
     // 1. Send BootConfig with clock.
-    write_control_msg(file, &HostToGuest::BootConfig { epoch_secs })?;
+    let traceparent = crate::telemetry::current_parent_traceparent().to_string();
+    write_control_msg(
+        file,
+        &HostToGuest::BootConfig {
+            epoch_secs,
+            traceparent,
+        },
+    )?;
 
     // 1b. Inject host timezone (TZ env var + /etc/localtime binary).
     if let Some(tz) = detect_host_timezone() {
         info!("injecting host timezone: {tz}");
         write_control_msg(
             file,
-            &HostToGuest::SetEnv { key: "TZ".into(), value: tz },
+            &HostToGuest::SetEnv {
+                key: "TZ".into(),
+                value: tz,
+            },
         )?;
         if let Ok(tz_data) = std::fs::read("/etc/localtime") {
             write_control_msg(
@@ -320,8 +364,8 @@ pub fn send_boot_config(
     }
 
     // 2. Send metadata-driven env vars from settings registry.
-    let guest_config = preloaded_guest_config
-        .unwrap_or_else(policy_config::load_merged_guest_config);
+    let guest_config =
+        preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
     let mut env_count: usize = 0;
 
     // Track what we actually send for the injection test manifest.
@@ -472,7 +516,10 @@ mod tests {
     #[test]
     fn write_read_control_msg_exec_roundtrip() {
         let (mut reader, mut writer) = pipe_files();
-        let msg = HostToGuest::Exec { id: 42, command: "echo test".into() };
+        let msg = HostToGuest::Exec {
+            id: 42,
+            command: "echo test".into(),
+        };
         let frame = encode_host_msg(&msg).unwrap();
         writer.write_all(&frame).unwrap();
         drop(writer);

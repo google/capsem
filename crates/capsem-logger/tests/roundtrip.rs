@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use capsem_logger::{
-    validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, McpCall,
-    ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
+    validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, McpCall, ModelCall,
+    NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
 
 /// Open the shared test fixture at data/fixtures/test.db (read-only).
@@ -41,6 +41,11 @@ fn sample_net_event(domain: &str, decision: Decision) -> NetEvent {
         request_body_preview: None,
         response_body_preview: None,
         conn_type: None,
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: None,
     }
 }
 
@@ -65,6 +70,11 @@ fn http_net_event(domain: &str) -> NetEvent {
         request_body_preview: None,
         response_body_preview: Some("{\"repos\":[]}".to_string()),
         conn_type: Some("https".to_string()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: None,
     }
 }
 
@@ -95,22 +105,20 @@ fn sample_model_call(provider: &str) -> ModelCall {
         response_bytes: 4096,
         estimated_cost_usd: 0.001,
         trace_id: None,
-        tool_calls: vec![
-            ToolCallEntry {
-                call_index: 0,
-                call_id: "toolu_01".to_string(),
-                tool_name: "get_weather".to_string(),
-                arguments: Some("{\"city\":\"NYC\"}".to_string()),
-                origin: "native".to_string(),
-            },
-        ],
-        tool_responses: vec![
-            ToolResponseEntry {
-                call_id: "toolu_prev".to_string(),
-                content_preview: Some("72F and sunny".to_string()),
-                is_error: false,
-            },
-        ],
+        tool_calls: vec![ToolCallEntry {
+            call_index: 0,
+            call_id: "toolu_01".to_string(),
+            tool_name: "get_weather".to_string(),
+            arguments: Some("{\"city\":\"NYC\"}".to_string()),
+            origin: "native".to_string(),
+            trace_id: None,
+        }],
+        tool_responses: vec![ToolResponseEntry {
+            call_id: "toolu_prev".to_string(),
+            content_preview: Some("72F and sunny".to_string()),
+            is_error: false,
+            trace_id: None,
+        }],
     }
 }
 
@@ -122,7 +130,9 @@ async fn net_event_roundtrip() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(http_net_event("github.com"))).await;
+    writer
+        .write(WriteOp::NetEvent(http_net_event("github.com")))
+        .await;
     drop(writer); // flush
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -148,7 +158,9 @@ async fn model_call_roundtrip() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
+    writer
+        .write(WriteOp::ModelCall(sample_model_call("anthropic")))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -196,12 +208,27 @@ async fn net_event_counts() {
     let writer = DbWriter::open(&path, 64).unwrap();
 
     for _ in 0..3 {
-        writer.write(WriteOp::NetEvent(sample_net_event("a.com", Decision::Allowed))).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                "a.com",
+                Decision::Allowed,
+            )))
+            .await;
     }
     for _ in 0..2 {
-        writer.write(WriteOp::NetEvent(sample_net_event("b.com", Decision::Denied))).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                "b.com",
+                Decision::Denied,
+            )))
+            .await;
     }
-    writer.write(WriteOp::NetEvent(sample_net_event("c.com", Decision::Error))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "c.com",
+            Decision::Error,
+        )))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -218,7 +245,9 @@ async fn model_call_count() {
     let writer = DbWriter::open(&path, 64).unwrap();
 
     for _ in 0..5 {
-        writer.write(WriteOp::ModelCall(sample_model_call("openai"))).await;
+        writer
+            .write(WriteOp::ModelCall(sample_model_call("openai")))
+            .await;
     }
     drop(writer);
 
@@ -277,7 +306,12 @@ async fn writer_drop_flushes_pending_writes() {
     {
         let writer = DbWriter::open(&path, 256).unwrap();
         for i in 0..10 {
-            writer.write(WriteOp::NetEvent(sample_net_event(&format!("site{i}.com"), Decision::Allowed))).await;
+            writer
+                .write(WriteOp::NetEvent(sample_net_event(
+                    &format!("site{i}.com"),
+                    Decision::Allowed,
+                )))
+                .await;
         }
         // Drop flushes all pending writes.
     }
@@ -295,9 +329,10 @@ async fn concurrent_async_writes() {
     let writer = DbWriter::open(&path, 256).unwrap();
 
     for i in 0..50 {
-        let ok = writer.try_write(WriteOp::NetEvent(
-            sample_net_event(&format!("concurrent{i}.com"), Decision::Allowed),
-        ));
+        let ok = writer.try_write(WriteOp::NetEvent(sample_net_event(
+            &format!("concurrent{i}.com"),
+            Decision::Allowed,
+        )));
         assert!(ok, "try_write should succeed with large channel");
     }
     drop(writer);
@@ -316,7 +351,12 @@ async fn reader_works_while_writer_active() {
 
     // Write some events.
     for i in 0..5 {
-        writer.write(WriteOp::NetEvent(sample_net_event(&format!("wal{i}.com"), Decision::Allowed))).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                &format!("wal{i}.com"),
+                Decision::Allowed,
+            )))
+            .await;
     }
 
     // Give writer thread a moment to flush.
@@ -328,7 +368,12 @@ async fn reader_works_while_writer_active() {
     assert_eq!(events.len(), 5);
 
     // Write more events and read again.
-    writer.write(WriteOp::NetEvent(sample_net_event("wal5.com", Decision::Denied))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "wal5.com",
+            Decision::Denied,
+        )))
+        .await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let events = reader.recent_net_events(10).unwrap();
@@ -365,6 +410,11 @@ async fn empty_strings() {
         request_body_preview: Some("".to_string()),
         response_body_preview: Some("".to_string()),
         conn_type: Some("".to_string()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: None,
     };
 
     writer.write(WriteOp::NetEvent(event)).await;
@@ -422,7 +472,10 @@ async fn unicode_strings() {
     assert_eq!(events[0].domain, "xn--n3h.example.com");
 
     let calls = reader.recent_model_calls(10).unwrap();
-    assert_eq!(calls[0].1.text_content.as_deref(), Some("Bonjour le monde!"));
+    assert_eq!(
+        calls[0].1.text_content.as_deref(),
+        Some("Bonjour le monde!")
+    );
 }
 
 #[tokio::test]
@@ -441,7 +494,10 @@ async fn large_body_previews() {
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events[0].request_body_preview.as_ref().unwrap().len(), 100_000);
+    assert_eq!(
+        events[0].request_body_preview.as_ref().unwrap().len(),
+        100_000
+    );
 }
 
 // ── Rapid-fire writes ────────────────────────────────────────────────
@@ -453,9 +509,12 @@ async fn rapid_fire_writes() {
     let writer = DbWriter::open(&path, 1024).unwrap();
 
     for i in 0..500 {
-        writer.write(WriteOp::NetEvent(
-            sample_net_event(&format!("rapid{i}.com"), Decision::Allowed),
-        )).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                &format!("rapid{i}.com"),
+                Decision::Allowed,
+            )))
+            .await;
     }
     drop(writer);
 
@@ -471,10 +530,24 @@ async fn mixed_net_events_and_model_calls() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(sample_net_event("net1.com", Decision::Allowed))).await;
-    writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
-    writer.write(WriteOp::NetEvent(sample_net_event("net2.com", Decision::Denied))).await;
-    writer.write(WriteOp::ModelCall(sample_model_call("openai"))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "net1.com",
+            Decision::Allowed,
+        )))
+        .await;
+    writer
+        .write(WriteOp::ModelCall(sample_model_call("anthropic")))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "net2.com",
+            Decision::Denied,
+        )))
+        .await;
+    writer
+        .write(WriteOp::ModelCall(sample_model_call("openai")))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -514,18 +587,24 @@ async fn model_call_many_tools() {
     let writer = DbWriter::open(&path, 64).unwrap();
 
     let mut call = sample_model_call("anthropic");
-    call.tool_calls = (0..10).map(|i| ToolCallEntry {
-        call_index: i,
-        call_id: format!("toolu_{i:02}"),
-        tool_name: format!("tool_{i}"),
-        arguments: Some(format!("{{\"arg\":{i}}}")),
-        origin: "native".to_string(),
-    }).collect();
-    call.tool_responses = (0..5).map(|i| ToolResponseEntry {
-        call_id: format!("toolu_{i:02}"),
-        content_preview: Some(format!("result {i}")),
-        is_error: i == 3,
-    }).collect();
+    call.tool_calls = (0..10)
+        .map(|i| ToolCallEntry {
+            call_index: i,
+            call_id: format!("toolu_{i:02}"),
+            tool_name: format!("tool_{i}"),
+            arguments: Some(format!("{{\"arg\":{i}}}")),
+            origin: "native".to_string(),
+            trace_id: None,
+        })
+        .collect();
+    call.tool_responses = (0..5)
+        .map(|i| ToolResponseEntry {
+            call_id: format!("toolu_{i:02}"),
+            content_preview: Some(format!("result {i}")),
+            is_error: i == 3,
+            trace_id: None,
+        })
+        .collect();
     writer.write(WriteOp::ModelCall(call)).await;
     drop(writer);
 
@@ -554,7 +633,12 @@ async fn db_file_persists_across_opens() {
     // First open: write data.
     {
         let writer = DbWriter::open(&path, 64).unwrap();
-        writer.write(WriteOp::NetEvent(sample_net_event("persist.com", Decision::Allowed))).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                "persist.com",
+                Decision::Allowed,
+            )))
+            .await;
         drop(writer);
     }
 
@@ -576,7 +660,12 @@ async fn creates_parent_directories() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("deep").join("nested").join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::NetEvent(sample_net_event("deep.com", Decision::Allowed))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "deep.com",
+            Decision::Allowed,
+        )))
+        .await;
     drop(writer);
 
     assert!(path.exists());
@@ -675,10 +764,30 @@ async fn net_event_counts_error_counted_in_total_only() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(sample_net_event("a.com", Decision::Allowed))).await;
-    writer.write(WriteOp::NetEvent(sample_net_event("b.com", Decision::Denied))).await;
-    writer.write(WriteOp::NetEvent(sample_net_event("c.com", Decision::Error))).await;
-    writer.write(WriteOp::NetEvent(sample_net_event("d.com", Decision::Error))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "a.com",
+            Decision::Allowed,
+        )))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "b.com",
+            Decision::Denied,
+        )))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "c.com",
+            Decision::Error,
+        )))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "d.com",
+            Decision::Error,
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -708,6 +817,7 @@ async fn multiple_model_calls_get_distinct_ids() {
         tool_name: "tool_a".to_string(),
         arguments: None,
         origin: "native".to_string(),
+        trace_id: None,
     }];
     call1.tool_responses = Vec::new();
 
@@ -718,6 +828,7 @@ async fn multiple_model_calls_get_distinct_ids() {
         tool_name: "tool_b".to_string(),
         arguments: None,
         origin: "native".to_string(),
+        trace_id: None,
     }];
     call2.tool_responses = Vec::new();
 
@@ -753,13 +864,22 @@ async fn writer_reader_on_file_backed_sees_data() {
     let path = dir.path().join("session.db");
     let writer = Arc::new(DbWriter::open(&path, 64).unwrap());
 
-    writer.write(WriteOp::NetEvent(sample_net_event("live.com", Decision::Allowed))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "live.com",
+            Decision::Allowed,
+        )))
+        .await;
     // Give writer thread time to flush.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let reader = writer.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1, "reader from writer.reader() should see written data");
+    assert_eq!(
+        events.len(),
+        1,
+        "reader from writer.reader() should see written data"
+    );
     assert_eq!(events[0].domain, "live.com");
 }
 
@@ -793,10 +913,27 @@ async fn session_stats_with_data() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(sample_net_event("a.com", Decision::Allowed))).await;
-    writer.write(WriteOp::NetEvent(sample_net_event("b.com", Decision::Denied))).await;
-    writer.write(WriteOp::NetEvent(sample_net_event("c.com", Decision::Error))).await;
-    writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "a.com",
+            Decision::Allowed,
+        )))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "b.com",
+            Decision::Denied,
+        )))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "c.com",
+            Decision::Error,
+        )))
+        .await;
+    writer
+        .write(WriteOp::ModelCall(sample_model_call("anthropic")))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -841,11 +978,26 @@ async fn top_domains_ordering() {
 
     // 3 events for a.com, 1 for b.com, 2 for c.com
     for _ in 0..3 {
-        writer.write(WriteOp::NetEvent(sample_net_event("a.com", Decision::Allowed))).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                "a.com",
+                Decision::Allowed,
+            )))
+            .await;
     }
-    writer.write(WriteOp::NetEvent(sample_net_event("b.com", Decision::Denied))).await;
+    writer
+        .write(WriteOp::NetEvent(sample_net_event(
+            "b.com",
+            Decision::Denied,
+        )))
+        .await;
     for _ in 0..2 {
-        writer.write(WriteOp::NetEvent(sample_net_event("c.com", Decision::Allowed))).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                "c.com",
+                Decision::Allowed,
+            )))
+            .await;
     }
     drop(writer);
 
@@ -868,7 +1020,12 @@ async fn top_domains_limit() {
     let writer = DbWriter::open(&path, 64).unwrap();
 
     for i in 0..5 {
-        writer.write(WriteOp::NetEvent(sample_net_event(&format!("d{i}.com"), Decision::Allowed))).await;
+        writer
+            .write(WriteOp::NetEvent(sample_net_event(
+                &format!("d{i}.com"),
+                Decision::Allowed,
+            )))
+            .await;
     }
     drop(writer);
 
@@ -883,9 +1040,15 @@ async fn search_net_events_by_domain() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(http_net_event("github.com"))).await;
-    writer.write(WriteOp::NetEvent(http_net_event("pypi.org"))).await;
-    writer.write(WriteOp::NetEvent(http_net_event("api.github.com"))).await;
+    writer
+        .write(WriteOp::NetEvent(http_net_event("github.com")))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(http_net_event("pypi.org")))
+        .await;
+    writer
+        .write(WriteOp::NetEvent(http_net_event("api.github.com")))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -899,7 +1062,9 @@ async fn search_net_events_by_path() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(http_net_event("api.com"))).await;
+    writer
+        .write(WriteOp::NetEvent(http_net_event("api.com")))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -914,7 +1079,9 @@ async fn search_net_events_no_match() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(http_net_event("api.com"))).await;
+    writer
+        .write(WriteOp::NetEvent(http_net_event("api.com")))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
@@ -928,12 +1095,16 @@ async fn search_net_events_sql_injection() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::NetEvent(http_net_event("safe.com"))).await;
+    writer
+        .write(WriteOp::NetEvent(http_net_event("safe.com")))
+        .await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
     // Parameterized queries make this safe; should return empty, not crash.
-    let results = reader.search_net_events("'; DROP TABLE net_events; --", 100).unwrap();
+    let results = reader
+        .search_net_events("'; DROP TABLE net_events; --", 100)
+        .unwrap();
     assert!(results.is_empty());
     // Table still works:
     let events = reader.recent_net_events(10).unwrap();
@@ -946,7 +1117,9 @@ async fn search_model_calls_by_provider() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
+    writer
+        .write(WriteOp::ModelCall(sample_model_call("anthropic")))
+        .await;
     let mut google_call = sample_model_call("google");
     google_call.model = Some("gemini-2.0-flash".to_string());
     writer.write(WriteOp::ModelCall(google_call)).await;
@@ -964,8 +1137,12 @@ async fn token_usage_by_provider() {
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
-    writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
+    writer
+        .write(WriteOp::ModelCall(sample_model_call("anthropic")))
+        .await;
+    writer
+        .write(WriteOp::ModelCall(sample_model_call("anthropic")))
+        .await;
     let mut google_call = sample_model_call("google");
     google_call.input_tokens = Some(100);
     google_call.output_tokens = Some(50);
@@ -999,15 +1176,34 @@ async fn tool_usage_frequency() {
 
     let mut call = sample_model_call("anthropic");
     call.tool_calls = vec![
-        ToolCallEntry { call_index: 0, call_id: "t1".into(), tool_name: "read_file".into(), arguments: None, origin: "native".into() },
-        ToolCallEntry { call_index: 1, call_id: "t2".into(), tool_name: "write_file".into(), arguments: None, origin: "native".into() },
+        ToolCallEntry {
+            call_index: 0,
+            call_id: "t1".into(),
+            tool_name: "read_file".into(),
+            arguments: None,
+            origin: "native".into(),
+            trace_id: None,
+        },
+        ToolCallEntry {
+            call_index: 1,
+            call_id: "t2".into(),
+            tool_name: "write_file".into(),
+            arguments: None,
+            origin: "native".into(),
+            trace_id: None,
+        },
     ];
     writer.write(WriteOp::ModelCall(call)).await;
 
     let mut call2 = sample_model_call("anthropic");
-    call2.tool_calls = vec![
-        ToolCallEntry { call_index: 0, call_id: "t3".into(), tool_name: "read_file".into(), arguments: None, origin: "native".into() },
-    ];
+    call2.tool_calls = vec![ToolCallEntry {
+        call_index: 0,
+        call_id: "t3".into(),
+        tool_name: "read_file".into(),
+        arguments: None,
+        origin: "native".into(),
+        trace_id: None,
+    }];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);
 
@@ -1252,7 +1448,10 @@ fn query_raw_null_values() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     let rows = v["rows"].as_array().unwrap();
-    assert!(!rows.is_empty(), "fixture should contain at least one denied event");
+    assert!(
+        !rows.is_empty(),
+        "fixture should contain at least one denied event"
+    );
     assert_eq!(rows[0][2], "denied");
 }
 
@@ -1278,7 +1477,10 @@ fn query_raw_real_type() {
     let rows = v["rows"].as_array().unwrap();
     assert!(!rows.is_empty(), "fixture should have model_calls");
     // estimated_cost_usd is REAL -- verify it deserializes as a JSON number
-    assert!(rows[0][0].is_number(), "REAL column should serialize as JSON number");
+    assert!(
+        rows[0][0].is_number(),
+        "REAL column should serialize as JSON number"
+    );
 }
 
 #[test]
@@ -1288,7 +1490,7 @@ fn query_raw_timeout_on_slow_query() {
     // COUNT can return, so the interrupt fires before completion.
     let result = reader.query_raw(
         "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r WHERE n < 999999999) \
-         SELECT COUNT(*) FROM r"
+         SELECT COUNT(*) FROM r",
     );
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -1398,21 +1600,31 @@ fn validate_select_rejects_detach() {
 #[test]
 fn validate_select_rejects_begin_commit_rollback() {
     assert!(validate_select_only("BEGIN").unwrap_err().contains("BEGIN"));
-    assert!(validate_select_only("COMMIT").unwrap_err().contains("COMMIT"));
-    assert!(validate_select_only("ROLLBACK").unwrap_err().contains("ROLLBACK"));
+    assert!(validate_select_only("COMMIT")
+        .unwrap_err()
+        .contains("COMMIT"));
+    assert!(validate_select_only("ROLLBACK")
+        .unwrap_err()
+        .contains("ROLLBACK"));
 }
 
 #[test]
 fn validate_select_rejects_savepoint_release() {
-    assert!(validate_select_only("SAVEPOINT sp1").unwrap_err().contains("SAVEPOINT"));
-    assert!(validate_select_only("RELEASE sp1").unwrap_err().contains("RELEASE"));
+    assert!(validate_select_only("SAVEPOINT sp1")
+        .unwrap_err()
+        .contains("SAVEPOINT"));
+    assert!(validate_select_only("RELEASE sp1")
+        .unwrap_err()
+        .contains("RELEASE"));
 }
 
 #[test]
 fn validate_select_whitespace_prefix_stripped() {
     assert!(validate_select_only("  SELECT 1").is_ok());
     assert!(validate_select_only("\t\nSELECT 1").is_ok());
-    assert!(validate_select_only("  INSERT INTO x VALUES(1)").unwrap_err().contains("INSERT"));
+    assert!(validate_select_only("  INSERT INTO x VALUES(1)")
+        .unwrap_err()
+        .contains("INSERT"));
 }
 
 #[test]
@@ -1449,7 +1661,10 @@ fn reader_rejects_insert() {
     let result = reader.query_raw(
         "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms) VALUES (0, 'evil.com', 443, 'allowed', 0, 0, 0)",
     );
-    assert!(result.is_err(), "INSERT must be rejected by PRAGMA query_only on DbReader");
+    assert!(
+        result.is_err(),
+        "INSERT must be rejected by PRAGMA query_only on DbReader"
+    );
 }
 
 #[test]
@@ -1466,7 +1681,10 @@ fn reader_rejects_drop_table() {
     assert!(result.is_err(), "DROP TABLE must be rejected");
     // Verify the table still works.
     let check = reader.query_raw("SELECT COUNT(*) FROM net_events");
-    assert!(check.is_ok(), "net_events must still be accessible after rejected DROP");
+    assert!(
+        check.is_ok(),
+        "net_events must still be accessible after rejected DROP"
+    );
 }
 
 #[test]
@@ -1477,7 +1695,10 @@ fn reader_rejects_semicolon_injection() {
     let _ = reader.query_raw("SELECT 1; DROP TABLE net_events");
     // Regardless of whether the above returned Ok or Err, the table must be intact.
     let check = reader.query_raw("SELECT COUNT(*) FROM net_events");
-    assert!(check.is_ok(), "net_events must survive semicolon injection attempt");
+    assert!(
+        check.is_ok(),
+        "net_events must survive semicolon injection attempt"
+    );
 }
 
 // ── reader: domain counts ──────────────────────────────────────────
@@ -1541,10 +1762,7 @@ async fn model_call_usage_details_roundtrip() {
     let writer = DbWriter::open(&path, 64).unwrap();
 
     let mut call = sample_model_call("anthropic");
-    call.usage_details = BTreeMap::from([
-        ("cache_read".into(), 800),
-        ("thinking".into(), 200),
-    ]);
+    call.usage_details = BTreeMap::from([("cache_read".into(), 800), ("thinking".into(), 200)]);
     call.trace_id = Some("trace-001".to_string());
 
     writer.write(WriteOp::ModelCall(call)).await;
@@ -1553,8 +1771,14 @@ async fn model_call_usage_details_roundtrip() {
 
     let reader = DbReader::open(&path).unwrap();
     let stats = reader.session_stats().unwrap();
-    assert_eq!(*stats.total_usage_details.get("cache_read").unwrap_or(&0), 800);
-    assert_eq!(*stats.total_usage_details.get("thinking").unwrap_or(&0), 200);
+    assert_eq!(
+        *stats.total_usage_details.get("cache_read").unwrap_or(&0),
+        800
+    );
+    assert_eq!(
+        *stats.total_usage_details.get("thinking").unwrap_or(&0),
+        200
+    );
 }
 
 // ── writer+reader: tool_calls + tool_responses roundtrip ───────────
@@ -1574,6 +1798,7 @@ async fn model_call_tool_data_roundtrip() {
             tool_name: "get_weather".to_string(),
             arguments: Some("{\"city\":\"NYC\"}".to_string()),
             origin: "native".to_string(),
+            trace_id: None,
         },
         ToolCallEntry {
             call_index: 1,
@@ -1581,15 +1806,15 @@ async fn model_call_tool_data_roundtrip() {
             tool_name: "search".to_string(),
             arguments: Some("{\"q\":\"test\"}".to_string()),
             origin: "native".to_string(),
+            trace_id: None,
         },
     ];
-    call.tool_responses = vec![
-        ToolResponseEntry {
-            call_id: "call_prev".to_string(),
-            content_preview: Some("72F and sunny".to_string()),
-            is_error: false,
-        },
-    ];
+    call.tool_responses = vec![ToolResponseEntry {
+        call_id: "call_prev".to_string(),
+        content_preview: Some("72F and sunny".to_string()),
+        is_error: false,
+        trace_id: None,
+    }];
 
     writer.write(WriteOp::ModelCall(call)).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1640,20 +1865,20 @@ async fn net_events_over_time_buckets_correctly() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    
+
     // Bucket by 60 mins (1 hour), get last 3 hours (3 buckets)
     // bucket 0: 3 hours ago -> 2 hours ago (ev3)
     // bucket 1: 2 hours ago -> 1 hour ago (no events)
     // bucket 2: 1 hour ago -> now (ev1, ev2)
     let buckets = reader.net_events_over_time(60, 3).unwrap();
     assert_eq!(buckets.len(), 3);
-    
+
     assert_eq!(buckets[0].allowed, 1);
     assert_eq!(buckets[0].denied, 0);
-    
+
     assert_eq!(buckets[1].allowed, 0);
     assert_eq!(buckets[1].denied, 0);
-    
+
     assert_eq!(buckets[2].allowed, 1);
     assert_eq!(buckets[2].denied, 1);
 }
@@ -1675,6 +1900,18 @@ fn sample_mcp_call(server: &str, decision: &str) -> McpCall {
         process_name: Some("claude".to_string()),
         bytes_sent: 0,
         bytes_received: 0,
+        policy_mode: Some("audit_only".to_string()),
+        policy_action: Some(decision_to_policy_action(decision).to_string()),
+        policy_rule: Some(format!("mcp.tool.{server}__search_repos")),
+        policy_reason: Some(format!("local policy {decision}")),
+        trace_id: None,
+    }
+}
+
+fn decision_to_policy_action(decision: &str) -> &'static str {
+    match decision {
+        "denied" => "deny",
+        _ => "allow",
     }
 }
 
@@ -1684,7 +1921,9 @@ async fn mcp_call_roundtrip() {
     let path = dir.path().join("mcp.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "allowed")))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -1698,6 +1937,13 @@ async fn mcp_call_roundtrip() {
     assert_eq!(c.decision, "allowed");
     assert_eq!(c.duration_ms, 250);
     assert_eq!(c.process_name.as_deref(), Some("claude"));
+    assert_eq!(c.policy_mode.as_deref(), Some("audit_only"));
+    assert_eq!(c.policy_action.as_deref(), Some("allow"));
+    assert_eq!(
+        c.policy_rule.as_deref(),
+        Some("mcp.tool.github__search_repos")
+    );
+    assert_eq!(c.policy_reason.as_deref(), Some("local policy allowed"));
 }
 
 #[tokio::test]
@@ -1706,9 +1952,15 @@ async fn mcp_call_search() {
     let path = dir.path().join("mcp-search.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
-    writer.write(WriteOp::McpCall(sample_mcp_call("slack", "denied"))).await;
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "warned"))).await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "allowed")))
+        .await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("slack", "denied")))
+        .await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "warned")))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -1736,15 +1988,25 @@ async fn mcp_call_stats() {
     let path = dir.path().join("mcp-stats.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
-    writer.write(WriteOp::McpCall(sample_mcp_call("slack", "denied"))).await;
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "warned"))).await;
-    writer.write(WriteOp::McpCall({
-        let mut c = sample_mcp_call("slack", "error");
-        c.error_message = Some("server crashed".to_string());
-        c
-    })).await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "allowed")))
+        .await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "allowed")))
+        .await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("slack", "denied")))
+        .await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "warned")))
+        .await;
+    writer
+        .write(WriteOp::McpCall({
+            let mut c = sample_mcp_call("slack", "error");
+            c.error_message = Some("server crashed".to_string());
+            c
+        }))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -1796,7 +2058,11 @@ async fn mcp_call_cap_field_truncation() {
     assert_eq!(calls.len(), 1);
     // Preview should be truncated to MAX_FIELD_BYTES (256KB)
     let preview = calls[0].request_preview.as_ref().unwrap();
-    assert!(preview.len() <= 256 * 1024, "preview not capped: {}", preview.len());
+    assert!(
+        preview.len() <= 256 * 1024,
+        "preview not capped: {}",
+        preview.len()
+    );
 }
 
 #[tokio::test]
@@ -1806,12 +2072,16 @@ async fn mcp_schema_migration_idempotent() {
 
     // First open creates tables.
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "allowed")))
+        .await;
     drop(writer);
 
     // Second open triggers migrate() again -- must not fail.
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::McpCall(sample_mcp_call("slack", "denied"))).await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("slack", "denied")))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -1904,6 +2174,7 @@ fn sample_file_event(path: &str, action: FileAction, size: Option<u64>) -> FileE
         action,
         path: path.to_string(),
         size,
+        trace_id: None,
     }
 }
 
@@ -1913,9 +2184,27 @@ async fn test_file_event_write_read() {
     let path = dir.path().join("fs-roundtrip.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("project/app.js", FileAction::Created, Some(1234)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("project/lib.rs", FileAction::Modified, Some(5678)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("project/old.txt", FileAction::Deleted, None))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/app.js",
+            FileAction::Created,
+            Some(1234),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/lib.rs",
+            FileAction::Modified,
+            Some(5678),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/old.txt",
+            FileAction::Deleted,
+            None,
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -1939,9 +2228,27 @@ async fn test_file_event_search() {
     let path = dir.path().join("fs-search.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("project/src/app.js", FileAction::Created, Some(100)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("project/src/lib.rs", FileAction::Modified, Some(200)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("project/README.md", FileAction::Modified, Some(300)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/src/app.js",
+            FileAction::Created,
+            Some(100),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/src/lib.rs",
+            FileAction::Modified,
+            Some(200),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/README.md",
+            FileAction::Modified,
+            Some(300),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -1949,7 +2256,11 @@ async fn test_file_event_search() {
     assert_eq!(results.len(), 2);
     // Only the two src/ files match
     for r in &results {
-        assert!(r.path.contains("src"), "expected path containing 'src', got: {}", r.path);
+        assert!(
+            r.path.contains("src"),
+            "expected path containing 'src', got: {}",
+            r.path
+        );
     }
 }
 
@@ -1959,10 +2270,34 @@ async fn test_file_event_stats() {
     let path = dir.path().join("fs-stats.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("a.js", FileAction::Created, Some(10)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("b.js", FileAction::Created, Some(20)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("a.js", FileAction::Modified, Some(15)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("c.js", FileAction::Deleted, None))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "a.js",
+            FileAction::Created,
+            Some(10),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "b.js",
+            FileAction::Created,
+            Some(20),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "a.js",
+            FileAction::Modified,
+            Some(15),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "c.js",
+            FileAction::Deleted,
+            None,
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2005,8 +2340,12 @@ fn test_file_events_in_fixture() {
     // Verify all actions parse correctly
     for e in &events {
         assert!(
-            matches!(e.action, FileAction::Created | FileAction::Modified | FileAction::Deleted),
-            "unexpected action: {:?}", e.action
+            matches!(
+                e.action,
+                FileAction::Created | FileAction::Modified | FileAction::Deleted
+            ),
+            "unexpected action: {:?}",
+            e.action
         );
         assert!(!e.path.is_empty(), "path should not be empty in fixture");
     }
@@ -2018,7 +2357,11 @@ fn test_file_events_fixture_search() {
     let reader = fixture_reader();
     let results = reader.search_file_events("src", 100).unwrap();
     for r in &results {
-        assert!(r.path.contains("src"), "search result should contain 'src': {}", r.path);
+        assert!(
+            r.path.contains("src"),
+            "search result should contain 'src': {}",
+            r.path
+        );
     }
 }
 
@@ -2029,7 +2372,13 @@ async fn test_file_event_empty_path() {
     let path = dir.path().join("fs-empty-path.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("", FileAction::Created, Some(0)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "",
+            FileAction::Created,
+            Some(0),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2051,11 +2400,17 @@ async fn test_file_event_unicode_paths() {
         "project/\u{1F4C4}document.txt",
         "project/\u{4E2D}\u{6587}\u{6587}\u{4EF6}.rs",
         "project/\u{0645}\u{0644}\u{0641}.py",
-        "project/caf\u{0065}\u{0301}.js",     // e + combining accent
-        "project/\u{0000}null.txt",             // null byte in path
+        "project/caf\u{0065}\u{0301}.js", // e + combining accent
+        "project/\u{0000}null.txt",       // null byte in path
     ];
     for p in &paths {
-        writer.write(WriteOp::FileEvent(sample_file_event(p, FileAction::Created, Some(100)))).await;
+        writer
+            .write(WriteOp::FileEvent(sample_file_event(
+                p,
+                FileAction::Created,
+                Some(100),
+            )))
+            .await;
     }
     drop(writer);
 
@@ -2072,7 +2427,13 @@ async fn test_file_event_huge_path() {
 
     let huge_path = "a/".repeat(10_000) + "file.txt"; // ~30KB path
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event(&huge_path, FileAction::Modified, Some(42)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            &huge_path,
+            FileAction::Modified,
+            Some(42),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2088,8 +2449,20 @@ async fn test_file_event_max_size() {
     let path = dir.path().join("fs-max-size.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("big.bin", FileAction::Created, Some(u64::MAX)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("zero.bin", FileAction::Created, Some(0)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "big.bin",
+            FileAction::Created,
+            Some(u64::MAX),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "zero.bin",
+            FileAction::Created,
+            Some(0),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2108,12 +2481,20 @@ async fn test_file_event_search_sql_injection() {
     let path = dir.path().join("fs-sqli.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("safe.rs", FileAction::Created, Some(10)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "safe.rs",
+            FileAction::Created,
+            Some(10),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     // Should return empty, not crash or drop the table.
-    let results = reader.search_file_events("'; DROP TABLE fs_events; --", 100).unwrap();
+    let results = reader
+        .search_file_events("'; DROP TABLE fs_events; --", 100)
+        .unwrap();
     assert!(results.is_empty());
     // Table still works:
     let events = reader.recent_file_events(10).unwrap();
@@ -2127,8 +2508,20 @@ async fn test_file_event_search_wildcards() {
     let path = dir.path().join("fs-wildcards.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("src/main.rs", FileAction::Created, Some(10)))).await;
-    writer.write(WriteOp::FileEvent(sample_file_event("src/lib.rs", FileAction::Modified, Some(20)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "src/main.rs",
+            FileAction::Created,
+            Some(10),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "src/lib.rs",
+            FileAction::Modified,
+            Some(20),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2151,12 +2544,18 @@ async fn test_file_event_batch_write() {
             1 => FileAction::Modified,
             _ => FileAction::Deleted,
         };
-        let size = if action == FileAction::Deleted { None } else { Some(i as u64) };
-        writer.write(WriteOp::FileEvent(sample_file_event(
-            &format!("file_{i}.rs"),
-            action,
-            size,
-        ))).await;
+        let size = if action == FileAction::Deleted {
+            None
+        } else {
+            Some(i as u64)
+        };
+        writer
+            .write(WriteOp::FileEvent(sample_file_event(
+                &format!("file_{i}.rs"),
+                action,
+                size,
+            )))
+            .await;
     }
     drop(writer);
 
@@ -2166,7 +2565,7 @@ async fn test_file_event_batch_write() {
     assert_eq!(stats.created, 167); // 0,3,6,...,498 -> ceil(500/3) = 167
     assert_eq!(stats.modified, 167); // 1,4,7,...,499
     assert_eq!(stats.deleted, 166); // 2,5,8,...,497
-    // Limit query returns at most the requested count
+                                    // Limit query returns at most the requested count
     let events = reader.recent_file_events(50).unwrap();
     assert_eq!(events.len(), 50);
 }
@@ -2187,7 +2586,8 @@ async fn test_file_event_concurrent_writes() {
                     &format!("thread_{t}/file_{i}.rs"),
                     FileAction::Modified,
                     Some(i as u64),
-                ))).await;
+                )))
+                .await;
             }
         }));
     }
@@ -2210,7 +2610,8 @@ async fn test_file_event_schema_migration() {
     // Create a minimal DB with only net_events (simulating an old schema).
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             CREATE TABLE net_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -2221,12 +2622,20 @@ async fn test_file_event_schema_migration() {
                 bytes_received INTEGER NOT NULL DEFAULT 0,
                 duration_ms INTEGER NOT NULL DEFAULT 0
             );
-        ").unwrap();
+        ",
+        )
+        .unwrap();
     }
 
     // Opening with DbWriter triggers migration, which should add fs_events.
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("migrated.rs", FileAction::Created, Some(42)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "migrated.rs",
+            FileAction::Created,
+            Some(42),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2242,9 +2651,21 @@ async fn test_file_event_deleted_has_no_size() {
     let path = dir.path().join("fs-deleted-size.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("gone.rs", FileAction::Deleted, None))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "gone.rs",
+            FileAction::Deleted,
+            None,
+        )))
+        .await;
     // Also test deleted with size (shouldn't crash even though unusual).
-    writer.write(WriteOp::FileEvent(sample_file_event("ghost.rs", FileAction::Deleted, Some(999)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "ghost.rs",
+            FileAction::Deleted,
+            Some(999),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2263,7 +2684,13 @@ async fn test_file_event_limit_zero() {
     let path = dir.path().join("fs-limit-zero.db");
 
     let writer = DbWriter::open(&path, 64).unwrap();
-    writer.write(WriteOp::FileEvent(sample_file_event("a.rs", FileAction::Created, Some(1)))).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "a.rs",
+            FileAction::Created,
+            Some(1),
+        )))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2288,25 +2715,32 @@ async fn try_write_drops_events_when_channel_full() {
     let writer = DbWriter::open(&path, 1).unwrap();
 
     // First try_write succeeds -- fills the single slot.
-    let ok1 = writer.try_write(WriteOp::FileEvent(
-        sample_file_event("first.rs", FileAction::Created, Some(10)),
-    ));
+    let ok1 = writer.try_write(WriteOp::FileEvent(sample_file_event(
+        "first.rs",
+        FileAction::Created,
+        Some(10),
+    )));
     assert!(ok1, "first try_write should succeed (channel has 1 slot)");
 
     // Immediately fire more try_writes without yielding -- the writer thread
     // has no chance to drain the channel, so these SILENTLY FAIL.
     let mut dropped = 0;
     for i in 0..20 {
-        let ok = writer.try_write(WriteOp::FileEvent(
-            sample_file_event(&format!("dropped{i}.rs"), FileAction::Modified, Some(100)),
-        ));
+        let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
+            &format!("dropped{i}.rs"),
+            FileAction::Modified,
+            Some(100),
+        )));
         if !ok {
             dropped += 1;
         }
     }
 
     // At least some events must have been silently dropped.
-    assert!(dropped > 0, "try_write should have dropped events, but none were dropped");
+    assert!(
+        dropped > 0,
+        "try_write should have dropped events, but none were dropped"
+    );
 
     // Flush and check: the DB will be MISSING the dropped events with zero indication.
     drop(writer);
@@ -2340,14 +2774,22 @@ async fn async_write_never_drops_events() {
 
     // Send 21 events via write().await -- all will succeed because write()
     // awaits channel capacity instead of failing.
-    writer.write(WriteOp::FileEvent(
-        sample_file_event("first.rs", FileAction::Created, Some(10)),
-    )).await;
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "first.rs",
+            FileAction::Created,
+            Some(10),
+        )))
+        .await;
 
     for i in 0..20 {
-        writer.write(WriteOp::FileEvent(
-            sample_file_event(&format!("safe{i}.rs"), FileAction::Modified, Some(100)),
-        )).await;
+        writer
+            .write(WriteOp::FileEvent(sample_file_event(
+                &format!("safe{i}.rs"),
+                FileAction::Modified,
+                Some(100),
+            )))
+            .await;
     }
 
     drop(writer);
@@ -2382,9 +2824,11 @@ async fn try_write_production_burst_loses_events() {
     let total = 500;
     let mut sent = 0;
     for i in 0..total {
-        let ok = writer.try_write(WriteOp::FileEvent(
-            sample_file_event(&format!("burst{i}.rs"), FileAction::Modified, Some(i as u64)),
-        ));
+        let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
+            &format!("burst{i}.rs"),
+            FileAction::Modified,
+            Some(i as u64),
+        )));
         if ok {
             sent += 1;
         }
@@ -2439,16 +2883,20 @@ async fn ignored_try_write_return_value_causes_silent_loss() {
 
     // Mimic the exact production pattern: call try_write, ignore the bool.
     // This is what mitm_proxy.rs:694 and main.rs:807 do.
-    writer.try_write(WriteOp::FileEvent(
-        sample_file_event("a.rs", FileAction::Created, Some(1)),
-    )); // return value ignored -- fills the channel
+    writer.try_write(WriteOp::FileEvent(sample_file_event(
+        "a.rs",
+        FileAction::Created,
+        Some(1),
+    ))); // return value ignored -- fills the channel
 
     // These mirror a rapid sequence of file touches or network events.
     // The channel is full, so these are silently discarded.
     for i in 0..10 {
-        writer.try_write(WriteOp::FileEvent(
-            sample_file_event(&format!("lost{i}.rs"), FileAction::Created, Some(1)),
-        )); // return value ignored -- SILENTLY DROPPED
+        writer.try_write(WriteOp::FileEvent(sample_file_event(
+            &format!("lost{i}.rs"),
+            FileAction::Created,
+            Some(1),
+        ))); // return value ignored -- SILENTLY DROPPED
     }
 
     drop(writer);
@@ -2469,7 +2917,8 @@ async fn ignored_try_write_return_value_causes_silent_loss() {
     // to persist all 11 without backpressure. At best we get 1-2.
     assert!(
         events.len() < 11,
-        "expected data loss with capacity=1 and ignored try_write, got all {}", events.len()
+        "expected data loss with capacity=1 and ignored try_write, got all {}",
+        events.len()
     );
 }
 
@@ -2491,38 +2940,35 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
     // Model call 1: native tool "bash"
     let mut call1 = sample_model_call("anthropic");
     call1.trace_id = Some("trace_dedup".to_string());
-    call1.tool_calls = vec![
-        ToolCallEntry {
-            call_index: 0,
-            call_id: "toolu_bash_01".to_string(),
-            tool_name: "bash".to_string(),
-            arguments: Some(r#"{"command":"ls"}"#.to_string()),
-            origin: "native".to_string(),
-        },
-    ];
+    call1.tool_calls = vec![ToolCallEntry {
+        call_index: 0,
+        call_id: "toolu_bash_01".to_string(),
+        tool_name: "bash".to_string(),
+        arguments: Some(r#"{"command":"ls"}"#.to_string()),
+        origin: "native".to_string(),
+        trace_id: None,
+    }];
     call1.tool_responses = vec![];
     writer.write(WriteOp::ModelCall(call1)).await;
 
     // Model call 2: MCP-proxied tool + response for bash from call 1
     let mut call2 = sample_model_call("anthropic");
     call2.trace_id = Some("trace_dedup".to_string());
-    call2.tool_calls = vec![
-        ToolCallEntry {
-            call_index: 0,
-            call_id: "toolu_mcp_01".to_string(),
-            tool_name: "mcp__capsem__fetch_http".to_string(),
-            arguments: Some(r#"{"url":"https://example.com"}"#.to_string()),
-            origin: "mcp_proxy".to_string(),
-        },
-    ];
+    call2.tool_calls = vec![ToolCallEntry {
+        call_index: 0,
+        call_id: "toolu_mcp_01".to_string(),
+        tool_name: "mcp__capsem__fetch_http".to_string(),
+        arguments: Some(r#"{"url":"https://example.com"}"#.to_string()),
+        origin: "mcp_proxy".to_string(),
+        trace_id: None,
+    }];
     // The response for the bash tool from call 1 comes back in call 2's request
-    call2.tool_responses = vec![
-        ToolResponseEntry {
-            call_id: "toolu_bash_01".to_string(),
-            content_preview: Some("file1.txt\nfile2.txt".to_string()),
-            is_error: false,
-        },
-    ];
+    call2.tool_responses = vec![ToolResponseEntry {
+        call_id: "toolu_bash_01".to_string(),
+        content_preview: Some("file1.txt\nfile2.txt".to_string()),
+        is_error: false,
+        trace_id: None,
+    }];
     writer.write(WriteOp::ModelCall(call2)).await;
 
     // MCP call: tools/call fetch_http (matches the MCP tool_call above)
@@ -2694,22 +3140,29 @@ async fn tool_unified_no_duplicates() {
     assert_eq!(bash_rows[0]["source"], "native");
 
     // "fetch_http" should appear once (from mcp_calls, source=mcp)
-    let fetch_rows: Vec<_> = rows.iter().filter(|r| {
-        r["tool_name"].as_str() == Some("fetch_http")
-    }).collect();
+    let fetch_rows: Vec<_> = rows
+        .iter()
+        .filter(|r| r["tool_name"].as_str() == Some("fetch_http"))
+        .collect();
     assert_eq!(fetch_rows.len(), 1, "fetch_http should appear exactly once");
     assert_eq!(fetch_rows[0]["source"], "mcp");
 
     // "mcp__capsem__fetch_http" should NOT appear (filtered out by origin='native')
-    let mcp_proxy_rows: Vec<_> = rows.iter().filter(|r| {
-        r["tool_name"].as_str() == Some("mcp__capsem__fetch_http")
-    }).collect();
-    assert_eq!(mcp_proxy_rows.len(), 0, "mcp_proxy tool_call should be filtered out");
+    let mcp_proxy_rows: Vec<_> = rows
+        .iter()
+        .filter(|r| r["tool_name"].as_str() == Some("mcp__capsem__fetch_http"))
+        .collect();
+    assert_eq!(
+        mcp_proxy_rows.len(),
+        0,
+        "mcp_proxy tool_call should be filtered out"
+    );
 
     // tools/list should appear (MCP discovery, no tool_name)
-    let list_rows: Vec<_> = rows.iter().filter(|r| {
-        r["method"].as_str() == Some("tools/list")
-    }).collect();
+    let list_rows: Vec<_> = rows
+        .iter()
+        .filter(|r| r["method"].as_str() == Some("tools/list"))
+        .collect();
     assert_eq!(list_rows.len(), 1, "tools/list MCP call should be present");
 }
 
@@ -2750,7 +3203,11 @@ async fn tool_stats_no_double_counting() {
     let r = &rows[0];
 
     // native = 1 (only bash, not mcp__capsem__fetch_http)
-    assert_eq!(r["native"].as_i64().unwrap(), 1, "native should be 1 (only bash)");
+    assert_eq!(
+        r["native"].as_i64().unwrap(),
+        1,
+        "native should be 1 (only bash)"
+    );
     // mcp = 2 (tools/call fetch_http + tools/list)
     assert_eq!(r["mcp"].as_i64().unwrap(), 2, "mcp should be 2");
     // total = native + mcp = 3
@@ -2772,7 +3229,10 @@ async fn tool_count_no_double_counting() {
     // cnt = 1 (native bash) + 1 (mcp fetch_http with tool_name) = 2
     // NOT 3 (which would include the mcp_proxy tool_call)
     let cnt = rows[0]["cnt"].as_i64().unwrap();
-    assert_eq!(cnt, 2, "tool count should be 2 (1 native + 1 mcp with tool_name), got {cnt}");
+    assert_eq!(
+        cnt, 2,
+        "tool count should be 2 (1 native + 1 mcp with tool_name), got {cnt}"
+    );
 }
 
 #[tokio::test]
@@ -2792,12 +3252,20 @@ async fn tool_top_tools_no_duplicates() {
     assert_eq!(bash["source"], "native");
 
     // "fetch_http" appears with source=mcp
-    let fetch = rows.iter().find(|r| r["tool_name"].as_str() == Some("fetch_http")).unwrap();
+    let fetch = rows
+        .iter()
+        .find(|r| r["tool_name"].as_str() == Some("fetch_http"))
+        .unwrap();
     assert_eq!(fetch["source"], "mcp");
 
     // "mcp__capsem__fetch_http" does NOT appear
-    let mcp_proxy = rows.iter().find(|r| r["tool_name"].as_str() == Some("mcp__capsem__fetch_http"));
-    assert!(mcp_proxy.is_none(), "mcp_proxy tool name should not appear in top tools");
+    let mcp_proxy = rows
+        .iter()
+        .find(|r| r["tool_name"].as_str() == Some("mcp__capsem__fetch_http"));
+    assert!(
+        mcp_proxy.is_none(),
+        "mcp_proxy tool name should not appear in top tools"
+    );
 }
 
 #[tokio::test]
@@ -2814,7 +3282,10 @@ async fn tool_over_time_no_double_counting() {
 
     // Sum native across all buckets: should be 1 (only bash)
     let total_native: i64 = rows.iter().map(|r| r["native"].as_i64().unwrap_or(0)).sum();
-    assert_eq!(total_native, 1, "total native over time should be 1, got {total_native}");
+    assert_eq!(
+        total_native, 1,
+        "total native over time should be 1, got {total_native}"
+    );
 }
 
 #[tokio::test]
@@ -2827,15 +3298,17 @@ async fn tool_unified_search_dedup() {
 
     let reader = DbReader::open(&path).unwrap();
     let search = "%bash%";
-    let json = reader.query_raw_with_params(
-        TOOLS_UNIFIED_SEARCH_SQL,
-        &[
-            serde_json::Value::String(search.to_string()),
-            serde_json::Value::String(search.to_string()),
-            serde_json::Value::String(search.to_string()),
-            serde_json::Value::String(search.to_string()),
-        ],
-    ).unwrap();
+    let json = reader
+        .query_raw_with_params(
+            TOOLS_UNIFIED_SEARCH_SQL,
+            &[
+                serde_json::Value::String(search.to_string()),
+                serde_json::Value::String(search.to_string()),
+                serde_json::Value::String(search.to_string()),
+                serde_json::Value::String(search.to_string()),
+            ],
+        )
+        .unwrap();
     let (_, rows) = parse_query_result(&json);
 
     // Only bash (native) should match -- NOT mcp__capsem__fetch_http
@@ -2858,6 +3331,7 @@ async fn tool_responses_linked_by_call_id_not_model_call_id() {
         tool_name: "bash".to_string(),
         arguments: Some(r#"{"cmd":"echo hi"}"#.to_string()),
         origin: "native".to_string(),
+        trace_id: None,
     }];
     call1.tool_responses = vec![];
     writer.write(WriteOp::ModelCall(call1)).await;
@@ -2869,6 +3343,7 @@ async fn tool_responses_linked_by_call_id_not_model_call_id() {
         call_id: "toolu_01".to_string(),
         content_preview: Some("hi".to_string()),
         is_error: false,
+        trace_id: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);
@@ -2903,15 +3378,27 @@ async fn tool_unified_empty_tables() {
         ("TOOLS_UNIFIED", TOOLS_UNIFIED_SQL),
     ] {
         let result = reader.query_raw(sql);
-        assert!(result.is_ok(), "{name} should not error on empty DB: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "{name} should not error on empty DB: {:?}",
+            result.err()
+        );
     }
     // Search query with params
     let empty_search = serde_json::Value::String("%%".to_string());
     let result = reader.query_raw_with_params(
         TOOLS_UNIFIED_SEARCH_SQL,
-        &[empty_search.clone(), empty_search.clone(), empty_search.clone(), empty_search],
+        &[
+            empty_search.clone(),
+            empty_search.clone(),
+            empty_search.clone(),
+            empty_search,
+        ],
     );
-    assert!(result.is_ok(), "TOOLS_UNIFIED_SEARCH should not error on empty DB");
+    assert!(
+        result.is_ok(),
+        "TOOLS_UNIFIED_SEARCH should not error on empty DB"
+    );
 }
 
 #[tokio::test]
@@ -2920,7 +3407,9 @@ async fn tool_unified_only_mcp_calls() {
     let path = dir.path().join("dedup-mcp-only.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    writer.write(WriteOp::McpCall(sample_mcp_call("github", "allowed"))).await;
+    writer
+        .write(WriteOp::McpCall(sample_mcp_call("github", "allowed")))
+        .await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
@@ -2945,6 +3434,7 @@ async fn tool_unified_only_native_calls() {
         tool_name: "read_file".to_string(),
         arguments: Some(r#"{"path":"README.md"}"#.to_string()),
         origin: "native".to_string(),
+        trace_id: None,
     }];
     call.tool_responses = vec![];
     writer.write(WriteOp::ModelCall(call)).await;
@@ -2956,6 +3446,7 @@ async fn tool_unified_only_native_calls() {
         call_id: "toolu_solo".to_string(),
         content_preview: Some("# README\nContents here".to_string()),
         is_error: false,
+        trace_id: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);

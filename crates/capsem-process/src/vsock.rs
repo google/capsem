@@ -1,19 +1,16 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Result};
-use capsem_core::{
-    VsockConnection,
-    read_control_msg, write_control_msg,
-};
+use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
+use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostToGuest};
-use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
-use tokio::sync::{broadcast, mpsc};
-use tracing::{info, error, warn};
 use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc};
+use tracing::{error, info, warn};
 
 use crate::helpers::clone_fd;
-use crate::job_store::{JobStore, JobResult, with_quiescence};
+use crate::job_store::{with_quiescence, JobResult, JobStore};
 
 /// Maximum attempts for the initial handshake before giving up.
 ///
@@ -39,7 +36,10 @@ pub(crate) struct VsockOptions {
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
     pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    pub(crate) mcp_config: Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
+    /// T3.2: handler for DNS queries forwarded over vsock port 5007.
+    /// Shared by-Arc with main.rs so the same `NetworkPolicy` drives
+    /// both the MITM proxy and the DNS NXDOMAIN gate.
+    pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
@@ -63,7 +63,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         cli_env,
         guest_config,
         mitm_config,
-        mcp_config,
+        dns_handler,
         is_restore,
         vm_ready,
         uds_path,
@@ -75,7 +75,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     // Stable channels to re-key the bridges when connections reset
     let (control_rekey_tx, control_rekey_rx) = mpsc::channel::<Arc<VsockConnection>>(4);
     let (terminal_rekey_tx, mut terminal_rekey_rx) = mpsc::channel::<Arc<VsockConnection>>(4);
-    
+
     // Channel for stable terminal input across reconnections
     let (term_in_tx, mut term_in_rx) = mpsc::channel::<Vec<u8>>(128);
 
@@ -96,8 +96,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 let mut fd = clone_fd(initial_ctrl_fd)?;
                 perform_handshake(&mut fd, is_rest, &cli_env_clone, Some(guest_config_clone))
             })
-                .await
-                .context("handshake task panicked")?;
+            .await
+            .context("handshake task panicked")?;
 
             match handshake_res {
                 Ok(()) => {
@@ -118,18 +118,35 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     };
 
     // Send the initial FDs into the rekey channels to prime the bridges
-    let _ = terminal_rekey_tx.send(initial_t.clone()).await;
-    let _ = control_rekey_tx.send(initial_c.clone()).await;
+    capsem_core::try_send!(
+        "terminal_rekey",
+        terminal_rekey_tx.send(initial_t.clone()).await
+    );
+    capsem_core::try_send!(
+        "control_rekey",
+        control_rekey_tx.send(initial_c.clone()).await
+    );
 
-    info!(category = "boot_timeline", from = "Handshaking", to = "Running", trigger = "booted", "state transition");
-    let _ = ipc_tx.send(ProcessToService::StateChanged {
-        id: vm_id.clone(),
-        state: "Running".into(),
-        trigger: "booted".into()
-    });
+    info!(
+        category = "boot_timeline",
+        from = "Handshaking",
+        to = "Running",
+        trigger = "booted",
+        "state transition"
+    );
+    capsem_core::try_send!(
+        "ipc_state_change",
+        ipc_tx.send(ProcessToService::StateChanged {
+            id: vm_id.clone(),
+            state: "Running".into(),
+            trigger: "booted".into()
+        })
+    );
     vm_ready.store(true, Ordering::Release);
     let ready_path = uds_path.with_extension("ready");
-    if let Err(e) = std::fs::File::create(&ready_path) { warn!("failed to create ready sentinel: {e}"); }
+    if let Err(e) = std::fs::File::create(&ready_path) {
+        warn!("failed to create ready sentinel: {e}");
+    }
 
     // -----------------------------------------------------------------------
     // 1. Stable Terminal Bridge (Read + Write)
@@ -137,11 +154,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let term_out = Arc::clone(&terminal_output);
     let serial_log_path = session_dir.join("serial.log");
     let pty_log_out = pty_log.clone();
-    
+
     tokio::spawn(async move {
         let mut log_file = std::fs::OpenOptions::new()
-            .create(true).append(true).open(&serial_log_path).ok();
-            
+            .create(true)
+            .append(true)
+            .open(&serial_log_path)
+            .ok();
+
         let mut current_conn = terminal_rekey_rx.recv().await;
         loop {
             let conn = match current_conn.take() {
@@ -153,16 +173,26 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             };
 
             info!("terminal bridge: active");
-            let mut reader = match clone_fd(conn.fd) { Ok(f) => f, Err(_) => continue };
-            let mut writer = match clone_fd(conn.fd) { Ok(f) => f, Err(_) => continue };
+            let mut reader = match clone_fd(conn.fd) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let mut writer = match clone_fd(conn.fd) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
             let (tx, mut rx) = mpsc::channel::<Vec<u8>>(128);
 
             // Blocking read thread for this specific FD
             let read_handle = std::thread::spawn(move || {
                 let mut buf = [0u8; 65536];
                 while let Ok(n) = reader.read(&mut buf) {
-                    if n == 0 { break; }
-                    if tx.blocking_send(buf[..n].to_vec()).is_err() { break; }
+                    if n == 0 {
+                        break;
+                    }
+                    if tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
                 }
             });
 
@@ -220,7 +250,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let vm_ready_for_reader = Arc::clone(&vm_ready);
     let ready_path_for_reader = ready_path.clone();
 
+    // Pending-ack map lives on `JobStore` (see job_store.rs::pending_acks)
+    // so IPC handlers can remove entries once no caller is still waiting
+    // and the bridge end here can replay-on-rekey. See the field doc on
+    // `JobStore::pending_acks` for the full reasoning.
+    let pending_for_bridge = Arc::clone(&job_store);
+
     tokio::spawn(async move {
+        let pending = pending_for_bridge;
         let mut current_conn = control_rekey_rx_inner.recv().await;
         loop {
             let conn = match current_conn.take() {
@@ -237,33 +274,89 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             };
 
             info!("control bridge: active");
-            let mut writer_fd = match clone_fd(conn.fd) { Ok(f) => f, Err(_) => continue };
-            let mut reader_fd = match clone_fd(conn.fd) { Ok(f) => f, Err(_) => continue };
-            
+            let mut writer_fd = match clone_fd(conn.fd) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let mut reader_fd = match clone_fd(conn.fd) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+
+            // Re-write every pending (unacked) message on the fresh conn.
+            // Snapshot under the lock so a concurrent insert during replay
+            // doesn't double-replay the same message.
+            let to_replay: Vec<HostToGuest> = pending
+                .pending_acks
+                .lock()
+                .unwrap()
+                .values()
+                .cloned()
+                .collect();
+            if !to_replay.is_empty() {
+                info!(
+                    count = to_replay.len(),
+                    "control bridge: replaying pending unacked messages"
+                );
+                let mut replay_failed = false;
+                for msg in &to_replay {
+                    if let Err(e) = write_control_msg(&mut writer_fd, msg) {
+                        error!("control bridge: replay write failed: {e}");
+                        replay_failed = true;
+                        break;
+                    }
+                }
+                if replay_failed {
+                    continue;
+                }
+            }
+
             let (msg_tx, mut msg_rx) = mpsc::channel::<Result<GuestToHost>>(32);
-            
+
             // Reader thread
-            std::thread::spawn(move || {
-                loop {
-                    let res = read_control_msg(&mut reader_fd);
-                    let is_err = res.is_err();
-                    if msg_tx.blocking_send(res).is_err() || is_err { break; }
+            std::thread::spawn(move || loop {
+                let res = read_control_msg(&mut reader_fd);
+                let is_err = res.is_err();
+                if msg_tx.blocking_send(res).is_err() || is_err {
+                    break;
                 }
             });
 
             loop {
                 tokio::select! {
-                    // Outgoing messages
+                    // Outgoing messages -- record ackable ones in `pending`
+                    // *before* writing so a write-fail/silent-drop is
+                    // recoverable via the next rekey replay.
                     Some(msg) = ctrl_out_rx.recv() => {
+                        if let Some(id) = ackable_id(&msg) {
+                            pending.pending_acks.lock().unwrap().insert(id, msg.clone());
+                        }
                         if let Err(e) = write_control_msg(&mut writer_fd, &msg) {
                             error!("control bridge: write failed: {e}");
                             break;
                         }
                     }
-                    // Incoming messages
+                    // Incoming messages -- intercept Ack here, dispatch
+                    // everything else to handle_guest_msg. Ackable
+                    // responses (ExecDone / FileOpDone / FileContent /
+                    // Error{id}) get an immediate `AckReply` written
+                    // back so the agent's symmetric pending_responses
+                    // map can drop the entry; without this the agent
+                    // would replay every response on every rekey.
                     res = msg_rx.recv() => {
                         match res {
-                            Some(Ok(msg)) => handle_guest_msg(msg, &js, &db_ctrl).await,
+                            Some(Ok(GuestToHost::Ack { id })) => {
+                                pending.pending_acks.lock().unwrap().remove(&id);
+                            }
+                            Some(Ok(msg)) => {
+                                if let Some(id) = ackable_response_id(&msg) {
+                                    if let Err(e) = write_control_msg(&mut writer_fd, &HostToGuest::AckReply { id }) {
+                                        error!("control bridge: AckReply write failed: {e}");
+                                        break;
+                                    }
+                                }
+                                handle_guest_msg(msg, &js, &db_ctrl).await
+                            }
                             _ => break, // Error or closed, wait for rekey
                         }
                     }
@@ -286,7 +379,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            if hb_tx.send(HostToGuest::Ping { epoch_secs }).await.is_err() { break; }
+            if hb_tx.send(HostToGuest::Ping { epoch_secs }).await.is_err() {
+                break;
+            }
         }
     });
 
@@ -306,68 +401,200 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         while let Some(msg) = ctrl_rx.recv().await {
             match msg {
                 ServiceToProcess::TerminalInput { data } => {
-                    if let Some(ref pl) = pty_log_for_cmd { pl.record_input(&data); }
-                    let _ = term_in_tx.send(data).await;
+                    if let Some(ref pl) = pty_log_for_cmd {
+                        pl.record_input(&data);
+                    }
+                    capsem_core::try_send!("term_in", term_in_tx.send(data).await);
                 }
-                ServiceToProcess::TerminalResize { cols, rows } => { let _ = hub_tx.send(HostToGuest::Resize { cols, rows }).await; }
+                ServiceToProcess::TerminalResize { cols, rows } => {
+                    capsem_core::try_send!(
+                        "hub_resize",
+                        hub_tx.send(HostToGuest::Resize { cols, rows }).await
+                    );
+                }
                 ServiceToProcess::Exec { id, command } => {
-                    *js_for_cmd.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
-                    db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
-                        timestamp: std::time::SystemTime::now(), exec_id: id, command: command.clone(),
-                        source: "api".into(), mcp_call_id: None, trace_id: None, process_name: None,
-                    }));
-                    let _ = hub_tx.send(HostToGuest::Exec { id, command }).await;
+                    // active_exec is owned by ipc.rs's Exec handler -- it
+                    // creates the capture slot *before* sending here. The
+                    // control bridge owns delivery/replay, so this layer just
+                    // forwards without replacing the active_exec slot.
+                    db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(
+                        capsem_logger::ExecEvent {
+                            timestamp: std::time::SystemTime::now(),
+                            exec_id: id,
+                            command: command.clone(),
+                            source: "api".into(),
+                            mcp_call_id: None,
+                            trace_id: None,
+                            process_name: None,
+                        },
+                    ));
+                    capsem_core::try_send!(
+                        "hub_exec",
+                        hub_tx.send(HostToGuest::Exec { id, command }).await
+                    );
                 }
-                ServiceToProcess::WriteFile { id, path, data } => { let _ = hub_tx.send(HostToGuest::FileWrite { id, path, data, mode: 0o644 }).await; }
-                ServiceToProcess::ReadFile { id, path } => { let _ = hub_tx.send(HostToGuest::FileRead { id, path }).await; }
+                ServiceToProcess::WriteFile { id, path, data } => {
+                    capsem_core::try_send!(
+                        "hub_file_write",
+                        hub_tx
+                            .send(HostToGuest::FileWrite {
+                                id,
+                                path,
+                                data,
+                                mode: 0o644
+                            })
+                            .await
+                    );
+                }
+                ServiceToProcess::ReadFile { id, path } => {
+                    capsem_core::try_send!(
+                        "hub_file_read",
+                        hub_tx.send(HostToGuest::FileRead { id, path }).await
+                    );
+                }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
+                    let checkpoint_path_for_save = full_path.clone();
+                    let rootfs_img = session_dir.join("guest").join("system").join("rootfs.img");
                     let h_tx = hub_tx.clone();
                     let j_s = Arc::clone(&js_for_cmd);
                     let v_m = Arc::clone(&vm_handle_for_cmd);
                     let i_tx = ipc_tx_for_cmd.clone();
                     let v_id = vm_id_for_cmd.clone();
                     tokio::spawn(async move {
-                        let _ = with_quiescence(&h_tx, &j_s, std::time::Duration::from_secs(10), || async {
-                            tokio::task::spawn_blocking(move || {
+                        // W4: explicit timing spans on every step of suspend so a
+                        // future hang lands in process.log with `duration_ms` per
+                        // stage. Pre-W4: only "suspend took 8s" total, no per-step
+                        // attribution.
+                        let suspend_start = std::time::Instant::now();
+                        let mut suspend_result = with_quiescence(&h_tx, &j_s, std::time::Duration::from_secs(10), || async {
+                            let pause_save_start = std::time::Instant::now();
+                            let r = tokio::task::spawn_blocking(move || {
                                 #[cfg(target_os = "macos")]
                                 capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
                                     let v = v_m.blocking_lock();
+                                    let t0 = std::time::Instant::now();
                                     v.pause()?;
-                                    v.save_state(&full_path)?;
+                                    info!(target: "suspend", op = "apple_vz_pause", duration_ms = t0.elapsed().as_millis() as u64, "stage complete");
+                                    let t1 = std::time::Instant::now();
+                                    v.save_state(&checkpoint_path_for_save)?;
+                                    info!(target: "suspend", op = "apple_vz_save_state", duration_ms = t1.elapsed().as_millis() as u64, "stage complete");
                                     Ok(())
                                 })?;
                                 #[cfg(not(target_os = "macos"))]
                                 {
                                     let v = v_m.blocking_lock();
+                                    let t0 = std::time::Instant::now();
                                     v.pause()?;
-                                    v.save_state(&full_path)?;
+                                    info!(target: "suspend", op = "pause", duration_ms = t0.elapsed().as_millis() as u64, "stage complete");
+                                    let t1 = std::time::Instant::now();
+                                    v.save_state(&checkpoint_path_for_save)?;
+                                    info!(target: "suspend", op = "save_state", duration_ms = t1.elapsed().as_millis() as u64, "stage complete");
                                 }
                                 Ok(())
-                            }).await?
+                            }).await?;
+                            info!(target: "suspend", op = "pause_save_block", duration_ms = pause_save_start.elapsed().as_millis() as u64, "block complete");
+                            r
                         }).await;
-                        let _ = i_tx.send(ProcessToService::StateChanged { id: v_id, state: "Suspended".into(), trigger: "suspend_requested".into() });
+                        info!(target: "suspend", op = "with_quiescence", duration_ms = suspend_start.elapsed().as_millis() as u64, "phase complete");
+
+                        // After save_state, Apple VZ has stopped writing to rootfs.img
+                        // (the virtio-blk-attached system overlay), but APFS may still
+                        // be holding dirty pages for it in the host page cache. If
+                        // capsem-process exits before APFS flushes them, the next boot
+                        // mounts a stale rootfs.img and EXT4 fails with `iget: checksum
+                        // invalid` -> overlayfs mount fails -> kernel panic. Force the
+                        // flush before we declare success and exit.
+                        if suspend_result.is_ok() {
+                            let fsync_start = std::time::Instant::now();
+                            let checkpoint_path = full_path.clone();
+                            if let Err(e) =
+                                tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                                    let checkpoint_file = std::fs::OpenOptions::new()
+                                        .read(true)
+                                        .open(&checkpoint_path)?;
+                                    checkpoint_file.sync_all()?;
+
+                                    let f = std::fs::OpenOptions::new()
+                                        .read(true)
+                                        .write(true)
+                                        .open(&rootfs_img)?;
+                                    f.sync_all()?;
+                                    Ok(())
+                                })
+                                .await
+                                .unwrap_or_else(|e| {
+                                    Err(std::io::Error::other(format!("join: {e}")))
+                                })
+                            {
+                                error!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", duration_ms = fsync_start.elapsed().as_millis() as u64, error = %e, "host_fsync_checkpoint_and_rootfs failed");
+                                suspend_result = Err(anyhow::anyhow!(
+                                    "failed to fsync checkpoint/rootfs after save_state: {e}"
+                                ));
+                            } else {
+                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
+                            }
+                        } else if let Err(ref e) = suspend_result {
+                            error!(target: "suspend", error = %e, "suspend failed");
+                        }
+
+                        // Only report Suspended when save_state actually succeeded.
+                        // Previously we sent it unconditionally, which made the service
+                        // mark a failed-suspend VM as "Suspended" and corrupt the registry.
+                        if suspend_result.is_ok() {
+                            capsem_core::try_send!(
+                                "ipc_state_change",
+                                i_tx.send(ProcessToService::StateChanged {
+                                    id: v_id,
+                                    state: "Suspended".into(),
+                                    trigger: "suspend_requested".into()
+                                })
+                            );
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            std::process::exit(0);
+                        }
+                        // On suspend failure the VM is still running (we did pause but
+                        // failed before save_state, or save_state failed). Exit so the
+                        // service notices and can re-spawn cleanly; but DO NOT claim
+                        // Suspended -- service treats process death without "Suspended"
+                        // as crash and will not write a checkpoint marker.
+                        warn!("suspend did not complete; exiting without Suspended marker");
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        std::process::exit(0);
+                        std::process::exit(1);
                     });
                 }
                 ServiceToProcess::Shutdown => {
-                    let _ = hub_tx.send(HostToGuest::Shutdown).await;
+                    capsem_core::try_send!(
+                        "hub_shutdown",
+                        hub_tx.send(HostToGuest::Shutdown).await
+                    );
                     let v_m = Arc::clone(&vm_handle_for_cmd);
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        // channel-closed-ok: spawn_blocking JoinHandle and stop()'s
+                        // Result are best-effort cleanup tails; nothing waits on them.
                         let _ = tokio::task::spawn_blocking(move || {
                             #[cfg(target_os = "macos")]
-                            let _ = capsem_core::hypervisor::apple_vz::run_on_main_thread(move || { v_m.blocking_lock().stop() });
+                            let _ =
+                                capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
+                                    v_m.blocking_lock().stop()
+                                });
                             #[cfg(not(target_os = "macos"))]
                             let _ = v_m.blocking_lock().stop();
-                        }).await;
+                        })
+                        .await;
                         std::process::exit(0);
                     });
                 }
                 ServiceToProcess::Ping => {
-                    let epoch_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                    let _ = hub_tx.send(HostToGuest::Ping { epoch_secs }).await;
+                    let epoch_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    capsem_core::try_send!(
+                        "hub_ping",
+                        hub_tx.send(HostToGuest::Ping { epoch_secs }).await
+                    );
                 }
                 _ => {}
             }
@@ -378,7 +605,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     // 4. Central Dispatcher Loop (Vsock -> Hub)
     // -----------------------------------------------------------------------
     let mitm_config_loop = Arc::clone(&mitm_config);
-    let mcp_config_loop = Arc::clone(&mcp_config);
+    let dns_handler_loop = Arc::clone(&dns_handler);
     let db_for_audit = Arc::clone(&db);
     let ipc_tx_lifecycle = ipc_tx.clone();
     let ctrl_tx_lifecycle = options._ctrl_tx.clone();
@@ -387,36 +614,71 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     let mut current_is_restore = true; // Always true after initial handshake
     let mut initial_handshake_done = true;
-    
+
     tokio::spawn(async move {
         let mut pending_aux = deferred_conns;
-        
+
         // Immediately dispatch the deferred_conns from the initial collect
         for conn in pending_aux.drain(..) {
-            dispatch_aux_connection(conn, &mitm_config_loop, &mcp_config_loop, &job_store_vsock, &db_for_audit, &ipc_tx_lifecycle, &ctrl_tx_lifecycle, &vm_id_lifecycle);
+            dispatch_aux_connection(
+                conn,
+                &mitm_config_loop,
+                &dns_handler_loop,
+                &job_store_vsock,
+                &db_for_audit,
+                &ipc_tx_lifecycle,
+                &ctrl_tx_lifecycle,
+                &vm_id_lifecycle,
+            );
         }
 
         while let Some(conn) = vsock_rx.recv().await {
             match conn.port {
                 capsem_core::VSOCK_PORT_CONTROL => {
                     info!("control port: connection accepted, performing handshake");
-                    let mut fd = match clone_fd(conn.fd) { Ok(f) => f, Err(_) => { pending_aux.clear(); continue; } };
+                    let mut fd = match clone_fd(conn.fd) {
+                        Ok(f) => f,
+                        Err(_) => {
+                            pending_aux.clear();
+                            continue;
+                        }
+                    };
                     let is_rest = current_is_restore;
                     let cli_env_clone = cli_env.clone();
                     let guest_config_clone = guest_config.clone();
-                    let hs_res = tokio::task::spawn_blocking(move || perform_handshake(&mut fd, is_rest, &cli_env_clone, Some(guest_config_clone))).await;
-                    
+                    let hs_res = tokio::task::spawn_blocking(move || {
+                        perform_handshake(
+                            &mut fd,
+                            is_rest,
+                            &cli_env_clone,
+                            Some(guest_config_clone),
+                        )
+                    })
+                    .await;
+
                     match hs_res {
                         Ok(Ok(())) => {
                             info!("control port: handshake successful, re-keying bridge");
                             let conn_arc = Arc::new(conn);
-                            let _ = control_rekey_tx.send(conn_arc).await;
-                            
+                            capsem_core::try_send!(
+                                "control_rekey",
+                                control_rekey_tx.send(conn_arc).await
+                            );
+
                             // Handshake succeeded: dispatch any auxiliary connections that arrived with it
                             for aux_conn in pending_aux.drain(..) {
-                                dispatch_aux_connection(aux_conn, &mitm_config_loop, &mcp_config_loop, &job_store_vsock, &db_for_audit, &ipc_tx_lifecycle, &ctrl_tx_lifecycle, &vm_id_lifecycle);
+                                dispatch_aux_connection(
+                                    aux_conn,
+                                    &mitm_config_loop,
+                                    &dns_handler_loop,
+                                    &job_store_vsock,
+                                    &db_for_audit,
+                                    &ipc_tx_lifecycle,
+                                    &ctrl_tx_lifecycle,
+                                    &vm_id_lifecycle,
+                                );
                             }
-                            
+
                             if !initial_handshake_done {
                                 initial_handshake_done = true;
                                 current_is_restore = true; // Subsequent connections are always "restores"
@@ -435,7 +697,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 capsem_core::VSOCK_PORT_TERMINAL => {
                     info!("terminal port: connection accepted, re-keying bridge");
                     let conn_arc = Arc::new(conn);
-                    let _ = terminal_rekey_tx.send(conn_arc).await;
+                    capsem_core::try_send!(
+                        "terminal_rekey",
+                        terminal_rekey_tx.send(conn_arc).await
+                    );
                 }
                 _ => {
                     if initial_handshake_done {
@@ -444,7 +709,16 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // But if it arrives *during* a reconnection storm, we should buffer.
                         // To keep it simple: just dispatch them. The control port rekeying is the
                         // only thing that requires a successful handshake lock-step.
-                        dispatch_aux_connection(conn, &mitm_config_loop, &mcp_config_loop, &job_store_vsock, &db_for_audit, &ipc_tx_lifecycle, &ctrl_tx_lifecycle, &vm_id_lifecycle);
+                        dispatch_aux_connection(
+                            conn,
+                            &mitm_config_loop,
+                            &dns_handler_loop,
+                            &job_store_vsock,
+                            &db_for_audit,
+                            &ipc_tx_lifecycle,
+                            &ctrl_tx_lifecycle,
+                            &vm_id_lifecycle,
+                        );
                     } else {
                         // Before initial boot, buffer them
                         pending_aux.push(conn);
@@ -461,7 +735,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 fn dispatch_aux_connection(
     conn: VsockConnection,
     mitm_config: &Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    mcp_config: &Arc<capsem_core::mcp::gateway::McpGatewayConfig>,
+    dns_handler: &Arc<capsem_core::net::dns::DnsHandler>,
     job_store: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
     ipc_tx: &broadcast::Sender<ProcessToService>,
@@ -471,16 +745,40 @@ fn dispatch_aux_connection(
     match conn.port {
         capsem_core::VSOCK_PORT_SNI_PROXY => {
             let config = Arc::clone(mitm_config);
-            tokio::spawn(async move { capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await; drop(conn); });
+            tokio::spawn(async move {
+                capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
+                drop(conn);
+            });
         }
-        capsem_core::VSOCK_PORT_MCP_GATEWAY => {
-            let mcp = Arc::clone(mcp_config);
-            tokio::spawn(async move { capsem_core::mcp::gateway::serve_mcp_session(conn.fd, mcp).await; drop(conn); });
+        capsem_proto::VSOCK_PORT_DNS_PROXY => {
+            // T3.2 -- one envelope round-trip per vsock connection.
+            // The agent opens a fresh conn per query (UDP datagram or
+            // TCP DNS query), writes a length-framed `DnsRequest`,
+            // reads back a length-framed `DnsResponse`, and closes.
+            // Lifetime is per-query; if this becomes a bottleneck T5
+            // can swap to a multiplexed long-lived conn.
+            // T3.3 -- after the handler returns we build a `DnsEvent`
+            // and push it through the shared `DbWriter` so a
+            // `dns_events` row is recorded for every query (allowed,
+            // denied, error). `trace_id` is the ambient capsem trace
+            // id so a single agent action joins across `dns_events`
+            // and `net_events`.
+            let handler = Arc::clone(dns_handler);
+            let db_for_dns = Arc::clone(db);
+            tokio::spawn(async move {
+                serve_dns_session(conn, handler, db_for_dns).await;
+            });
         }
         capsem_core::VSOCK_PORT_EXEC => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
-                let mut file = match clone_fd(conn.fd) { Ok(f) => f, Err(e) => { error!("exec port: clone_fd failed: {e}"); return; } };
+                let mut file = match clone_fd(conn.fd) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!("exec port: clone_fd failed: {e}");
+                        return;
+                    }
+                };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
                     let mut local_buf = Vec::new();
@@ -501,10 +799,16 @@ fn dispatch_aux_connection(
                             if active.id == id {
                                 active.captured = local_buf;
                                 Some(active.deposited.clone())
-                            } else { None }
-                        } else { None }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     };
-                    if let Some(n) = notify { n.notify_one(); }
+                    if let Some(n) = notify {
+                        n.notify_one();
+                    }
                 }
                 drop(conn);
             });
@@ -512,22 +816,48 @@ fn dispatch_aux_connection(
         capsem_proto::VSOCK_PORT_AUDIT => {
             let db_clone = Arc::clone(db);
             std::thread::spawn(move || {
-                let mut file = match clone_fd(conn.fd) { Ok(f) => f, Err(e) => { error!("audit port: clone_fd failed: {e}"); return; } };
+                let mut file = match clone_fd(conn.fd) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!("audit port: clone_fd failed: {e}");
+                        return;
+                    }
+                };
                 info!("audit port: connected, reading audit records");
                 let mut len_buf = [0u8; 4];
                 loop {
-                    if std::io::Read::read_exact(&mut file, &mut len_buf).is_err() { break; }
+                    if std::io::Read::read_exact(&mut file, &mut len_buf).is_err() {
+                        break;
+                    }
                     let len = u32::from_be_bytes(len_buf) as usize;
-                    if len > capsem_proto::MAX_FRAME_SIZE as usize { break; }
+                    if len > capsem_proto::MAX_FRAME_SIZE as usize {
+                        break;
+                    }
                     let mut payload = vec![0u8; len];
-                    if std::io::Read::read_exact(&mut file, &mut payload).is_err() { break; }
+                    if std::io::Read::read_exact(&mut file, &mut payload).is_err() {
+                        break;
+                    }
                     if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
-                        let timestamp = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_micros(record.timestamp_us);
-                        db_clone.try_write(capsem_logger::WriteOp::AuditEvent(capsem_logger::AuditEvent {
-                            timestamp, pid: record.pid, ppid: record.ppid, uid: record.uid, exe: record.exe, comm: record.comm,
-                            argv: record.argv, cwd: record.cwd, tty: record.tty, session_id: record.session_id, audit_id: Some(record.audit_id),
-                            exec_event_id: None, parent_exe: record.parent_exe,
-                        }));
+                        let timestamp = std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_micros(record.timestamp_us);
+                        db_clone.try_write(capsem_logger::WriteOp::AuditEvent(
+                            capsem_logger::AuditEvent {
+                                timestamp,
+                                pid: record.pid,
+                                ppid: record.ppid,
+                                uid: record.uid,
+                                exe: record.exe,
+                                comm: record.comm,
+                                argv: record.argv,
+                                cwd: record.cwd,
+                                tty: record.tty,
+                                session_id: record.session_id,
+                                audit_id: Some(record.audit_id),
+                                exec_event_id: None,
+                                parent_exe: record.parent_exe,
+                                trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
+                            },
+                        ));
                     }
                 }
                 drop(conn);
@@ -538,24 +868,181 @@ fn dispatch_aux_connection(
             let ctx = ctrl_tx.clone();
             let id = vm_id.to_string();
             std::thread::spawn(move || {
-                let mut f = match clone_fd(conn.fd) { Ok(f) => f, Err(_) => return };
+                let mut f = match clone_fd(conn.fd) {
+                    Ok(f) => f,
+                    Err(_) => return,
+                };
                 match read_control_msg(&mut f) {
                     Ok(GuestToHost::ShutdownRequest) => {
                         info!("guest requested shutdown via lifecycle port");
-                        let _ = itx.send(ProcessToService::ShutdownRequested { id });
-                        let _ = ctx.blocking_send(ServiceToProcess::Shutdown);
+                        capsem_core::try_send!(
+                            "ipc_lifecycle_shutdown",
+                            itx.send(ProcessToService::ShutdownRequested { id })
+                        );
+                        capsem_core::try_send!(
+                            "ctrl_lifecycle_shutdown",
+                            ctx.blocking_send(ServiceToProcess::Shutdown)
+                        );
                     }
                     Ok(GuestToHost::SuspendRequest) => {
                         info!("guest requested suspend via lifecycle port");
-                        let _ = itx.send(ProcessToService::SuspendRequested { id });
-                        let _ = ctx.blocking_send(ServiceToProcess::Suspend { checkpoint_path: "checkpoint.vzsave".into() });
+                        capsem_core::try_send!(
+                            "ipc_lifecycle_suspend",
+                            itx.send(ProcessToService::SuspendRequested { id })
+                        );
+                        capsem_core::try_send!(
+                            "ctrl_lifecycle_suspend",
+                            ctx.blocking_send(ServiceToProcess::Suspend {
+                                checkpoint_path: "checkpoint.vzsave".into()
+                            })
+                        );
                     }
-                    _ => {}
+                    other => {
+                        // W4: a lifecycle-port frame the host doesn't recognize
+                        // is exactly the bug pattern that wedged us today.
+                        warn!(target: "ipc", unhandled = ?other, "VSOCK_PORT_LIFECYCLE: unknown variant; this binary may be older than its peer");
+                    }
                 }
                 drop(conn);
             });
         }
-        _ => {}
+        other => {
+            warn!(target: "ipc", port = other, "vsock dispatch: unknown port; auxiliary connection ignored");
+        }
+    }
+}
+
+/// One-shot DNS query handler over the vsock DNS port (T3.2).
+///
+/// Wire shape:
+///   guest -> host: `[u32 BE length][rmp DnsRequest]`
+///   host -> guest: `[u32 BE length][rmp DnsResponse]`
+///
+/// The connection is closed after one round-trip. The agent opens a
+/// fresh conn per DNS query so we don't have to multiplex responses
+/// against transaction ids on the wire -- DNS already has a transaction
+/// id in the wire bytes themselves and the agent matches on those when
+/// returning the answer to the original UDP peer.
+async fn serve_dns_session(
+    conn: VsockConnection,
+    handler: Arc<capsem_core::net::dns::DnsHandler>,
+    db: Arc<capsem_logger::DbWriter>,
+) {
+    use std::io::{Read as _, Write as _};
+
+    let conn_fd = conn.fd;
+    // Move the fd in/out via spawn_blocking so we don't run sync I/O on
+    // the tokio runtime. The DNS handler itself is async (UDP forwarder
+    // returns Future), so we read the request, run the handler, then
+    // write the response.
+    let read_res = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+        let mut file = clone_fd(conn_fd)?;
+        let mut len_buf = [0u8; 4];
+        file.read_exact(&mut len_buf)
+            .context("DNS port: failed to read length prefix")?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > capsem_proto::MAX_FRAME_SIZE as usize {
+            anyhow::bail!("DNS port: frame too large ({len} > MAX_FRAME_SIZE)");
+        }
+        let mut payload = vec![0u8; len];
+        file.read_exact(&mut payload)
+            .context("DNS port: failed to read payload")?;
+        Ok(payload)
+    })
+    .await;
+
+    let payload = match read_res {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => {
+            warn!(error = %e, "DNS port: read failed");
+            drop(conn);
+            return;
+        }
+        Err(e) => {
+            warn!(error = %e, "DNS port: read task panicked");
+            drop(conn);
+            return;
+        }
+    };
+
+    let req = match capsem_proto::decode_dns_request(&payload) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(error = %e, "DNS port: decode_dns_request failed");
+            drop(conn);
+            return;
+        }
+    };
+
+    let result = handler.handle(&req.raw).await;
+
+    // T3.3 -- record one `dns_events` row per query. trace_id ties it
+    // back to the agent action; source_proto distinguishes UDP from
+    // TCP DNS at the source side. Don't await the channel send to
+    // keep the DNS path non-blocking under back-pressure on the
+    // writer queue (matches the audit-event try_write pattern).
+    let event = capsem_core::net::dns::build_dns_event(
+        &result,
+        Some(req.proto.as_str()),
+        req.process_name.clone(),
+        capsem_core::telemetry::ambient_capsem_trace_id(),
+    );
+    db.try_write(capsem_logger::WriteOp::DnsEvent(event));
+
+    let response = capsem_proto::DnsResponse {
+        raw: result.answer_bytes,
+        decision: result.decision.as_str().to_string(),
+        rcode: result.rcode,
+    };
+
+    let frame = match capsem_proto::encode_dns_response(&response) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(error = %e, "DNS port: encode_dns_response failed");
+            drop(conn);
+            return;
+        }
+    };
+
+    let _ = tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut file = clone_fd(conn_fd)?;
+        file.write_all(&frame)
+            .context("DNS port: failed to write response frame")?;
+        Ok(())
+    })
+    .await;
+
+    drop(conn);
+}
+
+/// Returns `Some(id)` for HostToGuest variants whose delivery the host
+/// bridge tracks via the pending-ack map. The agent acks these on
+/// receipt; the bridge replays them on every fresh conn until acked.
+/// Non-ackable variants (Resize, Ping, Shutdown, BootConfig, etc.) are
+/// either side-effect-free or fire-and-forget at boot, so we don't
+/// burden the wire with per-message acks for them.
+fn ackable_id(msg: &HostToGuest) -> Option<u64> {
+    match msg {
+        HostToGuest::Exec { id, .. }
+        | HostToGuest::FileWrite { id, .. }
+        | HostToGuest::FileRead { id, .. }
+        | HostToGuest::FileDelete { id, .. } => Some(*id),
+        _ => None,
+    }
+}
+
+/// Returns `Some(id)` for `GuestToHost` variants the agent retains in
+/// its symmetric pending_responses map and replays on every fresh
+/// control conn. The host emits `HostToGuest::AckReply { id }` on
+/// receipt so the agent can drop the entry. Mirrors `ackable_id` but
+/// for the return path.
+fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
+    match msg {
+        GuestToHost::ExecDone { id, .. }
+        | GuestToHost::FileOpDone { id }
+        | GuestToHost::FileContent { id, .. }
+        | GuestToHost::Error { id, .. } => Some(*id),
+        _ => None,
     }
 }
 
@@ -568,45 +1055,86 @@ async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_
             // the actual captured buffer, not a stale empty one. Short
             // timeout guards against lost connections (guest never opened
             // the EXEC port) so we still return in bounded time.
-            let notify = js.active_exec.lock().unwrap().as_ref()
-                .filter(|a| a.id == id).map(|a| a.deposited.clone());
+            let notify = js
+                .active_exec
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(|a| a.id == id)
+                .map(|a| a.deposited.clone());
             if let Some(n) = notify {
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_millis(100),
-                    n.notified(),
-                ).await;
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_millis(100), n.notified()).await;
             }
-            let stdout = js.active_exec.lock().unwrap().take()
-                .filter(|a| a.id == id).map(|a| a.captured).unwrap_or_default();
+            let stdout = js
+                .active_exec
+                .lock()
+                .unwrap()
+                .take()
+                .filter(|a| a.id == id)
+                .map(|a| a.captured)
+                .unwrap_or_default();
 
-            db.try_write(capsem_logger::WriteOp::ExecEventComplete(capsem_logger::ExecEventComplete {
-                exec_id: id, exit_code, duration_ms: 0,
-                stdout_preview: Some(String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into()),
-                stderr_preview: None, stdout_bytes: stdout.len() as u64, stderr_bytes: 0, pid: None,
-            }));
+            db.try_write(capsem_logger::WriteOp::ExecEventComplete(
+                capsem_logger::ExecEventComplete {
+                    exec_id: id,
+                    exit_code,
+                    duration_ms: 0,
+                    stdout_preview: Some(
+                        String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into(),
+                    ),
+                    stderr_preview: None,
+                    stdout_bytes: stdout.len() as u64,
+                    stderr_bytes: 0,
+                    pid: None,
+                },
+            ));
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                let _ = tx.send(JobResult::Exec { stdout, stderr: vec![], exit_code });
+                capsem_core::try_send!(
+                    "job_result_exec",
+                    tx.send(JobResult::Exec {
+                        stdout,
+                        stderr: vec![],
+                        exit_code
+                    })
+                );
             }
         }
         GuestToHost::FileContent { id, data, .. } => {
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                let _ = tx.send(JobResult::ReadFile { data: Some(data), error: None });
+                capsem_core::try_send!(
+                    "job_result_read_file",
+                    tx.send(JobResult::ReadFile {
+                        data: Some(data),
+                        error: None
+                    })
+                );
             }
         }
         GuestToHost::FileOpDone { id } => {
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                let _ = tx.send(JobResult::WriteFile { success: true, error: None });
+                capsem_core::try_send!(
+                    "job_result_write_file",
+                    tx.send(JobResult::WriteFile {
+                        success: true,
+                        error: None
+                    })
+                );
             }
         }
         GuestToHost::SnapshotReady => {
-            if let Some(tx) = js.snapshot_ready.lock().unwrap().take() { let _ = tx.send(()); }
+            if let Some(tx) = js.snapshot_ready.lock().unwrap().take() {
+                capsem_core::try_send!("snapshot_ready", tx.send(()));
+            }
         }
         GuestToHost::Error { id, message } => {
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                let _ = tx.send(JobResult::Error { message });
+                capsem_core::try_send!("job_result_error", tx.send(JobResult::Error { message }));
             }
         }
-        _ => {}
+        other => {
+            warn!(target: "ipc", unhandled = ?other, "handle_guest_msg: unknown variant; this binary may be older than its peer");
+        }
     }
 }
 
@@ -631,8 +1159,15 @@ fn perform_handshake(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        write_control_msg(fd, &HostToGuest::BootConfig { epoch_secs: epoch })
-            .context("restore BootConfig write failed")?;
+        let traceparent = capsem_core::telemetry::current_parent_traceparent().to_string();
+        write_control_msg(
+            fd,
+            &HostToGuest::BootConfig {
+                epoch_secs: epoch,
+                traceparent,
+            },
+        )
+        .context("restore BootConfig write failed")?;
         // Re-inject timezone in case host TZ changed since suspend. These
         // writes are best-effort: failing to reset the guest clock is not
         // itself a handshake failure.
@@ -642,7 +1177,10 @@ fn perform_handshake(
                     let tz = &s[idx + "/zoneinfo/".len()..];
                     let _ = write_control_msg(
                         fd,
-                        &HostToGuest::SetEnv { key: "TZ".into(), value: tz.to_string() },
+                        &HostToGuest::SetEnv {
+                            key: "TZ".into(),
+                            value: tz.to_string(),
+                        },
                     );
                     if let Ok(tz_data) = std::fs::read("/etc/localtime") {
                         let _ = write_control_msg(
@@ -669,7 +1207,7 @@ fn perform_handshake(
 
 /// Collect a terminal+control pair from the vsock accept stream.
 ///
-/// Auxiliary connections (SNI proxy, MCP gateway, audit) that race ahead
+/// Auxiliary connections (MITM proxy, audit, DNS) that race ahead
 /// of the pair are parked in `deferred_conns` so the caller can hand
 /// them to the long-running dispatcher once the handshake succeeds.
 async fn collect_terminal_control_pair(
@@ -686,8 +1224,8 @@ async fn collect_terminal_control_pair(
             capsem_core::VSOCK_PORT_TERMINAL => terminal = Some(conn),
             capsem_core::VSOCK_PORT_CONTROL => control = Some(conn),
             capsem_core::VSOCK_PORT_SNI_PROXY
-            | capsem_core::VSOCK_PORT_MCP_GATEWAY
-            | capsem_proto::VSOCK_PORT_AUDIT => {
+            | capsem_proto::VSOCK_PORT_AUDIT
+            | capsem_proto::VSOCK_PORT_DNS_PROXY => {
                 deferred_conns.push(conn);
             }
             _ => {}
@@ -696,23 +1234,30 @@ async fn collect_terminal_control_pair(
     Ok((terminal.unwrap(), control.unwrap()))
 }
 
-/// Narrowly classify a handshake error as retryable.
+/// Classify a handshake error as retryable.
 ///
-/// Only `BrokenPipe` / `ConnectionReset` at any level of the error source
-/// chain count: these are the Apple VZ half-open vsock fingerprints.
-/// Other I/O errors (`UnexpectedEof`, `NotFound`, etc.) and decode errors
-/// are intentionally NOT retried — retrying against a genuinely broken
-/// guest just burns the readiness budget.
+/// All cover the same observed pattern: Apple VZ tears the post-restoreState
+/// vsock conn down between the guest sending one frame and the next, leaving
+/// the host with a dead fd. The kind we get depends on which side closes
+/// first and how:
+///   - `BrokenPipe` / `ConnectionReset` -- guest's end shut down hard.
+///   - `UnexpectedEof` -- guest closed cleanly mid-frame; we get EOF on
+///     `read_exact`. Empirically this is the dominant kind under heavy
+///     suspend/resume churn (see commit history of this file).
+///
+/// Retrying drops the dead pair and waits for the guest's reconnect loop to
+/// open a fresh terminal+control pair, then re-runs the handshake. Capped
+/// at `HANDSHAKE_RETRY_MAX` so a genuinely broken guest fails fast.
 fn is_retryable_handshake_error(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
-        cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io| {
-                matches!(
-                    io.kind(),
-                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
-                )
-            })
+        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+            matches!(
+                io.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        })
     })
 }
 
@@ -722,9 +1267,9 @@ enum VsockPortKind {
     Terminal,
     Control,
     SniProxy,
-    McpGateway,
     Exec,
     Lifecycle,
+    DnsProxy,
     Unknown,
 }
 
@@ -734,9 +1279,9 @@ fn classify_vsock_port(port: u32) -> VsockPortKind {
         capsem_core::VSOCK_PORT_TERMINAL => VsockPortKind::Terminal,
         capsem_core::VSOCK_PORT_CONTROL => VsockPortKind::Control,
         capsem_core::VSOCK_PORT_SNI_PROXY => VsockPortKind::SniProxy,
-        capsem_core::VSOCK_PORT_MCP_GATEWAY => VsockPortKind::McpGateway,
         capsem_core::VSOCK_PORT_EXEC => VsockPortKind::Exec,
         capsem_core::VSOCK_PORT_LIFECYCLE => VsockPortKind::Lifecycle,
+        capsem_proto::VSOCK_PORT_DNS_PROXY => VsockPortKind::DnsProxy,
         _ => VsockPortKind::Unknown,
     }
 }

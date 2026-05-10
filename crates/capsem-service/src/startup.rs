@@ -24,17 +24,18 @@ use tokio::net::UnixStream;
 ///   - `Err(e)` only for unexpected IO errors (not ECONNREFUSED / ENOENT)
 ///
 /// Keeps the HTTP exchange deliberately small so we don't pull hyper here.
-pub async fn probe_running_version(
-    sock: &Path,
-    timeout: Duration,
-) -> io::Result<Option<String>> {
+pub async fn probe_running_version(sock: &Path, timeout: Duration) -> io::Result<Option<String>> {
     let connect = async {
         match UnixStream::connect(sock).await {
             Ok(s) => Ok(Some(s)),
-            Err(e) if matches!(
-                e.kind(),
-                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-            ) => Ok(None),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                Ok(None)
+            }
             Err(e) => Err(e),
         }
     };
@@ -46,8 +47,7 @@ pub async fn probe_running_version(
         Err(_) => return Ok(None),
     };
 
-    let request =
-        b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    let request = b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
 
     let exchange = async {
         stream.write_all(request).await?;
@@ -118,9 +118,7 @@ impl VzHostLock {
                 .write(true)
                 .truncate(false)
                 .open(&path)
-                .with_context(|| {
-                    format!("failed to open vz host lock {}", path.display())
-                })?;
+                .with_context(|| format!("failed to open vz host lock {}", path.display()))?;
             match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
                 Ok(flock) => return Ok(Some(Self { _flock: flock })),
                 Err((_file, nix::errno::Errno::EWOULDBLOCK)) => {
@@ -130,11 +128,7 @@ impl VzHostLock {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 Err((_file, e)) => {
-                    return Err(anyhow::anyhow!(
-                        "flock failed on {}: {}",
-                        path.display(),
-                        e
-                    ));
+                    return Err(anyhow::anyhow!("flock failed on {}: {}", path.display(), e));
                 }
             }
         }
@@ -155,7 +149,10 @@ impl StartupLock {
     pub fn acquire(lock_path: &Path, timeout: Duration) -> Result<Option<Self>> {
         if let Some(parent) = lock_path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create parent of lock file {}", lock_path.display())
+                format!(
+                    "failed to create parent of lock file {}",
+                    lock_path.display()
+                )
             })?;
         }
 
@@ -167,9 +164,7 @@ impl StartupLock {
                 .write(true)
                 .truncate(false)
                 .open(lock_path)
-                .with_context(|| {
-                    format!("failed to open lock file {}", lock_path.display())
-                })?;
+                .with_context(|| format!("failed to open lock file {}", lock_path.display()))?;
 
             match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
                 Ok(flock) => return Ok(Some(Self { _flock: flock })),
@@ -197,7 +192,8 @@ mod tests {
 
     #[test]
     fn parse_version_body_extracts_version() {
-        let resp = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"1.2.3\"}";
+        let resp =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"1.2.3\"}";
         assert_eq!(parse_version_body(resp).as_deref(), Some("1.2.3"));
     }
 
@@ -222,7 +218,10 @@ mod tests {
             .unwrap()
             .expect("first acquisition");
         let b = StartupLock::acquire(&lock_path, Duration::from_millis(50)).unwrap();
-        assert!(b.is_none(), "second acquisition must fail while first is held");
+        assert!(
+            b.is_none(),
+            "second acquisition must fail while first is held"
+        );
 
         drop(a);
 

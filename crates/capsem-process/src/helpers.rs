@@ -3,15 +3,22 @@ use std::os::unix::io::RawFd;
 pub(crate) fn clone_fd(fd: RawFd) -> std::io::Result<std::fs::File> {
     use std::os::unix::io::FromRawFd;
     if fd == -1 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid file descriptor -1"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid file descriptor -1",
+        ));
     }
     let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
     file.try_clone()
 }
 
 pub(crate) fn query_max_fs_event_id(db: &capsem_logger::DbWriter) -> i64 {
-    db.reader().ok()
-        .and_then(|r| r.query_raw("SELECT COALESCE(MAX(id),0) FROM fs_events").ok())
+    db.reader()
+        .ok()
+        .and_then(|r| {
+            r.query_raw("SELECT COALESCE(MAX(id),0) FROM fs_events")
+                .ok()
+        })
         .and_then(|json| {
             let parsed: serde_json::Value = serde_json::from_str(&json).ok()?;
             parsed["rows"].get(0)?.get(0)?.as_i64()
@@ -56,22 +63,27 @@ mod tests {
 
     #[test]
     fn query_max_fs_event_id_reflects_highest_row() {
+        use capsem_logger::events::{FileAction, FileEvent};
         use capsem_logger::writer::WriteOp;
-        use capsem_logger::events::{FileEvent, FileAction};
 
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("events.db");
         let writer = capsem_logger::DbWriter::open(&db_path, 64).unwrap();
 
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         rt.block_on(async {
             for i in 0..3 {
-                writer.write(WriteOp::FileEvent(FileEvent {
-                    timestamp: std::time::SystemTime::now(),
-                    action: FileAction::Created,
-                    path: format!("/tmp/f{i}"),
-                    size: Some(1),
-                })).await;
+                writer
+                    .write(WriteOp::FileEvent(FileEvent {
+                        timestamp: std::time::SystemTime::now(),
+                        action: FileAction::Created,
+                        path: format!("/tmp/f{i}"),
+                        size: Some(1),
+                        trace_id: None,
+                    }))
+                    .await;
             }
         });
 

@@ -24,6 +24,35 @@ fn log_frontend(level: String, message: String) {
     }
 }
 
+/// T5/F2: return the absolute path to the most recent frontend log
+/// (jsonl) under `<capsem_home>/logs/`. Console-only debug handle in
+/// `tauri-log.ts` invokes this and copies the result to clipboard so
+/// devs can `cat` the file from the host shell.
+#[tauri::command]
+async fn dump_frontend_logs() -> Result<String, String> {
+    let dir = capsem_home_dir().join("logs");
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("read_dir({}): {e}", dir.display()))?;
+    let mut latest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let modified = entry.metadata().and_then(|m| m.modified()).ok();
+        if let Some(m) = modified {
+            match &latest {
+                None => latest = Some((m, p)),
+                Some((t, _)) if m > *t => latest = Some((m, p)),
+                _ => {}
+            }
+        }
+    }
+    latest
+        .map(|(_, p)| p.display().to_string())
+        .ok_or_else(|| format!("no jsonl logs in {}", dir.display()))
+}
+
 #[tauri::command]
 async fn open_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
@@ -41,8 +70,13 @@ struct UpdateInfo {
 #[tauri::command]
 async fn check_for_app_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| format!("updater unavailable: {e}"))?;
-    let update = updater.check().await.map_err(|e| format!("update check failed: {e}"))?;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater unavailable: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("update check failed: {e}"))?;
     Ok(update.map(|u| UpdateInfo {
         version: u.version.clone(),
         current_version: app.package_info().version.to_string(),
@@ -70,14 +104,33 @@ fn parse_action_arg(args: &[String]) -> Option<String> {
     parse_flag(args, "--action")
 }
 
+/// Build the deep-link payload as a JSON value.
+///
+/// AB-003: the previous implementation hand-escaped only single quotes and
+/// interpolated `vm_id` / `action` directly into a single-quoted JS string
+/// literal. A backslash, newline, or `'); ...; //` payload broke out of the
+/// literal and ran as code in a webview that holds the gateway token --
+/// effective full local capsem control. JSON is a strict subset of valid JS
+/// for object/string literals, so embedding `serde_json::Value` output is
+/// safe by construction: every `"`, `\`, control char, and high-bit code
+/// point gets the proper escape.
+fn build_deep_link_payload(vm_id: &str, action: Option<&str>) -> serde_json::Value {
+    match action {
+        Some(a) => serde_json::json!({ "connect": vm_id, "action": a }),
+        None => serde_json::json!({ "connect": vm_id }),
+    }
+}
+
+/// Build the JS one-liner that invokes `window.__capsemDeepLink({...})` with
+/// the deep-link payload. See [`build_deep_link_payload`] for the safety
+/// rationale.
+fn build_deep_link_script(vm_id: &str, action: Option<&str>) -> String {
+    let payload = build_deep_link_payload(vm_id, action);
+    format!("if (window.__capsemDeepLink) {{ window.__capsemDeepLink({payload}) }}")
+}
+
 fn dispatch_deep_link(window: &tauri::WebviewWindow, vm_id: &str, action: Option<&str>) {
-    let escaped_id = vm_id.replace('\'', "\\'");
-    let action_part = action
-        .map(|a| format!(", action: '{}'", a.replace('\'', "\\'")))
-        .unwrap_or_default();
-    let _ = window.eval(format!(
-        "if (window.__capsemDeepLink) {{ window.__capsemDeepLink({{ connect: '{escaped_id}'{action_part} }}) }}"
-    ));
+    let _ = window.eval(build_deep_link_script(vm_id, action));
 }
 
 // ---------- Auto-update dialog ----------
@@ -129,7 +182,9 @@ async fn check_for_update_with_prompt(app: tauri::AppHandle) {
 // ---------- Log housekeeping ----------
 
 fn cleanup_old_logs(dir: &Path, max_days: u64) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let now = SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -137,9 +192,15 @@ fn cleanup_old_logs(dir: &Path, max_days: u64) {
     let cutoff = now.saturating_sub(max_days * 86400);
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() { continue }
-        let Ok(modified) = meta.modified() else { continue };
-        let Ok(mtime) = modified.duration_since(std::time::UNIX_EPOCH) else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        let Ok(mtime) = modified.duration_since(std::time::UNIX_EPOCH) else {
+            continue;
+        };
         if mtime.as_secs() < cutoff {
             let _ = std::fs::remove_file(entry.path());
         }
@@ -251,6 +312,18 @@ fn main() {
         args = ?cli_args,
         "starting capsem-app"
     );
+    // C3: emit a `service.start` line that mirrors what other capsem
+    // binaries log via capsem_core::telemetry::init(). Lets the support
+    // bundle parser key on cross-version-mix detection for capsem-app
+    // too -- without taking a capsem-core dep (project invariant).
+    info!(
+        target: "service",
+        service = "capsem-app",
+        protocol_version = capsem_proto::PROTOCOL_VERSION,
+        schema_hash = format!("{:016x}", capsem_proto::SCHEMA_HASH),
+        parent_traceparent = std::env::var("TRACEPARENT").unwrap_or_default(),
+        "service.start",
+    );
 
     let connect_id = parse_connect_arg(&cli_args);
     let initial_action = parse_action_arg(&cli_args);
@@ -298,6 +371,7 @@ fn main() {
             log_frontend,
             open_url,
             check_for_app_update,
+            dump_frontend_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -436,7 +510,10 @@ mod tests {
         assert_eq!(name.len(), "YYYY-MM-DDTHH-MM-SS.jsonl".len());
         // Year should be at least 2025 (any CI machine).
         let year: i32 = name[..4].parse().unwrap();
-        assert!(year >= 2025, "expected modern year in log filename, got {name}");
+        assert!(
+            year >= 2025,
+            "expected modern year in log filename, got {name}"
+        );
     }
 
     #[test]
@@ -446,5 +523,95 @@ mod tests {
         let b = log_filename();
         // Shapes match.
         assert_eq!(a.len(), b.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // AB-003: deep-link payload is JSON-serialized, not string-interpolated
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_deep_link_script_with_plain_values() {
+        let s = build_deep_link_script("vm-123", Some("open"));
+        assert!(s.contains("window.__capsemDeepLink"));
+        // The payload is JSON: keys are double-quoted, the call is one expr.
+        assert!(s.contains("\"connect\":\"vm-123\""));
+        assert!(s.contains("\"action\":\"open\""));
+    }
+
+    #[test]
+    fn build_deep_link_script_omits_action_when_none() {
+        let s = build_deep_link_script("vm-1", None);
+        assert!(s.contains("\"connect\":\"vm-1\""));
+        assert!(!s.contains("\"action\""), "no action key when None: {s}");
+    }
+
+    #[test]
+    fn build_deep_link_script_escapes_single_quote_in_id() {
+        let s = build_deep_link_script("ab'cd", None);
+        // Inside JSON the bare apostrophe needs no escape, but the surrounding
+        // quoting must be double quotes -- the legacy code embedded into a
+        // single-quoted JS literal which is what the bug exploited.
+        assert!(s.contains("\"connect\":\"ab'cd\""), "got: {s}");
+    }
+
+    #[test]
+    fn build_deep_link_script_escapes_backslash_in_id() {
+        // AB-003 critical: the previous fix only escaped single quotes, so a
+        // trailing backslash escaped the closing JS quote and let attacker
+        // payloads run as code.
+        let s = build_deep_link_script("ab\\cd", None);
+        // JSON serialization must produce \\ (two characters).
+        assert!(
+            s.contains("\"connect\":\"ab\\\\cd\""),
+            "backslash must be JSON-escaped: {s}"
+        );
+    }
+
+    #[test]
+    fn build_deep_link_script_escapes_newline_in_id() {
+        let s = build_deep_link_script("ab\ncd", None);
+        // The literal newline must NOT appear; JSON encodes it as \n (two chars).
+        assert!(!s.contains("ab\ncd"), "raw newline must not survive: {s:?}");
+        assert!(s.contains("ab\\ncd"), "newline must be escaped \\n: {s:?}");
+    }
+
+    #[test]
+    fn build_deep_link_payload_blocks_injection_input() {
+        // AB-003 attack repro: a `--connect` value crafted to break out of the
+        // legacy single-quoted JS literal and run arbitrary code. The input
+        // must round-trip through the JSON payload as a string -- not become
+        // executable code.
+        let vm_id = "x\\'); alert(1); //";
+        let payload = build_deep_link_payload(vm_id, None);
+        assert_eq!(
+            payload["connect"], vm_id,
+            "input must survive verbatim as data"
+        );
+        // Double-check the serialized form: the `\\` and `'` must be
+        // contained inside a JSON string (double-quoted), not as bare JS.
+        let serialized = payload.to_string();
+        assert!(
+            serialized.starts_with("{\"connect\":\""),
+            "expected JSON object, got: {serialized}"
+        );
+        assert!(
+            serialized.contains("\"x\\\\'); alert(1); //\""),
+            "JSON encoding must escape backslash; got: {serialized}"
+        );
+    }
+
+    #[test]
+    fn build_deep_link_payload_round_trips_through_json() {
+        // The payload, when serialized, must be parseable as JSON with the
+        // same string content. This is the structural guarantee that the
+        // value is data, not code, regardless of what bytes the input
+        // contained.
+        let vm_id = "vm\"\\'\n\t\u{1}";
+        let action = "op'>?</";
+        let serialized = build_deep_link_payload(vm_id, Some(action)).to_string();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&serialized).expect("payload must be valid JSON");
+        assert_eq!(parsed["connect"], vm_id);
+        assert_eq!(parsed["action"], action);
     }
 }

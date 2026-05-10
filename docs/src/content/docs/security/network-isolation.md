@@ -1,11 +1,11 @@
 ---
 title: Network Isolation
-description: Air-gapped networking, iptables rules, and the MITM proxy.
+description: Air-gapped networking, DNS proxying, iptables rules, and the MITM proxy.
 sidebar:
   order: 20
 ---
 
-The guest VM has no real network interface. All outbound HTTPS traffic flows through a host-side MITM proxy that enforces domain and HTTP-level policy, terminates TLS, and logs every request to the session database.
+The guest VM has no real network interface. DNS and HTTPS are redirected to guest-side proxy binaries, forwarded to host handlers over vsock, checked against policy, and logged to the session database.
 
 ## Air-gapped architecture
 
@@ -13,24 +13,27 @@ The guest VM has no real network interface. All outbound HTTPS traffic flows thr
 graph LR
     subgraph "Guest VM"
         APP["Application (curl, pip, npm)"]
-        DNS["dnsmasq<br/>all domains -> 10.0.0.1"]
+        DNS["capsem-dns-proxy<br/>UDP/TCP :1053"]
         IPT["iptables REDIRECT<br/>:443 -> :10443"]
         NP["capsem-net-proxy<br/>TCP:10443"]
     end
 
     subgraph "Host"
+        HDNS["DNS Proxy<br/>policy + upstream resolver"]
         MITM["MITM Proxy<br/>TLS termination + policy"]
         UP["Upstream server"]
     end
 
-    APP -->|DNS query| DNS
+    APP -->|DNS :53| DNS
+    DNS -->|vsock:5007| HDNS
+    HDNS -->|allowed query| UP
     APP -->|HTTPS :443| IPT
     IPT -->|TCP :10443| NP
     NP -->|vsock:5002| MITM
     MITM -->|TLS| UP
 ```
 
-No packets leave the VM through a NIC. The only path to the internet is vsock port 5002, which the host MITM proxy controls.
+No packets leave the VM through a NIC. DNS reaches the host only through vsock port 5007, and HTTPS reaches the host only through vsock port 5002.
 
 ## Guest network setup
 
@@ -42,11 +45,12 @@ No packets leave the VM through a NIC. The only path to the internet is vsock po
 | 2. Dummy NIC | `ip link add dummy0 type dummy` | Create fake interface |
 | 3. Assign IP | `ip addr add 10.0.0.1/24 dev dummy0` | Give it a local address |
 | 4. Default route | `ip route add default dev dummy0` | All traffic routes to dummy0 |
-| 5. Fake DNS | `dnsmasq --address=/#/10.0.0.1` | All domains resolve to 10.0.0.1 |
-| 6. iptables | `iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443` | Redirect HTTPS to proxy |
+| 5. DNS redirect | `iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 1053` plus TCP | Send DNS to `capsem-dns-proxy` |
+| 6. HTTPS redirect | `iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443` | Redirect HTTPS to proxy |
 | 7. Net proxy | `capsem-net-proxy` | TCP:10443 to vsock:5002 bridge |
+| 8. DNS proxy | `capsem-dns-proxy` | UDP/TCP :1053 to vsock:5007 bridge |
 
-The result: when an application resolves `github.com`, it gets `10.0.0.1`. When it connects to `10.0.0.1:443`, iptables redirects to `127.0.0.1:10443`. `capsem-net-proxy` bridges the TCP connection to the host over vsock port 5002.
+The result: when an application resolves `github.com`, the query is captured on port 53, handled by `capsem-dns-proxy`, and resolved or denied by the host DNS handler. When an application connects to `github.com:443`, iptables redirects the socket to `127.0.0.1:10443`; `capsem-net-proxy` bridges the TCP connection to the host over vsock port 5002.
 
 ## MITM proxy overview
 
@@ -136,32 +140,31 @@ custom_block = ["malware.bad.com"]
 
 Corporate policy in `/etc/capsem/corp.toml` overrides user settings entirely per field.
 
-## HTTP policy
+## HTTP and DNS Policy
 
-For allowed domains, an optional HTTP-level policy checks method and path:
+For allowed domains, named policy rules add method, path, query, header,
+and response controls. DNS policy uses the same named-rule model for query and
+response decisions.
 
-| Field | Description | Example |
-|-------|-------------|---------|
-| `domain` | Exact domain match | `github.com` |
-| `method` | HTTP method or `*` for any | `POST`, `GET`, `*` |
-| `path_pattern` | Exact path or prefix wildcard | `/repos/*`, `/api/v1/users` |
-| `action` | Allow or Deny | `Deny` |
+```toml
+[policy.http.block_repo_writes]
+on = "http.request"
+if = 'request.host == "github.com" && request.method == "POST" && request.path.matches("^/openai/")'
+decision = "block"
+priority = 10
 
-### Evaluation stages
+[policy.dns.block_ai_provider]
+on = "dns.query"
+if = 'qname == "api.openai.com" && qtype == "A"'
+decision = "block"
+priority = 10
+```
 
-| Stage | Check | Short-circuit |
-|-------|-------|---------------|
-| 1. Domain | Block/allow list + default | If denied, return immediately |
-| 2. HTTP rules | Method + path matching for the domain | First matching rule wins |
-| 3. Fallback | No matching HTTP rule for allowed domain | Allow (backward compat) |
+HTTP `rewrite` rules can strip request or response headers before they leave
+the boundary or appear in telemetry. DNS `rewrite` rules synthesize configured
+answers without upstream resolution.
 
-### Path matching
-
-| Pattern | Matches | Does not match |
-|---------|---------|----------------|
-| `/api/v1/users` | Exact: `/api/v1/users` | `/api/v1/users/123` |
-| `/api/v1/*` | `/api/v1/users`, `/api/v1/repos/foo/bar` | `/api/v2/users` |
-| `*` | Any path | -- |
+See [Policy](/security/policy/) for the full rule reference.
 
 ## Telemetry
 
@@ -179,9 +182,12 @@ Every proxied request is logged to the per-VM `session.db`:
 | `duration_ms` | End-to-end latency |
 | `request_body_preview` | First 4 KB of request body |
 | `response_body_preview` | First 4 KB of response body |
-| `matched_rule` | Which policy rule matched |
+| `matched_rule` | Which domain, HTTP, or policy rule matched |
 
 For AI provider traffic (Anthropic, OpenAI, Google), the proxy also parses SSE streams to extract model calls, token usage, tool calls, and estimated cost. See [Session Telemetry](/architecture/session-telemetry/) for the full schema.
+
+DNS queries are logged separately in `dns_events` with `qname`, `qtype`,
+`rcode`, `decision`, `matched_rule`, `process_name`, and `trace_id`.
 
 ## What gets blocked
 
@@ -192,7 +198,7 @@ For AI provider traffic (Anthropic, OpenAI, Google), the proxy also parses SSE s
 | HTTP port 80 (`http://google.com`) | Connection refused | Only port 443 is redirected |
 | Non-standard port (`https://google.com:8443`) | Connection refused | Only port 443 is redirected |
 | Direct IP (`https://1.1.1.1`) | Connection refused | No real NIC; dummy0 has no real route |
-| POST to allowed domain with deny rule | 403 Forbidden | HTTP-level rule blocks the method |
+| POST to allowed domain with block rule | 403 Forbidden | HTTP-level rule blocks the method |
 
 ## capsem-doctor validation
 
@@ -200,7 +206,7 @@ Network isolation is validated by `test_network.py` across 7 layers. Tests are o
 
 | Layer | Tests | What it validates |
 |-------|-------|-------------------|
-| **L1: Guest plumbing** | `test_dummy0_has_ip`, `test_dnsmasq_responds`, `test_dns_all_resolve_to_local`, `test_iptables_redirect_443_to_10443` | dummy0 has 10.0.0.1, DNS resolves all domains to 10.0.0.1, iptables REDIRECT rule present |
+| **L1: Guest plumbing** | `test_dummy0_has_ip`, `test_dns_proxy_listening_udp`, `test_dns_proxy_listening_tcp`, `test_iptables_redirect_dns_udp_to_1053`, `test_iptables_redirect_dns_tcp_to_1053`, `test_dns_resolves_via_capsem_proxy`, `test_dns_nxdomain_propagates_from_upstream`, `test_iptables_redirect_443_to_10443` | dummy0 has 10.0.0.1, DNS is captured by `capsem-dns-proxy`, real upstream answers and NXDOMAIN propagate, HTTPS redirect rule is present |
 | **L2: Net proxy** | `test_net_proxy_listening`, `test_tcp_443_reaches_proxy`, `test_vsock_bridge_delivers_bytes` | capsem-net-proxy accepts TCP on :10443, iptables redirect works, bytes flow through vsock bridge |
 | **L3: TLS handshake** | `test_tls_handshake_completes`, `test_tls_cert_from_capsem_ca` | Full TLS to allowed domain succeeds, MITM proxy presents Capsem CA cert |
 | **L4: HTTP over MITM** | `test_curl_https_with_skip_verify`, `test_curl_verbose_diagnostics` | curl -k gets HTTP response, full handshake trace captured |
@@ -213,9 +219,11 @@ Additional network tests in `test_sandbox.py`:
 | Test | Property |
 |------|----------|
 | `test_dummy_interface_exists` | dummy0 interface present |
-| `test_dns_resolves_to_local` | DNS returns 10.0.0.1 |
+| `test_dns_resolves_via_capsem_proxy` | DNS resolves through the host proxy, not the old local sentinel |
 | `test_iptables_redirect` | REDIRECT rule active |
 | `test_net_proxy_running` | capsem-net-proxy process alive |
+| `test_dns_proxy_running` | capsem-dns-proxy process alive |
+| `test_dnsmasq_not_running` | Legacy dnsmasq is absent |
 | `test_no_real_nics` | Only `lo` and `dummy0` in `/sys/class/net/` |
 | `test_allowed_domain` | End-to-end HTTPS to allowed domain (5-step diagnostic) |
 | `test_denied_domain` | HTTPS to denied domain returns 403 or refused |

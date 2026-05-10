@@ -37,7 +37,7 @@ let result = tokio::task::spawn_blocking(move || {
 }).await.unwrap_or_else(|e| /* handle panic */);
 ```
 
-**Known fixed sites (2026-03-27):** MCP gateway file tool dispatch (gateway.rs), auto-snapshot timer (vsock_wiring.rs), asset hash verification (asset_manager.rs). If you add new file tools or snapshot operations, use the same `spawn_blocking` pattern.
+**Known fixed sites (2026-03-27):** MCP file tool dispatch, auto-snapshot timer (vsock_wiring.rs), asset hash verification (asset_manager.rs). If you add new file tools or snapshot operations, use the same `spawn_blocking` pattern.
 
 ### Channel patterns
 
@@ -219,7 +219,7 @@ When adding a new long-running process or a new background-thread owner, wire it
 
 7. **Prefer syscalls over subprocesses**: `std::process::Command` costs 5-30ms per spawn (fork/exec). If a syscall does the same thing, use it. Example: `cp -c -R` for APFS clonefile was 20-30ms; direct `libc::clonefile()` is <1ms. On Linux, `ReflinkSnapshot` already uses `FICLONE` ioctl directly -- no subprocess. Always check if the OS provides a syscall before reaching for `Command`.
 
-7. **Blocking I/O in MCP gateway**: All 7 snapshot file tool handlers ran blocking I/O (clonefile subprocess, walkdir, blake3) directly on tokio worker threads while holding a `tokio::sync::Mutex`. The auto-snapshot timer did the same. This caused snapshot creation to hang from the model's perspective. Fixed by wrapping in `spawn_blocking` everywhere.
+7. **Blocking I/O in MCP file tools**: All 7 snapshot file tool handlers ran blocking I/O (clonefile subprocess, walkdir, blake3) directly on tokio worker threads while holding a `tokio::sync::Mutex`. The auto-snapshot timer did the same. This caused snapshot creation to hang from the model's perspective. Fixed by wrapping in `spawn_blocking` everywhere.
 
 7. **Single-file CoW**: Added `clone_file()` helper that uses APFS clonefile on macOS and FICLONE on Linux for instant CoW copies. Used in snapshot compact (host-to-host). **Not safe for revert** (snapshot-to-VirtioFS-workspace) because APFS clonefile is metadata-only and VirtioFS may serve stale data to the guest. Revert must use `std::fs::copy` (byte copy) so the guest sees the new content immediately.
 

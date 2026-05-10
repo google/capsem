@@ -27,7 +27,11 @@ impl FileHandleTable {
     }
 
     pub fn with_limit(max_handles: usize) -> Self {
-        Self { handles: HashMap::new(), next_fh: 1, max_handles }
+        Self {
+            handles: HashMap::new(),
+            next_fh: 1,
+            max_handles,
+        }
     }
 
     /// Allocate a new handle. Returns `None` (EMFILE) if at capacity.
@@ -90,8 +94,16 @@ mod tests {
         std::fs::write(dir.join("a"), b"").unwrap();
         std::fs::write(dir.join("b"), b"").unwrap();
         let mut fht = FileHandleTable::new();
-        let fh1 = fht.alloc(OpenHandle::File(std::fs::File::open(dir.join("a")).unwrap())).unwrap();
-        let fh2 = fht.alloc(OpenHandle::File(std::fs::File::open(dir.join("b")).unwrap())).unwrap();
+        let fh1 = fht
+            .alloc(OpenHandle::File(
+                std::fs::File::open(dir.join("a")).unwrap(),
+            ))
+            .unwrap();
+        let fh2 = fht
+            .alloc(OpenHandle::File(
+                std::fs::File::open(dir.join("b")).unwrap(),
+            ))
+            .unwrap();
         assert_eq!(fh2, fh1 + 1);
     }
 

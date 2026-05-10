@@ -23,10 +23,10 @@ pub(super) const VRING_DESC_F_WRITE: u16 = 2;
 /// A single virtqueue descriptor.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct VirtqDesc {
-    pub addr: u64,   // guest physical address of buffer
-    pub len: u32,    // buffer length
-    pub flags: u16,  // VRING_DESC_F_*
-    pub next: u16,   // next descriptor index (if NEXT flag set)
+    pub addr: u64,  // guest physical address of buffer
+    pub len: u32,   // buffer length
+    pub flags: u16, // VRING_DESC_F_*
+    pub next: u16,  // next descriptor index (if NEXT flag set)
 }
 
 impl VirtqDesc {
@@ -38,7 +38,12 @@ impl VirtqDesc {
             let len = u32::from_le(*((host as *const u8).add(8) as *const u32));
             let flags = u16::from_le(*((host as *const u8).add(12) as *const u16));
             let next = u16::from_le(*((host as *const u8).add(14) as *const u16));
-            Some(VirtqDesc { addr, len, flags, next })
+            Some(VirtqDesc {
+                addr,
+                len,
+                flags,
+                next,
+            })
         }
     }
 
@@ -136,10 +141,7 @@ impl VirtQueue {
             idx = desc.next;
         }
 
-        Some(DescriptorChain {
-            head,
-            descriptors,
-        })
+        Some(DescriptorChain { head, descriptors })
     }
 
     /// Push a used descriptor chain back to the used ring.
@@ -201,8 +203,8 @@ impl VirtQueue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::memory::{GuestMemory, RAM_BASE};
+    use super::*;
 
     // Helper: set up guest memory with a virtqueue at known offsets.
     // Returns (GuestMemory, desc_table_gpa, avail_ring_gpa, used_ring_gpa).
@@ -236,7 +238,12 @@ mod tests {
     }
 
     // Helper: write avail ring entry
-    fn write_avail_ring_entry(mem: &GuestMemory, avail_ring_gpa: u64, ring_index: u16, desc_idx: u16) {
+    fn write_avail_ring_entry(
+        mem: &GuestMemory,
+        avail_ring_gpa: u64,
+        ring_index: u16,
+        desc_idx: u16,
+    ) {
         let offset = (avail_ring_gpa - RAM_BASE) + 4 + (ring_index as u64) * 2;
         mem.write_at(offset, &desc_idx.to_le_bytes()).unwrap();
     }
@@ -278,12 +285,17 @@ mod tests {
         let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
 
         // Write a single descriptor
-        write_desc(&mem, desc_gpa, 0, &VirtqDesc {
-            addr: RAM_BASE + 0x1000,
-            len: 256,
-            flags: 0, // no NEXT, no WRITE
-            next: 0,
-        });
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 256,
+                flags: 0, // no NEXT, no WRITE
+                next: 0,
+            },
+        );
 
         // Make it available
         write_avail_ring_entry(&mem, avail_gpa, 0, 0); // ring[0] = desc 0
@@ -309,24 +321,39 @@ mod tests {
         let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
 
         // Write 3 chained descriptors
-        write_desc(&mem, desc_gpa, 0, &VirtqDesc {
-            addr: RAM_BASE + 0x1000,
-            len: 16,
-            flags: VRING_DESC_F_NEXT,
-            next: 1,
-        });
-        write_desc(&mem, desc_gpa, 1, &VirtqDesc {
-            addr: RAM_BASE + 0x2000,
-            len: 1024,
-            flags: VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
-            next: 2,
-        });
-        write_desc(&mem, desc_gpa, 2, &VirtqDesc {
-            addr: RAM_BASE + 0x3000,
-            len: 1,
-            flags: VRING_DESC_F_WRITE,
-            next: 0,
-        });
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 16,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mem,
+            desc_gpa,
+            1,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x2000,
+                len: 1024,
+                flags: VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+                next: 2,
+            },
+        );
+        write_desc(
+            &mem,
+            desc_gpa,
+            2,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x3000,
+                len: 1,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
 
         write_avail_ring_entry(&mem, avail_gpa, 0, 0);
         write_avail_idx(&mem, avail_gpa, 1);
@@ -347,12 +374,28 @@ mod tests {
         let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
 
         // Two independent single descriptors
-        write_desc(&mem, desc_gpa, 0, &VirtqDesc {
-            addr: RAM_BASE + 0x1000, len: 100, flags: 0, next: 0,
-        });
-        write_desc(&mem, desc_gpa, 1, &VirtqDesc {
-            addr: RAM_BASE + 0x2000, len: 200, flags: 0, next: 0,
-        });
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 100,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mem,
+            desc_gpa,
+            1,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x2000,
+                len: 200,
+                flags: 0,
+                next: 0,
+            },
+        );
 
         write_avail_ring_entry(&mem, avail_gpa, 0, 0);
         write_avail_ring_entry(&mem, avail_gpa, 1, 1);
@@ -421,12 +464,17 @@ mod tests {
 
         // Fill all 4 slots
         for i in 0..queue_size {
-            write_desc(&mem, desc_gpa, i, &VirtqDesc {
-                addr: RAM_BASE + (i as u64) * 0x1000,
-                len: 64,
-                flags: 0,
-                next: 0,
-            });
+            write_desc(
+                &mem,
+                desc_gpa,
+                i,
+                &VirtqDesc {
+                    addr: RAM_BASE + (i as u64) * 0x1000,
+                    len: 64,
+                    flags: 0,
+                    next: 0,
+                },
+            );
             write_avail_ring_entry(&mem, avail_gpa, i, i);
         }
         write_avail_idx(&mem, avail_gpa, 4);
@@ -450,12 +498,28 @@ mod tests {
         let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
 
         // Create a cycle: desc 0 -> desc 1 -> desc 0
-        write_desc(&mem, desc_gpa, 0, &VirtqDesc {
-            addr: RAM_BASE + 0x1000, len: 64, flags: VRING_DESC_F_NEXT, next: 1,
-        });
-        write_desc(&mem, desc_gpa, 1, &VirtqDesc {
-            addr: RAM_BASE + 0x2000, len: 64, flags: VRING_DESC_F_NEXT, next: 0,
-        });
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 64,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mem,
+            desc_gpa,
+            1,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x2000,
+                len: 64,
+                flags: VRING_DESC_F_NEXT,
+                next: 0,
+            },
+        );
 
         write_avail_ring_entry(&mem, avail_gpa, 0, 0);
         write_avail_idx(&mem, avail_gpa, 1);
@@ -475,23 +539,35 @@ mod tests {
     #[test]
     fn descriptor_flag_helpers() {
         let read_only = VirtqDesc {
-            addr: 0, len: 0, flags: 0, next: 0,
+            addr: 0,
+            len: 0,
+            flags: 0,
+            next: 0,
         };
         assert!(!read_only.is_write_only());
         assert!(!read_only.has_next());
 
         let write_only = VirtqDesc {
-            addr: 0, len: 0, flags: VRING_DESC_F_WRITE, next: 0,
+            addr: 0,
+            len: 0,
+            flags: VRING_DESC_F_WRITE,
+            next: 0,
         };
         assert!(write_only.is_write_only());
 
         let chained = VirtqDesc {
-            addr: 0, len: 0, flags: VRING_DESC_F_NEXT, next: 5,
+            addr: 0,
+            len: 0,
+            flags: VRING_DESC_F_NEXT,
+            next: 5,
         };
         assert!(chained.has_next());
 
         let both = VirtqDesc {
-            addr: 0, len: 0, flags: VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, next: 3,
+            addr: 0,
+            len: 0,
+            flags: VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            next: 3,
         };
         assert!(both.is_write_only());
         assert!(both.has_next());

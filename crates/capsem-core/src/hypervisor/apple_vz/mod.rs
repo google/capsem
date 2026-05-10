@@ -10,9 +10,9 @@ use objc2::rc::Retained;
 use objc2_virtualization::{VZVirtioSocketListener, VZVirtualMachine as ObjcVZVirtualMachine};
 use tokio::sync::mpsc;
 
-use crate::vm::VmState;
-use crate::vm::config::VmConfig;
 use super::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
+use crate::vm::config::VmConfig;
+use crate::vm::VmState;
 
 pub use machine::{is_main_thread, run_on_main_thread};
 

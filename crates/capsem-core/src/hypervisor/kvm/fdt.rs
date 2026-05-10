@@ -299,7 +299,11 @@ mod tests {
             .collect();
         let blob = build_fdt(&config).unwrap();
         // With 32 devices, FDT should still be < 64KB
-        assert!(blob.len() < 65536, "FDT too large with 32 devices: {}", blob.len());
+        assert!(
+            blob.len() < 65536,
+            "FDT too large with 32 devices: {}",
+            blob.len()
+        );
     }
 
     // -----------------------------------------------------------------------

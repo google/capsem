@@ -152,10 +152,25 @@ def test_dummy_interface_exists():
     assert result.returncode == 0, "dummy0 interface not found"
 
 
-def test_dns_resolves_to_local():
-    """All DNS queries must resolve to 10.0.0.1 (fake DNS)."""
-    result = run("getent hosts github.com 2>&1", timeout=5)
-    assert "10.0.0.1" in result.stdout, f"DNS did not resolve to 10.0.0.1:\n{result.stdout}"
+def test_dns_resolves_via_capsem_proxy():
+    """T3.4: DNS must resolve to a real upstream IP via the capsem
+    DNS proxy. Pre-T3 every name resolved to the dnsmasq sentinel
+    `10.0.0.1`; post-T3 we forward to a real recursive resolver
+    (host hickory -> 1.1.1.1) and return the actual answer."""
+    result = run("getent hosts github.com 2>&1", timeout=10)
+    assert result.returncode == 0, f"DNS resolution failed:\n{result.stderr}"
+    # Pin the cutover: must NOT be the legacy 10.0.0.1 sentinel.
+    assert "10.0.0.1" not in result.stdout, \
+        f"github.com still resolves to dnsmasq sentinel 10.0.0.1:\n{result.stdout}"
+    # Sanity: the first whitespace-separated token is the IP. Accept
+    # IPv4 (3 dots) or IPv6 (>=2 colons) -- some upstreams return
+    # AAAA-only on this name.
+    parts = result.stdout.split()
+    assert parts, f"empty getent output:\n{result.stdout!r}"
+    ip = parts[0]
+    is_v4 = ip.count(".") == 3
+    is_v6 = ip.count(":") >= 2
+    assert is_v4 or is_v6, f"unexpected IP shape {ip!r} in:\n{result.stdout}"
 
 
 def test_iptables_redirect():
@@ -173,59 +188,79 @@ def test_net_proxy_running():
 
 
 def test_allowed_domain():
-    """HTTPS to an allowed domain -- step-by-step handshake diagnostic."""
+    """HTTPS to an allowed domain -- step-by-step handshake diagnostic.
+
+    Post-T3.4: DNS resolves to a real upstream IP (not the legacy
+    10.0.0.1 sentinel) via the capsem DNS proxy. The MITM proxy
+    still terminates TLS at the agent's :10443 listener via
+    iptables nat redirect of TCP :443.
+    """
     errors = []
 
-    # Step 1: DNS resolves to 10.0.0.1
-    r = run("getent hosts elie.net", timeout=5)
-    if "10.0.0.1" not in r.stdout:
-        errors.append(f"DNS: expected 10.0.0.1, got: {r.stdout.strip()}")
-
-    # Step 2: TCP connect to 10.0.0.1:443 (should be redirected to 10443)
-    r = run(
-        "python3 -c \""
-        "import socket; s=socket.socket(); s.settimeout(5); "
-        "s.connect(('10.0.0.1', 443)); "
-        "print('TCP_OK'); s.close()\"",
-        timeout=10,
-    )
-    if "TCP_OK" not in r.stdout:
-        errors.append(f"TCP connect: {r.stderr.strip() or r.stdout.strip()}")
-
-    # Step 3: TCP connect directly to net-proxy port
-    r = run(
-        "python3 -c \""
-        "import socket; s=socket.socket(); s.settimeout(5); "
-        "s.connect(('127.0.0.1', 10443)); "
-        "print('PROXY_OK'); s.close()\"",
-        timeout=10,
-    )
-    if "PROXY_OK" not in r.stdout:
-        errors.append(f"net-proxy TCP: {r.stderr.strip() or r.stdout.strip()}")
-
-    # Step 4: Send TLS ClientHello and check if we get a ServerHello back
-    r = run(
-        "python3 -c \""
-        "import socket, ssl; "
-        "s = socket.socket(); s.settimeout(10); "
-        "s.connect(('10.0.0.1', 443)); "
-        "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
-        "ctx.check_hostname = False; "
-        "ctx.verify_mode = ssl.CERT_NONE; "
-        "ws = ctx.wrap_socket(s, server_hostname='elie.net'); "
-        "print('TLS_OK version=' + str(ws.version())); "
-        "ws.close()\" 2>&1",
-        timeout=15,
-    )
-    if "TLS_OK" not in r.stdout:
-        errors.append(f"TLS handshake: {r.stdout.strip()}")
-
-    # Step 5: Full HTTPS request
-    r = run("curl -skI --connect-timeout 10 https://elie.net 2>&1", timeout=20)
+    # Step 1: DNS resolves to a real upstream IP (NOT the legacy
+    # 10.0.0.1 sentinel from pre-T3 dnsmasq).
+    r = run("getent hosts elie.net", timeout=10)
     if r.returncode != 0:
-        errors.append(f"curl exit {r.returncode}: {r.stdout.strip()}")
-    elif "HTTP/" not in r.stdout:
-        errors.append(f"curl no HTTP response: {r.stdout.strip()}")
+        errors.append(f"DNS: getent failed: {r.stderr.strip() or r.stdout.strip()}")
+    elif "10.0.0.1" in r.stdout:
+        errors.append(f"DNS: still resolving to dnsmasq sentinel 10.0.0.1: {r.stdout.strip()}")
+    else:
+        # Capture the real IP for the rest of the steps.
+        parts = r.stdout.split()
+        if parts:
+            real_ip = parts[0]
+        else:
+            errors.append(f"DNS: empty getent output: {r.stdout!r}")
+            real_ip = None
+
+    # If DNS failed entirely there's no point running TCP/TLS steps.
+    if not errors:
+        # Step 2: TCP connect to elie.net:443 (iptables redirects to 10443).
+        # Use the resolved IP so we don't double-resolve.
+        r = run(
+            "python3 -c \""
+            "import socket; s=socket.socket(); s.settimeout(5); "
+            f"s.connect(('elie.net', 443)); "
+            "print('TCP_OK'); s.close()\"",
+            timeout=10,
+        )
+        if "TCP_OK" not in r.stdout:
+            errors.append(f"TCP connect: {r.stderr.strip() or r.stdout.strip()}")
+
+        # Step 3: TCP connect directly to net-proxy port
+        r = run(
+            "python3 -c \""
+            "import socket; s=socket.socket(); s.settimeout(5); "
+            "s.connect(('127.0.0.1', 10443)); "
+            "print('PROXY_OK'); s.close()\"",
+            timeout=10,
+        )
+        if "PROXY_OK" not in r.stdout:
+            errors.append(f"net-proxy TCP: {r.stderr.strip() or r.stdout.strip()}")
+
+        # Step 4: TLS handshake
+        r = run(
+            "python3 -c \""
+            "import socket, ssl; "
+            "s = socket.socket(); s.settimeout(10); "
+            "s.connect(('elie.net', 443)); "
+            "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
+            "ctx.check_hostname = False; "
+            "ctx.verify_mode = ssl.CERT_NONE; "
+            "ws = ctx.wrap_socket(s, server_hostname='elie.net'); "
+            "print('TLS_OK version=' + str(ws.version())); "
+            "ws.close()\" 2>&1",
+            timeout=15,
+        )
+        if "TLS_OK" not in r.stdout:
+            errors.append(f"TLS handshake: {r.stdout.strip()}")
+
+        # Step 5: Full HTTPS request
+        r = run("curl -skI --connect-timeout 10 https://elie.net 2>&1", timeout=20)
+        if r.returncode != 0:
+            errors.append(f"curl exit {r.returncode}: {r.stdout.strip()}")
+        elif "HTTP/" not in r.stdout:
+            errors.append(f"curl no HTTP response: {r.stdout.strip()}")
 
     assert not errors, "HTTPS handshake diagnostic:\n" + "\n".join(
         f"  [{i+1}] {e}" for i, e in enumerate(errors)
@@ -266,10 +301,16 @@ def test_pty_agent_running():
     assert result.returncode == 0, "capsem-pty-agent is not running"
 
 
-def test_dnsmasq_running():
-    """dnsmasq must be running for fake DNS."""
+def test_dns_proxy_running():
+    """capsem-dns-proxy must be running (T3.4 replaced dnsmasq)."""
+    result = run("pgrep -f capsem-dns-proxy")
+    assert result.returncode == 0, "capsem-dns-proxy is not running"
+
+
+def test_dnsmasq_not_running():
+    """T3.4 dropped dnsmasq from the rootfs; pgrep must miss."""
     result = run("pgrep dnsmasq")
-    assert result.returncode == 0, "dnsmasq is not running"
+    assert result.returncode != 0, "dnsmasq is still running -- T3.4 cutover incomplete"
 
 
 def test_no_systemd():

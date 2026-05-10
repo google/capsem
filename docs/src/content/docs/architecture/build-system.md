@@ -229,14 +229,14 @@ On macOS, Docker runs inside a Colima VM with limited resources. The rootfs buil
 
 | Threshold | RAM | Notes |
 |-----------|-----|-------|
-| **Minimum** | 4 GB | Below this, builds OOM-kill (exit 137) |
-| **Recommended** | 8 GB | Comfortable margin for all installers |
-| **CI (GitHub Actions)** | 7 GB | Standard runner allocation |
+| **Minimum** | 12 GB | Tauri install-test cold build SIGTERMs below this (exit 143 mid-cargo) |
+| **Recommended** | 16 GB | Comfortable margin for build-assets + install-test together |
+| **CI (GitHub Actions)** | 7 GB | Standard runner; install-test container uses pre-baked image so no cold build |
 
 ```bash
 # Colima (macOS): configure VM resources
 colima stop
-colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 
 # Linux: Docker runs natively, no memory tuning needed
 # sudo apt install docker.io

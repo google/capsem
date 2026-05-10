@@ -1,47 +1,51 @@
 pub mod asset_manager;
-pub mod poll;
 pub mod auto_snapshot;
 pub mod fs_monitor;
 pub mod host_config;
 pub mod host_state;
 pub mod hypervisor;
+pub mod ipc_handshake;
 pub mod log_layer;
+pub mod poll;
+#[macro_use]
+pub mod macros;
 pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
 pub mod paths;
 pub mod session;
 pub mod setup_state;
+pub mod telemetry;
 pub mod uds;
 pub mod vm;
 use std::path::Path;
 
 pub use capsem_proto;
 pub use capsem_proto::{
-    GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_guest_msg, decode_host_msg, encode_guest_msg,
-    encode_host_msg,
+    decode_guest_msg, decode_host_msg, encode_guest_msg, encode_host_msg, GuestToHost, HostToGuest,
+    MAX_FRAME_SIZE,
 };
 pub use host_state::{
-    HostState, HostStateMachine, StateMachine, Transition, validate_guest_msg, validate_host_msg,
+    validate_guest_msg, validate_host_msg, HostState, HostStateMachine, StateMachine, Transition,
 };
-pub use vm::config::{VirtioFsShare, VmConfig};
-pub use vm::registry::{SandboxInstance, SandboxNetworkState};
-pub use vm::terminal::TerminalOutputQueue;
 pub use vm::boot::{
     boot_vm, create_net_state, create_net_state_with_policy, read_control_msg, send_boot_config,
     write_control_msg, BootOptions,
 };
-pub use vm::VmState;
+pub use vm::config::{VirtioFsShare, VmConfig};
+pub use vm::registry::{SandboxInstance, SandboxNetworkState};
+pub use vm::terminal::TerminalOutputQueue;
 pub use vm::vsock::{
     self, CoalesceBuffer, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE,
-    VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+    VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
+pub use vm::VmState;
 
 // Hypervisor abstraction layer
 pub use hypervisor::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
 
 #[cfg(target_os = "macos")]
-pub use hypervisor::apple_vz::{AppleVzHypervisor, is_main_thread};
+pub use hypervisor::apple_vz::{is_main_thread, AppleVzHypervisor};
 
 #[cfg(target_os = "linux")]
 pub use hypervisor::kvm::KvmHypervisor;
@@ -50,7 +54,10 @@ pub use hypervisor::kvm::KvmHypervisor;
 ///
 /// The session_dir has two zones:
 /// - `guest/` -- shared with the VM via VirtioFS (only this subtree is exposed)
-///   - `system/rootfs.img` -- sparse ext4 loopback image for overlayfs upper
+///   - `system/rootfs.img` -- sparse ext4 image for the overlayfs upper.
+///     Attached to the guest as a virtio-blk device (`/dev/vdb`); never
+///     accessed from the guest through the VirtioFS share. Sits in the
+///     share so the host can introspect it while the VM is stopped.
 ///   - `workspace/`        -- direct host-visible files for /root (AI workspace)
 /// - Host-only (NOT shared with guest):
 ///   - `auto_snapshots/`   -- rolling ring buffer for host-side APFS clone snapshots
@@ -59,8 +66,8 @@ pub use hypervisor::kvm::KvmHypervisor;
 ///   - `checkpoint.vzsave` -- suspend checkpoint
 ///
 /// The host creates a sparse `rootfs.img` (0 bytes actual). The guest formats
-/// it as ext4 on first boot (~1s). Forked sessions already have a formatted
-/// image (APFS-cloned from snapshot).
+/// it as ext4 on first boot (~1s) via `mke2fs /dev/vdb`. Forked sessions
+/// already have a formatted image (APFS-cloned from snapshot).
 pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> std::io::Result<()> {
     use std::fs::OpenOptions;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -100,8 +107,6 @@ pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> s
 pub fn guest_share_dir(session_dir: &Path) -> std::path::PathBuf {
     session_dir.join("guest")
 }
-
-
 
 /// Create a sparse scratch disk image file.
 ///
@@ -143,7 +148,11 @@ mod tests {
         assert_eq!(meta.len(), 1024 * 1024 * 1024);
         // Sparse file: actual blocks should be much less than 1GB
         // (blocks are in 512-byte units)
-        assert!(meta.blocks() < 1024, "file should be sparse, blocks={}", meta.blocks());
+        assert!(
+            meta.blocks() < 1024,
+            "file should be sparse, blocks={}",
+            meta.blocks()
+        );
         // Permissions should be 0600
         assert_eq!(meta.mode() & 0o777, 0o600);
 
@@ -177,7 +186,10 @@ mod tests {
 
         // Overwrite with 2GB
         create_scratch_disk(&path, 2).unwrap();
-        assert_eq!(std::fs::metadata(&path).unwrap().len(), 2 * 1024 * 1024 * 1024);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            2 * 1024 * 1024 * 1024
+        );
 
         std::fs::remove_file(&path).unwrap();
     }
@@ -218,8 +230,6 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
-
-
 
     #[test]
     fn create_virtiofs_session_idempotent() {
@@ -276,7 +286,7 @@ mod tests {
             VSOCK_PORT_CONTROL,
             VSOCK_PORT_TERMINAL,
             VSOCK_PORT_SNI_PROXY,
-            VSOCK_PORT_MCP_GATEWAY,
+            VSOCK_PORT_LIFECYCLE,
         ];
 
         // Proto re-exports
@@ -297,7 +307,8 @@ mod tests {
             _h: &dyn Hypervisor,
             _v: &dyn VmHandle,
             _s: &dyn SerialConsole,
-        ) {}
+        ) {
+        }
 
         // AppleVzHypervisor (macOS-only)
         #[cfg(target_os = "macos")]

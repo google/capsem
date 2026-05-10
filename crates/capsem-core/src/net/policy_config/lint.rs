@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use super::types::*;
 use super::loader::load_settings_files;
 use super::resolver::resolve_settings;
+use super::types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A single config validation issue.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -58,10 +58,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                         issues.push(ConfigIssue {
                             id: s.id.clone(),
                             severity: "error".into(),
-                            message: format!(
-                                "{}: value {} is below minimum {}",
-                                s.id, n, min
-                            ),
+                            message: format!("{}: value {} is below minimum {}", s.id, n, min),
                             docs_url: None,
                         });
                     }
@@ -71,10 +68,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                         issues.push(ConfigIssue {
                             id: s.id.clone(),
                             severity: "error".into(),
-                            message: format!(
-                                "{}: value {} exceeds maximum {}",
-                                s.id, n, max
-                            ),
+                            message: format!("{}: value {} exceeds maximum {}", s.id, n, max),
                             docs_url: None,
                         });
                     }
@@ -102,7 +96,11 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
         }
 
         // -- File value validation (path + JSON content) --
-        if let SettingValue::File { path: file_path, content: file_content } = &s.effective_value {
+        if let SettingValue::File {
+            path: file_path,
+            content: file_content,
+        } = &s.effective_value
+        {
             // Path validation
             if !file_path.starts_with('/') {
                 issues.push(ConfigIssue {
@@ -120,11 +118,17 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                     docs_url: None,
                 });
             }
-            if !file_path.starts_with("/root/") && !file_path.starts_with("/root/.") && !file_path.starts_with("/etc/") {
+            if !file_path.starts_with("/root/")
+                && !file_path.starts_with("/root/.")
+                && !file_path.starts_with("/etc/")
+            {
                 issues.push(ConfigIssue {
                     id: s.id.clone(),
                     severity: "warning".into(),
-                    message: format!("{}: unusual file path (expected under /root/ or /etc/)", s.id),
+                    message: format!(
+                        "{}: unusual file path (expected under /root/ or /etc/)",
+                        s.id
+                    ),
                     docs_url: None,
                 });
             }
@@ -136,10 +140,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                             issues.push(ConfigIssue {
                                 id: s.id.clone(),
                                 severity: "warning".into(),
-                                message: format!(
-                                    "{}: JSON parsed but is not an object",
-                                    s.id
-                                ),
+                                message: format!("{}: JSON parsed but is not an object", s.id),
                                 docs_url: None,
                             });
                         }
@@ -200,9 +201,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
         // -- URL validation --
         if s.setting_type == SettingType::Url {
             if let Some(text) = text_value {
-                if !text.is_empty()
-                    && !text.starts_with("http://")
-                    && !text.starts_with("https://")
+                if !text.is_empty() && !text.starts_with("http://") && !text.starts_with("https://")
                 {
                     issues.push(ConfigIssue {
                         id: s.id.clone(),
@@ -257,9 +256,15 @@ mod tests {
 
     #[test]
     fn lint_nul_byte_in_text() {
-        let s = make_resolved("test.key", SettingType::Text, SettingValue::Text("hello\0world".into()));
+        let s = make_resolved(
+            "test.key",
+            SettingType::Text,
+            SettingValue::Text("hello\0world".into()),
+        );
         let issues = config_lint(&[s]);
-        assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("invalid characters")));
+        assert!(issues
+            .iter()
+            .any(|i| i.severity == "error" && i.message.contains("invalid characters")));
     }
 
     #[test]
@@ -289,15 +294,25 @@ mod tests {
 
     #[test]
     fn lint_invalid_choice() {
-        let mut s = make_resolved("test.choice", SettingType::Text, SettingValue::Text("bad".into()));
+        let mut s = make_resolved(
+            "test.choice",
+            SettingType::Text,
+            SettingValue::Text("bad".into()),
+        );
         s.metadata.choices = vec!["good".into(), "ok".into()];
         let issues = config_lint(&[s]);
-        assert!(issues.iter().any(|i| i.message.contains("not a valid choice")));
+        assert!(issues
+            .iter()
+            .any(|i| i.message.contains("not a valid choice")));
     }
 
     #[test]
     fn lint_valid_choice_no_issue() {
-        let mut s = make_resolved("test.choice", SettingType::Text, SettingValue::Text("good".into()));
+        let mut s = make_resolved(
+            "test.choice",
+            SettingType::Text,
+            SettingValue::Text("good".into()),
+        );
         s.metadata.choices = vec!["good".into(), "ok".into()];
         let issues = config_lint(&[s]);
         assert!(issues.is_empty());
@@ -305,51 +320,79 @@ mod tests {
 
     #[test]
     fn lint_file_path_traversal() {
-        let s = make_resolved("test.file", SettingType::File, SettingValue::File {
-            path: "/root/../etc/shadow".into(),
-            content: "".into(),
-        });
+        let s = make_resolved(
+            "test.file",
+            SettingType::File,
+            SettingValue::File {
+                path: "/root/../etc/shadow".into(),
+                content: "".into(),
+            },
+        );
         let issues = config_lint(&[s]);
-        assert!(issues.iter().any(|i| i.message.contains("must not contain '..'")));
+        assert!(issues
+            .iter()
+            .any(|i| i.message.contains("must not contain '..'")));
     }
 
     #[test]
     fn lint_file_path_not_absolute() {
-        let s = make_resolved("test.file", SettingType::File, SettingValue::File {
-            path: "relative/path.txt".into(),
-            content: "".into(),
-        });
+        let s = make_resolved(
+            "test.file",
+            SettingType::File,
+            SettingValue::File {
+                path: "relative/path.txt".into(),
+                content: "".into(),
+            },
+        );
         let issues = config_lint(&[s]);
-        assert!(issues.iter().any(|i| i.message.contains("must be absolute")));
+        assert!(issues
+            .iter()
+            .any(|i| i.message.contains("must be absolute")));
     }
 
     #[test]
     fn lint_file_invalid_json_content() {
-        let s = make_resolved("test.file", SettingType::File, SettingValue::File {
-            path: "/root/.config/settings.json".into(),
-            content: "not json {{{".into(),
-        });
+        let s = make_resolved(
+            "test.file",
+            SettingType::File,
+            SettingValue::File {
+                path: "/root/.config/settings.json".into(),
+                content: "not json {{{".into(),
+            },
+        );
         let issues = config_lint(&[s]);
         assert!(issues.iter().any(|i| i.message.contains("invalid JSON")));
     }
 
     #[test]
     fn lint_api_key_with_whitespace() {
-        let s = make_resolved("ai.test.key", SettingType::ApiKey, SettingValue::Text("sk-abc 123\n".into()));
+        let s = make_resolved(
+            "ai.test.key",
+            SettingType::ApiKey,
+            SettingValue::Text("sk-abc 123\n".into()),
+        );
         let issues = config_lint(&[s]);
         assert!(issues.iter().any(|i| i.message.contains("whitespace")));
     }
 
     #[test]
     fn lint_url_not_http() {
-        let s = make_resolved("test.url", SettingType::Url, SettingValue::Text("ftp://example.com".into()));
+        let s = make_resolved(
+            "test.url",
+            SettingType::Url,
+            SettingValue::Text("ftp://example.com".into()),
+        );
         let issues = config_lint(&[s]);
         assert!(issues.iter().any(|i| i.message.contains("not a valid URL")));
     }
 
     #[test]
     fn lint_url_valid_https() {
-        let s = make_resolved("test.url", SettingType::Url, SettingValue::Text("https://example.com".into()));
+        let s = make_resolved(
+            "test.url",
+            SettingType::Url,
+            SettingValue::Text("https://example.com".into()),
+        );
         let issues = config_lint(&[s]);
         assert!(issues.is_empty());
     }

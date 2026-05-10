@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-When the `capsem-mcp` stdio server is registered with your AI CLI, the agent gains 22 tools for creating and driving VM sessions, running commands, reading and writing files inside the guest, querying telemetry, and calling into the in-VM MCP gateway.
+When the `capsem-mcp` stdio server is registered with your AI CLI, the agent gains 26 tools for creating and driving VM sessions, running commands, reading and writing files inside the guest, querying telemetry, reading host logs, and calling into the guest MCP path.
 
 All tools use **camelCase** parameter names on the wire (e.g. `ramMb`, `cpuCount`). The source of truth is `crates/capsem-mcp/src/main.rs`.
 
@@ -55,10 +55,16 @@ The binary is installed to `~/.capsem/bin/capsem-mcp` by `capsem setup`.
 | `capsem_inspect` | `id`, `sql` | Run a read-only SQL query against a session's telemetry database. Returns columns and rows. |
 | `capsem_vm_logs` | `id`, `grep?`, `tail?` | Serial + process logs for a session. `grep` filters lines, `tail` limits to last N lines. |
 | `capsem_service_logs` | `grep?`, `tail?` | Latest `capsem-service` logs (last ~100 KB). `grep` + `tail` filters. |
+| `capsem_host_logs` | `name`, `grep?`, `tail?`, `maxBytes?` | Read an allowlisted host log by symbolic name: `service`, `mcp`, `gateway`, `tray`, or `app`. |
+| `capsem_panics` | `since?`, `limit?`, `id?` | Extract structured Rust panics and backtraces from recent host logs. |
+| `capsem_triage` | `since?`, `limit?`, `id?` | Summarize recent panics, dropped IPC frames, server errors, and slow operations. |
+| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, MCP, network, filesystem, and model events. |
 
-## MCP aggregator (in-guest gateway)
+## MCP aggregator
 
-These tools let the agent exercise the full in-VM MCP gateway (policy + telemetry) without having to drive `capsem_exec` by hand.
+These tools let the agent exercise the full guest MCP path through
+`/run/capsem-mcp-server` and framed MITM MCP on `vsock:5002` (policy +
+telemetry) without having to drive `capsem_exec` by hand.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -85,7 +91,7 @@ These tools let the agent exercise the full in-VM MCP gateway (policy + telemetr
 ```json
 { "tool": "capsem_create", "arguments": { "name": "dev" } }
 { "tool": "capsem_exec",   "arguments": { "id": "<id>", "command": "capsem-doctor -k net" } }
-{ "tool": "capsem_inspect", "arguments": { "id": "<id>", "sql": "SELECT domain, action, status_code FROM net_events ORDER BY timestamp DESC LIMIT 10" } }
+{ "tool": "capsem_inspect", "arguments": { "id": "<id>", "sql": "SELECT domain, decision, status_code FROM net_events ORDER BY timestamp DESC LIMIT 10" } }
 ```
 
 **Fork a template and boot from it:**

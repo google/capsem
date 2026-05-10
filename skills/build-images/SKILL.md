@@ -298,11 +298,11 @@ On macOS, Docker runs inside a Colima VM with limited resources.
 The rootfs build runs apt, npm, and curl-based CLI installers concurrently --
 the default RAM allocation may cause OOM kills (exit code 137).
 
-**Minimum**: 4GB RAM. **Recommended**: 8GB RAM, 8 CPUs.
+**Minimum**: 12GB RAM. **Recommended**: 16GB RAM, 8 CPUs.
 
 ```bash
 # Colima (macOS)
-colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
+colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 
 # Linux: Docker runs natively, no memory tuning needed
 # sudo apt install docker.io

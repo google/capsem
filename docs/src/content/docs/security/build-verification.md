@@ -196,7 +196,7 @@ The release pipeline verifies these binaries exist in the rootfs before packagin
 |--------|---------|
 | `capsem-pty-agent` | PTY bridge and control channel |
 | `capsem-net-proxy` | HTTPS proxy bridge |
-| `capsem-mcp-server` | MCP gateway |
+| `capsem-mcp-server` | Guest MCP relay |
 | `capsem-doctor` | In-VM diagnostics |
 | `capsem-bench` | Performance benchmarks |
 | `snapshots` | Snapshot management |

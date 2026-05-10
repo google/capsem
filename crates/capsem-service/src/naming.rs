@@ -5,31 +5,86 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 
 const ADJECTIVES: &[&str] = &[
-    "agile", "ample", "bold", "bonny", "brave", "bright", "calm", "cheerful",
-    "clever", "cosmic", "cozy", "crafty", "daring", "dapper", "dashing",
-    "eager", "elegant", "epic", "fancy", "feisty", "fierce", "friendly",
-    "gentle", "gleeful", "glossy", "grand", "happy", "hardy", "honest",
-    "jazzy", "jolly", "keen", "kindly", "lively", "lofty", "lucky", "mellow",
-    "merry", "mighty", "nimble", "noble", "pearly", "peppy", "placid",
-    "plucky", "proud", "quick", "quiet", "royal", "rustic", "serene", "sharp",
-    "sleek", "smart", "steady", "stellar", "swift", "tender", "tidy",
-    "upbeat", "valiant", "vibrant", "vivid", "whimsical", "winsome", "witty",
-    "zany", "zesty",
+    "agile",
+    "ample",
+    "bold",
+    "bonny",
+    "brave",
+    "bright",
+    "calm",
+    "cheerful",
+    "clever",
+    "cosmic",
+    "cozy",
+    "crafty",
+    "daring",
+    "dapper",
+    "dashing",
+    "eager",
+    "elegant",
+    "epic",
+    "fancy",
+    "feisty",
+    "fierce",
+    "friendly",
+    "gentle",
+    "gleeful",
+    "glossy",
+    "grand",
+    "happy",
+    "hardy",
+    "honest",
+    "jazzy",
+    "jolly",
+    "keen",
+    "kindly",
+    "lively",
+    "lofty",
+    "lucky",
+    "mellow",
+    "merry",
+    "mighty",
+    "nimble",
+    "noble",
+    "pearly",
+    "peppy",
+    "placid",
+    "plucky",
+    "proud",
+    "quick",
+    "quiet",
+    "royal",
+    "rustic",
+    "serene",
+    "sharp",
+    "sleek",
+    "smart",
+    "steady",
+    "stellar",
+    "swift",
+    "tender",
+    "tidy",
+    "upbeat",
+    "valiant",
+    "vibrant",
+    "vivid",
+    "whimsical",
+    "winsome",
+    "witty",
+    "zany",
+    "zesty",
 ];
 
 const NOUNS: &[&str] = &[
-    "amber", "aurora", "badger", "beacon", "bear", "beaver", "bison",
-    "blaze", "bobcat", "breeze", "bronze", "canyon", "cedar", "comet",
-    "cobra", "coral", "cougar", "cricket", "crimson", "dolphin", "dragon",
-    "eagle", "ember", "falcon", "finch", "fox", "frost", "galaxy", "gecko",
-    "glacier", "griffin", "hare", "hawk", "heron", "ibis", "indigo", "ivory",
-    "jade", "jaguar", "kestrel", "kiwi", "koala", "lemur", "llama", "lotus",
-    "lynx", "maple", "marlin", "meadow", "meteor", "moth", "narwhal",
-    "nebula", "nova", "onyx", "opal", "orchid", "osprey", "otter", "owl",
-    "panda", "pebble", "phoenix", "pine", "puma", "quartz", "raven", "ridge",
-    "river", "ruby", "sable", "seal", "silver", "sparrow", "spruce", "stone",
-    "summit", "swan", "thunder", "tiger", "tundra", "violet", "vortex",
-    "willow", "wolf", "zephyr",
+    "amber", "aurora", "badger", "beacon", "bear", "beaver", "bison", "blaze", "bobcat", "breeze",
+    "bronze", "canyon", "cedar", "comet", "cobra", "coral", "cougar", "cricket", "crimson",
+    "dolphin", "dragon", "eagle", "ember", "falcon", "finch", "fox", "frost", "galaxy", "gecko",
+    "glacier", "griffin", "hare", "hawk", "heron", "ibis", "indigo", "ivory", "jade", "jaguar",
+    "kestrel", "kiwi", "koala", "lemur", "llama", "lotus", "lynx", "maple", "marlin", "meadow",
+    "meteor", "moth", "narwhal", "nebula", "nova", "onyx", "opal", "orchid", "osprey", "otter",
+    "owl", "panda", "pebble", "phoenix", "pine", "puma", "quartz", "raven", "ridge", "river",
+    "ruby", "sable", "seal", "silver", "sparrow", "spruce", "stone", "summit", "swan", "thunder",
+    "tiger", "tundra", "violet", "vortex", "willow", "wolf", "zephyr",
 ];
 
 /// Generate a fun temporary VM name like `brave-falcon-tmp`.
@@ -96,8 +151,13 @@ pub fn validate_vm_name(name: &str) -> Result<()> {
     if !name.chars().next().unwrap().is_ascii_alphanumeric() {
         return Err(anyhow!("VM name must start with a letter or digit"));
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(anyhow!("VM name must contain only letters, digits, hyphens, and underscores"));
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(anyhow!(
+            "VM name must contain only letters, digits, hyphens, and underscores"
+        ));
     }
     Ok(())
 }
@@ -174,8 +234,14 @@ mod tests {
     fn generate_tmp_name_ends_with_tmp_suffix() {
         for _ in 0..32 {
             let n = generate_tmp_name(std::iter::empty::<&str>());
-            assert!(n.ends_with("-tmp"), "generated name {n:?} missing -tmp suffix");
-            assert!(!n.starts_with("tmp-"), "generated name {n:?} must not keep tmp- prefix");
+            assert!(
+                n.ends_with("-tmp"),
+                "generated name {n:?} missing -tmp suffix"
+            );
+            assert!(
+                !n.starts_with("tmp-"),
+                "generated name {n:?} must not keep tmp- prefix"
+            );
         }
     }
 
@@ -220,10 +286,7 @@ mod tests {
     fn generate_tmp_name_falls_back_when_all_adjectives_used() {
         // Every adjective claimed -- the generator must still return something
         // that validates rather than panicking or spinning forever.
-        let used: Vec<String> = ADJECTIVES
-            .iter()
-            .map(|a| format!("{a}-wolf-tmp"))
-            .collect();
+        let used: Vec<String> = ADJECTIVES.iter().map(|a| format!("{a}-wolf-tmp")).collect();
         let n = generate_tmp_name(used.iter().map(|s| s.as_str()));
         validate_vm_name(&n).expect("fallback name must still validate");
         assert!(n.ends_with("-tmp"));

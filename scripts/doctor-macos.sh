@@ -15,8 +15,8 @@ tool_hint() {
         git)           echo "brew install git" ;;
         b3sum)         echo "cargo install b3sum --locked" ;;
         flock)         echo "brew install flock (multi-agent lock on ~/.capsem/run/execution.lock)" ;;
-        docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8" ;;
-        docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8" ;;
+        docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8" ;;
+        docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8" ;;
         docker-buildx) echo "brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx" ;;
     esac
 }
@@ -29,7 +29,7 @@ check_platform() {
         if colima status 2>&1 | grep -qi "running"; then
             pass "colima (running)"
         else
-            fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
+            fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"
         fi
 
         # Rosetta
@@ -38,7 +38,7 @@ check_platform() {
             if grep -q 'rosetta: true' "$colima_yaml" && grep -q 'vmType: vz' "$colima_yaml"; then
                 pass "colima rosetta (enabled, vz)"
             else
-                fail "colima rosetta not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8"
+                fail "colima rosetta not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"
             fi
         else
             fail "colima config not found at $colima_yaml"

@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -70,12 +70,17 @@ pub struct AssetEntry {
 /// An asset release.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetRelease {
+    /// Build date (YYYY-MM-DD). Pure metadata. Optional because the CI
+    /// release-pipeline writer historically omitted it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub date: String,
     #[serde(default)]
     pub deprecated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated_date: Option<String>,
-    /// Oldest binary version compatible with these assets.
+    /// Oldest binary version compatible with these assets. Optional --
+    /// not consulted at runtime (kept for tooling).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub min_binary: String,
     /// Per-arch asset maps: arch -> { logical_name -> AssetEntry }.
     pub arches: HashMap<String, HashMap<String, AssetEntry>>,
@@ -84,13 +89,34 @@ pub struct AssetRelease {
 /// A binary release.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinaryRelease {
+    /// Build date (YYYY-MM-DD). Pure metadata. Optional because the CI
+    /// release-pipeline writer omits it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub date: String,
     #[serde(default)]
     pub deprecated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated_date: Option<String>,
-    /// Oldest asset version this binary can boot.
+    /// Oldest asset version this binary can boot. Optional -- when empty,
+    /// `pick_asset_version` falls back to `assets.current`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub min_assets: String,
+    /// Echo of the version key (release.yaml writes this; harmless).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version: String,
+    /// pkg/deb metadata published by the release pipeline. Not consulted
+    /// at runtime; preserved on round-trip so external tooling can read it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<BinaryFile>,
+}
+
+/// One downloadable binary asset (e.g. .pkg, .deb) listed under a
+/// `BinaryRelease`. Metadata only -- the runtime resolver never reads it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BinaryFile {
+    pub name: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 /// The assets section.
@@ -195,11 +221,10 @@ pub fn verify_manifest_with_baked_or_dev_key(
         Ok(()) => Ok(()),
         Err(baked_err) => {
             let dev = dev_pub_path.filter(|p| p.is_file()).ok_or(baked_err)?;
-            let dev_pub = std::fs::read_to_string(dev)
-                .with_context(|| format!("read {}", dev.display()))?;
-            verify_manifest_signature(&dev_pub, manifest_bytes, sig_file).with_context(|| {
-                format!("dev key at {} did not verify either", dev.display())
-            })
+            let dev_pub =
+                std::fs::read_to_string(dev).with_context(|| format!("read {}", dev.display()))?;
+            verify_manifest_signature(&dev_pub, manifest_bytes, sig_file)
+                .with_context(|| format!("dev key at {} did not verify either", dev.display()))
         }
     }
 }
@@ -233,8 +258,8 @@ pub fn load_verified_manifest_for_assets(
         if !path.is_file() {
             continue;
         }
-        let manifest_bytes = std::fs::read(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let manifest_bytes =
+            std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         let sig_path = {
             let mut p = path.clone();
             let name = path
@@ -251,12 +276,8 @@ pub fn load_verified_manifest_for_assets(
             // `<manifest_dir>/manifest-sign.dev.pub` (deployed by
             // `just install`). See `verify_manifest_with_baked_or_dev_key`.
             let dev_pub = path.parent().map(|p| p.join("manifest-sign.dev.pub"));
-            verify_manifest_with_baked_or_dev_key(
-                &manifest_bytes,
-                &sig_text,
-                dev_pub.as_deref(),
-            )
-            .with_context(|| format!("verify {}", sig_path.display()))?;
+            verify_manifest_with_baked_or_dev_key(&manifest_bytes, &sig_text, dev_pub.as_deref())
+                .with_context(|| format!("verify {}", sig_path.display()))?;
             tracing::info!(path = %path.display(), "manifest signature verified");
         } else if require_signature {
             anyhow::bail!(
@@ -269,8 +290,8 @@ pub fn load_verified_manifest_for_assets(
                 "manifest.json.minisig not found; skipping signature verification (debug build)"
             );
         }
-        let content = std::str::from_utf8(&manifest_bytes)
-            .context("manifest is not valid UTF-8")?;
+        let content =
+            std::str::from_utf8(&manifest_bytes).context("manifest is not valid UTF-8")?;
         return Ok(Some(ManifestV2::from_json(content)?));
     }
     Ok(None)
@@ -335,8 +356,8 @@ pub fn hash_filename(logical_name: &str, hash: &str) -> String {
 impl ManifestV2 {
     /// Parse a manifest from JSON.
     pub fn from_json(content: &str) -> Result<Self> {
-        let manifest: ManifestV2 = serde_json::from_str(content)
-            .context("failed to parse manifest JSON")?;
+        let manifest: ManifestV2 =
+            serde_json::from_str(content).context("failed to parse manifest JSON")?;
         if manifest.format != 2 {
             bail!("expected manifest format 2, got {}", manifest.format);
         }
@@ -371,14 +392,21 @@ impl ManifestV2 {
     ) -> Result<ResolvedAssets> {
         let asset_version = pick_asset_version(self, binary_version);
 
-        let release = self.assets.releases.get(&asset_version)
-            .with_context(|| format!("asset version {} not found in manifest", asset_version))?;
-        let arch_assets = release.arches.get(arch)
-            .with_context(|| format!("arch {} not found in asset release {}", arch, asset_version))?;
+        let release =
+            self.assets.releases.get(&asset_version).with_context(|| {
+                format!("asset version {} not found in manifest", asset_version)
+            })?;
+        let arch_assets = release.arches.get(arch).with_context(|| {
+            format!("arch {} not found in asset release {}", arch, asset_version)
+        })?;
 
         let resolve_one = |name: &str| -> Result<PathBuf> {
-            let entry = arch_assets.get(name)
-                .with_context(|| format!("{} not found in asset release {} / {}", name, asset_version, arch))?;
+            let entry = arch_assets.get(name).with_context(|| {
+                format!(
+                    "{} not found in asset release {} / {}",
+                    name, asset_version, arch
+                )
+            })?;
             let hname = hash_filename(name, &entry.hash);
             // Check flat layout first (base_dir/{hash}), then arch subdir (base_dir/{arch}/{hash})
             let flat = base_dir.join(&hname);
@@ -418,7 +446,8 @@ impl ManifestV2 {
     /// Merge another manifest into this one, preserving existing entries.
     pub fn merge(&mut self, other: &ManifestV2) {
         for (version, entry) in &other.assets.releases {
-            self.assets.releases
+            self.assets
+                .releases
                 .entry(version.clone())
                 .or_insert_with(|| entry.clone());
         }
@@ -426,7 +455,8 @@ impl ManifestV2 {
             self.assets.current = other.assets.current.clone();
         }
         for (version, entry) in &other.binaries.releases {
-            self.binaries.releases
+            self.binaries
+                .releases
                 .entry(version.clone())
                 .or_insert_with(|| entry.clone());
         }
@@ -471,17 +501,28 @@ pub fn default_assets_dir() -> Option<PathBuf> {
     crate::paths::capsem_home_opt().map(|h| h.join("assets"))
 }
 
-/// Build the GitHub Releases download base URL for the given asset version.
+/// Build the GitHub Releases download base URL for the given **binary**
+/// version. Releases are tagged `v{binary_version}` (e.g. `v1.0.1777065213`);
+/// asset version lives only inside the manifest and is *not* a tag.
 ///
 /// Honors the `CAPSEM_RELEASE_URL` env override (used by integration tests that
 /// point at a local HTTP fixture). The trailing path `/v{version}` is still
 /// appended so local fixtures can mirror the release directory structure.
-pub fn release_url(version: &str) -> String {
+pub fn release_url(binary_version: &str) -> String {
     let base = std::env::var("CAPSEM_RELEASE_URL")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "https://github.com/google/capsem/releases/download".into());
-    format!("{}/v{version}", base.trim_end_matches('/'))
+    format!("{}/v{binary_version}", base.trim_end_matches('/'))
+}
+
+/// Full per-asset download URL: `{release_url}/{arch}-{logical_name}`.
+///
+/// Single source of truth for the URL `download_missing_assets` constructs.
+/// Pinned by unit tests so the layout the binary fetches stays in lock-step
+/// with the layout `release.yaml` uploads (`gh release upload "$f#${arch}-${base}"`).
+pub fn asset_download_url(binary_version: &str, arch: &str, logical_name: &str) -> String {
+    format!("{}/{}-{}", release_url(binary_version), arch, logical_name)
 }
 
 // ---------------------------------------------------------------------------
@@ -491,10 +532,7 @@ pub fn release_url(version: &str) -> String {
 /// Remove hash-named asset files not referenced by any non-deprecated release.
 ///
 /// Returns paths that were removed.
-pub fn cleanup_unused_assets(
-    base_dir: &Path,
-    manifest: &ManifestV2,
-) -> Result<Vec<PathBuf>> {
+pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<Vec<PathBuf>> {
     let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for release in manifest.assets.releases.values() {
@@ -576,9 +614,14 @@ where
 
     // Pick the same asset release the service's resolver will pick.
     let asset_version = pick_asset_version(manifest, binary_version);
-    let release = manifest.assets.releases.get(&asset_version)
+    let release = manifest
+        .assets
+        .releases
+        .get(&asset_version)
         .with_context(|| format!("asset version {asset_version} not found in manifest"))?;
-    let arch_assets = release.arches.get(arch)
+    let arch_assets = release
+        .arches
+        .get(arch)
         .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
 
     let arch_dir = base_dir.join(arch);
@@ -590,7 +633,6 @@ where
         .build()
         .context("build reqwest client")?;
 
-    let base_url = release_url(&asset_version);
     let mut downloaded = Vec::new();
 
     // Deterministic order for stable progress output.
@@ -620,10 +662,13 @@ where
             }
         }
 
-        let url = format!("{}/{}-{}", base_url, arch, name);
+        let url = asset_download_url(binary_version, arch, name);
         info!(name = %name, url = %url, "downloading asset");
 
-        let resp = client.get(&url).send().await
+        let resp = client
+            .get(&url)
+            .send()
+            .await
             .with_context(|| format!("GET {url}"))?;
         if !resp.status().is_success() {
             bail!("GET {} returned {}", url, resp.status());
@@ -634,7 +679,8 @@ where
         // Best-effort: clean up any stale tmp from a prior aborted run.
         let _ = std::fs::remove_file(&tmp);
 
-        let mut file = tokio::fs::File::create(&tmp).await
+        let mut file = tokio::fs::File::create(&tmp)
+            .await
             .with_context(|| format!("create {}", tmp.display()))?;
         let mut hasher = blake3::Hasher::new();
         let mut bytes_done: u64 = 0;
@@ -676,7 +722,9 @@ where
             cleanup_tmp(&tmp);
             bail!(
                 "{}: hash mismatch (expected {}, got {})",
-                name, entry.hash, actual
+                name,
+                entry.hash,
+                actual
             );
         }
 
@@ -704,9 +752,11 @@ where
 /// given binary version. Extracted so `download_missing_assets` and the
 /// resolver stay in lock-step.
 fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> String {
+    // Empty min_assets means "no compatibility constraint declared" -- pick
+    // assets.current. Same fallback as binary_version not being in manifest.
     if let Some(bin_rel) = manifest.binaries.releases.get(binary_version) {
         let min = &bin_rel.min_assets;
-        if manifest.assets.current >= *min {
+        if min.is_empty() || manifest.assets.current >= *min {
             return manifest.assets.current.clone();
         }
         let mut best: Option<&str> = None;
@@ -715,7 +765,9 @@ fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> String {
                 best = Some(v.as_str());
             }
         }
-        return best.map(String::from).unwrap_or_else(|| manifest.assets.current.clone());
+        return best
+            .map(String::from)
+            .unwrap_or_else(|| manifest.assets.current.clone());
     }
     manifest.assets.current.clone()
 }
@@ -781,9 +833,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
         assert_eq!(resolved.asset_version, "2026.0415.1");
-        assert!(resolved.kernel.to_str().unwrap().contains("vmlinuz-a65f925ebe0b0cc7"));
-        assert!(resolved.initrd.to_str().unwrap().contains("initrd-cba052ee1e3fc7de.img"));
-        assert!(resolved.rootfs.to_str().unwrap().contains("rootfs-b8199dc4a83069b9.squashfs"));
+        assert!(resolved
+            .kernel
+            .to_str()
+            .unwrap()
+            .contains("vmlinuz-a65f925ebe0b0cc7"));
+        assert!(resolved
+            .initrd
+            .to_str()
+            .unwrap()
+            .contains("initrd-cba052ee1e3fc7de.img"));
+        assert!(resolved
+            .rootfs
+            .to_str()
+            .unwrap()
+            .contains("rootfs-b8199dc4a83069b9.squashfs"));
     }
 
     #[test]
@@ -797,15 +861,24 @@ mod tests {
     #[test]
     fn hash_filename_cases() {
         assert_eq!(
-            hash_filename("vmlinuz", "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"),
+            hash_filename(
+                "vmlinuz",
+                "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"
+            ),
             "vmlinuz-a65f925ebe0b0cc7"
         );
         assert_eq!(
-            hash_filename("initrd.img", "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456"),
+            hash_filename(
+                "initrd.img",
+                "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456"
+            ),
             "initrd-cba052ee1e3fc7de.img"
         );
         assert_eq!(
-            hash_filename("rootfs.squashfs", "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"),
+            hash_filename(
+                "rootfs.squashfs",
+                "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
+            ),
             "rootfs-b8199dc4a83069b9.squashfs"
         );
     }
@@ -820,9 +893,18 @@ mod tests {
     fn expected_hashes_current_returns_arch_hashes() {
         let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
         let h = m.expected_hashes_current("arm64").unwrap();
-        assert_eq!(h.kernel, "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c");
-        assert_eq!(h.initrd, "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456");
-        assert_eq!(h.rootfs, "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee");
+        assert_eq!(
+            h.kernel,
+            "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"
+        );
+        assert_eq!(
+            h.initrd,
+            "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456"
+        );
+        assert_eq!(
+            h.rootfs,
+            "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
+        );
     }
 
     #[test]
@@ -949,7 +1031,9 @@ mod tests {
     fn load_verified_manifest_accepts_unsigned_when_allowed() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
-        let m = load_verified_manifest_for_assets(dir.path(), false).unwrap().unwrap();
+        let m = load_verified_manifest_for_assets(dir.path(), false)
+            .unwrap()
+            .unwrap();
         assert_eq!(m.assets.current, "2026.0415.1");
     }
 
@@ -959,7 +1043,10 @@ mod tests {
         std::fs::write(dir.path().join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
         std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
         let err = load_verified_manifest_for_assets(dir.path(), false).unwrap_err();
-        assert!(format!("{err}").contains("verify"), "unexpected error: {err}");
+        assert!(
+            format!("{err}").contains("verify"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -982,12 +1069,8 @@ mod tests {
     fn dev_key_missing_falls_back_to_baked_error() {
         // No dev key supplied: the baked-key failure must propagate
         // unchanged so callers see the real reason verification failed.
-        let err = verify_manifest_with_baked_or_dev_key(
-            TEST_MANIFEST_BYTES,
-            TEST_SIGNATURE,
-            None,
-        )
-        .unwrap_err();
+        let err = verify_manifest_with_baked_or_dev_key(TEST_MANIFEST_BYTES, TEST_SIGNATURE, None)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("verify"), "unexpected error: {msg}");
     }
@@ -1065,9 +1148,21 @@ mod tests {
 
         let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
         let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
-        assert!(resolved.kernel.exists(), "kernel not found: {:?}", resolved.kernel);
-        assert!(resolved.initrd.exists(), "initrd not found: {:?}", resolved.initrd);
-        assert!(resolved.rootfs.exists(), "rootfs not found: {:?}", resolved.rootfs);
+        assert!(
+            resolved.kernel.exists(),
+            "kernel not found: {:?}",
+            resolved.kernel
+        );
+        assert!(
+            resolved.initrd.exists(),
+            "initrd not found: {:?}",
+            resolved.initrd
+        );
+        assert!(
+            resolved.rootfs.exists(),
+            "rootfs not found: {:?}",
+            resolved.rootfs
+        );
         // Must resolve to the arch subdir, not the flat path
         assert!(resolved.kernel.to_str().unwrap().contains("arm64/"));
     }
@@ -1132,8 +1227,8 @@ mod tests {
         // With CAPSEM_HOME / CAPSEM_ASSETS_DIR overrides the path won't contain
         // ".capsem/assets" -- it's whatever the user pointed at. Only assert
         // the substring when we're on the default layout.
-        let overridden = std::env::var("CAPSEM_ASSETS_DIR").is_ok()
-            || std::env::var("CAPSEM_HOME").is_ok();
+        let overridden =
+            std::env::var("CAPSEM_ASSETS_DIR").is_ok() || std::env::var("CAPSEM_HOME").is_ok();
         if let Some(dir) = default_assets_dir() {
             if overridden {
                 assert!(dir.to_str().is_some());
@@ -1150,6 +1245,36 @@ mod tests {
             "https://github.com/google/capsem/releases/download/v1.0.1776269479"
         );
     }
+
+    /// Pin the exact URL `download_missing_assets` constructs. Releases are
+    /// tagged by binary version and assets are arch-prefixed -- this matches
+    /// the upload step in `release.yaml`:
+    ///   gh release upload "v$BINARY" "$f#${arch}-${base}"
+    /// If either side drifts, the binary 404s on every fresh install. Caught
+    /// in the wild by v1.0.1777065213 (asset-version was used as the tag).
+    #[test]
+    fn asset_download_url_uses_binary_version_and_arch_prefix() {
+        assert_eq!(
+            asset_download_url("1.0.1777065213", "arm64", "vmlinuz"),
+            "https://github.com/google/capsem/releases/download/v1.0.1777065213/arm64-vmlinuz",
+        );
+        assert_eq!(
+            asset_download_url("1.0.1777065213", "x86_64", "rootfs.squashfs"),
+            "https://github.com/google/capsem/releases/download/v1.0.1777065213/x86_64-rootfs.squashfs",
+        );
+        // Asset version (YYYY.MMDD.N) must NEVER appear in the URL -- it is
+        // not a release tag.
+        let url = asset_download_url("1.0.1777065213", "arm64", "initrd.img");
+        assert!(
+            !url.contains("2026."),
+            "asset version leaked into URL: {url}"
+        );
+    }
+
+    // CAPSEM_RELEASE_URL override is exercised end-to-end by the Python
+    // integration test in tests/capsem-install/test_asset_download.py against
+    // a real local HTTP server. We deliberately don't unit-test it here:
+    // env mutation is process-wide and races with other tests in this binary.
 
     #[test]
     fn cleanup_removes_unreferenced_files() {

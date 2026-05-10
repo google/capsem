@@ -31,7 +31,7 @@ value = "github@elie.net"
 modified = "2026-04-20T14:54:44Z"
 
 [settings."security.web.custom_block"]
-value = "deny.example.com"
+value = "example.com"
 modified = "2026-03-05T00:00:00Z"
 
 [settings."ai.google.allow"]

@@ -134,7 +134,7 @@ The Rust workspace produces multiple binaries. Six host binaries and the Tauri d
 
 | Crate | Binary | Role |
 |-------|--------|------|
-| `capsem-core` | (lib) | All business logic: VM config, boot, vsock, MITM proxy, MCP gateway, network policy, telemetry |
+| `capsem-core` | (lib) | All business logic: VM config, boot, vsock, MITM proxy, MCP endpoint, network policy, telemetry |
 | `capsem-service` | `capsem-service` | Background daemon: Axum HTTP over UDS, VM lifecycle |
 | `capsem-process` | `capsem-process` | Per-VM: boots VM, bridges vsock, manages jobs |
 | `capsem` | `capsem` | CLI: HTTP over UDS to service |
@@ -173,12 +173,12 @@ uv run capsem-builder doctor guest/                  # check prerequisites
 
 The builder needs Docker.
 
-**macOS** -- Docker runs inside a Colima VM. Minimum 4GB RAM, recommended 8GB.
+**macOS** -- Docker runs inside a Colima VM. Minimum 12GB RAM, recommended 16GB (Tauri install-test build OOMs below 12GB).
 
 ```bash
 # Colima setup (recommended on macOS)
 brew install colima docker
-colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 ```
 
 **Linux** -- Docker runs natively, no memory tuning needed.

@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use notify::{Config, Event, EventKind, RecursiveMode, Watcher};
 use notify::poll::PollWatcher;
+use notify::{Config, Event, EventKind, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -101,13 +101,15 @@ impl FsMonitor {
         let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
-        let config = Config::default()
-            .with_poll_interval(Duration::from_millis(POLL_INTERVAL_MS));
-        let mut watcher = PollWatcher::new(move |res: Result<Event, _>| {
-            if let Ok(event) = res {
-                let _ = event_tx.blocking_send(event);
-            }
-        }, config)?;
+        let config = Config::default().with_poll_interval(Duration::from_millis(POLL_INTERVAL_MS));
+        let mut watcher = PollWatcher::new(
+            move |res: Result<Event, _>| {
+                if let Ok(event) = res {
+                    let _ = event_tx.blocking_send(event);
+                }
+            },
+            config,
+        )?;
 
         watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
         info!(dir = %watch_dir.display(), poll_ms = POLL_INTERVAL_MS,
@@ -206,7 +208,10 @@ impl FsMonitor {
         }
 
         if *dropped > 0 {
-            warn!(count = *dropped, "fs-monitor queue overflow, events dropped");
+            warn!(
+                count = *dropped,
+                "fs-monitor queue overflow, events dropped"
+            );
             *dropped = 0;
         }
 
@@ -259,7 +264,9 @@ impl FsMonitor {
             action,
             path: path.to_string(),
             size,
-        })).await;
+            trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        }))
+        .await;
     }
 
     /// Signal the monitor to stop.

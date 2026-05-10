@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SettingsModel } from '../settings-model';
+import { SettingsModel, policyRuleKey } from '../settings-model';
 import { Widget } from '../settings-enums';
 import { buildMockSettingsResponse } from '../../mock-settings';
 
@@ -82,6 +82,95 @@ describe('SettingsModel', () => {
     });
   });
 
+  describe('policy', () => {
+    it('normalizes omitted policy maps from the settings response', () => {
+      const response = buildMockSettingsResponse();
+      response.policy = {
+        http: {
+          block_openai_github: {
+            on: 'http.request',
+            if: "request.host == 'github.com'",
+            decision: 'block',
+            priority: 10,
+          },
+        },
+      };
+
+      const model = new SettingsModel(response);
+      expect(model.policy.mcp).toEqual({});
+      expect(Object.keys(model.policy.http ?? {})).toEqual([
+        'block_openai_github',
+      ]);
+      expect(model.policy.dns).toEqual({});
+      expect(model.policy.model).toEqual({});
+      expect(model.policy.hook).toEqual({});
+    });
+
+    it('lists named policy rules with full settings-save keys', () => {
+      const model = loadModel();
+      const keys = model.policyRuleEntries.map((entry) => entry.key);
+      expect(keys).toContain('policy.http.block_openai_github');
+      expect(keys).toContain('policy.mcp.ask_prod_issue');
+    });
+
+    it('generates Policy block rules from blocked domain chips', () => {
+      const model = loadModel();
+      const blocked = model.getLeaf('security.web.custom_block')!;
+      (blocked as { effective_value: string }).effective_value = 'evil.com, *.tracker.example';
+
+      const generated = model.generatedPolicyRuleEntries;
+      const exact = generated.find((entry) => entry.key === 'policy.http.block_custom_evil_com');
+      expect(exact?.rule).toEqual({
+        on: 'http.request',
+        if: 'request.host == "evil.com"',
+        decision: 'block',
+        priority: 100,
+        reason: 'Blocked by Blocked domains',
+      });
+
+      const wildcard = generated.find((entry) => entry.key === 'policy.http.block_custom_tracker_example');
+      expect(wildcard?.rule.if).toBe('request.host.endsWith(".tracker.example")');
+    });
+
+    it('generates method-aware Policy allow rules from metadata rules', () => {
+      const model = loadModel();
+      const generated = model.generatedPolicyRuleEntries;
+      const key = policyRuleKey(
+        'http',
+        'allow_repository_providers_github_allow_default_github_com_post',
+      );
+      const rule = generated.find((entry) => entry.key === key)?.rule;
+      expect(rule).toMatchObject({
+        on: 'http.request',
+        if: 'request.host == "github.com" && request.method == "POST"',
+        decision: 'allow',
+        priority: 800,
+      });
+    });
+
+    it('deduplicates generated policy rules with the same key', () => {
+      const model = loadModel();
+      const allowed = model.getLeaf('security.web.custom_allow')!;
+      (allowed as { effective_value: string }).effective_value = 'elie.net, elie.net';
+
+      const generated = model.generatedPolicyRuleEntries.filter(
+        (entry) => entry.key === 'policy.http.allow_custom_elie_net',
+      );
+      expect(generated).toHaveLength(1);
+    });
+
+    it('tolerates omitted metadata arrays from live settings responses', () => {
+      const model = loadModel();
+      const leaf = model.getLeaf('repository.providers.github.allow')!;
+      (leaf.metadata as { domains?: string[] }).domains = undefined;
+      for (const permissions of Object.values(leaf.metadata.rules)) {
+        (permissions as { domains?: string[] }).domains = undefined;
+      }
+
+      expect(() => model.generatedPolicyRuleEntries).not.toThrow();
+    });
+  });
+
   describe('getWidget', () => {
     it('returns Toggle for bool type', () => {
       const model = loadModel();
@@ -155,6 +244,20 @@ describe('SettingsModel', () => {
       model.stage('vm.resources.cpu_count', 8);
       const record = model.getPendingAsRecord();
       expect(record).toEqual({ 'vm.resources.cpu_count': 8 });
+    });
+
+    it('stages policy rule objects for settings save', () => {
+      const model = loadModel();
+      const rule = {
+        on: 'http.request' as const,
+        if: "request.host == 'github.com'",
+        decision: 'block' as const,
+        priority: 10,
+      };
+      model.stage('policy.http.block_openai_github', rule);
+      expect(model.getPendingAsRecord()).toEqual({
+        'policy.http.block_openai_github': rule,
+      });
     });
   });
 

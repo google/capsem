@@ -146,15 +146,27 @@ mod tests {
     #[test]
     fn security_presets_have_names_and_descriptions() {
         for preset in security_presets() {
-            assert!(!preset.name.is_empty(), "Preset {} has empty name", preset.id);
-            assert!(!preset.description.is_empty(), "Preset {} has empty description", preset.id);
+            assert!(
+                !preset.name.is_empty(),
+                "Preset {} has empty name",
+                preset.id
+            );
+            assert!(
+                !preset.description.is_empty(),
+                "Preset {} has empty description",
+                preset.id
+            );
         }
     }
 
     #[test]
     fn security_presets_have_settings() {
         for preset in security_presets() {
-            assert!(!preset.settings.is_empty(), "Preset {} has no settings", preset.id);
+            assert!(
+                !preset.settings.is_empty(),
+                "Preset {} has no settings",
+                preset.id
+            );
         }
     }
 

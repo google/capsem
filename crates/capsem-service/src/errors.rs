@@ -3,85 +3,77 @@
 //! `ErrorResponse` (the on-the-wire JSON shape) lives in `api.rs` so the public
 //! API surface stays in one place; this module re-exports it for ergonomics.
 
-use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::Json;
 
 pub use crate::api::ErrorResponse;
 
 /// Tuple of (HTTP status, error message). Implements `IntoResponse` so handlers
 /// can `?` against `Result<T, AppError>` and get a JSON `{"error": "..."}`
 /// body with the right status code.
+///
+/// Every `AppError` is automatically logged as it goes out the door (see the
+/// `IntoResponse` impl below). 5xx → `tracing::error!`, 4xx → `tracing::warn!`,
+/// other → `info!`. The operator sees a structured `target = "service"` line
+/// for every error response without per-site work. Pre-W3.5: the operator
+/// got a 500 in the response and nothing in the log to trace back from.
 #[derive(Debug)]
 pub struct AppError(pub StatusCode, pub String);
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        (
-            self.0,
-            Json(ErrorResponse {
-                error: self.1,
-            }),
-        )
-            .into_response()
+        let status = self.0;
+        let msg = self.1.as_str();
+        if status.is_server_error() {
+            ::tracing::error!(
+                target: "service",
+                status = status.as_u16(),
+                "{}",
+                msg
+            );
+        } else if status.is_client_error() {
+            ::tracing::warn!(
+                target: "service",
+                status = status.as_u16(),
+                "{}",
+                msg
+            );
+        } else {
+            ::tracing::info!(
+                target: "service",
+                status = status.as_u16(),
+                "{}",
+                msg
+            );
+        }
+
+        (self.0, Json(ErrorResponse { error: self.1 })).into_response()
     }
+}
+
+/// Construct an `AppError` and emit an early `tracing` event at the call
+/// site (in addition to the late one fired by `IntoResponse`). Use this
+/// when you want the log line BEFORE the response is built -- e.g. so a
+/// span timer sees the error inside the operation -- or when the bare
+/// (status, msg) is enough but you want the operator to see it
+/// twice-with-different-fields. Most sites can rely on the
+/// `IntoResponse` auto-log alone; reach for this macro only when context
+/// would be lost otherwise.
+///
+/// Usage: `return Err(app_error_logged!(error, StatusCode::INTERNAL_SERVER_ERROR, "exec failed: {e}"));`
+#[macro_export]
+macro_rules! app_error_logged {
+    ($lvl:ident, $status:expr, $($fmt:tt)+) => {{
+        let __msg = format!($($fmt)+);
+        ::tracing::$lvl!(
+            target: "service",
+            status = $status.as_u16(),
+            "{}", __msg
+        );
+        $crate::errors::AppError($status, __msg)
+    }};
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::to_bytes;
-    use axum::http::StatusCode;
-
-    #[tokio::test]
-    async fn app_error_formats_json() {
-        let err = AppError(StatusCode::BAD_REQUEST, "invalid sandbox name".into());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "invalid sandbox name");
-    }
-
-    #[tokio::test]
-    async fn app_error_internal_server() {
-        let err = AppError(StatusCode::INTERNAL_SERVER_ERROR, "db connection failed".into());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "db connection failed");
-    }
-
-    #[tokio::test]
-    async fn app_error_conflict() {
-        let err = AppError(StatusCode::CONFLICT, "sandbox already exists".into());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "sandbox already exists");
-    }
-
-    #[tokio::test]
-    async fn app_error_preserves_arbitrary_status() {
-        // Non-standard status codes (418 I'm a teapot, etc.) round-trip cleanly.
-        let err = AppError(StatusCode::IM_A_TEAPOT, "no coffee here".into());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "no coffee here");
-    }
-
-    #[tokio::test]
-    async fn app_error_preserves_empty_message() {
-        // Empty strings are still valid JSON values; assert no panic and shape stays intact.
-        let err = AppError(StatusCode::FORBIDDEN, String::new());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "");
-    }
-}
+mod tests;

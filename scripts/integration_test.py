@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -59,9 +60,57 @@ MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 SERVICE_SOCKET = _run_dir() / "service.sock"
 SERVICE_PIDFILE = _run_dir() / "service.pid"
 
-# The compound command executed inside the VM.  Semicolons ensure every step
-# runs even if an earlier one fails -- the host-side assertions decide pass/fail.
-VM_COMMAND = "; ".join([
+def _gemini_api_key() -> Optional[str]:
+    """Find a Gemini API key for the optional live model telemetry probe."""
+    google_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if google_key:
+        return google_key
+
+    user_toml = Path.home() / ".capsem" / "user.toml"
+    if user_toml.exists():
+        with open(user_toml) as f:
+            for line in f:
+                if line.strip().startswith("value") and "AIza" in line:
+                    m = re.search(r'value\s*=\s*"(AIza[^"]*)"', line)
+                    if m:
+                        return m.group(1)
+    return None
+
+
+def _integration_block_domain() -> str:
+    """Read the first blocked domain from the integration test config."""
+    deny_domain = "example.com"
+    config_path = Path("config/integration-test-user.toml")
+    if not config_path.exists():
+        return deny_domain
+
+    in_custom_block = False
+    with open(config_path, "r") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped.startswith("[settings."):
+                in_custom_block = stripped == '[settings."security.web.custom_block"]'
+                continue
+
+            # Support the older inline form too:
+            # "security.web.custom_block" = { value = "domain.com", ... }
+            if 'security.web.custom_block' in stripped and 'value =' in stripped:
+                in_custom_block = True
+
+            if in_custom_block and 'value =' in stripped:
+                match = re.search(r'value\s*=\s*"(.*?)"', stripped)
+                if match:
+                    return match.group(1).split(",")[0].strip()
+    return deny_domain
+
+
+def _vm_command(include_gemini_probe: bool) -> str:
+    """Build the compound command executed inside the VM.
+
+    Semicolons ensure every step runs even if an earlier one fails -- the
+    host-side assertions decide pass/fail.
+    """
+    commands = [
     # -- fs_events: create, modify, and delete files --
     "echo 'integration-test-data' > /root/integration_test.txt",
     "mkdir -p /root/test_dir",
@@ -72,7 +121,7 @@ VM_COMMAND = "; ".join([
 
     # -- net_events: HTTPS fetch to allowed + denied domains --
     "curl -sf https://google.com -o /dev/null",
-    "curl -sf https://deny.example.com/ -o /dev/null || true",  # denied by policy
+    "curl -sf https://example.com/ -o /dev/null || true",  # denied by policy
 
     # -- throughput: ~10MB PDF through the full MITM proxy pipeline --
     # cdn.elie.net 301-redirects to elie.net; -L proves the proxy handles
@@ -89,23 +138,34 @@ VM_COMMAND = "; ".join([
 
     # -- mcp_calls: capsem-doctor MCP test subset --
     "capsem-doctor -k mcp",
+    ]
 
-    # -- model_calls + tool_calls: ask Gemini to write a poem into a file --
-    (
-        "gemini --yolo -p "
-        "'Use the write_file tool to write a four line poem about sandboxes"
-        " to the file /root/gemini_poem.txt'"
-    ),
-    # Fallback: if Gemini printed instead of using write_file, create the file
-    # so the fs_events assertion doesn't flake on non-deterministic LLM behavior.
-    "test -f /root/gemini_poem.txt || echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
+    if include_gemini_probe:
+        commands.extend([
+            # -- model_calls + tool_calls: ask Gemini to write a poem into a file --
+            (
+                "gemini --yolo -p "
+                "'Use the write_file tool to write a four line poem about sandboxes"
+                " to the file /root/gemini_poem.txt'"
+            ),
+            # Fallback: if Gemini printed instead of using write_file, create the
+            # file so the fs_events assertion doesn't flake on nondeterministic LLM behavior.
+            "test -f /root/gemini_poem.txt || echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
+        ])
+    else:
+        commands.extend([
+            "echo CAPSEM_INTEGRATION_GEMINI_SKIPPED",
+            "echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
+        ])
 
-    # -- debouncer flush: fs_events uses a 100ms debouncer --
-    "sleep 2",
+    commands.extend([
+        # -- debouncer flush: fs_events uses a 100ms debouncer --
+        "sleep 2",
 
-    # -- sentinel so the host can confirm full execution --
-    "echo CAPSEM_INTEGRATION_DONE",
-])
+        # -- sentinel so the host can confirm full execution --
+        "echo CAPSEM_INTEGRATION_DONE",
+    ])
+    return "; ".join(commands)
 
 
 def _kill_dev_service() -> None:
@@ -149,7 +209,7 @@ def _start_service_with_test_config(
     """Spawn `capsem-service --foreground` with test config env vars.
 
     The service forwards CAPSEM_{USER,CORP}_CONFIG to each `capsem-process`
-    it spawns, so the per-VM network policy picks up `deny.example.com`
+    it spawns, so the per-VM network policy picks up `example.com`
     and the other overrides from `config/integration-test-user.toml`.
     """
     project_root = Path(__file__).resolve().parent.parent
@@ -200,7 +260,7 @@ def _start_service_with_test_config(
     raise RuntimeError(f"capsem-service did not become ready in 15s; see {log_path}")
 
 
-def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
+def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
     """Boot a temp VM via `capsem run`, return (session_id, exit_code).
 
     The service preserves the session dir after `run` completes, so we
@@ -215,18 +275,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
-    # API key: check env, then fall back to ~/.capsem/user.toml.
-    google_key = os.environ.get("GOOGLE_API_KEY")
-    if not google_key:
-        user_toml = Path.home() / ".capsem" / "user.toml"
-        if user_toml.exists():
-            with open(user_toml) as f:
-                for line in f:
-                    if line.strip().startswith("value") and "AIza" in line:
-                        m = re.search(r'value\s*=\s*"(AIza[^"]*)"', line)
-                        if m:
-                            google_key = m.group(1)
-                            break
+    google_key = _gemini_api_key()
 
     # Restart the dev service with CAPSEM_{USER,CORP}_CONFIG in its env so
     # the policy rules from `config/integration-test-user.toml` actually
@@ -248,7 +297,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     cmd = [binary, "run", "--timeout", "300"]
     if google_key:
         cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])
-    cmd.append(VM_COMMAND)
+    cmd.append(_vm_command(include_gemini_probe=google_key is not None))
 
     print(f"{BOLD}Booting VM with test command ...{RESET}")
     try:
@@ -291,7 +340,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
 
     session_id = new_sessions[0].name
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
-    return session_id, exit_code
+    return session_id, exit_code, google_key is not None
 
 
 # ── assertions ───────────────────────────────────────────────────────────
@@ -328,7 +377,7 @@ class Results:
         return len(self.failed) == 0
 
 
-def verify_session(session_id: str) -> bool:
+def verify_session(session_id: str, expect_model_calls: bool) -> bool:
     """Open the session DB, run all assertions, return True on success."""
     db_path = SESSIONS_DIR / session_id / "session.db"
     gz_path = SESSIONS_DIR / session_id / "session.db.gz"
@@ -397,15 +446,20 @@ def verify_session(session_id: str) -> bool:
             f"google.com decision = {elie['decision']} (expected allowed)",
         )
 
-    # Google/Gemini API requests.
+    # Google/Gemini API requests are live-credential dependent. Smoke must pass
+    # on clean machines without API keys; deterministic parser/policy behavior is
+    # covered by offline Rust and e2e suites.
     google_net = conn.execute(
         "SELECT COUNT(*) FROM net_events WHERE domain LIKE '%.googleapis.com'"
     ).fetchone()[0]
-    r.check(
-        google_net > 0,
-        f"{google_net} googleapis.com net_events (Gemini API calls)",
-        "no googleapis.com net_events (Gemini API call not captured)",
-    )
+    if expect_model_calls:
+        r.check(
+            google_net > 0,
+            f"{google_net} googleapis.com net_events (Gemini API calls)",
+            "no googleapis.com net_events (Gemini API call not captured)",
+        )
+    else:
+        r.warn("Gemini live model probe skipped (no GEMINI_API_KEY/GOOGLE_API_KEY)")
 
     # cdn.elie.net / elie.net throughput download (~10MB PDF, -L follows
     # 301 to elie.net, so both hosts should appear in net_events).
@@ -442,28 +496,27 @@ def verify_session(session_id: str) -> bool:
         "no net_events with HTTP status codes (MITM proxy may not be recording)",
     )
 
-    # Denied net_event from curl to blocked domain (from test config).
-    # Manually parse the TOML to avoid 'import toml' dependency.
-    # Structure: "security.web.custom_block" = { value = "domain.com", ... }
-    deny_domain = "deny.example.com"
-    config_path = Path("config/integration-test-user.toml")
-    if config_path.exists():
-        with open(config_path, "r") as f:
-            for line in f:
-                if 'security.web.custom_block' in line and 'value =' in line:
-                    match = re.search(r'value\s*=\s*"(.*?)"', line)
-                    if match:
-                        deny_domain = match.group(1).split(",")[0].strip()
-                    break
-
-    denied_count = conn.execute(
-        "SELECT COUNT(*) FROM net_events WHERE decision = 'denied' AND domain = ?",
+    # Denied DNS event from curl to blocked domain (from test config). A DNS
+    # deny never reaches the HTTP MITM layer, so the custom block belongs in
+    # dns_events, while MCP builtin blocked fetches below prove denied net_events.
+    deny_domain = _integration_block_domain()
+    dns_denied_count = conn.execute(
+        "SELECT COUNT(*) FROM dns_events WHERE decision = 'denied' AND qname = ?",
         (deny_domain,)
     ).fetchone()[0]
     r.check(
+        dns_denied_count >= 1,
+        f"{dns_denied_count} denied dns_events for {deny_domain} (policy enforcement working)",
+        f"no denied dns_events for {deny_domain} (curl to blocked domain may have failed silently)",
+    )
+
+    denied_count = conn.execute(
+        "SELECT COUNT(*) FROM net_events WHERE decision = 'denied'"
+    ).fetchone()[0]
+    r.check(
         denied_count >= 1,
-        f"{denied_count} denied net_events for {deny_domain} (policy enforcement working)",
-        f"no denied net_events for {deny_domain} (curl to blocked domain may have failed silently)",
+        f"{denied_count} denied net_events recorded",
+        "no denied net_events recorded",
     )
 
     # Decision breakdown -- verify both allowed and denied present.
@@ -576,11 +629,16 @@ def verify_session(session_id: str) -> bool:
     # ── model_calls ──────────────────────────────────────────────────
     print(f"\n{BOLD}model_calls{RESET}")
     model_count = conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0]
-    r.check(
-        model_count > 0,
-        f"{model_count} model_calls recorded",
-        "no model_calls recorded (Gemini API parsing may have failed)",
-    )
+    if expect_model_calls:
+        r.check(
+            model_count > 0,
+            f"{model_count} model_calls recorded",
+            "no model_calls recorded (Gemini API parsing may have failed)",
+        )
+    elif model_count > 0:
+        r.ok(f"{model_count} model_calls recorded")
+    else:
+        r.warn("model_calls live assertion skipped (no Gemini API key)")
 
     if model_count > 0:
         # Provider should be google.
@@ -616,11 +674,16 @@ def verify_session(session_id: str) -> bool:
     with_cost = conn.execute(
         "SELECT COUNT(*) FROM model_calls WHERE estimated_cost_usd > 0"
     ).fetchone()[0]
-    r.check(
-        with_cost >= 1,
-        f"{with_cost} model_calls with positive estimated_cost_usd",
-        "no model_calls with positive cost (API may have returned an error)",
-    )
+    if expect_model_calls:
+        r.check(
+            with_cost >= 1,
+            f"{with_cost} model_calls with positive estimated_cost_usd",
+            "no model_calls with positive cost (API may have returned an error)",
+        )
+    elif with_cost > 0:
+        r.ok(f"{with_cost} model_calls with positive estimated_cost_usd")
+    else:
+        r.warn("model cost assertion skipped (no Gemini API key)")
 
     # ── tool_calls / tool_responses ──────────────────────────────────
     print(f"\n{BOLD}tool_calls / tool_responses{RESET}")
@@ -911,34 +974,51 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
-    print("  Invocation 1: writing sentinel file...")
-    proc1 = subprocess.run(
-        [binary, "run", PERSISTENCE_WRITE_CMD],
-        env=env, capture_output=True, text=True, timeout=120,
+    _kill_dev_service()
+    service_proc = _start_service_with_test_config(
+        assets_dir,
+        "config/integration-test-user.toml",
+        "config/integration-test-corp.toml",
     )
-    output1 = proc1.stdout + "\n" + proc1.stderr
-    if "CAPSEM_PERSISTENCE_WRITTEN" not in output1:
-        print(f"  {RED}FAIL{RESET}  sentinel write failed (invocation 1 did not confirm)")
-        print(output1[:1000])
-        return False
-    print(f"  {GREEN}PASS{RESET}  sentinel written in invocation 1")
+    try:
+        print("  Invocation 1: writing sentinel file...")
+        proc1 = subprocess.run(
+            [binary, "run", PERSISTENCE_WRITE_CMD],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+        output1 = proc1.stdout + "\n" + proc1.stderr
+        if "CAPSEM_PERSISTENCE_WRITTEN" not in output1:
+            print(f"  {RED}FAIL{RESET}  sentinel write failed (invocation 1 did not confirm)")
+            print(output1[:1000])
+            return False
+        print(f"  {GREEN}PASS{RESET}  sentinel written in invocation 1")
 
-    print("  Invocation 2: checking sentinel is absent...")
-    proc2 = subprocess.run(
-        [binary, "run", PERSISTENCE_CHECK_CMD],
-        env=env, capture_output=True, text=True, timeout=120,
-    )
-    output2 = proc2.stdout + "\n" + proc2.stderr
-    # Use exit code as the definitive indicator -- the command string itself contains
-    # "CAPSEM_EPHEMERAL_FAIL" so searching for it in output would always match (PTY echo).
-    if proc2.returncode != 0:
-        print(f"  {RED}FAIL{RESET}  sentinel persisted across VM invocations -- SECURITY BREACH")
-        return False
-    if "CAPSEM_EPHEMERAL_OK" not in output2:
-        print(f"  {RED}FAIL{RESET}  ephemeral check did not confirm (no CAPSEM_EPHEMERAL_OK)")
-        return False
-    print(f"  {GREEN}PASS{RESET}  sentinel absent in invocation 2 (VM is fully ephemeral)")
-    return True
+        print("  Invocation 2: checking sentinel is absent...")
+        proc2 = subprocess.run(
+            [binary, "run", PERSISTENCE_CHECK_CMD],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+        output2 = proc2.stdout + "\n" + proc2.stderr
+        # Use exit code as the definitive indicator -- the command string itself contains
+        # "CAPSEM_EPHEMERAL_FAIL" so searching for it in output would always match (PTY echo).
+        if proc2.returncode != 0:
+            print(f"  {RED}FAIL{RESET}  sentinel persisted across VM invocations -- SECURITY BREACH")
+            return False
+        if "CAPSEM_EPHEMERAL_OK" not in output2:
+            print(f"  {RED}FAIL{RESET}  ephemeral check did not confirm (no CAPSEM_EPHEMERAL_OK)")
+            return False
+        print(f"  {GREEN}PASS{RESET}  sentinel absent in invocation 2 (VM is fully ephemeral)")
+        return True
+    finally:
+        service_proc.send_signal(signal.SIGTERM)
+        try:
+            service_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            service_proc.kill()
+        try:
+            SERVICE_PIDFILE.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def main():
@@ -957,14 +1037,14 @@ def main():
     )
     args = parser.parse_args()
 
-    session_id, exit_code = run_vm(args.binary, args.assets)
+    session_id, exit_code, expect_model_calls = run_vm(args.binary, args.assets)
 
     # The VM command uses semicolons so individual failures don't abort.
     # We don't fail on a non-zero exit code -- the DB assertions decide.
     if exit_code != 0:
         print(f"{YELLOW}VM exited with code {exit_code} (non-fatal, checking DB){RESET}")
 
-    telemetry_ok = verify_session(session_id)
+    telemetry_ok = verify_session(session_id, expect_model_calls)
     ephemeral_ok = check_persistence(args.binary, args.assets)
     sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 

@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use capsem_core::session::{
     GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Response for GET /stats -- full main.db dump in one call.
 #[derive(Serialize, Debug)]
@@ -171,8 +171,8 @@ pub struct PurgeResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RunRequest {
     pub command: String,
-    #[serde(default = "default_run_timeout")]
-    pub timeout_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
     /// Guest RAM in MiB. Falls back to merged VM settings
     /// (vm.resources.ram_gb, default 4 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,8 +185,6 @@ pub struct RunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
 }
-
-fn default_run_timeout() -> u64 { 60 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AssetHealth {
@@ -206,11 +204,9 @@ pub struct ListResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ExecRequest {
     pub command: String,
-    #[serde(default = "default_timeout")]
-    pub timeout_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
-
-fn default_timeout() -> u64 { 30 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ExecResponse {
@@ -349,9 +345,13 @@ pub struct HistoryQuery {
 }
 
 #[allow(dead_code)]
-fn default_history_limit() -> usize { 500 }
+fn default_history_limit() -> usize {
+    500
+}
 #[allow(dead_code)]
-fn default_history_layer() -> String { "all".to_string() }
+fn default_history_layer() -> String {
+    "all".to_string()
+}
 
 /// Response for GET /history/{id}.
 #[derive(Serialize, Debug)]
@@ -386,7 +386,9 @@ pub struct TranscriptQuery {
 }
 
 #[allow(dead_code)]
-fn default_tail_lines() -> usize { 500 }
+fn default_tail_lines() -> usize {
+    500
+}
 
 /// Response for GET /history/{id}/transcript.
 #[derive(Serialize, Debug)]
@@ -455,7 +457,14 @@ mod tests {
 
     #[test]
     fn provision_request_env_omitted() {
-        let r = ProvisionRequest { name: None, ram_mb: Some(2048), cpus: Some(2), persistent: false, env: None, from: None };
+        let r = ProvisionRequest {
+            name: None,
+            ram_mb: Some(2048),
+            cpus: Some(2),
+            persistent: false,
+            env: None,
+            from: None,
+        };
         let json = serde_json::to_string(&r).unwrap();
         assert!(!json.contains("env"));
         assert!(!json.contains("from"));
@@ -492,7 +501,10 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.id, "vm-123");
-        assert_eq!(r2.uds_path.as_deref(), Some(std::path::Path::new("/tmp/r/instances/vm-123.sock")));
+        assert_eq!(
+            r2.uds_path.as_deref(),
+            Some(std::path::Path::new("/tmp/r/instances/vm-123.sock"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -501,7 +513,10 @@ mod tests {
 
     #[test]
     fn list_response_empty() {
-        let r = ListResponse { sandboxes: vec![], asset_health: None };
+        let r = ListResponse {
+            sandboxes: vec![],
+            asset_health: None,
+        };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ListResponse = serde_json::from_str(&json).unwrap();
         assert!(r2.sandboxes.is_empty());
@@ -511,7 +526,13 @@ mod tests {
     fn list_response_multiple() {
         let r = ListResponse {
             sandboxes: vec![
-                { let mut s = SandboxInfo::new("a".into(), 100, "Running".into(), true); s.name = Some("a".into()); s.ram_mb = Some(2048); s.cpus = Some(2); s },
+                {
+                    let mut s = SandboxInfo::new("a".into(), 100, "Running".into(), true);
+                    s.name = Some("a".into());
+                    s.ram_mb = Some(2048);
+                    s.cpus = Some(2);
+                    s
+                },
                 SandboxInfo::new("b".into(), 200, "Running".into(), false),
             ],
             asset_health: None,
@@ -560,7 +581,11 @@ mod tests {
 
     #[test]
     fn purge_response_roundtrip() {
-        let r = PurgeResponse { purged: 5, persistent_purged: 2, ephemeral_purged: 3 };
+        let r = PurgeResponse {
+            purged: 5,
+            persistent_purged: 2,
+            ephemeral_purged: 3,
+        };
         let json = serde_json::to_string(&r).unwrap();
         let r2: PurgeResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.purged, 5);
@@ -578,7 +603,7 @@ mod tests {
         let json = json!({"command": "echo hello"});
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.command, "echo hello");
-        assert_eq!(r.timeout_secs, 60);
+        assert_eq!(r.timeout_secs, None);
         assert_eq!(r.ram_mb, None);
         assert_eq!(r.cpus, None);
     }
@@ -587,7 +612,7 @@ mod tests {
     fn run_request_custom() {
         let json = json!({"command": "ls", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
         let r: RunRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(r.timeout_secs, 120);
+        assert_eq!(r.timeout_secs, Some(120));
         assert_eq!(r.ram_mb, Some(4096));
         assert_eq!(r.cpus, Some(4));
     }
@@ -597,23 +622,27 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn exec_request_default_timeout() {
+    fn exec_request_defaults_to_no_timeout() {
         let json = json!({"command": "echo hi"});
         let r: ExecRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.command, "echo hi");
-        assert_eq!(r.timeout_secs, 30);
+        assert_eq!(r.timeout_secs, None);
     }
 
     #[test]
     fn exec_request_custom_timeout() {
         let json = json!({"command": "sleep 10", "timeout_secs": 5});
         let r: ExecRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(r.timeout_secs, 5);
+        assert_eq!(r.timeout_secs, Some(5));
     }
 
     #[test]
     fn exec_response_roundtrip() {
-        let r = ExecResponse { stdout: "hello\n".into(), stderr: "".into(), exit_code: 0 };
+        let r = ExecResponse {
+            stdout: "hello\n".into(),
+            stderr: "".into(),
+            exit_code: 0,
+        };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ExecResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.stdout, "hello\n");
@@ -634,7 +663,9 @@ mod tests {
 
     #[test]
     fn read_file_response_roundtrip() {
-        let r = ReadFileResponse { content: "file contents".into() };
+        let r = ReadFileResponse {
+            content: "file contents".into(),
+        };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ReadFileResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.content, "file contents");
@@ -669,7 +700,11 @@ mod tests {
 
     #[test]
     fn logs_response_roundtrip() {
-        let r = LogsResponse { logs: "Linux boot...\n".into(), serial_logs: None, process_logs: None };
+        let r = LogsResponse {
+            logs: "Linux boot...\n".into(),
+            serial_logs: None,
+            process_logs: None,
+        };
         let json = serde_json::to_string(&r).unwrap();
         let r2: LogsResponse = serde_json::from_str(&json).unwrap();
         assert!(r2.logs.contains("Linux"));
@@ -677,7 +712,9 @@ mod tests {
 
     #[test]
     fn error_response_roundtrip() {
-        let r = ErrorResponse { error: "sandbox not found".into() };
+        let r = ErrorResponse {
+            error: "sandbox not found".into(),
+        };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ErrorResponse = serde_json::from_str(&json).unwrap();
         assert!(r2.error.contains("not found"));

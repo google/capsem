@@ -3,38 +3,37 @@
 //! Direct KVM ioctls with in-process virtio device emulation.
 //! No QEMU, no crosvm, no external VMM -- 100% embedded.
 
-
-mod sys;
-mod memory;
-#[cfg(target_arch = "aarch64")]
-mod fdt;
 #[cfg(target_arch = "aarch64")]
 mod boot;
 #[cfg(target_arch = "x86_64")]
 mod boot_x86_64;
+#[cfg(target_arch = "aarch64")]
+mod fdt;
+mod memory;
 mod mmio;
 #[cfg(target_arch = "x86_64")]
 mod pio;
+mod serial;
 #[cfg(target_arch = "x86_64")]
 mod serial_pio;
+mod sys;
 mod vcpu;
+mod virtio_blk;
+mod virtio_console;
+mod virtio_fs;
 mod virtio_mmio;
 mod virtio_queue;
-mod virtio_console;
-mod virtio_blk;
 mod virtio_vsock;
-mod virtio_fs;
-mod serial;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
 
-use crate::vm::VmState;
-use crate::vm::config::VmConfig;
 use super::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
+use crate::vm::config::VmConfig;
+use crate::vm::VmState;
 
 /// KVM hypervisor backend.
 pub struct KvmHypervisor;
@@ -44,9 +43,13 @@ pub struct KvmHypervisor;
 /// On x86_64, the IRQ number IS the GSI directly.
 fn irq_to_gsi(irq: u32) -> u32 {
     #[cfg(target_arch = "aarch64")]
-    { irq - 32 }
+    {
+        irq - 32
+    }
     #[cfg(target_arch = "x86_64")]
-    { irq }
+    {
+        irq
+    }
 }
 
 impl Hypervisor for KvmHypervisor {
@@ -60,12 +63,7 @@ impl Hypervisor for KvmHypervisor {
         let vm = kvm.create_vm()?;
 
         let guest_mem = memory::GuestMemory::new(config.ram_bytes)?;
-        vm.set_user_memory_region(
-            0,
-            memory::RAM_BASE,
-            config.ram_bytes,
-            guest_mem.as_ptr(),
-        )?;
+        vm.set_user_memory_region(0, memory::RAM_BASE, config.ram_bytes, guest_mem.as_ptr())?;
 
         // -- Arch-specific: interrupt controller --------------------------
         #[cfg(target_arch = "x86_64")]
@@ -87,7 +85,9 @@ impl Hypervisor for KvmHypervisor {
         #[cfg(target_arch = "x86_64")]
         if let Err(e) = vm.get_supported_cpuid() {
             tracing::warn!("KVM CPUID probe failed: {e:#}");
-            tracing::warn!("This indicates restricted/nested KVM -- vCPU creation will likely fail");
+            tracing::warn!(
+                "This indicates restricted/nested KVM -- vCPU creation will likely fail"
+            );
         }
 
         // Create vCPUs (must happen before GIC init on aarch64)
@@ -132,12 +132,10 @@ impl Hypervisor for KvmHypervisor {
         // -- Arch-specific: FDT (aarch64) / boot_params (x86_64) ---------
         #[cfg(target_arch = "aarch64")]
         {
-            let mut virtio_devices = vec![
-                fdt::VirtioDeviceInfo {
-                    base_addr: memory::virtio_mmio_addr(0),
-                    irq: memory::virtio_mmio_irq(0),
-                },
-            ];
+            let mut virtio_devices = vec![fdt::VirtioDeviceInfo {
+                base_addr: memory::virtio_mmio_addr(0),
+                irq: memory::virtio_mmio_irq(0),
+            }];
             if config.disk_path.is_some() {
                 virtio_devices.push(fdt::VirtioDeviceInfo {
                     base_addr: memory::virtio_mmio_addr(1),
@@ -184,16 +182,18 @@ impl Hypervisor for KvmHypervisor {
         {
             // Count virtio MMIO devices for cmdline generation
             let mut device_count: u32 = 1; // console at slot 0
-            if config.disk_path.is_some() { device_count += 1; }
-            if config.scratch_disk_path.is_some() { device_count += 1; }
-            if !vsock_ports.is_empty() { device_count += 1; }
+            if config.disk_path.is_some() {
+                device_count += 1;
+            }
+            if config.scratch_disk_path.is_some() {
+                device_count += 1;
+            }
+            if !vsock_ports.is_empty() {
+                device_count += 1;
+            }
             device_count += config.virtio_fs_shares.len() as u32;
 
-            let cmdline = boot_x86_64::build_cmdline(
-                &config.kernel_cmdline,
-                device_count,
-                has_pit,
-            );
+            let cmdline = boot_x86_64::build_cmdline(&config.kernel_cmdline, device_count, has_pit);
             let e820 = memory::build_e820_map(config.ram_bytes);
 
             boot_x86_64::write_gdt(&guest_mem)?;
@@ -243,12 +243,18 @@ impl Hypervisor for KvmHypervisor {
             // for the serial console (boot output goes through ttyS0, not hvc0).
             let (output_read, output_write) = {
                 let mut fds = [0i32; 2];
-                anyhow::ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe() failed");
+                anyhow::ensure!(
+                    unsafe { libc::pipe(fds.as_mut_ptr()) } == 0,
+                    "pipe() failed"
+                );
                 (fds[0], fds[1])
             };
             let (input_read, input_write) = {
                 let mut fds = [0i32; 2];
-                anyhow::ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe() failed");
+                anyhow::ensure!(
+                    unsafe { libc::pipe(fds.as_mut_ptr()) } == 0,
+                    "pipe() failed"
+                );
                 (fds[0], fds[1])
             };
             (
@@ -465,26 +471,24 @@ fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
     // Probe 4: create a fresh VM and try vcpu WITHOUT irqchip
     tracing::error!("probe: creating fresh VM without IRQCHIP...");
     match kvm.create_vm() {
-        Ok(probe_vm) => {
-            match probe_vm.create_vcpu(0) {
-                Ok(_vcpu) => {
-                    tracing::error!("probe: vCPU(0) succeeds WITHOUT IRQCHIP -- IRQCHIP causes the conflict");
-                }
-                Err(e) => {
-                    tracing::error!("probe: vCPU(0) fails even WITHOUT IRQCHIP: {e:#}");
-                    tracing::error!("probe: this KVM environment cannot create vCPUs at all");
-                }
+        Ok(probe_vm) => match probe_vm.create_vcpu(0) {
+            Ok(_vcpu) => {
+                tracing::error!(
+                    "probe: vCPU(0) succeeds WITHOUT IRQCHIP -- IRQCHIP causes the conflict"
+                );
             }
-        }
+            Err(e) => {
+                tracing::error!("probe: vCPU(0) fails even WITHOUT IRQCHIP: {e:#}");
+                tracing::error!("probe: this KVM environment cannot create vCPUs at all");
+            }
+        },
         Err(e) => {
             tracing::error!("probe: fresh VM creation failed: {e:#}");
         }
     }
 
     tracing::error!("--- end KVM diagnostics ---");
-    tracing::error!(
-        "For detailed probing, run: python3 scripts/kvm-diagnostic.py"
-    );
+    tracing::error!("For detailed probing, run: python3 scripts/kvm-diagnostic.py");
 }
 
 /// Minimal uname wrapper for diagnostics.

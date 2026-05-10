@@ -10,13 +10,28 @@ vi.mock('../api', () => ({
   saveSettings: vi.fn(async (changes: Record<string, unknown>) => {
     // Apply changes to mock data and return updated response.
     for (const [id, value] of Object.entries(changes)) {
+      if (id.startsWith('policy.')) {
+        const [, type, name] = id.split('.');
+        const policy = mockResponse.policy ?? {};
+        const bucket = (policy as Record<string, Record<string, unknown>>)[type] ?? {};
+        if (value === null) {
+          delete bucket[name];
+        } else {
+          bucket[name] = value;
+        }
+        (policy as Record<string, Record<string, unknown>>)[type] = bucket;
+        mockResponse.policy = policy as SettingsResponse['policy'];
+        continue;
+      }
       const setting = mockSettings.find(s => s.id === id);
       if (setting) {
         setting.effective_value = value as any;
       }
     }
     recomputeEnabled();
+    const policy = mockResponse.policy;
     mockResponse = buildMockSettingsResponse();
+    mockResponse.policy = policy;
     return mockResponse;
   }),
   applyPreset: vi.fn(async (id: string) => {
@@ -146,6 +161,20 @@ describe('settingsStore', () => {
       expect(settingsStore.isDirty).toBe(false);
       expect(settingsStore.findLeaf('vm.resources.cpu_count')!.effective_value).toBe(8);
       expect(settingsStore.findLeaf('vm.resources.ram_gb')!.effective_value).toBe(16);
+    });
+
+    it('saves named policy rule changes', async () => {
+      settingsStore.stagePolicyRule('http', 'block_evil', {
+        on: 'http.request',
+        if: 'request.host == "evil.com"',
+        decision: 'block',
+        priority: 5,
+      });
+      await settingsStore.save();
+      expect(settingsStore.model!.policy.http?.block_evil).toMatchObject({
+        on: 'http.request',
+        decision: 'block',
+      });
     });
 
     it('no-op when not dirty', async () => {

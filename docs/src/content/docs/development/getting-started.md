@@ -29,12 +29,28 @@ sidebar:
 
 ```bash
 git clone https://github.com/google/capsem.git && cd capsem
-sh scripts/bootstrap.sh
+./bootstrap.sh            # interactive: prompts [Y/n] before each install
+./bootstrap.sh --yes      # non-interactive: auto-yes (use in CI)
 ```
 
-The bootstrap script checks bare-minimum tools (bash, git, curl, rustup, just), installs Python and frontend dependencies, then runs `just doctor --fix` to validate the full environment and auto-fix any fixable issues (missing Rust targets, cargo tools, config files).
+`bootstrap.sh` lives at the repo root. It walks the dependency tree top-down, asking before installing anything, and exits clean when everything's already in place.
 
-The only prerequisite is a POSIX shell. See [Life of a Build](./stack) for what gets built by what and how the tools fit together.
+### What bootstrap installs
+
+| Phase | Tool | How it's installed | Why |
+|-------|------|---------------------|-----|
+| 1 (hard prereqs) | `bash`, `git`, `curl` | system package manager (you install) | Without curl we can't fetch any installer |
+| 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` official installer | Source of `cargo` |
+| 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
+| 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
+| 2 | Python deps | `uv sync` | Locked via `uv.lock` |
+| 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
+| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets` |
+| 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` | Runs Docker; Rosetta enables x86_64 cross-builds |
+| 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
+| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, builds VM assets, packs initrd |
+
+Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.
 
 ## Build VM assets
 
@@ -42,7 +58,7 @@ The only prerequisite is a POSIX shell. See [Life of a Build](./stack) for what 
 just build-assets
 ```
 
-Builds the Linux kernel and rootfs via Docker (~10 min on first run). Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to configure Colima resources.
+Builds the Linux kernel and rootfs via Docker (~10 min on first run). The kernel version is **not** pinned — `kernel_branch = "auto"` in `guest/config/build.toml` makes the resolver fetch the newest non-EOL longterm (LTS) branch from `kernel.org/releases.json` and pull its latest patch (e.g. `6.18.26`). To freeze a specific branch (CI reproducibility, security freeze), set `kernel_branch = "6.6"` (or any `X.Y`) in the same file. Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to retune Colima resources.
 
 ## Verify
 
@@ -120,14 +136,14 @@ If `just run` or `just doctor` reports a codesign failure:
    - Check SIP status: `csrutil status` (should be "enabled")
    - Verify `cc` works: `echo 'int main(){return 0;}' | cc -x c -o /tmp/test -` -- if this fails, reinstall CLTools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`
 
-### `just build-assets` fails with exit code 137
+### `just build-assets` or `just test-install` fails with exit 137 (or 143 mid-cargo-build)
 
-The container runtime ran out of memory. See [Life of a Build > Container runtime](./stack#container-runtime) for how to increase memory to 8GB.
+The container runtime ran out of memory. The Tauri install-test cold build needs >12GB. See [Life of a Build > Container runtime](./stack#container-runtime) for how to bump Colima to 16GB.
 
 ### `just build-assets` fails with "Release file not valid yet"
 
 The container VM's clock has drifted:
-- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 8 --cpu 8`
+- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`
 - Docker Desktop: restart Docker Desktop
 
 ### `just run` fails with "assets not found"

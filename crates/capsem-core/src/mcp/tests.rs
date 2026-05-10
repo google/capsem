@@ -1,6 +1,6 @@
 use super::*;
-use std::io::Write;
 use crate::mcp::policy::{McpManualServer, McpUserConfig};
+use std::io::Write;
 
 fn make_tool(ns_name: &str, orig_name: &str, server: &str, desc: Option<&str>) -> McpToolDef {
     McpToolDef {
@@ -10,6 +10,7 @@ fn make_tool(ns_name: &str, orig_name: &str, server: &str, desc: Option<&str>) -
         input_schema: serde_json::json!({"type": "object"}),
         server_name: server.into(),
         annotations: None,
+        timeout_secs: None,
     }
 }
 
@@ -36,7 +37,8 @@ fn compute_tool_hash_changes_on_description() {
 fn compute_tool_hash_changes_on_schema() {
     let mut tool = make_tool("github__search", "search", "github", Some("Search"));
     let h1 = compute_tool_hash(&tool);
-    tool.input_schema = serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}}});
+    tool.input_schema =
+        serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}}});
     let h2 = compute_tool_hash(&tool);
     assert_ne!(h1, h2);
 }
@@ -44,9 +46,15 @@ fn compute_tool_hash_changes_on_schema() {
 #[test]
 fn compute_tool_hash_changes_on_annotations() {
     let mut tool = make_tool("github__search", "search", "github", Some("Search"));
-    tool.annotations = Some(ToolAnnotations { read_only_hint: true, ..Default::default() });
+    tool.annotations = Some(ToolAnnotations {
+        read_only_hint: true,
+        ..Default::default()
+    });
     let h1 = compute_tool_hash(&tool);
-    tool.annotations = Some(ToolAnnotations { read_only_hint: false, ..Default::default() });
+    tool.annotations = Some(ToolAnnotations {
+        read_only_hint: false,
+        ..Default::default()
+    });
     let h2 = compute_tool_hash(&tool);
     assert_ne!(h1, h2);
 }
@@ -74,7 +82,12 @@ fn detect_pin_changes_no_change() {
 
 #[test]
 fn detect_pin_changes_description_changed() {
-    let tool = make_tool("github__search", "search", "github", Some("New description"));
+    let tool = make_tool(
+        "github__search",
+        "search",
+        "github",
+        Some("New description"),
+    );
     let cache = vec![ToolCacheEntry {
         namespaced_name: "github__search".into(),
         original_name: "search".into(),
@@ -127,7 +140,12 @@ fn rug_pull_subtle_description_change() {
         description: Some("Search repos".into()),
         server_name: "github".into(),
         annotations: None,
-        pin_hash: compute_tool_hash(&make_tool("github__search", "search", "github", Some("Search repos"))),
+        pin_hash: compute_tool_hash(&make_tool(
+            "github__search",
+            "search",
+            "github",
+            Some("Search repos"),
+        )),
         first_seen: "2025-01-01".into(),
         last_seen: "2025-01-01".into(),
         approved: true,
@@ -161,15 +179,24 @@ fn rug_pull_schema_injection() {
 #[test]
 fn rug_pull_annotation_flip() {
     let mut tool = make_tool("github__delete", "delete", "github", Some("Delete"));
-    tool.annotations = Some(ToolAnnotations { read_only_hint: false, ..Default::default() });
+    tool.annotations = Some(ToolAnnotations {
+        read_only_hint: false,
+        ..Default::default()
+    });
     let mut original = make_tool("github__delete", "delete", "github", Some("Delete"));
-    original.annotations = Some(ToolAnnotations { read_only_hint: true, ..Default::default() });
+    original.annotations = Some(ToolAnnotations {
+        read_only_hint: true,
+        ..Default::default()
+    });
     let cache = vec![ToolCacheEntry {
         namespaced_name: "github__delete".into(),
         original_name: "delete".into(),
         description: Some("Delete".into()),
         server_name: "github".into(),
-        annotations: Some(ToolAnnotations { read_only_hint: true, ..Default::default() }),
+        annotations: Some(ToolAnnotations {
+            read_only_hint: true,
+            ..Default::default()
+        }),
         pin_hash: compute_tool_hash(&original),
         first_seen: "2025-01-01".into(),
         last_seen: "2025-01-01".into(),
@@ -245,7 +272,9 @@ fn build_server_list_manual_servers() {
     };
     let corp = McpUserConfig::default();
     let list = build_server_list(&user, &corp);
-    assert!(list.iter().any(|s| s.name == "myserver" && s.source == "manual"));
+    assert!(list
+        .iter()
+        .any(|s| s.name == "myserver" && s.source == "manual"));
 }
 
 #[test]
@@ -262,7 +291,9 @@ fn build_server_list_corp_servers_added() {
         ..Default::default()
     };
     let list = build_server_list(&user, &corp);
-    assert!(list.iter().any(|s| s.name == "corp-server" && s.source == "corp"));
+    assert!(list
+        .iter()
+        .any(|s| s.name == "corp-server" && s.source == "corp"));
 }
 
 #[test]
@@ -297,6 +328,111 @@ fn build_server_list_empty_name_rejected() {
     let corp = McpUserConfig::default();
     let list = build_server_list(&user, &corp);
     assert!(!list.iter().any(|s| s.name.is_empty()));
+}
+
+#[test]
+fn build_server_list_corp_shadows_user_on_same_name() {
+    // AB-002: user manual servers must not shadow corp-defined servers with
+    // the same name. The corp.toml policy is the highest-trust layer; if a
+    // user defines `github` and corp also defines `github`, the corp URL,
+    // headers, and bearer token must be the surviving definition.
+    let user = McpUserConfig {
+        servers: vec![McpManualServer {
+            name: "github".into(),
+            url: "https://user.example/mcp".into(),
+            headers: HashMap::new(),
+            bearer_token: Some("user-token".into()),
+            enabled: true,
+        }],
+        ..Default::default()
+    };
+    let corp = McpUserConfig {
+        servers: vec![McpManualServer {
+            name: "github".into(),
+            url: "https://corp.internal/mcp".into(),
+            headers: HashMap::new(),
+            bearer_token: Some("corp-token".into()),
+            enabled: true,
+        }],
+        ..Default::default()
+    };
+    let list = build_server_list(&user, &corp);
+    let github = list
+        .iter()
+        .find(|s| s.name == "github")
+        .expect("github must survive");
+    assert_eq!(
+        github.source, "corp",
+        "corp definition must win over same-name user"
+    );
+    assert_eq!(github.url, "https://corp.internal/mcp");
+    assert_eq!(github.bearer_token.as_deref(), Some("corp-token"));
+    // Only one entry, not two.
+    assert_eq!(list.iter().filter(|s| s.name == "github").count(), 1);
+}
+
+#[test]
+fn build_server_list_unique_user_server_survives_with_corp_present() {
+    // Regression guard for AB-002: reordering must not drop unique user
+    // servers when corp also has its own (different-name) servers.
+    let user = McpUserConfig {
+        servers: vec![McpManualServer {
+            name: "user-only".into(),
+            url: "https://user.example/mcp".into(),
+            headers: HashMap::new(),
+            bearer_token: None,
+            enabled: true,
+        }],
+        ..Default::default()
+    };
+    let corp = McpUserConfig {
+        servers: vec![McpManualServer {
+            name: "corp-only".into(),
+            url: "https://corp.internal/mcp".into(),
+            headers: HashMap::new(),
+            bearer_token: None,
+            enabled: true,
+        }],
+        ..Default::default()
+    };
+    let list = build_server_list(&user, &corp);
+    assert!(list
+        .iter()
+        .any(|s| s.name == "user-only" && s.source == "manual"));
+    assert!(list
+        .iter()
+        .any(|s| s.name == "corp-only" && s.source == "corp"));
+}
+
+#[test]
+fn build_server_list_corp_enabled_override_on_user_server() {
+    // AB-002 audit follow-up: corp.server_enabled must still flip a
+    // user-defined server's enabled state. Tested independently from the
+    // precedence change because this path is not affected by it.
+    let user = McpUserConfig {
+        servers: vec![McpManualServer {
+            name: "user-server".into(),
+            url: "https://user.example/mcp".into(),
+            headers: HashMap::new(),
+            bearer_token: None,
+            enabled: true,
+        }],
+        ..Default::default()
+    };
+    let corp = McpUserConfig {
+        server_enabled: {
+            let mut m = HashMap::new();
+            m.insert("user-server".into(), false);
+            m
+        },
+        ..Default::default()
+    };
+    let list = build_server_list(&user, &corp);
+    let s = list.iter().find(|s| s.name == "user-server").unwrap();
+    assert!(
+        !s.enabled,
+        "corp.server_enabled=false must override user-defined enabled=true"
+    );
 }
 
 #[test]
@@ -412,11 +548,7 @@ fn parse_no_mcp_servers_key() {
 fn parse_server_without_url_or_command_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
-    std::fs::write(
-        &path,
-        r#"{"mcpServers": {"bad": {"name": "bad"}}}"#,
-    )
-    .unwrap();
+    std::fs::write(&path, r#"{"mcpServers": {"bad": {"name": "bad"}}}"#).unwrap();
     let defs = parse_mcp_servers_from_file(&path, "test").unwrap();
     assert_eq!(defs.len(), 0);
 }
@@ -462,15 +594,13 @@ fn build_server_list_rejects_names_with_separator() {
 fn parse_cargo_bin_names(path: &std::path::Path) -> Vec<String> {
     let text = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let doc: toml::Value = toml::from_str(&text)
-        .unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+    let doc: toml::Value =
+        toml::from_str(&text).unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
     doc.get("bin")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|entry| {
-                    entry.get("name").and_then(|n| n.as_str()).map(String::from)
-                })
+                .filter_map(|entry| entry.get("name").and_then(|n| n.as_str()).map(String::from))
                 .collect()
         })
         .unwrap_or_default()
@@ -492,10 +622,9 @@ fn all_guest_binaries_in_dockerfile_rootfs() {
     let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
     assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-    let template = std::fs::read_to_string(
-        root.join("src/capsem/builder/templates/Dockerfile.rootfs.j2"),
-    )
-    .expect("cannot read Dockerfile.rootfs.j2");
+    let template =
+        std::fs::read_to_string(root.join("src/capsem/builder/templates/Dockerfile.rootfs.j2"))
+            .expect("cannot read Dockerfile.rootfs.j2");
 
     // The Jinja template uses a loop over guest_binaries to COPY each binary.
     // Verify the loop pattern exists -- the Python build context test
@@ -527,8 +656,7 @@ fn all_guest_binaries_in_pack_initrd() {
     let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
     assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-    let justfile = std::fs::read_to_string(root.join("justfile"))
-        .expect("cannot read justfile");
+    let justfile = std::fs::read_to_string(root.join("justfile")).expect("cannot read justfile");
 
     // Extract the _pack-initrd recipe section (from "_pack-initrd:" to next recipe)
     let start = justfile

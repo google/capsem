@@ -15,20 +15,17 @@ use crate::vm::config::VmConfig;
 pub fn create_boot_loader(config: &VmConfig) -> Result<objc2::rc::Retained<VZLinuxBootLoader>> {
     let _span = debug_span!("create_boot_loader").entered();
     unsafe {
-        let kernel_url = nsurl_from_path(&config.kernel_path)
-            .context("failed to create kernel URL")?;
+        let kernel_url =
+            nsurl_from_path(&config.kernel_path).context("failed to create kernel URL")?;
 
-        let boot_loader = VZLinuxBootLoader::initWithKernelURL(
-            VZLinuxBootLoader::alloc(),
-            &kernel_url,
-        );
+        let boot_loader =
+            VZLinuxBootLoader::initWithKernelURL(VZLinuxBootLoader::alloc(), &kernel_url);
 
         let cmdline = NSString::from_str(&config.kernel_cmdline);
         boot_loader.setCommandLine(&cmdline);
 
         if let Some(ref initrd_path) = config.initrd_path {
-            let initrd_url = nsurl_from_path(initrd_path)
-                .context("failed to create initrd URL")?;
+            let initrd_url = nsurl_from_path(initrd_path).context("failed to create initrd URL")?;
             boot_loader.setInitialRamdiskURL(Some(&initrd_url));
         }
 
@@ -37,9 +34,7 @@ pub fn create_boot_loader(config: &VmConfig) -> Result<objc2::rc::Retained<VZLin
 }
 
 fn nsurl_from_path(path: &Path) -> Result<objc2::rc::Retained<NSURL>> {
-    let path_str = path
-        .to_str()
-        .context("path is not valid UTF-8")?;
+    let path_str = path.to_str().context("path is not valid UTF-8")?;
     let ns_path = NSString::from_str(path_str);
     Ok(NSURL::fileURLWithPath(&ns_path))
 }
@@ -61,14 +56,14 @@ mod tests {
     #[test]
     fn creates_boot_loader_with_kernel_only() {
         let kernel = temp_file("vmlinuz-boot-test");
-        let config = VmConfig::builder()
-            .kernel_path(&kernel)
-            .build()
-            .unwrap();
+        let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();
         let loader = create_boot_loader(&config).unwrap();
 
         let cmdline = unsafe { loader.commandLine() };
-        assert_eq!(cmdline.to_string(), "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1");
+        assert_eq!(
+            cmdline.to_string(),
+            "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
+        );
         let initrd = unsafe { loader.initialRamdiskURL() };
         assert!(initrd.is_none());
     }

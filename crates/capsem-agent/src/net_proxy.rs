@@ -1,12 +1,19 @@
 // capsem-net-proxy: Guest-side TCP-to-vsock relay for air-gapped networking.
 //
-// Listens on TCP 127.0.0.1:10443 (HTTPS) and bridges each connection to
-// the host SNI proxy via vsock port 5002. The host proxy inspects the TLS
-// ClientHello for the SNI hostname, checks the domain policy, and bridges
-// to the real server if allowed.
+// Listens on TWO localhost ports and bridges every connection to the host
+// MITM proxy via vsock port 5002:
+//   * 127.0.0.1:10443 -- intercepts iptables-redirected port 443 (HTTPS).
+//   * 127.0.0.1:10080 -- intercepts iptables-redirected plain-HTTP ports
+//                         (80 + the configured allowlist, e.g. 11434 for
+//                         Ollama). T2.2 added this listener.
+//
+// The host proxy runs a first-byte sniff (T2.1) and routes TLS handshakes
+// to the rustls termination path and plain HTTP request lines to the
+// hyper plain-HTTP path. Both listen ports forward to the SAME vsock port
+// because the host classifier doesn't care which guest port the traffic
+// originated on -- only the first byte.
 //
 // This binary runs inside the guest VM, launched by capsem-init.
-// iptables REDIRECT captures port 443 traffic and sends it here.
 
 #[path = "vsock_io.rs"]
 mod vsock_io;
@@ -27,10 +34,17 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
 use capsem_proto::VSOCK_PORT_SNI_PROXY;
-use vsock_io::{VSOCK_HOST_CID, vsock_connect};
+use vsock_io::{vsock_connect, VSOCK_HOST_CID};
 
-/// TCP port to listen on for HTTPS traffic (iptables REDIRECT target).
+/// TCP port to listen on for HTTPS traffic (iptables REDIRECT target
+/// for outbound :443).
 const LISTEN_PORT_HTTPS: u16 = 10443;
+/// TCP port to listen on for plain-HTTP traffic (iptables REDIRECT
+/// target for outbound :80 + the configurable allowlist, e.g.
+/// :11434 for Ollama). Added in T2.2; the host proxy's first-byte
+/// sniff distinguishes TLS from plain HTTP, so a dedicated guest
+/// listener is just an iptables-target convenience.
+const LISTEN_PORT_HTTP: u16 = 10080;
 
 // Async wrapper for vsock RawFd
 struct AsyncVsock {
@@ -211,17 +225,16 @@ async fn handle_connection(mut tcp_stream: TcpStream) {
         .unwrap_or_else(|| "unknown".to_string());
     let process_name = sanitize_process_name(&process_name);
 
-    let vsock_raw = match tokio::task::spawn_blocking(|| {
-        vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY)
-    })
-    .await
-    {
-        Ok(Ok(fd)) => fd,
-        _ => {
-            eprintln!("[capsem-net-proxy] vsock connect failed");
-            return;
-        }
-    };
+    let vsock_raw =
+        match tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY))
+            .await
+        {
+            Ok(Ok(fd)) => fd,
+            _ => {
+                eprintln!("[capsem-net-proxy] vsock connect failed");
+                return;
+            }
+        };
 
     let mut vsock_stream = match AsyncVsock::new(vsock_raw) {
         Ok(v) => v,
@@ -250,25 +263,42 @@ async fn handle_connection(mut tcp_stream: TcpStream) {
     }
 }
 
+/// Spawn the per-port accept loop. Every accepted TCP connection is
+/// forwarded to vsock 5002 via `handle_connection`; the listen port
+/// itself is not preserved across the bridge -- the host's first-byte
+/// sniff classifies on wire bytes.
+async fn run_listener(port: u16) -> io::Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", port)).await?;
+    eprintln!("[capsem-net-proxy] listening on 127.0.0.1:{port}");
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let _ = stream.set_nodelay(true);
+        tokio::spawn(async move {
+            handle_connection(stream).await;
+        });
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     eprintln!("[capsem-net-proxy] starting (pid {})", process::id());
 
-    let listener = TcpListener::bind(("127.0.0.1", LISTEN_PORT_HTTPS)).await?;
-    eprintln!("[capsem-net-proxy] listening on 127.0.0.1:{LISTEN_PORT_HTTPS}");
+    let https_task = tokio::spawn(run_listener(LISTEN_PORT_HTTPS));
+    let http_task = tokio::spawn(run_listener(LISTEN_PORT_HTTP));
 
-    loop {
-        tokio::select! {
-            Ok((stream, _)) = listener.accept() => {
-                let _ = stream.set_nodelay(true);
-                tokio::spawn(async move {
-                    handle_connection(stream).await;
-                });
+    tokio::select! {
+        res = https_task => {
+            if let Ok(Err(e)) = res {
+                eprintln!("[capsem-net-proxy] HTTPS listener error: {e}");
             }
-            _ = signal::ctrl_c() => {
-                eprintln!("[capsem-net-proxy] shutting down");
-                break;
+        }
+        res = http_task => {
+            if let Ok(Err(e)) = res {
+                eprintln!("[capsem-net-proxy] HTTP listener error: {e}");
             }
+        }
+        _ = signal::ctrl_c() => {
+            eprintln!("[capsem-net-proxy] shutting down");
         }
     }
 
@@ -289,6 +319,19 @@ mod tests {
     #[test]
     fn listen_port_is_10443() {
         assert_eq!(LISTEN_PORT_HTTPS, 10443);
+    }
+
+    #[test]
+    fn http_listen_port_is_10080() {
+        assert_eq!(LISTEN_PORT_HTTP, 10080);
+    }
+
+    #[test]
+    fn http_and_https_listen_ports_are_distinct() {
+        // Same vsock target on the host, but distinct guest-side
+        // listen ports so iptables can route 80/443 to the right
+        // localhost socket without collision.
+        assert_ne!(LISTEN_PORT_HTTP, LISTEN_PORT_HTTPS);
     }
 
     #[test]
@@ -314,7 +357,7 @@ mod tests {
         assert_eq!(sanitize_process_name("my\nproc"), "my_proc");
         assert_eq!(sanitize_process_name("my\rproc"), "my_proc");
         assert_eq!(sanitize_process_name("my\0proc"), "my_proc");
-        
+
         let long_name = "A".repeat(200);
         assert_eq!(sanitize_process_name(&long_name).len(), 128);
     }
@@ -405,10 +448,14 @@ mod tests {
         let mut vb = AsyncVsock::new(fd_b).unwrap();
 
         // Write from a, read fixed-size from b
-        tokio::io::AsyncWriteExt::write_all(&mut va, b"ping").await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut va, b"ping")
+            .await
+            .unwrap();
 
         let mut buf = [0u8; 4];
-        tokio::io::AsyncReadExt::read_exact(&mut vb, &mut buf).await.unwrap();
+        tokio::io::AsyncReadExt::read_exact(&mut vb, &mut buf)
+            .await
+            .unwrap();
         assert_eq!(&buf, b"ping");
     }
 
@@ -423,7 +470,7 @@ mod tests {
 
         let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
         let data_clone = data.clone();
-        
+
         let (write_res, read_res) = tokio::join!(
             async {
                 let r = tokio::io::AsyncWriteExt::write_all(&mut va, &data_clone).await;
@@ -442,5 +489,4 @@ mod tests {
         assert_eq!(received.len(), 65536);
         assert_eq!(received, data);
     }
-
 }

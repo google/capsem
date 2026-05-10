@@ -2,8 +2,8 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-use crate::hypervisor::fuse::{self, *};
 use super::FuseProcessor;
+use crate::hypervisor::fuse::{self, *};
 
 impl FuseProcessor {
     pub(super) fn do_init(&self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
@@ -47,8 +47,12 @@ impl FuseProcessor {
         };
 
         let entry = FuseEntryOut {
-            nodeid: ino, generation: 0, entry_valid: 1, attr_valid: 1,
-            entry_valid_nsec: 0, attr_valid_nsec: 0,
+            nodeid: ino,
+            generation: 0,
+            entry_valid: 1,
+            attr_valid: 1,
+            entry_valid_nsec: 0,
+            attr_valid_nsec: 0,
             attr: fuse::metadata_to_fuse_attr(ino, &meta),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&entry))
@@ -65,7 +69,9 @@ impl FuseProcessor {
         };
 
         let attr_out = FuseAttrOut {
-            attr_valid: 1, attr_valid_nsec: 0, dummy: 0,
+            attr_valid: 1,
+            attr_valid_nsec: 0,
+            dummy: 0,
             attr: fuse::metadata_to_fuse_attr(header.nodeid, &meta),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&attr_out))
@@ -85,8 +91,9 @@ impl FuseProcessor {
         };
 
         if attr_in.valid & FATTR_MODE != 0 {
-            if let Err(e) = std::fs::set_permissions(&path,
-                std::fs::Permissions::from_mode(attr_in.mode)) {
+            if let Err(e) =
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(attr_in.mode))
+            {
                 return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
             }
         }
@@ -100,8 +107,16 @@ impl FuseProcessor {
             }
         }
         if attr_in.valid & (FATTR_UID | FATTR_GID) != 0 {
-            let uid = if attr_in.valid & FATTR_UID != 0 { attr_in.uid } else { u32::MAX };
-            let gid = if attr_in.valid & FATTR_GID != 0 { attr_in.gid } else { u32::MAX };
+            let uid = if attr_in.valid & FATTR_UID != 0 {
+                attr_in.uid
+            } else {
+                u32::MAX
+            };
+            let gid = if attr_in.valid & FATTR_GID != 0 {
+                attr_in.gid
+            } else {
+                u32::MAX
+            };
             let c_path = match std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
                 Ok(c) => c,
                 Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
@@ -117,12 +132,28 @@ impl FuseProcessor {
             };
             let times = [
                 libc::timespec {
-                    tv_sec: if attr_in.valid & FATTR_ATIME != 0 { attr_in.atime as i64 } else { 0 },
-                    tv_nsec: if attr_in.valid & FATTR_ATIME != 0 { attr_in.atimensec as i64 } else { libc::UTIME_OMIT },
+                    tv_sec: if attr_in.valid & FATTR_ATIME != 0 {
+                        attr_in.atime as i64
+                    } else {
+                        0
+                    },
+                    tv_nsec: if attr_in.valid & FATTR_ATIME != 0 {
+                        attr_in.atimensec as i64
+                    } else {
+                        libc::UTIME_OMIT
+                    },
                 },
                 libc::timespec {
-                    tv_sec: if attr_in.valid & FATTR_MTIME != 0 { attr_in.mtime as i64 } else { 0 },
-                    tv_nsec: if attr_in.valid & FATTR_MTIME != 0 { attr_in.mtimensec as i64 } else { libc::UTIME_OMIT },
+                    tv_sec: if attr_in.valid & FATTR_MTIME != 0 {
+                        attr_in.mtime as i64
+                    } else {
+                        0
+                    },
+                    tv_nsec: if attr_in.valid & FATTR_MTIME != 0 {
+                        attr_in.mtimensec as i64
+                    } else {
+                        libc::UTIME_OMIT
+                    },
                 },
             ];
             if unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) } != 0 {
@@ -143,11 +174,16 @@ impl FuseProcessor {
             return fuse::error_response(header.unique, -fuse::errno());
         }
         let kstatfs = FuseKStatfs {
-            blocks: stat.f_blocks as u64, bfree: stat.f_bfree as u64,
-            bavail: stat.f_bavail as u64, files: stat.f_files as u64,
-            ffree: stat.f_ffree as u64, bsize: stat.f_bsize as u32,
-            namelen: stat.f_namemax as u32, frsize: stat.f_frsize as u32,
-            padding: 0, spare: [0; 6],
+            blocks: stat.f_blocks as u64,
+            bfree: stat.f_bfree as u64,
+            bavail: stat.f_bavail as u64,
+            files: stat.f_files as u64,
+            ffree: stat.f_ffree as u64,
+            bsize: stat.f_bsize as u32,
+            namelen: stat.f_namemax as u32,
+            frsize: stat.f_frsize as u32,
+            padding: 0,
+            spare: [0; 6],
         };
         fuse::success_response(header.unique, fuse::as_bytes(&kstatfs))
     }

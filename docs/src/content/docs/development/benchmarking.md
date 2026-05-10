@@ -17,6 +17,9 @@ just run "capsem-bench startup"     # CLI cold-start only
 just run "capsem-bench http"        # HTTP through proxy
 just run "capsem-bench throughput"  # 100MB download
 just run "capsem-bench snapshot"    # Snapshot operations only
+just run "capsem-bench mitm-load"   # MITM proxy concurrency/load test
+just run "capsem-bench mcp-load"    # Guest MCP endpoint concurrency/load test
+just run "capsem-bench dns-load"    # DNS proxy concurrency/load test
 just full-test                      # Full validation including benchmarks
 ```
 
@@ -32,7 +35,8 @@ Boot timing is measured independently from `capsem-bench`. The guest init script
 | `virtiofs` | Mount the VirtioFS shared directory from the host |
 | `overlayfs` | Create the overlay filesystem (ext4 loopback upper + squashfs lower) |
 | `workspace` | Bind-mount `/root` from the VirtioFS workspace |
-| `network` | Configure dummy0 interface, dnsmasq, iptables redirect rules |
+| `network` | Configure dummy0 interface and iptables DNS/HTTPS redirect rules |
+| `dns_proxy` | Start capsem-dns-proxy and bridge DNS to host vsock:5007 |
 | `net_proxy` | Start the TCP-to-vsock proxy for HTTPS interception |
 | `deploy` | Copy MCP server, capsem-doctor, capsem-bench, and diagnostics from initrd |
 | `venv` | Create the Python virtualenv (uses `uv` for speed) |
@@ -94,9 +98,19 @@ Downloads a ~10 MB PDF through the MITM proxy and reports end-to-end throughput.
 
 Uses `curl -L` to download `https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf` (301-redirects to `elie.net`, so both hosts must be on the allow list). This measures the maximum sustained bandwidth the proxy pipeline can deliver, including TLS termination, body inspection, and re-encryption.
 
+### Load tests (`mitm-load`, `mcp-load`, `dns-load`)
+
+These modes are opt-in because they stress hot paths more aggressively than the default `all` suite.
+
+| Mode | What it exercises |
+|------|-------------------|
+| `mitm-load` | Concurrent HTTPS requests through the MITM proxy |
+| `mcp-load` | Guest MCP framed transport and host endpoint dispatch |
+| `dns-load` | DNS redirect, capsem-dns-proxy, host DNS policy, and resolver path |
+
 ### Snapshot operations (`snapshot`)
 
-End-to-end latency for snapshot operations via the MCP gateway. Tests at 3 workspace sizes (10, 100, 500 files of 4KB each):
+End-to-end latency for snapshot operations via the guest MCP endpoint. Tests at 3 workspace sizes (10, 100, 500 files of 4KB each):
 
 | Operation | What it does |
 |-----------|-------------|
@@ -122,7 +136,8 @@ All benchmarks save structured JSON to `/tmp/capsem-benchmark.json` inside the V
   "startup": { "commands": { "python3": { "mean_ms": 9.0 }, ... } },
   "http": { "requests_per_sec": 58, "latency_ms": { "p50": 67, ... } },
   "throughput": { "throughput_mbps": 34.3, ... },
-  "snapshot": { "10_files": { "create_ms": 879, ... }, ... }
+  "snapshot": { "10_files": { "create_ms": 879, ... }, ... },
+  "dns_load": { "qname": "api.openai.com", "levels": [...] }
 }
 ```
 

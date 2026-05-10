@@ -20,8 +20,8 @@ use std::os::unix::io::RawFd;
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc};
 
-pub use crate::vm::VmState;
 use crate::vm::config::VmConfig;
+pub use crate::vm::VmState;
 
 /// A hypervisor backend that can boot VMs.
 pub trait Hypervisor: Send + Sync {
@@ -57,17 +57,23 @@ pub trait VmHandle: Send {
 
     /// Pause the VM.
     fn pause(&self) -> Result<()> {
-        Err(anyhow::anyhow!("pause not supported by this hypervisor backend"))
+        Err(anyhow::anyhow!(
+            "pause not supported by this hypervisor backend"
+        ))
     }
 
     /// Resume the paused VM.
     fn resume(&self) -> Result<()> {
-        Err(anyhow::anyhow!("resume not supported by this hypervisor backend"))
+        Err(anyhow::anyhow!(
+            "resume not supported by this hypervisor backend"
+        ))
     }
 
     /// Save the VM state to the given path.
     fn save_state(&self, _path: &std::path::Path) -> Result<()> {
-        Err(anyhow::anyhow!("save_state not supported by this hypervisor backend"))
+        Err(anyhow::anyhow!(
+            "save_state not supported by this hypervisor backend"
+        ))
     }
 
     /// Returns true if this hypervisor supports suspend/resume functionality.
@@ -118,25 +124,29 @@ unsafe impl Sync for VsockConnection {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     // -----------------------------------------------------------------------
     // Trait object safety (compile-time checks)
     // -----------------------------------------------------------------------
 
-    fn _assert_object_safe(
-        _h: &dyn Hypervisor,
-        _v: &dyn VmHandle,
-        _s: &dyn SerialConsole,
-    ) {}
+    fn _assert_object_safe(_h: &dyn Hypervisor, _v: &dyn VmHandle, _s: &dyn SerialConsole) {}
 
     struct DummyKvmHandle;
     impl VmHandle for DummyKvmHandle {
-        fn stop(&self) -> Result<()> { Ok(()) }
-        fn state(&self) -> crate::vm::VmState { crate::vm::VmState::Stopped }
-        fn serial(&self) -> &dyn SerialConsole { unimplemented!() }
-        fn as_any(&self) -> &dyn std::any::Any { self }
+        fn stop(&self) -> Result<()> {
+            Ok(())
+        }
+        fn state(&self) -> crate::vm::VmState {
+            crate::vm::VmState::Stopped
+        }
+        fn serial(&self) -> &dyn SerialConsole {
+            unimplemented!()
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     #[test]
@@ -239,7 +249,7 @@ mod tests {
     #[test]
     fn vsock_connection_unit_anchor() {
         // () anchor is the lightest possible -- verify it works
-        let conn = VsockConnection::new(99, 5003, Box::new(()));
+        let conn = VsockConnection::new(99, 5002, Box::new(()));
         assert_eq!(conn.fd, 99);
         drop(conn); // should not panic
     }

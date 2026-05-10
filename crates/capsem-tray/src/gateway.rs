@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use reqwest::header::{AUTHORIZATION, HeaderValue};
+use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use tracing::debug;
 
@@ -148,7 +148,10 @@ impl GatewayClient {
     pub async fn status(&self) -> Result<StatusResponse> {
         let start = std::time::Instant::now();
         let resp = self.get("/status").await?;
-        let mut status: StatusResponse = resp.json().await.context("failed to parse status response")?;
+        let mut status: StatusResponse = resp
+            .json()
+            .await
+            .context("failed to parse status response")?;
         status.latency_ms = Some(start.elapsed().as_millis() as u32);
         Ok(status)
     }
@@ -370,14 +373,13 @@ mod tests {
     fn captured_auth(captures: &Arc<Mutex<Vec<String>>>) -> Option<String> {
         let g = captures.lock().unwrap();
         let req = g.first()?;
-        req.lines()
-            .find_map(|l| {
-                let lower = l.to_ascii_lowercase();
-                lower.strip_prefix("authorization: ").map(|_| {
-                    // Return the ORIGINAL header value, not the lowercased one.
-                    l["authorization: ".len()..].to_string()
-                })
+        req.lines().find_map(|l| {
+            let lower = l.to_ascii_lowercase();
+            lower.strip_prefix("authorization: ").map(|_| {
+                // Return the ORIGINAL header value, not the lowercased one.
+                l["authorization: ".len()..].to_string()
             })
+        })
     }
 
     #[tokio::test]
@@ -448,7 +450,8 @@ mod tests {
 
     #[tokio::test]
     async fn provision_temp_returns_id() {
-        let (base, _, handle) = spawn_http_probe("POST", "/provision", 200, r#"{"id":"vm-new"}"#).await;
+        let (base, _, handle) =
+            spawn_http_probe("POST", "/provision", 200, r#"{"id":"vm-new"}"#).await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let id = client.provision_temp().await.unwrap();
         handle.await.unwrap();
@@ -457,7 +460,8 @@ mod tests {
 
     #[tokio::test]
     async fn provision_temp_errors_on_missing_id() {
-        let (base, _, handle) = spawn_http_probe("POST", "/provision", 200, r#"{"status":"ok"}"#).await;
+        let (base, _, handle) =
+            spawn_http_probe("POST", "/provision", 200, r#"{"status":"ok"}"#).await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let err = client.provision_temp().await.unwrap_err();
         handle.await.unwrap();
@@ -466,7 +470,8 @@ mod tests {
 
     #[tokio::test]
     async fn provision_temp_errors_on_http_error_status() {
-        let (base, _, handle) = spawn_http_probe("POST", "/provision", 415, "unsupported media").await;
+        let (base, _, handle) =
+            spawn_http_probe("POST", "/provision", 415, "unsupported media").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let err = client.provision_temp().await.unwrap_err();
         handle.await.unwrap();

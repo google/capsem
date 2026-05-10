@@ -4,8 +4,8 @@
 //! in a tight loop, handling MMIO exits by dispatching to the MMIO bus,
 //! and stopping when the shutdown flag is set or a system event occurs.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use anyhow::Result;
@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 use super::mmio::MmioBus;
 #[cfg(target_arch = "x86_64")]
 use super::pio::PioBus;
-use super::sys::{VcpuExit, VcpuFd, KVM_SYSTEM_EVENT_SHUTDOWN, KVM_SYSTEM_EVENT_RESET};
+use super::sys::{VcpuExit, VcpuFd, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
 
 /// Spawn a vCPU run loop thread.
 ///
@@ -26,8 +26,7 @@ use super::sys::{VcpuExit, VcpuFd, KVM_SYSTEM_EVENT_SHUTDOWN, KVM_SYSTEM_EVENT_R
 pub(super) fn run_vcpu(
     vcpu: VcpuFd,
     mmio_bus: Arc<MmioBus>,
-    #[cfg(target_arch = "x86_64")]
-    pio_bus: Arc<PioBus>,
+    #[cfg(target_arch = "x86_64")] pio_bus: Arc<PioBus>,
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<Result<()>> {
     let vcpu_id = vcpu.id();
@@ -52,8 +51,7 @@ pub(super) fn run_vcpu(
 fn vcpu_loop(
     vcpu: &VcpuFd,
     mmio_bus: &MmioBus,
-    #[cfg(target_arch = "x86_64")]
-    pio_bus: &PioBus,
+    #[cfg(target_arch = "x86_64")] pio_bus: &PioBus,
     shutdown: &AtomicBool,
 ) -> Result<()> {
     loop {
@@ -65,7 +63,12 @@ fn vcpu_loop(
         let exit = vcpu.run()?;
 
         match exit {
-            VcpuExit::Mmio { addr, data_offset: _, len, is_write } => {
+            VcpuExit::Mmio {
+                addr,
+                data_offset: _,
+                len,
+                is_write,
+            } => {
                 if is_write {
                     // Read data from kvm_run's MMIO data buffer
                     let data = &vcpu.mmio_data_mut()[..len as usize];
@@ -78,9 +81,20 @@ fn vcpu_loop(
             }
 
             #[cfg(target_arch = "x86_64")]
-            VcpuExit::Io { direction, port, size } => {
+            VcpuExit::Io {
+                direction,
+                port,
+                size,
+            } => {
                 let io = vcpu.io_data();
-                dispatch_pio(pio_bus, direction, port, size, io.count, vcpu.io_data_mut(io.data_offset));
+                dispatch_pio(
+                    pio_bus,
+                    direction,
+                    port,
+                    size,
+                    io.count,
+                    vcpu.io_data_mut(io.data_offset),
+                );
             }
 
             #[cfg(target_arch = "x86_64")]
@@ -97,23 +111,21 @@ fn vcpu_loop(
                 return Ok(());
             }
 
-            VcpuExit::SystemEvent { event_type } => {
-                match event_type {
-                    KVM_SYSTEM_EVENT_SHUTDOWN => {
-                        info!("guest requested shutdown (PSCI SYSTEM_OFF)");
-                        shutdown.store(true, Ordering::SeqCst);
-                        return Ok(());
-                    }
-                    KVM_SYSTEM_EVENT_RESET => {
-                        info!("guest requested reset (PSCI SYSTEM_RESET)");
-                        shutdown.store(true, Ordering::SeqCst);
-                        return Ok(());
-                    }
-                    other => {
-                        warn!("unknown system event type: {other}");
-                    }
+            VcpuExit::SystemEvent { event_type } => match event_type {
+                KVM_SYSTEM_EVENT_SHUTDOWN => {
+                    info!("guest requested shutdown (PSCI SYSTEM_OFF)");
+                    shutdown.store(true, Ordering::SeqCst);
+                    return Ok(());
                 }
-            }
+                KVM_SYSTEM_EVENT_RESET => {
+                    info!("guest requested reset (PSCI SYSTEM_RESET)");
+                    shutdown.store(true, Ordering::SeqCst);
+                    return Ok(());
+                }
+                other => {
+                    warn!("unknown system event type: {other}");
+                }
+            },
 
             VcpuExit::Interrupted => {
                 // Interrupted by a signal -- check shutdown and retry
@@ -160,8 +172,8 @@ fn dispatch_pio(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::mmio::MmioDevice;
+    use super::*;
     use std::sync::atomic::AtomicU32;
 
     struct CountingDevice {
@@ -235,7 +247,10 @@ mod tests {
         shutdown.store(true, Ordering::SeqCst);
 
         let iters = handle.join().unwrap();
-        assert!(iters < 10000, "thread should have stopped, ran {iters} iterations");
+        assert!(
+            iters < 10000,
+            "thread should have stopped, ran {iters} iterations"
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -274,9 +289,13 @@ mod tests {
         bus.register(0x3F8, 8, dev.clone()).unwrap();
 
         let mut data = [0u8; 4]; // 4 bytes of data
-        // Simulate string I/O out: 4 bytes written 1 byte at a time
+                                 // Simulate string I/O out: 4 bytes written 1 byte at a time
         dispatch_pio(&bus, 1, 0x3F8, 1, 4, data.as_mut_ptr());
 
-        assert_eq!(dev.writes.load(Ordering::SeqCst), 4, "PIO dispatch ignored count > 1");
+        assert_eq!(
+            dev.writes.load(Ordering::SeqCst),
+            4,
+            "PIO dispatch ignored count > 1"
+        );
     }
 }

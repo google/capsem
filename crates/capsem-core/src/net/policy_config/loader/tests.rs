@@ -30,10 +30,13 @@ fn load_settings_file_empty_file() {
 fn write_then_load_roundtrip() {
     let tmp = std::env::temp_dir().join("capsem-test-roundtrip.toml");
     let mut file = SettingsFile::default();
-    file.settings.insert("test.key".into(), crate::net::policy_config::types::SettingEntry {
-        value: SettingValue::Text("hello".into()),
-        modified: "2024-01-01T00:00:00Z".into(),
-    });
+    file.settings.insert(
+        "test.key".into(),
+        crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Text("hello".into()),
+            modified: "2024-01-01T00:00:00Z".into(),
+        },
+    );
     write_settings_file(&tmp, &file).unwrap();
     let loaded = load_settings_file(&tmp).unwrap();
     assert!(loaded.settings.contains_key("test.key"));
@@ -45,10 +48,13 @@ fn write_then_load_roundtrip() {
 #[test]
 fn migrate_setting_ids_renames_old_keys() {
     let mut file = SettingsFile::default();
-    file.settings.insert("web.defaults.allow_read".into(), crate::net::policy_config::types::SettingEntry {
-        value: SettingValue::Bool(true),
-        modified: "2024-01-01".into(),
-    });
+    file.settings.insert(
+        "web.defaults.allow_read".into(),
+        crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Bool(true),
+            modified: "2024-01-01".into(),
+        },
+    );
     migrate_setting_ids(&mut file);
     assert!(!file.settings.contains_key("web.defaults.allow_read"));
     assert!(file.settings.contains_key("security.web.allow_read"));
@@ -58,17 +64,26 @@ fn migrate_setting_ids_renames_old_keys() {
 fn migrate_setting_ids_does_not_clobber_new() {
     let mut file = SettingsFile::default();
     // Both old and new key exist -- new key should be preserved
-    file.settings.insert("web.defaults.allow_read".into(), crate::net::policy_config::types::SettingEntry {
-        value: SettingValue::Bool(false),
-        modified: "old".into(),
-    });
-    file.settings.insert("security.web.allow_read".into(), crate::net::policy_config::types::SettingEntry {
-        value: SettingValue::Bool(true),
-        modified: "new".into(),
-    });
+    file.settings.insert(
+        "web.defaults.allow_read".into(),
+        crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Bool(false),
+            modified: "old".into(),
+        },
+    );
+    file.settings.insert(
+        "security.web.allow_read".into(),
+        crate::net::policy_config::types::SettingEntry {
+            value: SettingValue::Bool(true),
+            modified: "new".into(),
+        },
+    );
     migrate_setting_ids(&mut file);
     // New key retains its value
-    let val = file.settings["security.web.allow_read"].value.as_bool().unwrap();
+    let val = file.settings["security.web.allow_read"]
+        .value
+        .as_bool()
+        .unwrap();
     assert!(val); // true from the new key, not false from old
 }
 

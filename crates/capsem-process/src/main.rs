@@ -1,28 +1,26 @@
 mod helpers;
 mod ipc;
 mod job_store;
+mod mcp_runtime;
 mod pty_log;
 mod terminal;
 mod vsock;
 
+use anyhow::{Context, Result};
+use capsem_core::fs_monitor::FsMonitor;
+use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
+use capsem_logger::DbWriter;
+use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use clap::Parser;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use anyhow::{Context, Result};
-use clap::Parser;
-use capsem_core::{
-    boot_vm, BootOptions, VirtioFsShare,
-    VsockConnection,
-};
-use capsem_core::fs_monitor::FsMonitor;
-use capsem_logger::DbWriter;
-use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc, Mutex};
-use tracing::{info, error, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
+use tracing::{error, info, warn};
 
 use helpers::query_max_fs_event_id;
 use job_store::JobStore;
+use mcp_runtime::McpRuntime;
 use vsock::VsockOptions;
 
 /// Owns the background-thread resources that MUST drain before the main
@@ -54,18 +52,28 @@ impl Shutdown {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(long)] id: String,
-    #[arg(long)] assets_dir: PathBuf,
-    #[arg(long)] rootfs: PathBuf,
+    #[arg(long)]
+    id: String,
+    #[arg(long)]
+    assets_dir: PathBuf,
+    #[arg(long)]
+    rootfs: PathBuf,
     /// Explicit kernel path (overrides assets_dir/vmlinuz)
-    #[arg(long)] kernel: Option<PathBuf>,
+    #[arg(long)]
+    kernel: Option<PathBuf>,
     /// Explicit initrd path (overrides assets_dir/initrd.img)
-    #[arg(long)] initrd: Option<PathBuf>,
-    #[arg(long)] session_dir: PathBuf,
-    #[arg(long, default_value_t = 2)] cpus: u32,
-    #[arg(long, default_value_t = 2048)] ram_mb: u64,
-    #[arg(long)] uds_path: PathBuf,
-    #[arg(long)] checkpoint_path: Option<PathBuf>,
+    #[arg(long)]
+    initrd: Option<PathBuf>,
+    #[arg(long)]
+    session_dir: PathBuf,
+    #[arg(long, default_value_t = 2)]
+    cpus: u32,
+    #[arg(long, default_value_t = 2048)]
+    ram_mb: u64,
+    #[arg(long)]
+    uds_path: PathBuf,
+    #[arg(long)]
+    checkpoint_path: Option<PathBuf>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -106,12 +114,11 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
 }
 
 fn main() -> Result<()> {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt::layer().json().with_writer(std::io::stderr))
-        .init();
+    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+        service: "capsem-process",
+        sink: capsem_core::telemetry::LogSink::Stderr,
+        default_filter: "info",
+    })?;
     let args = Args::parse();
 
     // Root span shared across the whole capsem-process run: every
@@ -121,7 +128,9 @@ fn main() -> Result<()> {
     let root_span = tracing::info_span!("vm", vm_id = %args.id, trace_id = %trace_id);
     let _root_span_guard = root_span.enter();
 
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
 
     info!(id = %args.id, "capsem-sandbox-process starting");
 
@@ -130,11 +139,23 @@ fn main() -> Result<()> {
     if let Ok(resolved) = session_dir.canonicalize() {
         session_dir = resolved;
     }
-    
+
     capsem_core::create_virtiofs_session(&session_dir, 2)?;
     let guest_dir = capsem_core::guest_share_dir(&session_dir);
-    let virtiofs_shares = vec![VirtioFsShare { tag: "capsem".into(), host_path: guest_dir, read_only: false }];
+    let virtiofs_shares = vec![VirtioFsShare {
+        tag: "capsem".into(),
+        host_path: guest_dir.clone(),
+        read_only: false,
+    }];
 
+    // Attach the system-overlay rootfs.img as a virtio-blk device (/dev/vdb in
+    // the guest). capsem-init mounts it as the overlayfs upper directly --
+    // native virtio-blk speaks block-device semantics and doesn't EIO under
+    // writeback pressure across save_state/restore_state, unlike the prior
+    // loop-on-VirtioFS path. The file lives in the VirtioFS share so the
+    // host can introspect it while the VM is stopped, but the guest only
+    // opens it via virtio-blk, never through the share.
+    let system_img = guest_dir.join("system").join("rootfs.img");
     let machine_identifier_path = session_dir.join("machine_identifier");
     let serial_log_path = session_dir.join("serial.log");
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {
@@ -143,7 +164,7 @@ fn main() -> Result<()> {
         initrd_override: args.initrd.as_deref(),
         rootfs_override: Some(&args.rootfs),
         cmdline: "console=hvc0 ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1",
-        scratch_disk_path: None,
+        system_overlay_disk: Some(&system_img),
         virtiofs_shares: &virtiofs_shares,
         cpu_count: args.cpus,
         ram_bytes: args.ram_mb * 1024 * 1024,
@@ -184,7 +205,17 @@ fn main() -> Result<()> {
     let session_dir_for_loop = session_dir.clone();
     let shutdown_for_loop = Arc::clone(&shutdown);
     rt.spawn(async move {
-        if let Err(e) = run_async_main_loop(args, vm_arc, vsock_rx, sm, trace_id_for_loop, session_dir_for_loop, shutdown_for_loop).await {
+        if let Err(e) = run_async_main_loop(
+            args,
+            vm_arc,
+            vsock_rx,
+            sm,
+            trace_id_for_loop,
+            session_dir_for_loop,
+            shutdown_for_loop,
+        )
+        .await
+        {
             error!("async loop failed: {e:#}");
             std::process::exit(1);
         }
@@ -206,7 +237,10 @@ fn main() -> Result<()> {
             _ = sigterm.recv() => "SIGTERM",
             _ = sigint.recv() => "SIGINT",
         };
-        tracing::warn!(signal = signal_name, "capsem-process received signal, draining background owners");
+        tracing::warn!(
+            signal = signal_name,
+            "capsem-process received signal, draining background owners"
+        );
 
         // Take the Shutdown struct out from under the async mutex so we
         // can hand it to `spawn_blocking` for the synchronous join. The
@@ -220,16 +254,23 @@ fn main() -> Result<()> {
             owned.drain_blocking();
         })
         .await;
-        tracing::warn!(signal = signal_name, "background owners drained, stopping run loop");
+        tracing::warn!(
+            signal = signal_name,
+            "background owners drained, stopping run loop"
+        );
 
         #[cfg(target_os = "macos")]
         unsafe {
-            core_foundation_sys::runloop::CFRunLoopStop(core_foundation_sys::runloop::CFRunLoopGetMain());
+            core_foundation_sys::runloop::CFRunLoopStop(
+                core_foundation_sys::runloop::CFRunLoopGetMain(),
+            );
         }
     });
 
     #[cfg(target_os = "macos")]
-    unsafe { core_foundation_sys::runloop::CFRunLoopRun(); }
+    unsafe {
+        core_foundation_sys::runloop::CFRunLoopRun();
+    }
     #[cfg(not(target_os = "macos"))]
     rt.block_on(tokio::signal::ctrl_c())?;
 
@@ -250,7 +291,10 @@ async fn run_async_main_loop(
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
-    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 256)?);
+    let db = Arc::new(capsem_logger::DbWriter::open(
+        &session_dir.join("session.db"),
+        256,
+    )?);
     // Register the DbWriter with the SIGTERM handler BEFORE any work that
     // produces writes. If the signal fires before the workspace monitor
     // starts, we still want a clean checkpoint.
@@ -288,24 +332,34 @@ async fn run_async_main_loop(
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mut builtin_env = std::collections::HashMap::new();
-    builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
+    builtin_env.insert(
+        "CAPSEM_SESSION_DIR".into(),
+        session_dir.to_string_lossy().to_string(),
+    );
     let db_path = session_dir.join("session.db");
-    builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
+    builtin_env.insert(
+        "CAPSEM_SESSION_DB".into(),
+        db_path.to_string_lossy().to_string(),
+    );
+    mcp_runtime::insert_builtin_domain_policy_env(&mut builtin_env, &merged.domain);
     let mcp_servers = capsem_core::mcp::build_server_list_with_builtin(
         &user_sf.mcp.clone().unwrap_or_default(),
         &corp_sf.mcp.clone().unwrap_or_default(),
         builtin_bin.as_deref(),
         builtin_env,
     );
-    let snap_auto_max = snap_settings.iter()
+    let snap_auto_max = snap_settings
+        .iter()
         .find(|s| s.id == "vm.snapshots.auto_max")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(10) as usize;
-    let snap_manual_max = snap_settings.iter()
+    let snap_manual_max = snap_settings
+        .iter()
         .find(|s| s.id == "vm.snapshots.manual_max")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(12) as usize;
-    let snap_interval = snap_settings.iter()
+    let snap_interval = snap_settings
+        .iter()
         .find(|s| s.id == "vm.snapshots.auto_interval")
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(300) as u64;
@@ -326,28 +380,27 @@ async fn run_async_main_loop(
             let mut s = sched.lock().await;
             if let Ok(slot) = s.take_snapshot() {
                 let stop_id = query_max_fs_event_id(&db_snap);
-                db_snap.write(capsem_logger::WriteOp::SnapshotEvent(
-                    capsem_logger::SnapshotEvent {
-                        timestamp: slot.timestamp,
-                        slot: slot.slot,
-                        origin: "auto".into(),
-                        name: None,
-                        files_count: slot.files_count,
-                        start_fs_event_id: 0,
-                        stop_fs_event_id: stop_id,
-                    },
-                )).await;
+                db_snap
+                    .write(capsem_logger::WriteOp::SnapshotEvent(
+                        capsem_logger::SnapshotEvent {
+                            timestamp: slot.timestamp,
+                            slot: slot.slot,
+                            origin: "auto".into(),
+                            name: None,
+                            files_count: slot.files_count,
+                            start_fs_event_id: 0,
+                            stop_fs_event_id: stop_id,
+                            trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
+                        },
+                    ))
+                    .await;
             }
         });
     }
 
     // Spawn the isolated MCP aggregator subprocess.
-    let aggregator_client = spawn_mcp_aggregator(
-        &mcp_servers,
-        &session_dir,
-        &args.id,
-        &trace_id,
-    ).await?;
+    let aggregator_client =
+        spawn_mcp_aggregator(&mcp_servers, &session_dir, &args.id, &trace_id).await?;
 
     // Persist the aggregator's discovered tool catalog to the cache file
     // so the service's GET /mcp/tools endpoint can serve it.
@@ -358,21 +411,30 @@ async fn run_async_main_loop(
             .unwrap_or_default();
         // Merge with existing cache to preserve approval state.
         let existing = capsem_core::mcp::load_tool_cache();
-        let cache_entries: Vec<capsem_core::mcp::ToolCacheEntry> = tools.iter().map(|t| {
-            let pin_hash = capsem_core::mcp::compute_tool_hash(t);
-            let prev = existing.iter().find(|e| e.namespaced_name == t.namespaced_name);
-            capsem_core::mcp::ToolCacheEntry {
-                namespaced_name: t.namespaced_name.clone(),
-                original_name: t.original_name.clone(),
-                description: t.description.clone(),
-                server_name: t.server_name.clone(),
-                annotations: t.annotations.clone(),
-                pin_hash: pin_hash.clone(),
-                first_seen: prev.map(|p| p.first_seen.clone()).unwrap_or_else(|| now.clone()),
-                last_seen: now.clone(),
-                approved: prev.map(|p| p.approved && p.pin_hash == pin_hash).unwrap_or(false),
-            }
-        }).collect();
+        let cache_entries: Vec<capsem_core::mcp::ToolCacheEntry> = tools
+            .iter()
+            .map(|t| {
+                let pin_hash = capsem_core::mcp::compute_tool_hash(t);
+                let prev = existing
+                    .iter()
+                    .find(|e| e.namespaced_name == t.namespaced_name);
+                capsem_core::mcp::ToolCacheEntry {
+                    namespaced_name: t.namespaced_name.clone(),
+                    original_name: t.original_name.clone(),
+                    description: t.description.clone(),
+                    server_name: t.server_name.clone(),
+                    annotations: t.annotations.clone(),
+                    pin_hash: pin_hash.clone(),
+                    first_seen: prev
+                        .map(|p| p.first_seen.clone())
+                        .unwrap_or_else(|| now.clone()),
+                    last_seen: now.clone(),
+                    approved: prev
+                        .map(|p| p.approved && p.pin_hash == pin_hash)
+                        .unwrap_or(false),
+                }
+            })
+            .collect();
         if let Err(e) = capsem_core::mcp::save_tool_cache(&cache_entries) {
             warn!(error = %e, "failed to write tool cache");
         } else {
@@ -380,27 +442,61 @@ async fn run_async_main_loop(
         }
     }
 
-    let mcp_config = Arc::new(capsem_core::mcp::gateway::McpGatewayConfig {
+    let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
+    info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
+    let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.mcp)));
+    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.policy)));
+    let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(merged.domain)));
+    let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
+    let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
+        aggregator_client.clone(),
+        Arc::clone(&mcp_policy),
+        Arc::clone(&policy_v2),
+        Arc::clone(&mcp_inflight),
+        capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+    ));
+    let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
-        db: Arc::clone(&db),
-        policy: tokio::sync::RwLock::new(Arc::new(merged.mcp)),
-        domain_policy: std::sync::RwLock::new(Arc::new(merged.domain)),
-        server_manager: tokio::sync::Mutex::new(
-            capsem_core::mcp::server_manager::McpServerManager::new(vec![], reqwest::Client::new()),
-        ),
-        http_client: reqwest::Client::new(),
-        auto_snapshots: None,
-        workspace_dir: None,
+        policy: Arc::clone(&mcp_policy),
+        policy_v2: Arc::clone(&policy_v2),
+        domain_policy: Arc::clone(&mcp_domain_policy),
     });
 
+    let telemetry_deps = Arc::new(
+        capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
+            db: Arc::clone(&db),
+            pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
+            trace_state: Arc::new(std::sync::Mutex::new(
+                capsem_core::net::ai_traffic::TraceState::new(),
+            )),
+        },
+    );
+    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline_with_policy_v2(
+        Arc::clone(&net_state.policy),
+        Arc::clone(&policy_v2),
+        Arc::clone(&telemetry_deps),
+    );
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
         policy: Arc::clone(&net_state.policy),
+        policy_v2: Arc::clone(&policy_v2),
         db: Arc::clone(&db),
         upstream_tls: Arc::clone(&net_state.upstream_tls),
-        pricing: capsem_core::net::ai_traffic::pricing::PricingTable::load(),
-        trace_state: std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()),
+        telemetry: telemetry_deps,
+        pipeline: mitm_pipeline,
+        mcp_endpoint: Some(mcp_endpoint),
     });
+
+    // T3.2 -- DNS handler shares the same `NetworkPolicy` as the MITM
+    // proxy so an admin policy edit takes effect for both protocols at
+    // once. Default upstream nameservers (1.1.1.1, 8.8.8.8) until T5
+    // adds operator-configurable upstreams.
+    let dns_handler = Arc::new(
+        capsem_core::net::dns::DnsHandler::with_default_resolver_and_policy_v2(
+            Arc::clone(&net_state.policy),
+            Arc::clone(&policy_v2),
+        ),
+    );
 
     let db_clone = Arc::clone(&db);
     let sched_clone = Arc::clone(&scheduler);
@@ -418,21 +514,25 @@ async fn run_async_main_loop(
                     let mut s = sched.lock().await;
                     s.take_snapshot()
                 })
-            }).await;
+            })
+            .await;
             match result {
                 Ok(Ok(slot)) => {
                     let stop_id = query_max_fs_event_id(&db_clone);
-                    db_clone.write(capsem_logger::WriteOp::SnapshotEvent(
-                        capsem_logger::SnapshotEvent {
-                            timestamp: slot.timestamp,
-                            slot: slot.slot,
-                            origin: "auto".into(),
-                            name: None,
-                            files_count: slot.files_count,
-                            start_fs_event_id: last_stop,
-                            stop_fs_event_id: stop_id,
-                        },
-                    )).await;
+                    db_clone
+                        .write(capsem_logger::WriteOp::SnapshotEvent(
+                            capsem_logger::SnapshotEvent {
+                                timestamp: slot.timestamp,
+                                slot: slot.slot,
+                                origin: "auto".into(),
+                                name: None,
+                                files_count: slot.files_count,
+                                start_fs_event_id: last_stop,
+                                stop_fs_event_id: stop_id,
+                                trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
+                            },
+                        ))
+                        .await;
                     last_stop = stop_id;
                 }
                 Ok(Err(e)) => tracing::warn!("auto-snapshot failed: {e}"),
@@ -452,11 +552,16 @@ async fn run_async_main_loop(
 
     let net_state_clone = Arc::clone(&net_state);
     let mitm_config_clone = Arc::clone(&mitm_config);
-    let mcp_config_clone = Arc::clone(&mcp_config);
+    let dns_handler_clone = Arc::clone(&dns_handler);
 
     // Parse --env KEY=VALUE pairs for guest injection
-    let cli_env: Vec<(String, String)> = args.env.iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+    let cli_env: Vec<(String, String)> = args
+        .env
+        .iter()
+        .filter_map(|kv| {
+            kv.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect();
 
     let vm_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -490,14 +595,16 @@ async fn run_async_main_loop(
             cli_env,
             guest_config,
             mitm_config: mitm_config_clone,
-            mcp_config: mcp_config_clone,
+            dns_handler: dns_handler_clone,
             _net_state: net_state_clone,
             is_restore,
             vm_ready: vm_ready_vsock,
             uds_path: uds_path_vsock,
             db: db_for_vsock,
             pty_log,
-        }).await {
+        })
+        .await
+        {
             // Handshake or other vsock setup failed. Without an explicit
             // exit, capsem-process keeps running with no .ready sentinel
             // and no working control channel -- the service sees no exit,
@@ -510,7 +617,9 @@ async fn run_async_main_loop(
         }
     });
 
-    if uds_path.exists() { std::fs::remove_file(&uds_path)?; }
+    if uds_path.exists() {
+        std::fs::remove_file(&uds_path)?;
+    }
     let listener = UnixListener::bind(&uds_path)?;
     #[cfg(unix)]
     {
@@ -520,7 +629,9 @@ async fn run_async_main_loop(
     info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
 
     let ws_sock_path = uds_path.with_file_name(format!("{}-ws.sock", vm_id_ws));
-    if ws_sock_path.exists() { std::fs::remove_file(&ws_sock_path)?; }
+    if ws_sock_path.exists() {
+        std::fs::remove_file(&ws_sock_path)?;
+    }
     let ws_listener = tokio::net::UnixListener::bind(&ws_sock_path)?;
     #[cfg(unix)]
     {
@@ -543,16 +654,18 @@ async fn run_async_main_loop(
     let ctrl_tx_ws = ctrl_tx_ipc.clone();
     let term_relay_app = Arc::clone(&term_relay);
 
-    let ws_app = axum::Router::new()
-        .route("/terminal", axum::routing::get(
-            move |ws: axum::extract::ws::WebSocketUpgrade| {
-                let ctrl_tx = ctrl_tx_ws.clone();
-                let (replay, term_rx) = term_relay_app.subscribe();
-                async move {
-                    ws.on_upgrade(move |socket| terminal::handle_terminal_socket(socket, ctrl_tx, replay, term_rx))
-                }
+    let ws_app = axum::Router::new().route(
+        "/terminal",
+        axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+            let ctrl_tx = ctrl_tx_ws.clone();
+            let (replay, term_rx) = term_relay_app.subscribe();
+            async move {
+                ws.on_upgrade(move |socket| {
+                    terminal::handle_terminal_socket(socket, ctrl_tx, replay, term_rx)
+                })
             }
-        ));
+        }),
+    );
 
     tokio::spawn(async move {
         if let Err(e) = axum::serve(ws_listener, ws_app).await {
@@ -567,11 +680,22 @@ async fn run_async_main_loop(
         let term_c = Arc::clone(&term_relay);
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
-        let mcp_c = Arc::clone(&mcp_config);
+        let mcp_c = Arc::clone(&mcp_runtime);
         let ready_c = Arc::clone(&vm_ready);
 
         tokio::spawn(async move {
-            if let Err(e) = ipc::handle_ipc_connection(stream, tx_c, ipc_tx_pass, term_c, job_c, net_c, mcp_c, ready_c).await {
+            if let Err(e) = ipc::handle_ipc_connection(
+                stream,
+                tx_c,
+                ipc_tx_pass,
+                term_c,
+                job_c,
+                net_c,
+                mcp_c,
+                ready_c,
+            )
+            .await
+            {
                 error!("IPC error: {e:#}");
             }
         });
@@ -593,8 +717,8 @@ async fn spawn_mcp_aggregator(
     vm_id: &str,
     trace_id: &str,
 ) -> Result<capsem_core::mcp::aggregator::AggregatorClient> {
-    use std::collections::HashMap;
     use capsem_core::mcp::aggregator::*;
+    use std::collections::HashMap;
 
     let (client, mut rx) = AggregatorClient::channel(64);
 
@@ -605,13 +729,18 @@ async fn spawn_mcp_aggregator(
 
     if !aggregator_bin.exists() {
         // Dev fallback: no aggregator binary. Return a client with an empty mock driver.
-        info!("aggregator binary not found at {}, using empty stub", aggregator_bin.display());
+        info!(
+            "aggregator binary not found at {}, using empty stub",
+            aggregator_bin.display()
+        );
         tokio::spawn(async move {
             while let Some((req, resp_tx)) = rx.recv().await {
                 let body = match req.method {
                     AggregatorMethod::ListServers => AggregatorResult::Servers { servers: vec![] },
                     AggregatorMethod::ListTools => AggregatorResult::Tools { tools: vec![] },
-                    AggregatorMethod::ListResources => AggregatorResult::Resources { resources: vec![] },
+                    AggregatorMethod::ListResources => {
+                        AggregatorResult::Resources { resources: vec![] }
+                    }
                     AggregatorMethod::ListPrompts => AggregatorResult::Prompts { prompts: vec![] },
                     AggregatorMethod::CallTool { name, .. } => AggregatorResult::Error {
                         error: format!("aggregator not available: {name}"),
@@ -626,7 +755,10 @@ async fn spawn_mcp_aggregator(
                         AggregatorResult::Ok { ok: true }
                     }
                 };
-                let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
+                capsem_core::try_send!(
+                    "aggregator_response",
+                    resp_tx.send(AggregatorResponse { id: req.id, body })
+                );
             }
         });
         return Ok(client);
@@ -665,11 +797,24 @@ async fn spawn_mcp_aggregator(
         "spawning MCP aggregator"
     );
 
-    let mut child = tokio::process::Command::new(&aggregator_bin)
-        .env("CAPSEM_VM_ID", vm_id)
-        .env("CAPSEM_TRACE_ID", trace_id)
-        .arg("--parent-pid").arg(std::process::id().to_string())
-        .arg("--lock-path").arg(session_dir.join("mcp-aggregator.lock"))
+    let mut cmd = tokio::process::Command::new(&aggregator_bin);
+    // W4: include CAPSEM_VM_ID, CAPSEM_TRACE_ID, TRACEPARENT, TRACESTATE.
+    // Caller already has `trace_id` from the root span; we re-derive via
+    // child_trace_env so the aggregator inherits this process's parent
+    // traceparent verbatim instead of getting a freshly-synthesized one.
+    for (k, v) in capsem_core::telemetry::child_trace_env(vm_id) {
+        cmd.env(k, v);
+    }
+    // Keep the pre-W4 CAPSEM_TRACE_ID override path so callers that
+    // pass an explicit trace_id (the root span's value) still win over
+    // the env-derived id. Belt-and-suspenders for the aggregator's
+    // structured root span.
+    cmd.env("CAPSEM_TRACE_ID", trace_id);
+    let mut child = cmd
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string())
+        .arg("--lock-path")
+        .arg(session_dir.join("mcp-aggregator.lock"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::from(stderr_file))
@@ -684,8 +829,9 @@ async fn spawn_mcp_aggregator(
 
     // Background driver: reads from client channel, writes to subprocess stdin,
     // reads responses from subprocess stdout, routes back to callers.
-    let pending: Arc<tokio::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<AggregatorResponse>>>> =
-        Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let pending: Arc<
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<AggregatorResponse>>>,
+    > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
     // Reader task: reads msgpack frames from subprocess stdout and routes to pending callers.
     let pending_reader = Arc::clone(&pending);
@@ -696,7 +842,7 @@ async fn spawn_mcp_aggregator(
                 Ok(Some(resp)) => {
                     let mut map = pending_reader.lock().await;
                     if let Some(tx) = map.remove(&resp.id) {
-                        let _ = tx.send(resp);
+                        capsem_core::try_send!("aggregator_oneshot", tx.send(resp));
                     }
                 }
                 Ok(None) => {
@@ -742,7 +888,6 @@ async fn spawn_mcp_aggregator(
     Ok(client)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -756,12 +901,18 @@ mod tests {
     fn args_parses_all_required() {
         let args = Args::try_parse_from([
             "capsem-process",
-            "--id", "test-vm",
-            "--assets-dir", "/tmp/assets",
-            "--rootfs", "/tmp/rootfs.img",
-            "--session-dir", "/tmp/session",
-            "--uds-path", "/tmp/vm.sock",
-        ]).unwrap();
+            "--id",
+            "test-vm",
+            "--assets-dir",
+            "/tmp/assets",
+            "--rootfs",
+            "/tmp/rootfs.img",
+            "--session-dir",
+            "/tmp/session",
+            "--uds-path",
+            "/tmp/vm.sock",
+        ])
+        .unwrap();
         assert_eq!(args.id, "test-vm");
         assert_eq!(args.assets_dir, PathBuf::from("/tmp/assets"));
         assert_eq!(args.rootfs, PathBuf::from("/tmp/rootfs.img"));
@@ -773,9 +924,18 @@ mod tests {
     fn args_default_cpus() {
         let args = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
-        ]).unwrap();
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+        ])
+        .unwrap();
         assert_eq!(args.cpus, 2);
     }
 
@@ -783,9 +943,18 @@ mod tests {
     fn args_default_ram_mb() {
         let args = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
-        ]).unwrap();
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+        ])
+        .unwrap();
         assert_eq!(args.ram_mb, 2048);
     }
 
@@ -793,10 +962,22 @@ mod tests {
     fn args_custom_cpus_and_ram() {
         let args = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
-            "--cpus", "8", "--ram-mb", "16384",
-        ]).unwrap();
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+            "--cpus",
+            "8",
+            "--ram-mb",
+            "16384",
+        ])
+        .unwrap();
         assert_eq!(args.cpus, 8);
         assert_eq!(args.ram_mb, 16384);
     }
@@ -805,8 +986,14 @@ mod tests {
     fn args_missing_required_id_fails() {
         let result = Args::try_parse_from([
             "capsem-process",
-            "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
         ]);
         assert!(result.is_err());
     }
@@ -815,8 +1002,14 @@ mod tests {
     fn args_missing_required_assets_dir_fails() {
         let result = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
+            "--id",
+            "vm",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
         ]);
         assert!(result.is_err());
     }
@@ -825,9 +1018,18 @@ mod tests {
     fn args_invalid_cpus_type_fails() {
         let result = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
-            "--cpus", "not-a-number",
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+            "--cpus",
+            "not-a-number",
         ]);
         assert!(result.is_err());
     }
@@ -836,9 +1038,18 @@ mod tests {
     fn args_checkpoint_path_optional() {
         let args = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
-        ]).unwrap();
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+        ])
+        .unwrap();
         assert!(args.checkpoint_path.is_none());
     }
 
@@ -846,21 +1057,46 @@ mod tests {
     fn args_checkpoint_path_set() {
         let args = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
-            "--checkpoint-path", "/tmp/cp.vzsave",
-        ]).unwrap();
-        assert_eq!(args.checkpoint_path.unwrap(), PathBuf::from("/tmp/cp.vzsave"));
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+            "--checkpoint-path",
+            "/tmp/cp.vzsave",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.checkpoint_path.unwrap(),
+            PathBuf::from("/tmp/cp.vzsave")
+        );
     }
 
     #[test]
     fn args_env_vars_parsed() {
         let args = Args::try_parse_from([
             "capsem-process",
-            "--id", "vm", "--assets-dir", "/a", "--rootfs", "/r",
-            "--session-dir", "/s", "--uds-path", "/u",
-            "--env", "FOO=bar", "--env", "BAZ=qux",
-        ]).unwrap();
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+            "--env",
+            "FOO=bar",
+            "--env",
+            "BAZ=qux",
+        ])
+        .unwrap();
         assert_eq!(args.env, vec!["FOO=bar", "BAZ=qux"]);
     }
 
@@ -871,20 +1107,31 @@ mod tests {
     #[test]
     fn cli_env_parsing_valid() {
         let env = ["FOO=bar".to_string(), "BAZ=qux=extra".to_string()];
-        let parsed: Vec<(String, String)> = env.iter()
-            .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        let parsed: Vec<(String, String)> = env
+            .iter()
+            .filter_map(|kv| {
+                kv.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+            })
             .collect();
-        assert_eq!(parsed, vec![
-            ("FOO".to_string(), "bar".to_string()),
-            ("BAZ".to_string(), "qux=extra".to_string()),
-        ]);
+        assert_eq!(
+            parsed,
+            vec![
+                ("FOO".to_string(), "bar".to_string()),
+                ("BAZ".to_string(), "qux=extra".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn cli_env_parsing_no_equals_skipped() {
         let env = ["NOEQ".to_string(), "GOOD=val".to_string()];
-        let parsed: Vec<(String, String)> = env.iter()
-            .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        let parsed: Vec<(String, String)> = env
+            .iter()
+            .filter_map(|kv| {
+                kv.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+            })
             .collect();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0], ("GOOD".to_string(), "val".to_string()));
@@ -893,8 +1140,12 @@ mod tests {
     #[test]
     fn cli_env_parsing_empty_value() {
         let env = ["KEY=".to_string()];
-        let parsed: Vec<(String, String)> = env.iter()
-            .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        let parsed: Vec<(String, String)> = env
+            .iter()
+            .filter_map(|kv| {
+                kv.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+            })
             .collect();
         assert_eq!(parsed, vec![("KEY".to_string(), "".to_string())]);
     }

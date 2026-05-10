@@ -33,7 +33,9 @@ fn now_secs() -> u64 {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    crate::paths::capsem_home().ok().map(|d| d.join("update-check.json"))
+    crate::paths::capsem_home()
+        .ok()
+        .map(|d| d.join("update-check.json"))
 }
 
 /// Read cached update notice. Sync file read, no latency.
@@ -148,7 +150,10 @@ pub async fn refresh_update_cache_if_stale() {
 /// Compare versions: is `latest` newer than `current`?
 /// Returns false for malformed versions (conservative: don't prompt for bad data).
 fn is_newer(latest: &str, current: &str) -> bool {
-    match (semver::Version::parse(latest), semver::Version::parse(current)) {
+    match (
+        semver::Version::parse(latest),
+        semver::Version::parse(current),
+    ) {
         (Ok(l), Ok(c)) => l > c,
         _ => false,
     }
@@ -187,7 +192,11 @@ async fn refresh_assets() -> Result<()> {
     let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
 
-    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
     let binary_version = env!("CARGO_PKG_VERSION");
 
     println!("Refreshing VM assets into {}...", assets_dir.display());

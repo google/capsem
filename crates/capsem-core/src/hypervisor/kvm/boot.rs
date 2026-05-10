@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use super::memory::{self, GuestMemory};
 use super::sys;
@@ -97,8 +97,10 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
     // Reject bzImage (x86_64) kernels -- HdrS magic at offset 0x202
     if kernel_data.len() > 0x206 {
         let hdrs = u32::from_le_bytes([
-            kernel_data[0x202], kernel_data[0x203],
-            kernel_data[0x204], kernel_data[0x205],
+            kernel_data[0x202],
+            kernel_data[0x203],
+            kernel_data[0x204],
+            kernel_data[0x205],
         ]);
         if hdrs == 0x5372_6448 {
             bail!("kernel is a bzImage (x86_64) but this is an aarch64 host");
@@ -171,11 +173,7 @@ pub(super) fn load_initrd(
 ///
 /// The FDT is placed at the next page boundary after kernel_end.
 /// Returns the guest physical address of the FDT.
-pub(super) fn load_fdt(
-    mem: &GuestMemory,
-    fdt_blob: &[u8],
-    kernel_end: u64,
-) -> Result<u64> {
+pub(super) fn load_fdt(mem: &GuestMemory, fdt_blob: &[u8], kernel_end: u64) -> Result<u64> {
     let fdt_start = memory::page_align_up(kernel_end);
     let offset = fdt_start - memory::RAM_BASE;
     let fdt_end_offset = offset + fdt_blob.len() as u64;
@@ -191,9 +189,7 @@ pub(super) fn load_fdt(
     // ARM64 boot protocol: FDT must be within 512MB of kernel entry
     let kernel_entry = memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET;
     if fdt_start - kernel_entry > 512 * 1024 * 1024 {
-        bail!(
-            "FDT at {fdt_start:#x} is more than 512MB from kernel entry at {kernel_entry:#x}"
-        );
+        bail!("FDT at {fdt_start:#x} is more than 512MB from kernel entry at {kernel_entry:#x}");
     }
 
     mem.write_at(offset, fdt_blob)
@@ -215,12 +211,9 @@ pub(super) fn set_boot_regs(vcpu: &sys::VcpuFd, entry_addr: u64, fdt_addr: u64) 
         .context("setting PC")?;
     vcpu.set_one_reg(sys::REG_X0, fdt_addr)
         .context("setting X0 (FDT address)")?;
-    vcpu.set_one_reg(sys::REG_X1, 0)
-        .context("setting X1")?;
-    vcpu.set_one_reg(sys::REG_X2, 0)
-        .context("setting X2")?;
-    vcpu.set_one_reg(sys::REG_X3, 0)
-        .context("setting X3")?;
+    vcpu.set_one_reg(sys::REG_X1, 0).context("setting X1")?;
+    vcpu.set_one_reg(sys::REG_X2, 0).context("setting X2")?;
+    vcpu.set_one_reg(sys::REG_X3, 0).context("setting X3")?;
     Ok(())
 }
 
@@ -326,7 +319,10 @@ mod tests {
         let mem = GuestMemory::new(64 * 1024 * 1024).unwrap();
         let info = load_kernel(&mem, &kernel_path).unwrap();
 
-        assert_eq!(info.entry_addr, memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET);
+        assert_eq!(
+            info.entry_addr,
+            memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET
+        );
     }
 
     #[test]
@@ -368,7 +364,10 @@ mod tests {
         std::fs::write(&path, &kernel).unwrap();
         let mem = GuestMemory::new(64 * 1024 * 1024).unwrap();
         let err = load_kernel(&mem, &path).unwrap_err();
-        assert!(err.to_string().contains("bzImage"), "should reject bzImage kernel: {err}");
+        assert!(
+            err.to_string().contains("bzImage"),
+            "should reject bzImage kernel: {err}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -421,13 +420,16 @@ mod tests {
 
         let ram_size: u64 = 64 * 1024 * 1024; // 64MB RAM
         let mem = GuestMemory::new(ram_size).unwrap();
-        
-        // Push kernel_end to 40MB. Initrd needs 32MB, but we only have 64MB total. 
+
+        // Push kernel_end to 40MB. Initrd needs 32MB, but we only have 64MB total.
         // 64MB - 32MB = 32MB available start. 32MB < 40MB (overlap).
         let kernel_end = memory::RAM_BASE + 40 * 1024 * 1024;
         let result = load_initrd(&mem, &initrd_path, kernel_end);
-        
-        assert!(result.is_err(), "Should reject initrd if it overlaps the kernel");
+
+        assert!(
+            result.is_err(),
+            "Should reject initrd if it overlaps the kernel"
+        );
         assert!(result.unwrap_err().to_string().contains("too large to fit"));
     }
 
@@ -466,12 +468,15 @@ mod tests {
         let ram_size: u64 = 2 * 1024 * 1024 * 1024;
         let mem = GuestMemory::new(ram_size).unwrap();
         let fdt_blob = vec![0xd0, 0x0d, 0xfe, 0xed, 0, 0, 0, 0]; // fake FDT
-        
+
         // Push kernel_end beyond 512MB limit from kernel_entry (0x80000)
         let kernel_end = memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET + 513 * 1024 * 1024;
         let result = load_fdt(&mem, &fdt_blob, kernel_end);
 
-        assert!(result.is_err(), "Should reject FDT that is > 512MB away from kernel entry");
+        assert!(
+            result.is_err(),
+            "Should reject FDT that is > 512MB away from kernel entry"
+        );
         assert!(result.unwrap_err().to_string().contains("more than 512MB"));
     }
 

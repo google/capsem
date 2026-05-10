@@ -172,11 +172,12 @@ def _rotate_artifacts(root, keep):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self):
+    def __init__(self, extra_env=None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.proc = None
         self._log_file = None
+        self.extra_env = extra_env or {}
 
     def start(self):
         # Sign binaries before spawning (macOS needs virtualization entitlement)
@@ -193,6 +194,7 @@ class ServiceInstance:
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.tmp_dir)
         env["HOME"] = str(self.tmp_dir)
+        env.update(self.extra_env)
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")

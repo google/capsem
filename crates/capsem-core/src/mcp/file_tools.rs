@@ -24,7 +24,13 @@ use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// Tool names for file operations.
 pub const FILE_TOOL_NAMES: &[&str] = &[
-    "snapshots_changes", "snapshots_list", "snapshots_revert", "snapshots_create", "snapshots_delete", "snapshots_history", "snapshots_compact",
+    "snapshots_changes",
+    "snapshots_list",
+    "snapshots_revert",
+    "snapshots_create",
+    "snapshots_delete",
+    "snapshots_history",
+    "snapshots_compact",
 ];
 
 pub fn is_file_tool(name: &str) -> bool {
@@ -69,6 +75,7 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: false,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "snapshots_list".into(),
@@ -104,6 +111,7 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: false,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "snapshots_revert".into(),
@@ -138,6 +146,7 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: false,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "snapshots_create".into(),
@@ -166,6 +175,7 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: false,
                 open_world_hint: false,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "snapshots_delete".into(),
@@ -193,6 +203,7 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: false,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "snapshots_history".into(),
@@ -221,6 +232,7 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: true,
                 open_world_hint: false,
             }),
+            timeout_secs: None,
         },
         McpToolDef {
             namespaced_name: "snapshots_compact".into(),
@@ -254,6 +266,7 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                 idempotent_hint: false,
                 open_world_hint: false,
             }),
+            timeout_secs: None,
         },
     ]
 }
@@ -289,7 +302,10 @@ fn validate_snapshot_name(name: &str) -> Result<&str, String> {
     if name.is_empty() || name.len() > 64 {
         return Err("name must be 1-64 characters".into());
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Err("name must be alphanumeric, underscore, or hyphen only".into());
     }
     Ok(name)
@@ -339,7 +355,13 @@ fn collect_files(root: &Path) -> HashMap<String, FileEntry> {
                 .symlink_metadata()
                 .map(|m| m.len())
                 .unwrap_or(0);
-            files.insert(rel_str, FileEntry { size, is_symlink: ft.is_symlink() });
+            files.insert(
+                rel_str,
+                FileEntry {
+                    size,
+                    is_symlink: ft.is_symlink(),
+                },
+            );
         }
     }
     files
@@ -361,10 +383,7 @@ fn age_string(ts: SystemTime) -> String {
 }
 
 /// Collect changes between current workspace and snapshots.
-fn collect_changes(
-    scheduler: &AutoSnapshotScheduler,
-    workspace_root: &Path,
-) -> Vec<ChangedFile> {
+fn collect_changes(scheduler: &AutoSnapshotScheduler, workspace_root: &Path) -> Vec<ChangedFile> {
     let current_files = collect_files(workspace_root);
     let snapshots = scheduler.list_snapshots();
     let mut changes: Vec<ChangedFile> = Vec::new();
@@ -472,12 +491,37 @@ fn render_changes_table(changes: &[ChangedFile]) -> String {
 }
 
 /// Truncate a path string to fit a column, adding "..." if too long.
+///
+/// AB-007: counts and slices in characters, not bytes. The previous
+/// implementation used `path.len()` and `&path[byte_offset..]`, which panics
+/// with "byte index N is not a char boundary" when the suffix offset lands
+/// inside a multibyte UTF-8 sequence. Snapshot rendering walks user-supplied
+/// paths, so any non-ASCII path could take down the tool.
 fn truncate_path(path: &str, max: usize) -> String {
-    if path.len() <= max {
-        path.to_string()
-    } else {
-        format!("...{}", &path[path.len() - (max - 3)..])
+    let char_count = path.chars().count();
+    if char_count <= max {
+        return path.to_string();
     }
+    // No room for both the ellipsis and content: return the last `max`
+    // chars without prefix. Defensive against ill-typed callers; the
+    // production call sites pass max = 33 and 15.
+    if max <= 3 {
+        let skip = char_count - max;
+        let byte_offset = path
+            .char_indices()
+            .nth(skip)
+            .map(|(i, _)| i)
+            .unwrap_or(path.len());
+        return path[byte_offset..].to_string();
+    }
+    let to_take = max - 3;
+    let suffix_start_char = char_count - to_take;
+    let byte_offset = path
+        .char_indices()
+        .nth(suffix_start_char)
+        .map(|(i, _)| i)
+        .unwrap_or(path.len());
+    format!("...{}", &path[byte_offset..])
 }
 
 /// Extract pagination params (start_index, max_length, format) from arguments.
@@ -578,7 +622,9 @@ pub fn handle_revert_file(
     };
 
     // Resolve checkpoint: explicit or auto-select newest containing the file.
-    let (slot, cp_str_owned) = if let Some(cp_str) = arguments.get("checkpoint").and_then(|v| v.as_str()) {
+    let (slot, cp_str_owned) = if let Some(cp_str) =
+        arguments.get("checkpoint").and_then(|v| v.as_str())
+    {
         let slot = match parse_checkpoint(cp_str) {
             Ok(s) => s,
             Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
@@ -587,17 +633,13 @@ pub fn handle_revert_file(
     } else {
         // Auto-select: scan snapshots newest-first, find first containing the file.
         let snapshots = scheduler.list_snapshots();
-        let found = snapshots.iter().find(|s| {
-            s.workspace_path.join(&path_str).symlink_metadata().is_ok()
-        });
+        let found = snapshots
+            .iter()
+            .find(|s| s.workspace_path.join(&path_str).symlink_metadata().is_ok());
         match found {
             Some(s) => (s.slot, format!("cp-{}", s.slot)),
             None => {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32602,
-                    "no snapshot contains this file",
-                );
+                return JsonRpcResponse::err(request_id, -32602, "no snapshot contains this file");
             }
         }
     };
@@ -637,7 +679,8 @@ pub fn handle_revert_file(
     // Use symlink_metadata to detect presence without following symlinks.
     let snap_exists = snap_file.symlink_metadata().is_ok();
     let current_exists = current_file.symlink_metadata().is_ok();
-    let snap_is_symlink = snap_file.symlink_metadata()
+    let snap_is_symlink = snap_file
+        .symlink_metadata()
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false);
 
@@ -645,10 +688,9 @@ pub fn handle_revert_file(
     // Check if file already matches snapshot (no-op): same content AND same permissions.
     // Skip no-op check for symlinks (comparing link targets is handled below).
     if snap_exists && current_exists && !snap_is_symlink {
-        if let (Ok(snap_bytes), Ok(cur_bytes)) = (
-            std::fs::read(&snap_file),
-            std::fs::read(&current_file),
-        ) {
+        if let (Ok(snap_bytes), Ok(cur_bytes)) =
+            (std::fs::read(&snap_file), std::fs::read(&current_file))
+        {
             let same_perms = match (snap_file.metadata(), current_file.metadata()) {
                 (Ok(sm), Ok(cm)) => {
                     use std::os::unix::fs::PermissionsExt;
@@ -783,16 +825,21 @@ pub fn handle_revert_file(
             capsem_logger::FileAction::Deleted
         };
         let size = if action == "restored" {
-            std::fs::symlink_metadata(&current_file).ok().map(|m| m.len())
+            std::fs::symlink_metadata(&current_file)
+                .ok()
+                .map(|m| m.len())
         } else {
             None
         };
-        db.try_write(capsem_logger::WriteOp::FileEvent(capsem_logger::FileEvent {
-            timestamp: SystemTime::now(),
-            action: file_action,
-            path: format!("{} (from {})", path_str, cp_str_owned),
-            size,
-        }));
+        db.try_write(capsem_logger::WriteOp::FileEvent(
+            capsem_logger::FileEvent {
+                timestamp: SystemTime::now(),
+                action: file_action,
+                path: format!("{} (from {})", path_str, cp_str_owned),
+                size,
+                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+            },
+        ));
     }
 
     JsonRpcResponse::ok(
@@ -839,10 +886,7 @@ fn format_change_summary(changes: &[Value]) -> String {
 }
 
 /// Render snapshot list as a text table.
-fn render_snapshots_table(
-    entries: &[serde_json::Value],
-    manual_available: usize,
-) -> String {
+fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize) -> String {
     let mut out = format!(
         "Snapshots ({} total, {} manual slots available)\n",
         entries.len(),
@@ -855,7 +899,10 @@ fn render_snapshots_table(
         let origin = e["origin"].as_str().unwrap_or("-");
         let name = e["name"].as_str().unwrap_or("-");
         let age = e["age"].as_str().unwrap_or("-");
-        let hash = e["hash"].as_str().map(|h| &h[..h.len().min(12)]).unwrap_or("-");
+        let hash = e["hash"]
+            .as_str()
+            .map(|h| &h[..h.len().min(12)])
+            .unwrap_or("-");
         let files = e["files_count"].as_u64().unwrap_or(0);
         let changes = e["changes"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
         let summary = format_change_summary(changes);
@@ -874,9 +921,7 @@ fn render_snapshots_table(
 }
 
 /// Collect snapshot entries as JSON values (for both text and json rendering).
-fn collect_snapshot_entries(
-    scheduler: &AutoSnapshotScheduler,
-) -> Vec<serde_json::Value> {
+fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler) -> Vec<serde_json::Value> {
     let mut snapshots = scheduler.list_snapshots();
     // list_snapshots returns newest-first; reverse to walk oldest-first.
     snapshots.reverse();
@@ -957,7 +1002,9 @@ fn compute_changes_vs_previous(
     // Deleted: in prev but not in current.
     for (path, entry) in prev {
         if !current.contains_key(path) {
-            changes.push(serde_json::json!({"path": path, "op": "deleted", "is_symlink": entry.is_symlink}));
+            changes.push(
+                serde_json::json!({"path": path, "op": "deleted", "is_symlink": entry.is_symlink}),
+            );
         }
     }
 
@@ -1030,13 +1077,15 @@ pub fn handle_delete_snapshot(
     match scheduler.get_metadata(slot) {
         Some(meta) if meta.origin == SnapshotOrigin::Auto => {
             return JsonRpcResponse::err(
-                request_id, -32602,
+                request_id,
+                -32602,
                 "cannot delete automatic snapshots (managed by scheduler)",
             );
         }
         None => {
             return JsonRpcResponse::err(
-                request_id, -32602,
+                request_id,
+                -32602,
                 format!("checkpoint {cp_str} not found"),
             );
         }
@@ -1146,7 +1195,8 @@ pub fn handle_snapshots_compact(
         None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoints' array"),
     };
 
-    let name = arguments.get("name")
+    let name = arguments
+        .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
@@ -1201,802 +1251,4 @@ pub fn handle_snapshots_compact(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::auto_snapshot::AutoSnapshotScheduler;
-    use std::path::PathBuf;
-    use std::time::Duration;
-
-    fn setup() -> (tempfile::TempDir, PathBuf, AutoSnapshotScheduler) {
-        let tmp = tempfile::tempdir().unwrap();
-        let session = tmp.path().to_path_buf();
-        std::fs::create_dir_all(session.join("workspace")).unwrap();
-        std::fs::create_dir_all(session.join("system")).unwrap();
-        std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
-        let sched = AutoSnapshotScheduler::new(session.clone(), 10, 12, Duration::from_secs(300));
-        (tmp, session, sched)
-    }
-
-    #[test]
-    fn tool_names_match_defs() {
-        let defs = file_tool_defs();
-        assert_eq!(defs.len(), FILE_TOOL_NAMES.len());
-        for def in &defs {
-            assert!(
-                FILE_TOOL_NAMES.contains(&def.namespaced_name.as_str()),
-                "def name {:?} not in FILE_TOOL_NAMES",
-                def.namespaced_name,
-            );
-        }
-    }
-
-    #[test]
-    fn validate_path_rejects_traversal() {
-        assert!(normalize_path("../etc/passwd").is_err());
-        assert!(normalize_path("foo/../../bar").is_err());
-    }
-
-    #[test]
-    fn validate_path_rejects_absolute() {
-        assert!(normalize_path("/etc/passwd").is_err());
-    }
-
-    #[test]
-    fn validate_path_rejects_empty() {
-        assert!(normalize_path("").is_err());
-    }
-
-    #[test]
-    fn validate_path_rejects_null_bytes() {
-        assert!(normalize_path("foo\0bar").is_err());
-    }
-
-    #[test]
-    fn validate_path_accepts_normal() {
-        assert!(normalize_path("project/app.js").is_ok());
-        assert!(normalize_path("a.txt").is_ok());
-    }
-
-    #[test]
-    fn normalize_path_strips_root_prefix() {
-        assert_eq!(normalize_path("/root/hello.txt").unwrap(), "hello.txt");
-        assert_eq!(normalize_path("/root/sub/file.py").unwrap(), "sub/file.py");
-        assert_eq!(normalize_path("hello.txt").unwrap(), "hello.txt");
-    }
-
-    #[test]
-    fn parse_checkpoint_valid() {
-        assert_eq!(parse_checkpoint("cp-0"), Ok(0));
-        assert_eq!(parse_checkpoint("cp-11"), Ok(11));
-    }
-
-    #[test]
-    fn parse_checkpoint_invalid() {
-        assert!(parse_checkpoint("0").is_err());
-        assert!(parse_checkpoint("cp-").is_err());
-        assert!(parse_checkpoint("cp-abc").is_err());
-        assert!(parse_checkpoint("").is_err());
-    }
-
-    #[test]
-    fn list_changed_files_detects_created() {
-        let (_tmp, session, mut sched) = setup();
-
-        // Take baseline snapshot (empty workspace).
-        sched.take_snapshot().unwrap();
-
-        // Create a file after the snapshot.
-        std::fs::write(session.join("workspace/new.txt"), "hello").unwrap();
-
-        let workspace = session.join("workspace");
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
-
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0]["path"], "new.txt");
-        assert_eq!(changes[0]["op"], "created");
-    }
-
-    #[test]
-    fn list_changed_files_detects_modified() {
-        let (_tmp, session, mut sched) = setup();
-
-        std::fs::write(session.join("workspace/file.txt"), "original").unwrap();
-        sched.take_snapshot().unwrap();
-
-        // Modify the file.
-        std::fs::write(session.join("workspace/file.txt"), "modified content that is longer").unwrap();
-
-        let workspace = session.join("workspace");
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
-
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0]["path"], "file.txt");
-        assert_eq!(changes[0]["op"], "modified");
-    }
-
-    #[test]
-    fn list_changed_files_detects_deleted() {
-        let (_tmp, session, mut sched) = setup();
-
-        std::fs::write(session.join("workspace/gone.txt"), "bye").unwrap();
-        sched.take_snapshot().unwrap();
-
-        // Delete the file.
-        std::fs::remove_file(session.join("workspace/gone.txt")).unwrap();
-
-        let workspace = session.join("workspace");
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
-
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0]["path"], "gone.txt");
-        assert_eq!(changes[0]["op"], "deleted");
-    }
-
-    /// Roundtrip test: write a file, snapshot, copy it, delete original,
-    /// revert via snapshots_revert, verify content matches exactly.
-    #[test]
-    fn revert_file_roundtrip_content_preserved() {
-        let (_tmp, session, mut sched) = setup();
-
-        // Write a file with known content.
-        let content = "The quick brown fox jumps over the lazy dog.\nLine 2.\n";
-        std::fs::write(session.join("workspace/important.txt"), content).unwrap();
-
-        // Take a snapshot.
-        sched.take_snapshot().unwrap();
-
-        // Copy the file (proving we can read it).
-        let copied = std::fs::read_to_string(session.join("workspace/important.txt")).unwrap();
-        assert_eq!(copied, content);
-
-        // Delete the original.
-        std::fs::remove_file(session.join("workspace/important.txt")).unwrap();
-        assert!(!session.join("workspace/important.txt").exists());
-
-        // Revert via snapshots_revert.
-        let args = serde_json::json!({"path": "important.txt", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(
-            &args,
-            &sched,
-            &session.join("workspace"),
-            Some(serde_json::json!(1)),
-            None,
-        );
-
-        // Verify success with action and checkpoint fields.
-        assert!(resp.error.is_none(), "snapshots_revert failed: {:?}", resp.error);
-        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let result: Value = serde_json::from_str(&result_text).unwrap();
-        assert_eq!(result["reverted"], true);
-        assert_eq!(result["action"], "restored");
-        assert_eq!(result["checkpoint"], "cp-0");
-
-        // Verify the file is back with exact same content.
-        let recovered = std::fs::read_to_string(session.join("workspace/important.txt")).unwrap();
-        assert_eq!(recovered, content, "recovered content must match original exactly");
-    }
-
-    #[test]
-    fn revert_file_deletes_created_file() {
-        let (_tmp, session, mut sched) = setup();
-
-        // Snapshot with empty workspace.
-        sched.take_snapshot().unwrap();
-
-        // Create a new file.
-        std::fs::write(session.join("workspace/new.txt"), "should be deleted").unwrap();
-
-        // Revert -- file didn't exist in snapshot, so it should be deleted.
-        let args = serde_json::json!({"path": "new.txt", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(
-            &args,
-            &sched,
-            &session.join("workspace"),
-            Some(serde_json::json!(1)),
-            None,
-        );
-
-        assert!(resp.error.is_none());
-        assert!(!session.join("workspace/new.txt").exists());
-
-        // Verify action and checkpoint in response.
-        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let result: Value = serde_json::from_str(&result_text).unwrap();
-        assert_eq!(result["action"], "deleted");
-        assert_eq!(result["checkpoint"], "cp-0");
-    }
-
-    #[test]
-    fn revert_file_rejects_path_traversal() {
-        let (_tmp, session, mut sched) = setup();
-        sched.take_snapshot().unwrap();
-
-        let args = serde_json::json!({"path": "../../../etc/passwd", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(
-            &args,
-            &sched,
-            &session.join("workspace"),
-            Some(serde_json::json!(1)),
-            None,
-        );
-        assert!(resp.error.is_some());
-    }
-
-    #[test]
-    fn revert_file_rejects_invalid_checkpoint() {
-        let (_tmp, session, mut sched) = setup();
-        sched.take_snapshot().unwrap();
-
-        let args = serde_json::json!({"path": "file.txt", "checkpoint": "bad"});
-        let resp = handle_revert_file(
-            &args,
-            &sched,
-            &session.join("workspace"),
-            Some(serde_json::json!(1)),
-            None,
-        );
-        assert!(resp.error.is_some());
-    }
-
-    #[test]
-    fn revert_file_rejects_nonexistent_checkpoint() {
-        let (_tmp, session, sched) = setup();
-        // No snapshots taken.
-        let args = serde_json::json!({"path": "file.txt", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(
-            &args,
-            &sched,
-            &session.join("workspace"),
-            Some(serde_json::json!(1)),
-            None,
-        );
-        assert!(resp.error.is_some());
-    }
-
-    /// File changed 3 times, snapshot after each change, revert all 3 to their
-    /// respective checkpoint, verify each recovered content matches exactly.
-    #[test]
-    fn revert_three_versions_of_same_file() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-        let file = ws.join("evolving.txt");
-
-        // Version 1
-        std::fs::write(&file, "version ONE").unwrap();
-        sched.take_snapshot().unwrap(); // cp-0
-
-        // Version 2
-        std::fs::write(&file, "version TWO -- longer content here").unwrap();
-        sched.take_snapshot().unwrap(); // cp-1
-
-        // Version 3
-        std::fs::write(&file, "version THREE!!!").unwrap();
-        sched.take_snapshot().unwrap(); // cp-2
-
-        // Overwrite with garbage
-        std::fs::write(&file, "CORRUPTED").unwrap();
-
-        // Revert to version 1 (cp-0)
-        let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-        assert!(resp.error.is_none(), "revert to cp-0 failed: {:?}", resp.error);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "version ONE");
-        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let result: Value = serde_json::from_str(&result_text).unwrap();
-        assert_eq!(result["action"], "restored");
-        assert_eq!(result["checkpoint"], "cp-0");
-
-        // Revert to version 2 (cp-1)
-        let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-1"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-        assert!(resp.error.is_none(), "revert to cp-1 failed: {:?}", resp.error);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "version TWO -- longer content here");
-
-        // Revert to version 3 (cp-2)
-        let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-2"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-        assert!(resp.error.is_none(), "revert to cp-2 failed: {:?}", resp.error);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "version THREE!!!");
-    }
-
-    /// File deleted after snapshot, then recovered via revert, content matches.
-    #[test]
-    fn delete_then_recover_via_revert() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-        let file = ws.join("precious.txt");
-
-        let content = "This file is very important.\nDo not delete.\n";
-        std::fs::write(&file, content).unwrap();
-        sched.take_snapshot().unwrap(); // cp-0
-
-        // Copy it (proving we can read it).
-        let copied = std::fs::read_to_string(&file).unwrap();
-        assert_eq!(copied, content);
-
-        // Delete
-        std::fs::remove_file(&file).unwrap();
-        assert!(!file.exists());
-
-        // Recover
-        let args = serde_json::json!({"path": "precious.txt", "checkpoint": "cp-0"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-        assert!(resp.error.is_none());
-
-        // Verify exact content
-        let recovered = std::fs::read_to_string(&file).unwrap();
-        assert_eq!(recovered, content, "recovered content must match original exactly");
-
-        // Verify response fields
-        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let result: Value = serde_json::from_str(&result_text).unwrap();
-        assert_eq!(result["action"], "restored");
-        assert_eq!(result["checkpoint"], "cp-0");
-    }
-
-    /// list_changed_files shows all 3 file operations across snapshots.
-    #[test]
-    fn list_changed_files_shows_create_modify_delete() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        // Create 3 files, snapshot.
-        std::fs::write(ws.join("keep.txt"), "original").unwrap();
-        std::fs::write(ws.join("modify_me.txt"), "before").unwrap();
-        std::fs::write(ws.join("delete_me.txt"), "goodbye").unwrap();
-        sched.take_snapshot().unwrap(); // cp-0
-
-        // Modify one, delete one, create a new one.
-        std::fs::write(ws.join("modify_me.txt"), "after -- different length").unwrap();
-        std::fs::remove_file(ws.join("delete_me.txt")).unwrap();
-        std::fs::write(ws.join("brand_new.txt"), "hello").unwrap();
-
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
-
-        // Should see: brand_new.txt (created), modify_me.txt (modified), delete_me.txt (deleted)
-        // keep.txt should NOT appear (unchanged).
-        let paths: Vec<&str> = changes.iter().map(|c| c["path"].as_str().unwrap()).collect();
-        assert!(paths.contains(&"brand_new.txt"), "missing created file: {paths:?}");
-        assert!(paths.contains(&"modify_me.txt"), "missing modified file: {paths:?}");
-        assert!(paths.contains(&"delete_me.txt"), "missing deleted file: {paths:?}");
-        assert!(!paths.contains(&"keep.txt"), "unchanged file should not appear: {paths:?}");
-
-        // Verify ops
-        let get_op = |name: &str| -> &str {
-            changes.iter().find(|c| c["path"] == name).unwrap()["op"].as_str().unwrap()
-        };
-        assert_eq!(get_op("brand_new.txt"), "created");
-        assert_eq!(get_op("modify_me.txt"), "modified");
-        assert_eq!(get_op("delete_me.txt"), "deleted");
-    }
-
-    /// snapshots_list includes per-snapshot changes and filters empty snapshots.
-    #[test]
-    fn list_snapshots_changes_vs_previous() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        // Create a file and snapshot.
-        std::fs::write(ws.join("hello.txt"), "world").unwrap();
-        sched.take_snapshot().unwrap(); // cp-0
-
-        // Modify the file and snapshot again.
-        std::fs::write(ws.join("hello.txt"), "modified world content").unwrap();
-        sched.take_snapshot().unwrap(); // cp-1
-
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let summary: Value = serde_json::from_str(&text).unwrap();
-        let entries = summary["snapshots"].as_array().unwrap();
-
-        assert_eq!(entries.len(), 2);
-        // Newest first: cp-1, cp-0
-        let cp1_changes = entries[0]["changes"].as_array().unwrap();
-        let cp0_changes = entries[1]["changes"].as_array().unwrap();
-
-        // cp-0: hello.txt is "new" (didn't exist before)
-        assert_eq!(cp0_changes.len(), 1);
-        assert_eq!(cp0_changes[0]["path"], "hello.txt");
-        assert_eq!(cp0_changes[0]["op"], "new");
-
-        // cp-1: hello.txt is "modified" (changed since cp-0)
-        assert_eq!(cp1_changes.len(), 1);
-        assert_eq!(cp1_changes[0]["path"], "hello.txt");
-        assert_eq!(cp1_changes[0]["op"], "modified");
-    }
-
-    /// All snapshots are shown (no empty filtering).
-    #[test]
-    fn list_snapshots_shows_all() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        // Snapshot with empty workspace.
-        sched.take_snapshot().unwrap(); // cp-0 (empty)
-
-        // Create a file and snapshot again.
-        std::fs::write(ws.join("data.txt"), "content").unwrap();
-        sched.take_snapshot().unwrap(); // cp-1
-
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let summary: Value = serde_json::from_str(&text).unwrap();
-        let entries = summary["snapshots"].as_array().unwrap();
-
-        // Both should be present (no filtering).
-        assert_eq!(entries.len(), 2);
-    }
-
-    /// snapshots_revert auto-selects newest snapshot containing the file when
-    /// checkpoint is omitted.
-    #[test]
-    fn revert_file_auto_selects_checkpoint() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        // Create a file and take two snapshots.
-        std::fs::write(ws.join("auto.txt"), "version 1").unwrap();
-        sched.take_snapshot().unwrap(); // cp-0
-
-        std::fs::write(ws.join("auto.txt"), "version 2 is longer").unwrap();
-        sched.take_snapshot().unwrap(); // cp-1
-
-        // Now corrupt the file.
-        std::fs::write(ws.join("auto.txt"), "CORRUPTED").unwrap();
-
-        // Revert without specifying checkpoint -- should pick cp-1 (newest).
-        let args = serde_json::json!({"path": "auto.txt"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-        assert!(resp.error.is_none(), "auto-select revert failed: {:?}", resp.error);
-
-        let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let result: Value = serde_json::from_str(&result_text).unwrap();
-        assert_eq!(result["action"], "restored");
-        assert_eq!(result["checkpoint"], "cp-1");
-        assert_eq!(std::fs::read_to_string(ws.join("auto.txt")).unwrap(), "version 2 is longer");
-    }
-
-    /// snapshots_revert errors when no snapshot contains the file and checkpoint
-    /// is omitted.
-    #[test]
-    fn revert_file_auto_select_no_match() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        // Snapshot empty workspace.
-        sched.take_snapshot().unwrap();
-
-        // Create a file that doesn't exist in any snapshot.
-        std::fs::write(ws.join("orphan.txt"), "data").unwrap();
-
-        let args = serde_json::json!({"path": "orphan.txt"});
-        let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-        assert!(resp.error.is_some());
-        let err_msg = &resp.error.unwrap().message;
-        assert!(err_msg.contains("no snapshot contains this file"), "unexpected error: {err_msg}");
-    }
-
-    // -- Pagination and text table tests (TDD: written before implementation) --
-
-    /// Helper to extract the text content from a JsonRpcResponse.
-    fn extract_text(resp: &JsonRpcResponse) -> String {
-        resp.result.as_ref().unwrap()["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-
-    #[test]
-    fn changes_returns_text_table() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        std::fs::write(ws.join("hello.txt"), "world").unwrap();
-        sched.take_snapshot().unwrap();
-        std::fs::write(ws.join("new.txt"), "created").unwrap();
-
-        let args = serde_json::json!({});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        // Default format is text table, not JSON.
-        assert!(
-            serde_json::from_str::<Vec<Value>>(&text).is_err(),
-            "default response should NOT be a JSON array"
-        );
-        assert!(text.contains("Changed Files"), "missing header: {text}");
-        assert!(text.contains("Path"), "missing Path column: {text}");
-        assert!(text.contains("Op"), "missing Op column: {text}");
-        assert!(text.contains("new.txt"), "missing file entry: {text}");
-        assert!(text.contains("created"), "missing op value: {text}");
-    }
-
-    #[test]
-    fn changes_pagination_truncates_large_output() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        // Take empty snapshot, then create 300 files.
-        sched.take_snapshot().unwrap();
-        for i in 0..300 {
-            std::fs::write(ws.join(format!("file_{i:04}.txt")), format!("content {i}")).unwrap();
-        }
-
-        let args = serde_json::json!({});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        // Response should be bounded by DEFAULT_MAX_LENGTH + header overhead.
-        let max_allowed = super::super::builtin_tools::DEFAULT_MAX_LENGTH as usize + 500;
-        assert!(
-            text.len() <= max_allowed,
-            "response too large: {} chars (max {})",
-            text.len(),
-            max_allowed
-        );
-        // Should indicate pagination is available.
-        assert!(text.contains("start_index="), "missing pagination hint: {text}");
-    }
-
-    #[test]
-    fn changes_pagination_continuation() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        sched.take_snapshot().unwrap();
-        for i in 0..300 {
-            std::fs::write(ws.join(format!("file_{i:04}.txt")), format!("content {i}")).unwrap();
-        }
-
-        // First page.
-        let args = serde_json::json!({});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let page1 = extract_text(&resp);
-
-        // Extract start_index from pagination hint.
-        let idx_str = page1
-            .split("start_index=")
-            .nth(1)
-            .unwrap()
-            .split(|c: char| !c.is_ascii_digit())
-            .next()
-            .unwrap();
-        let next_start: u64 = idx_str.parse().unwrap();
-
-        // Second page.
-        let args = serde_json::json!({"start_index": next_start});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let page2 = extract_text(&resp);
-
-        // Pages should have different content.
-        assert_ne!(page1, page2, "pages should differ");
-        // Page 2 should not re-include the header.
-        assert!(!page2.starts_with("Changed Files"), "page 2 should not repeat the header");
-    }
-
-    #[test]
-    fn changes_custom_max_length() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        sched.take_snapshot().unwrap();
-        for i in 0..20 {
-            std::fs::write(ws.join(format!("f_{i}.txt")), "x").unwrap();
-        }
-
-        let args = serde_json::json!({"max_length": 200});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        // Header + chunk: allow some overhead for the pagination hint itself.
-        assert!(
-            text.len() <= 500,
-            "response should be short with max_length=200, got {} chars",
-            text.len()
-        );
-        assert!(text.contains("start_index="), "should paginate at max_length=200");
-    }
-
-    #[test]
-    fn changes_small_result_no_pagination() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        sched.take_snapshot().unwrap();
-        std::fs::write(ws.join("only.txt"), "small").unwrap();
-
-        let args = serde_json::json!({});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        assert!(!text.contains("start_index="), "should not paginate small results: {text}");
-        assert!(text.contains("only.txt"), "missing file entry: {text}");
-    }
-
-    #[test]
-    fn changes_format_json_returns_raw() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        std::fs::write(ws.join("a.txt"), "original").unwrap();
-        sched.take_snapshot().unwrap();
-        std::fs::write(ws.join("b.txt"), "new").unwrap();
-
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        // format=json should return valid JSON array.
-        let changes: Vec<Value> = serde_json::from_str(&text)
-            .expect("format=json should return valid JSON array");
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0]["path"], "b.txt");
-        assert_eq!(changes[0]["op"], "created");
-    }
-
-    #[test]
-    fn list_returns_text_table() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        std::fs::write(ws.join("hello.txt"), "world").unwrap();
-        sched.take_snapshot().unwrap();
-        std::fs::write(ws.join("hello.txt"), "modified world content").unwrap();
-        sched.take_snapshot().unwrap();
-
-        let args = serde_json::json!({});
-        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        // Default format is text table, not JSON.
-        assert!(
-            serde_json::from_str::<Value>(&text).is_err(),
-            "default response should NOT be JSON"
-        );
-        assert!(text.contains("Snapshots"), "missing header: {text}");
-        assert!(text.contains("Checkpoint"), "missing Checkpoint column: {text}");
-        // Changes should use compact format.
-        assert!(
-            text.contains('+') || text.contains('~'),
-            "changes should use compact +/~ format: {text}"
-        );
-    }
-
-    #[test]
-    fn list_pagination_works() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        // Create many snapshots with files to generate a large response.
-        for i in 0..8 {
-            for j in 0..20 {
-                std::fs::write(ws.join(format!("f_{i}_{j}.txt")), format!("{i}{j}")).unwrap();
-            }
-            sched.take_snapshot().unwrap();
-        }
-
-        let args = serde_json::json!({"max_length": 500});
-        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        assert!(
-            text.len() <= 1000,
-            "response should respect max_length, got {} chars",
-            text.len()
-        );
-        assert!(text.contains("start_index="), "should paginate: {text}");
-    }
-
-    #[test]
-    fn list_format_json_returns_raw() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        std::fs::write(ws.join("a.txt"), "data").unwrap();
-        sched.take_snapshot().unwrap();
-
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-        let text = extract_text(&resp);
-
-        // format=json should return valid JSON.
-        let summary: Value = serde_json::from_str(&text)
-            .expect("format=json should return valid JSON");
-        assert!(summary["snapshots"].is_array());
-    }
-
-    /// Contract test: verifies the exact response shape the frontend depends on.
-    ///
-    /// The frontend (api.ts:listSnapshots) calls callMcpTool('snapshots_list', {format:'json'})
-    /// and parses result.content[0].text as JSON expecting these fields. If this test
-    /// breaks, the snapshot panel will break too.
-    #[test]
-    fn list_format_json_frontend_contract() {
-        let (_tmp, session, mut sched) = setup();
-        let ws = session.join("workspace");
-
-        std::fs::write(ws.join("hello.txt"), "world").unwrap();
-        sched.take_snapshot().unwrap();
-        std::fs::write(ws.join("hello.txt"), "changed").unwrap();
-        sched.take_snapshot().unwrap();
-
-        // Frontend always passes format: "json".
-        let args = serde_json::json!({"format": "json"});
-        let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-
-        // Response must have result.content[0].text.
-        let result = resp.result.as_ref().expect("response must have result");
-        let content = result["content"].as_array().expect("result must have content array");
-        assert!(!content.is_empty(), "content must not be empty");
-        let text = content[0]["text"].as_str().expect("content[0] must have text string");
-
-        // text must be valid JSON with the expected shape.
-        let data: Value = serde_json::from_str(text)
-            .expect("content text must be valid JSON when format=json");
-
-        // Top-level fields the frontend depends on.
-        assert!(data["snapshots"].is_array(), "must have snapshots array");
-        assert!(data["auto_max"].is_number(), "must have auto_max number");
-        assert!(data["manual_max"].is_number(), "must have manual_max number");
-        assert!(data["manual_available"].is_number(), "must have manual_available number");
-
-        // Each snapshot must have the fields SnapshotsTab.svelte reads.
-        let snaps = data["snapshots"].as_array().unwrap();
-        assert!(snaps.len() >= 2, "should have at least 2 snapshots");
-        for snap in snaps {
-            assert!(snap["checkpoint"].is_string(), "snapshot must have checkpoint: {snap}");
-            assert!(snap["slot"].is_number(), "snapshot must have slot: {snap}");
-            assert!(snap["origin"].is_string(), "snapshot must have origin: {snap}");
-            // name and hash can be null.
-            assert!(snap["age"].is_string(), "snapshot must have age: {snap}");
-            assert!(snap["files_count"].is_number(), "snapshot must have files_count: {snap}");
-            assert!(snap["changes"].is_array(), "snapshot must have changes array: {snap}");
-        }
-    }
-
-    // -------------------------------------------------------------------
-    // Symlink handling in collect_files
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn collect_files_includes_symlinks() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("real.txt"), "data").unwrap();
-        std::os::unix::fs::symlink("real.txt", dir.path().join("link.txt")).unwrap();
-
-        let files = collect_files(dir.path());
-        assert!(files.contains_key("real.txt"), "regular file must appear");
-        assert!(files.contains_key("link.txt"), "symlink must appear");
-        assert_eq!(files.len(), 2);
-        assert!(!files["real.txt"].is_symlink);
-        assert!(files["link.txt"].is_symlink);
-    }
-
-    #[test]
-    fn collect_files_does_not_follow_symlinks_for_size() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = "x".repeat(1000);
-        std::fs::write(dir.path().join("big.txt"), &data).unwrap();
-        std::os::unix::fs::symlink("big.txt", dir.path().join("link.txt")).unwrap();
-
-        let files = collect_files(dir.path());
-        let link_size = files["link.txt"].size;
-        // Symlink size is the length of the target path, not the target file size.
-        // "big.txt" is 7 bytes as a symlink target.
-        assert!(link_size < 100, "symlink size should be small (target path), not {link_size}");
-    }
-}
+mod tests;

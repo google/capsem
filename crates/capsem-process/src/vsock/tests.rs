@@ -6,32 +6,42 @@ use super::*;
 
 #[test]
 fn classify_terminal_port() {
-    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_TERMINAL), VsockPortKind::Terminal);
+    assert_eq!(
+        classify_vsock_port(capsem_core::VSOCK_PORT_TERMINAL),
+        VsockPortKind::Terminal
+    );
 }
 
 #[test]
 fn classify_control_port() {
-    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_CONTROL), VsockPortKind::Control);
+    assert_eq!(
+        classify_vsock_port(capsem_core::VSOCK_PORT_CONTROL),
+        VsockPortKind::Control
+    );
 }
 
 #[test]
 fn classify_sni_proxy_port() {
-    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_SNI_PROXY), VsockPortKind::SniProxy);
-}
-
-#[test]
-fn classify_mcp_gateway_port() {
-    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_MCP_GATEWAY), VsockPortKind::McpGateway);
+    assert_eq!(
+        classify_vsock_port(capsem_core::VSOCK_PORT_SNI_PROXY),
+        VsockPortKind::SniProxy
+    );
 }
 
 #[test]
 fn classify_exec_port() {
-    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_EXEC), VsockPortKind::Exec);
+    assert_eq!(
+        classify_vsock_port(capsem_core::VSOCK_PORT_EXEC),
+        VsockPortKind::Exec
+    );
 }
 
 #[test]
 fn classify_lifecycle_port() {
-    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_LIFECYCLE), VsockPortKind::Lifecycle);
+    assert_eq!(
+        classify_vsock_port(capsem_core::VSOCK_PORT_LIFECYCLE),
+        VsockPortKind::Lifecycle
+    );
 }
 
 #[test]
@@ -69,14 +79,18 @@ fn connection_reset_is_retryable() {
 }
 
 #[test]
-fn unexpected_eof_not_retryable() {
-    // UnexpectedEof is intentionally NOT retryable: it signals the guest
-    // wedged mid-handshake (e.g. kernel I/O failure on the overlay), not
-    // the Apple VZ half-open vsock case. Retrying would just burn the
-    // readiness budget against a genuinely broken guest.
+fn unexpected_eof_is_retryable() {
+    // UnexpectedEof during handshake is the dominant failure mode under
+    // heavy suspend/resume churn: Apple VZ tears the post-restoreState
+    // vsock conn down between guest frames, so the host's read_exact hits
+    // EOF mid-frame. This is the same Apple VZ half-open fingerprint as
+    // BrokenPipe / ConnectionReset, just with a clean rather than hard
+    // close. Retrying lets the guest's RECONNECT_TIMEOUT_SECS=30 reconnect
+    // loop hand us a fresh terminal+control pair within the
+    // HANDSHAKE_RETRY_MAX budget.
     let io_err = std::io::Error::from(std::io::ErrorKind::UnexpectedEof);
     let err: anyhow::Error = anyhow::Error::new(io_err).context("BootReady read failed");
-    assert!(!is_retryable_handshake_error(&err));
+    assert!(is_retryable_handshake_error(&err));
 }
 
 #[test]
@@ -100,7 +114,8 @@ fn not_found_not_retryable() {
 async fn collect_returns_terminal_and_control_in_any_order() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     tx.send(make_conn(capsem_core::VSOCK_PORT_CONTROL)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL))
+        .unwrap();
 
     let mut deferred = Vec::new();
     let (terminal, control) = collect_terminal_control_pair(&mut rx, &mut deferred)
@@ -112,26 +127,29 @@ async fn collect_returns_terminal_and_control_in_any_order() {
 }
 
 #[tokio::test]
-async fn collect_parks_sni_and_mcp_as_deferred() {
+async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_SNI_PROXY)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_MCP_GATEWAY)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_SNI_PROXY))
+        .unwrap();
+    tx.send(make_conn(5003)).unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL))
+        .unwrap();
     tx.send(make_conn(capsem_core::VSOCK_PORT_CONTROL)).unwrap();
 
     let mut deferred = Vec::new();
     collect_terminal_control_pair(&mut rx, &mut deferred)
         .await
         .expect("pair collected");
-    assert_eq!(deferred.len(), 2);
+    assert_eq!(deferred.len(), 1);
     assert_eq!(deferred[0].port, capsem_core::VSOCK_PORT_SNI_PROXY);
-    assert_eq!(deferred[1].port, capsem_core::VSOCK_PORT_MCP_GATEWAY);
+    assert_eq!(classify_vsock_port(5003), VsockPortKind::Unknown);
 }
 
 #[tokio::test]
 async fn collect_errors_when_channel_closes_early() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL))
+        .unwrap();
     drop(tx); // close before control arrives
 
     let mut deferred = Vec::new();
@@ -155,7 +173,7 @@ async fn collect_errors_when_channel_closes_early() {
 
 #[tokio::test]
 async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
-    use crate::job_store::{JobStore, JobResult};
+    use crate::job_store::{JobResult, JobStore};
     use capsem_proto::GuestToHost;
     use std::sync::Arc;
     use tokio::sync::oneshot;
@@ -186,8 +204,13 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
 
     let result = rx.await.expect("job oneshot must resolve");
     match result {
-        JobResult::Exec { stdout, exit_code, .. } => {
-            assert!(stdout.is_empty(), "no-output command should return empty stdout");
+        JobResult::Exec {
+            stdout, exit_code, ..
+        } => {
+            assert!(
+                stdout.is_empty(),
+                "no-output command should return empty stdout"
+            );
             assert_eq!(exit_code, 0);
         }
         other => panic!("expected Exec result, got {other:?}"),

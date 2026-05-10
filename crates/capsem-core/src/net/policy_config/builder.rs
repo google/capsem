@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use super::types::*;
 use super::loader::load_settings_files;
 use super::resolver::resolve_settings;
+use super::types::*;
 use crate::net::domain_policy::{Action, DomainPolicy};
 use crate::net::http_policy::{HttpPolicy, HttpRule};
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Translation: settings -> policy objects
@@ -138,7 +138,8 @@ pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
 
     // Block beats allow: any domain in custom_block goes to block_list only.
     for d in &custom_allow_domains {
-        if corp_blocked_matches(d, &corp_blocked) || corp_blocked_matches(d, &custom_block_domains) {
+        if corp_blocked_matches(d, &corp_blocked) || corp_blocked_matches(d, &custom_block_domains)
+        {
             block_list.push(d.clone());
         } else {
             allow_list.push(d.clone());
@@ -269,7 +270,11 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
                 _ => None,
             };
             if let Some(var_name) = bool_env {
-                let val = if s.effective_value.as_bool().unwrap_or(false) { "1" } else { "0" };
+                let val = if s.effective_value.as_bool().unwrap_or(false) {
+                    "1"
+                } else {
+                    "0"
+                };
                 env.insert(var_name.to_string(), val.to_string());
             }
         }
@@ -301,7 +306,11 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         // Boot files: File values with non-empty content.
         // Always inject if non-empty -- the allow toggle controls network
         // policy, not file availability.
-        if let SettingValue::File { path: file_path, content: file_content } = &s.effective_value {
+        if let SettingValue::File {
+            path: file_path,
+            content: file_content,
+        } = &s.effective_value
+        {
             if !file_content.is_empty() {
                 if let Err(e) = validate_file_path(file_path) {
                     tracing::warn!("skipping boot file: {e}");
@@ -455,10 +464,7 @@ pub(super) fn inject_mcp_servers_json(json_str: &str, servers: &[McpServerDef]) 
         for s in servers {
             if s.transport == McpTransport::Stdio {
                 if let Some(cmd) = &s.command {
-                    server_map.insert(
-                        s.key.clone(),
-                        serde_json::json!({"command": cmd}),
-                    );
+                    server_map.insert(s.key.clone(), serde_json::json!({"command": cmd}));
                 }
             }
         }
@@ -536,9 +542,7 @@ pub(super) fn inject_api_key_approval(json_str: &str, api_key: &str) -> String {
         .entry("customApiKeyResponses")
         .or_insert_with(|| serde_json::json!({}));
     if let Some(r) = responses.as_object_mut() {
-        let approved = r
-            .entry("approved")
-            .or_insert_with(|| serde_json::json!([]));
+        let approved = r.entry("approved").or_insert_with(|| serde_json::json!([]));
         if let Some(arr) = approved.as_array_mut() {
             if !arr.iter().any(|v| v.as_str() == Some(&key_suffix)) {
                 arr.push(serde_json::json!(key_suffix));
@@ -602,6 +606,7 @@ pub struct MergedPolicies {
     pub domain: DomainPolicy,
     pub http: HttpPolicy,
     pub mcp: crate::mcp::policy::McpPolicy,
+    pub policy: PolicyConfig,
     pub guest: GuestConfig,
     pub vm: VmSettings,
 }
@@ -612,11 +617,13 @@ impl MergedPolicies {
         let resolved = resolve_settings(user, corp);
         let mcp_user = user.mcp.clone().unwrap_or_default();
         let mcp_corp = corp.mcp.clone().unwrap_or_default();
+        let policy = PolicyConfig::merged(&user.policy, &corp.policy);
         Self {
             network: build_network_policy(&resolved),
             domain: settings_to_domain_policy(&resolved),
             http: settings_to_http_policy(&resolved),
             mcp: mcp_user.to_policy(&mcp_corp),
+            policy,
             guest: settings_to_guest_config(&resolved),
             vm: settings_to_vm_settings(&resolved),
         }
@@ -787,7 +794,7 @@ pub fn load_merged_policy() -> HttpPolicy {
 /// Build a `DomainPolicy` from merged settings.
 ///
 /// Convenience wrapper matching the `load_merged_network_policy()` pattern.
-/// Used by the MCP gateway to check built-in HTTP tool domains.
+/// Used by built-in MCP HTTP tools to check domains.
 pub fn load_merged_domain_policy() -> DomainPolicy {
     MergedPolicies::from_disk().domain
 }
@@ -923,10 +930,7 @@ mod tests {
 
     #[test]
     fn corp_blocked_multiple_patterns() {
-        let blocked = vec![
-            "evil.com".to_string(),
-            "*.bad.org".to_string(),
-        ];
+        let blocked = vec!["evil.com".to_string(), "*.bad.org".to_string()];
         assert!(corp_blocked_matches("evil.com", &blocked));
         assert!(corp_blocked_matches("sub.bad.org", &blocked));
         assert!(!corp_blocked_matches("good.com", &blocked));
@@ -945,9 +949,11 @@ mod tests {
 
     #[test]
     fn domain_policy_allow_read_default_allow() {
-        let settings = vec![
-            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(true)),
-        ];
+        let settings = vec![make_setting(
+            "security.web.allow_read",
+            SettingType::Bool,
+            SettingValue::Bool(true),
+        )];
         let policy = settings_to_domain_policy(&settings);
         assert_eq!(policy.evaluate("unknown.com").0, Action::Allow);
     }
@@ -956,7 +962,11 @@ mod tests {
     fn domain_policy_bool_toggle_adds_domains() {
         let settings = vec![
             make_bool_setting("ai.anthropic.allow", true, vec!["api.anthropic.com".into()]),
-            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(false)),
+            make_setting(
+                "security.web.allow_read",
+                SettingType::Bool,
+                SettingValue::Bool(false),
+            ),
         ];
         let policy = settings_to_domain_policy(&settings);
         assert_eq!(policy.evaluate("api.anthropic.com").0, Action::Allow);
@@ -965,8 +975,16 @@ mod tests {
     #[test]
     fn domain_policy_bool_toggle_off_blocks_domains() {
         let settings = vec![
-            make_bool_setting("ai.anthropic.allow", false, vec!["api.anthropic.com".into()]),
-            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(false)),
+            make_bool_setting(
+                "ai.anthropic.allow",
+                false,
+                vec!["api.anthropic.com".into()],
+            ),
+            make_setting(
+                "security.web.allow_read",
+                SettingType::Bool,
+                SettingValue::Bool(false),
+            ),
         ];
         let policy = settings_to_domain_policy(&settings);
         assert_eq!(policy.evaluate("api.anthropic.com").0, Action::Deny);
@@ -975,9 +993,21 @@ mod tests {
     #[test]
     fn domain_policy_custom_block_beats_allow() {
         let settings = vec![
-            make_setting("security.web.custom_allow", SettingType::Text, SettingValue::Text("example.com".into())),
-            make_setting("security.web.custom_block", SettingType::Text, SettingValue::Text("example.com".into())),
-            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(true)),
+            make_setting(
+                "security.web.custom_allow",
+                SettingType::Text,
+                SettingValue::Text("example.com".into()),
+            ),
+            make_setting(
+                "security.web.custom_block",
+                SettingType::Text,
+                SettingValue::Text("example.com".into()),
+            ),
+            make_setting(
+                "security.web.allow_read",
+                SettingType::Bool,
+                SettingValue::Bool(true),
+            ),
         ];
         let policy = settings_to_domain_policy(&settings);
         assert_eq!(policy.evaluate("example.com").0, Action::Deny);
@@ -986,8 +1016,16 @@ mod tests {
     #[test]
     fn domain_policy_custom_allow_works() {
         let settings = vec![
-            make_setting("security.web.custom_allow", SettingType::Text, SettingValue::Text("allowed.com".into())),
-            make_setting("security.web.allow_read", SettingType::Bool, SettingValue::Bool(false)),
+            make_setting(
+                "security.web.custom_allow",
+                SettingType::Text,
+                SettingValue::Text("allowed.com".into()),
+            ),
+            make_setting(
+                "security.web.allow_read",
+                SettingType::Bool,
+                SettingValue::Bool(false),
+            ),
         ];
         let policy = settings_to_domain_policy(&settings);
         assert_eq!(policy.evaluate("allowed.com").0, Action::Allow);
@@ -1020,9 +1058,11 @@ mod tests {
 
     #[test]
     fn http_policy_log_bodies_setting() {
-        let settings = vec![
-            make_setting("vm.resources.log_bodies", SettingType::Bool, SettingValue::Bool(true)),
-        ];
+        let settings = vec![make_setting(
+            "vm.resources.log_bodies",
+            SettingType::Bool,
+            SettingValue::Bool(true),
+        )];
         let policy = settings_to_http_policy(&settings);
         assert!(policy.log_bodies);
     }
@@ -1035,9 +1075,11 @@ mod tests {
 
     #[test]
     fn http_policy_max_body_capture_custom() {
-        let settings = vec![
-            make_setting("vm.resources.max_body_capture", SettingType::Number, SettingValue::Number(8192)),
-        ];
+        let settings = vec![make_setting(
+            "vm.resources.max_body_capture",
+            SettingType::Number,
+            SettingValue::Number(8192),
+        )];
         let policy = settings_to_http_policy(&settings);
         assert_eq!(policy.max_body_capture, 8192);
     }

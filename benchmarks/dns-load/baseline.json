@@ -1,0 +1,72 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1778181145.1635518,
+  "hostname": "bench-vm",
+  "dns_load": {
+    "version": "1.0",
+    "qname": "api.openai.com",
+    "qtype": 1,
+    "concurrency_levels": [
+      {
+        "concurrency": 1,
+        "duration_s": 10.0,
+        "total_requests": 35565,
+        "errors": 0,
+        "rps": 3556.5,
+        "p50_ms": 0.26404200000129663,
+        "p95_ms": 0.33425000000164573,
+        "p99_ms": 0.49674988000021025,
+        "p999_ms": 1.0917131879981583,
+        "decision_distribution": {
+          "allowed": 35565
+        },
+        "rss_peak_mb": 25.375
+      },
+      {
+        "concurrency": 10,
+        "duration_s": 10.0,
+        "total_requests": 129285,
+        "errors": 0,
+        "rps": 12928.5,
+        "p50_ms": 0.7444169999999417,
+        "p95_ms": 0.9850000000000136,
+        "p99_ms": 1.142484720003268,
+        "p999_ms": 1.4999120000002901,
+        "decision_distribution": {
+          "allowed": 129285
+        },
+        "rss_peak_mb": 38.16015625
+      },
+      {
+        "concurrency": 50,
+        "duration_s": 10.0,
+        "total_requests": 124250,
+        "errors": 0,
+        "rps": 12425.0,
+        "p50_ms": 3.970750000000578,
+        "p95_ms": 4.472106100001127,
+        "p99_ms": 4.91456291000155,
+        "p999_ms": 7.731596334000267,
+        "decision_distribution": {
+          "allowed": 124250
+        },
+        "rss_peak_mb": 47.7421875
+      },
+      {
+        "concurrency": 200,
+        "duration_s": 10.0,
+        "total_requests": 114821,
+        "errors": 0,
+        "rps": 11482.1,
+        "p50_ms": 16.463749999999777,
+        "p95_ms": 20.785166000010236,
+        "p99_ms": 26.73422500000413,
+        "p999_ms": 39.154577439996835,
+        "decision_distribution": {
+          "allowed": 114821
+        },
+        "rss_peak_mb": 50.8203125
+      }
+    ]
+  }
+}

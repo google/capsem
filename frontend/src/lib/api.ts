@@ -1,5 +1,6 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
+import { recordWsEvent } from './tauri-log';
 import type {
   StatusResponse,
   TokenResponse,
@@ -17,7 +18,9 @@ import type {
   SettingsResponse,
   SecurityPreset,
   ConfigIssue,
+  PolicyRuleConfig,
 } from './types/settings';
+import { policyRuleKey, policyRuleNameFromParts } from './models/settings-model';
 import type {
   DownloadProgress,
   McpServerInfo,
@@ -390,6 +393,9 @@ export function connectTerminal(id: string) {
   };
   _termWs.onmessage = (ev) => {
     const data = Array.from(new Uint8Array(ev.data as ArrayBuffer));
+    // T5/F3: feed __capsemDebug.lastWsEvents ring buffer (no-op in
+    // production unless ?debug=1 set installs the global).
+    recordWsEvent({ kind: 'message', bytes: data.length, ts: Date.now() });
     if (_termWaiter) {
       const w = _termWaiter;
       _termWaiter = null;
@@ -399,6 +405,7 @@ export function connectTerminal(id: string) {
     }
   };
   _termWs.onclose = () => {
+    recordWsEvent({ kind: 'close', ts: Date.now() });
     _termWs = null;
   };
 }
@@ -623,7 +630,20 @@ function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
     }
   }
   walk(settings.tree);
+  for (const rule of Object.values(settings.policy?.mcp ?? {})) {
+    const tool = policyToolName(rule);
+    if (!tool) continue;
+    if (rule.decision === 'allow' || rule.decision === 'ask' || rule.decision === 'block') {
+      policy.tool_permissions[tool] = rule.decision;
+    }
+  }
   return policy;
+}
+
+function policyToolName(rule: PolicyRuleConfig): string | null {
+  if (rule.on !== 'mcp.request') return null;
+  const match = rule.if.match(/tool\.name\s*==\s*["']([^"']+)["']/);
+  return match?.[1] ?? null;
 }
 
 /** Enable/disable an MCP server via settings. */
@@ -668,7 +688,19 @@ export async function setMcpDefaultPermission(permission: string): Promise<void>
 
 /** Set a per-tool MCP permission via settings. */
 export async function setMcpToolPermission(tool: string, permission: string): Promise<void> {
-  await saveSettings({ [`mcp.policy.tools.${tool}`]: permission });
+  const decision = permission === 'warn' ? 'ask' : permission;
+  if (decision !== 'allow' && decision !== 'ask' && decision !== 'block') {
+    throw new Error(`Unsupported MCP policy decision: ${permission}`);
+  }
+  const ruleName = policyRuleNameFromParts(['tool', tool]);
+  const rule: PolicyRuleConfig = {
+    on: 'mcp.request',
+    if: `method == "tools/call" && tool.name == "${tool.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
+    decision,
+    priority: 500,
+    reason: `MCP tool ${tool} set from settings UI`,
+  };
+  await saveSettings({ [policyRuleKey('mcp', ruleName)]: rule });
 }
 
 // -- MCP runtime --
@@ -831,4 +863,3 @@ export async function uploadFile(id: string, path: string, content: Blob | strin
   }
   return await resp.json();
 }
-

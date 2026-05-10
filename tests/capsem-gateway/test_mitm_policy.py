@@ -57,14 +57,22 @@ def test_mitm_policy_telemetry(service_env, client):
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             cursor = conn.execute(
-                "SELECT domain, decision FROM net_events WHERE domain = ?",
+                "SELECT qname, decision, rcode FROM dns_events WHERE qname = ?",
                 (blocked_domain,),
             )
             row = cursor.fetchone()
-            assert row is not None, f"No net_event found for {blocked_domain}"
-            # Decision should be 'denied', 'blocked', or 'error' (if it failed due to block)
-            assert row[1] in ("denied", "blocked", "error"), f"Expected non-allowed decision, got: {row[1]}"
-            assert row[1] != "allowed", f"Domain {blocked_domain} should not be allowed"
+            assert row is not None, f"No dns_event found for {blocked_domain}"
+            assert row[1] == "denied", f"Expected denied DNS decision, got: {row[1]}"
+            assert row[2] == 3, f"Expected NXDOMAIN rcode=3, got: {row[2]}"
+
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM net_events WHERE domain = ? AND decision = 'allowed'",
+                (blocked_domain,),
+            )
+            allowed_count = cursor.fetchone()[0]
+            assert allowed_count == 0, (
+                f"Domain {blocked_domain} should not have allowed net_events"
+            )
         finally:
             conn.close()
             

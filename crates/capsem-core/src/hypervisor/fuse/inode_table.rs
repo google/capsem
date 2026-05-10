@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 
 pub struct InodeEntry {
     pub host_path: PathBuf,
@@ -26,18 +26,30 @@ pub struct InodeTable {
 impl InodeTable {
     /// Create an empty sentinel table (placeholder after state transfer to worker).
     pub fn empty() -> Self {
-        Self { entries: HashMap::new(), next_ino: 2, root_canonical: PathBuf::new() }
+        Self {
+            entries: HashMap::new(),
+            next_ino: 2,
+            root_canonical: PathBuf::new(),
+        }
     }
 
     pub fn new(root_path: &Path) -> Result<Self> {
-        let root_canonical = root_path.canonicalize()
+        let root_canonical = root_path
+            .canonicalize()
             .with_context(|| format!("canonicalize VirtioFS root: {}", root_path.display()))?;
         let mut entries = HashMap::new();
-        entries.insert(1, InodeEntry {
-            host_path: root_canonical.clone(),
-            refcount: u64::MAX / 2,
-        });
-        Ok(Self { entries, next_ino: 2, root_canonical })
+        entries.insert(
+            1,
+            InodeEntry {
+                host_path: root_canonical.clone(),
+                refcount: u64::MAX / 2,
+            },
+        );
+        Ok(Self {
+            entries,
+            next_ino: 2,
+            root_canonical,
+        })
     }
 
     pub fn get(&self, ino: u64) -> Option<&PathBuf> {
@@ -76,15 +88,20 @@ impl InodeTable {
 
         let ino = self.next_ino;
         self.next_ino += 1;
-        self.entries.insert(ino, InodeEntry {
-            host_path: canonical,
-            refcount: 1,
-        });
+        self.entries.insert(
+            ino,
+            InodeEntry {
+                host_path: canonical,
+                refcount: 1,
+            },
+        );
         Some(ino)
     }
 
     pub fn forget(&mut self, ino: u64, nlookup: u64) {
-        if ino <= 1 { return; }
+        if ino <= 1 {
+            return;
+        }
         let remove = if let Some(entry) = self.entries.get_mut(&ino) {
             entry.refcount = entry.refcount.saturating_sub(nlookup);
             entry.refcount == 0
@@ -188,55 +205,79 @@ mod tests {
 
     // Path traversal security (adversarial)
 
-    #[test] fn rejects_dotdot() {
+    #[test]
+    fn rejects_dotdot() {
         let dir = temp_share("path-dotdot");
         assert!(InodeTable::new(&dir).unwrap().lookup(1, b"..").is_none());
     }
 
-    #[test] fn rejects_dot() {
+    #[test]
+    fn rejects_dot() {
         let dir = temp_share("path-dot");
         assert!(InodeTable::new(&dir).unwrap().lookup(1, b".").is_none());
     }
 
-    #[test] fn rejects_slash() {
+    #[test]
+    fn rejects_slash() {
         let dir = temp_share("path-slash");
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("sub/file.txt"), b"data").unwrap();
-        assert!(InodeTable::new(&dir).unwrap().lookup(1, b"sub/file.txt").is_none());
+        assert!(InodeTable::new(&dir)
+            .unwrap()
+            .lookup(1, b"sub/file.txt")
+            .is_none());
     }
 
-    #[test] fn rejects_null() {
+    #[test]
+    fn rejects_null() {
         let dir = temp_share("path-null");
-        assert!(InodeTable::new(&dir).unwrap().lookup(1, b"file\0.txt").is_none());
+        assert!(InodeTable::new(&dir)
+            .unwrap()
+            .lookup(1, b"file\0.txt")
+            .is_none());
     }
 
-    #[test] fn rejects_empty() {
+    #[test]
+    fn rejects_empty() {
         let dir = temp_share("path-empty");
         assert!(InodeTable::new(&dir).unwrap().lookup(1, b"").is_none());
     }
 
-    #[test] fn rejects_symlink_escape() {
+    #[test]
+    fn rejects_symlink_escape() {
         let dir = temp_share("path-symlink-escape");
         std::os::unix::fs::symlink("/etc/passwd", dir.join("escape")).unwrap();
-        assert!(InodeTable::new(&dir).unwrap().lookup(1, b"escape").is_none());
+        assert!(InodeTable::new(&dir)
+            .unwrap()
+            .lookup(1, b"escape")
+            .is_none());
     }
 
-    #[test] fn rejects_symlink_chain_escape() {
+    #[test]
+    fn rejects_symlink_chain_escape() {
         let dir = temp_share("path-chain-escape");
         std::os::unix::fs::symlink("/tmp", dir.join("link")).unwrap();
         assert!(InodeTable::new(&dir).unwrap().lookup(1, b"link").is_none());
     }
 
-    #[test] fn allows_regular_file() {
+    #[test]
+    fn allows_regular_file() {
         let dir = temp_share("path-regular");
         std::fs::write(dir.join("ok.txt"), b"fine").unwrap();
-        assert!(InodeTable::new(&dir).unwrap().lookup(1, b"ok.txt").is_some());
+        assert!(InodeTable::new(&dir)
+            .unwrap()
+            .lookup(1, b"ok.txt")
+            .is_some());
     }
 
-    #[test] fn allows_dotfile() {
+    #[test]
+    fn allows_dotfile() {
         let dir = temp_share("path-dotfile");
         std::fs::write(dir.join(".hidden"), b"secret").unwrap();
-        assert!(InodeTable::new(&dir).unwrap().lookup(1, b".hidden").is_some());
+        assert!(InodeTable::new(&dir)
+            .unwrap()
+            .lookup(1, b".hidden")
+            .is_some());
     }
 
     #[test]

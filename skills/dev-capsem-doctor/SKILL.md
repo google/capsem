@@ -29,7 +29,7 @@ just run "capsem-doctor -v"           # Extra verbose
 | `test_workflows.py` | Text write/read, JSON roundtrip (Python + Node), shell pipes, large file (10MB) |
 | `test_ai_cli.py` | claude, gemini, codex installed and executable without crashing |
 | `test_virtiofs.py` | VirtioFS root mount, ext4 loopback upper, loop device active, workspace write/read/large file/subdir, system overlay writable, pip install works, file delete+recreate (skipped in block mode) |
-| `test_mcp.py` | MCP gateway tool routing, domain blocking via MCP |
+| `test_mcp.py` | Guest MCP endpoint tool routing, domain blocking via MCP |
 | `test_injection.py` | Security injection tests |
 | `conftest.py` | Test infrastructure (auto-skip outside VM, `run()` helper, output dir fixture) |
 

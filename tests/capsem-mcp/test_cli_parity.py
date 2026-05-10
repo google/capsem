@@ -44,12 +44,18 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_mcp_tools":   "mcp tools",
     "capsem_mcp_call":    "mcp call",
 
+    # File transfer
+    "capsem_read_file":       "cp",
+    "capsem_write_file":      "cp",
+
     # MCP-only: bridges / AI-caller helpers with no CLI analog
-    "capsem_read_file":       (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
-    "capsem_write_file":      (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
     "capsem_inspect":         (None, "SQL query tool for AI callers; CLI users `sqlite3` the session DB directly"),
     "capsem_inspect_schema":  (None, "paired with capsem_inspect; AI callers need schemas before querying"),
     "capsem_service_logs":    (None, "no CLI equivalent yet -- candidate for `capsem service logs`"),
+    "capsem_panics":          (None, "AI-facing host triage helper; CLI users inspect logs/support bundles directly"),
+    "capsem_triage":          (None, "AI-facing host triage helper; CLI users inspect logs/support bundles directly"),
+    "capsem_host_logs":       (None, "AI-facing host log reader; CLI users inspect ~/.capsem/run logs directly"),
+    "capsem_timeline":        (None, "AI-facing telemetry correlation view; no CLI equivalent yet"),
 
     # Known drift -- possible cleanup candidate
     "capsem_stop":            (None, "MCP-only -- CLI expresses stop via suspend (persistent) or delete (ephemeral). Consider removing."),
@@ -71,6 +77,7 @@ CLI_ONLY: dict[str, str] = {
     "status":       "service + asset health; prints a human table",
     "start":        "start the background service daemon",
     "stop":         "stop the background service daemon",
+    "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
 
     # MCP sub-namespace: not every entry has a tool
     "mcp policy":   "read-only policy dump; AI callers don't need it",
@@ -82,7 +89,7 @@ CLI_ONLY: dict[str, str] = {
 # Source parsers
 # ---------------------------------------------------------------------------
 
-_MCP_TOOL_RE = re.compile(r'#\[tool\(name\s*=\s*"(?P<name>capsem_[a-z_]+)"')
+_MCP_TOOL_RE = re.compile(r'#\[tool\(\s*name\s*=\s*"(?P<name>capsem_[a-z_]+)"')
 
 
 def parse_mcp_tools() -> set[str]:

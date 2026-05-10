@@ -11,39 +11,89 @@ sidebar:
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just run` | Cross-compile guest + repack initrd + build host + codesign + boot VM | ~10s |
-| `just run "CMD"` | Same, but run CMD inside the VM and exit | ~10s |
-| `just dev` | Hot-reloading Tauri app (frontend + Rust, full desktop app) | continuous |
-| `just ui` | Frontend-only dev server with mock data (no VM needed) | continuous |
+| `just shell` | Build/sign as needed, boot a temporary VM, and attach a shell | ~10s after first build |
+| `just exec "CMD"` | Run a command in a fresh temporary VM, then destroy it | ~10s after first build |
+| `just run-service` | Start or reuse the daemon service | continuous |
+| `just ui` | Tauri desktop app with hot reload and the service path | continuous |
+| `just dev-frontend` | Frontend-only dev server with mock data on port 5173 | continuous |
+| `just build-ui [release]` | Frontend build plus `cargo build -p capsem-app` | build dependent |
 
-`just run` is the daily driver. It only rebuilds what changed -- if you edited Rust code, it recompiles; if you changed a guest script, it repacks the initrd. See [Life of a Build](./stack) for the full pipeline.
+`just shell` is the daily VM driver. `just exec "CMD"` is the one-shot path for
+quick checks. After frontend changes intended for the desktop app, use
+`just build-ui`; the Tauri binary embeds `frontend/dist` at cargo build time.
 
 ## Testing
 
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
-| `just test` | Unit tests (llvm-cov) + agent cross-compile + frontend check + Python schema tests | No |
-| `just run "capsem-doctor"` | In-VM diagnostic suite (VirtioFS, networking, binaries, permissions) | Yes |
-| `just full-test` | All of the above + injection test + integration test + benchmarks | Yes (3x) |
-| `just test-injection` | Boot VM with generated configs, verify all injection paths | Yes |
-| `just bench` | In-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency) | Yes |
+| `just smoke` | Fast end-to-end gate: audit, doctor, injection, service/CLI/MCP/gateway tests | Yes |
+| `just test` | Full gate: unit, coverage, cross-compile, frontend, Python, injection, integration, benchmarks, install E2E | Yes |
+| `just test-gateway` | Gateway unit and mock-UDS tests | No |
+| `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
+| `just test-install` | Installer E2E in Docker/systemd | No host VM |
+| `just bench` | In-VM and host lifecycle benchmarks | Yes |
 
-Three-tier testing policy:
-1. `just test` -- catches compile errors, regressions, type issues
-2. `just run "capsem-doctor"` -- catches VirtioFS, networking, and guest binary issues
-3. `just full-test` -- full validation before release
+`just test` is the source of truth. Targeted commands are for iteration, not
+for declaring a sprint done.
+
+## Policy Verification
+
+Policy work spans parser contracts, runtime boundaries, settings UI, docs,
+and telemetry. Use this sequence for focused iteration:
+
+| Step | Command |
+|---|---|
+| Rust policy contracts | `cargo test -p capsem-core policy_config --lib` |
+| Framed MCP policy | `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib` |
+| Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
+| Frontend type/check gate | `pnpm -C frontend run check` |
+| Docs gate | `cd docs && pnpm run build` |
+| VM smoke | `just smoke` |
+| Session integrity | `just inspect-session [id]` |
+| Session SQL proof | `just query-session "SQL" [id]` |
+| Final gate | `just test` |
+
+Useful policy audit queries:
+
+```bash
+just query-session "
+SELECT tool_name, policy_action, policy_rule, policy_reason
+FROM mcp_calls
+WHERE policy_rule IS NOT NULL
+ORDER BY id DESC
+LIMIT 20;"
+```
+
+```bash
+just query-session "
+SELECT domain, method, path, decision, matched_rule
+FROM net_events
+WHERE matched_rule IS NOT NULL
+ORDER BY id DESC
+LIMIT 20;"
+```
+
+```bash
+just query-session "
+SELECT qname, qtype, rcode, decision, matched_rule
+FROM dns_events
+WHERE matched_rule IS NOT NULL OR decision != 'allowed'
+ORDER BY id DESC
+LIMIT 20;"
+```
 
 ## VM image builds
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
 | `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker) | ~10 min |
-| `just build-kernel [arch]` | Kernel only (default: arm64) | ~5 min |
-| `just build-rootfs [arch]` | Rootfs only (default: arm64) | ~8 min |
+| `just build-kernel <arch>` | Kernel only | ~5 min |
+| `just build-rootfs <arch>` | Rootfs only | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
-| `just full-run "CMD"` | `build-assets` then `run` (full rebuild + boot) | ~10 min |
 
-You only need `just build-assets` on first setup or when `guest/config/` changes (new packages, rootfs changes). Day-to-day, `just run` repacks the initrd without rebuilding images.
+You only need `just build-assets` on first setup or when `guest/config/`
+changes rootfs packages or image build inputs. Day-to-day, `just shell` and
+`just exec` repack the initrd without rebuilding rootfs images.
 
 ## Session inspection
 
@@ -62,7 +112,7 @@ You only need `just build-assets` on first setup or when `guest/config/` changes
 | `just update-deps` | `cargo update` + `pnpm update` to latest compatible versions |
 | `just update-prices` | Refresh model pricing JSON from upstream |
 | `just doctor` | Check tools, colored output, structured recap (exits 1 if failures) |
-| `just doctor-fix` | Doctor + auto-fix all fixable issues in dependency order |
+| `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
 
 ## Release
 
@@ -70,43 +120,40 @@ You only need `just build-assets` on first setup or when `guest/config/` changes
 |--------|-------------|
 | `just cut-release` | Run tests, bump version, stamp changelog, tag, push, wait for CI |
 | `just release [tag]` | Wait for CI to build + publish an existing tag |
-| `just install` | Full validation (doctor + full-test), for pre-release checks |
+| `just install` | Build release package and install locally |
 
 ## Cleanup
 
 | Recipe | What it does |
 |--------|-------------|
 | `just clean` | Remove Rust + frontend build artifacts |
-| `just clean-all` | Deep clean: build artifacts + container images + docker cache |
+| `just clean all` | Deep clean: build artifacts + container images + docker cache |
 
 ## Dependency chains
 
 Recipes automatically pull in their prerequisites. You never need to run setup steps manually.
 
-```
-run            -> audit -> _ensure-setup (auto-runs doctor on first use)
-               -> _check-assets + _generate-settings + _pack-initrd -> _sign -> _compile -> _frontend
-
-test           -> _install-tools + audit + _generate-settings
-
-full-test      -> test + _check-assets + _pack-initrd + _sign
-
-build-assets   -> doctor + _install-tools + audit
-
-dev            -> _ensure-setup + _pnpm-install
-
-install        -> doctor + full-test
+```text
+shell            -> _check-assets + _pack-initrd + _ensure-service
+exec             -> run-service
+run-service      -> _check-assets + _pack-initrd + _ensure-service
+ui               -> _ensure-setup + _pnpm-install + run-service
+build-ui         -> _pnpm-install + frontend build + cargo build -p capsem-app
+smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
+test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
+build-assets     -> _install-tools + _clean-stale + doctor + capsem-builder kernel/rootfs
+test-install     -> _build-host
+cut-release      -> test + _stamp-version
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`). Key internal recipes:
 
 | Recipe | What it does |
 |--------|-------------|
-| `_ensure-setup` | Checks for `.dev-setup` sentinel, runs `doctor` if missing |
+| `_ensure-setup` | Checks setup state and required tools |
 | `_install-tools` | Auto-installs Rust targets, components, and cargo tools |
 | `_pack-initrd` | Cross-compiles guest agent + repacks initrd with latest binaries |
 | `_sign` | Codesigns the binary with virtualization entitlement |
 | `_check-assets` | Verifies VM assets exist, tells you to run `build-assets` if not |
 | `_generate-settings` | Exports MCP tool defs + generates schema/defaults/mock data |
-| `_frontend` | `pnpm build` (Astro + Svelte) |
-| `_compile` | `cargo build -p capsem` |
+| `_ensure-service` | Builds/signs host binaries and starts or reuses the service |

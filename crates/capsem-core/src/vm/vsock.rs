@@ -2,10 +2,9 @@
 
 // Re-export protocol types and port constants from capsem-proto.
 pub use capsem_proto::{
-    GuestToHost, HostToGuest, MAX_FRAME_SIZE, decode_guest_msg, decode_host_msg, encode_guest_msg,
-    encode_host_msg, max_frame_size,
-    VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL, VSOCK_PORT_SNI_PROXY,
-    VSOCK_PORT_MCP_GATEWAY, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_EXEC,
+    decode_guest_msg, decode_host_msg, encode_guest_msg, encode_host_msg, max_frame_size,
+    GuestToHost, HostToGuest, MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC,
+    VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
 };
 
 // ---------------------------------------------------------------------------
@@ -257,7 +256,7 @@ mod tests {
         assert!(!buf.push(b"aaa")); // 3
         assert!(!buf.push(b"bbb")); // 6
         assert!(!buf.push(b"ccc")); // 9
-        assert!(buf.push(b"d"));    // 10 -- cap hit
+        assert!(buf.push(b"d")); // 10 -- cap hit
         assert!(buf.is_full());
         let data = buf.take();
         assert_eq!(&data, b"aaabbbcccd");
@@ -297,8 +296,14 @@ mod tests {
             flush_count += 1;
         }
         assert_eq!(total, 200 * line.len());
-        assert!(flush_count >= 3, "expected at least 3 flushes, got {flush_count}");
-        assert!(flush_count <= 10, "expected at most 10 flushes, got {flush_count}");
+        assert!(
+            flush_count >= 3,
+            "expected at least 3 flushes, got {flush_count}"
+        );
+        assert!(
+            flush_count <= 10,
+            "expected at most 10 flushes, got {flush_count}"
+        );
     }
 
     #[test]

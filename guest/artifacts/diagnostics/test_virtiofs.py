@@ -1,7 +1,7 @@
 """VirtioFS storage mode tests.
 
 These tests verify the VirtioFS single-share hybrid architecture:
-- ext4 loopback for overlayfs upper (system packages)
+- ext4 on virtio-blk (/dev/vdb) for overlayfs upper (system packages)
 - direct VirtioFS workspace for /root (AI workspace)
 - file write/read through the full stack
 """
@@ -35,21 +35,24 @@ def test_virtiofs_root_mount():
     assert "virtiofs" in result.stdout, f"/root not virtiofs: {result.stdout}"
 
 
-def test_overlayfs_with_loop_upper():
-    """Root overlay must use an ext4 loopback as upper (not tmpfs, not virtiofs)."""
+def test_overlayfs_with_virtio_blk_upper():
+    """Root overlay must be a stacked overlay (capsem-init pivot_root drops
+    the upper-mount path from the post-chroot namespace, but the overlay
+    itself is reported on / via the kernel's stacked mount info)."""
     result = run("mount | grep 'on / '")
     assert "overlay" in result.stdout, f"/ not overlay: {result.stdout}"
-    # A loop device must be active (ext4 on loop backs the overlay upper).
-    result = run("losetup -a")
-    assert "/dev/loop" in result.stdout, f"no loop device active: {result.stdout}"
 
 
-def test_loop_device_active():
-    """A loop device must be active (backing the ext4 system image)."""
-    result = run("losetup -a")
-    assert result.returncode == 0
-    assert "/mnt/shared/system/rootfs.img" in result.stdout, \
-        f"no loop device for rootfs.img: {result.stdout}"
+def test_system_overlay_block_device_present():
+    """The system-overlay virtio-blk device (/dev/vdb) must be attached
+    and usable as an ext4 device. capsem-init mounts /dev/vdb pre-chroot
+    so it isn't visible in `mount` after switch_root, but the device node
+    survives in /sys/class/block."""
+    result = run("[ -b /dev/vdb ] && echo present || echo absent")
+    assert "present" in result.stdout, f"/dev/vdb not a block device: {result.stdout}"
+    # Confirm it really is the ext4 system overlay (magic 0xEF53 at offset 0x438).
+    result = run("dd if=/dev/vdb bs=1 skip=1080 count=2 2>/dev/null | od -A n -t x1")
+    assert "53 ef" in result.stdout.lower(), f"/dev/vdb not ext4-formatted: {result.stdout!r}"
 
 
 def test_workspace_write_read():
@@ -83,8 +86,8 @@ def test_workspace_subdirectory():
 
 
 def test_system_overlay_writable():
-    """System overlay (ext4 loopback) must be writable for package installs."""
-    # Write to a system path (goes through overlayfs -> ext4 loopback upper).
+    """System overlay (ext4 on /dev/vdb) must be writable for package installs."""
+    # Write to a system path (goes through overlayfs -> ext4 virtio-blk upper).
     test_file = pathlib.Path("/tmp/overlay_write_test.txt")
     test_file.write_text("overlay write test")
     assert test_file.read_text() == "overlay write test"
@@ -92,7 +95,7 @@ def test_system_overlay_writable():
 
 
 def test_pip_install_works():
-    """pip install must work (writes to ext4 loopback overlay, not VirtioFS)."""
+    """pip install must work (writes to ext4 virtio-blk overlay, not VirtioFS)."""
     # Install a tiny package to verify the overlay is writable for package managers.
     result = run("pip install --quiet cowsay 2>&1", timeout=30)
     assert result.returncode == 0, f"pip install failed: {result.stdout}\n{result.stderr}"

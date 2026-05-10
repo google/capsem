@@ -4,21 +4,23 @@ mod paths;
 mod platform;
 mod service_install;
 mod setup;
+mod shell_exit;
+mod support;
+mod support_bundle;
 mod uninstall;
 mod update;
 
-use std::path::PathBuf;
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use client::{
-    ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
-    HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
-    ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
+    ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
+    ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest,
+    PurgeResponse, RunRequest, SessionInfo, UdsClient,
 };
-
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -38,23 +40,14 @@ const fn cli_styles() -> Styles {
                 .fg_color(Some(Color::Ansi(AnsiColor::Green)))
                 .bold(),
         )
-        .placeholder(
-            Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::BrightBlack))),
-        )
+        .placeholder(Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlack))))
         .error(
             Style::new()
                 .fg_color(Some(Color::Ansi(AnsiColor::Red)))
                 .bold(),
         )
-        .valid(
-            Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Green))),
-        )
-        .invalid(
-            Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
-        )
+        .valid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))))
+        .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
 }
 
 const GROUPED_HELP: &str = "\
@@ -214,9 +207,9 @@ enum SessionCommands {
         session: String,
         /// Command to execute
         command: String,
-        /// Timeout in seconds (default 30)
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
+        /// Timeout in seconds
+        #[arg(long)]
+        timeout: Option<u64>,
     },
     /// Run a command in a fresh session (destroyed after)
     ///
@@ -225,12 +218,30 @@ enum SessionCommands {
     Run {
         /// Command to execute
         command: String,
-        /// Timeout in seconds (default 60)
-        #[arg(long, default_value_t = 60)]
-        timeout: u64,
+        /// Timeout in seconds
+        #[arg(long)]
+        timeout: Option<u64>,
         /// Set environment variables (repeatable: -e KEY=VALUE)
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
+    },
+    /// Copy a file in or out of a session's workspace.
+    ///
+    /// Either `src` or `dst` (but not both) must use the form
+    /// `SESSION:PATH` -- where SESSION is the session name or id and
+    /// PATH is relative to the workspace root (`/root` in the guest).
+    /// The other side is a local host path.
+    ///
+    /// Examples:
+    ///   capsem cp foo.txt my-vm:foo.txt           # upload
+    ///   capsem cp my-vm:bench.json ./bench.json   # download
+    ///   capsem cp my-vm:/root/log.txt -           # download to stdout
+    Cp {
+        /// Source path (`SESSION:PATH` for guest, plain path for host).
+        src: String,
+        /// Destination path (`SESSION:PATH` for guest, plain path for host;
+        /// `-` for stdout on download).
+        dst: String,
     },
     /// List all sessions (running + suspended persistent)
     #[command(alias = "ls")]
@@ -365,6 +376,12 @@ enum MiscCommands {
         /// Skip slow tests (throughput download, etc.)
         #[arg(long)]
         fast: bool,
+        /// Tell the in-VM doctor to package its diagnostic surface
+        /// (pytest output + junit, /var/log, dmesg, /proc/{mounts,cmdline},
+        /// session.db) into a tar that capsem support-bundle picks up
+        /// at `~/.capsem/run/doctor-latest.tar`.
+        #[arg(long)]
+        bundle: bool,
     },
     /// Generate shell completions (bash, zsh, fish, powershell)
     Completions {
@@ -374,6 +391,35 @@ enum MiscCommands {
     },
     /// Show version and build information
     Version,
+    /// Bundle host logs, recent session telemetry, configs, and version
+    /// info into a single redacted tar.gz for bug reports.
+    ///
+    /// Default output: `~/.capsem/support/capsem-support-<ts>-<host>.tar.gz`.
+    /// Secrets in user.toml/corp.toml and bearer tokens in log lines are
+    /// stripped by default. The bundle excludes rootfs.img unless
+    /// `--include-rootfs` is passed.
+    SupportBundle {
+        /// Output tar.gz path. Default: ~/.capsem/support/capsem-support-<ts>-<host>.tar.gz
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+        /// Number of recent session directories to include. Max 10.
+        #[arg(long, default_value_t = 3)]
+        sessions: usize,
+        /// Include the (potentially huge) rootfs.img in each session.
+        /// Off by default: a 2GB image per session is rarely useful in
+        /// a bug report.
+        #[arg(long)]
+        include_rootfs: bool,
+        /// Skip the secret-redaction pass. Off by default: keep this off
+        /// when sharing the bundle with anyone outside your team.
+        #[arg(long)]
+        no_redact: bool,
+        /// Cap the total uncompressed size of session-DB content. When
+        /// exceeded, sessions are dropped from oldest first. 0 = no cap.
+        /// Default 50MB so the bundle stays attachable to bug reports.
+        #[arg(long, default_value_t = 50 * 1024 * 1024)]
+        max_session_bytes: u64,
+    },
     /// Uninstall capsem completely (service, binaries, data)
     Uninstall {
         /// Skip confirmation prompt
@@ -470,7 +516,10 @@ fn print_session_info(info: &SessionInfo) {
             let total = info.total_requests.unwrap_or(0);
             let allowed = info.allowed_requests.unwrap_or(0);
             let denied = info.denied_requests.unwrap_or(0);
-            println!("  Requests:      {} ({} allowed, {} denied)", total, allowed, denied);
+            println!(
+                "  Requests:      {} ({} allowed, {} denied)",
+                total, allowed, denied
+            );
         }
         if let Some(fe) = info.total_file_events {
             println!("  File Events:   {}", fe);
@@ -479,10 +528,10 @@ fn print_session_info(info: &SessionInfo) {
 }
 
 async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
-    use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
-    use tokio_unix_ipc::{channel_from_std, Sender, Receiver};
-    use std::sync::Arc;
+    use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
     use nix::sys::termios::{tcgetattr, tcsetattr, SetArg};
+    use std::sync::Arc;
+    use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 
     client::validate_id(id)?;
     let sock_path = run_dir.join("instances").join(format!("{}.sock", id));
@@ -490,17 +539,26 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         anyhow::bail!("Session socket not found at: {}", sock_path.display());
     }
 
-    let stream = tokio::net::UnixStream::connect(&sock_path).await.context("failed to connect to sandbox")?;
-    let std_stream = stream.into_std()?;
+    let stream = tokio::net::UnixStream::connect(&sock_path)
+        .await
+        .context("failed to connect to sandbox")?;
+    let mut std_stream = stream.into_std()?;
+    capsem_core::ipc_handshake::negotiate_initiator(
+        &mut std_stream,
+        "capsem-cli",
+        capsem_core::telemetry::current_parent_traceparent(),
+    )
+    .context("IPC handshake failed")?;
     #[allow(unused_variables)]
-    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(std_stream)?;
+    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
+        channel_from_std(std_stream)?;
     let tx = Arc::new(tx);
 
     // Request terminal streaming
     tx.send(ServiceToProcess::StartTerminalStream).await?;
 
     use std::os::unix::io::{AsRawFd, BorrowedFd};
-    
+
     let stdin_fd = std::io::stdin().as_raw_fd();
     let is_tty = nix::unistd::isatty(stdin_fd).unwrap_or(false);
 
@@ -516,7 +574,11 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     // Send initial window size
     if is_tty {
         if let Some((cols, rows)) = get_terminal_size() {
-            let _ = tx.send(ServiceToProcess::TerminalResize { cols, rows }).await;
+            capsem_core::try_send!(
+                "cli_terminal_resize_init",
+                tx.send(ServiceToProcess::TerminalResize { cols, rows })
+                    .await
+            );
         }
     }
 
@@ -546,7 +608,10 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         None
     };
 
-    let _guard = RawModeGuard { fd: stdin_fd, original: original_termios };
+    let _guard = RawModeGuard {
+        fd: stdin_fd,
+        original: original_termios,
+    };
 
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -557,6 +622,21 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         while let Ok(msg) = rx.recv().await {
             match msg {
                 ProcessToService::TerminalOutput { data } => {
+                    // Smoking-gun trace mirrored from capsem-process. If a
+                    // payload prefix looks like an IPC frame, dump the
+                    // first 16 bytes to stderr (visible to the user, also
+                    // capturable via `capsem shell 2>shell.log`). Catches
+                    // the leak even when process.log isn't being tailed.
+                    if shell_exit::looks_like_msgpack_ipc_frame(&data) {
+                        let preview: Vec<String> =
+                            data.iter().take(16).map(|b| format!("{:02x}", b)).collect();
+                        eprintln!(
+                            "\r\n[capsem-shell] WARN: PTY stream starts with IPC-frame-shaped bytes \
+                             (len={}, first16={})\r",
+                            data.len(),
+                            preview.join(" "),
+                        );
+                    }
                     let _ = stdout.write_all(&data).await;
                     let _ = stdout.flush().await;
                 }
@@ -576,7 +656,8 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         }
     });
 
-    let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
+    let mut sigwinch =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
 
     // Read from stdin and send over IPC.
     // Also watch for output_task completion (VM connection closed).
@@ -585,7 +666,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
             _ = sigwinch.recv() => {
                 if is_tty {
                     if let Some((cols, rows)) = get_terminal_size() {
-                        let _ = tx.send(ServiceToProcess::TerminalResize { cols, rows }).await;
+                        capsem_core::try_send!("cli_terminal_resize", tx.send(ServiceToProcess::TerminalResize { cols, rows }).await);
                     }
                 }
             }
@@ -603,7 +684,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                         if n == 1 && buf[0] == 0x1D {
                             break;
                         }
-                        let _ = tx.send(ServiceToProcess::TerminalInput { data: buf[..n].to_vec() }).await;
+                        capsem_core::try_send!("cli_terminal_input", tx.send(ServiceToProcess::TerminalInput { data: buf[..n].to_vec() }).await);
                     }
                     Err(_) => break,
                 }
@@ -611,8 +692,29 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
         }
     }
 
-    // Ensure the parent shell redraws its prompt after raw mode exit.
-    eprintln!();
+    // ---- Clean shell exit ----
+    // Order matters and is asserted by tests in shell_exit::tests:
+    //  1. Tell the host to stop streaming so no new TerminalOutput frames
+    //     get queued for this connection.
+    //  2. Abort the local output task. tokio JoinHandle drop does NOT
+    //     cancel; without abort the task lives on, holds stdout, and any
+    //     in-flight TerminalOutput frame will write to the user's parent
+    //     shell after raw mode is restored. This is the symptom that
+    //     manifested as "MessagePack-shaped garbage in my terminal after
+    //     `capsem shell`".
+    //  3. Drop tx to close the IPC writer half (defensive; the next read
+    //     loop will hit ECONNRESET and the connection winds down cleanly).
+    //  4. Reset the terminal: SGR reset + show cursor + move to col 0.
+    //     RawModeGuard restores termios on Drop right after this, but
+    //     in-flight escape sequences from the guest can leave the terminal
+    //     in a weird state (alt screen, scroll region, cursor hidden).
+    capsem_core::try_send!(
+        "cli_stop_terminal_stream",
+        tx.send(ServiceToProcess::StopTerminalStream).await
+    );
+    output_task.abort();
+    drop(tx);
+    shell_exit::reset_user_terminal(is_tty).await;
     Ok(())
 }
 
@@ -633,24 +735,36 @@ async fn check_service_health() -> Result<Vec<String>> {
     let svc_version = async {
         let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
         let (reader, mut writer) = tokio::io::split(stream);
-        writer.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.ok()?;
+        writer
+            .write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .ok()?;
         let mut buf = Vec::new();
-        tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf).await.ok()?;
+        tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf)
+            .await
+            .ok()?;
         let body = String::from_utf8_lossy(&buf);
         let json_start = body.find('{')?;
         let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
         v.get("version")?.as_str().map(String::from)
-    }.await;
+    }
+    .await;
 
     match svc_version {
         Some(ref v) if v == my_version => {}
-        Some(ref v) => issues.push(format!("Service is STALE (running v{}, binary is v{}) -- restart service", v, my_version)),
+        Some(ref v) => issues.push(format!(
+            "Service is STALE (running v{}, binary is v{}) -- restart service",
+            v, my_version
+        )),
         None => issues.push("Service is STALE (socket dead or no /version endpoint)".into()),
     }
 
     let port_path = home.join("run/gateway.port");
     let token_path = home.join("run/gateway.token");
-    match (std::fs::read_to_string(&port_path), std::fs::read_to_string(&token_path)) {
+    match (
+        std::fs::read_to_string(&port_path),
+        std::fs::read_to_string(&token_path),
+    ) {
         (Ok(port_str), Ok(token)) => {
             let port = port_str.trim();
             let token = token.trim();
@@ -659,29 +773,41 @@ async fn check_service_health() -> Result<Vec<String>> {
             // Check gateway version (unauthenticated health endpoint)
             let health_url = format!("http://127.0.0.1:{}/health", port);
             let gw_version: Option<String> = async {
-                let r = client.get(&health_url)
+                let r = client
+                    .get(&health_url)
                     .timeout(std::time::Duration::from_secs(2))
-                    .send().await.ok()?;
+                    .send()
+                    .await
+                    .ok()?;
                 let v: serde_json::Value = r.json().await.ok()?;
                 v.get("version")?.as_str().map(String::from)
-            }.await;
+            }
+            .await;
 
             // Check token validity (authenticated endpoint)
             let auth_url = format!("http://127.0.0.1:{}/list", port);
-            let token_ok = client.get(&auth_url)
+            let token_ok = client
+                .get(&auth_url)
                 .header("Authorization", format!("Bearer {}", token))
                 .timeout(std::time::Duration::from_secs(2))
-                .send().await
+                .send()
+                .await
                 .map(|r| r.status().is_success())
                 .unwrap_or(false);
 
             match (gw_version, token_ok) {
                 (Some(ref v), true) if v == my_version => {}
                 (Some(ref v), true) => {
-                    issues.push(format!("Gateway is STALE (running v{}, binary is v{}) -- restart service", v, my_version));
+                    issues.push(format!(
+                        "Gateway is STALE (running v{}, binary is v{}) -- restart service",
+                        v, my_version
+                    ));
                 }
                 (Some(_), false) => {
-                    issues.push(format!("Gateway token MISMATCH (port {}) -- restart service", port));
+                    issues.push(format!(
+                        "Gateway token MISMATCH (port {}) -- restart service",
+                        port
+                    ));
                 }
                 (None, _) => {
                     issues.push(format!("Gateway is DOWN (port {} not responding)", port));
@@ -698,12 +824,31 @@ async fn check_service_health() -> Result<Vec<String>> {
             .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
         {
             Some(m) => {
-                let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+                let arch = if cfg!(target_arch = "aarch64") {
+                    "arm64"
+                } else {
+                    "x86_64"
+                };
                 match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
                     Ok(resolved) => {
-                        if !resolved.kernel.exists() { issues.push(format!("Kernel asset is MISSING: {}", resolved.kernel.display())); }
-                        if !resolved.initrd.exists() { issues.push(format!("Initrd asset is MISSING: {}", resolved.initrd.display())); }
-                        if !resolved.rootfs.exists() { issues.push(format!("Rootfs asset is MISSING: {}", resolved.rootfs.display())); }
+                        if !resolved.kernel.exists() {
+                            issues.push(format!(
+                                "Kernel asset is MISSING: {}",
+                                resolved.kernel.display()
+                            ));
+                        }
+                        if !resolved.initrd.exists() {
+                            issues.push(format!(
+                                "Initrd asset is MISSING: {}",
+                                resolved.initrd.display()
+                            ));
+                        }
+                        if !resolved.rootfs.exists() {
+                            issues.push(format!(
+                                "Rootfs asset is MISSING: {}",
+                                resolved.rootfs.display()
+                            ));
+                        }
                     }
                     Err(e) => issues.push(format!("Failed to resolve assets: {}", e)),
                 }
@@ -729,7 +874,10 @@ async fn main() -> Result<()> {
     // env > <capsem_home>/run), matching the service.
     let (run_dir, uds_path) = match cli.uds_path {
         Some(p) => {
-            let dir = p.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+            let dir = p
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
             (dir, p)
         }
         None => {
@@ -773,6 +921,23 @@ async fn main() -> Result<()> {
             );
             return Ok(());
         }
+        Commands::Misc(MiscCommands::SupportBundle {
+            output,
+            sessions,
+            include_rootfs,
+            no_redact,
+            max_session_bytes,
+        }) => {
+            let path = support_bundle::run_with_opts(support_bundle::Opts {
+                output: output.clone(),
+                sessions: *sessions,
+                include_rootfs: *include_rootfs,
+                no_redact: *no_redact,
+                max_session_bytes: *max_session_bytes,
+            })?;
+            println!("{}", path.display());
+            return Ok(());
+        }
         Commands::Misc(MiscCommands::Install) => {
             service_install::install_service().await?;
             println!("Service installed.");
@@ -810,13 +975,19 @@ async fn main() -> Result<()> {
 
                 match svc_version {
                     Some(ref v) if v == my_version => println!("Service:   ok (v{})", v),
-                    Some(ref v) => println!("Service:   STALE (running v{}, binary is v{}) -- restart service", v, my_version),
+                    Some(ref v) => println!(
+                        "Service:   STALE (running v{}, binary is v{}) -- restart service",
+                        v, my_version
+                    ),
                     None => println!("Service:   STALE (socket dead or no /version endpoint)"),
                 }
 
                 let port_path = home.join("run/gateway.port");
                 let token_path = home.join("run/gateway.token");
-                match (std::fs::read_to_string(&port_path), std::fs::read_to_string(&token_path)) {
+                match (
+                    std::fs::read_to_string(&port_path),
+                    std::fs::read_to_string(&token_path),
+                ) {
                     (Ok(port_str), Ok(token)) => {
                         let port = port_str.trim();
                         let token = token.trim();
@@ -825,19 +996,25 @@ async fn main() -> Result<()> {
                         // Check gateway version (unauthenticated health endpoint)
                         let health_url = format!("http://127.0.0.1:{}/health", port);
                         let gw_version: Option<String> = async {
-                            let r = client.get(&health_url)
+                            let r = client
+                                .get(&health_url)
                                 .timeout(std::time::Duration::from_secs(2))
-                                .send().await.ok()?;
+                                .send()
+                                .await
+                                .ok()?;
                             let v: serde_json::Value = r.json().await.ok()?;
                             v.get("version")?.as_str().map(String::from)
-                        }.await;
+                        }
+                        .await;
 
                         // Check token validity (authenticated endpoint)
                         let auth_url = format!("http://127.0.0.1:{}/list", port);
-                        let token_ok = client.get(&auth_url)
+                        let token_ok = client
+                            .get(&auth_url)
                             .header("Authorization", format!("Bearer {}", token))
                             .timeout(std::time::Duration::from_secs(2))
-                            .send().await
+                            .send()
+                            .await
                             .map(|r| r.status().is_success())
                             .unwrap_or(false);
 
@@ -849,7 +1026,10 @@ async fn main() -> Result<()> {
                                 println!("Gateway:   STALE (running v{}, binary is v{}) -- restart service", v, my_version);
                             }
                             (Some(_), false) => {
-                                println!("Gateway:   token MISMATCH (port {}) -- restart service", port);
+                                println!(
+                                    "Gateway:   token MISMATCH (port {}) -- restart service",
+                                    port
+                                );
                             }
                             (None, _) => {
                                 println!("Gateway:   DOWN (port {} not responding)", port);
@@ -868,13 +1048,29 @@ async fn main() -> Result<()> {
                     .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
                 {
                     Some(m) => {
-                        let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+                        let arch = if cfg!(target_arch = "aarch64") {
+                            "arm64"
+                        } else {
+                            "x86_64"
+                        };
                         println!("Assets:    {} ({})", m.assets.current, arch);
                         match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
                             Ok(resolved) => {
-                                let k = if resolved.kernel.exists() { "ok" } else { "MISSING" };
-                                let i = if resolved.initrd.exists() { "ok" } else { "MISSING" };
-                                let r = if resolved.rootfs.exists() { "ok" } else { "MISSING" };
+                                let k = if resolved.kernel.exists() {
+                                    "ok"
+                                } else {
+                                    "MISSING"
+                                };
+                                let i = if resolved.initrd.exists() {
+                                    "ok"
+                                } else {
+                                    "MISSING"
+                                };
+                                let r = if resolved.rootfs.exists() {
+                                    "ok"
+                                } else {
+                                    "MISSING"
+                                };
                                 println!("  kernel:  {} ({})", resolved.kernel.display(), k);
                                 println!("  initrd:  {} ({})", resolved.initrd.display(), i);
                                 println!("  rootfs:  {} ({})", resolved.rootfs.display(), r);
@@ -952,7 +1148,14 @@ async fn main() -> Result<()> {
             update::run_update(*yes, *assets).await?;
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, accept_detected, corp_config, force_onboarding }) => {
+        Commands::Misc(MiscCommands::Setup {
+            non_interactive,
+            preset,
+            force,
+            accept_detected,
+            corp_config,
+            force_onboarding,
+        }) => {
             let opts = setup::SetupOptions {
                 non_interactive: *non_interactive,
                 preset: preset.clone(),
@@ -985,14 +1188,21 @@ async fn main() -> Result<()> {
                 accept_detected: true,
                 corp_config: None,
                 force_onboarding: false,
-            }).await?;
+            })
+            .await?;
         }
     }
 
     let client = UdsClient::new(uds_path, auto_launch);
 
     match cli.command.as_ref().unwrap() {
-        Commands::Session(SessionCommands::Create { name, ram, cpu, env, from }) => {
+        Commands::Session(SessionCommands::Create {
+            name,
+            ram,
+            cpu,
+            env,
+            from,
+        }) => {
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
                 name: name.clone(),
@@ -1012,27 +1222,39 @@ async fn main() -> Result<()> {
                 println!("{}", info.id);
             }
         }
-        Commands::Session(SessionCommands::Fork { session, name, description }) => {
+        Commands::Session(SessionCommands::Fork {
+            session,
+            name,
+            description,
+        }) => {
             client::validate_id(session)?;
             let req = ForkRequest {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let resp: ApiResponse<ForkResponse> = client.post(&format!("/fork/{}", session), &req).await?;
+            let resp: ApiResponse<ForkResponse> =
+                client.post(&format!("/fork/{}", session), &req).await?;
             let info = resp.into_result()?;
             let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
-            println!("Forked session '{}' from '{}' ({:.1} MB)", info.name, session, size_mb);
+            println!(
+                "Forked session '{}' from '{}' ({:.1} MB)",
+                info.name, session, size_mb
+            );
         }
         Commands::Session(SessionCommands::Resume { name }) => {
             client::validate_id(name)?;
-            let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
+            let resp: ApiResponse<ProvisionResponse> = client
+                .post(&format!("/resume/{}", name), &serde_json::json!({}))
+                .await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
         }
         Commands::Session(SessionCommands::Suspend { session }) => {
             client::validate_id(session)?;
             println!("Suspending session: {}", session);
-            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/suspend/{}", session), &serde_json::json!({})).await?;
+            let resp: ApiResponse<serde_json::Value> = client
+                .post(&format!("/suspend/{}", session), &serde_json::json!({}))
+                .await?;
             resp.into_result()?;
             println!("Session suspended.");
         }
@@ -1045,7 +1267,9 @@ async fn main() -> Result<()> {
                 }
                 None => {
                     // No args: create ephemeral session, attach, destroy on exit
-                    println!("[!] Temporary session. Use `capsem create -n <name>` for persistent.");
+                    println!(
+                        "[!] Temporary session. Use `capsem create -n <name>` for persistent."
+                    );
                     let req = ProvisionRequest {
                         name: None,
                         ram_mb: 4 * 1024,
@@ -1054,14 +1278,18 @@ async fn main() -> Result<()> {
                         env: None,
                         from: None,
                     };
-                    let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
+                    let resp: ApiResponse<ProvisionResponse> =
+                        client.post("/provision", &req).await?;
                     let info = resp.into_result()?;
 
                     // Poll until the socket is connectable (not just present on disk).
                     let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
                     let sp = socket_path.clone();
                     let _ = capsem_core::poll::poll_until(
-                        capsem_core::poll::PollOpts::new("shell-socket", std::time::Duration::from_secs(10)),
+                        capsem_core::poll::PollOpts::new(
+                            "shell-socket",
+                            std::time::Duration::from_secs(10),
+                        ),
                         || {
                             let sp = sp.clone();
                             async move {
@@ -1071,11 +1299,13 @@ async fn main() -> Result<()> {
                                 }
                             }
                         },
-                    ).await;
+                    )
+                    .await;
 
                     let shell_result = run_shell(&info.id, &run_dir).await;
                     // Ephemeral: auto-destroy on disconnect
-                    let _: Result<ApiResponse<serde_json::Value>, _> = client.delete(&format!("/delete/{}", info.id)).await;
+                    let _: Result<ApiResponse<serde_json::Value>, _> =
+                        client.delete(&format!("/delete/{}", info.id)).await;
                     shell_result?;
                 }
             }
@@ -1090,15 +1320,22 @@ async fn main() -> Result<()> {
             } else if resp.sessions.is_empty() {
                 println!("No sessions.");
             } else {
-                println!("{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
-                    "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME");
+                println!(
+                    "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                    "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME"
+                );
                 for s in &resp.sessions {
                     let name = s.name.as_deref().unwrap_or("-");
-                    let ram = s.ram_mb.map(|mb| format!("{} GB", mb / 1024)).unwrap_or_else(|| "-".into());
+                    let ram = s
+                        .ram_mb
+                        .map(|mb| format!("{} GB", mb / 1024))
+                        .unwrap_or_else(|| "-".into());
                     let cpus = s.cpus.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
                     let uptime = format_uptime(s.uptime_secs);
-                    println!("{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
-                        s.id, name, s.status, ram, cpus, uptime);
+                    println!(
+                        "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                        s.id, name, s.status, ram, cpus, uptime
+                    );
                     // Defunct rows: show the tail of process.log inline so
                     // the user doesn't need a separate `capsem logs` call
                     // to see why boot failed.
@@ -1128,13 +1365,18 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
+        Commands::Session(SessionCommands::Exec {
+            session,
+            command,
+            timeout,
+        }) => {
             client::validate_id(session)?;
             let req = ExecRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
             };
-            let resp: ApiResponse<ExecResponse> = client.post(&format!("/exec/{}", session), req).await?;
+            let resp: ApiResponse<ExecResponse> =
+                client.post(&format!("/exec/{}", session), req).await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);
@@ -1144,7 +1386,11 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Session(SessionCommands::Run { command, timeout, env }) => {
+        Commands::Session(SessionCommands::Run {
+            command,
+            timeout,
+            env,
+        }) => {
             let req = RunRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
@@ -1160,19 +1406,27 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
+        Commands::Session(SessionCommands::Cp { src, dst }) => {
+            handle_cp(&client, src, dst).await?;
+        }
         Commands::Session(SessionCommands::Delete { session }) => {
             client::validate_id(session)?;
             println!("Deleting session: {}", session);
-            let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/delete/{}", session)).await?;
+            let resp: ApiResponse<serde_json::Value> =
+                client.delete(&format!("/delete/{}", session)).await?;
             resp.into_result()?;
             println!("Session deleted.");
         }
         Commands::Session(SessionCommands::Persist { session, name }) => {
             client::validate_id(session)?;
             let req = PersistRequest { name: name.clone() };
-            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/persist/{}", session), &req).await?;
+            let resp: ApiResponse<serde_json::Value> =
+                client.post(&format!("/persist/{}", session), &req).await?;
             resp.into_result()?;
-            println!("[*] Session \"{}\" is now persistent as \"{}\"", session, name);
+            println!(
+                "[*] Session \"{}\" is now persistent as \"{}\"",
+                session, name
+            );
         }
         Commands::Session(SessionCommands::Purge { all }) => {
             if *all {
@@ -1197,8 +1451,10 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<PurgeResponse> = client.post("/purge", &req).await?;
             let result = resp.into_result()?;
             if *all {
-                println!("[*] Purged {} sessions ({} persistent, {} temporary).",
-                    result.purged, result.persistent_purged, result.ephemeral_purged);
+                println!(
+                    "[*] Purged {} sessions ({} persistent, {} temporary).",
+                    result.purged, result.persistent_purged, result.ephemeral_purged
+                );
             } else {
                 println!("[*] Purged {} temporary sessions.", result.ephemeral_purged);
             }
@@ -1252,12 +1508,22 @@ async fn main() -> Result<()> {
                 println!("{}", output);
             }
         }
-        Commands::Session(SessionCommands::History { session, tail, all, search, layer, json }) => {
+        Commands::Session(SessionCommands::History {
+            session,
+            tail,
+            all,
+            search,
+            layer,
+            json,
+        }) => {
             client::validate_id(session)?;
             let limit = if *all { 100_000 } else { *tail };
             let mut url = format!("/history/{}?limit={}&layer={}", session, limit, layer);
             if let Some(q) = search {
-                url.push_str(&format!("&search={}", q.replace(' ', "%20").replace('&', "%26")));
+                url.push_str(&format!(
+                    "&search={}",
+                    q.replace(' ', "%20").replace('&', "%26")
+                ));
             }
             let resp: ApiResponse<HistoryResponse> = client.get(&url).await?;
             let history = resp.into_result()?;
@@ -1274,23 +1540,36 @@ async fn main() -> Result<()> {
                     );
                 }
                 for entry in &history.commands {
-                    let exit = entry.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
+                    let exit = entry
+                        .exit_code
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "-".into());
                     let process = match entry.layer.as_str() {
-                        "exec" => entry.details.get("process_name")
+                        "exec" => entry
+                            .details
+                            .get("process_name")
                             .and_then(|v| v.as_str())
                             .unwrap_or("api")
                             .to_string(),
                         "audit" => {
-                            let parent = entry.details.get("parent_exe")
+                            let parent = entry
+                                .details
+                                .get("parent_exe")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
-                            let exe = entry.details.get("exe")
+                            let exe = entry
+                                .details
+                                .get("exe")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
                             if parent.is_empty() {
                                 exe.rsplit('/').next().unwrap_or(exe).to_string()
                             } else {
-                                format!("{}>{}", parent.rsplit('/').next().unwrap_or(parent), exe.rsplit('/').next().unwrap_or(exe))
+                                format!(
+                                    "{}>{}",
+                                    parent.rsplit('/').next().unwrap_or(parent),
+                                    exe.rsplit('/').next().unwrap_or(exe)
+                                )
                             }
                         }
                         _ => "-".to_string(),
@@ -1301,25 +1580,39 @@ async fn main() -> Result<()> {
                     } else {
                         entry.command.clone()
                     };
-                    println!(" {:<22} {:<7} {:<5} {:<10} {}", entry.timestamp, entry.layer, exit, process, cmd);
+                    println!(
+                        " {:<22} {:<7} {:<5} {:<10} {}",
+                        entry.timestamp, entry.layer, exit, process, cmd
+                    );
                 }
                 if history.has_more {
-                    println!(" Showing {} of {} commands. Use --all for full history.", history.commands.len(), history.total);
+                    println!(
+                        " Showing {} of {} commands. Use --all for full history.",
+                        history.commands.len(),
+                        history.total
+                    );
                 }
             }
         }
         Commands::Session(SessionCommands::Restart { name }) => {
             client::validate_id(name)?;
-            let info_resp: ApiResponse<SessionInfo> = client.get(&format!("/info/{}", name)).await?;
+            let info_resp: ApiResponse<SessionInfo> =
+                client.get(&format!("/info/{}", name)).await?;
             let info = info_resp.into_result()?;
             if !info.persistent {
                 anyhow::bail!("Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.", name);
             }
 
             // Stop, then resume
-            let stop_resp: ApiResponse<serde_json::Value> = client.post(&format!("/stop/{}", name), &serde_json::json!({})).await?;
-            stop_resp.into_result().context("failed to stop session during restart")?;
-            let resp: ApiResponse<ProvisionResponse> = client.post(&format!("/resume/{}", name), &serde_json::json!({})).await?;
+            let stop_resp: ApiResponse<serde_json::Value> = client
+                .post(&format!("/stop/{}", name), &serde_json::json!({}))
+                .await?;
+            stop_resp
+                .into_result()
+                .context("failed to stop session during restart")?;
+            let resp: ApiResponse<ProvisionResponse> = client
+                .post(&format!("/resume/{}", name), &serde_json::json!({}))
+                .await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
@@ -1340,7 +1633,11 @@ async fn main() -> Result<()> {
                     println!(
                         "{:<20} {:<8} {:<10} {:<8} {}",
                         s["name"].as_str().unwrap_or("-"),
-                        if s["enabled"].as_bool().unwrap_or(false) { "yes" } else { "no" },
+                        if s["enabled"].as_bool().unwrap_or(false) {
+                            "yes"
+                        } else {
+                            "no"
+                        },
                         s["source"].as_str().unwrap_or("-"),
                         s["tool_count"].as_u64().unwrap_or(0),
                         s["url"].as_str().unwrap_or("-"),
@@ -1371,7 +1668,11 @@ async fn main() -> Result<()> {
                         "{:<40} {:<20} {:<10} {}",
                         t["namespaced_name"].as_str().unwrap_or("-"),
                         t["server_name"].as_str().unwrap_or("-"),
-                        if t["approved"].as_bool().unwrap_or(false) { "yes" } else { "no" },
+                        if t["approved"].as_bool().unwrap_or(false) {
+                            "yes"
+                        } else {
+                            "no"
+                        },
                         short_desc,
                     );
                 }
@@ -1383,17 +1684,18 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&policy)?);
         }
         Commands::Mcp(McpCommands::Refresh) => {
-            let resp: ApiResponse<serde_json::Value> = client.post("/mcp/tools/refresh", &serde_json::json!({})).await?;
+            let resp: ApiResponse<serde_json::Value> = client
+                .post("/mcp/tools/refresh", &serde_json::json!({}))
+                .await?;
             resp.into_result()?;
             println!("MCP tools refreshed.");
         }
         Commands::Mcp(McpCommands::Call { name, args }) => {
-            let arguments: serde_json::Value = serde_json::from_str(args)
-                .context("invalid JSON arguments")?;
-            let resp: ApiResponse<serde_json::Value> = client.post(
-                &format!("/mcp/tools/{}/call", name),
-                &arguments,
-            ).await?;
+            let arguments: serde_json::Value =
+                serde_json::from_str(args).context("invalid JSON arguments")?;
+            let resp: ApiResponse<serde_json::Value> = client
+                .post(&format!("/mcp/tools/{}/call", name), &arguments)
+                .await?;
             let result = resp.into_result()?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
@@ -1407,11 +1709,12 @@ async fn main() -> Result<()> {
             | MiscCommands::Status
             | MiscCommands::Start
             | MiscCommands::Stop
+            | MiscCommands::SupportBundle { .. }, /* handled before UDS */
         ) => {
             unreachable!("handled before UdsClient creation")
         }
-        Commands::Misc(MiscCommands::Doctor { fast }) => {
-            use capsem_proto::ipc::{ServiceToProcess, ProcessToService};
+        Commands::Misc(MiscCommands::Doctor { fast, bundle }) => {
+            use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
             use tokio_unix_ipc::channel_from_std;
 
             // Log file: ~/.capsem/run/doctor-latest.log (always overwritten)
@@ -1466,7 +1769,13 @@ async fn main() -> Result<()> {
                             return None;
                         }
                         let stream = tokio::net::UnixStream::connect(&sock_path).await.ok()?;
-                        let std_stream = stream.into_std().ok()?;
+                        let mut std_stream = stream.into_std().ok()?;
+                        capsem_core::ipc_handshake::negotiate_initiator(
+                            &mut std_stream,
+                            "capsem-cli",
+                            capsem_core::telemetry::current_parent_traceparent(),
+                        )
+                        .ok()?;
                         channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).ok()
                     }
                 },
@@ -1491,7 +1800,10 @@ async fn main() -> Result<()> {
             // Subscribe to terminal output then type the command
             // into the shell. This streams output in real-time
             // (unlike Exec which buffers until completion).
-            let _ = tx.send(ServiceToProcess::StartTerminalStream).await;
+            capsem_core::try_send!(
+                "cli_doctor_start_stream",
+                tx.send(ServiceToProcess::StartTerminalStream).await
+            );
 
             // Wait for shell to be ready (boot banner finishes)
             let mut ready = false;
@@ -1527,13 +1839,27 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Type the doctor command into the shell
-            let cmd: Vec<u8> = if *fast {
-                b"capsem-doctor --durations=10 -k 'not throughput'\n".to_vec()
+            // Type the doctor command into the shell. T4: when --bundle
+            // is set, append `--bundle /shared/doctor-bundle.tar` so the
+            // in-VM doctor packages its diagnostic surface to virtiofs.
+            // The host-side reader (after the doctor exits) copies that
+            // tar into ~/.capsem/run/doctor-latest.tar so capsem
+            // support-bundle picks it up.
+            let bundle_arg = if *bundle {
+                " --bundle /shared/doctor-bundle.tar"
             } else {
-                b"capsem-doctor --durations=10\n".to_vec()
+                ""
             };
-            let _ = tx.send(ServiceToProcess::TerminalInput { data: cmd }).await;
+            let cmd: Vec<u8> = if *fast {
+                format!("capsem-doctor --durations=10 -k 'not throughput'{bundle_arg}\n")
+                    .into_bytes()
+            } else {
+                format!("capsem-doctor --durations=10{bundle_arg}\n").into_bytes()
+            };
+            capsem_core::try_send!(
+                "cli_doctor_terminal_input",
+                tx.send(ServiceToProcess::TerminalInput { data: cmd }).await
+            );
 
             // Stream output until we see the sentinel line
             let mut stdout = tokio::io::stdout();
@@ -1584,6 +1910,42 @@ async fn main() -> Result<()> {
                 }
             };
 
+            // T4: copy the in-VM bundle out of virtiofs BEFORE delete_vm
+            // tears down the session dir. The bundle path inside the
+            // guest is /shared/doctor-bundle.tar which maps to
+            // <session_dir>/guest/doctor-bundle.tar on the host.
+            if *bundle {
+                let session_dir = run_dir.join("instances").join(&vm_id);
+                let candidates = [
+                    session_dir.join("guest").join("doctor-bundle.tar"),
+                    session_dir.join("workspace").join("doctor-bundle.tar"),
+                ];
+                let dest = run_dir.join("doctor-latest.tar");
+                let mut copied = false;
+                for src in &candidates {
+                    if src.exists() {
+                        if let Err(e) = std::fs::copy(src, &dest) {
+                            eprintln!(
+                                "warning: failed to copy doctor bundle from {} -> {}: {e}",
+                                src.display(),
+                                dest.display()
+                            );
+                        } else {
+                            eprintln!(
+                                "Doctor bundle: {} ({} bytes)",
+                                dest.display(),
+                                std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0)
+                            );
+                            copied = true;
+                        }
+                        break;
+                    }
+                }
+                if !copied {
+                    eprintln!("warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar", candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+                }
+            }
+
             delete_vm(&client, &vm_id).await;
             if exit_code != 0 {
                 eprintln!("Full log: {}", log_path.display());
@@ -1593,6 +1955,86 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Parse `SESSION:PATH` style argument. Returns `Some((session, path))`
+/// or `None` if no `:` is present (i.e., a plain local path).
+///
+/// Treats the first `:` as the separator. SESSION may not contain `:`,
+/// but PATH may (e.g., `vm:/root/file:0001`).
+fn parse_session_arg(arg: &str) -> Option<(&str, &str)> {
+    arg.split_once(':')
+}
+
+async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<()> {
+    use std::io::Write;
+    let src_remote = parse_session_arg(src);
+    let dst_remote = parse_session_arg(dst);
+
+    match (src_remote, dst_remote) {
+        (Some(_), Some(_)) => Err(anyhow::anyhow!(
+            "guest-to-guest copy not supported -- only one of <src>, <dst> may be a SESSION:PATH"
+        )),
+        (None, None) => Err(anyhow::anyhow!(
+            "neither argument is `SESSION:PATH`; use `cp` for host-to-host copies"
+        )),
+        // Download: SESSION:PATH -> local
+        (Some((session, guest_path)), None) => {
+            client::validate_id(session)?;
+            let url = format!(
+                "/files/{session}/content?path={}",
+                urlencoding::encode(guest_path)
+            );
+            let (bytes, _ct) = client.request_bytes("GET", &url, None, None).await?;
+            if dst == "-" {
+                std::io::stdout().write_all(&bytes)?;
+            } else {
+                std::fs::write(dst, &bytes).with_context(|| format!("write {dst}"))?;
+                eprintln!(
+                    "[cp] {} bytes  {}:{}  ->  {}",
+                    bytes.len(),
+                    session,
+                    guest_path,
+                    dst,
+                );
+            }
+            Ok(())
+        }
+        // Upload: local -> SESSION:PATH
+        (None, Some((session, guest_path))) => {
+            client::validate_id(session)?;
+            let bytes = if src == "-" {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                std::io::stdin().read_to_end(&mut buf)?;
+                buf
+            } else {
+                std::fs::read(src).with_context(|| format!("read {src}"))?
+            };
+            let url = format!(
+                "/files/{session}/content?path={}",
+                urlencoding::encode(guest_path)
+            );
+            let (resp_body, _ct) = client
+                .request_bytes(
+                    "POST",
+                    &url,
+                    Some(bytes.clone()),
+                    Some("application/octet-stream"),
+                )
+                .await?;
+            // POST handler returns JSON `{success, size}`; surface for sanity.
+            let _ = resp_body;
+            eprintln!(
+                "[cp] {} bytes  {}  ->  {}:{}",
+                bytes.len(),
+                src,
+                session,
+                guest_path,
+            );
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1670,7 +2112,9 @@ mod tests {
     fn parse_suspend() {
         let cli = Cli::parse_from(["capsem", "suspend", "vm-123"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Suspend { session }) => assert_eq!(session, "vm-123"),
+            Commands::Session(SessionCommands::Suspend { session }) => {
+                assert_eq!(session, "vm-123")
+            }
             _ => panic!("expected Suspend"),
         }
     }
@@ -1746,9 +2190,13 @@ mod tests {
     fn parse_run() {
         let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Run { command, timeout, env }) => {
+            Commands::Session(SessionCommands::Run {
+                command,
+                timeout,
+                env,
+            }) => {
                 assert_eq!(command, "echo hello");
-                assert_eq!(timeout, 60); // default
+                assert_eq!(timeout, None);
                 assert!(env.is_empty());
             }
             _ => panic!("expected Run"),
@@ -1759,9 +2207,13 @@ mod tests {
     fn parse_run_with_timeout() {
         let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Run { command, timeout, env }) => {
+            Commands::Session(SessionCommands::Run {
+                command,
+                timeout,
+                env,
+            }) => {
                 assert_eq!(command, "ls -la");
-                assert_eq!(timeout, 120);
+                assert_eq!(timeout, Some(120));
                 assert!(env.is_empty());
             }
             _ => panic!("expected Run"),
@@ -1771,7 +2223,10 @@ mod tests {
     #[test]
     fn parse_list() {
         let cli = Cli::parse_from(["capsem", "list"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Session(SessionCommands::List { quiet: false })));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Session(SessionCommands::List { quiet: false })
+        ));
     }
 
     #[test]
@@ -1796,7 +2251,10 @@ mod tests {
     fn parse_status() {
         // `capsem status` is now the service status command
         let cli = Cli::parse_from(["capsem", "status"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Status)));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Status)
+        ));
     }
 
     #[test]
@@ -1829,10 +2287,14 @@ mod tests {
     fn parse_exec() {
         let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
+            Commands::Session(SessionCommands::Exec {
+                session,
+                command,
+                timeout,
+            }) => {
                 assert_eq!(session, "my-vm");
                 assert_eq!(command, "echo hello");
-                assert_eq!(timeout, 30); // default
+                assert_eq!(timeout, None);
             }
             _ => panic!("expected Exec"),
         }
@@ -1842,10 +2304,14 @@ mod tests {
     fn parse_exec_with_timeout() {
         let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Exec { session, command, timeout }) => {
+            Commands::Session(SessionCommands::Exec {
+                session,
+                command,
+                timeout,
+            }) => {
                 assert_eq!(session, "my-vm");
                 assert_eq!(command, "make build");
-                assert_eq!(timeout, 120);
+                assert_eq!(timeout, Some(120));
             }
             _ => panic!("expected Exec"),
         }
@@ -1920,7 +2386,10 @@ mod tests {
     #[test]
     fn parse_version() {
         let cli = Cli::parse_from(["capsem", "version"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Version)));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Version)
+        ));
     }
 
     #[test]
@@ -1959,32 +2428,64 @@ mod tests {
     #[test]
     fn parse_doctor() {
         let cli = Cli::parse_from(["capsem", "doctor"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Doctor { fast: false })));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Doctor {
+                fast: false,
+                bundle: false
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_doctor_bundle_flag() {
+        let cli = Cli::parse_from(["capsem", "doctor", "--bundle"]);
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Doctor {
+                fast: false,
+                bundle: true
+            })
+        ));
     }
 
     #[test]
     fn parse_install() {
         let cli = Cli::parse_from(["capsem", "install"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Install)));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Install)
+        ));
     }
 
     #[test]
     fn parse_start() {
         let cli = Cli::parse_from(["capsem", "start"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Start)));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Start)
+        ));
     }
 
     #[test]
     fn parse_stop() {
         let cli = Cli::parse_from(["capsem", "stop"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Stop)));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Stop)
+        ));
     }
 
     #[test]
     fn parse_setup_non_interactive() {
         let cli = Cli::parse_from(["capsem", "setup", "--non-interactive"]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Setup { non_interactive, preset, force, .. }) => {
+            Commands::Misc(MiscCommands::Setup {
+                non_interactive,
+                preset,
+                force,
+                ..
+            }) => {
                 assert!(non_interactive);
                 assert_eq!(preset, None);
                 assert!(!force);
@@ -2007,9 +2508,19 @@ mod tests {
 
     #[test]
     fn parse_setup_with_corp_config() {
-        let cli = Cli::parse_from(["capsem", "setup", "--corp-config", "https://example.com/corp.toml", "--non-interactive"]);
+        let cli = Cli::parse_from([
+            "capsem",
+            "setup",
+            "--corp-config",
+            "https://example.com/corp.toml",
+            "--non-interactive",
+        ]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Setup { corp_config, non_interactive, .. }) => {
+            Commands::Misc(MiscCommands::Setup {
+                corp_config,
+                non_interactive,
+                ..
+            }) => {
                 assert_eq!(corp_config, Some("https://example.com/corp.toml".into()));
                 assert!(non_interactive);
             }
@@ -2020,7 +2531,12 @@ mod tests {
     #[test]
     fn parse_completions_bash() {
         let cli = Cli::parse_from(["capsem", "completions", "bash"]);
-        assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Completions { shell: clap_complete::Shell::Bash })));
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Completions {
+                shell: clap_complete::Shell::Bash
+            })
+        ));
     }
 
     #[test]
@@ -2106,7 +2622,11 @@ mod tests {
     fn parse_fork() {
         let cli = Cli::parse_from(["capsem", "fork", "my-vm", "my-image"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Fork { session, name, description }) => {
+            Commands::Session(SessionCommands::Fork {
+                session,
+                name,
+                description,
+            }) => {
                 assert_eq!(session, "my-vm");
                 assert_eq!(name, "my-image");
                 assert_eq!(description, None);
@@ -2119,7 +2639,11 @@ mod tests {
     fn parse_fork_with_description() {
         let cli = Cli::parse_from(["capsem", "fork", "vm1", "img1", "-d", "My description"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Fork { session, name, description }) => {
+            Commands::Session(SessionCommands::Fork {
+                session,
+                name,
+                description,
+            }) => {
                 assert_eq!(session, "vm1");
                 assert_eq!(name, "img1");
                 assert_eq!(description, Some("My description".into()));

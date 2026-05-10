@@ -353,4 +353,4 @@ stateDiagram-v2
 
 ## MCP tools
 
-The same session operations are available to AI agents via the `capsem-mcp` server. See [MCP Gateway](/architecture/mcp-gateway/) for the full tool registry.
+The same session operations are available to AI agents via the `capsem-mcp` server. See [Guest MCP Endpoint](/architecture/mcp-gateway/) for the full tool registry.

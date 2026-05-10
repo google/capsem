@@ -5,7 +5,7 @@
 
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 // ---------------------------------------------------------------------------
 // ioctl encoding helpers (Linux ioctl number scheme)
@@ -321,7 +321,10 @@ impl KvmFd {
             );
         }
         let raw = unsafe {
-            libc::open(b"/dev/kvm\0".as_ptr() as *const libc::c_char, libc::O_RDWR | libc::O_CLOEXEC)
+            libc::open(
+                b"/dev/kvm\0".as_ptr() as *const libc::c_char,
+                libc::O_RDWR | libc::O_CLOEXEC,
+            )
         };
         if raw < 0 {
             let err = std::io::Error::last_os_error();
@@ -369,7 +372,10 @@ impl KvmFd {
         let raw = self.ioctl(KVM_CREATE_VM, 0)?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
         let mmap_size = self.vcpu_mmap_size()?;
-        Ok(VmFd { fd, vcpu_mmap_size: mmap_size })
+        Ok(VmFd {
+            fd,
+            vcpu_mmap_size: mmap_size,
+        })
     }
 
     fn ioctl(&self, request: u64, arg: u64) -> Result<i32> {
@@ -468,10 +474,7 @@ impl VmFd {
             )
         };
         if run_ptr == libc::MAP_FAILED {
-            bail!(
-                "mmap kvm_run failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("mmap kvm_run failed: {}", std::io::Error::last_os_error());
         }
 
         Ok(VcpuFd {
@@ -691,13 +694,7 @@ impl VcpuFd {
 
     /// Run the vCPU. Returns the exit reason.
     pub fn run(&self) -> Result<VcpuExit> {
-        let ret = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_RUN as libc::c_ulong,
-                0u64,
-            )
-        };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN as libc::c_ulong, 0u64) };
         if ret < 0 {
             let err = std::io::Error::last_os_error();
             if err.kind() == std::io::ErrorKind::Interrupted {
@@ -707,15 +704,12 @@ impl VcpuFd {
         }
 
         // Read exit reason from mmap'd kvm_run
-        let exit_reason = unsafe {
-            *(self.run.add(KVM_RUN_EXIT_REASON_OFFSET) as *const u32)
-        };
+        let exit_reason = unsafe { *(self.run.add(KVM_RUN_EXIT_REASON_OFFSET) as *const u32) };
 
         match exit_reason {
             KVM_EXIT_MMIO => {
-                let mmio = unsafe {
-                    &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunMmio)
-                };
+                let mmio =
+                    unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunMmio) };
                 Ok(VcpuExit::Mmio {
                     addr: mmio.phys_addr,
                     data_offset: KVM_RUN_EXIT_DATA_OFFSET + 8, // offset of data field in kvm_run
@@ -733,9 +727,7 @@ impl VcpuFd {
             }
             #[cfg(target_arch = "x86_64")]
             KVM_EXIT_IO => {
-                let io = unsafe {
-                    &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo)
-                };
+                let io = unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo) };
                 Ok(VcpuExit::Io {
                     direction: io.direction,
                     port: io.port,
@@ -746,21 +738,15 @@ impl VcpuFd {
             KVM_EXIT_HLT => Ok(VcpuExit::Hlt),
             #[cfg(target_arch = "x86_64")]
             KVM_EXIT_SHUTDOWN => Ok(VcpuExit::Shutdown),
-            KVM_EXIT_INTERNAL_ERROR => {
-                Ok(VcpuExit::InternalError)
-            }
-            other => {
-                Ok(VcpuExit::Unknown(other))
-            }
+            KVM_EXIT_INTERNAL_ERROR => Ok(VcpuExit::InternalError),
+            other => Ok(VcpuExit::Unknown(other)),
         }
     }
 
     /// Get a mutable pointer to the kvm_run MMIO data buffer.
     /// Used by the MMIO handler to write read responses back.
     pub fn mmio_data_mut(&self) -> &mut [u8; 8] {
-        unsafe {
-            &mut *(self.run.add(KVM_RUN_EXIT_DATA_OFFSET + 8) as *mut [u8; 8])
-        }
+        unsafe { &mut *(self.run.add(KVM_RUN_EXIT_DATA_OFFSET + 8) as *mut [u8; 8]) }
     }
 }
 
@@ -839,10 +825,22 @@ pub(super) const KVM_EXIT_SHUTDOWN: u32 = 8;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct KvmRegs {
-    pub rax: u64, pub rbx: u64, pub rcx: u64, pub rdx: u64,
-    pub rsi: u64, pub rdi: u64, pub rsp: u64, pub rbp: u64,
-    pub r8: u64,  pub r9: u64,  pub r10: u64, pub r11: u64,
-    pub r12: u64, pub r13: u64, pub r14: u64, pub r15: u64,
+    pub rax: u64,
+    pub rbx: u64,
+    pub rcx: u64,
+    pub rdx: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub rsp: u64,
+    pub rbp: u64,
+    pub r8: u64,
+    pub r9: u64,
+    pub r10: u64,
+    pub r11: u64,
+    pub r12: u64,
+    pub r13: u64,
+    pub r14: u64,
+    pub r15: u64,
     pub rip: u64,
     pub rflags: u64,
 }
@@ -961,11 +959,13 @@ const _: () = {
 impl VmFd {
     /// Set the TSS address (required before creating IRQCHIP on x86_64).
     pub fn set_tss_addr(&self, addr: u64) -> Result<()> {
-        let ret = unsafe {
-            libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR as libc::c_ulong, addr)
-        };
+        let ret =
+            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR as libc::c_ulong, addr) };
         if ret < 0 {
-            bail!("KVM_SET_TSS_ADDR failed: {}", std::io::Error::last_os_error());
+            bail!(
+                "KVM_SET_TSS_ADDR failed: {}",
+                std::io::Error::last_os_error()
+            );
         }
         Ok(())
     }
@@ -980,7 +980,10 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!("KVM_SET_IDENTITY_MAP_ADDR failed: {}", std::io::Error::last_os_error());
+            bail!(
+                "KVM_SET_IDENTITY_MAP_ADDR failed: {}",
+                std::io::Error::last_os_error()
+            );
         }
         Ok(())
     }
@@ -988,10 +991,17 @@ impl VmFd {
     /// Create an in-kernel i8259 PIC + IOAPIC + LAPIC.
     pub fn create_irqchip(&self) -> Result<()> {
         let ret = unsafe {
-            libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_IRQCHIP as libc::c_ulong, 0u64)
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_CREATE_IRQCHIP as libc::c_ulong,
+                0u64,
+            )
         };
         if ret < 0 {
-            bail!("KVM_CREATE_IRQCHIP failed: {}", std::io::Error::last_os_error());
+            bail!(
+                "KVM_CREATE_IRQCHIP failed: {}",
+                std::io::Error::last_os_error()
+            );
         }
         Ok(())
     }
@@ -1007,7 +1017,10 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!("KVM_CREATE_PIT2 failed: {}", std::io::Error::last_os_error());
+            bail!(
+                "KVM_CREATE_PIT2 failed: {}",
+                std::io::Error::last_os_error()
+            );
         }
         Ok(())
     }
@@ -1019,15 +1032,16 @@ impl VmFd {
         let header_size = std::mem::size_of::<u32>() * 2; // nent + padding
         let total_size = header_size + MAX_ENTRIES * entry_size;
 
-        let layout = std::alloc::Layout::from_size_align(total_size, 8)
-            .context("cpuid layout")?;
+        let layout = std::alloc::Layout::from_size_align(total_size, 8).context("cpuid layout")?;
         let buf = unsafe { std::alloc::alloc_zeroed(layout) };
         if buf.is_null() {
             bail!("failed to allocate CPUID buffer");
         }
 
         // Set nent to MAX_ENTRIES
-        unsafe { *(buf as *mut u32) = MAX_ENTRIES as u32; }
+        unsafe {
+            *(buf as *mut u32) = MAX_ENTRIES as u32;
+        }
 
         let ret = unsafe {
             libc::ioctl(
@@ -1037,14 +1051,21 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            unsafe { std::alloc::dealloc(buf, layout); }
-            bail!("KVM_GET_SUPPORTED_CPUID failed: {}", std::io::Error::last_os_error());
+            unsafe {
+                std::alloc::dealloc(buf, layout);
+            }
+            bail!(
+                "KVM_GET_SUPPORTED_CPUID failed: {}",
+                std::io::Error::last_os_error()
+            );
         }
 
         let nent = unsafe { *(buf as *const u32) } as usize;
         let entries_ptr = unsafe { buf.add(header_size) as *const KvmCpuidEntry2 };
         let entries = unsafe { std::slice::from_raw_parts(entries_ptr, nent) }.to_vec();
-        unsafe { std::alloc::dealloc(buf, layout); }
+        unsafe {
+            std::alloc::dealloc(buf, layout);
+        }
         Ok(entries)
     }
 }
@@ -1091,8 +1112,7 @@ impl VcpuFd {
         let header_size = std::mem::size_of::<u32>() * 2;
         let total_size = header_size + entries.len() * entry_size;
 
-        let layout = std::alloc::Layout::from_size_align(total_size, 8)
-            .context("cpuid layout")?;
+        let layout = std::alloc::Layout::from_size_align(total_size, 8).context("cpuid layout")?;
         let buf = unsafe { std::alloc::alloc_zeroed(layout) };
         if buf.is_null() {
             bail!("failed to allocate CPUID buffer");
@@ -1113,7 +1133,9 @@ impl VcpuFd {
                 buf as u64,
             )
         };
-        unsafe { std::alloc::dealloc(buf, layout); }
+        unsafe {
+            std::alloc::dealloc(buf, layout);
+        }
         if ret < 0 {
             bail!("KVM_SET_CPUID2 failed: {}", std::io::Error::last_os_error());
         }
@@ -1122,9 +1144,7 @@ impl VcpuFd {
 
     /// Get the IO exit data from the kvm_run mmap'd region.
     pub fn io_data(&self) -> &KvmRunIo {
-        unsafe {
-            &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo)
-        }
+        unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo) }
     }
 
     /// Get a mutable pointer to the IO data buffer.
@@ -1224,26 +1244,14 @@ mod tests {
             12,
             "KvmCreateDevice"
         );
-        assert_eq!(
-            std::mem::size_of::<KvmDeviceAttr>(),
-            24,
-            "KvmDeviceAttr"
-        );
-        assert_eq!(
-            std::mem::size_of::<KvmIrqfd>(),
-            32,
-            "KvmIrqfd"
-        );
+        assert_eq!(std::mem::size_of::<KvmDeviceAttr>(), 24, "KvmDeviceAttr");
+        assert_eq!(std::mem::size_of::<KvmIrqfd>(), 32, "KvmIrqfd");
     }
 
     #[cfg(target_arch = "aarch64")]
     #[test]
     fn struct_sizes_aarch64() {
-        assert_eq!(
-            std::mem::size_of::<KvmOneReg>(),
-            16,
-            "KvmOneReg"
-        );
+        assert_eq!(std::mem::size_of::<KvmOneReg>(), 16, "KvmOneReg");
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -1383,7 +1391,11 @@ mod tests {
         assert_eq!(std::mem::size_of::<VhostVringState>(), 8, "VhostVringState");
         assert_eq!(std::mem::size_of::<VhostVringAddr>(), 48, "VhostVringAddr");
         assert_eq!(std::mem::size_of::<VhostVringFile>(), 8, "VhostVringFile");
-        assert_eq!(std::mem::size_of::<VhostMemoryRegion>(), 32, "VhostMemoryRegion");
+        assert_eq!(
+            std::mem::size_of::<VhostMemoryRegion>(),
+            32,
+            "VhostMemoryRegion"
+        );
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -1464,7 +1476,11 @@ mod tests {
         let Some(kvm) = require_kvm() else { return };
         let vm = kvm.create_vm().unwrap();
         let target = vm.preferred_target();
-        assert!(target.is_ok(), "preferred_target failed: {:?}", target.err());
+        assert!(
+            target.is_ok(),
+            "preferred_target failed: {:?}",
+            target.err()
+        );
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -1498,9 +1514,15 @@ mod tests {
         assert_ne!(ptr, libc::MAP_FAILED);
 
         let result = vm.set_user_memory_region(0, 0x4000_0000, page_size as u64, ptr as *const u8);
-        assert!(result.is_ok(), "set_user_memory_region failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "set_user_memory_region failed: {:?}",
+            result.err()
+        );
 
-        unsafe { libc::munmap(ptr, page_size); }
+        unsafe {
+            libc::munmap(ptr, page_size);
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -805,3 +805,105 @@ jobs:
               gh release upload ${{ github.ref_name }} "release-artifacts/$arch/${arch}-${base}"
             done
           done
+
+  # ---------------------------------------------------------------------------
+  # Post-release: verify every asset URL the binary will request actually
+  # resolves on the live GitHub Release, AND that the just-released .deb's
+  # `capsem update --assets` succeeds end-to-end against real GitHub. This
+  # is the layer that was missing when v1.0.1777065213 shipped a downloader
+  # pointing at /v<asset_version>/... (404). If this job had existed it would
+  # have failed on that release.
+  # ---------------------------------------------------------------------------
+  verify-release-downloads:
+    needs: [create-release]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Wait for release assets to be queryable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in $(seq 1 30); do
+            if gh release view "${{ github.ref_name }}" --json assets --jq '.assets | length' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Verify every URL in the published manifest is reachable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/verify
+          gh release download "${{ github.ref_name }}" --pattern manifest.json -D /tmp/verify
+          # The URL contract: <base>/v<binary_version>/<arch>-<logical_name>
+          # where binary_version is the release tag (without leading 'v').
+          # This MUST match crates/capsem-core/src/asset_manager.rs::asset_download_url.
+          BASE="https://github.com/google/capsem/releases/download"
+          TAG="${{ github.ref_name }}"
+          fail=0
+          # Iterate every (arch, logical_name) the current asset release declares.
+          while IFS=$'\t' read -r arch name; do
+            url="$BASE/$TAG/$arch-$name"
+            code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")
+            if [ "$code" != "200" ]; then
+              echo "::error::$url -> HTTP $code"
+              fail=1
+            else
+              echo "ok  $url"
+            fi
+          done < <(python3 -c "
+          import json
+          m = json.load(open('/tmp/verify/manifest.json'))
+          cur = m['assets']['current']
+          for arch, files in m['assets']['releases'][cur]['arches'].items():
+              for name in files:
+                  print(f'{arch}\t{name}')
+          ")
+          [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable'; exit 1; }
+
+      - name: Verify capsem update --assets succeeds against real GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Pull the just-released .deb for this runner's arch.
+          arch=$(uname -m)
+          [ "$arch" = "aarch64" ] && deb_arch=arm64 || deb_arch=amd64
+          mkdir -p /tmp/deb
+          if ! gh release download "${{ github.ref_name }}" \
+               --pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb; then
+            echo "::warning::no .deb for ${deb_arch} on this release -- skipping binary e2e"
+            exit 0
+          fi
+          deb=$(ls /tmp/deb/Capsem_*_${deb_arch}.deb | head -1)
+          # Extract the bundled capsem binary; we don't need to dpkg -i for this.
+          mkdir -p /tmp/extract && cd /tmp/extract
+          ar x "$deb"
+          for d in data.tar.zst data.tar.xz data.tar.gz; do
+            [ -f "$d" ] && tar xf "$d" && break
+          done
+          # Tauri .deb installs the umbrella binary as capsem-app; the CLI is
+          # bundled separately under /usr/share/capsem/bin or similar. Find it.
+          CAPSEM_BIN=$(find . -type f -name capsem -perm -u+x | head -1)
+          if [ -z "$CAPSEM_BIN" ]; then
+            echo "::warning::no 'capsem' CLI inside .deb -- skipping binary e2e"
+            exit 0
+          fi
+          echo "Using $CAPSEM_BIN ($("$CAPSEM_BIN" --version 2>&1 | head -1))"
+
+          # Stand up a clean CAPSEM_HOME with only the published manifest.
+          export CAPSEM_HOME=/tmp/capsem-home
+          mkdir -p "$CAPSEM_HOME/assets"
+          cp /tmp/verify/manifest.json "$CAPSEM_HOME/assets/manifest.json"
+          # No CAPSEM_RELEASE_URL override -- the binary must hit real GitHub.
+          "$CAPSEM_BIN" update --assets
+          # Sanity: at least the host arch's three canonical files must now exist.
+          host_arch=$( [ "$arch" = "aarch64" ] && echo arm64 || echo x86_64 )
+          for f in vmlinuz initrd.img rootfs.squashfs; do
+            count=$(find "$CAPSEM_HOME/assets/$host_arch" -name "${f%.*}-*" 2>/dev/null | wc -l)
+            [ "$count" -ge 1 ] || { echo "::error::no downloaded file for $f"; exit 1; }
+          done
+          echo "End-to-end download verified against live GitHub Release."

@@ -21,6 +21,8 @@ Write `sprints/<sprint-name>/plan.md`:
 - Files to create/modify
 - Dependencies and ordering
 - What "done" looks like
+- The testing proof matrix for each functional slice: unit/contract,
+  functional, adversarial, E2E/VM, telemetry, and performance
 
 The plan is a living document. Update it as the sprint evolves -- crossed-out items, new discoveries, changed approach. The plan is evidence of thinking, not a contract.
 
@@ -42,9 +44,20 @@ Create `sprints/<sprint-name>/tracker.md` as a checklist:
 ## Notes
 - Discovery: found that X needs Y
 - Changed approach: Z instead of W because...
+
+## Coverage Ledger
+- Unit/contract:
+- Functional:
+- Adversarial:
+- E2E/VM:
+- Telemetry:
+- Performance:
+- Missing/deferred:
 ```
 
 Update the tracker as you go. Check items off. Add notes about surprises, blockers, and changed approaches. This is your scratchpad -- future you (or the next conversation) reads this to understand what happened.
+
+For every functional milestone, keep the coverage ledger current. Do not mark a task complete with only implementation notes and a command list. Name the actual tests or manual VM checks that prove the feature, and name the missing categories honestly. A benchmark can prove performance, not functional correctness. A Rust unit suite can prove contracts, not the user-visible VM path.
 
 ## 3. Build
 
@@ -61,6 +74,9 @@ Do NOT commit after every file edit. Do NOT batch everything into one giant comm
 - A logical unit of work is complete and functional
 - Tests pass for that unit
 - The codebase is in a good state (not half-refactored)
+- The tracker has an explicit coverage ledger for that milestone,
+  including missing/deferred functional, adversarial, E2E/VM, telemetry,
+  or performance coverage
 
 Each commit should:
 - Be self-contained (revertable without breaking things)
@@ -96,6 +112,16 @@ just inspect-session                # Verify telemetry after a real session
 ```
 
 If tests fail, fix them before considering the sprint done. See `/dev-debugging` for the methodology.
+
+The testing gate must cover the story, not just the code that was easiest to test. For each shipped behavior, verify:
+- Unit/contract tests for the smallest meaningful logic boundary
+- Functional tests through the production-facing API
+- Adversarial tests for malformed input, denials, timeouts, races, and leak prevention
+- E2E/VM tests for the real user path when the behavior crosses a VM, CLI, MCP, service, telemetry, or network boundary
+- Session DB or external-state checks when the behavior claims auditability
+- Benchmarks only when performance is part of the claim
+
+If one of those is missing, keep the sprint open or record the exact debt in the tracker with a follow-up task. Do not bury the gap in prose like "covered later"; make it visible.
 
 ## 7. Clean up
 
@@ -142,3 +168,5 @@ When executing a meta sprint, create a `tracker.md` for the active work. Update 
 - **One mega commit**: can't bisect, can't review, can't cherry-pick
 - **Skip testing**: "I'll test later" means "I'll ship bugs now"
 - **Stale tracker**: if the tracker doesn't match reality, it's useless
+- **Benchmark-as-proof**: performance numbers do not prove the feature is correct
+- **Silent coverage debt**: missing E2E, functional, or adversarial tests must be named before a milestone can be called done

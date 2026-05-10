@@ -40,7 +40,8 @@ mod tests {
     use std::time::SystemTime;
 
     fn temp_db_path(name: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("capsem-test-db-{name}-{}.db", std::process::id()));
+        let p =
+            std::env::temp_dir().join(format!("capsem-test-db-{name}-{}.db", std::process::id()));
         // Clean up any stale file/WAL from previous runs
         let _ = std::fs::remove_file(&p);
         let _ = std::fs::remove_file(p.with_extension("db-wal"));
@@ -69,6 +70,11 @@ mod tests {
             request_body_preview: None,
             response_body_preview: None,
             conn_type: None,
+            policy_mode: None,
+            policy_action: None,
+            policy_rule: None,
+            policy_reason: None,
+            trace_id: None,
         }
     }
 
@@ -105,11 +111,13 @@ mod tests {
                 tool_name: "write_file".into(),
                 arguments: Some(r#"{"path":"test.txt"}"#.into()),
                 origin: "native".into(),
+                trace_id: None,
             }],
             tool_responses: vec![ToolResponseEntry {
                 call_id: "call_001".into(),
                 content_preview: Some("ok".into()),
                 is_error: false,
+                trace_id: None,
             }],
         }
     }
@@ -200,6 +208,11 @@ mod tests {
             process_name: Some("claude".into()),
             bytes_sent: 50,
             bytes_received: 200,
+            policy_mode: None,
+            policy_action: None,
+            policy_rule: None,
+            policy_reason: None,
+            trace_id: None,
         };
         writer.write(crate::WriteOp::McpCall(mcp)).await;
         drop(writer);
@@ -247,7 +260,9 @@ mod tests {
 
         // WAL files should have been created (or checkpoint cleared them)
         let conn = rusqlite::Connection::open(&p).unwrap();
-        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(mode, "wal");
 
         std::fs::remove_file(&p).ok();
@@ -260,9 +275,16 @@ mod tests {
 
         for i in 0..50 {
             let domain = format!("domain-{}.com", i);
-            writer.write(crate::WriteOp::NetEvent(
-                make_net_event(&domain, if i % 2 == 0 { Decision::Allowed } else { Decision::Denied })
-            )).await;
+            writer
+                .write(crate::WriteOp::NetEvent(make_net_event(
+                    &domain,
+                    if i % 2 == 0 {
+                        Decision::Allowed
+                    } else {
+                        Decision::Denied
+                    },
+                )))
+                .await;
         }
         drop(writer);
 
@@ -282,7 +304,9 @@ mod tests {
         drop(_writer);
 
         let reader = DbReader::open(&p).unwrap();
-        let json = reader.query_raw("SELECT COUNT(*) as cnt FROM net_events").unwrap();
+        let json = reader
+            .query_raw("SELECT COUNT(*) as cnt FROM net_events")
+            .unwrap();
         assert!(json.contains("cnt"));
         assert!(json.contains("0"));
 
@@ -294,8 +318,18 @@ mod tests {
         let p = temp_db_path("wal-reopen");
 
         let writer = DbWriter::open(&p, 16).unwrap();
-        writer.write(crate::WriteOp::NetEvent(make_net_event("a.com", Decision::Allowed))).await;
-        writer.write(crate::WriteOp::NetEvent(make_net_event("b.com", Decision::Denied))).await;
+        writer
+            .write(crate::WriteOp::NetEvent(make_net_event(
+                "a.com",
+                Decision::Allowed,
+            )))
+            .await;
+        writer
+            .write(crate::WriteOp::NetEvent(make_net_event(
+                "b.com",
+                Decision::Denied,
+            )))
+            .await;
         drop(writer);
 
         let reader = DbReader::open(&p).unwrap();
@@ -303,7 +337,12 @@ mod tests {
         assert_eq!((c.total, c.allowed, c.denied), (2, 1, 1));
 
         let writer2 = DbWriter::open(&p, 16).unwrap();
-        writer2.write(crate::WriteOp::NetEvent(make_net_event("c.com", Decision::Error))).await;
+        writer2
+            .write(crate::WriteOp::NetEvent(make_net_event(
+                "c.com",
+                Decision::Error,
+            )))
+            .await;
         drop(writer2);
 
         let reader2 = DbReader::open(&p).unwrap();

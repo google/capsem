@@ -180,7 +180,10 @@ async fn step_corp_config(capsem_dir: &Path, source: &str, state: &mut SetupStat
 /// Type alias for the background download join handle.
 type BgDownloadHandle = tokio::task::JoinHandle<anyhow::Result<()>>;
 
-async fn step_welcome(capsem_dir: &Path, state: &mut SetupState) -> Result<Option<BgDownloadHandle>> {
+async fn step_welcome(
+    capsem_dir: &Path,
+    state: &mut SetupState,
+) -> Result<Option<BgDownloadHandle>> {
     println!("[2/6] Welcome to Capsem!");
     println!("  The fastest way to ship with AI securely.");
 
@@ -201,7 +204,11 @@ async fn step_welcome(capsem_dir: &Path, state: &mut SetupState) -> Result<Optio
     let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
 
-    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
     let assets_dir = capsem_dir.join("assets");
     let binary_version = env!("CARGO_PKG_VERSION").to_string();
 
@@ -251,7 +258,10 @@ fn step_security_preset(
 
     if preset_locked {
         if let Some(entry) = corp.settings.get("security.preset") {
-            println!("  Security preset configured by your organization: {:?}", entry.value);
+            println!(
+                "  Security preset configured by your organization: {:?}",
+                entry.value
+            );
         }
         state.security_preset = Some("corp-locked".to_string());
     } else if let Some(ref preset) = opts.preset {
@@ -318,7 +328,10 @@ fn step_providers(
     }
 
     if !summary.settings_written.is_empty() {
-        println!("  Wrote {} setting(s) to user.toml.", summary.settings_written.len());
+        println!(
+            "  Wrote {} setting(s) to user.toml.",
+            summary.settings_written.len()
+        );
     }
 
     state.providers_done = true;
@@ -438,7 +451,10 @@ mod tests {
         s.mark_done("corp_config");
         s.security_preset = Some("high".into());
         save_state_to(&sub, &s).unwrap();
-        assert!(sub.join("setup-state.json").exists(), "file was not written");
+        assert!(
+            sub.join("setup-state.json").exists(),
+            "file was not written"
+        );
     }
 
     #[test]
@@ -503,8 +519,10 @@ mod tests {
 version = 1
 org = "Test Co"
 
-[policy]
-default_action = "allow"
+[policy.http.allow_example_docs]
+on = "http.request"
+if = 'request.host == "example.com"'
+decision = "allow"
 "#;
         let corp_path = d.path().join("corp.toml");
         std::fs::write(&corp_path, corp_toml).unwrap();

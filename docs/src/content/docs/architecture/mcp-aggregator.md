@@ -26,7 +26,7 @@ If the aggregator is compromised, the attacker has network access and MCP server
 
 ## Architecture
 
-The aggregator sits between the MCP gateway (which handles guest VM requests) and external MCP servers (which provide tools like GitHub, Slack, etc.).
+The aggregator sits between the host MITM MCP endpoint (which handles guest VM requests) and external MCP servers (which provide tools like GitHub, Slack, etc.).
 
 ```mermaid
 graph LR
@@ -35,7 +35,7 @@ graph LR
     end
 
     subgraph "capsem-process"
-        GW["MCP Gateway<br/>(vsock:5003)"]
+        EP["MITM MCP Endpoint<br/>(framed vsock:5002)"]
         CLIENT["AggregatorClient<br/>(mpsc channel)"]
         WRITER["Writer task<br/>(stdin)"]
         READER["Reader task<br/>(stdout)"]
@@ -51,8 +51,8 @@ graph LR
         EXT2["Slack MCP"]
     end
 
-    AGENT -->|"vsock:5003<br/>JSON-RPC"| GW
-    GW --> CLIENT
+    AGENT -->|"framed MCP<br/>vsock:5002"| EP
+    EP --> CLIENT
     CLIENT --> WRITER
     WRITER -->|"stdin<br/>NDJSON"| MAIN
     MAIN --> MGR
@@ -62,9 +62,15 @@ graph LR
     READER --> CLIENT
 ```
 
+The policy boundary is the MITM MCP endpoint, not the aggregator. External
+MCP tool calls are inspected, allowed, asked, blocked, or rewritten before the
+aggregator receives them. Network traffic that an external MCP server performs
+from the host is outside the guest MITM path and does not create guest
+`net_events` rows.
+
 Four layers handle the flow:
 
-1. **AggregatorClient** (in capsem-process) -- typed async API wrapping an mpsc channel. Multiple gateway sessions share one client via `Arc`.
+1. **AggregatorClient** (in capsem-process) -- typed async API wrapping an mpsc channel. Multiple endpoint sessions share one client via `Arc`.
 2. **Driver tasks** (in capsem-process) -- writer task serializes requests to subprocess stdin; reader task deserializes responses from stdout and routes them to pending callers via oneshot channels.
 3. **NDJSON loop** (in capsem-mcp-aggregator) -- reads requests from stdin, dispatches to `McpServerManager`, writes responses to stdout.
 4. **McpServerManager** (in capsem-core) -- manages `rmcp` HTTP connections to external servers, builds unified tool/resource/prompt catalogs with namespacing.
@@ -104,7 +110,7 @@ Two paths:
 
 ### Crash recovery
 
-If the aggregator crashes, the reader and writer driver tasks in capsem-process exit (broken pipe / EOF). Subsequent requests from the gateway receive a channel-closed error. The gateway returns a JSON-RPC error to the guest -- the VM continues running, only external MCP tools become unavailable.
+If the aggregator crashes, the reader and writer driver tasks in capsem-process exit (broken pipe / EOF). Subsequent requests from the endpoint receive a channel-closed error. The endpoint returns a JSON-RPC error to the guest -- the VM continues running, only external MCP tools become unavailable.
 
 ## NDJSON protocol
 
@@ -197,11 +203,11 @@ The aggregator splits on the first `__` when routing, so tool names containing `
 
 ## Server definition sources
 
-Three layers combined with deduplication (first occurrence wins by name):
+Three layers combined with deduplication (first occurrence wins by name). The list is processed in trust order so the first-wins rule encodes the documented `corp > user > defaults` policy:
 
-1. **Auto-detected** from host AI CLI configs (`~/.claude/settings.json`, `~/.gemini/settings.json`)
-2. **User manual servers** from `~/.capsem/user.toml` `[mcp]` section
-3. **Corp-injected servers** from `/etc/capsem/corp.toml` (enterprise policy, highest priority for enable/disable overrides)
+1. **Corp-injected servers** from `/etc/capsem/corp.toml` (enterprise policy -- definitions and enable/disable overrides; cannot be shadowed by a same-name user or auto-detected entry)
+2. **Auto-detected** from host AI CLI configs (`~/.claude/settings.json`, `~/.gemini/settings.json`)
+3. **User manual servers** from `~/.capsem/user.toml` `[mcp]` section
 
 Names containing `__` or matching `builtin` are rejected. Empty names are rejected.
 
@@ -239,7 +245,7 @@ The aggregator is designed for graceful degradation:
 | Some servers fail to connect at startup | Warning logged, continue with working servers |
 | Tool call to disconnected server | Error response to caller, other tools unaffected |
 | Malformed request line | Logged, skipped, loop continues |
-| Subprocess crash | Gateway returns JSON-RPC errors, VM keeps running |
+| Subprocess crash | Endpoint returns JSON-RPC errors, VM keeps running |
 | Serialization failure | Fallback JSON error response written to stdout |
 | Stdin EOF | Graceful shutdown (all servers disconnected) |
 
@@ -252,5 +258,5 @@ The aggregator is designed for graceful degradation:
 | `capsem-core/src/mcp/server_manager.rs` | `McpServerManager`: rmcp connections, tool catalog, namespacing |
 | `capsem-core/src/mcp/mod.rs` | `build_server_list()`: auto-detect + manual + corp merge |
 | `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch, driver tasks, mock fallback |
-| `capsem-core/src/mcp/gateway.rs` | MCP gateway: routes external tool calls through the aggregator |
+| `capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | MITM MCP endpoint: policy, telemetry, and dispatch through the aggregator |
 | `capsem-proto/src/ipc.rs` | Service-process IPC messages for MCP operations |

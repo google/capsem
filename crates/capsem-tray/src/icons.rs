@@ -63,7 +63,7 @@ fn tint_to_orange(rgba: &mut [u8]) {
         let lum = px[0] as u16;
         px[0] = ((lum * 255) / 255) as u8; // R
         px[1] = ((lum * 136) / 255) as u8; // G
-        px[2] = 0;                          // B
+        px[2] = 0; // B
     }
 }
 
@@ -118,7 +118,9 @@ mod tests {
                 assert!(
                     max - min < 30,
                     "idle icon should be grey (equal RGB), got r={} g={} b={}",
-                    chunk[0], chunk[1], chunk[2]
+                    chunk[0],
+                    chunk[1],
+                    chunk[2]
                 );
                 return;
             }
@@ -137,7 +139,9 @@ mod tests {
                 assert!(
                     max - min < 30,
                     "error icon should be grey, got r={} g={} b={}",
-                    chunk[0], chunk[1], chunk[2]
+                    chunk[0],
+                    chunk[1],
+                    chunk[2]
                 );
                 return;
             }
@@ -149,9 +153,8 @@ mod tests {
     fn tint_to_orange_preserves_alpha_and_remaps_channels() {
         // Two opaque grey pixels (RGBA), one transparent, one semi-transparent.
         let mut rgba = vec![
-            128, 128, 128, 255,
-            64, 64, 64, 128,
-            0, 0, 0, 0,        // fully transparent -- must be untouched
+            128, 128, 128, 255, 64, 64, 64, 128, 0, 0, 0,
+            0, // fully transparent -- must be untouched
             200, 200, 200, 200,
         ];
         tint_to_orange(&mut rgba);
@@ -185,6 +188,9 @@ mod tests {
                 }
             }
         }
-        assert!(saw_orange, "expected at least one orange opaque pixel after tinting");
+        assert!(
+            saw_orange,
+            "expected at least one orange opaque pixel after tinting"
+        );
     }
 }

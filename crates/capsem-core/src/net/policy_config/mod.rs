@@ -9,25 +9,26 @@
 //! Merge semantics: corp settings override user settings per-key.
 //! User can only write user.toml. Corp file is read-only (MDM-distributed).
 
-mod types;
-mod registry;
+mod builder;
+mod condition;
+pub mod corp_provision;
+mod lint;
 mod loader;
 mod presets;
+mod registry;
 mod resolver;
-mod builder;
-mod lint;
 mod tree;
-pub mod corp_provision;
+mod types;
 
 // Re-export everything to preserve the existing public API.
-pub use types::*;
-pub use registry::{setting_definitions, default_settings_file};
-pub use loader::*;
-pub use presets::*;
-pub use resolver::*;
 pub use builder::*;
 pub use lint::*;
+pub use loader::*;
+pub use presets::*;
+pub use registry::{default_settings_file, setting_definitions};
+pub use resolver::*;
 pub use tree::*;
+pub use types::*;
 
 // Re-export sibling types used by tests and downstream code.
 pub use super::domain_policy::{Action, DomainPolicy};

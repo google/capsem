@@ -66,7 +66,7 @@ sequenceDiagram
     VM->>Guest: Kernel boots (console=hvc0)
     Guest->>Guest: capsem-init (PID 1)
     Guest->>Guest: Mount overlayfs + VirtioFS
-    Guest->>Guest: Start dnsmasq, net-proxy
+    Guest->>Guest: Start net-proxy and dns-proxy
     Guest->>Guest: Start pty-agent, mcp-server, sysutil
     Guest-->>Proc: vsock:5000 Ready
     Proc-->>Svc: VM running, vsock wired
@@ -74,16 +74,17 @@ sequenceDiagram
 
 ## Guest-Host Communication
 
-All guest-host communication uses vsock (virtio socket), with six dedicated ports:
+All guest-host communication uses vsock (virtio socket), with dedicated ports:
 
 | Port | Purpose | Guest binary |
 |------|---------|-------------|
 | 5000 | Control messages (resize, heartbeat, exec, file I/O) | capsem-pty-agent |
 | 5001 | Terminal data (PTY I/O) | capsem-pty-agent |
-| 5002 | MITM proxy (HTTPS connections) | capsem-net-proxy |
-| 5003 | MCP gateway (tool routing, NDJSON) | capsem-mcp-server |
+| 5002 | MITM proxy and framed guest MCP endpoint | capsem-net-proxy, capsem-mcp-server |
 | 5004 | Lifecycle commands (shutdown/suspend) | capsem-sysutil |
 | 5005 | Exec output (direct child stdout) | capsem-pty-agent |
+| 5006 | Kernel audit stream | capsem-pty-agent |
+| 5007 | DNS proxy queries | capsem-dns-proxy |
 
 ### Vsock Per Platform
 

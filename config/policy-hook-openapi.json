@@ -1,0 +1,269 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Capsem Policy Hook Spec0",
+    "version": "policy-hook/v0",
+    "description": "External decision hook contract for Capsem Policy V2."
+  },
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Hook server health and supported spec versions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/policy/spec": {
+      "get": {
+        "operationId": "policySpec",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document or compatibility hash implemented by the hook server.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/policy/decision": {
+      "post": {
+        "operationId": "policyDecision",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HookDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A typed allow, ask, block, or rewrite decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookDecisionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/policy/batch-decision": {
+      "post": {
+        "operationId": "policyBatchDecision",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/HookDecisionRequest"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A decision for every request in order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HookDecisionResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "spec_versions"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "spec_versions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "policy-hook/v0"
+              ]
+            }
+          }
+        }
+      },
+      "HookCallback": {
+        "type": "string",
+        "enum": [
+          "mcp.request",
+          "mcp.response",
+          "http.request",
+          "http.response",
+          "dns.query",
+          "dns.response",
+          "model.request",
+          "model.response",
+          "model.tool_call",
+          "model.tool_response"
+        ]
+      },
+      "HookDecision": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "ask",
+          "block",
+          "rewrite"
+        ]
+      },
+      "HookAuditContext": {
+        "type": "object",
+        "properties": {
+          "process_name": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "config_source": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HookDecisionRequest": {
+        "type": "object",
+        "required": [
+          "spec_version",
+          "decision_id",
+          "on",
+          "subject"
+        ],
+        "properties": {
+          "spec_version": {
+            "type": "string",
+            "enum": [
+              "policy-hook/v0"
+            ]
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "on": {
+            "$ref": "#/components/schemas/HookCallback"
+          },
+          "subject": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "preview": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "hashes": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "audit_context": {
+            "$ref": "#/components/schemas/HookAuditContext"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HookDecisionResponse": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/HookDecision"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "rule_id": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "ttl_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rewrite_target": {
+            "type": "string"
+          },
+          "rewrite_value": {
+            "type": "string"
+          },
+          "redactions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

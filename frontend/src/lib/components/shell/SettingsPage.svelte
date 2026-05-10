@@ -5,6 +5,7 @@
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import SettingsSection from '../settings/SettingsSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
+  import PolicyRulesSection from '../settings/PolicyRulesSection.svelte';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
   import Brain from 'phosphor-svelte/lib/Brain';
@@ -44,7 +45,7 @@
     vm: Desktop,
   };
 
-  // Build full nav list: Appearance + dynamic + MCP + About
+  // Build full nav list: Appearance + dynamic + Policy + MCP + About
   let navItems = $derived.by(() => {
     const items: { key: string; label: string; icon: any }[] = [
       { key: 'appearance', label: 'Appearance', icon: Palette },
@@ -56,6 +57,7 @@
         icon: SECTION_ICONS[section.key] ?? GearSix,
       });
     }
+    items.push({ key: 'policy', label: 'Policy', icon: Shield });
     items.push({ key: 'mcp', label: 'MCP Servers', icon: Plugs });
     items.push({ key: 'about', label: 'About', icon: Info });
     return items;
@@ -320,6 +322,10 @@
       {:else if activeSection === 'mcp'}
         <!-- ===== MCP ===== -->
         <McpSection />
+
+      {:else if activeSection === 'policy'}
+        <!-- ===== Policy ===== -->
+        <PolicyRulesSection />
 
       {:else if activeSection === 'about'}
         <!-- ===== About ===== -->

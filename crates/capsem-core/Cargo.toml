@@ -16,6 +16,7 @@ tokio = { workspace = true }
 tokio-unix-ipc.workspace = true
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
 serde = { workspace = true }
 rmp-serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
@@ -50,9 +51,17 @@ regex = { workspace = true }
 scraper = "0.25"
 
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process", "reqwest"] }
+hickory-proto = { workspace = true }
+# Bounded LRU primitive used by `net::dns::cache` for the TTL-honoring
+# answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
+lru = "0.18"
 ego-tree = "0.10"
 notify = "7"
 walkdir = "2"
+# Metrics facade. No recorder registered in this sprint -- emission is a
+# single relaxed atomic add against a no-op recorder. T5 wires the
+# exporter (likely OTel via opentelemetry-otlp).
+metrics = "0.24"
 
 # Linux-only: KVM hypervisor backend
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -73,3 +82,28 @@ workspace = true
 [dev-dependencies]
 tempfile = "3"
 dotenvy = "0.15"
+criterion = { version = "0.5", features = ["html_reports"] }
+metrics-util = "0.19"
+# Property-based tests for the DNS wire codec (T3.f). Cheap dev-dep,
+# scoped to test runs only.
+proptest = "1"
+
+[[bench]]
+name = "mitm_pipeline"
+harness = false
+
+[[bench]]
+name = "parser_sse"
+harness = false
+
+[[bench]]
+name = "parser_jsonrpc"
+harness = false
+
+[[bench]]
+name = "interp_anthropic"
+harness = false
+
+[[bench]]
+name = "policy_v2"
+harness = false

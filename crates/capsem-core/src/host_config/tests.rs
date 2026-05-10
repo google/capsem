@@ -131,7 +131,11 @@ fn detect_claude_oauth_no_refresh_token() {
     let dir = tempfile::tempdir().unwrap();
     let claude_dir = dir.path().join(".claude");
     std::fs::create_dir_all(&claude_dir).unwrap();
-    std::fs::write(claude_dir.join(".credentials.json"), r#"{"claudeAiOauth":{}}"#).unwrap();
+    std::fs::write(
+        claude_dir.join(".credentials.json"),
+        r#"{"claudeAiOauth":{}}"#,
+    )
+    .unwrap();
     assert!(detect_claude_oauth(dir.path()).is_none());
 }
 
@@ -142,7 +146,8 @@ fn detect_google_adc_valid() {
     let dir = tempfile::tempdir().unwrap();
     let gcloud_dir = dir.path().join(".config").join("gcloud");
     std::fs::create_dir_all(&gcloud_dir).unwrap();
-    let adc = r#"{"type":"authorized_user","client_id":"x","client_secret":"y","refresh_token":"z"}"#;
+    let adc =
+        r#"{"type":"authorized_user","client_id":"x","client_secret":"y","refresh_token":"z"}"#;
     std::fs::write(gcloud_dir.join("application_default_credentials.json"), adc).unwrap();
     assert_eq!(detect_google_adc(dir.path()).as_deref(), Some(adc));
 }
@@ -158,7 +163,11 @@ fn detect_google_adc_no_refresh_token() {
     let dir = tempfile::tempdir().unwrap();
     let gcloud_dir = dir.path().join(".config").join("gcloud");
     std::fs::create_dir_all(&gcloud_dir).unwrap();
-    std::fs::write(gcloud_dir.join("application_default_credentials.json"), r#"{"type":"service_account"}"#).unwrap();
+    std::fs::write(
+        gcloud_dir.join("application_default_credentials.json"),
+        r#"{"type":"service_account"}"#,
+    )
+    .unwrap();
     assert!(detect_google_adc(dir.path()).is_none());
 }
 
@@ -308,14 +317,20 @@ fn non_empty_env_returns_none_for_empty() {
 #[test]
 fn non_empty_env_returns_value() {
     std::env::set_var("CAPSEM_TEST_HAS_VAR", "hello");
-    assert_eq!(non_empty_env("CAPSEM_TEST_HAS_VAR").as_deref(), Some("hello"));
+    assert_eq!(
+        non_empty_env("CAPSEM_TEST_HAS_VAR").as_deref(),
+        Some("hello")
+    );
     std::env::remove_var("CAPSEM_TEST_HAS_VAR");
 }
 
 #[test]
 fn non_empty_env_trims_whitespace() {
     std::env::set_var("CAPSEM_TEST_WS_VAR", "  trimmed  ");
-    assert_eq!(non_empty_env("CAPSEM_TEST_WS_VAR").as_deref(), Some("trimmed"));
+    assert_eq!(
+        non_empty_env("CAPSEM_TEST_WS_VAR").as_deref(),
+        Some("trimmed")
+    );
     std::env::remove_var("CAPSEM_TEST_WS_VAR");
 }
 
@@ -339,7 +354,9 @@ async fn validate_whitespace_key() {
 async fn validate_quoted_key_stripped() {
     // Surrounding quotes should be stripped -- the bogus key inside should
     // still reach the endpoint and get rejected, not treated as empty.
-    let result = validate_api_key("anthropic", "\"sk-ant-bogus\"").await.unwrap();
+    let result = validate_api_key("anthropic", "\"sk-ant-bogus\"")
+        .await
+        .unwrap();
     assert!(!result.valid);
     assert_eq!(result.message, "Invalid API key");
 }
@@ -397,7 +414,11 @@ fn read_user_toml_setting(id: &str) -> Option<String> {
     let settings = doc.get("settings")?;
     let entry = settings.get(id)?;
     let value = entry.get("value")?.as_str()?;
-    if value.is_empty() { None } else { Some(value.to_string()) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 /// Try env var first, then user.toml setting.

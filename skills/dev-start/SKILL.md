@@ -9,17 +9,22 @@ description: Quick-start guide for new Capsem developers. Use when someone asks 
 
 ```bash
 git clone <repo> && cd capsem
-bash scripts/bootstrap.sh      # checks tools, installs deps, runs doctor
-just build-assets               # builds kernel + rootfs (~10 min, needs Docker)
-just run "echo hello"           # verify VM boots
+./bootstrap.sh                  # interactive, prompts [Y/n] before each install
+./bootstrap.sh --yes            # non-interactive (CI / unattended setup)
+just run "echo hello"           # verify VM boots (build-assets runs as part of bootstrap)
 ```
+
+`bootstrap.sh` lives at the **repo root**, not under `scripts/`.
 
 ## What bootstrap.sh does
 
-1. Checks all required tools: Rust, just, Node 24+, pnpm, Python 3.11+, uv, Docker
-2. Prints install commands for anything missing
-3. Runs `uv sync` (Python deps) and `pnpm install` (frontend deps)
-4. Runs `just doctor` (writes `.dev-setup` sentinel)
+Three phases. Default answer at every prompt is **Yes** — press Enter to install, type `n` to skip.
+
+1. **Hard prereqs** (you must have): `bash`, `git`, `curl`. Auto-installed: `rustup` (sh.rustup.rs), `just` (just.systems → `~/.local/bin`).
+2. **Dependencies**: `uv` (astral.sh), `uv sync`, `flock` (brew on macOS), container runtime on macOS (`colima` + `docker` + `docker-buildx` via brew, then `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`), `pnpm install` for the frontend.
+3. **Doctor `--fix`** (`scripts/doctor-common.sh --fix`): installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`; builds VM assets and packs the initrd.
+
+`--yes` flag and non-tty input both auto-accept every prompt.
 
 ## After bootstrap
 
@@ -33,4 +38,4 @@ All just recipes (`run`, `test`, `dev`, etc.) check for `.dev-setup` and auto-ru
 
 ## Container runtime
 
-Docker (via Colima on macOS) with 4GB+ RAM (8GB recommended). On Linux, Docker runs natively. See `/dev-setup` for configuration.
+Docker (via Colima on macOS) with 12GB+ RAM (16GB recommended -- the Tauri install-test build OOMs below 12GB). On Linux, Docker runs natively. See `/dev-setup` for configuration.

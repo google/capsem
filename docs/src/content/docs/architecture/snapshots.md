@@ -13,7 +13,7 @@ Capsem takes periodic copy-on-write snapshots of the shared workspace so AI agen
 flowchart TB
   subgraph Host["Host (macOS / Linux)"]
     Timer["Timer<br/>(5 min interval)"]
-    MCP["MCP gateway<br/>vsock:5003"]
+    MCP["MITM MCP endpoint<br/>framed vsock:5002"]
     Sched["AutoSnapshotScheduler"]
     FS["Session dir<br/>auto_snapshots/{slot}/"]
     DB["session.db"]
@@ -81,7 +81,7 @@ When an AI agent calls `snapshots_revert`, the following sequence occurs:
 ```mermaid
 sequenceDiagram
     participant Agent as AI Agent (Guest)
-    participant GW as MCP Gateway
+    participant GW as MITM MCP Endpoint
     participant Sched as AutoSnapshotScheduler
     participant FS as Host Filesystem
     participant DB as session.db
@@ -117,7 +117,7 @@ Key properties:
 
 ## Session database integration
 
-Every snapshot writes a row to the `snapshot_events` table. Every file change (including reverts) writes to `fs_events`. This decouples the stats UI from the MCP gateway -- the frontend queries SQL directly.
+Every snapshot writes a row to the `snapshot_events` table. Every file change (including reverts) writes to `fs_events`. This decouples the stats UI from the MCP endpoint -- the frontend queries SQL directly.
 
 ### fs_events schema
 
@@ -138,7 +138,7 @@ The `action` field has four values:
 | `created` | FsMonitor | New file detected in workspace |
 | `modified` | FsMonitor | Existing file content changed |
 | `deleted` | FsMonitor | File removed from workspace |
-| `restored` | MCP gateway | File reverted from a snapshot checkpoint |
+| `restored` | MITM MCP endpoint | File reverted from a snapshot checkpoint |
 
 For `restored` events, the `path` field includes the source checkpoint: `"src/main.py (from cp-3)"`. This makes it easy to trace which snapshot was used for recovery.
 

@@ -26,6 +26,11 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
+# C3: only the protocol-version + schema_hash constants. Does NOT pull in
+# capsem-core or hypervisor code, so the "thin Tauri shell" invariant
+# (no VM logic in capsem-app) is preserved. capsem-proto is a leaf crate
+# with serde/rmp deps only.
+capsem-proto = { path = "../capsem-proto" }
 
 [lints]
 workspace = true

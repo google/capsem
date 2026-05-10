@@ -13,7 +13,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 |-------|------------|------|
 | Host (Capsem binary, macOS/Linux kernel) | Trusted | Contain guest escape, protect host resources |
 | Guest (AI agent, user code, guest kernel) | Untrusted | May attempt sandbox escape, resource exhaustion, data exfiltration |
-| Network (external services) | Controlled | All traffic audited via MITM proxy; allow/deny per domain+HTTP path |
+| Network (external services) | Controlled | DNS and HTTPS pass through host policy boundaries before upstream dispatch |
 
 **What Capsem defends against:**
 - Guest code escaping the VM boundary
@@ -32,7 +32,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 |-------|-----------|-----------------|
 | **Hardware virtualization** | Apple VZ / KVM | Guest cannot access host memory, devices, or kernel |
 | **Kernel hardening** | No modules, no debugfs, no IPv6, no swap, read-only rootfs | Reduces guest kernel attack surface |
-| **Network isolation** | Air-gapped NIC, fake DNS, iptables, MITM proxy | All traffic funneled through audited proxy |
+| **Network isolation** | Air-gapped NIC, DNS proxy, iptables, MITM proxy | DNS and HTTPS are funneled through audited host policy handlers |
 | **Filesystem sandboxing** | VirtioFS with path validation, resource limits | Guest confined to workspace directory |
 | **Build verification** | Code signing, notarization, SBOM | Host binary integrity |
 
@@ -54,7 +54,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 
 **Guest/host boundary (virtio):** All communication uses virtio devices (console, vsock, VirtioFS). The guest cannot directly access host memory or syscalls. The hypervisor validates all virtio descriptor chains.
 
-**Network boundary (MITM proxy):** Guest HTTPS traffic is terminated at the host, inspected against domain + HTTP policy, and forwarded to real upstream. Per-session telemetry records every request.
+**Network boundary (DNS + MITM proxies):** Guest DNS and HTTPS traffic are redirected to guest proxy binaries and forwarded over vsock to host policy handlers. HTTPS is terminated at the host, inspected against domain and HTTP policy, and forwarded to real upstream only after policy allows it. Per-session telemetry records every request and DNS query.
 
 **Filesystem boundary (VirtioFS):** The host VirtioFS server validates all path components, canonicalizes symlinks, and rejects any path that resolves outside the shared workspace. Resource limits prevent guest-driven host exhaustion.
 

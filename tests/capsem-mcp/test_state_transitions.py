@@ -44,6 +44,57 @@ def test_suspend_and_resume_persistent(fresh_vm, mcp_session):
     assert parse_content(res)["content"] == "persisted-through-suspend"
 
 
+@pytest.mark.parametrize("run", range(5))
+def test_suspend_and_resume_persistent_repeat(fresh_vm, mcp_session, run):
+    """Mirror of test_suspend_and_resume_persistent across 5 fresh VMs.
+
+    Default `just test` runs only the single-cycle variant, which means
+    intermittent post-resume races (e.g., the EXEC-port `ECONNRESET`
+    transient that motivated `vsock_connect_with_econnreset_retry` in
+    capsem-agent) need ~tens of cycles to surface and would slip past
+    CI. The 50-cycle stress in `test_stress_suspend_resume.py` is gated
+    behind `CAPSEM_STRESS=1` so it doesn't dominate `just test`.
+
+    This 5-cycle version is the in-between: cheap enough to run by
+    default (~25s on top of pytest), broad enough to hit a race that
+    only fires once every few cycles. It's a regression net for
+    integration paths the unit tests can't reach (real vsock + Apple
+    VZ kernel state); the 50-cycle gate stays for explicit acceptance.
+    """
+    vm_name = fresh_vm()
+    assert wait_exec_ready(mcp_session, vm_name, timeout=EXEC_READY_TIMEOUT), (
+        f"[run {run}] {vm_name} never exec-ready"
+    )
+
+    mcp_session.call_tool("capsem_write_file", {
+        "id": vm_name,
+        "path": "/root/marker.txt",
+        "content": f"persisted-through-suspend-{run}",
+    })
+
+    mcp_session.call_tool("capsem_suspend", {"id": vm_name})
+    info = parse_content(mcp_session.call_tool("capsem_info", {"id": vm_name}))
+    assert info["status"] == "Suspended", (
+        f"[run {run}] status after suspend: {info['status']!r}"
+    )
+
+    mcp_session.call_tool("capsem_resume", {"name": vm_name})
+    assert wait_exec_ready(mcp_session, vm_name, timeout=EXEC_READY_TIMEOUT), (
+        f"[run {run}] VM did not become exec-ready after resume"
+    )
+
+    info = parse_content(mcp_session.call_tool("capsem_info", {"id": vm_name}))
+    assert info["status"] == "Running", (
+        f"[run {run}] status after resume: {info['status']!r}"
+    )
+
+    res = mcp_session.call_tool("capsem_read_file", {
+        "id": vm_name,
+        "path": "/root/marker.txt",
+    })
+    assert parse_content(res)["content"] == f"persisted-through-suspend-{run}"
+
+
 def test_suspend_ephemeral_rejected(mcp_session):
     """capsem_suspend must reject ephemeral (non-persistent) sessions."""
     data = parse_content(mcp_session.call_tool("capsem_create", {}))

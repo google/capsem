@@ -11,16 +11,21 @@
 //!
 //! Frame format: [4 bytes big-endian payload length] [N bytes msgpack]
 //!
+//! Wire is full-duplex: the reader spawns one handler per request, handlers
+//! send responses through an mpsc channel, and a single writer task drains
+//! the channel to stdout. Out-of-order responses are fine because the
+//! capsem-process driver routes by request id.
+//!
 //! This subprocess intentionally has NO access to the VM, session DB,
 //! filesystem, or service IPC. It only has network access to reach
 //! external MCP servers.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
-use tracing::{debug, error, info, warn};
-use tokio::sync::Mutex;
 use clap::Parser;
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 use capsem_core::mcp::aggregator::*;
 use capsem_core::mcp::server_manager::McpServerManager;
@@ -44,20 +49,17 @@ async fn main() -> Result<()> {
     // mcp-aggregator.stderr.log in the VM's session dir). Matches the
     // format capsem-process + capsem-service already emit, so every
     // host-side log is machine-parseable with the same schema.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "capsem_mcp_aggregator=info".into()),
-        )
-        .json()
-        .with_writer(std::io::stderr)
-        .init();
+    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+        service: "capsem-mcp-aggregator",
+        sink: capsem_core::telemetry::LogSink::Stderr,
+        default_filter: "capsem_mcp_aggregator=info",
+    })?;
 
     // Root span: every log inherits `vm_id` and `trace_id` as
     // structured fields, so lines in mcp-aggregator.stderr.log can be
-    // correlated with process.log (parent) and main.db / session.db
-    // (service). `unknown` fallbacks let the binary still run if
-    // invoked standalone (dev/debug), without panicking.
+    // correlated with parent/service telemetry. `unknown` fallbacks let
+    // the binary still run if invoked standalone (dev/debug), without
+    // panicking.
     let vm_id = std::env::var("CAPSEM_VM_ID").unwrap_or_else(|_| "unknown".into());
     let trace_id = std::env::var("CAPSEM_TRACE_ID").unwrap_or_else(|_| "unknown".into());
     let root_span = tracing::info_span!("aggregator", vm_id = %vm_id, trace_id = %trace_id);
@@ -95,64 +97,98 @@ async fn main() -> Result<()> {
 
     info!(count = defs.len(), "received server definitions");
 
-    // Step 2: Initialize connections to all enabled HTTP servers.
-    let manager = Arc::new(Mutex::new(McpServerManager::new(
-        defs,
-        reqwest::Client::new(),
-    )));
-
-    {
-        let mut mgr = manager.lock().await;
-        if let Err(e) = mgr.initialize_all().await {
-            warn!(error = %e, "some MCP servers failed to initialize");
-        }
+    // Step 2: Initialize connections to all enabled HTTP servers BEFORE
+    // installing the manager into the shared lock. `initialize_all` is async
+    // and would otherwise need to run while holding the sync RwLock guard.
+    let mut mgr = McpServerManager::new(defs, reqwest::Client::new());
+    if let Err(e) = mgr.initialize_all().await {
+        warn!(error = %e, "some MCP servers failed to initialize");
     }
+    let manager = Arc::new(RwLock::new(mgr));
 
-    info!("aggregator ready, entering request loop");
+    info!("aggregator ready, entering pipelined request loop");
 
-    // Step 3: MessagePack frame request/response loop.
-    loop {
-        let req: AggregatorRequest = match read_frame(&mut stdin).await {
-            Ok(Some(r)) => r,
-            Ok(None) => {
-                // EOF -- parent closed stdin, shut down gracefully.
-                info!("stdin closed, shutting down");
-                let mut mgr = manager.lock().await;
-                mgr.shutdown_all().await;
+    // Pipelined session: the reader spawns one handler per request and hands
+    // the response back to a single writer task via mpsc. The capsem-process
+    // driver matches responses to requests by `id`, so out-of-order delivery
+    // is fine. Channel depth 256 is large enough that handlers don't normally
+    // block on send, small enough that a stuck writer creates backpressure on
+    // the reader instead of growing memory unbounded.
+    let (resp_tx, mut resp_rx) = mpsc::channel::<AggregatorResponse>(256);
+
+    let writer_task = tokio::spawn(async move {
+        while let Some(resp) = resp_rx.recv().await {
+            if let Err(e) = write_frame(&mut stdout, &resp).await {
+                error!(error = %e, "failed to write response frame");
                 break;
             }
-            Err(e) => {
-                error!(error = %e, "failed to read request frame");
-                continue;
-            }
-        };
-
-        let is_shutdown = matches!(req.method, AggregatorMethod::Shutdown);
-        let resp = handle_request(&manager, req).await;
-
-        if let Err(e) = write_frame(&mut stdout, &resp).await {
-            error!(error = %e, "failed to write response frame");
-            break;
         }
+    });
 
-        if is_shutdown {
-            info!("shutdown acknowledged, exiting");
-            break;
+    let reader_result: Result<()> = async {
+        loop {
+            let req: AggregatorRequest = match read_frame(&mut stdin).await {
+                Ok(Some(r)) => r,
+                Ok(None) => {
+                    info!("stdin closed, shutting down");
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!(error = %e, "failed to read request frame");
+                    continue;
+                }
+            };
+
+            // Ack Shutdown synchronously on the reader path so we can break
+            // out cleanly without depending on a spawned handler completing.
+            if matches!(req.method, AggregatorMethod::Shutdown) {
+                let _ = resp_tx
+                    .send(AggregatorResponse {
+                        id: req.id,
+                        body: AggregatorResult::Ok { ok: true },
+                    })
+                    .await;
+                info!("shutdown acknowledged, exiting");
+                return Ok(());
+            }
+
+            let mgr_h = Arc::clone(&manager);
+            let tx_h = resp_tx.clone();
+            tokio::spawn(async move {
+                let resp = handle_request(&mgr_h, req).await;
+                if tx_h.send(resp).await.is_err() {
+                    debug!("aggregator writer channel closed; dropping response");
+                }
+            });
         }
     }
+    .await;
 
-    Ok(())
+    // Drop our sender so the writer drains in-flight handlers and exits.
+    drop(resp_tx);
+    let _ = writer_task.await;
+
+    // Drain server connections outside any lock. Take ownership of the running
+    // map under a brief write guard, then await cancellation after the guard
+    // drops.
+    let drain_fut = {
+        let mut mgr = manager.write().expect("manager rwlock poisoned");
+        mgr.drain_running()
+    };
+    drain_fut.await;
+
+    reader_result
 }
 
 async fn handle_request(
-    manager: &Arc<Mutex<McpServerManager>>,
+    manager: &Arc<RwLock<McpServerManager>>,
     req: AggregatorRequest,
 ) -> AggregatorResponse {
     let id = req.id;
 
     match req.method {
         AggregatorMethod::ListServers => {
-            let mgr = manager.lock().await;
+            let mgr = manager.read().expect("manager rwlock poisoned");
             let servers = mgr
                 .definitions()
                 .iter()
@@ -183,8 +219,11 @@ async fn handle_request(
         }
 
         AggregatorMethod::ListTools => {
-            let mgr = manager.lock().await;
-            let tools = mgr.tool_catalog().to_vec();
+            let tools = manager
+                .read()
+                .expect("manager rwlock poisoned")
+                .tool_catalog()
+                .to_vec();
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Tools { tools },
@@ -192,8 +231,11 @@ async fn handle_request(
         }
 
         AggregatorMethod::ListResources => {
-            let mgr = manager.lock().await;
-            let resources = mgr.resource_catalog().to_vec();
+            let resources = manager
+                .read()
+                .expect("manager rwlock poisoned")
+                .resource_catalog()
+                .to_vec();
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Resources { resources },
@@ -201,8 +243,11 @@ async fn handle_request(
         }
 
         AggregatorMethod::ListPrompts => {
-            let mgr = manager.lock().await;
-            let prompts = mgr.prompt_catalog().to_vec();
+            let prompts = manager
+                .read()
+                .expect("manager rwlock poisoned")
+                .prompt_catalog()
+                .to_vec();
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Prompts { prompts },
@@ -210,15 +255,29 @@ async fn handle_request(
         }
 
         AggregatorMethod::CallTool { name, arguments } => {
-            let mgr = manager.lock().await;
-            match mgr.call_tool(&name, arguments).await {
-                Ok(resp) => {
-                    let result = resp.result.unwrap_or(serde_json::Value::Null);
-                    AggregatorResponse {
+            // Resolve the dispatch under a sync read guard, then drop the
+            // guard before awaiting the rmcp RPC. Concurrent CallTool
+            // handlers proceed in parallel; the read lock never crosses an
+            // `.await`.
+            let dispatch = manager
+                .read()
+                .expect("manager rwlock poisoned")
+                .dispatch_call_tool(&name, arguments);
+            match dispatch {
+                Ok(fut) => match fut.await {
+                    Ok(resp) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::CallResult { result },
-                    }
-                }
+                        body: AggregatorResult::CallResult {
+                            result: resp.result.unwrap_or(serde_json::Value::Null),
+                        },
+                    },
+                    Err(e) => AggregatorResponse {
+                        id,
+                        body: AggregatorResult::Error {
+                            error: e.to_string(),
+                        },
+                    },
+                },
                 Err(e) => AggregatorResponse {
                     id,
                     body: AggregatorResult::Error {
@@ -229,15 +288,25 @@ async fn handle_request(
         }
 
         AggregatorMethod::ReadResource { uri } => {
-            let mgr = manager.lock().await;
-            match mgr.read_resource(&uri).await {
-                Ok(resp) => {
-                    let result = resp.result.unwrap_or(serde_json::Value::Null);
-                    AggregatorResponse {
+            let dispatch = manager
+                .read()
+                .expect("manager rwlock poisoned")
+                .dispatch_read_resource(&uri);
+            match dispatch {
+                Ok(fut) => match fut.await {
+                    Ok(resp) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::CallResult { result },
-                    }
-                }
+                        body: AggregatorResult::CallResult {
+                            result: resp.result.unwrap_or(serde_json::Value::Null),
+                        },
+                    },
+                    Err(e) => AggregatorResponse {
+                        id,
+                        body: AggregatorResult::Error {
+                            error: e.to_string(),
+                        },
+                    },
+                },
                 Err(e) => AggregatorResponse {
                     id,
                     body: AggregatorResult::Error {
@@ -248,15 +317,25 @@ async fn handle_request(
         }
 
         AggregatorMethod::GetPrompt { name, arguments } => {
-            let mgr = manager.lock().await;
-            match mgr.get_prompt(&name, arguments).await {
-                Ok(resp) => {
-                    let result = resp.result.unwrap_or(serde_json::Value::Null);
-                    AggregatorResponse {
+            let dispatch = manager
+                .read()
+                .expect("manager rwlock poisoned")
+                .dispatch_get_prompt(&name, arguments);
+            match dispatch {
+                Ok(fut) => match fut.await {
+                    Ok(resp) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::CallResult { result },
-                    }
-                }
+                        body: AggregatorResult::CallResult {
+                            result: resp.result.unwrap_or(serde_json::Value::Null),
+                        },
+                    },
+                    Err(e) => AggregatorResponse {
+                        id,
+                        body: AggregatorResult::Error {
+                            error: e.to_string(),
+                        },
+                    },
+                },
                 Err(e) => AggregatorResponse {
                     id,
                     body: AggregatorResult::Error {
@@ -267,13 +346,23 @@ async fn handle_request(
         }
 
         AggregatorMethod::Refresh { servers } => {
-            let mut mgr = manager.lock().await;
             debug!(count = servers.len(), "refreshing server definitions");
-            mgr.shutdown_all().await;
-            *mgr = McpServerManager::new(servers, reqwest::Client::new());
-            if let Err(e) = mgr.initialize_all().await {
+
+            // Drain old running servers without holding the lock across .await.
+            let drain_fut = {
+                let mut mgr = manager.write().expect("manager rwlock poisoned");
+                mgr.drain_running()
+            };
+            drain_fut.await;
+
+            // Build and initialize the replacement manager off the lock,
+            // then swap it in under a brief write guard.
+            let mut new_mgr = McpServerManager::new(servers, reqwest::Client::new());
+            if let Err(e) = new_mgr.initialize_all().await {
                 warn!(error = %e, "some servers failed during refresh");
             }
+            *manager.write().expect("manager rwlock poisoned") = new_mgr;
+
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Ok { ok: true },
@@ -281,9 +370,15 @@ async fn handle_request(
         }
 
         AggregatorMethod::Shutdown => {
-            info!("shutdown requested");
-            let mut mgr = manager.lock().await;
-            mgr.shutdown_all().await;
+            // The reader path acks Shutdown directly before this handler runs,
+            // so this branch is only reached if a stray Shutdown gets spawned
+            // (it shouldn't). Drain and ack defensively.
+            info!("shutdown reached spawned handler -- draining defensively");
+            let drain_fut = {
+                let mut mgr = manager.write().expect("manager rwlock poisoned");
+                mgr.drain_running()
+            };
+            drain_fut.await;
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Ok { ok: true },

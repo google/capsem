@@ -14,6 +14,8 @@ Key files:
 | `src/capsem/builder/schema.py` | Pydantic models (canonical schema) |
 | `config/settings-schema.json` | Generated JSON Schema |
 | `config/defaults.json` | Generated defaults from guest TOML configs |
+| `crates/capsem-core/src/net/policy_config/types.rs` | Rust settings and Policy serde contract |
+| `frontend/src/lib/types/settings.ts` | TypeScript settings and Policy wire types |
 | `crates/capsem-core/tests/settings_spec.rs` | Rust conformance tests |
 | `frontend/src/lib/__tests__/settings_spec.test.ts` | TypeScript conformance tests |
 | `tests/test_settings_spec.py` | Python schema + conformance tests |
@@ -136,6 +138,30 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 | `args` | string[] | `[]` | Command arguments |
 | `env` | dict | `{}` | Environment variables for the server process |
 | `headers` | dict | `{}` | HTTP headers (sse transport) |
+
+## Policy Schema
+
+Policy rules are returned alongside the settings tree in
+`SettingsResponse.policy`. They are not leaf settings and do not use
+`SettingMetadata`; they are named objects grouped by type:
+
+```ts
+type PolicyConfig = {
+  mcp: Record<string, PolicyRuleConfig>
+  http: Record<string, PolicyRuleConfig>
+  dns: Record<string, PolicyRuleConfig>
+  model: Record<string, PolicyRuleConfig>
+  hook: Record<string, PolicyRuleConfig>
+}
+```
+
+Settings saves use fully qualified keys such as
+`policy.http.block_openai_github`. The Rust loader validates key shape, policy
+type, callback compatibility, condition fields, decisions, rewrites, and HTTP
+header names. The TypeScript model preserves these objects during export/import
+and stages them without flattening them into legacy setting leaves.
+
+See [Policy](/security/policy/) for the rule body schema and examples.
 
 ## JSON Schema Generation
 
